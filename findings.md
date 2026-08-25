@@ -280,3 +280,11 @@
 - GLOBAL 节点选择以运行时返回的候选集为唯一真值，UI 不会把仅存在于本地库存、但不在 Mihomo GLOBAL `all` 中的名称伪装成可选出口。
 - QX 规则解析器保留每条规则的源策略标签，并要求调用方提供映射；这与 QX `force-policy` 语义一致，能够把 `PROXY/proxy` 映射到用户选择的本地策略组，而无需硬编码组名。
 - QX URL 下载不能由当前 GPUI 原生 NullHttpClient 完成；正式实现需要 Rust TLS HTTP 客户端。系统 `curl` 虽可作为开发诊断工具，但不作为三平台产品实现，以免引入隐性外部运行依赖。
+
+## 托盘与远程 QX 规则实现结论（2026-08-26）
+
+- `tray-icon` 的 macOS/Windows 托盘应与创建它的原生事件循环同线程；Linux 后端还依赖 GTK3 与 AppIndicator。GPUI 没有直接暴露 Linux GTK 循环，因此实现用同一前台线程周期性排空 `glib::MainContext`，避免额外线程破坏 GTK 约束。
+- `ureq` 的同步 Agent 适合当前 GPUI 后台 executor：`https_only(true)`、最终 URI 再校验、全局超时、正文上限和严格 UTF-8 共同构成下载边界，不需要系统 `curl` 或外部进程。
+- 持久化的是已经校验过的规则正文，而不是每次生成配置都重新联网；这样启动和托管配置重建可离线完成，同时保留来源地址用于用户识别和后续刷新。
+- 导入时对原文件每条规则的策略标签采用 QX `force-policy` 式覆盖：所有可识别域名规则映射到用户选择的本地策略组；DIRECT/REJECT 走内置策略，其余名称映射到 Mihomo 策略组。
+- Windows 的私有来源存储仍沿用项目既有 fail-closed 边界：在 owner-only ACL 尚未实现前不写入含凭据的普通文件。托盘与 HTTPS 下载可编译到 Windows，但规则持久化在 Windows 上仍是明确的后续风险。

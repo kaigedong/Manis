@@ -13,16 +13,17 @@ use relay_core::{
     PolicyWorkspaceState, PrimaryWorkspace, ProxyId, ProxyMode, RoutingMode, WindowSizeClass,
 };
 use relay_mihomo::{Connection, ObservedRouteEvidence, RuntimeConfig};
-use relay_profile::SecretUrl;
+use relay_profile::{QxRuleList, SecretUrl};
 
 use crate::{
     demo,
     diagnostics::{UiEvent, trace_ui},
     mihomo::{
         self, ControllerRuntime, ControllerState, GeneratedProfileApply, KernelLogEntry,
-        LiveRuntimeSession, LiveStreamStatus, LoadedProvider, LoadedSnapshot, StoredSubscription,
-        StoredVlessNode, SubscriptionPreviewError, SubscriptionStoreError,
+        LiveRuntimeSession, LiveStreamStatus, LoadedProvider, LoadedSnapshot, StoredQxRuleSource,
+        StoredSubscription, StoredVlessNode, SubscriptionPreviewError, SubscriptionStoreError,
     },
+    rule_source::RuleDownloadError,
     subscription::{SourceKind, SubscriptionInputError, SubscriptionPreview},
     subscription_input::{SubscriptionInputChanged, SubscriptionTextInput},
     system_proxy::{ProxyPorts, SystemProxySession},
@@ -108,6 +109,26 @@ impl ImportedSubscription {
 
 enum ImportSubscriptionError {
     Preview(SubscriptionPreviewError),
+    Store(SubscriptionStoreError),
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+enum QxRuleImportFeedback {
+    #[default]
+    Idle,
+    Importing,
+    Imported {
+        rule_count: usize,
+        diagnostic_count: usize,
+    },
+    InvalidDocument,
+    DownloadFailed(RuleDownloadError),
+    StoreFailed(SubscriptionStoreError),
+}
+
+enum ImportQxRuleError {
+    Download(RuleDownloadError),
+    InvalidDocument,
     Store(SubscriptionStoreError),
 }
 
@@ -365,6 +386,10 @@ pub struct RelayApp {
     subscription_store_dir: Option<PathBuf>,
     imported_subscriptions: Vec<ImportedSubscription>,
     saved_vless_nodes: Vec<StoredVlessNode>,
+    qx_rule_sources: Vec<StoredQxRuleSource>,
+    qx_rule_feedback: QxRuleImportFeedback,
+    qx_rule_target_policy: String,
+    qx_rule_import_generation: u64,
     node_policy_groups: Vec<NodePolicyGroup>,
     node_group_draft: Option<NodeGroupDraft>,
     group_benchmarks: BTreeMap<String, GroupBenchmarkState>,
@@ -393,6 +418,8 @@ pub struct RelayApp {
     subscription_input: Option<Entity<SubscriptionTextInput>>,
     subscription_feedback: SubscriptionFeedback,
     subscription_input_events: Option<Subscription>,
+    qx_rule_input: Option<Entity<SubscriptionTextInput>>,
+    qx_rule_input_events: Option<Subscription>,
     node_group_name_input: Option<Entity<SubscriptionTextInput>>,
     node_group_filter_input: Option<Entity<SubscriptionTextInput>>,
 }
@@ -400,6 +427,7 @@ pub struct RelayApp {
 struct StoredWorkspace {
     imported_subscriptions: Vec<ImportedSubscription>,
     saved_vless_nodes: Vec<StoredVlessNode>,
+    qx_rule_sources: Vec<StoredQxRuleSource>,
     collapsed_groups: Vec<String>,
     node_policy_groups: Vec<NodePolicyGroup>,
     routing_mode: RoutingMode,
@@ -412,6 +440,7 @@ impl StoredWorkspace {
             return Self {
                 imported_subscriptions: Vec::new(),
                 saved_vless_nodes: Vec::new(),
+                qx_rule_sources: Vec::new(),
                 collapsed_groups: Vec::new(),
                 node_policy_groups: Vec::new(),
                 routing_mode: RoutingMode::Rule,
@@ -420,12 +449,14 @@ impl StoredWorkspace {
         };
         let subscriptions = mihomo::load_subscription_sources_in(directory);
         let nodes = mihomo::load_vless_sources_in(directory);
+        let qx_rule_sources = mihomo::load_qx_rule_sources_in(directory);
         let collapsed = mihomo::load_collapsed_groups_in(directory);
         let policy_groups = mihomo::load_node_policy_groups_in(directory);
         let routing_mode = mihomo::load_routing_mode_in(directory);
         let error = [
             subscriptions.is_err(),
             nodes.is_err(),
+            qx_rule_sources.is_err(),
             collapsed.is_err(),
             policy_groups.is_err(),
             routing_mode.is_err(),
@@ -440,6 +471,7 @@ impl StoredWorkspace {
                 .map(ImportedSubscription::from_stored)
                 .collect(),
             saved_vless_nodes: nodes.unwrap_or_default(),
+            qx_rule_sources: qx_rule_sources.unwrap_or_default(),
             collapsed_groups: collapsed.unwrap_or_default(),
             node_policy_groups: policy_groups.unwrap_or_default(),
             routing_mode: routing_mode.unwrap_or_default(),
@@ -490,6 +522,7 @@ impl RelayApp {
         let StoredWorkspace {
             imported_subscriptions,
             saved_vless_nodes,
+            qx_rule_sources,
             collapsed_groups,
             node_policy_groups,
             routing_mode,
@@ -498,6 +531,7 @@ impl RelayApp {
         if let Some(directory) = subscription_store_dir.as_ref()
             && (!imported_subscriptions.is_empty()
                 || !saved_vless_nodes.is_empty()
+                || !qx_rule_sources.is_empty()
                 || !node_policy_groups.is_empty()
                 || routing_mode != RoutingMode::Rule)
         {
@@ -527,6 +561,10 @@ impl RelayApp {
             subscription_store_dir,
             imported_subscriptions,
             saved_vless_nodes,
+            qx_rule_sources,
+            qx_rule_feedback: QxRuleImportFeedback::Idle,
+            qx_rule_target_policy: "Proxy".to_owned(),
+            qx_rule_import_generation: 0,
             node_policy_groups,
             node_group_draft: None,
             group_benchmarks: BTreeMap::new(),
@@ -555,6 +593,8 @@ impl RelayApp {
             subscription_input: None,
             subscription_feedback: SubscriptionFeedback::Idle,
             subscription_input_events: None,
+            qx_rule_input: None,
+            qx_rule_input_events: None,
             node_group_name_input: None,
             node_group_filter_input: None,
         }
@@ -576,6 +616,31 @@ impl RelayApp {
         self.subscription_input = Some(input);
         self.subscription_input_events = Some(events);
         self.restore_imported_subscriptions(cx);
+    }
+
+    fn ensure_qx_rule_input(&mut self, theme: Theme, cx: &mut Context<Self>) {
+        if let Some(input) = self.qx_rule_input.as_ref() {
+            input.update(cx, |input, cx| input.set_theme(theme, self.dark, cx));
+            return;
+        }
+        let input = cx.new(|cx| {
+            SubscriptionTextInput::new_field(
+                "qx-rule-url-input",
+                "https://example.com/rules.list",
+                16 * 1024,
+                theme,
+                self.dark,
+                cx,
+            )
+        });
+        let events = cx.subscribe(&input, |this, _input, _: &SubscriptionInputChanged, cx| {
+            if this.qx_rule_feedback != QxRuleImportFeedback::Idle {
+                this.qx_rule_feedback = QxRuleImportFeedback::Idle;
+                cx.notify();
+            }
+        });
+        self.qx_rule_input = Some(input);
+        self.qx_rule_input_events = Some(events);
     }
 
     fn ensure_node_group_inputs(&mut self, theme: Theme, cx: &mut Context<Self>) {
@@ -3001,6 +3066,7 @@ impl Render for RelayApp {
         let size_class = self.workspace.size_class;
         let theme = self.theme();
         self.ensure_subscription_input(theme, cx);
+        self.ensure_qx_rule_input(theme, cx);
         self.ensure_node_group_inputs(theme, cx);
         let compact = size_class == WindowSizeClass::Compact;
         let show_groups =
@@ -3133,5 +3199,28 @@ mod tests {
         assert_eq!(app.global_target(), Some("Tokyo"));
         assert!(app.is_global_candidate("Singapore"));
         assert!(!app.is_global_candidate("Unknown"));
+    }
+
+    #[test]
+    fn app_startup_restores_saved_qx_rule_sources() {
+        let root = std::env::temp_dir().join(format!("relay-app-qx-rule-{}", std::process::id()));
+        if root.exists() {
+            fs::remove_dir_all(&root).expect("remove stale fixture");
+        }
+        let store = root.join("subscriptions");
+        mihomo::save_qx_rule_source_in(
+            &store,
+            "https://rules.example.invalid/airports.list",
+            "Proxy",
+            "DOMAIN-SUFFIX,example.com,Proxy",
+        )
+        .expect("save QX rule fixture");
+
+        let app = RelayApp::with_controller_and_subscription_store("http://127.0.0.1:9090", store);
+
+        assert_eq!(app.qx_rule_sources.len(), 1);
+        assert_eq!(app.qx_rule_sources[0].rule_count, 1);
+        assert_eq!(app.qx_rule_sources[0].target_policy.as_str(), "Proxy");
+        fs::remove_dir_all(root).expect("remove fixture");
     }
 }

@@ -25,8 +25,8 @@ use relay_mihomo::{
     VersionInfo, to_policy_catalog,
 };
 use relay_profile::{
-    Name, Profile, ProfileMode, SecretUrl, UserPolicyGroup, UserPolicyGroupKind, VlessProxy,
-    render_mihomo_yaml, write_private_atomic,
+    Name, PolicyRef, Profile, ProfileMode, QxRuleList, Rule, SecretUrl, UserPolicyGroup,
+    UserPolicyGroupKind, VlessProxy, render_mihomo_yaml, write_private_atomic,
 };
 
 use crate::subscription::VlessSource;
@@ -46,6 +46,11 @@ const STORED_SUBSCRIPTION_PREFIX: &str = "source-";
 const STORED_SUBSCRIPTION_SUFFIX: &str = ".url";
 const SAVED_VLESS_PREFIX: &str = "saved-";
 const SAVED_VLESS_SUFFIX: &str = ".vless";
+const QX_RULE_SOURCE_PREFIX: &str = "qx-rule-";
+const QX_RULE_SOURCE_SUFFIX: &str = ".qxrules";
+const QX_RULE_SOURCE_VERSION: &str = "relay-qx-rule-source-v1";
+const MAX_QX_RULE_SOURCE_CONTENT_BYTES: usize = 1024 * 1024;
+const MAX_QX_RULE_SOURCE_FILE_BYTES: u64 = 2 * 1024 * 1024 + 64 * 1024;
 const WORKSPACE_STATE_FILE: &str = "workspace.state";
 const ROUTING_MODE_FILE: &str = "routing.mode";
 const NODE_POLICY_GROUP_PREFIX: &str = "group-";
@@ -562,6 +567,9 @@ impl ControllerRuntime {
         let routing_mode = load_routing_mode_in(store_dir)
             .map_err(|_error| LoadError::Runtime("无法读取已保存的路由模式".to_owned()))?;
         profile.set_mode(profile_mode(routing_mode));
+        let qx_rule_sources = load_qx_rule_sources_in(store_dir)
+            .map_err(|_error| LoadError::Runtime("无法读取 QX 规则来源".to_owned()))?;
+        apply_qx_rule_sources(&mut profile, &qx_rule_sources)?;
         let yaml =
             render_mihomo_yaml(&profile).map_err(|error| LoadError::Runtime(error.to_string()))?;
         let candidate_path =
@@ -757,6 +765,30 @@ impl fmt::Debug for StoredVlessNode {
             .debug_struct("StoredVlessNode")
             .field("id", &self.id)
             .field("source", &"<redacted>")
+            .finish()
+    }
+}
+
+#[derive(Clone, Eq, PartialEq)]
+pub(crate) struct StoredQxRuleSource {
+    pub id: String,
+    pub source: SecretUrl,
+    pub target_policy: Name,
+    pub content: String,
+    pub rule_count: usize,
+    pub diagnostic_count: usize,
+}
+
+impl fmt::Debug for StoredQxRuleSource {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("StoredQxRuleSource")
+            .field("id", &self.id)
+            .field("source", &"<redacted>")
+            .field("target_policy", &self.target_policy)
+            .field("content", &"<redacted>")
+            .field("rule_count", &self.rule_count)
+            .field("diagnostic_count", &self.diagnostic_count)
             .finish()
     }
 }
@@ -1123,6 +1155,147 @@ pub(crate) fn remove_vless_source_in(
     _id: &str,
 ) -> Result<(), SubscriptionStoreError> {
     Err(SubscriptionStoreError::StoreUnavailable)
+}
+
+#[cfg(not(windows))]
+#[allow(dead_code)]
+pub(crate) fn save_qx_rule_source_in(
+    directory: &Path,
+    url_input: &str,
+    target_policy: &str,
+    content: &str,
+) -> Result<StoredQxRuleSource, SubscriptionStoreError> {
+    let source = SecretUrl::parse_https(url_input)
+        .map_err(|_error| SubscriptionStoreError::InvalidSource)?;
+    let target_policy =
+        Name::parse(target_policy).map_err(|_error| SubscriptionStoreError::InvalidSource)?;
+    let (rule_count, diagnostic_count) = validate_qx_rule_source_content(content)?;
+    if let Some(existing) = load_qx_rule_sources_in(directory)?
+        .into_iter()
+        .find(|stored| {
+            stored.source == source
+                && stored.target_policy == target_policy
+                && stored.content == content
+        })
+    {
+        return Ok(existing);
+    }
+    let id = next_stored_source_id(QX_RULE_SOURCE_PREFIX);
+    let file_name = format!("{id}{QX_RULE_SOURCE_SUFFIX}");
+    let contents = encode_qx_rule_source(&id, url_input, &target_policy, content)?;
+    write_private_atomic(directory, &file_name, contents.as_bytes())
+        .map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
+    Ok(StoredQxRuleSource {
+        id,
+        source,
+        target_policy,
+        content: content.to_owned(),
+        rule_count,
+        diagnostic_count,
+    })
+}
+
+#[cfg(windows)]
+pub(crate) fn save_qx_rule_source_in(
+    _directory: &Path,
+    _url_input: &str,
+    _target_policy: &str,
+    _content: &str,
+) -> Result<StoredQxRuleSource, SubscriptionStoreError> {
+    Err(SubscriptionStoreError::StoreUnavailable)
+}
+
+#[cfg(not(windows))]
+pub(crate) fn load_qx_rule_sources_in(
+    directory: &Path,
+) -> Result<Vec<StoredQxRuleSource>, SubscriptionStoreError> {
+    let mut sources = Vec::new();
+    let Some(entries) = private_store_entries(directory)? else {
+        return Ok(sources);
+    };
+    for path in entries {
+        let Some(file_name) = path.file_name().and_then(std::ffi::OsStr::to_str) else {
+            continue;
+        };
+        let Some(id) = file_name.strip_suffix(QX_RULE_SOURCE_SUFFIX) else {
+            continue;
+        };
+        if !valid_stored_id(id, QX_RULE_SOURCE_PREFIX) {
+            continue;
+        }
+        let contents = read_private_source_allow_empty_max(&path, MAX_QX_RULE_SOURCE_FILE_BYTES)?;
+        sources.push(decode_qx_rule_source(&contents, id)?);
+    }
+    sources.sort_by(|left, right| left.id.cmp(&right.id));
+    Ok(sources)
+}
+
+#[cfg(windows)]
+pub(crate) fn load_qx_rule_sources_in(
+    _directory: &Path,
+) -> Result<Vec<StoredQxRuleSource>, SubscriptionStoreError> {
+    Ok(Vec::new())
+}
+
+#[cfg(not(windows))]
+#[allow(dead_code)]
+pub(crate) fn remove_qx_rule_source_in(
+    directory: &Path,
+    id: &str,
+) -> Result<(), SubscriptionStoreError> {
+    require_clean_absolute_store(directory)?;
+    if !valid_stored_id(id, QX_RULE_SOURCE_PREFIX) {
+        return Err(SubscriptionStoreError::StoreUnavailable);
+    }
+    remove_private_source(&directory.join(format!("{id}{QX_RULE_SOURCE_SUFFIX}")))
+}
+
+#[cfg(windows)]
+pub(crate) fn remove_qx_rule_source_in(
+    _directory: &Path,
+    _id: &str,
+) -> Result<(), SubscriptionStoreError> {
+    Err(SubscriptionStoreError::StoreUnavailable)
+}
+
+fn apply_qx_rule_sources(
+    profile: &mut Profile,
+    sources: &[StoredQxRuleSource],
+) -> Result<(), LoadError> {
+    let mut imported_rules = Vec::new();
+    for source in sources {
+        let target_policy = qx_rule_target_policy(&source.target_policy);
+        let parsed = QxRuleList::parse(&source.content);
+        if parsed.rules.is_empty() {
+            return Err(LoadError::Runtime(
+                "已保存的 QX 规则源没有可导入规则".to_owned(),
+            ));
+        }
+        let rules = parsed
+            .to_profile_rules(|_source_policy| Some(target_policy.clone()))
+            .map_err(|_error| LoadError::Runtime("无法映射 QX 规则策略".to_owned()))?;
+        imported_rules.extend(rules);
+    }
+    if imported_rules.is_empty() {
+        return Ok(());
+    }
+    let insert_at = profile
+        .rules
+        .iter()
+        .position(|rule| matches!(rule, Rule::GeoIp { .. } | Rule::Match { .. }))
+        .unwrap_or(profile.rules.len());
+    profile.rules.splice(insert_at..insert_at, imported_rules);
+    profile
+        .validate()
+        .map_err(|error| LoadError::Runtime(error.to_string()))
+}
+
+fn qx_rule_target_policy(target_policy: &Name) -> PolicyRef {
+    match target_policy.as_str() {
+        "DIRECT" => PolicyRef::Direct,
+        "REJECT" => PolicyRef::Reject,
+        _ => PolicyRef::Group(target_policy.clone()),
+    }
 }
 
 #[cfg(not(windows))]
@@ -1537,6 +1710,84 @@ fn decode_node_policy_group(
     Ok(group)
 }
 
+#[allow(dead_code)]
+fn encode_qx_rule_source(
+    id: &str,
+    url_input: &str,
+    target_policy: &Name,
+    content: &str,
+) -> Result<String, SubscriptionStoreError> {
+    if !valid_stored_id(id, QX_RULE_SOURCE_PREFIX) {
+        return Err(SubscriptionStoreError::InvalidSource);
+    }
+    validate_qx_rule_source_content(content)?;
+    Ok([
+        QX_RULE_SOURCE_VERSION.to_owned(),
+        format!("id\t{id}"),
+        format!("url\t{}", encode_hex(url_input)),
+        format!("target\t{}", encode_hex(target_policy.as_str())),
+        format!("content\t{}", encode_hex(content)),
+    ]
+    .join("\n"))
+}
+
+fn decode_qx_rule_source(
+    contents: &str,
+    expected_id: &str,
+) -> Result<StoredQxRuleSource, SubscriptionStoreError> {
+    let mut lines = contents.lines();
+    if lines.next() != Some(QX_RULE_SOURCE_VERSION) {
+        return Err(SubscriptionStoreError::StoredSourceUnavailable);
+    }
+    let mut id = None;
+    let mut url = None;
+    let mut target = None;
+    let mut content = None;
+    for line in lines {
+        let fields = line.split('\t').collect::<Vec<_>>();
+        match fields.as_slice() {
+            ["id", value] if id.is_none() => id = Some((*value).to_owned()),
+            ["url", value] if url.is_none() => url = Some(decode_hex(value)?),
+            ["target", value] if target.is_none() => target = Some(decode_hex(value)?),
+            ["content", value] if content.is_none() => content = Some(decode_hex(value)?),
+            _ => return Err(SubscriptionStoreError::StoredSourceUnavailable),
+        }
+    }
+    let id = id.ok_or(SubscriptionStoreError::StoredSourceUnavailable)?;
+    if id != expected_id || !valid_stored_id(&id, QX_RULE_SOURCE_PREFIX) {
+        return Err(SubscriptionStoreError::StoredSourceUnavailable);
+    }
+    let source =
+        SecretUrl::parse_https(&url.ok_or(SubscriptionStoreError::StoredSourceUnavailable)?)
+            .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
+    let target_policy =
+        Name::parse(&target.ok_or(SubscriptionStoreError::StoredSourceUnavailable)?)
+            .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
+    let content = content.ok_or(SubscriptionStoreError::StoredSourceUnavailable)?;
+    let (rule_count, diagnostic_count) = validate_qx_rule_source_content(&content)?;
+    Ok(StoredQxRuleSource {
+        id,
+        source,
+        target_policy,
+        content,
+        rule_count,
+        diagnostic_count,
+    })
+}
+
+fn validate_qx_rule_source_content(
+    content: &str,
+) -> Result<(usize, usize), SubscriptionStoreError> {
+    if content.is_empty() || content.len() > MAX_QX_RULE_SOURCE_CONTENT_BYTES {
+        return Err(SubscriptionStoreError::InvalidSource);
+    }
+    let parsed = QxRuleList::parse(content);
+    if parsed.rules.is_empty() {
+        return Err(SubscriptionStoreError::InvalidSource);
+    }
+    Ok((parsed.rules.len(), parsed.diagnostics.len()))
+}
+
 fn encode_hex(value: &str) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut encoded = String::with_capacity(value.len() * 2);
@@ -1625,6 +1876,14 @@ fn read_private_source(path: &Path) -> Result<String, SubscriptionStoreError> {
 
 #[cfg(not(windows))]
 fn read_private_source_allow_empty(path: &Path) -> Result<String, SubscriptionStoreError> {
+    read_private_source_allow_empty_max(path, MAX_SUBSCRIPTION_FILE_BYTES)
+}
+
+#[cfg(not(windows))]
+fn read_private_source_allow_empty_max(
+    path: &Path,
+    max_bytes: u64,
+) -> Result<String, SubscriptionStoreError> {
     let metadata = fs::symlink_metadata(path)
         .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
     if metadata.file_type().is_symlink() || !metadata.is_file() {
@@ -1635,7 +1894,7 @@ fn read_private_source_allow_empty(path: &Path) -> Result<String, SubscriptionSt
     let opened_metadata = file
         .metadata()
         .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
-    if opened_metadata.len() > MAX_SUBSCRIPTION_FILE_BYTES {
+    if opened_metadata.len() > max_bytes {
         return Err(SubscriptionStoreError::StoredSourceUnavailable);
     }
     #[cfg(unix)]
@@ -1650,10 +1909,10 @@ fn read_private_source_allow_empty(path: &Path) -> Result<String, SubscriptionSt
         }
     }
     let mut contents = String::new();
-    file.take(MAX_SUBSCRIPTION_FILE_BYTES + 1)
+    file.take(max_bytes + 1)
         .read_to_string(&mut contents)
         .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
-    if contents.len() as u64 > MAX_SUBSCRIPTION_FILE_BYTES {
+    if contents.len() as u64 > max_bytes {
         return Err(SubscriptionStoreError::StoredSourceUnavailable);
     }
     Ok(contents)
@@ -2933,6 +3192,153 @@ mod tests {
         assert!(super::load_vless_sources_in(&store)?.is_empty());
 
         fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn qx_rule_sources_round_trip_privately_with_counts() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let root = test_temp_dir("relay-qx-rule-store");
+        let store = root.join("subscriptions");
+        let url = "https://rules.example.invalid/airports.list?token=fixture-secret";
+        let content = r"
+# airports.list excerpt
+DOMAIN-KEYWORD,google,PROXY
+DOMAIN-SUFFIX,githubusercontent.com,PROXY
+IP-CIDR,192.0.2.0/24,DIRECT
+";
+
+        let stored = super::save_qx_rule_source_in(&store, url, "Proxy", content)?;
+        let loaded = super::load_qx_rule_sources_in(&store)?;
+
+        assert_eq!(loaded, vec![stored.clone()]);
+        assert_eq!(stored.target_policy.as_str(), "Proxy");
+        assert_eq!(stored.content, content);
+        assert_eq!(stored.rule_count, 2);
+        assert_eq!(stored.diagnostic_count, 1);
+        assert!(!format!("{stored:?}").contains("fixture-secret"));
+
+        #[cfg(unix)]
+        {
+            assert_eq!(fs::metadata(&store)?.permissions().mode() & 0o077, 0);
+            let entry = fs::read_dir(&store)?.next().ok_or("stored QX file")??;
+            assert_eq!(entry.metadata()?.permissions().mode() & 0o077, 0);
+            let stored_bytes = fs::read(entry.path())?;
+            let stored_text = String::from_utf8(stored_bytes)?;
+            assert!(!stored_text.contains("fixture-secret"));
+        }
+
+        super::remove_qx_rule_source_in(&store, &stored.id)?;
+        assert!(super::load_qx_rule_sources_in(&store)?.is_empty());
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn qx_rule_sources_reject_invalid_inputs() -> Result<(), Box<dyn std::error::Error>> {
+        let root = test_temp_dir("relay-qx-rule-invalid");
+        let store = root.join("subscriptions");
+        let valid_content = "DOMAIN-KEYWORD,google,PROXY\n";
+
+        assert!(
+            super::save_qx_rule_source_in(
+                &store,
+                "http://rules.example.invalid/list?token=fixture-secret",
+                "Proxy",
+                valid_content,
+            )
+            .is_err()
+        );
+        assert!(
+            super::save_qx_rule_source_in(
+                &store,
+                "https://rules.example.invalid/list?token=fixture-secret",
+                "bad,name",
+                valid_content,
+            )
+            .is_err()
+        );
+        assert!(
+            super::save_qx_rule_source_in(
+                &store,
+                "https://rules.example.invalid/list?token=fixture-secret",
+                "Proxy",
+                "# comments only\n",
+            )
+            .is_err()
+        );
+        assert!(
+            super::save_qx_rule_source_in(
+                &store,
+                "https://rules.example.invalid/list?token=fixture-secret",
+                "Proxy",
+                &"x".repeat(super::MAX_QX_RULE_SOURCE_CONTENT_BYTES + 1),
+            )
+            .is_err()
+        );
+
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn qx_rule_source_errors_redact_secret_inputs() {
+        let root = test_temp_dir("relay-qx-rule-redaction");
+        let store = root.join("subscriptions");
+        let error = super::save_qx_rule_source_in(
+            &store,
+            "http://rules.example.invalid/list?token=private-fixture",
+            "Proxy",
+            "DOMAIN-KEYWORD,google,PROXY\n",
+        )
+        .expect_err("plain HTTP QX rule source must fail");
+
+        assert!(!error.to_string().contains("private-fixture"));
+        assert!(!format!("{error:?}").contains("private-fixture"));
+        fs::remove_dir_all(root).expect("remove temp root");
+    }
+
+    #[test]
+    fn qx_rule_sources_apply_before_generated_terminal_rules()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let runtime = super::ControllerRuntime::External {
+            endpoint: "http://127.0.0.1:9".to_owned(),
+        };
+        assert_eq!(
+            runtime.apply_saved_sources(Path::new("/tmp/relay-qx-rules"))?,
+            super::GeneratedProfileApply::NotManaged
+        );
+
+        let source = super::StoredQxRuleSource {
+            id: "qx-rule-fixture-1".to_owned(),
+            source: relay_profile::SecretUrl::parse_https(
+                "https://rules.example.invalid/airports.list?token=fixture-secret",
+            )?,
+            target_policy: relay_profile::Name::parse("Proxy")?,
+            content: "DOMAIN-KEYWORD,google,PROXY\nDOMAIN-SUFFIX,githubusercontent.com,proxy\n"
+                .to_owned(),
+            rule_count: 2,
+            diagnostic_count: 0,
+        };
+        let mut profile =
+            relay_profile::Profile::qx_default(relay_profile::SecretUrl::parse_https(
+                "https://subscription.example.invalid/client?token=fixture-secret",
+            )?)?;
+
+        super::apply_qx_rule_sources(&mut profile, &[source])?;
+        let yaml = relay_profile::render_mihomo_yaml(&profile)?;
+
+        assert!(
+            yaml.find("- \"DOMAIN-KEYWORD,google,Proxy\"")
+                < yaml.find("- \"GEOIP,CN,DIRECT,no-resolve\"")
+        );
+        assert!(
+            yaml.find("- \"DOMAIN-SUFFIX,githubusercontent.com,Proxy\"")
+                < yaml.find("- \"MATCH,Proxy\"")
+        );
         Ok(())
     }
 

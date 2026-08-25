@@ -1,25 +1,16 @@
-use gpui::{App, AppContext, Bounds, WindowBounds, WindowOptions, px, size};
+use gpui::App;
 use gpui_platform::application;
-use relay_ui::{RelayApp, init};
+use relay_ui::{init, install_tray, open_window, show_or_open_window};
 
 fn main() {
-    application().run(|cx: &mut App| {
+    let application = application();
+    application.on_reopen(show_or_open_window);
+    application.run(|cx: &mut App| {
         init(cx);
-        let window_size = size(px(1420.0), px(900.0));
-        let bounds = Bounds::centered(None, window_size, cx);
-
-        cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                window_min_size: Some(size(px(640.0), px(560.0))),
-                is_resizable: true,
-                focus: true,
-                ..Default::default()
-            },
-            |_, cx| cx.new(|_| RelayApp::new()),
-        )
-        .expect("failed to open Relay GPUI window");
-
+        if let Err(message) = install_tray(cx) {
+            eprintln!("relay_ui level=WARN event=tray.unavailable message={message}");
+        }
+        open_window(cx).expect("failed to open Relay GPUI window");
         cx.activate(true);
     });
 }

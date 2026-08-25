@@ -203,3 +203,13 @@
 - 已生成宽屏、720px 紧凑和真实 controller 节点页截图；新增 `nodes-wide-connected-global.png` 专门验证全局出口列和只读边界。系统托盘与 HTTPS 规则下载仍等待用户明确批准两个直接依赖。
 - 首轮 Visual Verdict 88/100 指出窄窗控件与只读状态的交互暗示不足；改成带循环标记的紧凑控件和纯文本 `● 当前 / 外部只读` 后，第二轮为 91/100 `pass`。
 - 最终本阶段验证通过：143 passed、5 ignored；workspace fmt、all-targets Clippy `-D warnings`、diff check 和用户私有订阅域名/token 扫描均通过。
+
+# 2026-08-26 系统托盘与远程 QX 规则导入
+
+- 系统托盘已使用 `tray-icon 0.24.2` 接入 GPUI 生命周期：支持显示/重开主窗口和退出；仅在托盘成功建立后切换为显式退出，初始化失败时应用仍可正常运行。Linux 复用 GTK 主上下文并由 GPUI 定时协作泵送事件。
+- 远程规则下载使用 `ureq 3.4.0` 的 rustls 后端，只接受 HTTPS，限制 5 次跳转、15 秒总超时和 1 MiB 正文；错误、Debug 与运行日志均不包含来源 URL 或 token。
+- QX 规则正文、来源和目标策略以版本化私有文件原子保存；启动恢复后在 GEOIP/MATCH 兜底前插入规则，并按用户所选的 Proxy、DIRECT 或自定义策略组统一映射。外部 Clash Verge controller 保持只读。
+- 用户提供的公开 `airports.list` 已通过真实 HTTPS 下载、解析、私有保存和恢复测试，识别规则数大于 100；本地解析/持久化测试 5 通过、1 默认忽略，live 测试 1 通过。
+- 原生宽屏和 720px 紧凑截图完成；紧凑路由说明改为完整单行摘要后 Visual Verdict 93/100 `pass`，无状态栏裁切。
+- 全 workspace 验证通过：148 passed、6 ignored；fmt、严格 Clippy、all-targets check、build、diff check 和私有订阅域名/token 扫描全部通过。仅保留上游 `block 0.1.6` 的未来兼容提示。
+- 仅停止旧 Relay UI PID 47280，并以新构建二进制连接同一 Clash Verge Unix controller 启动 Relay UI PID 48994；托盘初始化未报错，来源恢复成功。Clash Verge PID 14173 与 verge-mihomo PID 14201 保持运行且未被停止或修改。

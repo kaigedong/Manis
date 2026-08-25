@@ -4,10 +4,14 @@ use gpui::{
 };
 use relay_core::{ConfigurationSection, WindowSizeClass};
 
-use super::{ImportedSubscriptionState, RelayApp, SourceRuntimeApply, SubscriptionFeedback};
+use super::{
+    ImportQxRuleError, ImportedSubscriptionState, QxRuleImportFeedback, QxRuleList, RelayApp,
+    SourceRuntimeApply, SubscriptionFeedback,
+};
 use crate::{
     diagnostics::{UiEvent, trace_ui},
     mihomo::{self, LoadedProvider, SubscriptionStoreError},
+    rule_source::download_qx_rule_document,
     subscription::{
         SourceKind, SourceNodePreview, SubscriptionPreview, validate_subscription_preview,
     },
@@ -82,7 +86,11 @@ impl RelayApp {
                 .gap_3()
                 .child(self.configuration_flow_strip(theme, cx))
                 .child(active)
-                .child(self.route_probe(theme, true))
+                .child(if compact {
+                    self.compact_route_summary(theme)
+                } else {
+                    self.route_probe(theme, true)
+                })
         };
 
         let header = Self::configuration_header(theme, compact, wide, tabs);
@@ -145,15 +153,31 @@ impl RelayApp {
 
     fn configuration_flow_strip(&self, theme: Theme, cx: &mut Context<Self>) -> Div {
         let mut strip = div().flex().gap_2();
+        let rule_count = RULE_COUNT
+            + self
+                .qx_rule_sources
+                .iter()
+                .map(|source| source.rule_count)
+                .sum::<usize>();
         for (section, index, label, detail) in [
             (
                 ConfigurationSection::Sources,
                 "01",
                 "代理来源",
-                "订阅 / URI",
+                "订阅 / URI".to_owned(),
             ),
-            (ConfigurationSection::Groups, "02", "策略组", "3 个出口"),
-            (ConfigurationSection::Rules, "03", "规则", "2 条有序"),
+            (
+                ConfigurationSection::Groups,
+                "02",
+                "策略组",
+                "3 个出口".to_owned(),
+            ),
+            (
+                ConfigurationSection::Rules,
+                "03",
+                "规则",
+                format!("{rule_count} 条有序"),
+            ),
         ] {
             strip =
                 strip.child(self.configuration_flow_step(section, index, label, detail, theme, cx));
@@ -167,7 +191,7 @@ impl RelayApp {
         section: ConfigurationSection,
         index: &'static str,
         label: &'static str,
-        detail: &'static str,
+        detail: String,
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
@@ -1315,7 +1339,14 @@ impl RelayApp {
             }))
     }
 
+    #[allow(clippy::too_many_lines)]
     fn rule_panel(&self, theme: Theme, cx: &mut Context<Self>) -> Div {
+        let input = self
+            .qx_rule_input
+            .as_ref()
+            .expect("QX rule input is initialized before rendering")
+            .clone();
+        let busy = self.qx_rule_feedback == QxRuleImportFeedback::Importing;
         div()
             .p_4()
             .rounded_md()
@@ -1341,8 +1372,393 @@ impl RelayApp {
                             .child("从上到下，首条命中"),
                     ),
             )
+            .child(
+                div()
+                    .mt_3()
+                    .p_3()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(theme.outline_subtle)
+                    .bg(theme.surface_low)
+                    .child(
+                        div()
+                            .flex()
+                            .items_start()
+                            .justify_between()
+                            .gap_3()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w(px(0.0))
+                                    .child(
+                                        div()
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .child("导入远程 QX 规则"),
+                                    )
+                                    .child(
+                                        div()
+                                            .mt_1()
+                                            .text_size(px(11.0))
+                                            .text_color(theme.text_secondary)
+                                            .child(
+                                                "下载后解析 DOMAIN / DOMAIN-SUFFIX / DOMAIN-KEYWORD，并统一映射到目标策略。",
+                                            ),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .id("qx-rule-target-policy")
+                                    .role(Role::Button)
+                                    .aria_label("切换 QX 规则目标策略")
+                                    .tab_stop(true)
+                                    .focusable()
+                                    .when(!busy, gpui::Styled::cursor_pointer)
+                                    .h(px(34.0))
+                                    .px_3()
+                                    .rounded_md()
+                                    .border_1()
+                                    .border_color(theme.outline_strong)
+                                    .bg(theme.surface_high)
+                                    .text_size(px(11.0))
+                                    .text_color(theme.action_primary)
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .flex()
+                                    .items_center()
+                                    .child(format!("目标 · {}  ↻", self.qx_rule_target_policy))
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        if busy {
+                                            return;
+                                        }
+                                        this.cycle_qx_rule_target();
+                                        cx.notify();
+                                    })),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .mt_3()
+                            .text_size(px(10.0))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(theme.text_tertiary)
+                            .child("HTTPS 规则地址"),
+                    )
+                    .child(input.clone())
+                    .child(
+                        div()
+                            .mt_2()
+                            .flex()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .id("qx-rule-import")
+                                    .role(Role::Button)
+                                    .aria_label("下载、校验并导入 QX 规则")
+                                    .tab_stop(true)
+                                    .focusable()
+                                    .when(!busy, gpui::Styled::cursor_pointer)
+                                    .h(px(36.0))
+                                    .px_3()
+                                    .rounded_md()
+                                    .bg(if busy {
+                                        theme.action_soft
+                                    } else {
+                                        theme.action_primary
+                                    })
+                                    .text_color(if busy {
+                                        theme.action_primary
+                                    } else {
+                                        theme.action_on_primary
+                                    })
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .gap_2()
+                                    .flex_1()
+                                    .when(busy, |button| {
+                                        button.child(Self::benchmark_latency_spinner(
+                                            "qx-rule-import-spinner".to_owned(),
+                                            theme,
+                                        ))
+                                    })
+                                    .child(if busy { "正在下载并解析…" } else { "导入规则" })
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        if busy {
+                                            return;
+                                        }
+                                        this.submit_qx_rule_import(&input, cx);
+                                    })),
+                            ),
+                    )
+                    .child(self.qx_rule_import_feedback(theme))
+                    .children(self.qx_rule_sources.iter().enumerate().map(|(index, source)| {
+                        let id = source.id.clone();
+                        let removing = busy;
+                        div()
+                            .mt_2()
+                            .px_3()
+                            .py_2()
+                            .rounded_md()
+                            .border_1()
+                            .border_color(theme.outline_subtle)
+                            .bg(theme.surface_high)
+                            .flex()
+                            .items_center()
+                            .gap_3()
+                            .child(
+                                div()
+                                    .size(px(24.0))
+                                    .rounded_full()
+                                    .bg(theme.action_soft)
+                                    .text_color(theme.action_primary)
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .font_weight(FontWeight::BOLD)
+                                    .child("R"),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w(px(0.0))
+                                    .child(
+                                        div()
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .child(format!("远程规则 {:02}", index + 1)),
+                                    )
+                                    .child(
+                                        div()
+                                            .mt_1()
+                                            .text_size(px(10.0))
+                                            .text_color(theme.text_secondary)
+                                            .child(format!(
+                                                "{} 条规则 · {} 条跳过 · → {}",
+                                                source.rule_count,
+                                                source.diagnostic_count,
+                                                source.target_policy.as_str()
+                                            )),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .id(format!("qx-rule-remove-{index}"))
+                                    .role(Role::Button)
+                                    .aria_label("删除这份远程 QX 规则")
+                                    .tab_stop(true)
+                                    .focusable()
+                                    .when(!removing, gpui::Styled::cursor_pointer)
+                                    .px_2()
+                                    .py_1()
+                                    .rounded_sm()
+                                    .text_size(px(10.0))
+                                    .text_color(theme.text_secondary)
+                                    .child("移除")
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        if !removing {
+                                            this.remove_qx_rule_source(id.clone(), cx);
+                                        }
+                                    })),
+                            )
+                    }))
+                    .child(
+                        div()
+                            .mt_3()
+                            .text_size(px(10.0))
+                            .text_color(theme.text_tertiary)
+                            .child("规则正文和地址只保存在本机私有目录；日志不会记录链接。"),
+                    ),
+            )
             .child(self.rule_row(0, "GEOIP", "CN · no-resolve", "DIRECT", theme, cx))
             .child(self.rule_row(1, "MATCH", "其余流量", "Proxy", theme, cx))
+    }
+
+    fn qx_rule_import_feedback(&self, theme: Theme) -> Div {
+        let (message, color) = match &self.qx_rule_feedback {
+            QxRuleImportFeedback::Idle => (
+                "只接受 HTTPS · 最多 1 MiB · 无效行会单独计数".to_owned(),
+                theme.text_secondary,
+            ),
+            QxRuleImportFeedback::Importing => (
+                "正在安全下载、解析并写入本机…".to_owned(),
+                theme.action_primary,
+            ),
+            QxRuleImportFeedback::Imported {
+                rule_count,
+                diagnostic_count,
+            } => (
+                if *diagnostic_count == 0 {
+                    format!("已导入 {rule_count} 条规则")
+                } else {
+                    format!("已导入 {rule_count} 条规则 · 跳过 {diagnostic_count} 条无效行")
+                },
+                theme.status_success,
+            ),
+            QxRuleImportFeedback::InvalidDocument => (
+                "文件已下载，但没有可识别的 QX 域名规则".to_owned(),
+                theme.status_error,
+            ),
+            QxRuleImportFeedback::DownloadFailed(error) => (error.to_string(), theme.status_error),
+            QxRuleImportFeedback::StoreFailed(error) => (error.to_string(), theme.status_error),
+        };
+        div()
+            .mt_2()
+            .text_size(px(11.0))
+            .text_color(color)
+            .child(message)
+    }
+
+    fn qx_rule_targets(&self) -> Vec<String> {
+        let mut targets = vec!["Proxy".to_owned(), "DIRECT".to_owned()];
+        for group in &self.node_policy_groups {
+            if !targets.iter().any(|target| target == &group.name) {
+                targets.push(group.name.clone());
+            }
+        }
+        targets
+    }
+
+    fn cycle_qx_rule_target(&mut self) {
+        let targets = self.qx_rule_targets();
+        let next = targets
+            .iter()
+            .position(|target| target == &self.qx_rule_target_policy)
+            .map_or(0, |index| (index + 1) % targets.len());
+        self.qx_rule_target_policy.clone_from(&targets[next]);
+        self.qx_rule_feedback = QxRuleImportFeedback::Idle;
+        self.status = format!("QX 规则目标已切换为 {}", self.qx_rule_target_policy);
+    }
+
+    fn submit_qx_rule_import(
+        &mut self,
+        input: &Entity<SubscriptionTextInput>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(store_dir) = self.subscription_store_dir.clone() else {
+            self.qx_rule_feedback =
+                QxRuleImportFeedback::StoreFailed(SubscriptionStoreError::DataDirectoryUnavailable);
+            "无法确定规则保存位置".clone_into(&mut self.status);
+            cx.notify();
+            return;
+        };
+        let url = input.read(cx).value().to_owned();
+        let target = self.qx_rule_target_policy.clone();
+        self.qx_rule_import_generation = self.qx_rule_import_generation.wrapping_add(1);
+        let generation = self.qx_rule_import_generation;
+        self.qx_rule_feedback = QxRuleImportFeedback::Importing;
+        "正在下载并解析 QX 规则".clone_into(&mut self.status);
+        input.update(cx, |input, cx| input.set_enabled(false, cx));
+        let runtime = self.runtime.clone();
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let result = executor
+                .spawn(async move {
+                    let content =
+                        download_qx_rule_document(&url).map_err(ImportQxRuleError::Download)?;
+                    let parsed = QxRuleList::parse(&content);
+                    if parsed.rules.is_empty() {
+                        return Err(ImportQxRuleError::InvalidDocument);
+                    }
+                    let stored =
+                        mihomo::save_qx_rule_source_in(&store_dir, &url, &target, &content)
+                            .map_err(ImportQxRuleError::Store)?;
+                    let apply =
+                        SourceRuntimeApply::from_result(runtime.apply_saved_sources(&store_dir));
+                    Ok::<_, ImportQxRuleError>((stored, apply))
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                if this.qx_rule_import_generation != generation {
+                    return;
+                }
+                if let Some(input) = this.qx_rule_input.as_ref() {
+                    input.update(cx, |input, cx| input.set_enabled(true, cx));
+                }
+                match result {
+                    Ok((stored, apply)) => {
+                        let rule_count = stored.rule_count;
+                        let diagnostic_count = stored.diagnostic_count;
+                        if let Some(existing) = this
+                            .qx_rule_sources
+                            .iter_mut()
+                            .find(|source| source.id == stored.id)
+                        {
+                            *existing = stored;
+                        } else {
+                            this.qx_rule_sources.push(stored);
+                        }
+                        this.qx_rule_feedback = QxRuleImportFeedback::Imported {
+                            rule_count,
+                            diagnostic_count,
+                        };
+                        if let Some(input) = this.qx_rule_input.as_ref() {
+                            input.update(cx, SubscriptionTextInput::clear_without_event);
+                        }
+                        this.status = format!(
+                            "QX 规则已导入 · {rule_count} 条生效{}",
+                            apply.status_suffix()
+                        );
+                    }
+                    Err(ImportQxRuleError::Download(error)) => {
+                        this.qx_rule_feedback = QxRuleImportFeedback::DownloadFailed(error);
+                        this.status = format!("QX 规则下载失败：{error}");
+                    }
+                    Err(ImportQxRuleError::InvalidDocument) => {
+                        this.qx_rule_feedback = QxRuleImportFeedback::InvalidDocument;
+                        "QX 规则未导入：没有可识别的域名规则".clone_into(&mut this.status);
+                    }
+                    Err(ImportQxRuleError::Store(error)) => {
+                        this.qx_rule_feedback = QxRuleImportFeedback::StoreFailed(error);
+                        this.status = format!("QX 规则保存失败：{error}");
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn remove_qx_rule_source(&mut self, id: String, cx: &mut Context<Self>) {
+        let Some(store_dir) = self.subscription_store_dir.clone() else {
+            return;
+        };
+        self.qx_rule_import_generation = self.qx_rule_import_generation.wrapping_add(1);
+        let generation = self.qx_rule_import_generation;
+        self.qx_rule_feedback = QxRuleImportFeedback::Importing;
+        "正在移除远程 QX 规则".clone_into(&mut self.status);
+        let runtime = self.runtime.clone();
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let result = executor
+                .spawn(async move {
+                    mihomo::remove_qx_rule_source_in(&store_dir, &id)?;
+                    let apply =
+                        SourceRuntimeApply::from_result(runtime.apply_saved_sources(&store_dir));
+                    Ok::<_, SubscriptionStoreError>((id, apply))
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                if this.qx_rule_import_generation != generation {
+                    return;
+                }
+                match result {
+                    Ok((id, apply)) => {
+                        this.qx_rule_sources.retain(|source| source.id != id);
+                        this.qx_rule_feedback = QxRuleImportFeedback::Idle;
+                        this.status = format!("远程 QX 规则已移除{}", apply.status_suffix());
+                    }
+                    Err(error) => {
+                        this.qx_rule_feedback = QxRuleImportFeedback::StoreFailed(error);
+                        this.status = format!("远程 QX 规则移除失败：{error}");
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1488,6 +1904,35 @@ impl RelayApp {
                     .text_color(theme.text_secondary)
                     .child("铜色只表示依赖路径；这不是 Mihomo 的实时命中结果。"),
             )
+    }
+
+    fn compact_route_summary(&self, theme: Theme) -> Div {
+        let (rule, policy) = if self.configuration.selected_rule == 0 {
+            ("#01 · GEOIP, CN", "DIRECT")
+        } else {
+            ("#02 · MATCH", "Proxy")
+        };
+        div()
+            .px_3()
+            .py_2()
+            .rounded_md()
+            .border_1()
+            .border_color(theme.route_trace)
+            .bg(theme.surface_high)
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(div().size(px(8.0)).rounded_full().bg(theme.route_trace))
+            .child(
+                div()
+                    .text_size(px(10.0))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(theme.route_trace)
+                    .child("本地配置预览"),
+            )
+            .child(div().text_size(px(11.0)).child(rule))
+            .child(div().text_color(theme.route_trace).child("→"))
+            .child(div().font_weight(FontWeight::SEMIBOLD).child(policy))
     }
 
     fn probe_chip(label: &'static str, value: &'static str, theme: Theme) -> Div {

@@ -19,6 +19,7 @@ pub(crate) struct Theme {
     pub route_trace: Rgba,
     pub route_soft: Rgba,
     pub status_success: Rgba,
+    pub status_error: Rgba,
 }
 
 impl Theme {
@@ -39,6 +40,7 @@ impl Theme {
             route_trace: rgb(0xd46642),
             route_soft: rgb(0xf8e5dc),
             status_success: rgb(0x24795f),
+            status_error: rgb(0xb54f49),
         }
     }
 
@@ -59,6 +61,7 @@ impl Theme {
             route_trace: rgb(0xf39b75),
             route_soft: rgb(0x402820),
             status_success: rgb(0x79d7b0),
+            status_error: rgb(0xef8c84),
         }
     }
 }
