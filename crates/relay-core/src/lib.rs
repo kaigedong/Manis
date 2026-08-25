@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, error::Error, fmt, sync::Arc};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WindowSizeClass {
@@ -20,11 +20,141 @@ impl WindowSizeClass {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub struct PolicyGroupId(pub &'static str);
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct PolicyGroupId(pub Arc<str>);
 
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub struct ProxyId(pub &'static str);
+impl PolicyGroupId {
+    #[must_use]
+    pub fn new(value: impl Into<Arc<str>>) -> Self {
+        Self(value.into())
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<&str> for PolicyGroupId {
+    fn from(value: &str) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<String> for PolicyGroupId {
+    fn from(value: String) -> Self {
+        Self::new(value)
+    }
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct ProxyId(pub Arc<str>);
+
+impl ProxyId {
+    #[must_use]
+    pub fn new(value: impl Into<Arc<str>>) -> Self {
+        Self(value.into())
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<&str> for ProxyId {
+    fn from(value: &str) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<String> for ProxyId {
+    fn from(value: String) -> Self {
+        Self::new(value)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PolicyNode {
+    pub id: ProxyId,
+    pub name: String,
+    pub provider: Option<String>,
+    pub detail: String,
+    pub latency_ms: Option<u16>,
+    pub alive: Option<bool>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PolicyRule {
+    pub index: u32,
+    pub kind: String,
+    pub payload: String,
+    pub hit_count: Option<u64>,
+    pub disabled: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PolicyGroup {
+    pub id: PolicyGroupId,
+    pub name: String,
+    pub kind: String,
+    pub target: String,
+    pub nodes: Vec<PolicyNode>,
+    pub rules: Vec<PolicyRule>,
+    pub rules_total: usize,
+}
+
+impl PolicyGroup {
+    #[must_use]
+    pub fn rules_count(&self) -> usize {
+        self.rules_total
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EmptyPolicyCatalog;
+
+impl fmt::Display for EmptyPolicyCatalog {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("policy catalog must contain at least one group")
+    }
+}
+
+impl Error for EmptyPolicyCatalog {}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PolicyCatalog {
+    primary: PolicyGroup,
+    remaining: Vec<PolicyGroup>,
+}
+
+impl PolicyCatalog {
+    #[must_use]
+    pub fn from_primary(primary: PolicyGroup, remaining: Vec<PolicyGroup>) -> Self {
+        Self { primary, remaining }
+    }
+
+    /// Builds a catalog while preserving the source order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EmptyPolicyCatalog`] when `groups` is empty.
+    pub fn try_new(groups: Vec<PolicyGroup>) -> Result<Self, EmptyPolicyCatalog> {
+        let mut groups = groups.into_iter();
+        let primary = groups.next().ok_or(EmptyPolicyCatalog)?;
+        Ok(Self::from_primary(primary, groups.collect()))
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &PolicyGroup> {
+        std::iter::once(&self.primary).chain(&self.remaining)
+    }
+
+    #[must_use]
+    pub fn select(&self, id: Option<&PolicyGroupId>) -> &PolicyGroup {
+        id.and_then(|id| self.iter().find(|group| group.id == *id))
+            .unwrap_or(&self.primary)
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CompactNavigation {
@@ -76,11 +206,14 @@ impl Default for PolicyWorkspaceState {
 impl PolicyWorkspaceState {
     #[must_use]
     pub fn demo() -> Self {
-        let streaming = PolicyGroupId("streaming");
-        let hk_01 = ProxyId("hk-01");
-        let search = PolicyGroupId("search");
-        let sg_02 = ProxyId("sg-02");
-        let selections = BTreeMap::from([(streaming, hk_01), (search, sg_02)]);
+        let streaming = PolicyGroupId::new("streaming");
+        let hk_01 = ProxyId::new("hk-01");
+        let search = PolicyGroupId::new("search");
+        let sg_02 = ProxyId::new("sg-02");
+        let selections = BTreeMap::from([
+            (streaming.clone(), hk_01.clone()),
+            (search.clone(), sg_02.clone()),
+        ]);
 
         Self {
             selected_group: Some(streaming),
@@ -95,21 +228,31 @@ impl PolicyWorkspaceState {
     }
 
     pub fn select_group(&mut self, group: PolicyGroupId) {
+        self.selected_node = self.selections.get(&group).cloned();
         self.selected_group = Some(group);
-        self.selected_node = self.selections.get(&group).copied();
         if self.size_class == WindowSizeClass::Compact {
             self.compact_navigation = CompactNavigation::GroupDetail;
         }
     }
 
     pub fn select_node(&mut self, proxy: ProxyId) {
-        if let Some(group) = self.selected_group {
-            self.selections.insert(group, proxy);
+        if let Some(group) = &self.selected_group {
+            self.selections.insert(group.clone(), proxy.clone());
             self.selected_node = Some(proxy);
         }
     }
 
     pub fn navigate_back(&mut self) {
+        self.compact_navigation = CompactNavigation::GroupList;
+    }
+
+    pub fn replace_source_selection(&mut self, group: PolicyGroupId, proxy: Option<ProxyId>) {
+        self.selections.clear();
+        if let Some(proxy) = &proxy {
+            self.selections.insert(group.clone(), proxy.clone());
+        }
+        self.selected_group = Some(group);
+        self.selected_node = proxy;
         self.compact_navigation = CompactNavigation::GroupList;
     }
 
@@ -124,9 +267,9 @@ impl PolicyWorkspaceState {
 
         let (policy, fallback_proxy) =
             if domain.ends_with("youtube.com") || domain.ends_with("netflix.com") {
-                (PolicyGroupId("streaming"), ProxyId("hk-01"))
+                (PolicyGroupId::new("streaming"), ProxyId::new("hk-01"))
             } else if domain.ends_with("openai.com") || domain.ends_with("google.com") {
-                (PolicyGroupId("search"), ProxyId("sg-02"))
+                (PolicyGroupId::new("search"), ProxyId::new("sg-02"))
             } else {
                 return RouteEvidence::NeedsConnection {
                     domain: domain.to_owned(),
@@ -137,11 +280,11 @@ impl PolicyWorkspaceState {
         RouteEvidence::Predicted {
             domain: domain.to_owned(),
             rule: "DOMAIN-SUFFIX",
-            policy,
+            policy: policy.clone(),
             proxy: self
                 .selections
                 .get(&policy)
-                .copied()
+                .cloned()
                 .unwrap_or(fallback_proxy),
         }
     }

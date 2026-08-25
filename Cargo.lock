@@ -4521,12 +4521,22 @@ name = "relay-core"
 version = "0.1.0"
 
 [[package]]
+name = "relay-mihomo"
+version = "0.1.0"
+dependencies = [
+ "relay-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "relay-ui"
 version = "0.1.0"
 dependencies = [
  "gpui",
  "gpui_platform",
  "relay-core",
+ "relay-mihomo",
 ]
 
 [[package]]

@@ -1,11 +1,23 @@
 use relay_core::{
-    CompactNavigation, PolicyGroupId, PolicyWorkspaceState, ProxyId, RouteEvidence, WindowSizeClass,
+    CompactNavigation, EmptyPolicyCatalog, PolicyCatalog, PolicyGroup, PolicyGroupId, PolicyNode,
+    PolicyRule, PolicyWorkspaceState, ProxyId, RouteEvidence, WindowSizeClass,
 };
 
-const STREAMING: PolicyGroupId = PolicyGroupId("streaming");
-const SEARCH: PolicyGroupId = PolicyGroupId("search");
-const HK_01: ProxyId = ProxyId("hk-01");
-const SG_02: ProxyId = ProxyId("sg-02");
+fn streaming() -> PolicyGroupId {
+    PolicyGroupId::new("streaming")
+}
+
+fn search() -> PolicyGroupId {
+    PolicyGroupId::new("search")
+}
+
+fn hk_01() -> ProxyId {
+    ProxyId::new("hk-01")
+}
+
+fn sg_02() -> ProxyId {
+    ProxyId::new("sg-02")
+}
 
 #[test]
 fn classifies_the_three_adaptive_widths() {
@@ -17,21 +29,21 @@ fn classifies_the_three_adaptive_widths() {
 #[test]
 fn resizing_preserves_the_active_policy_and_node() {
     let mut state = PolicyWorkspaceState::demo();
-    state.select_group(SEARCH);
-    state.select_node(SG_02);
+    state.select_group(search());
+    state.select_node(sg_02());
 
     state.resize(720.0);
     state.resize(1420.0);
 
-    assert_eq!(state.selected_group, Some(SEARCH));
-    assert_eq!(state.selected_node, Some(SG_02));
+    assert_eq!(state.selected_group, Some(search()));
+    assert_eq!(state.selected_node, Some(sg_02()));
 }
 
 #[test]
 fn compact_group_selection_opens_detail_and_back_returns_to_list() {
     let mut state = PolicyWorkspaceState::demo();
     state.resize(720.0);
-    state.select_group(SEARCH);
+    state.select_group(search());
 
     assert_eq!(state.compact_navigation, CompactNavigation::GroupDetail);
 
@@ -42,13 +54,13 @@ fn compact_group_selection_opens_detail_and_back_returns_to_list() {
 #[test]
 fn switching_groups_restores_each_groups_node_selection() {
     let mut state = PolicyWorkspaceState::demo();
-    state.select_group(SEARCH);
-    state.select_node(SG_02);
-    state.select_group(STREAMING);
-    state.select_node(HK_01);
-    state.select_group(SEARCH);
+    state.select_group(search());
+    state.select_node(sg_02());
+    state.select_group(streaming());
+    state.select_node(hk_01());
+    state.select_group(search());
 
-    assert_eq!(state.selected_node, Some(SG_02));
+    assert_eq!(state.selected_node, Some(sg_02()));
 }
 
 #[test]
@@ -62,10 +74,78 @@ fn local_route_result_is_explicitly_predicted() {
         RouteEvidence::Predicted {
             domain,
             rule: "DOMAIN-SUFFIX",
-            policy: STREAMING,
-            proxy: HK_01,
-        } if domain == "youtube.com"
+            policy,
+            proxy,
+        } if domain == "youtube.com" && policy == streaming() && proxy == hk_01()
     ));
+}
+
+#[test]
+fn accepts_runtime_owned_policy_and_proxy_ids() {
+    let policy = PolicyGroupId::new(format!("{}-{}", "real", "policy"));
+    let proxy = ProxyId::new(format!("{}-{}", "real", "proxy"));
+    let mut state = PolicyWorkspaceState::default();
+
+    state.select_group(policy.clone());
+    state.select_node(proxy.clone());
+    state.select_group(PolicyGroupId::new("another-policy"));
+    state.select_group(policy.clone());
+
+    assert_eq!(state.selected_group, Some(policy));
+    assert_eq!(state.selected_node, Some(proxy));
+}
+
+#[test]
+fn policy_catalog_requires_a_group_and_preserves_runtime_data() -> Result<(), EmptyPolicyCatalog> {
+    let group = PolicyGroup {
+        id: PolicyGroupId::new(String::from("AI 自动选择")),
+        name: String::from("AI 自动选择"),
+        kind: String::from("URLTest"),
+        target: String::from("新加坡 SG-02"),
+        nodes: vec![PolicyNode {
+            id: ProxyId::new(String::from("新加坡 SG-02")),
+            name: String::from("新加坡 SG-02"),
+            provider: Some(String::from("Provider A")),
+            detail: String::from("VLESS"),
+            latency_ms: Some(54),
+            alive: Some(true),
+        }],
+        rules: vec![PolicyRule {
+            index: 27,
+            kind: String::from("DOMAIN-SUFFIX"),
+            payload: String::from("openai.com"),
+            hit_count: Some(9),
+            disabled: false,
+        }],
+        rules_total: 1,
+    };
+
+    let catalog = PolicyCatalog::try_new(vec![group])?;
+    let selected = catalog.select(Some(&PolicyGroupId::new("AI 自动选择")));
+
+    assert_eq!(selected.target, "新加坡 SG-02");
+    assert_eq!(selected.nodes[0].latency_ms, Some(54));
+    assert_eq!(selected.rules[0].hit_count, Some(9));
+    assert_eq!(catalog.iter().count(), 1);
+    assert_eq!(PolicyCatalog::try_new(Vec::new()), Err(EmptyPolicyCatalog));
+    Ok(())
+}
+
+#[test]
+fn replacing_a_data_source_keeps_size_but_resets_navigation_and_selection() {
+    let mut state = PolicyWorkspaceState::demo();
+    state.resize(720.0);
+    state.select_group(search());
+
+    state.replace_source_selection(
+        PolicyGroupId::new("真实策略"),
+        Some(ProxyId::new("真实节点")),
+    );
+
+    assert_eq!(state.size_class, WindowSizeClass::Compact);
+    assert_eq!(state.compact_navigation, CompactNavigation::GroupList);
+    assert_eq!(state.selected_group, Some(PolicyGroupId::new("真实策略")));
+    assert_eq!(state.selected_node, Some(ProxyId::new("真实节点")));
 }
 
 #[test]

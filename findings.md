@@ -51,3 +51,14 @@
 - 状态模型放在不依赖 GPUI 的 `relay-core`，使策略选择、断点切换和路由证据可在三平台一致测试；GPUI 只负责事件和渲染。
 - macOS 已完成编译、启动、视觉和交互验证。Windows/Linux 的依赖路径已经声明，但仍需要原生 runner 验证工具链、字体、输入、窗口装饰与系统代理集成。
 - 依赖树中的 `block 0.1.6` 来自 GPUI 上游并触发 Rust future-incompatibility 提示；当前不阻断构建，后续升级固定提交时需复查。
+
+## Mihomo 只读集成结论
+
+- 官方控制器以 `Authorization: Bearer ${secret}` 鉴权；`secret` 可为空。原生 Rust 请求不受浏览器 CORS 限制。
+- `/proxies`、`/connections` 在不同 Mihomo 版本间存在字段新增、空值和行为变化；Serde 模型只绑定 UI 所需字段，默认允许未知字段，`history`、`providerChains` 等均按缺失/空值处理。
+- 第一阶段使用 `std::net::TcpStream`，没有引入新的 HTTP runtime 或异步依赖；请求由 GPUI background executor 调度，结果回到 entity 后再通知渲染。
+- 明文 HTTP 只接受 `localhost`、IPv4/IPv6 回环地址，并过滤 DNS 解析后的非回环结果；这是避免 Bearer secret 经 LAN/公网泄露的明确产品边界。
+- 传输只暴露 GET trait、固定调用四个只读端点、限制 header/body 尺寸并拒绝 path/header 控制字符；当前没有节点切换、配置更新或系统代理写入口。
+- HTTP 状态行、普通 Header、chunk-size 和 trailer 都使用限长读取，Header/trailer 另有 64 KiB 聚合上限，避免恶意回环服务在换行前迫使进程无限分配内存。
+- 从 `/rules` 得到的规则用于本地预测展示，从 `/connections` 得到的 `rule/rulePayload/chains` 才标为“最近已观察”；两种证据不会合并成一个虚假的确定结果。
+- 当前快照是用户点击连接/刷新时获取的一次性读模型；持续流量和连接更新以后应使用节流轮询或 WebSocket，并加入 generation 以丢弃过期回包。

@@ -2,15 +2,24 @@ use gpui::{
     Context, Div, FontWeight, IntoElement, ParentElement, Render, Role, Stateful, Styled, Toggled,
     Window, div, prelude::*, px,
 };
-use relay_core::{CompactNavigation, PolicyGroupId, PolicyWorkspaceState, WindowSizeClass};
+use relay_core::{
+    CompactNavigation, PolicyCatalog, PolicyGroup, PolicyNode, PolicyWorkspaceState, ProxyId,
+    WindowSizeClass,
+};
+use relay_mihomo::ObservedRouteEvidence;
 
 use crate::{
-    demo::{DemoNode, DemoPolicy, node, policies, policy},
+    demo,
+    mihomo::{self, ControllerState, LoadedSnapshot},
     theme::Theme,
 };
 
 pub struct RelayApp {
     workspace: PolicyWorkspaceState,
+    catalog: PolicyCatalog,
+    controller_endpoint: String,
+    controller: ControllerState,
+    observed_routes: Vec<ObservedRouteEvidence>,
     proxy_enabled: bool,
     inspector_open: bool,
     dark: bool,
@@ -20,8 +29,17 @@ pub struct RelayApp {
 impl RelayApp {
     #[must_use]
     pub fn new() -> Self {
+        Self::with_controller(mihomo::configured_endpoint())
+    }
+
+    #[must_use]
+    pub fn with_controller(endpoint: impl Into<String>) -> Self {
         Self {
             workspace: PolicyWorkspaceState::demo(),
+            catalog: demo::catalog(),
+            controller_endpoint: endpoint.into(),
+            controller: ControllerState::Demo,
+            observed_routes: Vec::new(),
             proxy_enabled: true,
             inspector_open: false,
             dark: false,
@@ -37,20 +55,97 @@ impl RelayApp {
         }
     }
 
-    fn selected_policy(&self) -> &'static DemoPolicy {
-        policy(
-            self.workspace
-                .selected_group
-                .unwrap_or(PolicyGroupId("streaming")),
-        )
+    fn selected_policy(&self) -> &PolicyGroup {
+        self.catalog.select(self.workspace.selected_group.as_ref())
     }
 
-    fn selected_node(&self) -> DemoNode {
+    fn selected_node(&self) -> PolicyNode {
         let policy = self.selected_policy();
-        node(
-            policy,
-            self.workspace.selected_node.unwrap_or(policy.nodes[0].id),
-        )
+        self.workspace
+            .selected_node
+            .as_ref()
+            .and_then(|selected| policy.nodes.iter().find(|node| node.id == *selected))
+            .or_else(|| policy.nodes.first())
+            .cloned()
+            .unwrap_or_else(|| PolicyNode {
+                id: ProxyId::new("unavailable"),
+                name: "暂无可用节点".to_owned(),
+                provider: None,
+                detail: "Mihomo 未返回组内节点".to_owned(),
+                latency_ms: None,
+                alive: None,
+            })
+    }
+
+    fn connect_mihomo(&mut self, cx: &mut Context<Self>) {
+        if matches!(self.controller, ControllerState::Connecting { .. }) {
+            return;
+        }
+
+        let endpoint = self.controller_endpoint.clone();
+        self.controller = ControllerState::Connecting {
+            endpoint: endpoint.clone(),
+        };
+        self.status = format!("正在从 {endpoint} 读取 Mihomo 数据");
+
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let result = executor.spawn(async move { mihomo::load(&endpoint) }).await;
+            this.update(cx, |this, cx| {
+                match result {
+                    Ok(snapshot) => this.apply_mihomo_snapshot(snapshot),
+                    Err(error) => {
+                        let endpoint = this
+                            .controller
+                            .endpoint()
+                            .unwrap_or("本地控制器")
+                            .to_owned();
+                        let message = error.to_string();
+                        this.controller = ControllerState::Failed {
+                            endpoint,
+                            message: message.clone(),
+                        };
+                        this.status = format!("Mihomo 连接失败：{message}");
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn apply_mihomo_snapshot(&mut self, snapshot: LoadedSnapshot) {
+        let primary = snapshot.catalog.select(None);
+        let group = primary.id.clone();
+        let selected_node = primary
+            .nodes
+            .iter()
+            .find(|node| node.name == primary.target)
+            .or_else(|| primary.nodes.first())
+            .map(|node| node.id.clone());
+        self.workspace
+            .replace_source_selection(group, selected_node);
+        self.catalog = snapshot.catalog;
+        self.observed_routes = snapshot.observed_routes;
+        let endpoint = self
+            .controller
+            .endpoint()
+            .unwrap_or("本地控制器")
+            .to_owned();
+        self.status = format!(
+            "已读取 {} 个策略组 · {} 条活动连接",
+            self.catalog.iter().count(),
+            snapshot.active_connections
+        );
+        self.controller = ControllerState::Connected {
+            endpoint,
+            version: snapshot.version,
+            active_connections: snapshot.active_connections,
+            download_total: snapshot.download_total,
+            upload_total: snapshot.upload_total,
+        };
     }
 
     #[allow(clippy::too_many_lines)]
@@ -200,9 +295,19 @@ impl RelayApp {
             )
     }
 
-    fn navigation(theme: Theme, size_class: WindowSizeClass) -> Div {
+    fn navigation(&self, theme: Theme, size_class: WindowSizeClass) -> Div {
         let labels = ["概览", "策略组", "规则", "连接", "配置", "日志"];
         let show_labels = size_class == WindowSizeClass::Wide;
+        let source_label = if show_labels {
+            self.controller.compact_label()
+        } else {
+            match &self.controller {
+                ControllerState::Demo => "演示".to_owned(),
+                ControllerState::Connecting { .. } => "连接中".to_owned(),
+                ControllerState::Connected { .. } => "已连接".to_owned(),
+                ControllerState::Failed { .. } => "失败".to_owned(),
+            }
+        };
         let width = match size_class {
             WindowSizeClass::Wide => 220.0,
             WindowSizeClass::Medium => 66.0,
@@ -245,11 +350,7 @@ impl RelayApp {
                     .p_2()
                     .text_size(px(11.0))
                     .text_color(theme.text_tertiary)
-                    .child(if show_labels {
-                        "Mihomo 未连接 · 演示"
-                    } else {
-                        "演示"
-                    }),
+                    .child(source_label),
             )
     }
 
@@ -263,12 +364,13 @@ impl RelayApp {
             .flex()
             .flex_col()
             .gap_1();
-        for item in policies() {
-            let selected = self.workspace.selected_group == Some(item.id);
-            let item_id = item.id;
+        for item in self.catalog.iter().cloned() {
+            let selected = self.workspace.selected_group.as_ref() == Some(&item.id);
+            let item_id = item.id.clone();
+            let item_name = item.name.clone();
             rows = rows.child(
                 div()
-                    .id(format!("policy-{}", item.id.0))
+                    .id(format!("policy-{}", item.id.as_str()))
                     .role(Role::Button)
                     .tab_stop(true)
                     .focusable()
@@ -302,7 +404,7 @@ impl RelayApp {
                                 div()
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(theme.text_primary)
-                                    .child(format!("{}  {}", item.name, item.rules_count)),
+                                    .child(format!("{}  {}", item.name, item.rules_count())),
                             )
                             .child(
                                 div()
@@ -314,8 +416,8 @@ impl RelayApp {
                     )
                     .child(div().text_color(theme.text_primary).child(item.target))
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        this.workspace.select_group(item_id);
-                        this.status = format!("已打开策略组“{}” · 演示数据", policy(item_id).name);
+                        this.workspace.select_group(item_id.clone());
+                        this.status = format!("已打开策略组“{item_name}”");
                         cx.notify();
                     })),
             );
@@ -345,7 +447,7 @@ impl RelayApp {
                                     .font_weight(FontWeight::BOLD)
                                     .child("策略组"),
                             )
-                            .child(Self::small_button("new-policy", "＋ 新建", theme)),
+                            .child(self.connection_button(theme, cx)),
                     )
                     .child(
                         div()
@@ -390,15 +492,57 @@ impl RelayApp {
             .child(label)
     }
 
+    fn connection_button(&self, theme: Theme, cx: &mut Context<Self>) -> Stateful<Div> {
+        let connecting = matches!(self.controller, ControllerState::Connecting { .. });
+        div()
+            .id("connect-mihomo")
+            .role(Role::Button)
+            .aria_label("连接或刷新 Mihomo 只读数据")
+            .tab_stop(!connecting)
+            .focusable()
+            .cursor_pointer()
+            .h(px(34.0))
+            .px_3()
+            .rounded_md()
+            .border_1()
+            .border_color(if connecting {
+                theme.outline_subtle
+            } else {
+                theme.action_primary
+            })
+            .bg(if connecting {
+                theme.surface_high
+            } else {
+                theme.action_soft
+            })
+            .text_color(if connecting {
+                theme.text_tertiary
+            } else {
+                theme.action_primary
+            })
+            .flex()
+            .items_center()
+            .child(self.controller.button_label())
+            .on_click(cx.listener(|this, _, _, cx| this.connect_mihomo(cx)))
+    }
+
     fn node_row(
-        item: DemoNode,
+        item: PolicyNode,
         selected: bool,
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let node_id = item.id;
+        let node_id = item.id.clone();
+        let node_name = item.name.clone();
+        let provider = item
+            .provider
+            .clone()
+            .unwrap_or_else(|| "内置节点".to_owned());
+        let latency = item
+            .latency_ms
+            .map_or_else(|| "—".to_owned(), |latency| format!("{latency} ms"));
         div()
-            .id(format!("node-{}", item.id.0))
+            .id(format!("node-{}", item.id.as_str()))
             .role(Role::RadioButton)
             .aria_toggled(if selected {
                 Toggled::True
@@ -453,24 +597,24 @@ impl RelayApp {
                 div()
                     .w(px(100.0))
                     .text_color(theme.text_secondary)
-                    .child(item.provider),
+                    .child(provider),
             )
             .child(
                 div()
                     .w(px(64.0))
                     .text_color(theme.status_success)
-                    .child(format!("{} ms", item.latency_ms)),
+                    .child(latency),
             )
             .on_click(cx.listener(move |this, _, _, cx| {
-                this.workspace.select_node(node_id);
-                this.status = format!("已切换到 {} · 尚未写入 Mihomo", item.name);
+                this.workspace.select_node(node_id.clone());
+                this.status = format!("已选择 {node_name} · 只读模式未写入 Mihomo");
                 cx.notify();
             }))
     }
 
     #[allow(clippy::too_many_lines)]
     fn detail(&self, theme: Theme, compact: bool, cx: &mut Context<Self>) -> Div {
-        let selected_policy = self.selected_policy();
+        let selected_policy = self.selected_policy().clone();
         let selected_node = self.selected_node();
         let mut body = div()
             .id("detail-scroll")
@@ -504,13 +648,9 @@ impl RelayApp {
                 .child(div().w(px(100.0)).child("来源"))
                 .child(div().w(px(64.0)).child("延迟")),
         );
-        for item in selected_policy.nodes {
-            body = body.child(Self::node_row(
-                *item,
-                item.id == selected_node.id,
-                theme,
-                cx,
-            ));
+        for item in selected_policy.nodes.iter().cloned() {
+            let selected = item.id == selected_node.id;
+            body = body.child(Self::node_row(item, selected, theme, cx));
         }
 
         body = body.child(
@@ -528,10 +668,10 @@ impl RelayApp {
                     div()
                         .text_size(px(11.0))
                         .text_color(theme.text_tertiary)
-                        .child(format!("{} 条，按顺序匹配", selected_policy.rules_count)),
+                        .child(format!("{} 条，按顺序匹配", selected_policy.rules_count())),
                 ),
         );
-        for rule in selected_policy.rules {
+        for rule in &selected_policy.rules {
             body = body.child(
                 div()
                     .h(px(50.0))
@@ -601,14 +741,14 @@ impl RelayApp {
                                         div()
                                             .text_size(px(18.0))
                                             .font_weight(FontWeight::BOLD)
-                                            .child(selected_policy.name),
+                                            .child(selected_policy.name.clone()),
                                     )
                                     .child(div().mt_1().text_color(theme.text_secondary).child(
                                         format!(
                                             "{} · {} 个节点 · {} 条规则",
                                             selected_policy.kind,
                                             selected_policy.nodes.len(),
-                                            selected_policy.rules_count
+                                            selected_policy.rules_count()
                                         ),
                                     )),
                             )
@@ -705,14 +845,15 @@ impl RelayApp {
 
     #[allow(clippy::too_many_lines)]
     fn inspector(&self, theme: Theme, overlay: bool, cx: &mut Context<Self>) -> Div {
-        let selected_policy = self.selected_policy();
+        let selected_policy = self.selected_policy().clone();
         let selected_node = self.selected_node();
-        let domain = if selected_policy.id == PolicyGroupId("search") {
+        let domain = if selected_policy.id.as_str() == "search" {
             "openai.com"
         } else {
             "youtube.com"
         };
         let rule_index = selected_policy.rules.first().map_or(18, |rule| rule.index);
+        let observed_route = self.observed_routes.first().cloned();
 
         div()
             .w(px(340.0))
@@ -801,9 +942,48 @@ impl RelayApp {
                                     .bg(theme.route_trace),
                             )
                             .child(Self::signal_stage("01", "预测首条命中规则", "DOMAIN-SUFFIX".to_owned(), format!("{domain} · 规则 #{rule_index}"), true, theme))
-                            .child(Self::signal_stage("02", "交给策略组", selected_policy.name.to_owned(), format!("{} · 当前选择固定节点", selected_policy.kind), false, theme))
-                            .child(Self::signal_stage("03", "最终出口", selected_node.name.to_owned(), format!("{} ms · {}", selected_node.latency_ms, selected_node.provider), false, theme)),
+                            .child(Self::signal_stage("02", "交给策略组", selected_policy.name.clone(), format!("{} · 当前选择固定节点", selected_policy.kind), false, theme))
+                            .child(Self::signal_stage("03", "最终出口", selected_node.name.clone(), format!("{} · {}", selected_node.latency_ms.map_or_else(|| "延迟未知".to_owned(), |latency| format!("{latency} ms")), selected_node.provider.as_deref().unwrap_or("内置节点")), false, theme)),
                     )
+                    .when_some(observed_route, |panel, observed| {
+                        let host = observed.host.unwrap_or_else(|| "目标未知".to_owned());
+                        let rule = observed.rule.unwrap_or_else(|| "规则未知".to_owned());
+                        let payload = observed.rule_payload.unwrap_or_default();
+                        let chain = if observed.chains.is_empty() {
+                            "链路未返回".to_owned()
+                        } else {
+                            observed.chains.join(" → ")
+                        };
+                        panel.child(
+                            div()
+                                .mt_3()
+                                .p_3()
+                                .rounded_md()
+                                .border_1()
+                                .border_color(theme.action_primary)
+                                .bg(theme.action_soft)
+                                .child(
+                                    div()
+                                        .text_size(px(11.0))
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .text_color(theme.action_primary)
+                                        .child("最近已观察 · /connections"),
+                                )
+                                .child(div().mt_2().font_weight(FontWeight::BOLD).child(host))
+                                .child(
+                                    div()
+                                        .mt_1()
+                                        .text_color(theme.text_secondary)
+                                        .child(format!("{rule} · {payload}")),
+                                )
+                                .child(
+                                    div()
+                                        .mt_2()
+                                        .text_color(theme.text_primary)
+                                        .child(chain),
+                                ),
+                        )
+                    })
                     .child(
                         div()
                             .mt_4()
@@ -829,6 +1009,43 @@ impl RelayApp {
     }
 
     fn status_bar(&self, theme: Theme) -> Div {
+        let (source, endpoint, download, upload, dot) = match &self.controller {
+            ControllerState::Demo => (
+                "Mihomo 未连接".to_owned(),
+                "配置：演示数据".to_owned(),
+                "↓ —".to_owned(),
+                "↑ —".to_owned(),
+                theme.route_trace,
+            ),
+            ControllerState::Connecting { endpoint } => (
+                "Mihomo 连接中".to_owned(),
+                endpoint.clone(),
+                "↓ —".to_owned(),
+                "↑ —".to_owned(),
+                theme.route_trace,
+            ),
+            ControllerState::Connected {
+                endpoint,
+                version,
+                active_connections,
+                download_total,
+                upload_total,
+            } => (
+                format!("Mihomo {version} · {active_connections} 条连接"),
+                endpoint.clone(),
+                format!("累计↓ {}", format_bytes(*download_total)),
+                format!("累计↑ {}", format_bytes(*upload_total)),
+                theme.status_success,
+            ),
+            ControllerState::Failed { endpoint, .. } => (
+                "Mihomo 连接失败".to_owned(),
+                endpoint.clone(),
+                "↓ —".to_owned(),
+                "↑ —".to_owned(),
+                theme.route_trace,
+            ),
+        };
+
         div()
             .h(px(28.0))
             .flex_shrink_0()
@@ -846,15 +1063,37 @@ impl RelayApp {
                     .flex()
                     .items_center()
                     .gap_2()
-                    .child(div().size(px(8.0)).rounded_full().bg(theme.route_trace))
-                    .child("Mihomo 未连接"),
+                    .child(div().size(px(8.0)).rounded_full().bg(dot))
+                    .child(source),
             )
-            .child("配置：演示配置")
+            .child(endpoint)
             .child(self.status.clone())
             .child(div().flex_1())
-            .child("↓ 3.4 MB/s")
-            .child("↑ 812 KB/s")
+            .child(download)
+            .child(upload)
     }
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const KIB: u64 = 1024;
+    const MIB: u64 = KIB * 1024;
+    const GIB: u64 = MIB * 1024;
+
+    if bytes >= GIB {
+        format_bytes_in_unit(bytes, GIB, "GiB")
+    } else if bytes >= MIB {
+        format_bytes_in_unit(bytes, MIB, "MiB")
+    } else if bytes >= KIB {
+        format_bytes_in_unit(bytes, KIB, "KiB")
+    } else {
+        format!("{bytes} B")
+    }
+}
+
+fn format_bytes_in_unit(bytes: u64, unit: u64, suffix: &str) -> String {
+    let whole = bytes / unit;
+    let tenth = (bytes % unit) * 10 / unit;
+    format!("{whole}.{tenth} {suffix}")
 }
 
 impl Default for RelayApp {
@@ -891,7 +1130,7 @@ impl Render for RelayApp {
                     .flex_1()
                     .overflow_hidden()
                     .flex()
-                    .child(Self::navigation(theme, size_class))
+                    .child(self.navigation(theme, size_class))
                     .when(show_groups, |main| {
                         main.child(
                             self.policy_list(

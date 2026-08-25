@@ -19,6 +19,15 @@
 - [complete] 5. 用 GPUI 离屏渲染验证浅色、深色与紧凑交互流
 - [complete] 6. 完成独立视觉终审、全量 Rust 检查与版本提交
 
+## Mihomo 只读集成阶段
+
+- [complete] 1. 核验官方控制器端点、鉴权方式与字段漂移风险
+- [complete] 2. 以测试驱动建立 std-only 只读 HTTP 客户端和容错 JSON 模型
+- [complete] 3. 将控制器快照映射为拥有所有权的 `PolicyCatalog`
+- [complete] 4. 在 GPUI 后台任务中连接/刷新，保持演示、连接、成功、失败状态
+- [complete] 5. 分离本地预测与 `/connections` 已观察证据，并生成真实连接快照
+- [complete] 6. 完成安全复核、文档、全量验证和 Git 提交
+
 ## 固定约束
 - 实现框架：Rust + GPUI
 - 目标平台：Windows、macOS、Linux
@@ -35,3 +44,5 @@
 | 路由解释可能被误读为 Mihomo 的实时裁决 | 1 | 明确区分“本地规则预测”和来自 `/connections` 的“已观察连接”，并由独立评审复核通过 |
 | macOS 未授权窗口共享导致外部 UI 自动化无法捕获 GPUI 窗口 | 1 | 改用 GPUI `VisualTestAppContext` 直接捕获真实渲染纹理，并加入坐标点击烟测 |
 | 严格 Clippy 将声明式视图长度和 `RRGGBB` 色值视为问题 | 1 | 修复实际告警，仅对四个组合视图和标准色值表示做窄范围豁免 |
+| 明文控制器地址可能把 Bearer secret 发往远端 | 1 | 本阶段限制为 localhost/IPv4/IPv6 回环地址，并二次验证 DNS 解析结果 |
+| Bearer secret 可包含 HTTP 控制字符 | 1 | 请求构造前拒绝控制字符，并以回归测试覆盖 header injection |

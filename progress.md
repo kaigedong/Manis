@@ -22,3 +22,13 @@
 - 使用 `VisualTestAppContext` 保存宽/中/窄截图，并模拟点击验证“选择策略 → 进入详情 → 切换深色 → 打开路由解释”完整紧凑交互流。
 - 原生视觉判定 96/100，通过门槛；`cargo test --workspace --all-targets` 通过，严格 Clippy 通过，仅剩 GPUI 上游 `block 0.1.6` 的 future-incompatibility 提示。
 - 原生实现独立终审结论为 `disposition: ship`，没有阻断修正；评审要求继续保持预测/观察语义、铜色信号线、紧凑返回路径和克制的边框语言。
+- 调研 Mihomo 官方控制器契约，确认第一阶段只需读取 `/version`、`/proxies`、`/rules`、`/connections`，并按 Bearer secret 鉴权；模型允许未知字段和可空历史数据。
+- 新建 `relay-mihomo`：标准库 TCP/HTTP GET 传输、16 MiB 响应上限、连接/读取超时、Content-Length/chunked/connection-close 解码、结构化错误和 secret 脱敏。
+- 以 TDD 覆盖端点顺序、JSON 漂移、策略映射、规则命中、已观察链路、Bearer 请求、401、body cap、回环限制与 header injection；Mihomo/core 合计 26 个测试通过。
+- 将静态策略数据升级为拥有所有权的 `PolicyCatalog` 与运行时 ID；GPUI 点击连接后在后台读取快照并原子替换目录，不阻塞主线程。
+- 增加连接/刷新状态、版本/连接数/累计流量、错误反馈和 `/connections` 最近观察卡片；系统代理继续保持演示开关，不产生写操作。
+- 用本机伪 Mihomo 控制器生成 `native-wide-connected.png`，视觉判定 97/100，通过门槛，预测与观察的来源色彩和标签保持清楚分离。
+- 明文传输仅允许 localhost 与 IP 回环地址，并在 DNS 解析后再次检查回环；远程控制器必须等 HTTPS 传输完成后再开放。
+- 独立安全复核发现 HTTP 行在事后限长可能造成本地内存 DoS；改为读取时即限长并覆盖状态行、Header、chunk-size、trailer，复核结论为 resolved。
+- 最终 `fmt`、workspace 全目标测试、严格 Clippy、原生截图生成和 `git diff --check` 全部通过；仅保留 GPUI 上游 `block 0.1.6` 的 future-incompatibility 提示。
+- 独立连接态视觉终审为 94/100 `pass`，没有阻断视觉或无障碍问题。

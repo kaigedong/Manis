@@ -1,176 +1,166 @@
-use relay_core::{PolicyGroupId, ProxyId};
+use relay_core::{PolicyCatalog, PolicyGroup, PolicyGroupId, PolicyNode, PolicyRule, ProxyId};
 
-#[derive(Clone, Copy)]
-pub(crate) struct DemoNode {
-    pub id: ProxyId,
-    pub name: &'static str,
-    pub provider: &'static str,
-    pub detail: &'static str,
-    pub latency_ms: u16,
+pub(crate) fn catalog() -> PolicyCatalog {
+    let streaming_nodes = common_nodes();
+    let search_nodes = vec![
+        streaming_nodes[1].clone(),
+        streaming_nodes[2].clone(),
+        streaming_nodes[0].clone(),
+        streaming_nodes[3].clone(),
+    ];
+    let streaming_rules = streaming_rules();
+    let search_rules = search_rules();
+
+    let primary = group(
+        "streaming",
+        "视频服务",
+        "手动选择",
+        "香港 HK-01",
+        12,
+        streaming_nodes.clone(),
+        streaming_rules.clone(),
+    );
+    let remaining = vec![
+        group(
+            "search",
+            "搜索与 AI",
+            "自动选择",
+            "新加坡 SG-02",
+            8,
+            search_nodes.clone(),
+            search_rules,
+        ),
+        group(
+            "development",
+            "开发服务",
+            "故障转移",
+            "日本 JP-03",
+            17,
+            streaming_nodes.clone(),
+            streaming_rules.clone(),
+        ),
+        group(
+            "social",
+            "社交网络",
+            "负载均衡",
+            "新加坡 SG-02",
+            9,
+            search_nodes,
+            streaming_rules.clone(),
+        ),
+        group(
+            "direct",
+            "国内直连",
+            "直连",
+            "DIRECT",
+            31,
+            vec![node(
+                "direct",
+                "DIRECT",
+                Some("系统内置"),
+                "本地网络",
+                Some(4),
+            )],
+            streaming_rules,
+        ),
+    ];
+
+    PolicyCatalog::from_primary(primary, remaining)
 }
 
-#[derive(Clone, Copy)]
-pub(crate) struct DemoRule {
-    pub index: u16,
-    pub kind: &'static str,
-    pub payload: &'static str,
+#[allow(clippy::too_many_arguments)]
+fn group(
+    id: &str,
+    name: &str,
+    kind: &str,
+    target: &str,
+    rules_total: usize,
+    nodes: Vec<PolicyNode>,
+    rules: Vec<PolicyRule>,
+) -> PolicyGroup {
+    PolicyGroup {
+        id: PolicyGroupId::new(id),
+        name: name.to_owned(),
+        kind: kind.to_owned(),
+        target: target.to_owned(),
+        nodes,
+        rules,
+        rules_total,
+    }
 }
 
-#[derive(Clone, Copy)]
-pub(crate) struct DemoPolicy {
-    pub id: PolicyGroupId,
-    pub name: &'static str,
-    pub kind: &'static str,
-    pub target: &'static str,
-    pub rules_count: u16,
-    pub nodes: &'static [DemoNode],
-    pub rules: &'static [DemoRule],
+fn common_nodes() -> Vec<PolicyNode> {
+    vec![
+        node(
+            "hk-01",
+            "香港 HK-01",
+            Some("Provider A"),
+            "HK · Hysteria2",
+            Some(38),
+        ),
+        node(
+            "sg-02",
+            "新加坡 SG-02",
+            Some("Provider A"),
+            "SG · VLESS",
+            Some(54),
+        ),
+        node(
+            "jp-03",
+            "日本 JP-03",
+            Some("Provider B"),
+            "JP · Trojan",
+            Some(67),
+        ),
+        node(
+            "us-01",
+            "美国 US-01",
+            Some("Provider A"),
+            "US · VLESS",
+            Some(142),
+        ),
+    ]
 }
 
-const STREAMING_NODES: &[DemoNode] = &[
-    DemoNode {
-        id: ProxyId("hk-01"),
-        name: "香港 HK-01",
-        provider: "Provider A",
-        detail: "HK · Hysteria2",
-        latency_ms: 38,
-    },
-    DemoNode {
-        id: ProxyId("sg-02"),
-        name: "新加坡 SG-02",
-        provider: "Provider A",
-        detail: "SG · VLESS",
-        latency_ms: 54,
-    },
-    DemoNode {
-        id: ProxyId("jp-03"),
-        name: "日本 JP-03",
-        provider: "Provider B",
-        detail: "JP · Trojan",
-        latency_ms: 67,
-    },
-    DemoNode {
-        id: ProxyId("us-01"),
-        name: "美国 US-01",
-        provider: "Provider A",
-        detail: "US · VLESS",
-        latency_ms: 142,
-    },
-];
-
-const SEARCH_NODES: &[DemoNode] = &[
-    STREAMING_NODES[1],
-    STREAMING_NODES[2],
-    STREAMING_NODES[0],
-    STREAMING_NODES[3],
-];
-
-const STREAMING_RULES: &[DemoRule] = &[
-    DemoRule {
-        index: 18,
-        kind: "DOMAIN-SUFFIX",
-        payload: "youtube.com",
-    },
-    DemoRule {
-        index: 19,
-        kind: "DOMAIN-SUFFIX",
-        payload: "netflix.com",
-    },
-    DemoRule {
-        index: 20,
-        kind: "GEOSITE",
-        payload: "category-streaming",
-    },
-];
-
-const SEARCH_RULES: &[DemoRule] = &[
-    DemoRule {
-        index: 27,
-        kind: "DOMAIN-SUFFIX",
-        payload: "openai.com",
-    },
-    DemoRule {
-        index: 28,
-        kind: "DOMAIN-SUFFIX",
-        payload: "google.com",
-    },
-    DemoRule {
-        index: 29,
-        kind: "GEOSITE",
-        payload: "category-ai-!cn",
-    },
-];
-
-const POLICIES: &[DemoPolicy] = &[
-    DemoPolicy {
-        id: PolicyGroupId("streaming"),
-        name: "视频服务",
-        kind: "手动选择",
-        target: "香港 HK-01",
-        rules_count: 12,
-        nodes: STREAMING_NODES,
-        rules: STREAMING_RULES,
-    },
-    DemoPolicy {
-        id: PolicyGroupId("search"),
-        name: "搜索与 AI",
-        kind: "自动选择",
-        target: "新加坡 SG-02",
-        rules_count: 8,
-        nodes: SEARCH_NODES,
-        rules: SEARCH_RULES,
-    },
-    DemoPolicy {
-        id: PolicyGroupId("development"),
-        name: "开发服务",
-        kind: "故障转移",
-        target: "日本 JP-03",
-        rules_count: 17,
-        nodes: STREAMING_NODES,
-        rules: STREAMING_RULES,
-    },
-    DemoPolicy {
-        id: PolicyGroupId("social"),
-        name: "社交网络",
-        kind: "负载均衡",
-        target: "新加坡 SG-02",
-        rules_count: 9,
-        nodes: SEARCH_NODES,
-        rules: SEARCH_RULES,
-    },
-    DemoPolicy {
-        id: PolicyGroupId("direct"),
-        name: "国内直连",
-        kind: "直连",
-        target: "DIRECT",
-        rules_count: 31,
-        nodes: &[DemoNode {
-            id: ProxyId("direct"),
-            name: "DIRECT",
-            provider: "系统内置",
-            detail: "本地网络",
-            latency_ms: 4,
-        }],
-        rules: STREAMING_RULES,
-    },
-];
-
-pub(crate) fn policies() -> &'static [DemoPolicy] {
-    POLICIES
+fn node(
+    id: &str,
+    name: &str,
+    provider: Option<&str>,
+    detail: &str,
+    latency_ms: Option<u16>,
+) -> PolicyNode {
+    PolicyNode {
+        id: ProxyId::new(id),
+        name: name.to_owned(),
+        provider: provider.map(str::to_owned),
+        detail: detail.to_owned(),
+        latency_ms,
+        alive: Some(true),
+    }
 }
 
-pub(crate) fn policy(id: PolicyGroupId) -> &'static DemoPolicy {
-    POLICIES
-        .iter()
-        .find(|item| item.id == id)
-        .map_or(&POLICIES[0], |item| item)
+fn streaming_rules() -> Vec<PolicyRule> {
+    vec![
+        rule(18, "DOMAIN-SUFFIX", "youtube.com"),
+        rule(19, "DOMAIN-SUFFIX", "netflix.com"),
+        rule(20, "GEOSITE", "category-streaming"),
+    ]
 }
 
-pub(crate) fn node(policy: &DemoPolicy, id: ProxyId) -> DemoNode {
-    policy
-        .nodes
-        .iter()
-        .find(|item| item.id == id)
-        .copied()
-        .unwrap_or(policy.nodes[0])
+fn search_rules() -> Vec<PolicyRule> {
+    vec![
+        rule(27, "DOMAIN-SUFFIX", "openai.com"),
+        rule(28, "DOMAIN-SUFFIX", "google.com"),
+        rule(29, "GEOSITE", "category-ai-!cn"),
+    ]
+}
+
+fn rule(index: u32, kind: &str, payload: &str) -> PolicyRule {
+    PolicyRule {
+        index,
+        kind: kind.to_owned(),
+        payload: payload.to_owned(),
+        hit_count: None,
+        disabled: false,
+    }
 }

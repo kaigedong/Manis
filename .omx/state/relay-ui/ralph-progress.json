@@ -1,9 +1,15 @@
 {
-  "score": 96,
+  "score": 97,
   "verdict": "pass",
   "category_match": true,
   "threshold": 90,
   "threshold_met": true,
+  "independent_review": {
+    "score": 94,
+    "verdict": "pass",
+    "category_match": true,
+    "reasoning": "Connected state clearly separates the runtime/observed path from the predicted route without collapsing the two. Hierarchy, spacing, and density stay consistent with the reference, with no blocking visual or accessibility issues."
+  },
   "references": [
     "/Users/bobo/.planning/qx_policy_client_ui/relay-direction-board.png",
     "/Users/bobo/.planning/qx_policy_client_ui/reference-fluent2.png",
@@ -15,21 +21,24 @@
     "/Users/bobo/.planning/qx_policy_client_ui/.impeccable/review/native-compact.png",
     "/Users/bobo/.planning/qx_policy_client_ui/.impeccable/review/native-compact-detail.png",
     "/Users/bobo/.planning/qx_policy_client_ui/.impeccable/review/native-compact-dark-detail.png",
-    "/Users/bobo/.planning/qx_policy_client_ui/.impeccable/review/native-compact-dark-inspector.png"
+    "/Users/bobo/.planning/qx_policy_client_ui/.impeccable/review/native-compact-dark-inspector.png",
+    "/Users/bobo/.planning/qx_policy_client_ui/.impeccable/review/native-wide-connected.png"
   ],
   "differences": [
     "The native medium route inspector is intentionally hidden until invoked rather than persistently consuming workspace width.",
     "The native compact inspector overlays the detail task as a 340 px side sheet instead of shrinking every pane.",
-    "The GPUI navigation rail uses readable Chinese initials instead of a bundled icon asset set."
+    "The GPUI navigation rail uses readable Chinese initials instead of a bundled icon asset set.",
+    "The connected fixture intentionally reduces the catalog to two real controller groups, leaving more white space than the richer demo catalog."
   ],
   "suggestions": [
     "Preserve the copper signal line as the only strong non-semantic accent.",
     "Keep compact list and detail as separate tasks rather than forcing multi-pane compression.",
-    "Replace navigation initials only when a deliberate cross-platform icon asset pipeline is introduced."
+    "Replace navigation initials only when a deliberate cross-platform icon asset pipeline is introduced.",
+    "Keep predicted routes in copper and observed /connections evidence in teal so provenance remains unambiguous."
   ],
   "next_actions": [
-    "Ship the verified native GPUI visual milestone as a Git commit.",
-    "Keep Mihomo integration outside this visual milestone so demo and observed connection states cannot be confused."
+    "Run the complete Rust workspace verification suite.",
+    "Document the read-only controller boundary and commit the Mihomo integration milestone."
   ],
-  "reasoning": "The native GPUI implementation preserves the selected Signal Patch Bay direction across wide, medium, and compact window classes. Direct texture captures confirm legible light and dark themes, single-task compact navigation, and a distinctive connected route chain; simulated clicks also prove policy selection, theme switching, and inspector opening in the compact flow."
+  "reasoning": "The connected GPUI state preserves the Signal Patch Bay hierarchy while clearly replacing demo content with controller-derived groups, nodes, rules, latency, version, connection count, and traffic totals. Copper prediction and teal observed evidence remain visually distinct, so the interface does not overclaim what Mihomo actually routed."
 }

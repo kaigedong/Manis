@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/relay-core",
+    "crates/relay-mihomo",
     "crates/relay-ui",
 ]
 resolver = "2"
