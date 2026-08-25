@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/relay-core",
+    "crates/relay-engine",
     "crates/relay-mihomo",
     "crates/relay-ui",
 ]

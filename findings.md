@@ -68,3 +68,35 @@
 - Mihomo 延迟历史中的 `0` 表示未知/未测速而不是零延迟；显示层应渲染为缺失值。连接 metadata 的空 host 同样应回退到 destination IP。
 - `external-controller-unix` 依赖 Unix 文件权限而不是 Bearer secret；Relay 的 Unix transport 不发送 `Authorization`，并在连接前拒绝普通文件和符号链接 socket。
 - 真实控制器错误 body 可能包含不适合普通 UI 的诊断内容；结构化错误保留状态码，但用户可见文案只显示 HTTP status/reason。
+
+## Relay 托管进程的本地架构发现
+
+- 当前 `relay-ui` 同时负责 controller endpoint 环境变量、网络加载和展示状态；托管子进程若继续塞入 UI 会把进程所有权与视图生命周期耦合，应建立独立 engine crate。
+- `relay-mihomo` 已是纯 controller 协议/模型边界，适合保持无子进程所有权；engine 只应产出一个 controller endpoint，再复用现有 `MihomoClient` 做健康检查和快照读取。
+- 当前入口只创建一个 `RelayApp` entity，窗口关闭/应用退出没有 engine cleanup hook；第一阶段应先让 engine manager 的 Drop/显式 stop 可独立测试，再决定 GPUI 生命周期接线。
+- 当前仓库没有配置文件解析器、sidecar 资源、下载器或平台数据目录依赖；本阶段不应引入自动下载/升级或真实订阅持久化，以免一次跨越供应链、密钥和进程三个信任边界。
+- `ControllerState` 目前只有 Demo/Connecting/Connected/Failed，不能表达“未安装/准备/启动/停止”；engine 生命周期应使用独立穷举枚举，UI 再将其映射为简化状态。
+
+## Mihomo sidecar 官方/运行时证据（2026-08-25）
+
+- 官方 Releases 当前可见稳定版已到 `v1.19.30`，为 macOS/Windows/Linux 多架构提供独立压缩资产，并在 GitHub asset 元数据中给出 SHA-256；未来下载器必须固定版本、匹配明确 asset 名并验证摘要，不能下载 `Alpha` 或静默跟随 latest。来源：https://github.com/MetaCubeX/mihomo/releases
+- 本机 Clash Verge 携带的 Mihomo `v1.19.29 darwin arm64` 帮助文本确认核心参数：`-d` 配置目录、`-f` 配置文件、`-t` 测试后退出、`-v` 版本、`-ext-ctl`/`-ext-ctl-unix`/`-ext-ctl-pipe` controller override、`-secret` API secret。
+- 官方 general config 同时记录 `external-controller-unix`，说明 engine 可以为 macOS/Linux 每次运行创建独立 socket；Windows 应走 pipe 或独立 loopback 端口，不能假装共享同一路径语义。来源：https://wiki.metacubex.one/en/config/general/
+- 本阶段只编码生命周期和命令计划，不实现下载器；官方资产数量多、CPU 兼容变体复杂，下载/校验/签名与许可证归档应作为单独供应链里程碑。
+- 官方仓库的 `LICENSE` 是 GPL-3.0；未来若随 Relay 分发官方 Mihomo 二进制，需要在发布清单中处理许可证告知与对应源码可得性等 GPL 义务。Relay 自身的许可证选择应与“是否捆绑分发 Mihomo”分开决策。来源：https://github.com/MetaCubeX/mihomo/blob/Meta/LICENSE
+- 官方稳定版发布页目前提供逐资产 SHA-256；GitHub 对发布提交的 verified 标记不能等同于二进制资产签名（这是基于发布页信息的推断）。未来下载器应固定明确版本并校验对应资产哈希，不跟随 Alpha/latest 漂移。
+- 许可证必须按实际分发版本核验：`v1.19.30` tag 的 `LICENSE` 与 `Meta` 分支都是 GPL-3.0，而 `main` 分支当前是一个 5 行 MIT 文本。未来打包清单必须记录“具体 tag + 对应许可证”，不能用默认分支替代稳定版证据。来源：https://raw.githubusercontent.com/MetaCubeX/mihomo/v1.19.30/LICENSE
+- 托管层采用新的 `relay-engine` crate：只持有自己启动的 `Child`，只产出 controller endpoint，再复用 `relay-mihomo` 做健康检查；外部 `RELAY_MIHOMO_CONTROLLER` 路径保持只读且不归 engine 所有。
+- 第一版生命周期以可替换的 process spawner 和 health probe 做确定性测试，覆盖校验、启动、就绪、提前退出、超时、幂等停止和 Drop 清理；真实平台命令执行保持薄适配层。
+- GPUI 目前只有一个 `controller_endpoint` 字符串和四态 `ControllerState`；连接按钮直接后台调用 `mihomo::load`。托管接线应保持同一个按钮：显式检测到 managed env 时先后台 `EngineManager::start`，拿到 endpoint 后再走同一只读快照路径。
+- `RelayApp::with_controller` 被原生截图夹具直接使用；必须保留它作为纯外部控制器构造器，避免托管环境探测污染视觉回归和 fixture 测试。
+- 托管模式只在 `RELAY_MIHOMO_BINARY` 与 `RELAY_MIHOMO_CONFIG` 同时存在时启用；可选 `RELAY_MIHOMO_DATA_DIR`、controller 和 secret。manager 先执行 `mihomo -t`，再 spawn，并只用轻量 `/version` 判定 ready；刷新数据继续复用现有只读四端点快照。
+- macOS 默认托管目录为 `~/Library/Application Support/Relay/mihomo`，Linux 为 `$XDG_DATA_HOME/relay/mihomo` 或 `~/.local/share/relay/mihomo`，Windows 为 `%LOCALAPPDATA%/Relay/mihomo`；Unix controller socket 必须位于该独立目录内。
+- `ManagedEngineConfig` 不再接收或保存 API secret；托管 TCP 在 engine validation 与 UI endpoint parser 两层都被拒绝，直到 Relay 能生成并验证自己的鉴权配置。stop/失败清理若第一次 terminate 失败会保留同一个 Child，Drop 再次尝试，避免丢失所有权。
+- Windows named-pipe endpoint 和启动参数已经建模，但 `relay-mihomo` 尚无 named-pipe transport；因此 Windows 托管模式的健康检查仍是明确的后续项，当前 Windows 外部 loopback HTTP 控制器路径不受影响。
+- 仅检查缓存的 `EngineState::Ready` 会在子进程事后崩溃时永久阻止重启；UI 刷新前必须通过 manager 对同一 owned Child 执行 `try_wait`，reap 后清空 handle，再允许新的 start。
+- 原生宽屏截图重新生成后与变更前参考图逐字节相同，`visual-verdict` 为 100/100；托管文案只在显式 managed env 下出现，默认外部/fixture 视觉没有变化。
+- Unix controller 不鉴权，因此 runtime 目录本身就是访问控制边界：启动前创建并强制 `0700`，拒绝 final symlink/非目录，并要求 socket 是 data dir 的直接子项，避免嵌套目录权限漂移。
+- loopback TCP secret 不能通过 `-secret` 进入进程 argv，也不能只靠“用户 YAML 应该配置了同值 secret”的假设；因此本阶段完全禁用托管 TCP，外部 loopback controller 继续由已有只读客户端支持。
+- `Command::status()` 会让恶意/损坏的 validation 永久阻塞；标准 spawner 改为 child + `try_wait`，默认 10 秒 deadline，超时后 kill 并 wait，fixture 回归在 2 秒门槛内通过。
+- 安全终审为 LOW 且无 High/Medium：托管 TCP 与尚未实现 transport 的 Windows pipe 都在 UI 配置阶段 fail closed；engine 层仍独立拒绝 managed TCP，形成纵深防线。残余只有 Unix 父目录 symlink/TOCTOU 的本地加固项与未安装 `cargo-audit`。

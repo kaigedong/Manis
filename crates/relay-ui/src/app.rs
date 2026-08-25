@@ -10,14 +10,14 @@ use relay_mihomo::ObservedRouteEvidence;
 
 use crate::{
     demo,
-    mihomo::{self, ControllerState, LoadedSnapshot},
+    mihomo::{self, ControllerRuntime, ControllerState, LoadedSnapshot},
     theme::Theme,
 };
 
 pub struct RelayApp {
     workspace: PolicyWorkspaceState,
     catalog: PolicyCatalog,
-    controller_endpoint: String,
+    runtime: ControllerRuntime,
     controller: ControllerState,
     observed_routes: Vec<ObservedRouteEvidence>,
     proxy_enabled: bool,
@@ -29,21 +29,28 @@ pub struct RelayApp {
 impl RelayApp {
     #[must_use]
     pub fn new() -> Self {
-        Self::with_controller(mihomo::configured_endpoint())
+        Self::with_runtime(mihomo::configured_runtime())
     }
 
     #[must_use]
     pub fn with_controller(endpoint: impl Into<String>) -> Self {
+        Self::with_runtime(ControllerRuntime::External {
+            endpoint: endpoint.into(),
+        })
+    }
+
+    fn with_runtime(runtime: ControllerRuntime) -> Self {
+        let status = runtime.initial_status();
         Self {
             workspace: PolicyWorkspaceState::demo(),
             catalog: demo::catalog(),
-            controller_endpoint: endpoint.into(),
+            runtime,
             controller: ControllerState::Demo,
             observed_routes: Vec::new(),
             proxy_enabled: true,
             inspector_open: false,
             dark: false,
-            status: "演示数据 · 尚未连接 Mihomo".to_owned(),
+            status,
         }
     }
 
@@ -82,7 +89,8 @@ impl RelayApp {
             return;
         }
 
-        let endpoint = self.controller_endpoint.clone();
+        let endpoint = self.runtime.endpoint_label();
+        let runtime = self.runtime.clone();
         self.controller = ControllerState::Connecting {
             endpoint: endpoint.clone(),
         };
@@ -90,10 +98,10 @@ impl RelayApp {
 
         let executor = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
-            let result = executor.spawn(async move { mihomo::load(&endpoint) }).await;
+            let result = executor.spawn(async move { runtime.connect() }).await;
             this.update(cx, |this, cx| {
                 match result {
-                    Ok(snapshot) => this.apply_mihomo_snapshot(snapshot),
+                    Ok(result) => this.apply_mihomo_snapshot(result.endpoint, result.snapshot),
                     Err(error) => {
                         let endpoint = this
                             .controller
@@ -116,7 +124,7 @@ impl RelayApp {
         cx.notify();
     }
 
-    fn apply_mihomo_snapshot(&mut self, snapshot: LoadedSnapshot) {
+    fn apply_mihomo_snapshot(&mut self, endpoint: String, snapshot: LoadedSnapshot) {
         let primary = snapshot.catalog.select(None);
         let group = primary.id.clone();
         let selected_node = primary
@@ -129,11 +137,6 @@ impl RelayApp {
             .replace_source_selection(group, selected_node);
         self.catalog = snapshot.catalog;
         self.observed_routes = snapshot.observed_routes;
-        let endpoint = self
-            .controller
-            .endpoint()
-            .unwrap_or("本地控制器")
-            .to_owned();
         self.status = format!(
             "已读取 {} 个策略组 · {} 条活动连接",
             self.catalog.iter().count(),
@@ -522,7 +525,7 @@ impl RelayApp {
             })
             .flex()
             .items_center()
-            .child(self.controller.button_label())
+            .child(self.runtime.button_label(&self.controller))
             .on_click(cx.listener(|this, _, _, cx| this.connect_mihomo(cx)))
     }
 

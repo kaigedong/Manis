@@ -37,6 +37,15 @@
 - [complete] 5. 将 live screenshot 限制到系统临时目录并完成视觉复核
 - [complete] 6. 完成全量验证、安全复核和 Git 提交
 
+## Relay 托管 Mihomo 进程阶段
+
+- [complete] 1. 核验官方发行、许可证、启动参数和跨平台进程边界
+- [complete] 2. 以测试驱动建立独立 engine 配置、数据目录和生命周期状态
+- [complete] 3. 实现不接管外部进程的安全 spawn/health/stop 管理器
+- [complete] 4. 用隔离假进程验证启动、就绪、失败和清理路径
+- [complete] 5. 接入 GPUI 的托管/外部控制器状态，但暂不下载二进制或订阅
+- [complete] 6. 完成安全复核、全量验证、文档和 Git 提交
+
 ## 固定约束
 - 实现框架：Rust + GPUI
 - 目标平台：Windows、macOS、Linux
@@ -58,3 +67,4 @@
 | 真实 Mihomo 将 `fixed` 返回为节点名而非布尔值 | 1 | 删除 UI 未使用的脆弱字段绑定，让 Serde 按未知字段忽略并保留兼容性回归样本 |
 | 首次 live screenshot 误选内置 GLOBAL 且把空 host/0 ms 当有效值 | 1 | GLOBAL 排在普通策略之后，空 host 回退目标 IP，0 ms 视为未知；第二轮视觉判定通过 |
 | live screenshot 命令使用 zsh 只读变量名 `status` | 1 | 不重试该变量名；改用任务专用 `task_exit_code` 后成功 |
+| 一次 `cargo test` 误传多个位置过滤参数 | 1 | Cargo 只接受一个 TESTNAME；改为运行整个 `relay-engine` 测试集并读取三项预期失败 |

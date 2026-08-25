@@ -42,3 +42,11 @@
 - live screenshot 使用 canonical parent 校验、拒绝已有目标文件，防止 `..`/symlink 绕回仓库；控制器 HTTP 错误 body 不再展示到 UI。
 - `.gitignore` 增加 `.env`、订阅导出和 live artifact 防线，降低以后手工测试误提交敏感文件的风险。
 - 最终 workspace 31 个常规测试、真实控制器 ignored smoke、严格 Clippy、fixture/live 原生截图和 `git diff --check` 全部通过；安全复核降为 LOW，无未解决 High/Medium 问题。
+- 开始 Relay 托管 Mihomo 进程阶段；本里程碑只建立隔离生命周期和 GPUI 状态，不终止/复用 Clash Verge 进程，不下载二进制，也不持久化订阅凭据。
+- 完成稳定版 `v1.19.30` 的官方发行、CLI、控制器与许可证核验；确定新增独立 `relay-engine` crate，并保留外部 controller 原路径。当前开始以 fake process/health probe 锁定状态机和进程所有权。
+- `relay-engine` 首轮 TDD 已由编译失败转绿：6 个测试覆盖命令计划、路径/回环边界、validation-before-spawn、就绪重试、提前退出、超时清理、幂等 stop 与 Drop；Manager 不接受裸 PID。
+- 生命周期现在共 8 个测试：新增 API secret Debug 脱敏，以及 stop 首次失败后保留原 Child、由 Drop 再次清理。GPUI 已支持显式 managed runtime，未设置 binary/config 时完全保留外部 controller 行为。
+- 原生 fixture 进程通过真实 `std::process::Command` 完成 `-t`、spawn、ready、stop；GPUI 默认模式截图与改动前 byte-identical，视觉门禁 100/100。workspace 当时 42 个常规测试通过，严格 Clippy 通过。
+- 增加 ready 后崩溃探测：刷新前会先 `try_wait`，已退出的 owned child 被 reap 并允许下一次重新启动；不会卡在陈旧 Ready 状态。worktree 与 Git 历史的订阅域名/token 模式扫描均无命中。
+- 安全复核的 Unix runtime、argv secret 与 validation timeout 均已修复；二次复核指出无法证明用户 YAML 的 TCP secret 生效，因此进一步在 engine/UI 两层禁用托管 TCP并删除 engine secret 状态。外部 loopback TCP 不受影响，等待最终安全 verdict。
+- 最终安全 verdict 为 LOW，High/Medium 为 0；托管 Windows pipe 同样在配置阶段明确提示尚未开放，不再启动后才超时。最终 45 个常规测试、真实 controller ignored smoke、fmt、严格 Clippy、diff check 全部通过；当前新编译 GPUI 应用已启动并持续运行。

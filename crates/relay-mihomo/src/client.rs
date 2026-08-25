@@ -32,7 +32,7 @@ where
     /// Returns an error if any controller request fails or if a response cannot be decoded as the
     /// expected Mihomo JSON shape.
     pub fn fetch_snapshot(&self) -> Result<MihomoSnapshot, MihomoError> {
-        let version = self.fetch_json::<VersionInfo>(VERSION_ENDPOINT)?;
+        let version = self.fetch_version()?;
         let proxies = self
             .fetch_json::<ProxiesResponse>(PROXIES_ENDPOINT)?
             .into_proxies();
@@ -45,6 +45,16 @@ where
             rules,
             connections,
         })
+    }
+
+    /// Fetches only `/version` for a lightweight controller readiness check.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the read-only request fails or the response is not a valid Mihomo
+    /// version payload.
+    pub fn fetch_version(&self) -> Result<VersionInfo, MihomoError> {
+        self.fetch_json::<VersionInfo>(VERSION_ENDPOINT)
     }
 
     fn fetch_json<Response>(&self, endpoint: &str) -> Result<Response, MihomoError>

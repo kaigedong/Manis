@@ -92,6 +92,19 @@ fn fetch_snapshot_requests_exact_readonly_endpoints() -> Result<(), Box<dyn std:
 }
 
 #[test]
+fn readiness_fetches_only_the_version_endpoint() -> Result<(), Box<dyn std::error::Error>> {
+    let transport = FakeTransport::default();
+    let client = MihomoClient::new(ControllerConfig::default(), &transport);
+
+    let version = client.fetch_version()?;
+
+    assert_eq!(transport.requests.borrow().as_slice(), ["/version"]);
+    assert_eq!(version.version.as_deref(), Some("v1.19.0"));
+    assert!(version.meta);
+    Ok(())
+}
+
+#[test]
 fn parses_flexible_proxy_json_and_extracts_policy_groups() -> Result<(), Box<dyn std::error::Error>>
 {
     let transport = FakeTransport::default();

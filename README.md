@@ -8,6 +8,7 @@ Relay 是一个使用 Rust 与 GPUI 构建的跨平台代理策略工作台。�
 
 - 原生 GPUI 窗口，可在宽、中、窄三档尺寸间自适应
 - 一键读取 Mihomo 策略组、节点、规则、延迟与活跃连接；未连接时保留演示状态
+- 可选择连接外部 Mihomo，或由 Relay 校验并托管一个独立 Mihomo 子进程
 - 可解释的本地路由预测链，并明确区别于 Mihomo 已观察连接
 - 浅色/深色主题、系统代理演示开关与键盘可聚焦控件
 - macOS 原生运行和 Metal 离屏截图已验证
@@ -40,6 +41,19 @@ cargo run -p relay-ui
 
 Unix socket 依赖操作系统文件权限，Relay 会确认目标确实是 socket 且不是符号链接，并且不会向它转发 `RELAY_MIHOMO_SECRET`。远程控制器、HTTPS 和 Windows named pipe 尚未支持。Mihomo 需要先启用 [`external-controller`](https://wiki.metacubex.one/en/config/general/) 或 `external-controller-unix`；接口形状参考其[官方 API 文档](https://wiki.metacubex.one/en/api/)。
 
+### Relay 托管 Mihomo（当前为显式开发模式）
+
+同时提供 Mihomo 可执行文件和现有配置文件后，按钮会变为“启动 Mihomo”。Relay 会先运行 `mihomo -t` 校验配置，再以独立数据目录和 controller 启动子进程；应用退出时只清理自己持有的子进程，不扫描 PID、端口，也不会触碰 Clash Verge：
+
+```bash
+RELAY_MIHOMO_BINARY=/absolute/path/to/mihomo \
+RELAY_MIHOMO_CONFIG=/absolute/path/to/config.yaml \
+RELAY_MIHOMO_DATA_DIR=/absolute/path/to/relay-runtime \
+cargo run -p relay-ui
+```
+
+macOS/Linux 默认在平台用户数据目录内创建权限为 `0700` 的 Relay 专用 runtime，并使用目录内的 Unix socket。托管 TCP 暂不开放，因为 Relay 还不能验证用户 YAML 是否真的启用了同值 controller secret；外部 loopback TCP controller 不受影响。密钥不会进入 Mihomo 的进程参数。这一阶段不会下载 Mihomo、解析或保存订阅 URL，也不会把用户配置复制进仓库。Windows named-pipe 启动参数已经建模，但 Relay 的 named-pipe controller transport 尚未完成，因此 Windows 当前仍使用外部 loopback HTTP controller。
+
 ## 验证
 
 ```bash
@@ -68,6 +82,7 @@ cargo test -p relay-ui reads_a_live_controller_snapshot -- --ignored
 ## 代码结构
 
 - `crates/relay-core`：与渲染框架无关的窗口尺寸、策略选择和路由证据状态
+- `crates/relay-engine`：隔离路径、命令计划、配置预检、就绪探测与 owned-child 生命周期
 - `crates/relay-mihomo`：只读控制器配置、HTTP 传输、容错 JSON 模型和领域目录映射
 - `crates/relay-ui`：GPUI 应用、主题、演示/控制器数据与自适应视图
 - `DESIGN.md`：视觉 token、组件和响应式行为

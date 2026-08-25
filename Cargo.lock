@@ -4521,6 +4521,10 @@ name = "relay-core"
 version = "0.1.0"
 
 [[package]]
+name = "relay-engine"
+version = "0.1.0"
+
+[[package]]
 name = "relay-mihomo"
 version = "0.1.0"
 dependencies = [
@@ -4536,6 +4540,7 @@ dependencies = [
  "gpui",
  "gpui_platform",
  "relay-core",
+ "relay-engine",
  "relay-mihomo",
 ]
 
