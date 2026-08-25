@@ -2,7 +2,10 @@ use gpui::{Context, Div, FontWeight, ParentElement, Role, Stateful, Styled, div,
 use relay_core::{ConfigurationSection, WindowSizeClass};
 
 use super::RelayApp;
-use crate::theme::Theme;
+use crate::{
+    diagnostics::{UiEvent, trace_ui},
+    theme::Theme,
+};
 
 const RULE_COUNT: usize = 2;
 
@@ -33,7 +36,7 @@ impl RelayApp {
                 .flex()
                 .items_start()
                 .gap_3()
-                .child(self.source_panel(theme).w(px(270.0)).flex_shrink_0())
+                .child(self.source_panel(theme, cx).w(px(270.0)).flex_shrink_0())
                 .child(
                     div()
                         .flex_1()
@@ -47,7 +50,7 @@ impl RelayApp {
                 .child(self.route_probe(theme, false).w(px(300.0)).flex_shrink_0())
         } else {
             let active = match self.configuration.section {
-                ConfigurationSection::Sources => self.source_panel(theme),
+                ConfigurationSection::Sources => self.source_panel(theme, cx),
                 ConfigurationSection::Groups => Self::group_panel(theme, cx),
                 ConfigurationSection::Rules => self.rule_panel(theme, cx),
             };
@@ -186,8 +189,24 @@ impl RelayApp {
                     .child(detail),
             )
             .on_click(cx.listener(move |this, _, _, cx| {
-                this.configuration.select_section(section);
-                this.status = format!("配置预览 · {label}");
+                let event = match section {
+                    ConfigurationSection::Sources => {
+                        this.configuration.open_source_diagnostics();
+                        "已展开订阅源安全诊断 · 未读取凭据".clone_into(&mut this.status);
+                        UiEvent::SourceDiagnosticsOpened
+                    }
+                    ConfigurationSection::Groups => {
+                        this.configuration.select_section(section);
+                        this.status = format!("配置预览 · {label}");
+                        UiEvent::ConfigurationGroupsOpened
+                    }
+                    ConfigurationSection::Rules => {
+                        this.configuration.select_section(section);
+                        this.status = format!("配置预览 · {label}");
+                        UiEvent::ConfigurationRulesOpened
+                    }
+                };
+                trace_ui(event);
                 cx.notify();
             }))
     }
@@ -234,15 +253,42 @@ impl RelayApp {
             .items_center()
             .child(label)
             .on_click(cx.listener(move |this, _, _, cx| {
-                this.configuration.select_section(section);
-                this.status = format!("配置预览 · {label}");
+                let event = match section {
+                    ConfigurationSection::Sources => {
+                        this.configuration.open_source_diagnostics();
+                        "已展开订阅源安全诊断 · 未读取凭据".clone_into(&mut this.status);
+                        UiEvent::SourceDiagnosticsOpened
+                    }
+                    ConfigurationSection::Groups => {
+                        this.configuration.select_section(section);
+                        this.status = format!("配置预览 · {label}");
+                        UiEvent::ConfigurationGroupsOpened
+                    }
+                    ConfigurationSection::Rules => {
+                        this.configuration.select_section(section);
+                        this.status = format!("配置预览 · {label}");
+                        UiEvent::ConfigurationRulesOpened
+                    }
+                };
+                trace_ui(event);
                 cx.notify();
             }))
     }
 
-    fn source_panel(&self, theme: Theme) -> Div {
+    fn source_panel(&self, theme: Theme, cx: &mut Context<Self>) -> Div {
         let source = self.runtime.profile_source();
-        div()
+        let diagnostics_open = self.configuration.source_diagnostics_open;
+        let panel = div()
+            .id("configuration-source")
+            .role(Role::Button)
+            .aria_label(if diagnostics_open {
+                "收起订阅源安全诊断"
+            } else {
+                "查看订阅源安全诊断"
+            })
+            .tab_stop(true)
+            .focusable()
+            .cursor_pointer()
             .min_h(px(190.0))
             .p_4()
             .rounded_md()
@@ -292,6 +338,9 @@ impl RelayApp {
                     .text_color(theme.text_tertiary)
                     .child("刷新周期 24 小时 · 健康检查 10 分钟"),
             )
+            .when(diagnostics_open, |panel| {
+                panel.child(Self::source_diagnostics(theme, source.label()))
+            })
             .child(
                 div()
                     .mt_2()
@@ -301,8 +350,58 @@ impl RelayApp {
                     .bg(theme.surface_low)
                     .text_size(px(10.0))
                     .text_color(theme.text_secondary)
-                    .child("订阅 URL、token 与本机路径均不显示"),
+                    .child(if diagnostics_open {
+                        "订阅 URL、token 与本机路径均不显示 · 点击收起"
+                    } else {
+                        "订阅 URL、token 与本机路径均不显示 · 点击查看诊断"
+                    }),
             )
+            .on_click(cx.listener(|this, _, _, cx| {
+                let was_open = this.configuration.source_diagnostics_open;
+                this.configuration.toggle_source_diagnostics();
+                if was_open {
+                    "已收起订阅源安全诊断".clone_into(&mut this.status);
+                    trace_ui(UiEvent::SourceDiagnosticsClosed);
+                } else {
+                    "已展开订阅源安全诊断 · 未读取凭据".clone_into(&mut this.status);
+                    trace_ui(UiEvent::SourceDiagnosticsOpened);
+                }
+                cx.notify();
+            }));
+        div().w_full().child(panel)
+    }
+
+    fn source_diagnostics(theme: Theme, source_label: &'static str) -> Div {
+        let mut diagnostics = div()
+            .mt_3()
+            .pt_3()
+            .border_t_1()
+            .border_color(theme.outline_subtle)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(theme.action_primary)
+                    .child(div().size(px(7.0)).rounded_full().bg(theme.action_primary))
+                    .child("安全诊断已展开"),
+            );
+        for detail in [
+            format!("来源模式 · {source_label}"),
+            "凭据状态 · 已隐藏，未进入界面状态".to_owned(),
+            "当前能力 · 只读预览，未启用配置写入".to_owned(),
+            "调试日志 · 仅记录事件名，不记录订阅值".to_owned(),
+        ] {
+            diagnostics = diagnostics.child(
+                div()
+                    .mt_1()
+                    .text_size(px(11.0))
+                    .text_color(theme.text_secondary)
+                    .child(detail),
+            );
+        }
+        diagnostics
     }
 
     fn group_panel(theme: Theme, cx: &mut Context<Self>) -> Div {
@@ -415,6 +514,7 @@ impl RelayApp {
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.configuration
                     .select_section(ConfigurationSection::Groups);
+                trace_ui(UiEvent::PolicyPreviewOpened);
                 this.status = format!("策略组预览 · {name} · 尚未写入 Mihomo");
                 cx.notify();
             }))
@@ -511,6 +611,7 @@ impl RelayApp {
             )
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.configuration.select_rule(index, RULE_COUNT);
+                trace_ui(UiEvent::RulePreviewOpened);
                 this.status = format!("规则 #{:02} → {policy} · 配置预览", index + 1);
                 cx.notify();
             }))

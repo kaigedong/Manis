@@ -64,6 +64,14 @@
 - [completed] 5. 生成原生截图并按 Visual Verdict 完成视觉修正
 - [completed] 6. 完成独立终审、全量验证、敏感信息扫描与 Git 提交
 
+## 订阅源反馈与调试日志修复
+
+- [completed] 1. 复现并定位默认订阅源重复点击无可见反馈
+- [completed] 2. 以 TDD 建立订阅源安全诊断展开/收起状态
+- [completed] 3. 实现可点击订阅卡片与明确的诊断详情
+- [completed] 4. 加入统一脱敏 UI/连接事件日志与运行说明
+- [completed] 5. 完成原生交互截图、视觉门禁、全量验证和 Git 提交
+
 ## 固定约束
 - 实现框架：Rust + GPUI
 - 目标平台：Windows、macOS、Linux

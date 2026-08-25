@@ -32,6 +32,16 @@ RELAY_MIHOMO_SECRET='your-controller-secret' \
 cargo run -p relay-ui
 ```
 
+### 调试交互日志
+
+设置 `RELAY_UI_TRACE=debug` 可在终端输出结构化的界面与连接生命周期事件：
+
+```bash
+RELAY_UI_TRACE=debug cargo run -p relay-ui
+```
+
+日志格式为 `relay_ui ts_ms=... level=DEBUG event=...`。它只记录固定事件名，例如订阅源诊断展开、规则预览和 Mihomo 连接成功/失败；不会记录订阅 URL、token、本机路径、节点名或控制器错误正文。
+
 这一里程碑的标准库 HTTP 传输只允许 `localhost`、IPv4/IPv6 回环地址，避免通过明文网络泄露控制器密钥。macOS/Linux 也可直接连接 Clash Verge Rev 等应用暴露的 Unix socket：
 
 ```bash

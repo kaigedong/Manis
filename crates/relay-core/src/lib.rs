@@ -181,6 +181,7 @@ pub enum ConfigurationSection {
 pub struct ConfigurationWorkspaceState {
     pub section: ConfigurationSection,
     pub selected_rule: usize,
+    pub source_diagnostics_open: bool,
 }
 
 impl ConfigurationWorkspaceState {
@@ -191,6 +192,16 @@ impl ConfigurationWorkspaceState {
     pub fn select_rule(&mut self, index: usize, rule_count: usize) {
         self.selected_rule = index.min(rule_count.saturating_sub(1));
         self.section = ConfigurationSection::Rules;
+    }
+
+    pub fn open_source_diagnostics(&mut self) {
+        self.section = ConfigurationSection::Sources;
+        self.source_diagnostics_open = true;
+    }
+
+    pub fn toggle_source_diagnostics(&mut self) {
+        self.section = ConfigurationSection::Sources;
+        self.source_diagnostics_open = !self.source_diagnostics_open;
     }
 }
 

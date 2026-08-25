@@ -76,3 +76,5 @@
 - 最终响应式形态已完成并通过 Visual Verdict 94/100：中窄屏三段摘要导航控制单一详情，compact rules 点击截图证明规则与紧凑 Route Probe 同屏可见；进入独立终审和发布前验证。
 - 独立终审首轮 disposition 为 `do-not-ship`，唯一 blocking 是 4 个未实现的伪导航入口；已删除这些入口，只保留真实可点击/可聚焦/具辅助名称的“策略组 / 配置”。
 - 导航修正后 Visual Verdict 93/100 `pass`，独立 finish reviewer 最终 disposition `ship`；workspace 59 个常规测试通过、2 个默认 ignored，严格 Clippy、build、fmt、diff check 均通过。
+- 开始修复“订阅源点击无变化”和调试日志不足：TDD 已锁定安全诊断展开/收起状态；订阅源 tab 与卡片开始接入真实可见反馈，新增 `RELAY_UI_TRACE=debug` 固定事件日志，禁止动态敏感字段。
+- 修复完成：订阅源 tab 默认点击会展开安全诊断，订阅卡片可再次收起/展开；原生宽窄点击截图与结构化 trace 已验证，Visual Verdict 94/100。workspace 61 个常规测试通过、2 个默认 ignored，严格 Clippy、build、fmt 与 diff check 全部通过。

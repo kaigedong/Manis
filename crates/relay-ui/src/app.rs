@@ -10,6 +10,7 @@ use relay_mihomo::ObservedRouteEvidence;
 
 use crate::{
     demo,
+    diagnostics::{UiEvent, trace_ui},
     mihomo::{self, ControllerRuntime, ControllerState, LoadedSnapshot},
     theme::Theme,
 };
@@ -101,6 +102,7 @@ impl RelayApp {
             endpoint: endpoint.clone(),
         };
         self.status = format!("正在从 {endpoint} 读取 Mihomo 数据");
+        trace_ui(UiEvent::MihomoConnectStarted);
 
         let executor = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
@@ -109,6 +111,7 @@ impl RelayApp {
                 match result {
                     Ok(result) => this.apply_mihomo_snapshot(result.endpoint, result.snapshot),
                     Err(error) => {
+                        trace_ui(UiEvent::MihomoConnectFailed);
                         let endpoint = this
                             .controller
                             .endpoint()
@@ -131,6 +134,7 @@ impl RelayApp {
     }
 
     fn apply_mihomo_snapshot(&mut self, endpoint: String, snapshot: LoadedSnapshot) {
+        trace_ui(UiEvent::MihomoConnectSucceeded);
         let primary = snapshot.catalog.select(None);
         let group = primary.id.clone();
         let selected_node = primary
@@ -248,8 +252,10 @@ impl RelayApp {
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.dark = !this.dark;
                         if this.dark {
+                            trace_ui(UiEvent::ThemeDarkSelected);
                             "已切换到深色主题"
                         } else {
+                            trace_ui(UiEvent::ThemeLightSelected);
                             "已切换到浅色主题"
                         }
                         .clone_into(&mut this.status);
@@ -294,8 +300,10 @@ impl RelayApp {
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.proxy_enabled = !this.proxy_enabled;
                         if this.proxy_enabled {
+                            trace_ui(UiEvent::SystemProxyEnabled);
                             "演示：系统代理已开启"
                         } else {
+                            trace_ui(UiEvent::SystemProxyDisabled);
                             "演示：系统代理已关闭"
                         }
                         .clone_into(&mut this.status);
@@ -364,8 +372,14 @@ impl RelayApp {
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.primary_workspace = workspace;
                         this.status = match workspace {
-                            PrimaryWorkspace::Policies => "已打开策略组工作区".to_owned(),
-                            PrimaryWorkspace::Configuration => "已打开安全配置预览".to_owned(),
+                            PrimaryWorkspace::Policies => {
+                                trace_ui(UiEvent::WorkspacePoliciesOpened);
+                                "已打开策略组工作区".to_owned()
+                            }
+                            PrimaryWorkspace::Configuration => {
+                                trace_ui(UiEvent::WorkspaceConfigurationOpened);
+                                "已打开安全配置预览".to_owned()
+                            }
                         };
                         cx.notify();
                     }))
@@ -443,6 +457,7 @@ impl RelayApp {
                     .child(div().text_color(theme.text_primary).child(item.target))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.workspace.select_group(item_id.clone());
+                        trace_ui(UiEvent::PolicyPreviewOpened);
                         this.status = format!("已打开策略组“{item_name}”");
                         cx.notify();
                     })),
@@ -633,6 +648,7 @@ impl RelayApp {
             )
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.workspace.select_node(node_id.clone());
+                trace_ui(UiEvent::PolicyPreviewOpened);
                 this.status = format!("已选择 {node_name} · 只读模式未写入 Mihomo");
                 cx.notify();
             }))
@@ -796,6 +812,7 @@ impl RelayApp {
                                     .child("解释路由")
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.inspector_open = true;
+                                        trace_ui(UiEvent::RouteInspectorOpened);
                                         "已打开本地路由预测 · 演示数据"
                                             .clone_into(&mut this.status);
                                         cx.notify();
@@ -915,6 +932,7 @@ impl RelayApp {
                                         .child("关闭")
                                         .on_click(cx.listener(|this, _, _, cx| {
                                             this.inspector_open = false;
+                                            trace_ui(UiEvent::RouteInspectorClosed);
                                             cx.notify();
                                         })),
                                 )
@@ -943,6 +961,7 @@ impl RelayApp {
                                     .items_center()
                                     .child("预测路由")
                                     .on_click(cx.listener(move |this, _, _, cx| {
+                                        trace_ui(UiEvent::RoutePredictionRequested);
                                         this.status = format!("已预测 {domain}：{} → {}", this.selected_policy().name, this.selected_node().name);
                                         cx.notify();
                                     })),

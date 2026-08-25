@@ -39,7 +39,17 @@ fn capture_configuration(
     refresh(cx, window)?;
     save_screenshot(cx, window, file_name)?;
 
+    if width >= 1_280.0 {
+        cx.simulate_click(window, point(px(275.0), px(145.0)), Modifiers::none());
+        refresh(cx, window)?;
+        save_screenshot(cx, window, "configuration-wide-source-diagnostics.png")?;
+    }
+
     if (width - 720.0).abs() < f32::EPSILON {
+        cx.simulate_click(window, point(px(180.0), px(145.0)), Modifiers::none());
+        refresh(cx, window)?;
+        save_screenshot(cx, window, "configuration-compact-source-diagnostics.png")?;
+
         cx.simulate_click(window, point(px(548.0), px(145.0)), Modifiers::none());
         refresh(cx, window)?;
         save_screenshot(cx, window, "configuration-compact-rules.png")?;
