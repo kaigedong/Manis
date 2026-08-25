@@ -148,3 +148,18 @@
 - 安全复核为 LOW：0 个 Critical/High/Medium；已将误导性的 `ReadonlyTransport` 重命名为 `ControllerTransport`，并把 Selector 类型校验收紧为 ASCII 大小写不敏感的精确匹配。
 - 全仓验证通过：118 passed、5 ignored；workspace 全目标 Clippy `-D warnings` 通过；对正在运行的 Clash Verge Unix controller 只读 smoke test 通过。
 - Git 提交 `d0dc12f feat(ui): add strategy group controls` 已创建；Relay 已换成新构建进程 PID 13356，Clash Verge 与 verge-mihomo PID 19351/19379 保持未动。
+
+# 2026-08-25 全分组统一测速
+
+- 已启用 planning-with-files-zh、Impeccable harden、rust-testing 与 rust-patterns；锁定 Operate 模式下的统一图标、状态反馈和防重入边界。
+- 当前工作树从提交 `0e1ee1d` 干净开始；进入三类分组的本地架构映射。
+- 两个 Explorer 都因 Spark 用量上限失败且没有修改文件；已切换到本地映射，不重试同一失败路径。
+- 已确认可复用的核心是 `NodeGroupBenchmarkState` + `ControllerRuntime::test_node_group_delay`；主策略的现有测速按钮是伪交互，导入来源头部尚无测速动作。
+- 官方 API 证据确认 group delay 会清除自动组 fixed 选择；实现将在测速后重读组 `now`，不发送人工 PUT。
+- TDD RED 已确认：`PolicyCatalog` 尚不能原地应用组延迟/新出口，`ControllerRuntime` 也尚无 group delay 后重读自动 winner 的 API；失败正好命中新契约。
+- TDD GREEN：`PolicyCatalog::apply_group_benchmark` 会更新延迟/健康和合法当前出口；`ControllerRuntime::test_policy_group_delay` 对 HTTP/Unix 执行 group delay 后重读 `now`。
+- 三类分组已全部接入统一前置测速图标与四态反馈；来源组测速不会触发折叠，自动策略测速不会执行人工选择。
+- 严格 Clippy 首轮发现两处声明式视图体积、一处参数数量和两个小型风格问题；已通过提取策略状态文案、缩减 row 参数和窄范围视图豁免修复，复跑通过。
+- 全 workspace 测试通过：124 passed、5 ignored；fmt、严格 Clippy、diff check、私有订阅域名/token 扫描以及真实 Clash Verge Unix controller 只读 smoke test全部通过。
+- 原生宽屏/紧凑截图已生成，Visual Verdict 94/100 `pass`；当前仅剩提交与只重启 Relay UI。
+- Git 提交 `feat(ui): unify group speed tests` 已创建；仅停止旧 Relay UI PID 19410，并以相同 Unix controller 启动新 PID 25096。Clash Verge PID 14173 与 verge-mihomo PID 14201 保持运行且未被停止或修改。

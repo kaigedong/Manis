@@ -198,6 +198,42 @@ impl PolicyCatalog {
         id.and_then(|id| self.iter().find(|group| group.id == *id))
             .unwrap_or(&self.primary)
     }
+
+    /// Applies fresh delay measurements and the runtime-selected winner to one group.
+    ///
+    /// Returns `false` when the group no longer exists. An unknown winner is ignored so a stale
+    /// or malformed controller response cannot point the UI outside the group's candidates.
+    pub fn apply_group_benchmark(
+        &mut self,
+        id: &PolicyGroupId,
+        current: Option<&str>,
+        delays: &BTreeMap<String, u16>,
+    ) -> bool {
+        let Some(group) = std::iter::once(&mut self.primary)
+            .chain(&mut self.remaining)
+            .find(|group| group.id == *id)
+        else {
+            return false;
+        };
+        if let Some(current) =
+            current.filter(|current| group.nodes.iter().any(|node| node.name == *current))
+        {
+            current.clone_into(&mut group.target);
+        }
+        for node in &mut group.nodes {
+            let Some(delay) = delays.get(&node.name).copied() else {
+                continue;
+            };
+            if delay == 0 {
+                node.latency_ms = None;
+                node.alive = Some(false);
+            } else {
+                node.latency_ms = Some(delay);
+                node.alive = Some(true);
+            }
+        }
+        true
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

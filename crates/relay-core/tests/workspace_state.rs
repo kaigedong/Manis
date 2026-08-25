@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use relay_core::{
     CompactNavigation, ConfigurationSection, ConfigurationWorkspaceState, EmptyPolicyCatalog,
     NodeAvailabilityFilter, NodeGroupIcon, NodeGroupMatcher, NodeGroupStrategy, NodeIdentity,
@@ -133,6 +135,52 @@ fn policy_catalog_requires_a_group_and_preserves_runtime_data() -> Result<(), Em
     assert_eq!(selected.rules[0].hit_count, Some(9));
     assert_eq!(catalog.iter().count(), 1);
     assert_eq!(PolicyCatalog::try_new(Vec::new()), Err(EmptyPolicyCatalog));
+    Ok(())
+}
+
+#[test]
+fn policy_catalog_applies_fresh_group_delays_and_automatic_winner() -> Result<(), EmptyPolicyCatalog>
+{
+    let group = PolicyGroup {
+        id: PolicyGroupId::new("auto-hk"),
+        name: "我的香港优选".to_owned(),
+        kind: PolicyGroupKind::UrlTest,
+        target: "HK-01".to_owned(),
+        nodes: vec![
+            PolicyNode {
+                id: ProxyId::new("HK-01"),
+                name: "HK-01".to_owned(),
+                kind: PolicyCandidateKind::Node,
+                provider: None,
+                detail: "VLESS".to_owned(),
+                latency_ms: Some(80),
+                alive: Some(true),
+            },
+            PolicyNode {
+                id: ProxyId::new("HK-02"),
+                name: "HK-02".to_owned(),
+                kind: PolicyCandidateKind::Node,
+                provider: None,
+                detail: "VLESS".to_owned(),
+                latency_ms: None,
+                alive: None,
+            },
+        ],
+        rules: Vec::new(),
+        rules_total: 0,
+    };
+    let mut catalog = PolicyCatalog::try_new(vec![group])?;
+    let delays = BTreeMap::from([("HK-01".to_owned(), 0), ("HK-02".to_owned(), 31)]);
+
+    assert!(catalog.apply_group_benchmark(&PolicyGroupId::new("auto-hk"), Some("HK-02"), &delays,));
+
+    let selected = catalog.select(Some(&PolicyGroupId::new("auto-hk")));
+    assert_eq!(selected.target, "HK-02");
+    assert_eq!(selected.nodes[0].latency_ms, None);
+    assert_eq!(selected.nodes[0].alive, Some(false));
+    assert_eq!(selected.nodes[1].latency_ms, Some(31));
+    assert_eq!(selected.nodes[1].alive, Some(true));
+    assert!(!catalog.apply_group_benchmark(&PolicyGroupId::new("missing"), None, &delays,));
     Ok(())
 }
 

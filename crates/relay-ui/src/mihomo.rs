@@ -137,6 +137,12 @@ pub(crate) struct NodeGroupRuntimeSnapshot {
     pub candidates: BTreeSet<String>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct PolicyGroupBenchmarkSnapshot {
+    pub delays: BTreeMap<String, u16>,
+    pub current: Option<String>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum GeneratedProfileApply {
     NotManaged,
@@ -309,6 +315,31 @@ impl ControllerRuntime {
         }
 
         fetch_proxy_delays_bounded(&endpoint, candidate_names)
+    }
+
+    pub(crate) fn test_policy_group_delay(
+        &self,
+        group_name: &str,
+    ) -> Result<PolicyGroupBenchmarkSnapshot, LoadError> {
+        let endpoint = match self {
+            Self::External { endpoint } => endpoint.clone(),
+            Self::Managed { manager, .. } => {
+                let endpoint = {
+                    let mut manager = manager.lock().map_err(|_poisoned| {
+                        LoadError::Runtime("托管内核状态锁已损坏".to_owned())
+                    })?;
+                    match manager.running_endpoint()? {
+                        Some(endpoint) => endpoint,
+                        None => manager.start()?,
+                    }
+                };
+                endpoint.uri()
+            }
+            Self::Invalid { message } => return Err(LoadError::Runtime(message.clone())),
+        };
+        let delays = fetch_group_delay(&endpoint, group_name)?;
+        let current = fetch_policy_group(&endpoint, group_name)?.current;
+        Ok(PolicyGroupBenchmarkSnapshot { delays, current })
     }
 
     pub(crate) fn load_node_group_runtime(
@@ -3052,6 +3083,43 @@ mod tests {
         server.join().map_err(|_| "fixture server panicked")??;
         assert_eq!(delays.get("Working Node"), Some(&64));
         assert!(!delays.contains_key("Offline Node"));
+        Ok(())
+    }
+
+    #[test]
+    fn runtime_policy_benchmark_uses_group_delay_then_reads_automatic_winner()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let endpoint = format!("http://{}", listener.local_addr()?);
+        let server = std::thread::spawn(move || -> std::io::Result<Vec<String>> {
+            let mut requests = Vec::new();
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept()?;
+                let mut request_line = String::new();
+                BufReader::new(stream.try_clone()?).read_line(&mut request_line)?;
+                let body = if request_line.contains("/group/Auto%20HK/delay?") {
+                    r#"{"HK-01":68,"HK-02":29}"#
+                } else {
+                    r#"{"name":"Auto HK","type":"URLTest","now":"HK-02","all":["HK-01","HK-02"]}"#
+                };
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                stream.write_all(response.as_bytes())?;
+                requests.push(request_line);
+            }
+            Ok(requests)
+        });
+        let runtime = super::ControllerRuntime::External { endpoint };
+
+        let result = runtime.test_policy_group_delay("Auto HK")?;
+        let requests = server.join().map_err(|_| "fixture server panicked")??;
+
+        assert!(requests[0].contains("GET /group/Auto%20HK/delay?"));
+        assert!(requests[1].contains("GET /proxies/Auto%20HK HTTP/1.1"));
+        assert_eq!(result.current.as_deref(), Some("HK-02"));
+        assert_eq!(result.delays.get("HK-02"), Some(&29));
         Ok(())
     }
 

@@ -138,7 +138,7 @@ struct NodeGroupDraft {
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-struct NodeGroupBenchmarkSummary {
+struct GroupBenchmarkSummary {
     total: usize,
     succeeded: usize,
     failed: usize,
@@ -147,9 +147,12 @@ struct NodeGroupBenchmarkSummary {
     average_ms: Option<u16>,
 }
 
-impl NodeGroupBenchmarkSummary {
+impl GroupBenchmarkSummary {
     fn from_delays(total: usize, delays: impl IntoIterator<Item = u16>) -> Self {
-        let delays = delays.into_iter().collect::<Vec<_>>();
+        let delays = delays
+            .into_iter()
+            .filter(|delay| *delay > 0)
+            .collect::<Vec<_>>();
         let succeeded = delays.len().min(total);
         let sum = delays.iter().map(|delay| u64::from(*delay)).sum::<u64>();
         let divisor = u64::try_from(delays.len()).unwrap_or(1);
@@ -168,7 +171,7 @@ impl NodeGroupBenchmarkSummary {
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-enum NodeGroupBenchmarkState {
+enum GroupBenchmarkState {
     #[default]
     Idle,
     Running {
@@ -176,7 +179,7 @@ enum NodeGroupBenchmarkState {
     },
     Complete {
         generation: u64,
-        summary: NodeGroupBenchmarkSummary,
+        summary: GroupBenchmarkSummary,
         delays: BTreeMap<String, u16>,
     },
     Failed {
@@ -184,7 +187,7 @@ enum NodeGroupBenchmarkState {
     },
 }
 
-impl NodeGroupBenchmarkState {
+impl GroupBenchmarkState {
     fn is_running(&self) -> bool {
         matches!(self, Self::Running { .. })
     }
@@ -193,7 +196,7 @@ impl NodeGroupBenchmarkState {
         if !matches!(self, Self::Running { generation: current } if *current == generation) {
             return false;
         }
-        let summary = NodeGroupBenchmarkSummary::from_delays(total, delays.values().copied());
+        let summary = GroupBenchmarkSummary::from_delays(total, delays.values().copied());
         *self = Self::Complete {
             generation,
             summary,
@@ -313,9 +316,9 @@ pub struct RelayApp {
     saved_vless_nodes: Vec<StoredVlessNode>,
     node_policy_groups: Vec<NodePolicyGroup>,
     node_group_draft: Option<NodeGroupDraft>,
-    node_group_benchmarks: BTreeMap<String, NodeGroupBenchmarkState>,
-    node_group_benchmark_generation: u64,
-    node_group_benchmark_active_generation: Option<u64>,
+    group_benchmarks: BTreeMap<String, GroupBenchmarkState>,
+    group_benchmark_generation: u64,
+    group_benchmark_active_generation: Option<u64>,
     selected_node_group_id: Option<String>,
     node_group_runtime_states: BTreeMap<String, NodeGroupRuntimeState>,
     node_group_runtime_generation: u64,
@@ -450,9 +453,9 @@ impl RelayApp {
             saved_vless_nodes,
             node_policy_groups,
             node_group_draft: None,
-            node_group_benchmarks: BTreeMap::new(),
-            node_group_benchmark_generation: 0,
-            node_group_benchmark_active_generation: None,
+            group_benchmarks: BTreeMap::new(),
+            group_benchmark_generation: 0,
+            group_benchmark_active_generation: None,
             selected_node_group_id: None,
             node_group_runtime_states: BTreeMap::new(),
             node_group_runtime_generation: 0,
@@ -789,6 +792,98 @@ impl RelayApp {
         self.catalog.select(self.workspace.selected_group.as_ref())
     }
 
+    fn source_group_benchmark_key(id: &str) -> String {
+        format!("source:{id}")
+    }
+
+    fn user_group_benchmark_key(id: &str) -> String {
+        format!("user:{id}")
+    }
+
+    fn policy_group_benchmark_key(id: &relay_core::PolicyGroupId) -> String {
+        format!("policy:{}", id.as_str())
+    }
+
+    fn begin_group_benchmark(&mut self, key: String) -> Option<u64> {
+        if self.group_benchmark_active_generation.is_some() {
+            return None;
+        }
+        self.group_benchmark_generation = self.group_benchmark_generation.wrapping_add(1);
+        let generation = self.group_benchmark_generation;
+        self.group_benchmarks
+            .insert(key, GroupBenchmarkState::Running { generation });
+        self.group_benchmark_active_generation = Some(generation);
+        Some(generation)
+    }
+
+    fn group_benchmark_icon(
+        id: &str,
+        running: bool,
+        theme: Theme,
+        listener: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
+    ) -> Stateful<Div> {
+        let bar_color = if running {
+            theme.text_tertiary
+        } else {
+            theme.action_primary
+        };
+        div()
+            .id(format!("group-benchmark-{id}"))
+            .role(Role::Button)
+            .aria_label(if running {
+                "分组测速中"
+            } else {
+                "测试该分组延迟"
+            })
+            .tab_stop(!running)
+            .focusable()
+            .size(px(30.0))
+            .flex_shrink_0()
+            .rounded_md()
+            .border_1()
+            .border_color(if running {
+                theme.outline_subtle
+            } else {
+                theme.action_primary
+            })
+            .bg(if running {
+                theme.surface_low
+            } else {
+                theme.action_soft
+            })
+            .flex()
+            .items_end()
+            .justify_center()
+            .gap(px(2.0))
+            .pb(px(7.0))
+            .child(div().w(px(2.0)).h(px(5.0)).rounded_full().bg(bar_color))
+            .child(div().w(px(2.0)).h(px(9.0)).rounded_full().bg(bar_color))
+            .child(div().w(px(2.0)).h(px(13.0)).rounded_full().bg(bar_color))
+            .when(!running, gpui::Styled::cursor_pointer)
+            .on_click(listener)
+    }
+
+    fn policy_benchmark_status(
+        kind: relay_core::PolicyGroupKind,
+        current: Option<&str>,
+        summary: GroupBenchmarkSummary,
+    ) -> String {
+        match (kind.is_automatic(), current) {
+            (true, Some(current)) => format!(
+                "策略组测速完成：{}/{} 成功 · Mihomo 当前优选 {current}",
+                summary.succeeded, summary.total
+            ),
+            (true, None) => format!(
+                "策略组测速完成：{}/{} 成功 · 该策略没有单一固定出口",
+                summary.succeeded, summary.total
+            ),
+            (false, _) => format!(
+                "策略组测速完成：{}/{} 个候选项成功",
+                summary.succeeded, summary.total
+            ),
+        }
+    }
+
     fn selected_node(&self) -> PolicyNode {
         let policy = self.selected_policy();
         let selected = if policy.kind.allows_manual_selection() {
@@ -900,6 +995,109 @@ impl RelayApp {
             download_total: snapshot.download_total,
             upload_total: snapshot.upload_total,
         };
+    }
+
+    fn start_policy_group_benchmark(
+        &mut self,
+        id: &relay_core::PolicyGroupId,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(group) = self.catalog.iter().find(|group| group.id == *id).cloned() else {
+            return;
+        };
+        let key = Self::policy_group_benchmark_key(&group.id);
+        if matches!(
+            self.group_benchmarks.get(&key),
+            Some(GroupBenchmarkState::Running { .. })
+        ) {
+            return;
+        }
+        let candidate_names = group
+            .nodes
+            .iter()
+            .map(|node| node.name.clone())
+            .collect::<Vec<_>>();
+        if candidate_names.is_empty() {
+            "当前策略组没有可测速候选项".clone_into(&mut self.status);
+            cx.notify();
+            return;
+        }
+        let Some(generation) = self.begin_group_benchmark(key.clone()) else {
+            "已有分组正在测速，请等待完成后再试".clone_into(&mut self.status);
+            cx.notify();
+            return;
+        };
+        self.status = format!(
+            "正在测试策略组“{}”的 {} 个候选项",
+            group.name,
+            candidate_names.len()
+        );
+        trace_ui(UiEvent::GroupBenchmarkStarted);
+
+        let runtime = self.runtime.clone();
+        let group_id = group.id.clone();
+        let group_name = group.name.clone();
+        let group_kind = group.kind;
+        let total = candidate_names.len();
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let result = executor
+                .spawn(async move {
+                    if group_kind == relay_core::PolicyGroupKind::Direct {
+                        runtime
+                            .test_node_group_delay(&group_name, &candidate_names)
+                            .map(|delays| mihomo::PolicyGroupBenchmarkSnapshot {
+                                delays,
+                                current: None,
+                            })
+                    } else {
+                        runtime.test_policy_group_delay(&group_name)
+                    }
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                if this.group_benchmark_active_generation != Some(generation) {
+                    return;
+                }
+                this.group_benchmark_active_generation = None;
+                let (delays, current) = match result {
+                    Ok(snapshot) => (Some(snapshot.delays), snapshot.current),
+                    Err(_error) => (None, None),
+                };
+                if let Some(delays) = delays.as_ref() {
+                    this.catalog
+                        .apply_group_benchmark(&group_id, current.as_deref(), delays);
+                }
+                let Some(state) = this.group_benchmarks.get_mut(&key) else {
+                    cx.notify();
+                    return;
+                };
+                let accepted = match delays {
+                    Some(delays) => state.complete(generation, total, delays),
+                    None => state.fail(generation),
+                };
+                if !accepted {
+                    return;
+                }
+                match state {
+                    GroupBenchmarkState::Complete { summary, .. } => {
+                        trace_ui(UiEvent::GroupBenchmarkSucceeded);
+                        this.status =
+                            Self::policy_benchmark_status(group_kind, current.as_deref(), *summary);
+                    }
+                    GroupBenchmarkState::Failed { .. } => {
+                        trace_ui(UiEvent::GroupBenchmarkFailed);
+                        "策略组测速失败，请检查 Mihomo 连接与网络后重试"
+                            .clone_into(&mut this.status);
+                    }
+                    _ => return,
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
     }
 
     fn start_live_runtime(&mut self, endpoint: &str, cx: &mut Context<Self>) {
@@ -1373,6 +1571,12 @@ impl RelayApp {
             let selected = self.workspace.selected_group.as_ref() == Some(&item.id);
             let item_id = item.id.clone();
             let item_name = item.name.clone();
+            let benchmark_id = item.id.clone();
+            let benchmark_key = Self::policy_group_benchmark_key(&item.id);
+            let benchmarking = self
+                .group_benchmarks
+                .get(&benchmark_key)
+                .is_some_and(GroupBenchmarkState::is_running);
             rows = rows.child(
                 div()
                     .id(format!("policy-{}", item.id.as_str()))
@@ -1402,6 +1606,17 @@ impl RelayApp {
                     } else {
                         theme.outline_strong
                     }))
+                    .child(Self::group_benchmark_icon(
+                        &benchmark_key,
+                        benchmarking,
+                        theme,
+                        cx.listener(move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            if !benchmarking {
+                                this.start_policy_group_benchmark(&benchmark_id, cx);
+                            }
+                        }),
+                    ))
                     .child(
                         div()
                             .flex_1()
@@ -1681,6 +1896,12 @@ impl RelayApp {
         let selected_policy = self.selected_policy().clone();
         let selected_node = self.selected_node();
         let manually_selectable = selected_policy.kind.allows_manual_selection();
+        let benchmark_id = selected_policy.id.clone();
+        let benchmark_key = Self::policy_group_benchmark_key(&selected_policy.id);
+        let benchmarking = self
+            .group_benchmarks
+            .get(&benchmark_key)
+            .is_some_and(GroupBenchmarkState::is_running);
         let guidance = match selected_policy.kind {
             relay_core::PolicyGroupKind::Selector => "选择此策略当前使用的出口",
             relay_core::PolicyGroupKind::UrlTest => {
@@ -1859,7 +2080,18 @@ impl RelayApp {
                                         ),
                                     )),
                             )
-                            .child(Self::small_button("latency-test", "测速", theme))
+                            .when(compact, |header| {
+                                header.child(Self::group_benchmark_icon(
+                                    &benchmark_key,
+                                    benchmarking,
+                                    theme,
+                                    cx.listener(move |this, _, _, cx| {
+                                        if !benchmarking {
+                                            this.start_policy_group_benchmark(&benchmark_id, cx);
+                                        }
+                                    }),
+                                ))
+                            })
                             .child(
                                 div()
                                     .id("open-inspector")

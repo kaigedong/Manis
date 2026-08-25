@@ -125,6 +125,15 @@
 - [completed] 5. 完成真实 controller/托管 fixture 验证、原生截图与 Visual Verdict
 - [completed] 6. 完成安全复核、全仓验证、Git 提交和 Relay 重启
 
+## 全分组统一测速交互
+
+- [completed] 1. 映射导入来源分组、用户节点分组、运行策略组的现有状态与 Mihomo API 边界
+- [completed] 2. 以 TDD 建立统一分组测速状态、过期结果隔离和自动策略最优出口刷新契约
+- [completed] 3. 复用 HTTP/Unix 延迟服务，让三类分组共享同一发起、运行、成功和失败行为
+- [completed] 4. 在所有分组标题前接入同一测速图标，自动策略测速后刷新 Mihomo 当前出口
+- [completed] 5. 生成宽屏/紧凑原生截图并通过 Visual Verdict
+- [completed] 6. 完成全仓验证、Git 提交和仅 Relay UI 重启
+
 ## 固定约束
 - 实现框架：Rust + GPUI
 - 目标平台：Windows、macOS、Linux
@@ -156,3 +165,5 @@
 | `relay-ui` RED 测试撞上 profile 执行代理的中间编辑窗口 | 1 | 不重试并发编译；等待其完成独占文件后再运行，避免误判共享工作树中的暂态错误 |
 | 策略组详情首轮 TDD 缺少 runtime 状态和逐节点测速映射 | 1 | 预期红灯；确认失败点正好覆盖新状态类型、完成签名和 delays 字段，进入最小实现 |
 | 逐节点测速返回类型改为 map 后托管过滤仍丢弃节点名 | 1 | 编译器指出 iterator item 仍是 `u16`；改为保留 `(name, delay)` 对后 collect |
+| 两个测速代码映射 explorer 同时命中 Spark 用量上限 | 1 | 不重试该模型；改用主代理本地 `rg`/定向读取，必要时使用非 Spark 专项角色 |
+| 新 `PolicyCatalog` RED 测试首轮遗漏 `BTreeMap` import | 1 | 先补测试文件标准库 import；保留缺少生产 API 的预期红灯 |

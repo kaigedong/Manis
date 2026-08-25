@@ -7,10 +7,11 @@ use relay_core::{
 };
 
 use super::{
-    ImportedSubscriptionState, NodeGroupBenchmarkState, NodeGroupDraft, NodeGroupMatcherKind,
+    GroupBenchmarkState, ImportedSubscriptionState, NodeGroupDraft, NodeGroupMatcherKind,
     NodeGroupRuntimeState, RelayApp, SourceRuntimeApply,
 };
 use crate::{
+    diagnostics::{UiEvent, trace_ui},
     mihomo::{self, LoadedProvider, LoadedProviderNode},
     subscription::SourceNodePreview,
     theme::Theme,
@@ -449,8 +450,8 @@ impl RelayApp {
     ) -> Div {
         let matched = self.node_group_match_count(group);
         let benchmark = self
-            .node_group_benchmarks
-            .get(&group.id)
+            .group_benchmarks
+            .get(&Self::user_group_benchmark_key(&group.id))
             .cloned()
             .unwrap_or_default();
         let benchmarking = benchmark.is_running();
@@ -488,6 +489,16 @@ impl RelayApp {
                     .flex()
                     .items_center()
                     .gap_3()
+                    .child(Self::group_benchmark_icon(
+                        &Self::user_group_benchmark_key(&group.id),
+                        benchmarking,
+                        theme,
+                        cx.listener(move |this, _, _, cx| {
+                            if !benchmarking {
+                                this.start_node_group_benchmark(&benchmark_id, cx);
+                            }
+                        }),
+                    ))
                     .child(Self::node_group_icon_badge(group.icon, theme))
                     .child(
                         div()
@@ -518,16 +529,6 @@ impl RelayApp {
                     .flex()
                     .flex_wrap()
                     .gap_2()
-                    .child(Self::node_group_benchmark_button(
-                        &group.id,
-                        benchmarking,
-                        theme,
-                        cx.listener(move |this, _, _, cx| {
-                            if !benchmarking {
-                                this.start_node_group_benchmark(&benchmark_id, cx);
-                            }
-                        }),
-                    ))
                     .child(Self::node_group_text_button(
                         format!("node-group-detail-{detail_id}"),
                         if selected {
@@ -573,8 +574,8 @@ impl RelayApp {
             .cloned()
             .unwrap_or_default();
         let benchmark = self
-            .node_group_benchmarks
-            .get(&group.id)
+            .group_benchmarks
+            .get(&Self::user_group_benchmark_key(&group.id))
             .cloned()
             .unwrap_or_default();
         let close_id = group.id.clone();
@@ -751,7 +752,7 @@ impl RelayApp {
         group: &NodePolicyGroup,
         member: NodeGroupMemberView,
         runtime_state: &NodeGroupRuntimeState,
-        benchmark: &NodeGroupBenchmarkState,
+        benchmark: &GroupBenchmarkState,
         compact: bool,
         managed: bool,
         theme: Theme,
@@ -777,10 +778,13 @@ impl RelayApp {
             )
             && !is_current;
         let delay = match benchmark {
-            NodeGroupBenchmarkState::Complete { delays, .. } => delays
-                .get(&member.identity.node_name)
-                .map(|delay| format!("{delay} ms"))
-                .or(member.latency_label.clone()),
+            GroupBenchmarkState::Complete { delays, .. } => {
+                match delays.get(&member.identity.node_name).copied() {
+                    Some(0) => Some("失败".to_owned()),
+                    Some(delay) => Some(format!("{delay} ms")),
+                    None => member.latency_label.clone(),
+                }
+            }
             _ => member.latency_label.clone(),
         }
         .unwrap_or_else(|| "未测速".to_owned());
@@ -891,16 +895,16 @@ impl RelayApp {
     }
 
     fn node_group_benchmark_status(
-        state: &NodeGroupBenchmarkState,
+        state: &GroupBenchmarkState,
         matched: usize,
         theme: Theme,
     ) -> Div {
         let (label, color) = match state {
-            NodeGroupBenchmarkState::Idle => ("尚未测速".to_owned(), theme.text_tertiary),
-            NodeGroupBenchmarkState::Running { .. } => {
+            GroupBenchmarkState::Idle => ("尚未测速".to_owned(), theme.text_tertiary),
+            GroupBenchmarkState::Running { .. } => {
                 (format!("正在测试 {matched} 个节点…"), theme.action_primary)
             }
-            NodeGroupBenchmarkState::Complete { summary, .. } => {
+            GroupBenchmarkState::Complete { summary, .. } => {
                 let label = match (summary.average_ms, summary.minimum_ms, summary.maximum_ms) {
                     (Some(average), Some(minimum), Some(maximum)) => format!(
                         "平均 {average} ms · 最低 {minimum} ms · 最高 {maximum} ms · {}/{} 成功",
@@ -910,7 +914,7 @@ impl RelayApp {
                 };
                 (label, theme.status_success)
             }
-            NodeGroupBenchmarkState::Failed { .. } => (
+            GroupBenchmarkState::Failed { .. } => (
                 "测速失败 · 请检查 Mihomo 连接与网络后重试".to_owned(),
                 theme.route_trace,
             ),
@@ -923,50 +927,6 @@ impl RelayApp {
             .text_size(px(11.0))
             .text_color(color)
             .child(label)
-    }
-
-    fn node_group_benchmark_button(
-        id: &str,
-        running: bool,
-        theme: Theme,
-        listener: impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
-    ) -> Stateful<Div> {
-        let label = if running { "测速中…" } else { "测速" };
-        div()
-            .id(format!("node-group-benchmark-{id}"))
-            .role(Role::Button)
-            .aria_label(if running {
-                "分组测速中"
-            } else {
-                "测试分组延迟"
-            })
-            .tab_stop(!running)
-            .focusable()
-            .cursor_pointer()
-            .h(px(32.0))
-            .px_3()
-            .rounded_md()
-            .border_1()
-            .border_color(if running {
-                theme.outline_subtle
-            } else {
-                theme.action_primary
-            })
-            .bg(if running {
-                theme.surface_low
-            } else {
-                theme.action_soft
-            })
-            .text_color(if running {
-                theme.text_tertiary
-            } else {
-                theme.action_primary
-            })
-            .font_weight(FontWeight::SEMIBOLD)
-            .flex()
-            .items_center()
-            .child(label)
-            .on_click(listener)
     }
 
     fn node_group_icon_badge(icon: NodeGroupIcon, theme: Theme) -> Div {
@@ -1711,6 +1671,93 @@ impl RelayApp {
         cx.notify();
     }
 
+    fn start_source_group_benchmark(
+        &mut self,
+        id: &str,
+        name: &str,
+        candidate_names: Vec<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let key = Self::source_group_benchmark_key(id);
+        if matches!(
+            self.group_benchmarks.get(&key),
+            Some(GroupBenchmarkState::Running { .. })
+        ) {
+            return;
+        }
+        if candidate_names.is_empty() {
+            "当前导入分组没有可测速节点".clone_into(&mut self.status);
+            cx.notify();
+            return;
+        }
+        if candidate_names.len() > MAX_GROUP_BENCHMARK_NODES {
+            format!(
+                "分组包含 {} 个节点，单次最多测试 {} 个",
+                candidate_names.len(),
+                MAX_GROUP_BENCHMARK_NODES
+            )
+            .clone_into(&mut self.status);
+            cx.notify();
+            return;
+        }
+        let Some(generation) = self.begin_group_benchmark(key.clone()) else {
+            "已有分组正在测速，请等待完成后再试".clone_into(&mut self.status);
+            cx.notify();
+            return;
+        };
+        self.status = format!(
+            "正在测试导入分组“{name}”的 {} 个节点",
+            candidate_names.len()
+        );
+        trace_ui(UiEvent::GroupBenchmarkStarted);
+
+        let runtime = self.runtime.clone();
+        let group_name = name.to_owned();
+        let total = candidate_names.len();
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let result = executor
+                .spawn(async move { runtime.test_node_group_delay(&group_name, &candidate_names) })
+                .await;
+            this.update(cx, |this, cx| {
+                if this.group_benchmark_active_generation != Some(generation) {
+                    return;
+                }
+                this.group_benchmark_active_generation = None;
+                let Some(state) = this.group_benchmarks.get_mut(&key) else {
+                    cx.notify();
+                    return;
+                };
+                let accepted = match result {
+                    Ok(delays) => state.complete(generation, total, delays),
+                    Err(_error) => state.fail(generation),
+                };
+                if !accepted {
+                    return;
+                }
+                match state {
+                    GroupBenchmarkState::Complete { summary, .. } => {
+                        trace_ui(UiEvent::GroupBenchmarkSucceeded);
+                        this.status = format!(
+                            "导入分组测速完成：{}/{} 个节点成功",
+                            summary.succeeded, summary.total
+                        );
+                    }
+                    GroupBenchmarkState::Failed { .. } => {
+                        trace_ui(UiEvent::GroupBenchmarkFailed);
+                        "导入分组测速失败，请检查 Mihomo 连接与网络后重试"
+                            .clone_into(&mut this.status);
+                    }
+                    _ => return,
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
     #[allow(clippy::too_many_lines)]
     fn start_node_group_benchmark(&mut self, id: &str, cx: &mut Context<Self>) {
         let Some(group) = self
@@ -1722,12 +1769,13 @@ impl RelayApp {
             return;
         };
         if matches!(
-            self.node_group_benchmarks.get(id),
-            Some(NodeGroupBenchmarkState::Running { .. })
+            self.group_benchmarks
+                .get(&Self::user_group_benchmark_key(id)),
+            Some(GroupBenchmarkState::Running { .. })
         ) {
             return;
         }
-        if self.node_group_benchmark_active_generation.is_some() {
+        if self.group_benchmark_active_generation.is_some() {
             "已有分组正在测速，请等待完成后再试".clone_into(&mut self.status);
             cx.notify();
             return;
@@ -1749,18 +1797,18 @@ impl RelayApp {
             return;
         }
 
-        self.node_group_benchmark_generation = self.node_group_benchmark_generation.wrapping_add(1);
-        let generation = self.node_group_benchmark_generation;
-        self.node_group_benchmarks.insert(
-            group.id.clone(),
-            NodeGroupBenchmarkState::Running { generation },
-        );
-        self.node_group_benchmark_active_generation = Some(generation);
+        let benchmark_key = Self::user_group_benchmark_key(&group.id);
+        let Some(generation) = self.begin_group_benchmark(benchmark_key.clone()) else {
+            "已有分组正在测速，请等待完成后再试".clone_into(&mut self.status);
+            cx.notify();
+            return;
+        };
         self.status = format!(
             "正在测试分组“{}”的 {} 个节点",
             group.name,
             candidate_names.len()
         );
+        trace_ui(UiEvent::GroupBenchmarkStarted);
 
         let runtime = self.runtime.clone();
         let group_id = group.id.clone();
@@ -1774,10 +1822,10 @@ impl RelayApp {
                 .spawn(async move { runtime.test_node_group_delay(&group_name, &candidate_names) })
                 .await;
             this.update(cx, |this, cx| {
-                if this.node_group_benchmark_active_generation != Some(generation) {
+                if this.group_benchmark_active_generation != Some(generation) {
                     return;
                 }
-                this.node_group_benchmark_active_generation = None;
+                this.group_benchmark_active_generation = None;
                 if !this
                     .node_policy_groups
                     .iter()
@@ -1787,7 +1835,7 @@ impl RelayApp {
                     return;
                 }
                 let (accepted, succeeded) = {
-                    let Some(state) = this.node_group_benchmarks.get_mut(&group_id) else {
+                    let Some(state) = this.group_benchmarks.get_mut(&benchmark_key) else {
                         cx.notify();
                         return;
                     };
@@ -1795,14 +1843,18 @@ impl RelayApp {
                         Ok(delays) => state.complete(generation, total, delays),
                         Err(_error) => state.fail(generation),
                     };
-                    let succeeded = matches!(state, NodeGroupBenchmarkState::Complete { .. });
+                    let succeeded = matches!(state, GroupBenchmarkState::Complete { .. });
                     if accepted {
                         this.status = match state {
-                            NodeGroupBenchmarkState::Complete { summary, .. } => format!(
-                                "分组测速完成：{}/{} 个节点成功",
-                                summary.succeeded, summary.total
-                            ),
-                            NodeGroupBenchmarkState::Failed { .. } => {
+                            GroupBenchmarkState::Complete { summary, .. } => {
+                                trace_ui(UiEvent::GroupBenchmarkSucceeded);
+                                format!(
+                                    "分组测速完成：{}/{} 个节点成功",
+                                    summary.succeeded, summary.total
+                                )
+                            }
+                            GroupBenchmarkState::Failed { .. } => {
+                                trace_ui(UiEvent::GroupBenchmarkFailed);
                                 "分组测速失败，请检查 Mihomo 连接与网络后重试".to_owned()
                             }
                             _ => return,
@@ -1981,7 +2033,8 @@ impl RelayApp {
             self.node_policy_groups
                 .sort_by(|left, right| left.id.cmp(&right.id));
         }
-        self.node_group_benchmarks.remove(&group.id);
+        self.group_benchmarks
+            .remove(&Self::user_group_benchmark_key(&group.id));
         self.node_group_runtime_states.remove(&group.id);
         self.node_group_draft = None;
         self.status = format!("分组“{}”已保存，正在应用托管配置", group.name);
@@ -2005,7 +2058,8 @@ impl RelayApp {
             return;
         }
         let group = self.node_policy_groups.remove(index);
-        self.node_group_benchmarks.remove(id);
+        self.group_benchmarks
+            .remove(&Self::user_group_benchmark_key(id));
         self.node_group_runtime_states.remove(id);
         if self.selected_node_group_id.as_deref() == Some(id) {
             self.selected_node_group_id = None;
@@ -2266,6 +2320,7 @@ impl RelayApp {
         list
     }
 
+    #[allow(clippy::too_many_lines)]
     fn node_group(
         &self,
         group: &NodeSourceGroup<'_>,
@@ -2280,6 +2335,32 @@ impl RelayApp {
         let visible_count = counts.count_for(filter);
         let collapsed = self.node_workspace.is_group_collapsed(&group.id);
         let group_id = group.id.clone();
+        let benchmark_key = Self::source_group_benchmark_key(&group.id);
+        let benchmark = self
+            .group_benchmarks
+            .get(&benchmark_key)
+            .cloned()
+            .unwrap_or_default();
+        let benchmarking = benchmark.is_running();
+        let benchmark_id = group.id.clone();
+        let benchmark_name = group.name.clone();
+        let candidate_names = group
+            .providers
+            .iter()
+            .flat_map(|provider| provider.nodes.iter().map(|node| node.name.clone()))
+            .chain(group.saved_nodes.iter().map(|node| node.name.clone()))
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let detail = match &benchmark {
+            GroupBenchmarkState::Idle => group.detail.clone(),
+            GroupBenchmarkState::Running { .. } => format!("{} · 正在测速…", group.detail),
+            GroupBenchmarkState::Complete { summary, .. } => format!(
+                "{} · 测速 {}/{} 成功",
+                group.detail, summary.succeeded, summary.total
+            ),
+            GroupBenchmarkState::Failed { .. } => format!("{} · 测速失败", group.detail),
+        };
         let action = if collapsed { "展开" } else { "收起" };
         let header = div()
             .id(format!("node-group-header-{}", group.id))
@@ -2301,20 +2382,44 @@ impl RelayApp {
                     .min_w(px(0.0))
                     .flex_1()
                     .overflow_x_hidden()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .child(Self::group_benchmark_icon(
+                        &benchmark_key,
+                        benchmarking,
+                        theme,
+                        cx.listener(move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            if !benchmarking {
+                                this.start_source_group_benchmark(
+                                    &benchmark_id,
+                                    &benchmark_name,
+                                    candidate_names.clone(),
+                                    cx,
+                                );
+                            }
+                        }),
+                    ))
                     .child(
                         div()
-                            .overflow_x_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child(group.name.clone()),
-                    )
-                    .child(
-                        div()
-                            .mt_1()
-                            .text_size(px(10.0))
-                            .text_color(theme.text_tertiary)
-                            .child(group.detail.clone()),
+                            .min_w(px(0.0))
+                            .flex_1()
+                            .child(
+                                div()
+                                    .overflow_x_hidden()
+                                    .whitespace_nowrap()
+                                    .text_ellipsis()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(group.name.clone()),
+                            )
+                            .child(
+                                div()
+                                    .mt_1()
+                                    .text_size(px(10.0))
+                                    .text_color(theme.text_tertiary)
+                                    .child(detail),
+                            ),
                     ),
             )
             .child(
@@ -2367,13 +2472,16 @@ impl RelayApp {
                 )
             })
             .when(!collapsed && visible_count > 0, |container| {
-                container.child(Self::node_group_table(group, filter, compact, theme))
+                container.child(Self::node_group_table(
+                    group, filter, &benchmark, compact, theme,
+                ))
             })
     }
 
     fn node_group_table(
         group: &NodeSourceGroup<'_>,
         filter: NodeAvailabilityFilter,
+        benchmark: &GroupBenchmarkState,
         compact: bool,
         theme: Theme,
     ) -> Div {
@@ -2388,11 +2496,10 @@ impl RelayApp {
                     continue;
                 }
                 table = table.child(Self::workspace_node_row(
-                    &group.id,
-                    provider_index,
-                    node_index,
+                    format!("node-row-{}-{provider_index}-{node_index}", group.id),
                     node,
                     &group.name,
+                    benchmark,
                     compact,
                     theme,
                 ));
@@ -2409,11 +2516,14 @@ impl RelayApp {
                 alive: None,
             };
             table = table.child(Self::workspace_node_row(
-                &group.id,
-                group.providers.len(),
-                node_index,
+                format!(
+                    "node-row-{}-{}-{node_index}",
+                    group.id,
+                    group.providers.len()
+                ),
                 &loaded,
                 &group.name,
+                benchmark,
                 compact,
                 theme,
             ));
@@ -2445,27 +2555,40 @@ impl RelayApp {
     }
 
     fn workspace_node_row(
-        group_id: &str,
-        provider_index: usize,
-        node_index: usize,
+        row_id: String,
         node: &LoadedProviderNode,
         source_name: &str,
+        benchmark: &GroupBenchmarkState,
         compact: bool,
         theme: Theme,
     ) -> Stateful<Div> {
-        let (state, color) = match node.alive {
-            Some(true) => ("可用", theme.status_success),
-            Some(false) => ("不可用", theme.text_secondary),
-            None => ("未测速", theme.text_tertiary),
+        let fresh_delay = match benchmark {
+            GroupBenchmarkState::Complete { delays, .. } => delays.get(&node.name).copied(),
+            _ => None,
         };
-        let latency = node.latency_label.as_deref().unwrap_or("—");
+        let (state, color, latency) = match fresh_delay {
+            Some(0) => ("失败", theme.route_trace, "失败".to_owned()),
+            Some(delay) => ("可用", theme.status_success, format!("{delay} ms")),
+            None => {
+                let (state, color) = match node.alive {
+                    Some(true) => ("可用", theme.status_success),
+                    Some(false) => ("不可用", theme.text_secondary),
+                    None => ("未测速", theme.text_tertiary),
+                };
+                (
+                    state,
+                    color,
+                    node.latency_label.clone().unwrap_or_else(|| "—".to_owned()),
+                )
+            }
+        };
         let content = if compact {
-            Self::compact_node_row_content(source_name, node, state, latency, color, theme)
+            Self::compact_node_row_content(source_name, node, state, &latency, color, theme)
         } else {
-            Self::wide_node_row_content(source_name, node, state, latency, color, theme)
+            Self::wide_node_row_content(source_name, node, state, &latency, color, theme)
         };
         div()
-            .id(format!("node-row-{group_id}-{provider_index}-{node_index}"))
+            .id(row_id)
             .min_h(if compact { px(64.0) } else { px(52.0) })
             .px(if compact { px(12.0) } else { px(16.0) })
             .py_2()
@@ -2636,7 +2759,7 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
     use super::NodeCounts;
-    use crate::app::{NodeGroupBenchmarkState, NodeGroupBenchmarkSummary, NodeGroupRuntimeState};
+    use crate::app::{GroupBenchmarkState, GroupBenchmarkSummary, NodeGroupRuntimeState};
     use crate::mihomo::{LoadedProvider, LoadedProviderNode};
 
     #[test]
@@ -2665,7 +2788,7 @@ mod tests {
 
     #[test]
     fn group_benchmark_summary_counts_failures_and_latency_range() {
-        let summary = NodeGroupBenchmarkSummary::from_delays(4, [80, 42]);
+        let summary = GroupBenchmarkSummary::from_delays(4, [80, 0, 42]);
 
         assert_eq!(summary.total, 4);
         assert_eq!(summary.succeeded, 2);
@@ -2677,17 +2800,17 @@ mod tests {
 
     #[test]
     fn group_benchmark_state_ignores_a_stale_completion() {
-        let mut state = NodeGroupBenchmarkState::Running { generation: 7 };
+        let mut state = GroupBenchmarkState::Running { generation: 7 };
         let outdated = BTreeMap::from([("Tokyo".to_owned(), 90)]);
         assert!(!state.complete(6, 2, outdated));
-        assert_eq!(state, NodeGroupBenchmarkState::Running { generation: 7 });
+        assert_eq!(state, GroupBenchmarkState::Running { generation: 7 });
 
         let current = BTreeMap::from([("Tokyo".to_owned(), 55), ("Singapore".to_owned(), 75)]);
         assert!(state.complete(7, 2, current));
         assert!(matches!(
             &state,
-            NodeGroupBenchmarkState::Complete {
-                summary: NodeGroupBenchmarkSummary {
+            GroupBenchmarkState::Complete {
+                summary: GroupBenchmarkSummary {
                     average_ms: Some(65),
                     ..
                 },
@@ -2699,9 +2822,9 @@ mod tests {
 
     #[test]
     fn benchmark_state_reports_running_only_for_active_variant() {
-        assert!(NodeGroupBenchmarkState::Running { generation: 1 }.is_running());
-        assert!(!NodeGroupBenchmarkState::Idle.is_running());
-        assert!(!NodeGroupBenchmarkState::Failed { generation: 1 }.is_running());
+        assert!(GroupBenchmarkState::Running { generation: 1 }.is_running());
+        assert!(!GroupBenchmarkState::Idle.is_running());
+        assert!(!GroupBenchmarkState::Failed { generation: 1 }.is_running());
     }
 
     #[test]
