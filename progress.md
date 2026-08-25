@@ -176,3 +176,15 @@
 - 宽屏与 720px 紧凑原生截图通过 Visual Verdict 95/100 `pass`；中性测速按钮、列表列宽和响应式布局均无溢出或错位。
 - 全 workspace 验证通过：126 passed、5 ignored；格式、严格 Clippy、diff check 和私有订阅域名/token 扫描均通过。
 - Git 提交 `fix(ui): clarify imported node benchmarks` 已创建；仅停止旧 Relay UI PID 25096，并以相同 Unix controller 启动新 PID 28809。Clash Verge PID 14173 与 verge-mihomo PID 14201 保持运行且未被停止或修改。
+
+# 2026-08-25 增量测速与真实策略组反馈
+
+- 用户确认有限并发可以保留，但要求单节点结果一完成就立刻显示，不等待整组收尾。
+- 用户已连接真实 Mihomo 后复现策略组测速无明显动画且完成后不刷新；本轮同时删除策略卡片冗余竖线。
+- Motion thesis：测速按钮在运行期由静态柱形图切换为同一 8 点旋转器；候选行只在自身结果未到时旋转，单个结果到达立即停转并显示延迟或失败。除此之外不增加循环动效。
+- TDD RED 已确认：当前状态模型没有逐节点 `record/node_state`，运行态只保存 generation；runtime 也没有带进度回调的节点测速入口，失败点与本轮需求一致。
+- TDD GREEN：本地 HTTP 夹具用条件变量阻塞慢节点，确认快节点的 30 ms 会先于慢节点的 70 ms 回调；状态模型也验证逐节点成功、失败和过期 generation 隔离。
+- 真实 Clash Verge Mihomo 的 `自动选择` 组返回 44 个有效延迟，证明官方 group delay 接口与当前内核兼容。
+- GPUI 成功截图确认策略组候选延迟从 54/67 ms 刷新为 31/88 ms，完成摘要显示 2/2、最低 31、平均 60；第二轮 Visual Verdict 96/100 `pass`。
+- 最终验证通过：全 workspace 128 passed、5 ignored；`cargo fmt --check`、严格 Clippy、`git diff --check` 和敏感订阅域名/token 扫描全部通过。
+- Git 提交 `fix(ui): stream group benchmark results` 已创建；仅停止旧 Relay UI PID 28809，并以同一 Unix controller 启动新 PID 33768。Clash Verge PID 14173 与 verge-mihomo PID 14201 保持运行且未被停止或修改。

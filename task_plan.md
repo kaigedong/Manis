@@ -142,6 +142,14 @@
 - [completed] 4. 生成宽屏/紧凑截图、验证运行态并通过 Visual Verdict
 - [completed] 5. 完成全仓验证、Git 提交和仅 Relay UI 重启
 
+## 增量测速与真实策略组反馈
+
+- [completed] 1. 以 TDD 锁定逐节点增量结果、策略组运行态和真实结果刷新
+- [completed] 2. 为有限并发节点测速增加有界进度回传，并逐行停止动画
+- [completed] 3. 删除策略卡片竖线，为策略组按钮与候选延迟增加运行/成功/失败反馈
+- [completed] 4. 用真实 Mihomo 策略组及宽屏/紧凑 GPUI 截图完成验证和 Visual Verdict
+- [completed] 5. 完成全仓检查、Git 提交并仅重启 Relay UI
+
 ## 固定约束
 - 实现框架：Rust + GPUI
 - 目标平台：Windows、macOS、Linux
@@ -175,3 +183,4 @@
 | 逐节点测速返回类型改为 map 后托管过滤仍丢弃节点名 | 1 | 编译器指出 iterator item 仍是 `u16`；改为保留 `(name, delay)` 对后 collect |
 | 两个测速代码映射 explorer 同时命中 Spark 用量上限 | 1 | 不重试该模型；改用主代理本地 `rg`/定向读取，必要时使用非 Spark 专项角色 |
 | 新 `PolicyCatalog` RED 测试首轮遗漏 `BTreeMap` import | 1 | 先补测试文件标准库 import；保留缺少生产 API 的预期红灯 |
+| 增量 worker join 使用 `for_each` 被严格 Clippy 拒绝 | 1 | 按 lint 建议改为显式 `for`，让线程回收行为更直观 |

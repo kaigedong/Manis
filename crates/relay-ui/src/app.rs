@@ -4,8 +4,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use gpui::{
-    Context, Div, Entity, FontWeight, IntoElement, ParentElement, Render, Role, Stateful, Styled,
-    Subscription, Toggled, Window, div, prelude::*, px,
+    Animation, AnimationExt as _, Context, Div, Entity, FontWeight, IntoElement, ParentElement,
+    Render, Role, Stateful, Styled, Subscription, Toggled, Window, div, prelude::*, px,
 };
 use relay_core::{
     CompactNavigation, ConfigurationWorkspaceState, NodeGroupIcon, NodeGroupStrategy, NodeIdentity,
@@ -176,6 +176,7 @@ enum GroupBenchmarkState {
     Idle,
     Running {
         generation: u64,
+        results: BTreeMap<String, Option<u16>>,
     },
     Complete {
         generation: u64,
@@ -187,13 +188,63 @@ enum GroupBenchmarkState {
     },
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum GroupBenchmarkNodeState {
+    Idle,
+    Pending,
+    Measured(u16),
+    Failed,
+}
+
+type GroupBenchmarkProgressQueue = Arc<Mutex<VecDeque<(String, Option<u16>)>>>;
+
 impl GroupBenchmarkState {
+    fn running(generation: u64) -> Self {
+        Self::Running {
+            generation,
+            results: BTreeMap::new(),
+        }
+    }
+
     fn is_running(&self) -> bool {
         matches!(self, Self::Running { .. })
     }
 
+    fn record(&mut self, generation: u64, name: &str, delay: Option<u16>) -> bool {
+        let Self::Running {
+            generation: active,
+            results,
+        } = self
+        else {
+            return false;
+        };
+        if *active != generation {
+            return false;
+        }
+        results.insert(name.to_owned(), delay.filter(|delay| *delay > 0));
+        true
+    }
+
+    fn node_state(&self, name: &str) -> GroupBenchmarkNodeState {
+        match self {
+            Self::Idle => GroupBenchmarkNodeState::Idle,
+            Self::Running { results, .. } => match results.get(name) {
+                Some(Some(delay)) => GroupBenchmarkNodeState::Measured(*delay),
+                Some(None) => GroupBenchmarkNodeState::Failed,
+                None => GroupBenchmarkNodeState::Pending,
+            },
+            Self::Complete { delays, .. } => {
+                delays.get(name).copied().filter(|delay| *delay > 0).map_or(
+                    GroupBenchmarkNodeState::Failed,
+                    GroupBenchmarkNodeState::Measured,
+                )
+            }
+            Self::Failed { .. } => GroupBenchmarkNodeState::Failed,
+        }
+    }
+
     fn complete(&mut self, generation: u64, total: usize, delays: BTreeMap<String, u16>) -> bool {
-        if !matches!(self, Self::Running { generation: current } if *current == generation) {
+        if !matches!(self, Self::Running { generation: current, .. } if *current == generation) {
             return false;
         }
         let summary = GroupBenchmarkSummary::from_delays(total, delays.values().copied());
@@ -206,7 +257,7 @@ impl GroupBenchmarkState {
     }
 
     fn fail(&mut self, generation: u64) -> bool {
-        if !matches!(self, Self::Running { generation: current } if *current == generation) {
+        if !matches!(self, Self::Running { generation: current, .. } if *current == generation) {
             return false;
         }
         *self = Self::Failed { generation };
@@ -811,9 +862,45 @@ impl RelayApp {
         self.group_benchmark_generation = self.group_benchmark_generation.wrapping_add(1);
         let generation = self.group_benchmark_generation;
         self.group_benchmarks
-            .insert(key, GroupBenchmarkState::Running { generation });
+            .insert(key, GroupBenchmarkState::running(generation));
         self.group_benchmark_active_generation = Some(generation);
         Some(generation)
+    }
+
+    fn poll_group_benchmark_progress(
+        &mut self,
+        generation: u64,
+        key: String,
+        updates: GroupBenchmarkProgressQueue,
+        cx: &mut Context<Self>,
+    ) {
+        let drained = updates
+            .lock()
+            .map(|mut updates| updates.drain(..).collect::<Vec<_>>())
+            .unwrap_or_default();
+        let mut changed = false;
+        if let Some(state) = self.group_benchmarks.get_mut(&key) {
+            for (name, delay) in drained {
+                changed |= state.record(generation, &name, delay);
+            }
+        }
+        if changed {
+            cx.notify();
+        }
+        if self.group_benchmark_active_generation != Some(generation) {
+            return;
+        }
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(40))
+                .await;
+            if let Some(this) = this.upgrade() {
+                this.update(cx, |this, cx| {
+                    this.poll_group_benchmark_progress(generation, key, updates, cx);
+                });
+            }
+        })
+        .detach();
     }
 
     fn group_benchmark_icon(
@@ -844,15 +931,110 @@ impl RelayApp {
             .border_color(theme.outline_subtle)
             .bg(theme.surface_high)
             .flex()
-            .items_end()
             .justify_center()
-            .gap(px(2.0))
-            .pb(px(7.0))
-            .child(div().w(px(2.0)).h(px(5.0)).rounded_full().bg(bar_color))
-            .child(div().w(px(2.0)).h(px(9.0)).rounded_full().bg(bar_color))
-            .child(div().w(px(2.0)).h(px(13.0)).rounded_full().bg(bar_color))
+            .when(running, |button| {
+                button.items_center().child(Self::benchmark_latency_spinner(
+                    format!("{id}-button-spinner"),
+                    theme,
+                ))
+            })
+            .when(!running, |button| {
+                button
+                    .items_end()
+                    .gap(px(2.0))
+                    .pb(px(7.0))
+                    .child(div().w(px(2.0)).h(px(5.0)).rounded_full().bg(bar_color))
+                    .child(div().w(px(2.0)).h(px(9.0)).rounded_full().bg(bar_color))
+                    .child(div().w(px(2.0)).h(px(13.0)).rounded_full().bg(bar_color))
+            })
             .when(!running, gpui::Styled::cursor_pointer)
             .on_click(listener)
+    }
+
+    fn benchmark_latency_content(
+        state: GroupBenchmarkNodeState,
+        idle_label: String,
+        spinner_id: &str,
+        theme: Theme,
+    ) -> Div {
+        let cell = div()
+            .min_w(px(42.0))
+            .flex()
+            .items_center()
+            .justify_end()
+            .font_weight(FontWeight::SEMIBOLD)
+            .text_size(px(11.0));
+        match state {
+            GroupBenchmarkNodeState::Idle => cell.text_color(theme.text_tertiary).child(idle_label),
+            GroupBenchmarkNodeState::Pending => cell.child(Self::benchmark_latency_spinner(
+                spinner_id.to_owned(),
+                theme,
+            )),
+            GroupBenchmarkNodeState::Measured(delay) => cell
+                .text_color(theme.status_success)
+                .child(format!("{delay} ms")),
+            GroupBenchmarkNodeState::Failed => cell.text_color(theme.route_trace).child("失败"),
+        }
+    }
+
+    fn benchmark_latency_spinner(id: String, theme: Theme) -> impl IntoElement {
+        div().relative().size(px(14.0)).with_animation(
+            id,
+            Animation::new(Duration::from_millis(720)).repeat(),
+            move |spinner, delta| {
+                let active = Self::benchmark_latency_spinner_frame(delta);
+                (0..8).fold(spinner, |spinner, index| {
+                    spinner.child(Self::benchmark_latency_dot(
+                        index,
+                        active,
+                        theme.action_primary,
+                    ))
+                })
+            },
+        )
+    }
+
+    fn benchmark_latency_spinner_frame(delta: f32) -> usize {
+        if delta < 0.125 {
+            0
+        } else if delta < 0.25 {
+            1
+        } else if delta < 0.375 {
+            2
+        } else if delta < 0.5 {
+            3
+        } else if delta < 0.625 {
+            4
+        } else if delta < 0.75 {
+            5
+        } else if delta < 0.875 {
+            6
+        } else {
+            7
+        }
+    }
+
+    fn benchmark_latency_dot(index: usize, active: usize, color: gpui::Rgba) -> Div {
+        const POSITIONS: [(f32, f32); 8] = [
+            (5.5, 0.0),
+            (9.5, 1.5),
+            (11.0, 5.5),
+            (9.5, 9.5),
+            (5.5, 11.0),
+            (1.5, 9.5),
+            (0.0, 5.5),
+            (1.5, 1.5),
+        ];
+        const OPACITY: [f32; 8] = [1.0, 0.82, 0.68, 0.54, 0.42, 0.32, 0.24, 0.18];
+        let distance = (index + 8 - active) % 8;
+        let (left, top) = POSITIONS[index];
+        div()
+            .absolute()
+            .left(px(left))
+            .top(px(top))
+            .size(px(3.0))
+            .rounded_full()
+            .bg(color.opacity(OPACITY[distance]))
     }
 
     fn policy_benchmark_status(
@@ -874,6 +1056,47 @@ impl RelayApp {
                 summary.succeeded, summary.total
             ),
         }
+    }
+
+    fn policy_group_benchmark_feedback(
+        state: &GroupBenchmarkState,
+        total: usize,
+        theme: Theme,
+    ) -> Option<Div> {
+        let (label, color) = match state {
+            GroupBenchmarkState::Idle => return None,
+            GroupBenchmarkState::Running { results, .. } => (
+                format!("正在测速 · {}/{} 个候选项已返回", results.len(), total),
+                theme.action_primary,
+            ),
+            GroupBenchmarkState::Complete { summary, .. } => {
+                let latency = match (summary.minimum_ms, summary.average_ms) {
+                    (Some(minimum), Some(average)) => {
+                        format!(" · 最低 {minimum} ms · 平均 {average} ms")
+                    }
+                    _ => String::new(),
+                };
+                (
+                    format!(
+                        "测速完成 · {}/{} 个候选项成功{latency}",
+                        summary.succeeded, summary.total
+                    ),
+                    theme.status_success,
+                )
+            }
+            GroupBenchmarkState::Failed { .. } => (
+                "测速失败 · 当前策略组未返回延迟，请检查 Mihomo 连接后重试".to_owned(),
+                theme.route_trace,
+            ),
+        };
+        Some(
+            div()
+                .mt_2()
+                .text_size(px(11.0))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(color)
+                .child(label),
+        )
     }
 
     fn selected_node(&self) -> PolicyNode {
@@ -994,6 +1217,11 @@ impl RelayApp {
         id: &relay_core::PolicyGroupId,
         cx: &mut Context<Self>,
     ) {
+        if !matches!(self.controller, ControllerState::Connected { .. }) {
+            "请先连接 Mihomo，再测试真实策略组".clone_into(&mut self.status);
+            cx.notify();
+            return;
+        }
         let Some(group) = self.catalog.iter().find(|group| group.id == *id).cloned() else {
             return;
         };
@@ -1593,11 +1821,6 @@ impl RelayApp {
                     } else {
                         theme.surface_low
                     })
-                    .child(div().w(px(3.0)).h(px(44.0)).rounded_full().bg(if selected {
-                        theme.route_trace
-                    } else {
-                        theme.outline_strong
-                    }))
                     .child(Self::group_benchmark_icon(
                         &benchmark_key,
                         benchmarking,
@@ -1744,6 +1967,7 @@ impl RelayApp {
         item: PolicyNode,
         current: bool,
         manually_selectable: bool,
+        benchmark_state: GroupBenchmarkNodeState,
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
@@ -1756,9 +1980,10 @@ impl RelayApp {
                 .clone()
                 .unwrap_or_else(|| "内置节点".to_owned())
         };
-        let latency = item
+        let idle_latency = item
             .latency_ms
             .map_or_else(|| "—".to_owned(), |latency| format!("{latency} ms"));
+        let spinner_id = format!("policy-node-{}-latency", item.id.as_str());
         let leading = if manually_selectable {
             div()
                 .size(px(18.0))
@@ -1858,12 +2083,16 @@ impl RelayApp {
             .child(
                 div()
                     .w(px(64.0))
-                    .text_color(if manually_selectable {
-                        theme.status_success
-                    } else {
-                        theme.text_tertiary
-                    })
-                    .child(latency),
+                    .min_h(px(18.0))
+                    .flex()
+                    .items_center()
+                    .justify_end()
+                    .child(Self::benchmark_latency_content(
+                        benchmark_state,
+                        idle_latency,
+                        &spinner_id,
+                        theme,
+                    )),
             )
             .when(manually_selectable, |row| {
                 row.role(Role::RadioButton)
@@ -1951,6 +2180,11 @@ impl RelayApp {
                     ),
             );
         }
+        if let Some(feedback) = self.group_benchmarks.get(&benchmark_key).and_then(|state| {
+            Self::policy_group_benchmark_feedback(state, selected_policy.nodes.len(), theme)
+        }) {
+            body = body.child(feedback);
+        }
         body = body.child(
             div()
                 .mt_2()
@@ -1964,10 +2198,17 @@ impl RelayApp {
         );
         for item in selected_policy.nodes.iter().cloned() {
             let current = item.id == selected_node.id;
+            let benchmark_state = self
+                .group_benchmarks
+                .get(&benchmark_key)
+                .map_or(GroupBenchmarkNodeState::Idle, |state| {
+                    state.node_state(&item.name)
+                });
             body = body.child(Self::node_row(
                 item,
                 current,
                 manually_selectable,
+                benchmark_state,
                 theme,
                 cx,
             ));

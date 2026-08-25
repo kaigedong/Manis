@@ -4,7 +4,7 @@ use std::io::Read;
 use std::net::TcpListener;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{env, error::Error, fmt};
@@ -315,6 +315,34 @@ impl ControllerRuntime {
         }
 
         fetch_proxy_delays_bounded(&endpoint, candidate_names)
+    }
+
+    pub(crate) fn test_proxy_delays_with_progress(
+        &self,
+        candidate_names: &[String],
+        on_result: impl FnMut(&str, Option<u16>),
+    ) -> Result<BTreeMap<String, u16>, LoadError> {
+        if candidate_names.is_empty() {
+            return Err(LoadError::Runtime("当前分组没有可测速节点".to_owned()));
+        }
+        let endpoint = match self {
+            Self::External { endpoint } => endpoint.clone(),
+            Self::Managed { manager, .. } => {
+                let endpoint = {
+                    let mut manager = manager.lock().map_err(|_poisoned| {
+                        LoadError::Runtime("托管内核状态锁已损坏".to_owned())
+                    })?;
+                    match manager.running_endpoint()? {
+                        Some(endpoint) => endpoint,
+                        None => manager.start()?,
+                    }
+                };
+                endpoint.uri()
+            }
+            Self::Invalid { message } => return Err(LoadError::Runtime(message.clone())),
+        };
+
+        fetch_proxy_delays_bounded_with_progress(&endpoint, candidate_names, on_result)
     }
 
     pub(crate) fn test_policy_group_delay(
@@ -2467,29 +2495,44 @@ fn fetch_proxy_delays_bounded(
     endpoint: &str,
     candidate_names: &[String],
 ) -> Result<BTreeMap<String, u16>, LoadError> {
+    fetch_proxy_delays_bounded_with_progress(endpoint, candidate_names, |_name, _delay| {})
+}
+
+fn fetch_proxy_delays_bounded_with_progress(
+    endpoint: &str,
+    candidate_names: &[String],
+    mut on_result: impl FnMut(&str, Option<u16>),
+) -> Result<BTreeMap<String, u16>, LoadError> {
     let worker_count = candidate_names.len().min(GROUP_DELAY_WORKERS);
     let chunk_size = candidate_names.len().div_ceil(worker_count);
     let delays = thread::scope(|scope| {
+        let (sender, receiver) = mpsc::channel();
         let handles = candidate_names
             .chunks(chunk_size)
             .map(|chunk| {
+                let sender = sender.clone();
                 scope.spawn(move || {
-                    chunk
-                        .iter()
-                        .filter_map(|name| {
-                            fetch_proxy_delay(endpoint, name)
-                                .ok()
-                                .map(|delay| (name.clone(), delay))
-                        })
-                        .collect::<Vec<_>>()
+                    for name in chunk {
+                        let delay = fetch_proxy_delay(endpoint, name).ok();
+                        if sender.send((name.clone(), delay)).is_err() {
+                            break;
+                        }
+                    }
                 })
             })
             .collect::<Vec<_>>();
-        handles
-            .into_iter()
-            .filter_map(|handle| handle.join().ok())
-            .flatten()
-            .collect::<BTreeMap<_, _>>()
+        drop(sender);
+        let mut delays = BTreeMap::new();
+        for (name, delay) in receiver {
+            on_result(&name, delay);
+            if let Some(delay) = delay {
+                delays.insert(name, delay);
+            }
+        }
+        for handle in handles {
+            drop(handle.join());
+        }
+        delays
     });
     if delays.is_empty() {
         return Err(LoadError::Runtime(
@@ -2578,8 +2621,8 @@ mod tests {
     use std::net::TcpListener;
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Condvar, Mutex};
     use std::time::Duration;
 
     use relay_engine::ControllerEndpoint;
@@ -3083,6 +3126,83 @@ mod tests {
         server.join().map_err(|_| "fixture server panicked")??;
         assert_eq!(delays.get("Working Node"), Some(&64));
         assert!(!delays.contains_key("Offline Node"));
+        Ok(())
+    }
+
+    #[test]
+    fn external_proxy_benchmark_reports_fast_nodes_before_slow_nodes_finish()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let endpoint = format!("http://{}", listener.local_addr()?);
+        let slow_gate = Arc::new((Mutex::new(false), Condvar::new()));
+        let server_gate = slow_gate.clone();
+        let server = std::thread::spawn(move || -> std::io::Result<()> {
+            let handlers = (0..2)
+                .map(|_| {
+                    let (stream, _) = listener.accept()?;
+                    let gate = server_gate.clone();
+                    Ok(std::thread::spawn(move || -> std::io::Result<()> {
+                        let mut stream = stream;
+                        let mut request_line = String::new();
+                        BufReader::new(stream.try_clone()?).read_line(&mut request_line)?;
+                        let delay = if request_line.contains("Slow%20Node") {
+                            let (lock, ready) = &*gate;
+                            let mut released = lock.lock().map_err(|_| {
+                                std::io::Error::other("slow fixture gate poisoned")
+                            })?;
+                            while !*released {
+                                released = ready.wait(released).map_err(|_| {
+                                    std::io::Error::other("slow fixture gate poisoned")
+                                })?;
+                            }
+                            70
+                        } else {
+                            30
+                        };
+                        let body = format!(r#"{{"delay":{delay}}}"#);
+                        let response = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        );
+                        stream.write_all(response.as_bytes())?;
+                        Ok(())
+                    }))
+                })
+                .collect::<std::io::Result<Vec<_>>>()?;
+            for handler in handlers {
+                handler
+                    .join()
+                    .map_err(|_| std::io::Error::other("fixture handler panicked"))??;
+            }
+            Ok(())
+        });
+
+        let runtime = super::ControllerRuntime::External { endpoint };
+        let mut updates = Vec::new();
+        let callback_gate = slow_gate.clone();
+        let delays = runtime.test_proxy_delays_with_progress(
+            &["Slow Node".to_owned(), "Fast Node".to_owned()],
+            |name, delay| {
+                updates.push((name.to_owned(), delay));
+                if name == "Fast Node" {
+                    let (lock, ready) = &*callback_gate;
+                    let mut released = lock.lock().expect("fixture callback gate poisoned");
+                    *released = true;
+                    ready.notify_all();
+                }
+            },
+        )?;
+        server.join().map_err(|_| "fixture server panicked")??;
+
+        assert_eq!(
+            updates,
+            vec![
+                ("Fast Node".to_owned(), Some(30)),
+                ("Slow Node".to_owned(), Some(70)),
+            ]
+        );
+        assert_eq!(delays.get("Fast Node"), Some(&30));
+        assert_eq!(delays.get("Slow Node"), Some(&70));
         Ok(())
     }
 

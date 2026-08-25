@@ -430,9 +430,18 @@ fn capture_connected(
         std::thread::sleep(std::time::Duration::from_millis(25));
         refresh(cx, window)?;
     }
-    cx.advance_clock(std::time::Duration::from_millis(500));
     refresh(cx, window)?;
     save_screenshot(cx, window, "native-wide-connected.png")?;
+
+    cx.simulate_click(window, point(px(270.0), px(236.0)), Modifiers::none());
+    for _ in 0..24 {
+        std::thread::sleep(std::time::Duration::from_millis(25));
+        refresh(cx, window)?;
+    }
+    save_screenshot(cx, window, "native-wide-connected-benchmark.png")?;
+
+    cx.advance_clock(std::time::Duration::from_millis(500));
+    refresh(cx, window)?;
 
     cx.simulate_click(window, point(px(110.0), px(158.0)), Modifiers::none());
     refresh(cx, window)?;
@@ -446,9 +455,7 @@ fn capture_connected(
     refresh(cx, window)?;
     save_screenshot(cx, window, "configuration-wide-connected-sources.png")?;
 
-    server
-        .join()
-        .map_err(|_| "Mihomo fixture server thread panicked")??;
+    server.stop()?;
     Ok(())
 }
 
@@ -498,15 +505,28 @@ fn validate_live_output(output: &std::path::Path) -> Result<(), Box<dyn std::err
 }
 
 #[cfg(target_os = "macos")]
-fn spawn_mihomo_fixture() -> Result<FixtureServer, Box<dyn std::error::Error>> {
+fn spawn_mihomo_fixture() -> Result<(String, FixtureServer), Box<dyn std::error::Error>> {
     use std::io::{BufRead, BufReader, Write};
     use std::net::TcpListener;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::Duration;
 
     let listener = TcpListener::bind("127.0.0.1:0")?;
+    listener.set_nonblocking(true)?;
     let endpoint = format!("http://{}", listener.local_addr()?);
+    let stop = Arc::new(AtomicBool::new(false));
+    let server_stop = stop.clone();
     let server = std::thread::spawn(move || -> std::io::Result<()> {
-        for _ in 0..8 {
-            let (mut stream, _) = listener.accept()?;
+        while !server_stop.load(Ordering::Relaxed) {
+            let (mut stream, _) = match listener.accept() {
+                Ok(connection) => connection,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(10));
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
             let mut request_line = String::new();
             BufReader::new(stream.try_clone()?).read_line(&mut request_line)?;
             let path = request_line.split_whitespace().nth(1).unwrap_or("/");
@@ -541,18 +561,38 @@ fn spawn_mihomo_fixture() -> Result<FixtureServer, Box<dyn std::error::Error>> {
         Ok(())
     });
 
-    Ok((endpoint, server))
+    Ok((endpoint, FixtureServer { stop, server }))
 }
 
 #[cfg(target_os = "macos")]
-type FixtureServer = (String, std::thread::JoinHandle<Result<(), std::io::Error>>);
+struct FixtureServer {
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    server: std::thread::JoinHandle<Result<(), std::io::Error>>,
+}
+
+#[cfg(target_os = "macos")]
+impl FixtureServer {
+    fn stop(self) -> Result<(), Box<dyn std::error::Error>> {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.server
+            .join()
+            .map_err(|_| "Mihomo fixture server thread panicked")??;
+        Ok(())
+    }
+}
 
 #[cfg(target_os = "macos")]
 fn fixture_response(path: &str) -> &'static str {
+    if path.starts_with("/group/AI%20%E8%87%AA%E5%8A%A8%E9%80%89%E6%8B%A9/delay?") {
+        return r#"{"新加坡 SG-02":31,"日本 JP-03":88}"#;
+    }
     match path {
         "/version" => r#"{"meta":true,"version":"v1.19.12"}"#,
         "/proxies" => {
             r#"{"proxies":{"AI 自动选择":{"name":"AI 自动选择","type":"Selector","now":"新加坡 SG-02","all":["新加坡 SG-02","日本 JP-03"],"alive":true},"视频服务":{"name":"视频服务","type":"URLTest","now":"香港 HK-01","all":["香港 HK-01","美国 US-01"],"alive":true},"新加坡 SG-02":{"name":"新加坡 SG-02","type":"VLESS","alive":true,"provider-name":"Provider A","history":[{"delay":54}]},"日本 JP-03":{"name":"日本 JP-03","type":"Trojan","alive":true,"provider-name":"Provider B","history":[{"delay":67}]},"香港 HK-01":{"name":"香港 HK-01","type":"Hysteria2","alive":true,"provider-name":"Provider A","history":[{"delay":38}]},"美国 US-01":{"name":"美国 US-01","type":"VLESS","alive":true,"provider-name":"Provider A","history":[{"delay":142}]}}}"#
+        }
+        "/proxies/AI%20%E8%87%AA%E5%8A%A8%E9%80%89%E6%8B%A9" => {
+            r#"{"name":"AI 自动选择","type":"Selector","now":"新加坡 SG-02","all":["新加坡 SG-02","日本 JP-03"]}"#
         }
         "/providers/proxies" => {
             r#"{"providers":{"Provider A":{"name":"Provider A","type":"Proxy","vehicleType":"HTTP","proxies":[{"name":"香港 HK-01","type":"Hysteria2","alive":true,"history":[{"delay":38}]},{"name":"新加坡 SG-02","type":"VLESS","alive":true,"history":[{"delay":54}]},{"name":"美国 US-01","type":"VLESS","alive":true,"history":[{"delay":142}]}]},"Provider B":{"name":"Provider B","type":"Proxy","vehicleType":"HTTP","proxies":[{"name":"日本 JP-03","type":"Trojan","alive":true,"history":[{"delay":67}]}]}}}"#

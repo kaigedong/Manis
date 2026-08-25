@@ -1,18 +1,14 @@
 use std::collections::BTreeSet;
-use std::time::Duration;
 
-use gpui::{
-    Animation, AnimationExt as _, Context, Div, FontWeight, ParentElement, Role, Stateful, Styled,
-    div, prelude::*, px,
-};
+use gpui::{Context, Div, FontWeight, ParentElement, Role, Stateful, Styled, div, prelude::*, px};
 use relay_core::{
     NodeAvailabilityFilter, NodeGroupIcon, NodeGroupMatcher, NodeGroupStrategy, NodeIdentity,
     NodePolicyGroup, PrimaryWorkspace, WindowSizeClass,
 };
 
 use super::{
-    GroupBenchmarkState, ImportedSubscriptionState, NodeGroupDraft, NodeGroupMatcherKind,
-    NodeGroupRuntimeState, RelayApp, SourceRuntimeApply,
+    GroupBenchmarkNodeState, GroupBenchmarkState, ImportedSubscriptionState, NodeGroupDraft,
+    NodeGroupMatcherKind, NodeGroupRuntimeState, RelayApp, SourceRuntimeApply,
 };
 use crate::{
     diagnostics::{UiEvent, trace_ui},
@@ -36,28 +32,6 @@ struct NodeGroupMemberView {
     protocol: String,
     latency_label: Option<String>,
     alive: Option<bool>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum SourceNodeLatencyState {
-    Idle(Option<String>),
-    Running,
-    Measured(u16),
-    Failed,
-}
-
-impl SourceNodeLatencyState {
-    fn from_benchmark(node: &LoadedProviderNode, benchmark: &GroupBenchmarkState) -> Self {
-        match benchmark {
-            GroupBenchmarkState::Idle => Self::Idle(node.latency_label.clone()),
-            GroupBenchmarkState::Running { .. } => Self::Running,
-            GroupBenchmarkState::Complete { delays, .. } => match delays.get(&node.name).copied() {
-                Some(delay) if delay > 0 => Self::Measured(delay),
-                Some(_) | None => Self::Failed,
-            },
-            GroupBenchmarkState::Failed { .. } => Self::Failed,
-        }
-    }
 }
 
 const MAX_GROUP_BENCHMARK_NODES: usize = 512;
@@ -803,17 +777,11 @@ impl RelayApp {
                     if candidates.contains(&member.identity.node_name)
             )
             && !is_current;
-        let delay = match benchmark {
-            GroupBenchmarkState::Complete { delays, .. } => {
-                match delays.get(&member.identity.node_name).copied() {
-                    Some(0) => Some("失败".to_owned()),
-                    Some(delay) => Some(format!("{delay} ms")),
-                    None => member.latency_label.clone(),
-                }
-            }
-            _ => member.latency_label.clone(),
-        }
-        .unwrap_or_else(|| "未测速".to_owned());
+        let latency = benchmark.node_state(&member.identity.node_name);
+        let spinner_id = format!(
+            "user-group-{}-{}-latency",
+            group.id, member.identity.node_name
+        );
         let (health, health_color) = match member.alive {
             Some(true) => ("可用", theme.status_success),
             Some(false) => ("不可用", theme.route_trace),
@@ -913,9 +881,19 @@ impl RelayApp {
             .child(
                 div()
                     .w(if compact { px(62.0) } else { px(76.0) })
-                    .text_size(px(10.0))
-                    .text_color(theme.text_secondary)
-                    .child(delay),
+                    .min_h(px(18.0))
+                    .flex()
+                    .items_center()
+                    .justify_end()
+                    .child(Self::benchmark_latency_content(
+                        latency,
+                        member
+                            .latency_label
+                            .clone()
+                            .unwrap_or_else(|| "未测速".to_owned()),
+                        &spinner_id,
+                        theme,
+                    )),
             )
             .child(action)
     }
@@ -1738,12 +1716,23 @@ impl RelayApp {
         trace_ui(UiEvent::GroupBenchmarkStarted);
 
         let runtime = self.runtime.clone();
-        let group_name = name.to_owned();
+        let progress =
+            std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new()));
+        self.poll_group_benchmark_progress(generation, key.clone(), progress.clone(), cx);
         let total = candidate_names.len();
         let executor = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
             let result = executor
-                .spawn(async move { runtime.test_node_group_delay(&group_name, &candidate_names) })
+                .spawn(async move {
+                    runtime.test_proxy_delays_with_progress(
+                        &candidate_names,
+                        move |node_name, delay| {
+                            if let Ok(mut updates) = progress.lock() {
+                                updates.push_back((node_name.to_owned(), delay));
+                            }
+                        },
+                    )
+                })
                 .await;
             this.update(cx, |this, cx| {
                 if this.group_benchmark_active_generation != Some(generation) {
@@ -1839,13 +1828,38 @@ impl RelayApp {
         let runtime = self.runtime.clone();
         let group_id = group.id.clone();
         let group_name = group.name.clone();
+        let use_group_api = group.strategy == NodeGroupStrategy::LowestLatency
+            && runtime.manages_node_policy_groups();
         let refresh_after_success = group.strategy == NodeGroupStrategy::LowestLatency
             && self.selected_node_group_id.as_deref() == Some(group.id.as_str());
+        let progress =
+            std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new()));
+        if !use_group_api {
+            self.poll_group_benchmark_progress(
+                generation,
+                benchmark_key.clone(),
+                progress.clone(),
+                cx,
+            );
+        }
         let total = candidate_names.len();
         let executor = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
             let result = executor
-                .spawn(async move { runtime.test_node_group_delay(&group_name, &candidate_names) })
+                .spawn(async move {
+                    if use_group_api {
+                        runtime.test_node_group_delay(&group_name, &candidate_names)
+                    } else {
+                        runtime.test_proxy_delays_with_progress(
+                            &candidate_names,
+                            move |node_name, delay| {
+                                if let Ok(mut updates) = progress.lock() {
+                                    updates.push_back((node_name.to_owned(), delay));
+                                }
+                            },
+                        )
+                    }
+                })
                 .await;
             this.update(cx, |this, cx| {
                 if this.group_benchmark_active_generation != Some(generation) {
@@ -2584,12 +2598,27 @@ impl RelayApp {
         compact: bool,
         theme: Theme,
     ) -> Stateful<Div> {
-        let latency = SourceNodeLatencyState::from_benchmark(node, benchmark);
+        let latency = benchmark.node_state(&node.name);
+        let idle_latency = node.latency_label.clone().unwrap_or_else(|| "—".to_owned());
         let spinner_id = format!("{row_id}-latency");
         let content = if compact {
-            Self::compact_node_row_content(source_name, node, &latency, &spinner_id, theme)
+            Self::compact_node_row_content(
+                source_name,
+                node,
+                latency,
+                idle_latency,
+                &spinner_id,
+                theme,
+            )
         } else {
-            Self::wide_node_row_content(source_name, node, &latency, &spinner_id, theme)
+            Self::wide_node_row_content(
+                source_name,
+                node,
+                latency,
+                idle_latency,
+                &spinner_id,
+                theme,
+            )
         };
         div()
             .id(row_id)
@@ -2604,7 +2633,8 @@ impl RelayApp {
     fn compact_node_row_content(
         source_name: &str,
         node: &LoadedProviderNode,
-        latency: &SourceNodeLatencyState,
+        latency: GroupBenchmarkNodeState,
+        idle_latency: String,
         spinner_id: &str,
         theme: Theme,
     ) -> Div {
@@ -2641,8 +2671,11 @@ impl RelayApp {
                             .flex()
                             .items_center()
                             .justify_end()
-                            .child(Self::source_node_latency_content(
-                                latency, spinner_id, theme,
+                            .child(Self::benchmark_latency_content(
+                                latency,
+                                idle_latency,
+                                spinner_id,
+                                theme,
                             )),
                     ),
             )
@@ -2651,7 +2684,8 @@ impl RelayApp {
     fn wide_node_row_content(
         source_name: &str,
         node: &LoadedProviderNode,
-        latency: &SourceNodeLatencyState,
+        latency: GroupBenchmarkNodeState,
+        idle_latency: String,
         spinner_id: &str,
         theme: Theme,
     ) -> Div {
@@ -2686,97 +2720,13 @@ impl RelayApp {
                     .flex()
                     .items_center()
                     .justify_end()
-                    .child(Self::source_node_latency_content(
-                        latency, spinner_id, theme,
+                    .child(Self::benchmark_latency_content(
+                        latency,
+                        idle_latency,
+                        spinner_id,
+                        theme,
                     )),
             )
-    }
-
-    fn source_node_latency_content(
-        latency: &SourceNodeLatencyState,
-        spinner_id: &str,
-        theme: Theme,
-    ) -> Div {
-        let cell = div()
-            .min_w(px(42.0))
-            .flex()
-            .items_center()
-            .justify_end()
-            .font_weight(FontWeight::SEMIBOLD)
-            .text_size(px(11.0));
-        match latency {
-            SourceNodeLatencyState::Running => cell.child(Self::source_node_latency_spinner(
-                spinner_id.to_owned(),
-                theme,
-            )),
-            SourceNodeLatencyState::Measured(delay) => cell
-                .text_color(theme.status_success)
-                .child(format!("{delay} ms")),
-            SourceNodeLatencyState::Failed => cell.text_color(theme.route_trace).child("失败"),
-            SourceNodeLatencyState::Idle(previous) => cell
-                .text_color(theme.text_tertiary)
-                .child(previous.clone().unwrap_or_else(|| "—".to_owned())),
-        }
-    }
-
-    fn source_node_latency_spinner(id: String, theme: Theme) -> impl IntoElement {
-        div().relative().size(px(14.0)).with_animation(
-            id,
-            Animation::new(Duration::from_millis(720)).repeat(),
-            move |spinner, delta| {
-                let active = Self::source_node_latency_spinner_frame(delta);
-                (0..8).fold(spinner, |spinner, index| {
-                    spinner.child(Self::source_node_latency_dot(
-                        index,
-                        active,
-                        theme.action_primary,
-                    ))
-                })
-            },
-        )
-    }
-
-    fn source_node_latency_spinner_frame(delta: f32) -> usize {
-        if delta < 0.125 {
-            0
-        } else if delta < 0.25 {
-            1
-        } else if delta < 0.375 {
-            2
-        } else if delta < 0.5 {
-            3
-        } else if delta < 0.625 {
-            4
-        } else if delta < 0.75 {
-            5
-        } else if delta < 0.875 {
-            6
-        } else {
-            7
-        }
-    }
-
-    fn source_node_latency_dot(index: usize, active: usize, color: gpui::Rgba) -> Div {
-        const POSITIONS: [(f32, f32); 8] = [
-            (5.5, 0.0),
-            (9.5, 1.5),
-            (11.0, 5.5),
-            (9.5, 9.5),
-            (5.5, 11.0),
-            (1.5, 9.5),
-            (0.0, 5.5),
-            (1.5, 1.5),
-        ];
-        const OPACITY: [f32; 8] = [1.0, 0.82, 0.68, 0.54, 0.42, 0.32, 0.24, 0.18];
-        let distance = (index + 8 - active) % 8;
-        let (left, top) = POSITIONS[index];
-        div()
-            .absolute()
-            .left(px(left))
-            .top(px(top))
-            .size(px(3.0))
-            .rounded_full()
-            .bg(color.opacity(OPACITY[distance]))
     }
 
     fn node_empty_state(compact: bool, theme: Theme, cx: &mut Context<Self>) -> Div {
@@ -2842,8 +2792,10 @@ impl RelayApp {
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
-    use super::{NodeCounts, RelayApp, SourceNodeLatencyState};
-    use crate::app::{GroupBenchmarkState, GroupBenchmarkSummary, NodeGroupRuntimeState};
+    use super::{NodeCounts, RelayApp};
+    use crate::app::{
+        GroupBenchmarkNodeState, GroupBenchmarkState, GroupBenchmarkSummary, NodeGroupRuntimeState,
+    };
     use crate::mihomo::{LoadedProvider, LoadedProviderNode};
 
     #[test]
@@ -2884,60 +2836,46 @@ mod tests {
 
     #[test]
     fn imported_node_latency_uses_running_and_failure_states_without_health_labels() {
-        let node = LoadedProviderNode {
-            name: "Saved Edge".to_owned(),
-            protocol: "VLESS".to_owned(),
-            latency_label: Some("88 ms".to_owned()),
-            alive: Some(true),
-        };
-
         assert_eq!(
-            SourceNodeLatencyState::from_benchmark(
-                &node,
-                &GroupBenchmarkState::Running { generation: 2 },
-            ),
-            SourceNodeLatencyState::Running,
+            GroupBenchmarkState::running(2).node_state("Saved Edge"),
+            GroupBenchmarkNodeState::Pending,
         );
         assert_eq!(
-            SourceNodeLatencyState::from_benchmark(
-                &node,
-                &GroupBenchmarkState::Complete {
-                    generation: 2,
-                    summary: GroupBenchmarkSummary::default(),
-                    delays: BTreeMap::new(),
-                },
-            ),
-            SourceNodeLatencyState::Failed,
+            GroupBenchmarkState::Complete {
+                generation: 2,
+                summary: GroupBenchmarkSummary::default(),
+                delays: BTreeMap::new(),
+            }
+            .node_state("Saved Edge"),
+            GroupBenchmarkNodeState::Failed,
         );
         assert_eq!(
-            SourceNodeLatencyState::from_benchmark(
-                &node,
-                &GroupBenchmarkState::Complete {
-                    generation: 2,
-                    summary: GroupBenchmarkSummary::default(),
-                    delays: BTreeMap::from([("Saved Edge".to_owned(), 47)]),
-                },
-            ),
-            SourceNodeLatencyState::Measured(47),
+            GroupBenchmarkState::Complete {
+                generation: 2,
+                summary: GroupBenchmarkSummary::default(),
+                delays: BTreeMap::from([("Saved Edge".to_owned(), 47)]),
+            }
+            .node_state("Saved Edge"),
+            GroupBenchmarkNodeState::Measured(47),
         );
     }
 
     #[test]
     fn imported_node_latency_spinner_advances_through_eight_frames() {
-        assert_eq!(RelayApp::source_node_latency_spinner_frame(0.0), 0);
-        assert_eq!(RelayApp::source_node_latency_spinner_frame(0.124), 0);
-        assert_eq!(RelayApp::source_node_latency_spinner_frame(0.125), 1);
-        assert_eq!(RelayApp::source_node_latency_spinner_frame(0.5), 4);
-        assert_eq!(RelayApp::source_node_latency_spinner_frame(0.875), 7);
-        assert_eq!(RelayApp::source_node_latency_spinner_frame(1.0), 7);
+        assert_eq!(RelayApp::benchmark_latency_spinner_frame(0.0), 0);
+        assert_eq!(RelayApp::benchmark_latency_spinner_frame(0.124), 0);
+        assert_eq!(RelayApp::benchmark_latency_spinner_frame(0.125), 1);
+        assert_eq!(RelayApp::benchmark_latency_spinner_frame(0.5), 4);
+        assert_eq!(RelayApp::benchmark_latency_spinner_frame(0.875), 7);
+        assert_eq!(RelayApp::benchmark_latency_spinner_frame(1.0), 7);
     }
 
     #[test]
     fn group_benchmark_state_ignores_a_stale_completion() {
-        let mut state = GroupBenchmarkState::Running { generation: 7 };
+        let mut state = GroupBenchmarkState::running(7);
         let outdated = BTreeMap::from([("Tokyo".to_owned(), 90)]);
         assert!(!state.complete(6, 2, outdated));
-        assert_eq!(state, GroupBenchmarkState::Running { generation: 7 });
+        assert_eq!(state, GroupBenchmarkState::running(7));
 
         let current = BTreeMap::from([("Tokyo".to_owned(), 55), ("Singapore".to_owned(), 75)]);
         assert!(state.complete(7, 2, current));
@@ -2955,8 +2893,33 @@ mod tests {
     }
 
     #[test]
+    fn group_benchmark_exposes_each_node_result_before_completion() {
+        let mut state = GroupBenchmarkState::running(7);
+
+        assert_eq!(
+            state.node_state("Tokyo"),
+            crate::app::GroupBenchmarkNodeState::Pending
+        );
+        assert!(state.record(7, "Tokyo", Some(42)));
+        assert_eq!(
+            state.node_state("Tokyo"),
+            crate::app::GroupBenchmarkNodeState::Measured(42)
+        );
+        assert!(state.record(7, "Singapore", None));
+        assert_eq!(
+            state.node_state("Singapore"),
+            crate::app::GroupBenchmarkNodeState::Failed
+        );
+        assert!(!state.record(6, "Stale", Some(99)));
+        assert_eq!(
+            state.node_state("Stale"),
+            crate::app::GroupBenchmarkNodeState::Pending
+        );
+    }
+
+    #[test]
     fn benchmark_state_reports_running_only_for_active_variant() {
-        assert!(GroupBenchmarkState::Running { generation: 1 }.is_running());
+        assert!(GroupBenchmarkState::running(1).is_running());
         assert!(!GroupBenchmarkState::Idle.is_running());
         assert!(!GroupBenchmarkState::Failed { generation: 1 }.is_running());
     }
