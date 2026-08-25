@@ -1110,6 +1110,9 @@ fn optional_vless_value(
     key: &str,
 ) -> Result<Option<String>, ProfileError> {
     fields.get(key).map_or(Ok(None), |value| {
+        if value.is_empty() {
+            return Ok(None);
+        }
         is_plain_value(value, MAX_VLESS_FIELD_BYTES)
             .then(|| value.clone())
             .map(Some)

@@ -278,6 +278,18 @@ mod tests {
     }
 
     #[test]
+    fn recognizes_reality_tcp_with_an_empty_optional_header_type() {
+        let preview = validate_subscription_preview(
+            "vless://00000000-0000-4000-8000-000000000000@198.51.100.7:443?security=reality&encryption=none&pbk=fixture_reality-public-key&headerType=&fp=chrome&type=tcp&flow=xtls-rprx-vision&sni=cdn.example.invalid#Reality%20TCP",
+        )
+        .expect("QX-style empty optional query fields should be accepted");
+
+        assert_eq!(preview.kind, SourceKind::VlessNode);
+        assert_eq!(preview.nodes[0].name, "Reality TCP");
+        assert_eq!(preview.nodes[0].detail, "REALITY · TCP");
+    }
+
+    #[test]
     fn vless_source_keeps_credentials_out_of_debug_output() {
         let source = VlessSource::parse(
             "vless://00000000-0000-4000-8000-000000000000@edge.example.invalid:443?security=tls#Saved",

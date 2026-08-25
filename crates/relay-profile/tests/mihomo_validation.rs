@@ -51,7 +51,10 @@ fn generated_vless_profile_passes_mihomo_validation() -> Result<(), Box<dyn std:
     let vless = VlessProxy::parse_share_link(
         "vless://00000000-0000-4000-8000-000000000000@edge.example.invalid:443?encryption=none&security=reality&type=grpc&sni=cdn.example.invalid&fp=chrome&pbk=Qs24XU-ibEZ3LWDjGBITKdQvualLy0pi_PI0qoF79A8&sid=0123456789abcdef&serviceName=relay#Saved",
     )?;
-    let profile = Profile::qx_sources(Vec::new(), vec![vless], 17_890)?;
+    let reality_tcp = VlessProxy::parse_share_link(
+        "vless://10000000-0000-4000-8000-000000000001@198.51.100.7:443?security=reality&encryption=none&pbk=Qs24XU-ibEZ3LWDjGBITKdQvualLy0pi_PI0qoF79A8&headerType=&fp=chrome&type=tcp&flow=xtls-rprx-vision&sni=cdn.example.invalid#Reality%20TCP",
+    )?;
+    let profile = Profile::qx_sources(Vec::new(), vec![vless, reality_tcp], 17_890)?;
     let yaml = render_mihomo_yaml(&profile)?;
     let config = write_private_atomic(&root, "relay-generated.yaml", yaml.as_bytes())?;
 

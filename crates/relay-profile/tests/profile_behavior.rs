@@ -163,6 +163,25 @@ fn vless_share_link_compiles_into_a_direct_proxy_and_policy_reference() {
 }
 
 #[test]
+fn vless_reality_tcp_accepts_an_empty_optional_header_type() {
+    let vless = VlessProxy::parse_share_link(
+        "vless://00000000-0000-4000-8000-000000000000@198.51.100.7:443?security=reality&encryption=none&pbk=fixture_reality-public-key&headerType=&fp=chrome&type=tcp&flow=xtls-rprx-vision&sni=cdn.example.invalid#Reality%20TCP",
+    )
+    .expect("an empty optional headerType should behave like an omitted field");
+    let yaml = render_mihomo_yaml(
+        &Profile::qx_sources(Vec::new(), vec![vless], 17_890)
+            .expect("Reality TCP fixture should build a profile"),
+    )
+    .expect("Reality TCP fixture should render");
+
+    assert!(yaml.contains("name: \"Reality TCP\""));
+    assert!(yaml.contains("network: \"tcp\""));
+    assert!(yaml.contains("flow: \"xtls-rprx-vision\""));
+    assert!(yaml.contains("servername: \"cdn.example.invalid\""));
+    assert!(yaml.contains("public-key: \"fixture_reality-public-key\""));
+}
+
+#[test]
 fn vless_parser_is_fail_closed_and_redacts_credentials() {
     let input = "vless://00000000-0000-4000-8000-000000000000@edge.example.invalid:443?encryption=none&security=tls&type=ws&path=%2Frelay&host=cdn.example.invalid#Saved";
     let vless = VlessProxy::parse_share_link(input).expect("supported fixture should parse");
@@ -185,6 +204,10 @@ fn vless_parser_is_fail_closed_and_redacts_credentials() {
     .is_err());
     assert!(VlessProxy::parse_share_link(
         "vless://00000000-0000-4000-8000-000000000000@edge.example.invalid:443?security=none&sni=cdn.example.invalid#Bad",
+    )
+    .is_err());
+    assert!(VlessProxy::parse_share_link(
+        "vless://00000000-0000-4000-8000-000000000000@edge.example.invalid:443?encryption=none&security=reality&pbk=&type=tcp#Bad",
     )
     .is_err());
 }
