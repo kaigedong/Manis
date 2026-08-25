@@ -1,5 +1,7 @@
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use gpui::{
     Context, Div, Entity, FontWeight, IntoElement, ParentElement, Render, Role, Stateful, Styled,
@@ -16,8 +18,9 @@ use crate::{
     demo,
     diagnostics::{UiEvent, trace_ui},
     mihomo::{
-        self, ControllerRuntime, ControllerState, LoadedProvider, LoadedSnapshot,
-        StoredSubscription, StoredVlessNode, SubscriptionPreviewError, SubscriptionStoreError,
+        self, ControllerRuntime, ControllerState, GeneratedProfileApply, KernelLogEntry,
+        LiveRuntimeSession, LiveStreamStatus, LoadedProvider, LoadedSnapshot, StoredSubscription,
+        StoredVlessNode, SubscriptionPreviewError, SubscriptionStoreError,
     },
     subscription::{SourceKind, SubscriptionInputError, SubscriptionPreview},
     subscription_input::{SubscriptionInputChanged, SubscriptionTextInput},
@@ -39,6 +42,33 @@ enum SubscriptionFeedback {
     InvalidInput(SubscriptionInputError),
     PreviewFailed(SubscriptionPreviewError),
     StoreFailed(SubscriptionStoreError),
+}
+
+enum SourceRuntimeApply {
+    Applied(GeneratedProfileApply),
+    Failed(String),
+}
+
+impl SourceRuntimeApply {
+    fn from_result(result: Result<GeneratedProfileApply, mihomo::LoadError>) -> Self {
+        match result {
+            Ok(outcome) => Self::Applied(outcome),
+            Err(error) => Self::Failed(error.to_string()),
+        }
+    }
+
+    fn status_suffix(&self) -> String {
+        match self {
+            Self::Applied(GeneratedProfileApply::NotManaged) => {
+                " · 当前为外部/已有配置，未改写其配置".to_owned()
+            }
+            Self::Applied(GeneratedProfileApply::Updated) => " · 已写入 Relay 托管配置".to_owned(),
+            Self::Applied(GeneratedProfileApply::Restarted) => {
+                " · Relay 托管内核已安全重载".to_owned()
+            }
+            Self::Failed(message) => format!(" · 持久化已完成，但托管配置应用失败：{message}"),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -109,6 +139,11 @@ pub struct RelayApp {
     proxy_runtime: RuntimeConfig,
     system_proxy: Arc<Mutex<SystemProxySession>>,
     active_connections: Vec<Connection>,
+    live_runtime: Option<LiveRuntimeSession>,
+    live_generation: u64,
+    live_status: LiveStreamStatus,
+    kernel_logs: VecDeque<KernelLogEntry>,
+    dropped_kernel_logs: u64,
     inspector_open: bool,
     dark: bool,
     status: String,
@@ -155,7 +190,7 @@ impl RelayApp {
         runtime: ControllerRuntime,
         subscription_store_dir: Option<PathBuf>,
     ) -> Self {
-        let status = runtime.initial_status();
+        let mut status = runtime.initial_status();
         let (imported_subscriptions, saved_vless_nodes, collapsed_groups, source_store_error) =
             subscription_store_dir.as_ref().map_or_else(
                 || (Vec::new(), Vec::new(), Vec::new(), None),
@@ -186,6 +221,18 @@ impl RelayApp {
                     }
                 },
             );
+        if let Some(directory) = subscription_store_dir.as_ref()
+            && (!imported_subscriptions.is_empty() || !saved_vless_nodes.is_empty())
+        {
+            status = match runtime.apply_saved_sources(directory) {
+                Ok(GeneratedProfileApply::Updated) => "已将保存来源写入 Relay 托管配置".to_owned(),
+                Ok(GeneratedProfileApply::Restarted) => {
+                    "已将保存来源应用到 Relay 托管内核".to_owned()
+                }
+                Ok(GeneratedProfileApply::NotManaged) => status,
+                Err(error) => format!("保存来源已载入，但托管配置未应用：{error}"),
+            };
+        }
         let mut node_workspace = NodeWorkspaceState::default();
         node_workspace.replace_collapsed_groups(collapsed_groups.iter().map(String::as_str));
         Self {
@@ -209,6 +256,11 @@ impl RelayApp {
             proxy_runtime: RuntimeConfig::default(),
             system_proxy: Arc::new(Mutex::new(SystemProxySession::default())),
             active_connections: Vec::new(),
+            live_runtime: None,
+            live_generation: 0,
+            live_status: LiveStreamStatus::default(),
+            kernel_logs: VecDeque::with_capacity(500),
+            dropped_kernel_logs: 0,
             inspector_open: false,
             dark: false,
             status,
@@ -260,6 +312,7 @@ impl RelayApp {
         }
 
         let executor = cx.background_executor().clone();
+        let runtime = self.runtime.clone();
         cx.spawn(async move |this, cx| {
             let result = executor
                 .spawn(async move {
@@ -267,7 +320,10 @@ impl RelayApp {
                         .map_err(ImportSubscriptionError::Preview)?;
                     let subscription = mihomo::save_subscription_source_in(&store_dir, &input)
                         .map_err(ImportSubscriptionError::Store)?;
-                    Ok::<_, ImportSubscriptionError>((subscription, providers))
+                    let apply = SourceRuntimeApply::from_result(
+                        runtime.apply_saved_sources(&store_dir),
+                    );
+                    Ok::<_, ImportSubscriptionError>((subscription, providers, apply))
                 })
                 .await;
             this.update(cx, |this, cx| {
@@ -278,7 +334,7 @@ impl RelayApp {
                     input.update(cx, |input, cx| input.set_enabled(true, cx));
                 }
                 match result {
-                    Ok((subscription, providers)) => {
+                    Ok((subscription, providers, apply)) => {
                         let node_count: usize =
                             providers.iter().map(|provider| provider.nodes.len()).sum();
                         let provider_count = providers.len();
@@ -306,8 +362,9 @@ impl RelayApp {
                             input.update(cx, SubscriptionTextInput::clear_without_event);
                         }
                         this.status = format!(
-                            "订阅已导入 · 共 {} 个订阅组 · {provider_count} 个来源 · {node_count} 个节点",
-                            this.imported_subscriptions.len()
+                            "订阅已导入 · 共 {} 个订阅组 · {provider_count} 个来源 · {node_count} 个节点{}",
+                            this.imported_subscriptions.len(),
+                            apply.status_suffix()
                         );
                         trace_ui(UiEvent::SourceImportSucceeded);
                     }
@@ -423,9 +480,15 @@ impl RelayApp {
 
         let executor = cx.background_executor().clone();
         let remove_id = id.clone();
+        let runtime = self.runtime.clone();
         cx.spawn(async move |this, cx| {
             let result = executor
-                .spawn(async move { mihomo::remove_subscription_source_in(&store_dir, &remove_id) })
+                .spawn(async move {
+                    mihomo::remove_subscription_source_in(&store_dir, &remove_id)?;
+                    Ok::<_, SubscriptionStoreError>(SourceRuntimeApply::from_result(
+                        runtime.apply_saved_sources(&store_dir),
+                    ))
+                })
                 .await;
             this.update(cx, |this, cx| {
                 let Some(index) = this
@@ -439,9 +502,9 @@ impl RelayApp {
                     return;
                 }
                 match result {
-                    Ok(()) => {
+                    Ok(apply) => {
                         this.imported_subscriptions.remove(index);
-                        "已移除导入订阅".clone_into(&mut this.status);
+                        this.status = format!("已移除导入订阅{}", apply.status_suffix());
                         trace_ui(UiEvent::SourceRemoveSucceeded);
                     }
                     Err(error) => {
@@ -456,30 +519,6 @@ impl RelayApp {
             .ok();
         })
         .detach();
-    }
-
-    fn save_vless_source(&mut self, input: &str) -> Result<(), SubscriptionStoreError> {
-        let Some(store_dir) = self.subscription_store_dir.as_ref() else {
-            return Err(SubscriptionStoreError::DataDirectoryUnavailable);
-        };
-        let stored = mihomo::save_vless_source_in(store_dir, input)?;
-        if !self
-            .saved_vless_nodes
-            .iter()
-            .any(|node| node.id == stored.id)
-        {
-            self.saved_vless_nodes.push(stored);
-        }
-        Ok(())
-    }
-
-    fn remove_saved_vless_source(&mut self, id: &str) -> Result<(), SubscriptionStoreError> {
-        let Some(store_dir) = self.subscription_store_dir.as_ref() else {
-            return Err(SubscriptionStoreError::DataDirectoryUnavailable);
-        };
-        mihomo::remove_vless_source_in(store_dir, id)?;
-        self.saved_vless_nodes.retain(|node| node.id != id);
-        Ok(())
     }
 
     fn persist_node_workspace(&mut self) {
@@ -529,6 +568,13 @@ impl RelayApp {
             return;
         }
 
+        self.live_generation = self.live_generation.wrapping_add(1);
+        self.live_runtime = None;
+        self.live_status = LiveStreamStatus {
+            activity: "正在重新连接".to_owned(),
+            logs: "正在重新连接".to_owned(),
+        };
+
         let endpoint = self.runtime.endpoint_label();
         let runtime = self.runtime.clone();
         self.controller = ControllerState::Connecting {
@@ -542,7 +588,11 @@ impl RelayApp {
             let result = executor.spawn(async move { runtime.connect() }).await;
             this.update(cx, |this, cx| {
                 match result {
-                    Ok(result) => this.apply_mihomo_snapshot(result.endpoint, result.snapshot),
+                    Ok(result) => {
+                        let controller_endpoint = result.controller_endpoint;
+                        this.apply_mihomo_snapshot(result.endpoint, result.snapshot);
+                        this.start_live_runtime(&controller_endpoint, cx);
+                    }
                     Err(error) => {
                         trace_ui(UiEvent::MihomoConnectFailed);
                         let endpoint = this
@@ -602,6 +652,67 @@ impl RelayApp {
         };
     }
 
+    fn start_live_runtime(&mut self, endpoint: &str, cx: &mut Context<Self>) {
+        self.live_generation = self.live_generation.wrapping_add(1);
+        let generation = self.live_generation;
+        self.live_runtime = match LiveRuntimeSession::start(endpoint) {
+            Ok(session) => Some(session),
+            Err(error) => {
+                self.live_status = LiveStreamStatus {
+                    activity: format!("无法启动：{error}"),
+                    logs: format!("无法启动：{error}"),
+                };
+                None
+            }
+        };
+        if self.live_runtime.is_some() {
+            self.poll_live_runtime(generation, cx);
+        }
+    }
+
+    fn poll_live_runtime(&mut self, generation: u64, cx: &mut Context<Self>) {
+        if generation != self.live_generation {
+            return;
+        }
+        let Some(session) = self.live_runtime.as_ref() else {
+            return;
+        };
+        let update = session.drain();
+        self.live_status = update.status;
+        self.dropped_kernel_logs = self.dropped_kernel_logs.saturating_add(update.dropped_logs);
+        for entry in update.logs {
+            if self.kernel_logs.len() == 500 {
+                self.kernel_logs.pop_front();
+                self.dropped_kernel_logs = self.dropped_kernel_logs.saturating_add(1);
+            }
+            self.kernel_logs.push_back(entry);
+        }
+        if let Some(connections) = update.connections {
+            self.active_connections = connections.connections;
+            if let ControllerState::Connected {
+                active_connections,
+                download_total,
+                upload_total,
+                ..
+            } = &mut self.controller
+            {
+                *active_connections = self.active_connections.len();
+                *download_total = connections.download_total;
+                *upload_total = connections.upload_total;
+            }
+        }
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(400))
+                .await;
+            if let Some(this) = this.upgrade() {
+                this.update(cx, |this, cx| this.poll_live_runtime(generation, cx));
+            }
+        })
+        .detach();
+    }
+
     #[allow(clippy::too_many_lines)]
     fn apply_proxy_mode(&mut self, requested: ProxyMode, cx: &mut Context<Self>) {
         if self.proxy_mode_busy || requested == self.proxy_mode {
@@ -610,6 +721,13 @@ impl RelayApp {
         if !matches!(self.controller, ControllerState::Connected { .. }) {
             trace_ui(UiEvent::ProxyModeFailed);
             "请先连接 Mihomo，再切换代理模式".clone_into(&mut self.status);
+            cx.notify();
+            return;
+        }
+        if requested == ProxyMode::Tun && matches!(self.runtime, ControllerRuntime::External { .. })
+        {
+            trace_ui(UiEvent::ProxyModeFailed);
+            "外部控制器保持只读；请使用 Relay 托管内核启用 TUN 模式".clone_into(&mut self.status);
             cx.notify();
             return;
         }
@@ -1785,7 +1903,7 @@ impl Render for RelayApp {
                         main.child(self.activity_workspace(theme, size_class, cx))
                     })
                     .when(logs_active, |main| {
-                        main.child(Self::logs_workspace(theme, size_class, cx))
+                        main.child(self.logs_workspace(theme, size_class, cx))
                     })
                     .when(
                         self.primary_workspace == PrimaryWorkspace::Configuration,

@@ -307,6 +307,11 @@ fn capture_connected(
 
     refresh(cx, window)?;
     cx.simulate_click(window, point(px(480.0), px(80.0)), Modifiers::none());
+    for _ in 0..24 {
+        std::thread::sleep(std::time::Duration::from_millis(25));
+        refresh(cx, window)?;
+    }
+    cx.advance_clock(std::time::Duration::from_millis(500));
     refresh(cx, window)?;
     save_screenshot(cx, window, "native-wide-connected.png")?;
 
@@ -381,11 +386,32 @@ fn spawn_mihomo_fixture() -> Result<FixtureServer, Box<dyn std::error::Error>> {
     let listener = TcpListener::bind("127.0.0.1:0")?;
     let endpoint = format!("http://{}", listener.local_addr()?);
     let server = std::thread::spawn(move || -> std::io::Result<()> {
-        for _ in 0..6 {
+        for _ in 0..8 {
             let (mut stream, _) = listener.accept()?;
             let mut request_line = String::new();
             BufReader::new(stream.try_clone()?).read_line(&mut request_line)?;
             let path = request_line.split_whitespace().nth(1).unwrap_or("/");
+            if path.starts_with("/connections?interval=") {
+                let body = fixture_response("/connections");
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n{:X}\r\n{body}\n\r\n0\r\n\r\n",
+                    body.len() + 1
+                );
+                stream.write_all(response.as_bytes())?;
+                continue;
+            }
+            if path.starts_with("/logs?level=") {
+                let body = concat!(
+                    "{\"type\":\"info\",\"payload\":\"[TCP] Safari → openai.com matched DOMAIN-SUFFIX\"}\n",
+                    "{\"type\":\"warning\",\"payload\":\"provider https://fixture.invalid/private-token retrying\"}\n"
+                );
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n{:X}\r\n{body}\r\n0\r\n\r\n",
+                    body.len()
+                );
+                stream.write_all(response.as_bytes())?;
+                continue;
+            }
             let body = fixture_response(path);
             let response = format!(
                 "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",

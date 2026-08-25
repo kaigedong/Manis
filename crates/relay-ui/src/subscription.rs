@@ -1,6 +1,6 @@
 use std::fmt;
 
-use relay_profile::{Profile, SecretUrl};
+use relay_profile::{Profile, SecretUrl, VlessProxy};
 
 pub(crate) const MAX_SUBSCRIPTION_BYTES: usize = 16 * 1024;
 
@@ -86,6 +86,8 @@ pub(crate) fn validate_subscription_preview(
 
 impl VlessSource {
     pub(crate) fn parse(input: &str) -> Result<Self, SubscriptionInputError> {
+        VlessProxy::parse_share_link(input)
+            .map_err(|_error| SubscriptionInputError::InvalidVless)?;
         let preview = parse_vless_node(input)?;
         Ok(Self {
             value: input.to_owned(),

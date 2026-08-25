@@ -1,8 +1,9 @@
+use std::collections::VecDeque;
 use std::fs;
 use std::io::Read;
 use std::net::TcpListener;
 use std::path::{Component, Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -11,15 +12,16 @@ use std::{env, error::Error, fmt};
 use relay_core::{EmptyPolicyCatalog, PolicyCatalog};
 use relay_engine::{
     ControllerEndpoint, EngineError, EngineManager, ManagedEngineConfig, ProbeStatus,
-    ReadinessPolicy, ReadinessProbe,
+    ReadinessPolicy, ReadinessProbe, validate_managed_config,
 };
 #[cfg(unix)]
 use relay_mihomo::UnixSocketTransport;
 use relay_mihomo::{
-    Connection, ControllerConfig, MihomoClient, MihomoError, MihomoSnapshot, ObservedRouteEvidence,
-    RuntimeConfig, StdHttpTransport, VersionInfo, to_policy_catalog,
+    Connection, ConnectionsState, ControllerConfig, LiveController, MihomoClient, MihomoError,
+    MihomoLogEntry, MihomoSnapshot, ObservedRouteEvidence, RuntimeConfig, StdHttpTransport,
+    VersionInfo, to_policy_catalog,
 };
-use relay_profile::{Profile, SecretUrl, render_mihomo_yaml, write_private_atomic};
+use relay_profile::{Profile, SecretUrl, VlessProxy, render_mihomo_yaml, write_private_atomic};
 
 use crate::subscription::VlessSource;
 
@@ -39,8 +41,13 @@ const STORED_SUBSCRIPTION_SUFFIX: &str = ".url";
 const SAVED_VLESS_PREFIX: &str = "saved-";
 const SAVED_VLESS_SUFFIX: &str = ".vless";
 const WORKSPACE_STATE_FILE: &str = "workspace.state";
+const GENERATED_PROFILE_FILE: &str = "relay-generated.yaml";
+const CANDIDATE_PROFILE_FILE: &str = "relay-generated.candidate.yaml";
 const PREVIEW_PROVIDER_ATTEMPTS: usize = 80;
 const PREVIEW_PROVIDER_DELAY: Duration = Duration::from_millis(250);
+const LIVE_CONNECTION_INTERVAL: Duration = Duration::from_millis(750);
+const LIVE_LOG_MAILBOX_CAPACITY: usize = 256;
+const LIVE_RETRY_MAX: Duration = Duration::from_secs(5);
 static NEXT_PREVIEW_WORKSPACE: AtomicU64 = AtomicU64::new(0);
 static NEXT_STORED_SOURCE: AtomicU64 = AtomicU64::new(0);
 
@@ -96,10 +103,26 @@ pub(crate) enum ControllerRuntime {
         endpoint: String,
         manager: Arc<Mutex<EngineManager>>,
         profile_source: RuntimeProfileSource,
+        generated_profile: Option<ManagedGeneratedProfile>,
     },
     Invalid {
         message: String,
     },
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ManagedGeneratedProfile {
+    binary: PathBuf,
+    data_dir: PathBuf,
+    controller: ControllerEndpoint,
+    subscription_file: PathBuf,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum GeneratedProfileApply {
+    NotManaged,
+    Updated,
+    Restarted,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -170,6 +193,7 @@ impl ControllerRuntime {
         match self {
             Self::External { endpoint } => Ok(RuntimeSnapshot {
                 endpoint: endpoint.clone(),
+                controller_endpoint: endpoint.clone(),
                 snapshot: load(endpoint)?,
             }),
             Self::Managed { manager, .. } => {
@@ -185,6 +209,7 @@ impl ControllerRuntime {
                 let endpoint = endpoint.uri();
                 Ok(RuntimeSnapshot {
                     endpoint: format!("Relay 托管 · {endpoint}"),
+                    controller_endpoint: endpoint.clone(),
                     snapshot: load(&endpoint)?,
                 })
             }
@@ -194,7 +219,6 @@ impl ControllerRuntime {
 
     pub(crate) fn set_tun_enabled(&self, enabled: bool) -> Result<(), LoadError> {
         let endpoint = match self {
-            Self::External { endpoint } => endpoint.clone(),
             Self::Managed { manager, .. } => {
                 let mut manager = manager
                     .lock()
@@ -204,15 +228,199 @@ impl ControllerRuntime {
                     .ok_or_else(|| LoadError::Runtime("Mihomo 尚未运行，请先连接内核".to_owned()))?
                     .uri()
             }
+            Self::External { .. } => {
+                return Err(LoadError::Runtime(
+                    "外部控制器保持只读；TUN 模式仅支持 Relay 托管内核".to_owned(),
+                ));
+            }
             Self::Invalid { message } => return Err(LoadError::Runtime(message.clone())),
         };
         set_tun_enabled(&endpoint, enabled).map_err(LoadError::from)
+    }
+
+    pub(crate) fn apply_saved_sources(
+        &self,
+        store_dir: &Path,
+    ) -> Result<GeneratedProfileApply, LoadError> {
+        let Self::Managed {
+            manager,
+            generated_profile: Some(spec),
+            ..
+        } = self
+        else {
+            return Ok(GeneratedProfileApply::NotManaged);
+        };
+        let base_subscription =
+            read_private_subscription(&spec.subscription_file).map_err(LoadError::Runtime)?;
+        let mut subscriptions = vec![base_subscription];
+        for stored in load_subscription_sources_in(store_dir)
+            .map_err(|_error| LoadError::Runtime("无法读取已保存的订阅来源".to_owned()))?
+        {
+            if !subscriptions.contains(&stored.source) {
+                subscriptions.push(stored.source);
+            }
+        }
+        let mut vless_nodes = Vec::new();
+        for stored in load_vless_sources_in(store_dir)
+            .map_err(|_error| LoadError::Runtime("无法读取已保存的 VLESS 节点".to_owned()))?
+        {
+            let proxy = stored
+                .source
+                .expose_to(VlessProxy::parse_share_link)
+                .map_err(|error| LoadError::Runtime(error.to_string()))?;
+            vless_nodes.push(proxy);
+        }
+        let mixed_port = configured_mixed_port().map_err(LoadError::Runtime)?;
+        let profile = Profile::qx_sources(subscriptions, vless_nodes, mixed_port)
+            .map_err(|error| LoadError::Runtime(error.to_string()))?;
+        let yaml =
+            render_mihomo_yaml(&profile).map_err(|error| LoadError::Runtime(error.to_string()))?;
+        let candidate_path =
+            write_private_atomic(&spec.data_dir, CANDIDATE_PROFILE_FILE, yaml.as_bytes())
+                .map_err(|_error| LoadError::Runtime("无法写入候选托管配置".to_owned()))?;
+        let candidate_config = ManagedEngineConfig::new(
+            spec.binary.clone(),
+            candidate_path.clone(),
+            spec.data_dir.clone(),
+            spec.controller.clone(),
+        );
+        let validation = validate_managed_config(&candidate_config);
+        let _ = fs::remove_file(&candidate_path);
+        validation?;
+
+        let final_path = spec.data_dir.join(GENERATED_PROFILE_FILE);
+        let previous_yaml = fs::read(&final_path).ok();
+        write_private_atomic(&spec.data_dir, GENERATED_PROFILE_FILE, yaml.as_bytes())
+            .map_err(|_error| LoadError::Runtime("无法替换托管配置".to_owned()))?;
+        let final_config = ManagedEngineConfig::new(
+            spec.binary.clone(),
+            final_path,
+            spec.data_dir.clone(),
+            spec.controller.clone(),
+        );
+        let mut manager = manager
+            .lock()
+            .map_err(|_poisoned| LoadError::Runtime("托管内核状态锁已损坏".to_owned()))?;
+        let was_running = manager.running_endpoint()?.is_some();
+        if was_running {
+            manager.stop()?;
+        }
+        *manager = EngineManager::new(
+            final_config,
+            ReadinessPolicy::default(),
+            Box::new(MihomoReadinessProbe),
+        );
+        if was_running && let Err(error) = manager.start() {
+            if let Some(previous_yaml) = previous_yaml {
+                let _ =
+                    write_private_atomic(&spec.data_dir, GENERATED_PROFILE_FILE, &previous_yaml);
+                let rollback_config = ManagedEngineConfig::new(
+                    spec.binary.clone(),
+                    spec.data_dir.join(GENERATED_PROFILE_FILE),
+                    spec.data_dir.clone(),
+                    spec.controller.clone(),
+                );
+                *manager = EngineManager::new(
+                    rollback_config,
+                    ReadinessPolicy::default(),
+                    Box::new(MihomoReadinessProbe),
+                );
+                let _ = manager.start();
+            }
+            return Err(LoadError::Engine(error));
+        }
+        Ok(if was_running {
+            GeneratedProfileApply::Restarted
+        } else {
+            GeneratedProfileApply::Updated
+        })
     }
 }
 
 pub(crate) struct RuntimeSnapshot {
     pub endpoint: String,
+    pub controller_endpoint: String,
     pub snapshot: LoadedSnapshot,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct KernelLogEntry {
+    pub sequence: u64,
+    pub level: String,
+    pub payload: String,
+    pub timestamp_ms: u128,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct LiveStreamStatus {
+    pub activity: String,
+    pub logs: String,
+}
+
+impl Default for LiveStreamStatus {
+    fn default() -> Self {
+        Self {
+            activity: "等待连接".to_owned(),
+            logs: "等待连接".to_owned(),
+        }
+    }
+}
+
+#[derive(Default)]
+struct LiveMailbox {
+    latest_connections: Option<ConnectionsState>,
+    logs: VecDeque<KernelLogEntry>,
+    dropped_logs: u64,
+    status: LiveStreamStatus,
+}
+
+pub(crate) struct LiveRuntimeUpdate {
+    pub connections: Option<ConnectionsState>,
+    pub logs: Vec<KernelLogEntry>,
+    pub dropped_logs: u64,
+    pub status: LiveStreamStatus,
+}
+
+pub(crate) struct LiveRuntimeSession {
+    cancelled: Arc<AtomicBool>,
+    mailbox: Arc<Mutex<LiveMailbox>>,
+}
+
+impl LiveRuntimeSession {
+    pub(crate) fn start(endpoint: &str) -> Result<Self, LoadError> {
+        let controller = live_controller(endpoint)?;
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let mailbox = Arc::new(Mutex::new(LiveMailbox::default()));
+        spawn_connection_stream(controller.clone(), cancelled.clone(), mailbox.clone());
+        spawn_log_stream(controller, cancelled.clone(), mailbox.clone());
+        Ok(Self { cancelled, mailbox })
+    }
+
+    pub(crate) fn drain(&self) -> LiveRuntimeUpdate {
+        let Ok(mut mailbox) = self.mailbox.lock() else {
+            return LiveRuntimeUpdate {
+                connections: None,
+                logs: Vec::new(),
+                dropped_logs: 0,
+                status: LiveStreamStatus {
+                    activity: "实时状态不可用".to_owned(),
+                    logs: "实时状态不可用".to_owned(),
+                },
+            };
+        };
+        LiveRuntimeUpdate {
+            connections: mailbox.latest_connections.take(),
+            logs: mailbox.logs.drain(..).collect(),
+            dropped_logs: std::mem::take(&mut mailbox.dropped_logs),
+            status: mailbox.status.clone(),
+        }
+    }
+}
+
+impl Drop for LiveRuntimeSession {
+    fn drop(&mut self) {
+        self.cancelled.store(true, Ordering::Relaxed);
+    }
 }
 
 pub(crate) struct LoadedSnapshot {
@@ -1134,14 +1342,21 @@ fn build_subscription_runtime(
     let mut profile = Profile::qx_default(subscription).map_err(|error| error.to_string())?;
     profile.mixed_port = configured_mixed_port()?;
     let yaml = render_mihomo_yaml(&profile).map_err(|error| error.to_string())?;
-    let config_file = write_private_atomic(&data_dir, "relay-generated.yaml", yaml.as_bytes())
+    let config_file = write_private_atomic(&data_dir, GENERATED_PROFILE_FILE, yaml.as_bytes())
         .map_err(|error| error.to_string())?;
+    let generated_profile = ManagedGeneratedProfile {
+        binary: binary.clone(),
+        data_dir: data_dir.clone(),
+        controller: controller.clone(),
+        subscription_file: subscription_file.to_owned(),
+    };
     Ok(build_managed_runtime_with_controller(
         binary,
         config_file,
         data_dir,
         controller,
         RuntimeProfileSource::PrivateSubscription,
+        Some(generated_profile),
     ))
 }
 
@@ -1237,6 +1452,7 @@ fn build_managed_runtime_in(
         data_dir,
         controller,
         RuntimeProfileSource::ExistingConfig,
+        None,
     ))
 }
 
@@ -1257,6 +1473,7 @@ fn build_managed_runtime_with_controller(
     data_dir: PathBuf,
     controller: ControllerEndpoint,
     profile_source: RuntimeProfileSource,
+    generated_profile: Option<ManagedGeneratedProfile>,
 ) -> ControllerRuntime {
     let endpoint = controller.uri();
     let config = ManagedEngineConfig::new(binary, config_file, data_dir, controller);
@@ -1269,6 +1486,7 @@ fn build_managed_runtime_with_controller(
         endpoint,
         manager: Arc::new(Mutex::new(manager)),
         profile_source,
+        generated_profile,
     }
 }
 
@@ -1367,6 +1585,191 @@ pub(crate) fn load(endpoint: &str) -> Result<LoadedSnapshot, LoadError> {
         connections,
         runtime,
     })
+}
+
+fn live_controller(endpoint: &str) -> Result<LiveController, MihomoError> {
+    #[cfg(unix)]
+    if let Some(socket_path) = unix_socket_path(endpoint)? {
+        return Ok(LiveController::unix_socket(
+            ControllerConfig::default(),
+            socket_path,
+        ));
+    }
+
+    #[cfg(not(unix))]
+    if endpoint.starts_with("unix://") {
+        return Err(MihomoError::InvalidConfig(
+            "Unix controller sockets are not supported on this platform".to_owned(),
+        ));
+    }
+
+    Ok(LiveController::loopback(with_configured_secret(
+        ControllerConfig::new(endpoint)?,
+    )))
+}
+
+fn spawn_connection_stream(
+    controller: LiveController,
+    cancelled: Arc<AtomicBool>,
+    mailbox: Arc<Mutex<LiveMailbox>>,
+) {
+    thread::spawn(move || {
+        reconnect_live_stream(&cancelled, |attempt| {
+            set_live_status(&mailbox, true, stream_phase(attempt));
+            let result = controller.stream_connections(
+                LIVE_CONNECTION_INTERVAL,
+                &cancelled,
+                |connections| {
+                    if let Ok(mut mailbox) = mailbox.lock() {
+                        mailbox.latest_connections = Some(connections);
+                        "实时".clone_into(&mut mailbox.status.activity);
+                    }
+                },
+            );
+            if let Err(error) = &result {
+                set_live_status(&mailbox, true, safe_stream_error(error));
+            }
+            result
+        });
+    });
+}
+
+fn spawn_log_stream(
+    controller: LiveController,
+    cancelled: Arc<AtomicBool>,
+    mailbox: Arc<Mutex<LiveMailbox>>,
+) {
+    thread::spawn(move || {
+        let mut sequence = 0_u64;
+        reconnect_live_stream(&cancelled, |attempt| {
+            set_live_status(&mailbox, false, stream_phase(attempt));
+            let result = controller.stream_logs("info", &cancelled, |entry| {
+                sequence = sequence.wrapping_add(1);
+                push_kernel_log(&mailbox, sequence, &entry);
+            });
+            if let Err(error) = &result {
+                set_live_status(&mailbox, false, safe_stream_error(error));
+            }
+            result
+        });
+    });
+}
+
+fn reconnect_live_stream(
+    cancelled: &AtomicBool,
+    mut connect: impl FnMut(usize) -> Result<(), MihomoError>,
+) {
+    let mut attempt = 0_usize;
+    while !cancelled.load(Ordering::Relaxed) {
+        let result = connect(attempt);
+        if cancelled.load(Ordering::Relaxed) {
+            break;
+        }
+        if result.is_ok() {
+            attempt = 0;
+        } else {
+            attempt = attempt.saturating_add(1);
+        }
+        let shift = u32::try_from(attempt.min(5)).unwrap_or(5);
+        let delay =
+            Duration::from_millis(250_u64.saturating_mul(1_u64 << shift)).min(LIVE_RETRY_MAX);
+        let started = std::time::Instant::now();
+        while started.elapsed() < delay && !cancelled.load(Ordering::Relaxed) {
+            thread::sleep(Duration::from_millis(50));
+        }
+    }
+}
+
+fn stream_phase(attempt: usize) -> String {
+    if attempt == 0 {
+        "正在建立实时流".to_owned()
+    } else {
+        format!("正在重连 · 第 {attempt} 次")
+    }
+}
+
+fn safe_stream_error(error: &MihomoError) -> String {
+    match error {
+        MihomoError::HttpStatus { status_code, .. } => {
+            format!("流中断 · HTTP {status_code}")
+        }
+        MihomoError::Json { .. } => "流数据无法解析 · 正在重试".to_owned(),
+        MihomoError::Io(_) => "控制器暂时不可达 · 正在重试".to_owned(),
+        _ => "实时流不可用 · 正在重试".to_owned(),
+    }
+}
+
+fn set_live_status(mailbox: &Mutex<LiveMailbox>, activity: bool, status: String) {
+    if let Ok(mut mailbox) = mailbox.lock() {
+        if activity {
+            mailbox.status.activity = status;
+        } else {
+            mailbox.status.logs = status;
+        }
+    }
+}
+
+fn push_kernel_log(mailbox: &Mutex<LiveMailbox>, sequence: u64, entry: &MihomoLogEntry) {
+    let Ok(mut mailbox) = mailbox.lock() else {
+        return;
+    };
+    if mailbox.logs.len() == LIVE_LOG_MAILBOX_CAPACITY {
+        mailbox.logs.pop_front();
+        mailbox.dropped_logs = mailbox.dropped_logs.saturating_add(1);
+    }
+    mailbox.logs.push_back(KernelLogEntry {
+        sequence,
+        level: sanitize_log_field(&entry.level, 16),
+        payload: sanitize_kernel_log(&entry.payload),
+        timestamp_ms: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis(),
+    });
+    "实时".clone_into(&mut mailbox.status.logs);
+}
+
+fn sanitize_log_field(value: &str, limit: usize) -> String {
+    value
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(limit)
+        .collect()
+}
+
+fn sanitize_kernel_log(value: &str) -> String {
+    let bounded: String = value
+        .chars()
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .take(2_048)
+        .collect();
+    let mut output = String::with_capacity(bounded.len());
+    let mut remainder = bounded.as_str();
+    while !remainder.is_empty() {
+        let lowercase = remainder.to_ascii_lowercase();
+        let next_secret = ["https://", "http://", "vless://"]
+            .into_iter()
+            .filter_map(|prefix| lowercase.find(prefix).map(|index| (index, prefix.len())))
+            .min_by_key(|(index, _prefix)| *index);
+        let Some((index, prefix_len)) = next_secret else {
+            output.push_str(remainder);
+            break;
+        };
+        output.push_str(&remainder[..index]);
+        output.push_str("<redacted-url>");
+        let secret = &remainder[index + prefix_len..];
+        let end = secret
+            .find(|character: char| character.is_whitespace() || matches!(character, '"' | '\''))
+            .unwrap_or(secret.len());
+        remainder = &secret[end..];
+    }
+    output
 }
 
 fn load_providers(providers: &[relay_mihomo::ProxyProvider]) -> Vec<LoadedProvider> {
@@ -1493,6 +1896,28 @@ mod tests {
     use std::time::Duration;
 
     use relay_engine::ControllerEndpoint;
+
+    #[test]
+    fn kernel_log_sanitizer_redacts_urls_and_bounds_dynamic_payloads() {
+        let input = format!(
+            "provider https://example.invalid/client?token=fixture-secret failed; node vless://uuid@host:443 {}",
+            "x".repeat(3_000)
+        );
+        let sanitized = super::sanitize_kernel_log(&input);
+
+        assert!(sanitized.contains("<redacted-url>"));
+        assert!(!sanitized.contains("fixture-secret"));
+        assert!(!sanitized.contains("vless://"));
+        assert!(sanitized.chars().count() <= 2_048);
+
+        let uppercase = super::sanitize_kernel_log(
+            "provider HTTPS://example.invalid/path?token=uppercase-secret failed",
+        );
+        assert_eq!(
+            uppercase, "provider <redacted-url> failed",
+            "URI schemes are case-insensitive"
+        );
+    }
 
     #[test]
     fn runtime_profile_source_exposes_only_safe_copy() {

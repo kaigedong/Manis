@@ -189,7 +189,7 @@ impl ReadonlyTransport for UnixSocketTransport {
 }
 
 #[cfg(unix)]
-fn validate_unix_socket_path(socket_path: &Path) -> Result<(), MihomoError> {
+pub(crate) fn validate_unix_socket_path(socket_path: &Path) -> Result<(), MihomoError> {
     if !socket_path.is_absolute() {
         return Err(MihomoError::InvalidConfig(
             "Unix controller socket path must be absolute".to_owned(),
@@ -214,7 +214,7 @@ fn send_request(
     decode_http_response(stream, body_limit)
 }
 
-fn validate_path(path: &str) -> Result<(), MihomoError> {
+pub(crate) fn validate_path(path: &str) -> Result<(), MihomoError> {
     if !path.starts_with('/')
         || path
             .bytes()
@@ -225,7 +225,7 @@ fn validate_path(path: &str) -> Result<(), MihomoError> {
     Ok(())
 }
 
-fn build_request(
+pub(crate) fn build_request(
     config: &ControllerConfig,
     method: &str,
     path: &str,
@@ -288,7 +288,7 @@ fn decode_http_response(reader: impl Read, body_limit: usize) -> Result<String, 
     Ok(body)
 }
 
-fn parse_status_line(status_line: &str) -> Result<(u16, String), MihomoError> {
+pub(crate) fn parse_status_line(status_line: &str) -> Result<(u16, String), MihomoError> {
     let trimmed = status_line.trim_end_matches(['\r', '\n']);
     let mut parts = trimmed.splitn(3, ' ');
     let Some(version) = parts.next() else {
@@ -316,7 +316,9 @@ fn parse_status_line(status_line: &str) -> Result<(u16, String), MihomoError> {
     Ok((status_code, reason))
 }
 
-fn read_headers(reader: &mut impl BufRead) -> Result<Vec<(String, String)>, MihomoError> {
+pub(crate) fn read_headers(
+    reader: &mut impl BufRead,
+) -> Result<Vec<(String, String)>, MihomoError> {
     let mut headers = Vec::new();
     let mut total = 0_usize;
 
@@ -376,7 +378,7 @@ fn read_body(
     Ok(body)
 }
 
-fn has_transfer_encoding(headers: &[(String, String)], expected: &str) -> bool {
+pub(crate) fn has_transfer_encoding(headers: &[(String, String)], expected: &str) -> bool {
     headers
         .iter()
         .filter(|(name, _value)| name == "transfer-encoding")

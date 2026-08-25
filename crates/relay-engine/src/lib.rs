@@ -196,6 +196,30 @@ impl ManagedEngineConfig {
     }
 }
 
+/// Validates a candidate Relay-managed Mihomo configuration without starting a child process.
+///
+/// This is used before replacing a running generated profile, so a rejected candidate cannot
+/// force the currently owned core offline.
+///
+/// # Errors
+/// Returns a structured, secret-free lifecycle error when path checks or `mihomo -t` fail.
+pub fn validate_managed_config(config: &ManagedEngineConfig) -> Result<(), EngineError> {
+    config.validate()?;
+    prepare_data_dir(&config.data_dir)?;
+    let mut spawner = StdProcessSpawner;
+    let exit = spawner
+        .validate(&config.validation_command(), DEFAULT_VALIDATION_TIMEOUT)
+        .map_err(|source| EngineError::Io {
+            operation: "run Mihomo config validation",
+            source,
+        })?;
+    if exit.is_success() {
+        Ok(())
+    } else {
+        Err(EngineError::ValidationFailed(exit))
+    }
+}
+
 /// A fully resolved process command without shell interpolation.
 #[derive(Clone, PartialEq, Eq)]
 pub struct CommandSpec {

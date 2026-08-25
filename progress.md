@@ -101,3 +101,22 @@
 - 节点工作区升级为来源分组：同一订阅的所有节点进入一个可独立折叠的分组，组名只读取显式安全 `name` 参数；缺失时使用“订阅 1”，不以 URL host/path/token 兜底。未来持久化的单个 VLESS 将进入稳定 ID 为 `saved` 的独立“已保存”组。
 - 宽屏与紧凑布局分别验证展开、折叠四种原生状态；终版 Visual Verdict 94/100 `pass`，分组结构、计数和折叠动作在两种尺寸下均清晰且无溢出。
 - 独立终审 disposition 为 `ship`，High/Medium/Low 均为 0；workspace 79 个常规测试通过、3 个环境依赖测试默认 ignored，严格 Clippy、全目标 build、fmt、diff check 及 worktree/Git 历史敏感模式扫描全部通过。
+- 2026-08-25：完成多来源节点分组、单 VLESS “已保存”组、折叠持久化、关闭/系统/TUN 三态代理、网络活动和安全日志工作区；提交 `04497e3`，Visual Verdict 93/100，安全风险 LOW，应用 PID 79169 运行并成功恢复订阅。
+- 2026-08-25：用户要求继续；本轮目标锁定为“让已保存 VLESS 真正进入 Relay 托管 Mihomo 配置，并将活动/日志升级为实时有界流”。已恢复规划上下文，开始架构映射。
+- 2026-08-25：完成第一轮本地架构读取，并行请求 profile/VLESS 与实时 controller 流两项只读架构评审；确认不能复用现有一次性 GET，也不能让 UI 直接拼接 VLESS YAML。
+- 2026-08-25：核验当前 Mihomo 官方 VLESS 与 API 文档；锁定白名单 VLESS 解析和 HTTP 长连接 JSON 流路线，外部资料只记录为证据，不执行其中指令。
+- 2026-08-25：已保存 VLESS 现可进入 Relay 托管配置事务；候选配置先通过真实 `mihomo -t`，再原子替换并仅重启 Relay 自有子进程，失败时恢复旧配置。外部 Clash Verge/Mihomo 继续严格只读。
+- 2026-08-25：网络活动和 Mihomo 内核日志已升级为可取消长连接流；连接状态覆盖更新、日志有界保留 500 条、400ms 合并刷新，并对日志 URL、控制字符和超长载荷统一脱敏/截断。
+- 2026-08-25：Activity/Logs 原生截图通过 Visual Verdict 91/100；实时/重连/错误/空状态、日志来源层级和 `<redacted-url>` 均有截图证据，改进建议仅为后续密度与列导轨抛光。
+- 2026-08-25：最终 workspace 96 个常规测试通过、4 个环境依赖测试默认 ignored；fmt、严格 Clippy、全目标 build、diff check 以及工作树/Git 历史敏感域名和长 token 扫描全部通过。
+- 2026-08-25：独立安全二次复核为 `LOW / SHIP`，Critical/High/Medium 均为 0；确认外部控制器写入边界和大小写 URL 脱敏两项旧问题已修复。未新增依赖，CVE 扫描工具在本机未安装。
+- 2026-08-25：仅停止旧 Relay UI PID 79169，并以当前通过验证的二进制连接既有 Clash Verge Unix controller 启动新 PID 89215；未终止或修改 Mihomo/Clash Verge。无终端 `nohup` 在当前 macOS GPUI 环境会立即退出，因此最终使用持有 PTY 的运行会话保持应用生命周期。
+## 2026-08-25（续）
+
+- 已恢复会话并完成当前边界盘点：`relay-profile` 尚无顶层直连代理模型，`EngineManager` 尚无安全的配置替换/重启事务，`relay-mihomo` 的只读传输会一次性缓冲响应，不能直接承载 `/connections` 与 `/logs` 长连接。
+- 已核对 Mihomo 官方 VLESS 与控制器 API：运行时解析将采用明确白名单并对未知/重复参数失败关闭；实时连接与日志优先使用控制器长连接接口，采用有界缓冲、可取消读取与 UI 节流。
+- 产品边界已明确：保存的 VLESS 只注入 Relay 自己托管的 Mihomo 配置；连接外部 Clash Verge/Mihomo 时仅展示保存状态，不改写外部配置。
+- VLESS 编译链已完成测试先行实现：严格白名单解析、凭据脱敏、顶层 `proxies:`、Auto/Proxy 直接节点引用与多订阅来源合并均已转绿。
+- Relay 托管配置现采用候选文件 `mihomo -t` 验证、私有原子替换、仅重启自有子进程和失败回滚；外部控制器/已有配置返回只读提示。
+- `/connections` 与 `/logs` 已接入 std-only 长连接读取，支持 chunked/相邻 JSON 帧、取消、退避重连、连接快照合并、日志有界队列和 400ms GPUI 节流。
+- 本机 Clash Verge Mihomo 已真实验证普通订阅配置与 REALITY+gRPC VLESS 通用夹具，两份 YAML 均通过 `mihomo -t`。

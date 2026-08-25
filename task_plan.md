@@ -81,6 +81,23 @@
 - [completed] 5. 生成宽屏/紧凑成功状态截图并通过 Visual Verdict
 - [completed] 6. 完成全量验证、安全扫描、Git 提交和应用重启
 
+## 多来源、代理模式与运行状态工作区
+
+- [completed] 1. 将节点移动到一级导航首位并支持多订阅来源分组
+- [completed] 2. 持久保存单个 VLESS 节点与分组折叠状态
+- [completed] 3. 实现关闭、系统 HTTP/SOCKS、TUN 三态代理控制
+- [completed] 4. 增加网络活动与安全事件日志工作区
+- [completed] 5. 完成视觉门禁、安全复核、全量验证、提交和重启
+
+## 可运行 VLESS 与实时运行遥测
+
+- [completed] 1. 映射现有 profile/engine/controller 边界与 Mihomo 实时流契约
+- [completed] 2. 以 TDD 扩展 VLESS 领域模型和确定性 Mihomo 配置编译
+- [completed] 3. 将已保存 VLESS 安全合并进 Relay 托管运行配置并支持重载
+- [completed] 4. 实现有界、可停止的实时网络活动与内核日志流
+- [completed] 5. 完成 GPUI 实时状态、错误/空状态和响应式视觉验证
+- [completed] 6. 完成安全复核、全量验证、Git 提交和应用重启
+
 ## 固定约束
 - 实现框架：Rust + GPUI
 - 目标平台：Windows、macOS、Linux

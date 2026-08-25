@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt::{self, Write as _};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write as _};
@@ -8,6 +8,7 @@ use std::path::{Component, Path, PathBuf};
 
 const MAX_SECRET_URL_BYTES: usize = 16 * 1024;
 const MAX_SUBSCRIPTION_NAME_BYTES: usize = 96;
+const MAX_VLESS_FIELD_BYTES: usize = 1024;
 
 #[derive(Clone, Eq, PartialEq)]
 pub struct SecretUrl(String);
@@ -91,6 +92,7 @@ pub struct Profile {
     pub mixed_port: u16,
     pub log_level: LogLevel,
     pub store_selected: bool,
+    pub proxies: Vec<OutboundProxy>,
     pub providers: Vec<ProxyProvider>,
     pub groups: Vec<PolicyGroup>,
     pub rules: Vec<Rule>,
@@ -109,6 +111,7 @@ impl Profile {
             mixed_port: 7890,
             log_level: LogLevel::Warning,
             store_selected: true,
+            proxies: Vec::new(),
             providers: vec![ProxyProvider {
                 name: provider_name.clone(),
                 url: subscription,
@@ -124,6 +127,7 @@ impl Profile {
                 PolicyGroup {
                     name: automatic_name.clone(),
                     kind: PolicyGroupKind::UrlTest {
+                        proxies: Vec::new(),
                         use_providers: vec![provider_name.clone()],
                         url: "https://www.gstatic.com/generate_204".to_owned(),
                         interval_secs: 600,
@@ -134,6 +138,87 @@ impl Profile {
                     kind: PolicyGroupKind::Select {
                         proxies: vec![PolicyRef::Group(automatic_name), PolicyRef::Direct],
                         use_providers: vec![provider_name],
+                    },
+                },
+            ],
+            rules: vec![
+                Rule::GeoIp {
+                    country: "CN".to_owned(),
+                    policy: PolicyRef::Direct,
+                    no_resolve: true,
+                },
+                Rule::Match {
+                    policy: PolicyRef::Group(proxy_name),
+                },
+            ],
+        };
+        profile.validate()?;
+        Ok(profile)
+    }
+
+    /// Builds a QX-style policy profile from persisted subscriptions and manual VLESS nodes.
+    ///
+    /// # Errors
+    /// Returns a redacted validation error if a source set is empty or contains ambiguous names.
+    pub fn qx_sources(
+        subscriptions: Vec<SecretUrl>,
+        vless_nodes: Vec<VlessProxy>,
+        mixed_port: u16,
+    ) -> Result<Self, ProfileError> {
+        if subscriptions.is_empty() && vless_nodes.is_empty() {
+            return Err(ProfileError::InvalidValue("profile sources"));
+        }
+        let automatic_name = Name::parse("Auto")?;
+        let proxy_name = Name::parse("Proxy")?;
+        let providers = subscriptions
+            .into_iter()
+            .enumerate()
+            .map(|(index, url)| {
+                let display_index = index + 1;
+                Ok(ProxyProvider {
+                    name: Name::parse(&format!("Subscription {display_index}"))?,
+                    url,
+                    interval_secs: 86_400,
+                    path: format!("./proxy_providers/subscription-{display_index}.yaml"),
+                    health_check: HealthCheck {
+                        enabled: true,
+                        interval_secs: 600,
+                        url: "https://www.gstatic.com/generate_204".to_owned(),
+                    },
+                })
+            })
+            .collect::<Result<Vec<_>, ProfileError>>()?;
+        let provider_names = providers
+            .iter()
+            .map(|provider| provider.name.clone())
+            .collect::<Vec<_>>();
+        let direct_refs = vless_nodes
+            .iter()
+            .map(|proxy| PolicyRef::Proxy(proxy.name().clone()))
+            .collect::<Vec<_>>();
+        let mut select_refs = vec![PolicyRef::Group(automatic_name.clone()), PolicyRef::Direct];
+        select_refs.extend(direct_refs.iter().cloned());
+        let profile = Self {
+            mixed_port,
+            log_level: LogLevel::Warning,
+            store_selected: true,
+            proxies: vless_nodes.into_iter().map(OutboundProxy::Vless).collect(),
+            providers,
+            groups: vec![
+                PolicyGroup {
+                    name: automatic_name.clone(),
+                    kind: PolicyGroupKind::UrlTest {
+                        proxies: direct_refs,
+                        use_providers: provider_names.clone(),
+                        url: "https://www.gstatic.com/generate_204".to_owned(),
+                        interval_secs: 600,
+                    },
+                },
+                PolicyGroup {
+                    name: proxy_name.clone(),
+                    kind: PolicyGroupKind::Select {
+                        proxies: select_refs,
+                        use_providers: provider_names,
                     },
                 },
             ],
@@ -166,6 +251,7 @@ impl Profile {
             mixed_port,
             log_level: LogLevel::Silent,
             store_selected: false,
+            proxies: Vec::new(),
             providers: vec![ProxyProvider {
                 name: provider_name.clone(),
                 url: subscription,
@@ -201,9 +287,24 @@ impl Profile {
             return Err(ProfileError::InvalidValue("mixed port"));
         }
 
+        let mut all_names = HashSet::new();
+        let mut proxy_names = HashSet::new();
+        for proxy in &self.proxies {
+            let name = proxy.name();
+            if matches!(name.as_str(), "DIRECT" | "REJECT")
+                || !all_names.insert(name.clone())
+                || !proxy_names.insert(name.clone())
+            {
+                return Err(ProfileError::DuplicateName);
+            }
+            proxy.validate()?;
+        }
+
         let mut provider_names = HashSet::new();
         for provider in &self.providers {
-            if !provider_names.insert(provider.name.clone()) {
+            if !all_names.insert(provider.name.clone())
+                || !provider_names.insert(provider.name.clone())
+            {
                 return Err(ProfileError::DuplicateName);
             }
             if provider.interval_secs == 0
@@ -218,6 +319,7 @@ impl Profile {
         let mut group_names = HashSet::new();
         for group in &self.groups {
             if matches!(group.name.as_str(), "DIRECT" | "REJECT")
+                || !all_names.insert(group.name.clone())
                 || !group_names.insert(group.name.clone())
             {
                 return Err(ProfileError::DuplicateName);
@@ -233,17 +335,22 @@ impl Profile {
                     if proxies.is_empty() && use_providers.is_empty() {
                         return Err(ProfileError::InvalidValue("select group"));
                     }
-                    validate_policy_refs(proxies, &group_names)?;
+                    validate_policy_refs(proxies, &group_names, &proxy_names)?;
                     validate_provider_refs(use_providers, &provider_names)?;
                 }
                 PolicyGroupKind::UrlTest {
+                    proxies,
                     use_providers,
                     url,
                     interval_secs,
                 } => {
-                    if use_providers.is_empty() || *interval_secs == 0 || !is_https_url(url) {
+                    if (proxies.is_empty() && use_providers.is_empty())
+                        || *interval_secs == 0
+                        || !is_https_url(url)
+                    {
                         return Err(ProfileError::InvalidValue("url-test group"));
                     }
+                    validate_policy_refs(proxies, &group_names, &proxy_names)?;
                     validate_provider_refs(use_providers, &provider_names)?;
                 }
             }
@@ -261,7 +368,7 @@ impl Profile {
                     if !is_rule_value(value) {
                         return Err(ProfileError::InvalidValue("domain rule"));
                     }
-                    validate_policy_ref(policy, &group_names)?;
+                    validate_policy_ref(policy, &group_names, &proxy_names)?;
                 }
                 Rule::GeoIp {
                     country, policy, ..
@@ -269,9 +376,11 @@ impl Profile {
                     if !is_rule_value(country) {
                         return Err(ProfileError::InvalidValue("GEOIP rule"));
                     }
-                    validate_policy_ref(policy, &group_names)?;
+                    validate_policy_ref(policy, &group_names, &proxy_names)?;
                 }
-                Rule::Match { policy } => validate_policy_ref(policy, &group_names)?,
+                Rule::Match { policy } => {
+                    validate_policy_ref(policy, &group_names, &proxy_names)?;
+                }
             }
         }
         Ok(())
@@ -300,6 +409,207 @@ pub struct HealthCheck {
     pub url: String,
 }
 
+#[derive(Clone, Eq, PartialEq)]
+pub enum OutboundProxy {
+    Vless(VlessProxy),
+}
+
+impl OutboundProxy {
+    #[must_use]
+    pub fn name(&self) -> &Name {
+        match self {
+            Self::Vless(proxy) => proxy.name(),
+        }
+    }
+
+    fn validate(&self) -> Result<(), ProfileError> {
+        match self {
+            Self::Vless(proxy) => proxy.validate(),
+        }
+    }
+}
+
+impl fmt::Debug for OutboundProxy {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Vless(_) => formatter.write_str("OutboundProxy::Vless(<redacted>)"),
+        }
+    }
+}
+
+#[derive(Clone, Eq, PartialEq)]
+pub struct VlessProxy {
+    name: Name,
+    server: String,
+    port: u16,
+    uuid: String,
+    flow: Option<String>,
+    packet_encoding: Option<String>,
+    security: VlessSecurity,
+    servername: Option<String>,
+    alpn: Vec<String>,
+    client_fingerprint: Option<String>,
+    skip_cert_verify: bool,
+    reality_public_key: Option<String>,
+    reality_short_id: Option<String>,
+    transport: VlessTransport,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum VlessSecurity {
+    None,
+    Tls,
+    Reality,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum VlessTransport {
+    Tcp,
+    Ws {
+        path: Option<String>,
+        host: Option<String>,
+    },
+    Http {
+        path: Option<String>,
+        host: Option<String>,
+    },
+    H2 {
+        path: Option<String>,
+        host: Option<String>,
+    },
+    Grpc {
+        service_name: Option<String>,
+    },
+    Xhttp {
+        path: Option<String>,
+        host: Option<String>,
+        mode: Option<String>,
+    },
+}
+
+struct VlessSecurityOptions {
+    security: VlessSecurity,
+    servername: Option<String>,
+    alpn: Vec<String>,
+    client_fingerprint: Option<String>,
+    skip_cert_verify: bool,
+    reality_public_key: Option<String>,
+    reality_short_id: Option<String>,
+}
+
+impl VlessProxy {
+    /// Parses the explicitly supported subset of a VLESS share link.
+    ///
+    /// Unknown or duplicate query keys are rejected instead of being silently ignored. Errors
+    /// never contain source material.
+    ///
+    /// # Errors
+    /// Returns a fixed-category [`ProfileError`] for malformed or unsupported links.
+    pub fn parse_share_link(input: &str) -> Result<Self, ProfileError> {
+        if input.len() > MAX_SECRET_URL_BYTES
+            || input.trim() != input
+            || input.chars().any(char::is_control)
+        {
+            return Err(ProfileError::InvalidVless);
+        }
+        let remainder = input
+            .strip_prefix("vless://")
+            .ok_or(ProfileError::InvalidVless)?;
+        let (without_fragment, fragment) = remainder
+            .split_once('#')
+            .map_or((remainder, None), |(value, name)| (value, Some(name)));
+        let (authority, query) = without_fragment
+            .split_once('?')
+            .map_or((without_fragment, ""), |(value, query)| (value, query));
+        let (uuid, server_port) = authority
+            .split_once('@')
+            .ok_or(ProfileError::InvalidVless)?;
+        if !is_uuid(uuid) {
+            return Err(ProfileError::InvalidVless);
+        }
+        let (server, port) = parse_vless_server(server_port)?;
+        let fields = parse_vless_query(query)?;
+        require_vless_encryption(fields.get("encryption"))?;
+
+        let name = match fragment {
+            Some(value) => decode_query_value(value)
+                .ok_or(ProfileError::InvalidVless)?
+                .trim()
+                .to_owned(),
+            None => String::new(),
+        };
+        let name = if name.is_empty() {
+            format!("VLESS · {server}")
+        } else {
+            name
+        };
+        let name = Name::parse(&name).map_err(|_error| ProfileError::InvalidVless)?;
+        let flow = optional_vless_value(&fields, "flow")?;
+        if flow
+            .as_deref()
+            .is_some_and(|value| value != "xtls-rprx-vision")
+        {
+            return Err(ProfileError::UnsupportedVless);
+        }
+        let packet_encoding = optional_vless_value(&fields, "packetencoding")?;
+        if packet_encoding
+            .as_deref()
+            .is_some_and(|value| !matches!(value, "xudp" | "packetaddr"))
+        {
+            return Err(ProfileError::UnsupportedVless);
+        }
+        let security = parse_vless_security(&fields)?;
+        let transport = parse_vless_transport(&fields)?;
+        let proxy = Self {
+            name,
+            server,
+            port,
+            uuid: uuid.to_ascii_lowercase(),
+            flow,
+            packet_encoding,
+            security: security.security,
+            servername: security.servername,
+            alpn: security.alpn,
+            client_fingerprint: security.client_fingerprint,
+            skip_cert_verify: security.skip_cert_verify,
+            reality_public_key: security.reality_public_key,
+            reality_short_id: security.reality_short_id,
+            transport,
+        };
+        proxy.validate()?;
+        Ok(proxy)
+    }
+
+    #[must_use]
+    pub fn name(&self) -> &Name {
+        &self.name
+    }
+
+    fn validate(&self) -> Result<(), ProfileError> {
+        if self.port == 0
+            || !is_vless_host(&self.server)
+            || !is_uuid(&self.uuid)
+            || self
+                .reality_public_key
+                .as_deref()
+                .is_some_and(|value| !is_plain_value(value, MAX_VLESS_FIELD_BYTES))
+            || self
+                .reality_short_id
+                .as_deref()
+                .is_some_and(|value| !is_plain_value(value, 64))
+        {
+            return Err(ProfileError::InvalidVless);
+        }
+        Ok(())
+    }
+}
+
+impl fmt::Debug for VlessProxy {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("VlessProxy(<redacted>)")
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PolicyGroup {
     pub name: Name,
@@ -313,6 +623,7 @@ pub enum PolicyGroupKind {
         use_providers: Vec<Name>,
     },
     UrlTest {
+        proxies: Vec<PolicyRef>,
         use_providers: Vec<Name>,
         url: String,
         interval_secs: u32,
@@ -324,6 +635,7 @@ pub enum PolicyRef {
     Direct,
     Reject,
     Group(Name),
+    Proxy(Name),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -351,6 +663,8 @@ pub enum ProfileError {
     InvalidUrl,
     InvalidName,
     InvalidValue(&'static str),
+    InvalidVless,
+    UnsupportedVless,
     DuplicateName,
     DanglingReference,
     MissingTerminalMatch,
@@ -362,6 +676,8 @@ impl fmt::Display for ProfileError {
             Self::InvalidUrl => formatter.write_str("secret URL is invalid"),
             Self::InvalidName => formatter.write_str("profile name is invalid"),
             Self::InvalidValue(label) => write!(formatter, "profile {label} is invalid"),
+            Self::InvalidVless => formatter.write_str("VLESS source is invalid"),
+            Self::UnsupportedVless => formatter.write_str("VLESS option is not supported"),
             Self::DuplicateName => formatter.write_str("profile names must be unique"),
             Self::DanglingReference => formatter.write_str("profile contains a dangling reference"),
             Self::MissingTerminalMatch => {
@@ -439,6 +755,12 @@ pub fn render_mihomo_yaml(profile: &Profile) -> Result<String, ProfileError> {
     yaml.push_str("profile:\n");
     writeln!(yaml, "  store-selected: {}", profile.store_selected)
         .expect("String write cannot fail");
+    yaml.push_str("proxies:\n");
+    for proxy in &profile.proxies {
+        match proxy {
+            OutboundProxy::Vless(proxy) => render_vless_proxy(&mut yaml, proxy),
+        }
+    }
     yaml.push_str("proxy-providers:\n");
     for provider in &profile.providers {
         writeln!(yaml, "  {}:", quoted(provider.name.as_str())).expect("String write cannot fail");
@@ -480,11 +802,19 @@ pub fn render_mihomo_yaml(profile: &Profile) -> Result<String, ProfileError> {
                 render_provider_use(&mut yaml, use_providers);
             }
             PolicyGroupKind::UrlTest {
+                proxies,
                 use_providers,
                 url,
                 interval_secs,
             } => {
                 yaml.push_str("    type: \"url-test\"\n");
+                if !proxies.is_empty() {
+                    yaml.push_str("    proxies:\n");
+                    for policy in proxies {
+                        writeln!(yaml, "      - {}", quoted(policy_name(policy)))
+                            .expect("String write cannot fail");
+                    }
+                }
                 render_provider_use(&mut yaml, use_providers);
                 writeln!(yaml, "    url: {}", quoted(url)).expect("String write cannot fail");
                 writeln!(yaml, "    interval: {interval_secs}").expect("String write cannot fail");
@@ -557,20 +887,24 @@ pub fn write_private_atomic(
 fn validate_policy_refs(
     policies: &[PolicyRef],
     groups: &HashSet<Name>,
+    proxies: &HashSet<Name>,
 ) -> Result<(), ProfileError> {
     for policy in policies {
-        validate_policy_ref(policy, groups)?;
+        validate_policy_ref(policy, groups, proxies)?;
     }
     Ok(())
 }
 
-fn validate_policy_ref(policy: &PolicyRef, groups: &HashSet<Name>) -> Result<(), ProfileError> {
-    if let PolicyRef::Group(name) = policy
-        && !groups.contains(name)
-    {
-        return Err(ProfileError::DanglingReference);
+fn validate_policy_ref(
+    policy: &PolicyRef,
+    groups: &HashSet<Name>,
+    proxies: &HashSet<Name>,
+) -> Result<(), ProfileError> {
+    match policy {
+        PolicyRef::Group(name) if !groups.contains(name) => Err(ProfileError::DanglingReference),
+        PolicyRef::Proxy(name) if !proxies.contains(name) => Err(ProfileError::DanglingReference),
+        _ => Ok(()),
     }
-    Ok(())
 }
 
 fn validate_provider_refs(providers: &[Name], known: &HashSet<Name>) -> Result<(), ProfileError> {
@@ -587,6 +921,180 @@ fn is_https_url(input: &str) -> bool {
 
 fn is_subscription_url(input: &str) -> bool {
     is_url_with_scheme(input, "https://") || is_url_with_scheme(input, "http://")
+}
+
+fn parse_vless_query(query: &str) -> Result<HashMap<String, String>, ProfileError> {
+    const SUPPORTED: [&str; 16] = [
+        "encryption",
+        "flow",
+        "packetencoding",
+        "security",
+        "sni",
+        "alpn",
+        "fp",
+        "allowinsecure",
+        "pbk",
+        "sid",
+        "type",
+        "path",
+        "host",
+        "servicename",
+        "mode",
+        "headertype",
+    ];
+    let mut fields = HashMap::new();
+    if query.is_empty() {
+        return Ok(fields);
+    }
+    for pair in query.split('&') {
+        let (key, raw_value) = pair.split_once('=').ok_or(ProfileError::InvalidVless)?;
+        let key = key.to_ascii_lowercase();
+        if !SUPPORTED.contains(&key.as_str()) || fields.contains_key(&key) {
+            return Err(ProfileError::UnsupportedVless);
+        }
+        let value = decode_query_value(raw_value).ok_or(ProfileError::InvalidVless)?;
+        if value.len() > MAX_VLESS_FIELD_BYTES || value.chars().any(char::is_control) {
+            return Err(ProfileError::InvalidVless);
+        }
+        fields.insert(key, value);
+    }
+    Ok(fields)
+}
+
+fn optional_vless_value(
+    fields: &HashMap<String, String>,
+    key: &str,
+) -> Result<Option<String>, ProfileError> {
+    fields.get(key).map_or(Ok(None), |value| {
+        is_plain_value(value, MAX_VLESS_FIELD_BYTES)
+            .then(|| value.clone())
+            .map(Some)
+            .ok_or(ProfileError::InvalidVless)
+    })
+}
+
+fn parse_vless_security(
+    fields: &HashMap<String, String>,
+) -> Result<VlessSecurityOptions, ProfileError> {
+    let security = match fields.get("security").map_or("none", String::as_str) {
+        "none" => VlessSecurity::None,
+        "tls" => VlessSecurity::Tls,
+        "reality" => VlessSecurity::Reality,
+        _ => return Err(ProfileError::UnsupportedVless),
+    };
+    let servername = optional_vless_value(fields, "sni")?;
+    let alpn = optional_vless_value(fields, "alpn")?
+        .map(|value| value.split(',').map(str::to_owned).collect::<Vec<String>>())
+        .unwrap_or_default();
+    if alpn.iter().any(|value| !is_plain_value(value, 64)) {
+        return Err(ProfileError::InvalidVless);
+    }
+    let client_fingerprint = optional_vless_value(fields, "fp")?;
+    let skip_cert_verify = parse_vless_bool(fields.get("allowinsecure"))?;
+    let reality_public_key = optional_vless_value(fields, "pbk")?;
+    let reality_short_id = optional_vless_value(fields, "sid")?;
+    if security == VlessSecurity::None
+        && (servername.is_some()
+            || !alpn.is_empty()
+            || client_fingerprint.is_some()
+            || skip_cert_verify)
+    {
+        return Err(ProfileError::UnsupportedVless);
+    }
+    if security == VlessSecurity::Reality && reality_public_key.is_none() {
+        return Err(ProfileError::InvalidVless);
+    }
+    if security != VlessSecurity::Reality
+        && (reality_public_key.is_some() || reality_short_id.is_some())
+    {
+        return Err(ProfileError::UnsupportedVless);
+    }
+    Ok(VlessSecurityOptions {
+        security,
+        servername,
+        alpn,
+        client_fingerprint,
+        skip_cert_verify,
+        reality_public_key,
+        reality_short_id,
+    })
+}
+
+fn parse_vless_transport(fields: &HashMap<String, String>) -> Result<VlessTransport, ProfileError> {
+    let path = optional_vless_value(fields, "path")?;
+    let host = optional_vless_value(fields, "host")?;
+    let service_name = optional_vless_value(fields, "servicename")?;
+    let mode = optional_vless_value(fields, "mode")?;
+    let header_type = optional_vless_value(fields, "headertype")?;
+    if header_type.as_deref().is_some_and(|value| value != "none") {
+        return Err(ProfileError::UnsupportedVless);
+    }
+    match fields.get("type").map_or("tcp", String::as_str) {
+        "tcp" if path.is_none() && host.is_none() && service_name.is_none() && mode.is_none() => {
+            Ok(VlessTransport::Tcp)
+        }
+        "ws" if service_name.is_none() && mode.is_none() => Ok(VlessTransport::Ws { path, host }),
+        "http" if service_name.is_none() && mode.is_none() => {
+            Ok(VlessTransport::Http { path, host })
+        }
+        "h2" if service_name.is_none() && mode.is_none() => Ok(VlessTransport::H2 { path, host }),
+        "grpc" if path.is_none() && host.is_none() && mode.is_none() => {
+            Ok(VlessTransport::Grpc { service_name })
+        }
+        "xhttp" if service_name.is_none() => Ok(VlessTransport::Xhttp { path, host, mode }),
+        _ => Err(ProfileError::UnsupportedVless),
+    }
+}
+
+fn require_vless_encryption(value: Option<&String>) -> Result<(), ProfileError> {
+    match value.map_or("none", String::as_str) {
+        "none" => Ok(()),
+        _ => Err(ProfileError::UnsupportedVless),
+    }
+}
+
+fn parse_vless_bool(value: Option<&String>) -> Result<bool, ProfileError> {
+    match value.map_or("false", String::as_str) {
+        "false" | "0" => Ok(false),
+        "true" | "1" => Ok(true),
+        _ => Err(ProfileError::InvalidVless),
+    }
+}
+
+fn parse_vless_server(value: &str) -> Result<(String, u16), ProfileError> {
+    let (host, port) = if let Some(ipv6) = value.strip_prefix('[') {
+        let (host, port) = ipv6.split_once("]:").ok_or(ProfileError::InvalidVless)?;
+        (host, port)
+    } else {
+        value.rsplit_once(':').ok_or(ProfileError::InvalidVless)?
+    };
+    let port = port
+        .parse::<u16>()
+        .ok()
+        .filter(|port| *port > 0)
+        .ok_or(ProfileError::InvalidVless)?;
+    if !is_vless_host(host) {
+        return Err(ProfileError::InvalidVless);
+    }
+    Ok((host.to_owned(), port))
+}
+
+fn is_vless_host(value: &str) -> bool {
+    is_plain_value(value, 253)
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_' | b':'))
+}
+
+fn is_uuid(value: &str) -> bool {
+    value.len() == 36
+        && value.bytes().enumerate().all(|(index, byte)| {
+            if matches!(index, 8 | 13 | 18 | 23) {
+                byte == b'-'
+            } else {
+                byte.is_ascii_hexdigit()
+            }
+        })
 }
 
 fn decode_query_value(value: &str) -> Option<String> {
@@ -693,7 +1201,124 @@ fn policy_name(policy: &PolicyRef) -> &str {
     match policy {
         PolicyRef::Direct => "DIRECT",
         PolicyRef::Reject => "REJECT",
-        PolicyRef::Group(name) => name.as_str(),
+        PolicyRef::Group(name) | PolicyRef::Proxy(name) => name.as_str(),
+    }
+}
+
+fn render_vless_proxy(yaml: &mut String, proxy: &VlessProxy) {
+    writeln!(yaml, "  - name: {}", quoted(proxy.name.as_str())).expect("String write cannot fail");
+    yaml.push_str("    type: \"vless\"\n");
+    writeln!(yaml, "    server: {}", quoted(&proxy.server)).expect("String write cannot fail");
+    writeln!(yaml, "    port: {}", proxy.port).expect("String write cannot fail");
+    writeln!(yaml, "    uuid: {}", quoted(&proxy.uuid)).expect("String write cannot fail");
+    yaml.push_str("    udp: true\n");
+    if let Some(flow) = &proxy.flow {
+        writeln!(yaml, "    flow: {}", quoted(flow)).expect("String write cannot fail");
+    }
+    if let Some(packet_encoding) = &proxy.packet_encoding {
+        writeln!(yaml, "    packet-encoding: {}", quoted(packet_encoding))
+            .expect("String write cannot fail");
+    }
+    let network = match proxy.transport {
+        VlessTransport::Tcp => "tcp",
+        VlessTransport::Ws { .. } => "ws",
+        VlessTransport::Http { .. } => "http",
+        VlessTransport::H2 { .. } => "h2",
+        VlessTransport::Grpc { .. } => "grpc",
+        VlessTransport::Xhttp { .. } => "xhttp",
+    };
+    writeln!(yaml, "    network: {}", quoted(network)).expect("String write cannot fail");
+    let tls = proxy.security != VlessSecurity::None;
+    writeln!(yaml, "    tls: {tls}").expect("String write cannot fail");
+    if let Some(servername) = &proxy.servername {
+        writeln!(yaml, "    servername: {}", quoted(servername)).expect("String write cannot fail");
+    }
+    if !proxy.alpn.is_empty() {
+        yaml.push_str("    alpn:\n");
+        for value in &proxy.alpn {
+            writeln!(yaml, "      - {}", quoted(value)).expect("String write cannot fail");
+        }
+    }
+    if let Some(fingerprint) = &proxy.client_fingerprint {
+        writeln!(yaml, "    client-fingerprint: {}", quoted(fingerprint))
+            .expect("String write cannot fail");
+    }
+    if proxy.skip_cert_verify {
+        yaml.push_str("    skip-cert-verify: true\n");
+    }
+    if proxy.security == VlessSecurity::Reality {
+        yaml.push_str("    reality-opts:\n");
+        if let Some(public_key) = &proxy.reality_public_key {
+            writeln!(yaml, "      public-key: {}", quoted(public_key))
+                .expect("String write cannot fail");
+        }
+        if let Some(short_id) = &proxy.reality_short_id {
+            writeln!(yaml, "      short-id: {}", quoted(short_id))
+                .expect("String write cannot fail");
+        }
+    }
+    match &proxy.transport {
+        VlessTransport::Tcp => {}
+        VlessTransport::Ws { path, host } => {
+            if path.is_some() || host.is_some() {
+                yaml.push_str("    ws-opts:\n");
+                render_transport_path_host(yaml, path.as_deref(), host.as_deref(), false);
+            }
+        }
+        VlessTransport::Http { path, host } => {
+            if path.is_some() || host.is_some() {
+                yaml.push_str("    http-opts:\n");
+                render_transport_path_host(yaml, path.as_deref(), host.as_deref(), true);
+            }
+        }
+        VlessTransport::H2 { path, host } => {
+            if path.is_some() || host.is_some() {
+                yaml.push_str("    h2-opts:\n");
+                render_transport_path_host(yaml, path.as_deref(), host.as_deref(), true);
+            }
+        }
+        VlessTransport::Grpc { service_name } => {
+            if let Some(service_name) = service_name {
+                yaml.push_str("    grpc-opts:\n");
+                writeln!(yaml, "      grpc-service-name: {}", quoted(service_name))
+                    .expect("String write cannot fail");
+            }
+        }
+        VlessTransport::Xhttp { path, host, mode } => {
+            if path.is_some() || host.is_some() || mode.is_some() {
+                yaml.push_str("    xhttp-opts:\n");
+                render_transport_path_host(yaml, path.as_deref(), host.as_deref(), false);
+                if let Some(mode) = mode {
+                    writeln!(yaml, "      mode: {}", quoted(mode))
+                        .expect("String write cannot fail");
+                }
+            }
+        }
+    }
+}
+
+fn render_transport_path_host(
+    yaml: &mut String,
+    path: Option<&str>,
+    host: Option<&str>,
+    list_values: bool,
+) {
+    if let Some(path) = path {
+        if list_values {
+            yaml.push_str("      path:\n");
+            writeln!(yaml, "        - {}", quoted(path)).expect("String write cannot fail");
+        } else {
+            writeln!(yaml, "      path: {}", quoted(path)).expect("String write cannot fail");
+        }
+    }
+    if let Some(host) = host {
+        if list_values {
+            yaml.push_str("      headers:\n        Host:\n");
+            writeln!(yaml, "          - {}", quoted(host)).expect("String write cannot fail");
+        } else {
+            yaml.push_str("      headers:\n");
+            writeln!(yaml, "        Host: {}", quoted(host)).expect("String write cannot fail");
+        }
     }
 }
 

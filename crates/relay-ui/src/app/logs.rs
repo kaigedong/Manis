@@ -7,19 +7,20 @@ use crate::{diagnostics::recent_ui_logs, theme::Theme};
 impl RelayApp {
     #[allow(clippy::too_many_lines)]
     pub(super) fn logs_workspace(
+        &self,
         theme: Theme,
         _size_class: WindowSizeClass,
         cx: &mut gpui::Context<Self>,
     ) -> Div {
         let logs = recent_ui_logs();
-        let count = logs.len();
+        let count = logs.len() + self.kernel_logs.len();
         let mut rows = div()
             .id("logs-scroll")
             .flex_1()
             .overflow_y_scroll()
             .flex()
             .flex_col();
-        if logs.is_empty() {
+        if logs.is_empty() && self.kernel_logs.is_empty() {
             rows = rows.child(
                 div()
                     .flex_1()
@@ -27,9 +28,56 @@ impl RelayApp {
                     .items_center()
                     .justify_center()
                     .text_color(theme.text_tertiary)
-                    .child("还没有 UI 事件"),
+                    .child("还没有内核日志或 Relay UI 事件"),
             );
         } else {
+            for entry in self.kernel_logs.iter().rev() {
+                rows = rows.child(
+                    div()
+                        .min_h(px(48.0))
+                        .px_5()
+                        .py_2()
+                        .flex()
+                        .items_center()
+                        .gap_4()
+                        .border_b_1()
+                        .border_color(theme.outline_subtle)
+                        .child(
+                            div()
+                                .w(px(86.0))
+                                .flex_shrink_0()
+                                .font_family("monospace")
+                                .text_size(px(11.0))
+                                .text_color(theme.text_tertiary)
+                                .child(format!("K#{:04}", entry.sequence)),
+                        )
+                        .child(
+                            div()
+                                .w(px(64.0))
+                                .flex_shrink_0()
+                                .text_size(px(10.0))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(theme.action_primary)
+                                .child(entry.level.to_uppercase()),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .font_family("monospace")
+                                .text_size(px(11.0))
+                                .text_color(theme.text_primary)
+                                .child(entry.payload.clone()),
+                        )
+                        .child(
+                            div()
+                                .font_family("monospace")
+                                .text_size(px(10.0))
+                                .text_color(theme.text_tertiary)
+                                .child(format_log_time(entry.timestamp_ms)),
+                        ),
+                );
+            }
             for entry in logs.into_iter().rev() {
                 rows = rows.child(
                     div()
@@ -102,7 +150,9 @@ impl RelayApp {
                                     .text_size(px(11.0))
                                     .text_color(theme.text_tertiary)
                                     .child(format!(
-                                        "{count} 条安全事件 · 不记录订阅地址、令牌或节点 URI"
+                                        "{count} 条 · Mihomo {} · 已丢弃 {} 条过载日志 · URL/令牌已脱敏",
+                                        self.live_status.logs,
+                                        self.dropped_kernel_logs
                                     )),
                             ),
                     )
@@ -122,8 +172,8 @@ impl RelayApp {
                             .bg(theme.surface_high)
                             .flex()
                             .items_center()
-                            .child("刷新")
-                            .on_click(cx.listener(|_this, _, _, cx| cx.notify())),
+                            .child("重新连接")
+                            .on_click(cx.listener(|this, _, _, cx| this.connect_mihomo(cx))),
                     ),
             )
             .child(rows)

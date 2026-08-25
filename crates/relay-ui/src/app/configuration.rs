@@ -4,10 +4,10 @@ use gpui::{
 };
 use relay_core::{ConfigurationSection, WindowSizeClass};
 
-use super::{ImportedSubscriptionState, RelayApp, SubscriptionFeedback};
+use super::{ImportedSubscriptionState, RelayApp, SourceRuntimeApply, SubscriptionFeedback};
 use crate::{
     diagnostics::{UiEvent, trace_ui},
-    mihomo::LoadedProvider,
+    mihomo::{self, LoadedProvider, SubscriptionStoreError},
     subscription::{
         SourceKind, SourceNodePreview, SubscriptionPreview, validate_subscription_preview,
     },
@@ -542,21 +542,73 @@ impl RelayApp {
         };
         match result {
             Ok(preview) if preview.kind == SourceKind::VlessNode => {
-                match self.save_vless_source(&input_value) {
-                    Ok(()) => {
-                        self.subscription_feedback = SubscriptionFeedback::Valid(preview);
-                        if let Some(input) = self.subscription_input.as_ref() {
-                            input.update(cx, SubscriptionTextInput::clear_without_event);
-                        }
-                        "VLESS 节点已保存 · 已加入“已保存”分组".clone_into(&mut self.status);
-                        trace_ui(UiEvent::SourceImportSucceeded);
-                    }
-                    Err(error) => {
-                        self.subscription_feedback = SubscriptionFeedback::StoreFailed(error);
-                        self.status = format!("VLESS 节点保存失败：{error}");
-                        trace_ui(UiEvent::SourceImportFailed);
-                    }
+                let Some(store_dir) = self.subscription_store_dir.clone() else {
+                    self.subscription_feedback = SubscriptionFeedback::StoreFailed(
+                        SubscriptionStoreError::DataDirectoryUnavailable,
+                    );
+                    "无法确定节点保存位置".clone_into(&mut self.status);
+                    trace_ui(UiEvent::SourceImportFailed);
+                    cx.notify();
+                    return;
+                };
+                self.subscription_preview_generation =
+                    self.subscription_preview_generation.wrapping_add(1);
+                let generation = self.subscription_preview_generation;
+                self.subscription_feedback = SubscriptionFeedback::Importing(SourceKind::VlessNode);
+                "正在保存并编译 VLESS 节点".clone_into(&mut self.status);
+                if let Some(input) = self.subscription_input.as_ref() {
+                    input.update(cx, |input, cx| input.set_enabled(false, cx));
                 }
+                let runtime = self.runtime.clone();
+                let executor = cx.background_executor().clone();
+                cx.spawn(async move |this, cx| {
+                    let result = executor
+                        .spawn(async move {
+                            let stored = mihomo::save_vless_source_in(&store_dir, &input_value)?;
+                            let apply = SourceRuntimeApply::from_result(
+                                runtime.apply_saved_sources(&store_dir),
+                            );
+                            Ok::<_, SubscriptionStoreError>((stored, apply))
+                        })
+                        .await;
+                    this.update(cx, |this, cx| {
+                        if this.subscription_preview_generation != generation {
+                            return;
+                        }
+                        if let Some(input) = this.subscription_input.as_ref() {
+                            input.update(cx, |input, cx| input.set_enabled(true, cx));
+                        }
+                        match result {
+                            Ok((stored, apply)) => {
+                                if !this
+                                    .saved_vless_nodes
+                                    .iter()
+                                    .any(|node| node.id == stored.id)
+                                {
+                                    this.saved_vless_nodes.push(stored);
+                                }
+                                this.subscription_feedback = SubscriptionFeedback::Valid(preview);
+                                if let Some(input) = this.subscription_input.as_ref() {
+                                    input.update(cx, SubscriptionTextInput::clear_without_event);
+                                }
+                                this.status = format!(
+                                    "VLESS 节点已保存 · 已加入“已保存”分组{}",
+                                    apply.status_suffix()
+                                );
+                                trace_ui(UiEvent::SourceImportSucceeded);
+                            }
+                            Err(error) => {
+                                this.subscription_feedback =
+                                    SubscriptionFeedback::StoreFailed(error);
+                                this.status = format!("VLESS 节点保存失败：{error}");
+                                trace_ui(UiEvent::SourceImportFailed);
+                            }
+                        }
+                        cx.notify();
+                    })
+                    .ok();
+                })
+                .detach();
                 cx.notify();
             }
             Ok(preview) => {
@@ -793,6 +845,7 @@ impl RelayApp {
         list
     }
 
+    #[allow(clippy::too_many_lines)]
     fn saved_vless_cards(&self, theme: Theme, cx: &mut Context<Self>) -> Div {
         let mut list = div();
         for saved in &self.saved_vless_nodes {
@@ -839,13 +892,50 @@ impl RelayApp {
                                     .text_color(theme.text_secondary)
                                     .child("移除")
                                     .on_click(cx.listener(move |this, _, _, cx| {
-                                        match this.remove_saved_vless_source(&id) {
-                                            Ok(()) => "已移除保存的 VLESS 节点"
-                                                .clone_into(&mut this.status),
-                                            Err(error) => {
-                                                this.status = format!("移除节点失败：{error}");
-                                            }
-                                        }
+                                        let Some(store_dir) = this.subscription_store_dir.clone()
+                                        else {
+                                            "无法确定节点保存位置".clone_into(&mut this.status);
+                                            cx.notify();
+                                            return;
+                                        };
+                                        let runtime = this.runtime.clone();
+                                        let remove_id = id.clone();
+                                        "正在移除保存的 VLESS 节点".clone_into(&mut this.status);
+                                        let executor = cx.background_executor().clone();
+                                        cx.spawn(async move |this, cx| {
+                                            let result = executor
+                                                .spawn(async move {
+                                                    mihomo::remove_vless_source_in(
+                                                        &store_dir, &remove_id,
+                                                    )?;
+                                                    Ok::<_, SubscriptionStoreError>((
+                                                        remove_id,
+                                                        SourceRuntimeApply::from_result(
+                                                            runtime.apply_saved_sources(&store_dir),
+                                                        ),
+                                                    ))
+                                                })
+                                                .await;
+                                            this.update(cx, |this, cx| {
+                                                match result {
+                                                    Ok((deleted_id, apply)) => {
+                                                        this.saved_vless_nodes
+                                                            .retain(|node| node.id != deleted_id);
+                                                        this.status = format!(
+                                                            "已移除保存的 VLESS 节点{}",
+                                                            apply.status_suffix()
+                                                        );
+                                                    }
+                                                    Err(error) => {
+                                                        this.status =
+                                                            format!("移除节点失败：{error}");
+                                                    }
+                                                }
+                                                cx.notify();
+                                            })
+                                            .ok();
+                                        })
+                                        .detach();
                                         cx.notify();
                                     })),
                             ),

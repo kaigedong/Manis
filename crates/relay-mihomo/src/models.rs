@@ -203,6 +203,14 @@ pub struct ConnectionsState {
     pub connections: Vec<Connection>,
 }
 
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+pub struct MihomoLogEntry {
+    #[serde(rename = "type", default)]
+    pub level: String,
+    #[serde(default)]
+    pub payload: String,
+}
+
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct Connection {
     #[serde(default)]

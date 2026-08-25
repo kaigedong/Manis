@@ -33,7 +33,7 @@ impl RelayApp {
                     .items_center()
                     .justify_center()
                     .text_color(theme.text_tertiary)
-                    .child("当前没有活动连接；刷新后会显示 Mihomo /connections 数据"),
+                    .child("当前没有活动连接；实时流会在新连接建立后自动显示"),
             );
         } else {
             for connection in &self.active_connections {
@@ -74,10 +74,11 @@ impl RelayApp {
                                     .text_size(px(11.0))
                                     .text_color(theme.text_tertiary)
                                     .child(format!(
-                                        "{} 条活动连接 · ↓ {} · ↑ {}",
+                                        "{} 条活动连接 · ↓ {} · ↑ {} · {}",
                                         self.active_connections.len(),
                                         format_bytes(total_download),
-                                        format_bytes(total_upload)
+                                        format_bytes(total_upload),
+                                        self.live_status.activity
                                     )),
                             ),
                     )
@@ -97,7 +98,7 @@ impl RelayApp {
                             .bg(theme.surface_high)
                             .flex()
                             .items_center()
-                            .child("刷新")
+                            .child("重新连接")
                             .on_click(cx.listener(|this, _, _, cx| this.connect_mihomo(cx))),
                     ),
             )

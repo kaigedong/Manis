@@ -2,8 +2,8 @@ use std::fs;
 use std::path::Path;
 
 use relay_profile::{
-    HealthCheck, LogLevel, Name, PolicyGroup, PolicyGroupKind, PolicyRef, Profile, ProxyProvider,
-    Rule, SecretUrl, render_mihomo_yaml, write_private_atomic,
+    HealthCheck, LogLevel, Name, OutboundProxy, PolicyGroup, PolicyGroupKind, PolicyRef, Profile,
+    ProxyProvider, Rule, SecretUrl, VlessProxy, render_mihomo_yaml, write_private_atomic,
 };
 
 fn fixture_secret() -> SecretUrl {
@@ -127,11 +127,93 @@ fn qx_default_renders_ordered_minimal_mihomo_yaml() {
 }
 
 #[test]
+fn vless_share_link_compiles_into_a_direct_proxy_and_policy_reference() {
+    let vless = VlessProxy::parse_share_link(
+        "vless://00000000-0000-4000-8000-000000000000@edge.example.invalid:443?encryption=none&security=reality&type=grpc&sni=cdn.example.invalid&fp=chrome&pbk=fixture-public-key&sid=0123456789abcdef&serviceName=relay#Tokyo%20Edge",
+    )
+    .expect("supported fixture VLESS link should parse");
+    let proxy_name = vless.name().clone();
+    let mut profile = Profile::qx_default(fixture_secret()).expect("default profile is valid");
+    profile.proxies.push(OutboundProxy::Vless(vless));
+    let PolicyGroupKind::Select { proxies, .. } = &mut profile.groups[1].kind else {
+        panic!("Proxy is a select group");
+    };
+    proxies.insert(0, PolicyRef::Proxy(proxy_name));
+
+    let yaml = render_mihomo_yaml(&profile).expect("profile with VLESS renders");
+
+    assert!(yaml.contains("proxies:\n  - name: \"Tokyo Edge\""));
+    assert!(yaml.contains("type: \"vless\""));
+    assert!(yaml.contains("server: \"edge.example.invalid\""));
+    assert!(yaml.contains("port: 443"));
+    assert!(yaml.contains("uuid: \"00000000-0000-4000-8000-000000000000\""));
+    assert!(yaml.contains("network: \"grpc\""));
+    assert!(yaml.contains("tls: true"));
+    assert!(yaml.contains("servername: \"cdn.example.invalid\""));
+    assert!(yaml.contains("client-fingerprint: \"chrome\""));
+    assert!(yaml.contains("public-key: \"fixture-public-key\""));
+    assert!(yaml.contains("short-id: \"0123456789abcdef\""));
+    assert!(yaml.contains("grpc-service-name: \"relay\""));
+    assert!(yaml.contains("- \"Tokyo Edge\""));
+    assert!(
+        yaml.find("proxies:").expect("direct proxies section")
+            < yaml.find("proxy-providers:").expect("providers section")
+    );
+}
+
+#[test]
+fn vless_parser_is_fail_closed_and_redacts_credentials() {
+    let input = "vless://00000000-0000-4000-8000-000000000000@edge.example.invalid:443?encryption=none&security=tls&type=ws&path=%2Frelay&host=cdn.example.invalid#Saved";
+    let vless = VlessProxy::parse_share_link(input).expect("supported fixture should parse");
+    let debug = format!("{vless:?}");
+
+    assert_eq!(debug, "VlessProxy(<redacted>)");
+    assert!(!debug.contains("00000000"));
+    assert!(!debug.contains("cdn.example.invalid"));
+    assert!(VlessProxy::parse_share_link(
+        "vless://00000000-0000-4000-8000-000000000000@edge.example.invalid:443?encryption=none&security=tls&type=ws&unsupported=secret-value#Saved",
+    )
+    .is_err());
+    assert!(VlessProxy::parse_share_link(
+        "vless://00000000-0000-4000-8000-000000000000@edge.example.invalid:443?encryption=none&type=ws&type=grpc#Saved",
+    )
+    .is_err());
+    assert!(VlessProxy::parse_share_link(
+        "vless://00000000-0000-4000-8000-000000000000@edge.example.invalid:443?encryption=auto#Bad",
+    )
+    .is_err());
+    assert!(VlessProxy::parse_share_link(
+        "vless://00000000-0000-4000-8000-000000000000@edge.example.invalid:443?security=none&sni=cdn.example.invalid#Bad",
+    )
+    .is_err());
+}
+
+#[test]
+fn qx_sources_routes_subscriptions_and_saved_nodes_through_auto_and_proxy() {
+    let subscription = fixture_secret();
+    let vless = VlessProxy::parse_share_link(
+        "vless://00000000-0000-4000-8000-000000000000@edge.example.invalid:443?encryption=none&security=tls&type=ws&path=%2Frelay#Saved",
+    )
+    .expect("fixture VLESS should parse");
+
+    let profile = Profile::qx_sources(vec![subscription], vec![vless], 17_890)
+        .expect("combined QX-style profile should build");
+    let yaml = render_mihomo_yaml(&profile).expect("combined profile should render");
+
+    assert!(yaml.contains("mixed-port: 17890"));
+    assert!(yaml.contains("name: \"Saved\""));
+    assert_eq!(yaml.matches("- \"Saved\"").count(), 2);
+    assert!(yaml.contains("- \"Subscription 1\""));
+    assert!(yaml.contains("- \"MATCH,Proxy\""));
+}
+
+#[test]
 fn renderer_escapes_double_quoted_yaml_scalars() {
     let profile = Profile {
         mixed_port: 7891,
         log_level: LogLevel::Silent,
         store_selected: true,
+        proxies: Vec::new(),
         providers: vec![ProxyProvider {
             name: Name::parse("subscription").expect("valid name"),
             url: fixture_secret(),
@@ -172,6 +254,7 @@ fn validation_rejects_invalid_names_duplicates_dangling_refs_and_missing_match()
         mixed_port: 7890,
         log_level: LogLevel::Warning,
         store_selected: true,
+        proxies: Vec::new(),
         providers: vec![ProxyProvider {
             name: provider_name.clone(),
             url: fixture_secret(),
