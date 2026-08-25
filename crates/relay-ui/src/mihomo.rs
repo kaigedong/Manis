@@ -1130,7 +1130,10 @@ fn compile_node_policy_groups(
             }
             let kind = match group.strategy {
                 NodeGroupStrategy::Manual => UserPolicyGroupKind::Select,
-                NodeGroupStrategy::LowestLatency => UserPolicyGroupKind::UrlTest { tolerance: 50 },
+                NodeGroupStrategy::LowestLatency => UserPolicyGroupKind::UrlTest {
+                    tolerance: 50,
+                    interval_secs: group.test_interval_secs,
+                },
             };
             Ok(UserPolicyGroup {
                 name: Name::parse(&group.name)
@@ -1256,6 +1259,7 @@ fn encode_node_policy_group(group: &NodePolicyGroup) -> Result<String, Subscript
         format!("name\t{}", encode_hex(&group.name)),
         format!("icon\t{}", group.icon.key()),
         format!("strategy\t{}", group.strategy.key()),
+        format!("interval\t{}", group.test_interval_secs),
         format!("matcher\t{matcher_key}"),
         format!("filter\t{}", encode_hex(filter)),
     ];
@@ -1285,6 +1289,7 @@ fn decode_node_policy_group(
     let mut name = None;
     let mut icon = None;
     let mut strategy = None;
+    let mut interval = None;
     let mut matcher = None;
     let mut filter = None;
     let mut members = BTreeSet::new();
@@ -1302,6 +1307,13 @@ fn decode_node_policy_group(
             ["strategy", value] if strategy.is_none() => {
                 strategy = Some(
                     NodeGroupStrategy::parse_key(value)
+                        .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?,
+                );
+            }
+            ["interval", value] if interval.is_none() => {
+                interval = Some(
+                    value
+                        .parse::<u32>()
                         .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?,
                 );
             }
@@ -1327,6 +1339,9 @@ fn decode_node_policy_group(
     .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
     group.icon = icon.ok_or(SubscriptionStoreError::StoredSourceUnavailable)?;
     group.strategy = strategy.ok_or(SubscriptionStoreError::StoredSourceUnavailable)?;
+    group
+        .set_test_interval_secs(interval.unwrap_or(600))
+        .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
     let filter = filter.ok_or(SubscriptionStoreError::StoredSourceUnavailable)?;
     let parsed_matcher = match matcher.as_deref() {
         Some("all") if filter.is_empty() && members.is_empty() => NodeGroupMatcher::All,
@@ -2704,6 +2719,7 @@ mod tests {
         let mut group = NodePolicyGroup::new("group-a-1", "香港优选")?;
         group.icon = NodeGroupIcon::Globe;
         group.strategy = NodeGroupStrategy::LowestLatency;
+        group.set_test_interval_secs(1_800)?;
         group.set_matcher(NodeGroupMatcher::name_contains("Hong Kong")?)?;
         super::save_node_policy_group_in(&store, &group)?;
 
@@ -2745,6 +2761,7 @@ mod tests {
 
         let mut latency = NodePolicyGroup::new("group-a-1", "香港优选")?;
         latency.strategy = NodeGroupStrategy::LowestLatency;
+        latency.set_test_interval_secs(300)?;
         latency.set_matcher(NodeGroupMatcher::name_contains("Hong Kong")?)?;
 
         let mut explicit = NodePolicyGroup::new("group-b-2", "手动出口")?;
@@ -2757,7 +2774,10 @@ mod tests {
 
         assert_eq!(
             compiled[0].kind,
-            UserPolicyGroupKind::UrlTest { tolerance: 50 }
+            UserPolicyGroupKind::UrlTest {
+                tolerance: 50,
+                interval_secs: 300,
+            }
         );
         assert_eq!(compiled[0].provider_indexes, vec![0, 1]);
         assert_eq!(compiled[0].filter.as_deref(), Some("(?i)Hong Kong"));

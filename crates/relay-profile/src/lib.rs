@@ -224,13 +224,8 @@ impl Profile {
             .iter()
             .map(|proxy| proxy.name().clone())
             .collect::<HashSet<_>>();
-        let mut compiled_user_groups = compile_user_groups(
-            user_groups,
-            &provider_names,
-            &proxy_names,
-            GROUP_TEST_URL,
-            600,
-        )?;
+        let mut compiled_user_groups =
+            compile_user_groups(user_groups, &provider_names, &proxy_names, GROUP_TEST_URL)?;
         let mut select_refs = compiled_user_groups
             .iter()
             .map(|group| PolicyRef::Group(group.name.clone()))
@@ -669,7 +664,7 @@ pub struct UserPolicyGroup {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UserPolicyGroupKind {
     Select,
-    UrlTest { tolerance: u16 },
+    UrlTest { tolerance: u16, interval_secs: u32 },
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -895,7 +890,6 @@ fn compile_user_groups(
     provider_names: &[Name],
     proxy_names: &HashSet<Name>,
     test_url: &str,
-    interval_secs: u32,
 ) -> Result<Vec<PolicyGroup>, ProfileError> {
     let mut group_names = HashSet::new();
     user_groups
@@ -949,7 +943,10 @@ fn compile_user_groups(
                     use_providers,
                     filter: group.filter,
                 },
-                UserPolicyGroupKind::UrlTest { tolerance } => PolicyGroupKind::UrlTest {
+                UserPolicyGroupKind::UrlTest {
+                    tolerance,
+                    interval_secs,
+                } => PolicyGroupKind::UrlTest {
                     proxies,
                     use_providers,
                     filter: group.filter,

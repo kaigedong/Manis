@@ -90,7 +90,10 @@ fn generated_user_policy_groups_pass_mihomo_validation() -> Result<(), Box<dyn s
     let group = UserPolicyGroup {
         name: Name::parse("HK Auto")?,
         icon: None,
-        kind: UserPolicyGroupKind::UrlTest { tolerance: 50 },
+        kind: UserPolicyGroupKind::UrlTest {
+            tolerance: 50,
+            interval_secs: 600,
+        },
         provider_indexes: vec![0],
         direct_proxies: Vec::new(),
         filter: Some("(?i)Hong Kong".to_owned()),

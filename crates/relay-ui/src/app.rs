@@ -132,6 +132,7 @@ struct NodeGroupDraft {
     editing_id: Option<String>,
     icon: NodeGroupIcon,
     strategy: NodeGroupStrategy,
+    test_interval_secs: u32,
     matcher_kind: NodeGroupMatcherKind,
     explicit_members: BTreeSet<NodeIdentity>,
 }
@@ -790,15 +791,21 @@ impl RelayApp {
 
     fn selected_node(&self) -> PolicyNode {
         let policy = self.selected_policy();
-        self.workspace
-            .selected_node
-            .as_ref()
-            .and_then(|selected| policy.nodes.iter().find(|node| node.id == *selected))
+        let selected = if policy.kind.allows_manual_selection() {
+            self.workspace
+                .selected_node
+                .as_ref()
+                .and_then(|selected| policy.nodes.iter().find(|node| node.id == *selected))
+        } else {
+            policy.nodes.iter().find(|node| node.name == policy.target)
+        };
+        selected
             .or_else(|| policy.nodes.first())
             .cloned()
             .unwrap_or_else(|| PolicyNode {
                 id: ProxyId::new("unavailable"),
                 name: "暂无可用节点".to_owned(),
+                kind: relay_core::PolicyCandidateKind::Node,
                 provider: None,
                 detail: "Mihomo 未返回组内节点".to_owned(),
                 latency_ms: None,
@@ -1409,7 +1416,7 @@ impl RelayApp {
                                     .mt_1()
                                     .text_size(px(11.0))
                                     .text_color(theme.text_secondary)
-                                    .child(item.kind),
+                                    .child(item.kind.label()),
                             ),
                     )
                     .child(div().text_color(theme.text_primary).child(item.target))
@@ -1525,32 +1532,57 @@ impl RelayApp {
             .on_click(cx.listener(|this, _, _, cx| this.connect_mihomo(cx)))
     }
 
+    #[allow(clippy::too_many_lines)]
     fn node_row(
         item: PolicyNode,
-        selected: bool,
+        current: bool,
+        manually_selectable: bool,
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let node_id = item.id.clone();
         let node_name = item.name.clone();
-        let provider = item
-            .provider
-            .clone()
-            .unwrap_or_else(|| "内置节点".to_owned());
+        let provider = if item.kind == relay_core::PolicyCandidateKind::NodeGroup {
+            "节点分组".to_owned()
+        } else {
+            item.provider
+                .clone()
+                .unwrap_or_else(|| "内置节点".to_owned())
+        };
         let latency = item
             .latency_ms
             .map_or_else(|| "—".to_owned(), |latency| format!("{latency} ms"));
+        let leading = if manually_selectable {
+            div()
+                .size(px(18.0))
+                .rounded_full()
+                .border_2()
+                .border_color(if current {
+                    theme.action_primary
+                } else {
+                    theme.outline_strong
+                })
+                .when(current, |dot| dot.bg(theme.action_primary))
+        } else {
+            div()
+                .size(px(22.0))
+                .rounded_sm()
+                .bg(theme.surface_high)
+                .text_size(px(9.0))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(theme.text_tertiary)
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(if item.kind == relay_core::PolicyCandidateKind::NodeGroup {
+                    "组"
+                } else {
+                    "点"
+                })
+        };
         div()
             .id(format!("node-{}", item.id.as_str()))
-            .role(Role::RadioButton)
-            .aria_toggled(if selected {
-                Toggled::True
-            } else {
-                Toggled::False
-            })
-            .tab_stop(true)
-            .focusable()
-            .cursor_pointer()
+            .tab_stop(manually_selectable)
             .min_h(px(64.0))
             .px_3()
             .flex()
@@ -1558,32 +1590,46 @@ impl RelayApp {
             .gap_3()
             .rounded_md()
             .border_1()
-            .border_color(if selected {
+            .border_color(if manually_selectable && current {
                 theme.action_primary
             } else {
                 theme.outline_subtle
             })
-            .bg(if selected {
+            .bg(if manually_selectable && current {
                 theme.action_soft
             } else {
-                theme.surface_high
+                theme.surface_low
             })
-            .child(
-                div()
-                    .size(px(18.0))
-                    .rounded_full()
-                    .border_2()
-                    .border_color(if selected {
-                        theme.action_primary
-                    } else {
-                        theme.outline_strong
-                    })
-                    .when(selected, |dot| dot.bg(theme.action_primary)),
-            )
+            .child(leading)
             .child(
                 div()
                     .flex_1()
-                    .child(div().font_weight(FontWeight::SEMIBOLD).child(item.name))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(if manually_selectable {
+                                theme.text_primary
+                            } else {
+                                theme.text_secondary
+                            })
+                            .child(item.name)
+                            .when(current && !manually_selectable, |name| {
+                                name.child(
+                                    div()
+                                        .px_2()
+                                        .py_1()
+                                        .rounded_sm()
+                                        .bg(theme.surface_high)
+                                        .text_size(px(9.0))
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .text_color(theme.text_secondary)
+                                        .child("当前出口"),
+                                )
+                            }),
+                    )
                     .child(
                         div()
                             .mt_1()
@@ -1595,27 +1641,59 @@ impl RelayApp {
             .child(
                 div()
                     .w(px(100.0))
-                    .text_color(theme.text_secondary)
+                    .text_color(if manually_selectable {
+                        theme.text_secondary
+                    } else {
+                        theme.text_tertiary
+                    })
                     .child(provider),
             )
             .child(
                 div()
                     .w(px(64.0))
-                    .text_color(theme.status_success)
+                    .text_color(if manually_selectable {
+                        theme.status_success
+                    } else {
+                        theme.text_tertiary
+                    })
                     .child(latency),
             )
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.workspace.select_node(node_id.clone());
-                trace_ui(UiEvent::PolicyPreviewOpened);
-                this.status = format!("已选择 {node_name} · 只读模式未写入 Mihomo");
-                cx.notify();
-            }))
+            .when(manually_selectable, |row| {
+                row.role(Role::RadioButton)
+                    .aria_toggled(if current {
+                        Toggled::True
+                    } else {
+                        Toggled::False
+                    })
+                    .focusable()
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.workspace.select_node(node_id.clone());
+                        trace_ui(UiEvent::PolicyPreviewOpened);
+                        this.status = format!("已选择 {node_name} · 只读模式未写入 Mihomo");
+                        cx.notify();
+                    }))
+            })
     }
 
     #[allow(clippy::too_many_lines)]
     fn detail(&self, theme: Theme, compact: bool, cx: &mut Context<Self>) -> Div {
         let selected_policy = self.selected_policy().clone();
         let selected_node = self.selected_node();
+        let manually_selectable = selected_policy.kind.allows_manual_selection();
+        let guidance = match selected_policy.kind {
+            relay_core::PolicyGroupKind::Selector => "选择此策略当前使用的出口",
+            relay_core::PolicyGroupKind::UrlTest => {
+                "Mihomo 按策略配置的 URL 和间隔自动测量，候选项不可手动切换"
+            }
+            relay_core::PolicyGroupKind::Fallback => {
+                "Mihomo 按策略配置的间隔自动检查并故障转移，候选项不可手动切换"
+            }
+            relay_core::PolicyGroupKind::LoadBalance => {
+                "Mihomo 自动在候选分组之间分配连接，候选项不可手动切换"
+            }
+            relay_core::PolicyGroupKind::Direct => "直连策略没有可切换的出口",
+        };
         let mut body = div()
             .id("detail-scroll")
             .flex_1()
@@ -1630,13 +1708,36 @@ impl RelayApp {
                 .flex()
                 .items_center()
                 .justify_between()
-                .child(
-                    div()
-                        .text_color(theme.text_secondary)
-                        .child("选择此策略当前使用的出口节点"),
-                )
-                .child(Self::small_button("add-node", "＋ 添加节点", theme)),
+                .child(div().text_color(theme.text_secondary).child(guidance))
+                .when(manually_selectable, |header| {
+                    header.child(Self::small_button("add-node", "＋ 添加候选项", theme))
+                }),
         );
+        if selected_policy.kind.is_automatic() {
+            body = body.child(
+                div()
+                    .mt_2()
+                    .p_3()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(theme.outline_subtle)
+                    .bg(theme.surface_low)
+                    .child(
+                        div()
+                            .text_size(px(11.0))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(theme.text_secondary)
+                            .child("自动策略 · 只读候选项"),
+                    )
+                    .child(
+                        div()
+                            .mt_1()
+                            .text_size(px(10.0))
+                            .text_color(theme.text_tertiary)
+                            .child("名称和候选节点分组由用户配置；重新检查间隔属于策略设置。"),
+                    ),
+            );
+        }
         body = body.child(
             div()
                 .mt_2()
@@ -1644,13 +1745,19 @@ impl RelayApp {
                 .flex()
                 .text_size(px(11.0))
                 .text_color(theme.text_tertiary)
-                .child(div().flex_1().child("节点"))
+                .child(div().flex_1().child("候选节点 / 分组"))
                 .child(div().w(px(100.0)).child("来源"))
                 .child(div().w(px(64.0)).child("延迟")),
         );
         for item in selected_policy.nodes.iter().cloned() {
-            let selected = item.id == selected_node.id;
-            body = body.child(Self::node_row(item, selected, theme, cx));
+            let current = item.id == selected_node.id;
+            body = body.child(Self::node_row(
+                item,
+                current,
+                manually_selectable,
+                theme,
+                cx,
+            ));
         }
 
         body = body.child(
@@ -1746,7 +1853,7 @@ impl RelayApp {
                                     .child(div().mt_1().text_color(theme.text_secondary).child(
                                         format!(
                                             "{} · {} 个节点 · {} 条规则",
-                                            selected_policy.kind,
+                                            selected_policy.kind.label(),
                                             selected_policy.nodes.len(),
                                             selected_policy.rules_count()
                                         ),
@@ -1848,6 +1955,11 @@ impl RelayApp {
     fn inspector(&self, theme: Theme, overlay: bool, cx: &mut Context<Self>) -> Div {
         let selected_policy = self.selected_policy().clone();
         let selected_node = self.selected_node();
+        let decision_copy = if selected_policy.kind.allows_manual_selection() {
+            format!("{} · 当前人工选择", selected_policy.kind.label())
+        } else {
+            format!("{} · 由 Mihomo 自动决策", selected_policy.kind.label())
+        };
         let domain = if selected_policy.id.as_str() == "search" {
             "openai.com"
         } else {
@@ -1945,7 +2057,7 @@ impl RelayApp {
                                     .bg(theme.route_trace),
                             )
                             .child(Self::signal_stage("01", "预测首条命中规则", "DOMAIN-SUFFIX".to_owned(), format!("{domain} · 规则 #{rule_index}"), true, theme))
-                            .child(Self::signal_stage("02", "交给策略组", selected_policy.name.clone(), format!("{} · 当前选择固定节点", selected_policy.kind), false, theme))
+                            .child(Self::signal_stage("02", "交给策略组", selected_policy.name.clone(), decision_copy, false, theme))
                             .child(Self::signal_stage("03", "最终出口", selected_node.name.clone(), format!("{} · {}", selected_node.latency_ms.map_or_else(|| "延迟未知".to_owned(), |latency| format!("{latency} ms")), selected_node.provider.as_deref().unwrap_or("内置节点")), false, theme)),
                     )
                     .when_some(observed_route, |panel, observed| {

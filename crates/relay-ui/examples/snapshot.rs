@@ -3,6 +3,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let platform = gpui_platform::current_platform(false);
     let mut cx = gpui::VisualTestAppContext::new(platform);
     capture(&mut cx, 1420.0, 900.0, "native-wide.png")?;
+    capture_automatic_policy(&mut cx)?;
     capture(&mut cx, 1060.0, 800.0, "native-medium.png")?;
     capture(&mut cx, 720.0, 720.0, "native-compact.png")?;
     capture_configuration(&mut cx, 1420.0, 900.0, "configuration-wide.png")?;
@@ -13,6 +14,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     capture_connected(&mut cx)?;
     capture_live_when_configured(&mut cx)?;
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn capture_automatic_policy(
+    cx: &mut gpui::VisualTestAppContext,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use gpui::{AnyWindowHandle, AppContext, Modifiers, point, px, size};
+    use relay_ui::RelayApp;
+
+    let window = cx.open_offscreen_window(size(px(1420.0), px(900.0)), |_, cx| {
+        cx.new(|_| RelayApp::with_controller("http://127.0.0.1:9090"))
+    })?;
+    let window: AnyWindowHandle = window.into();
+
+    refresh(cx, window)?;
+    cx.simulate_click(window, point(px(380.0), px(312.0)), Modifiers::none());
+    refresh(cx, window)?;
+    save_screenshot(cx, window, "native-wide-automatic-policy.png")
 }
 
 #[cfg(target_os = "macos")]

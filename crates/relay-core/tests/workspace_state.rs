@@ -1,9 +1,9 @@
 use relay_core::{
     CompactNavigation, ConfigurationSection, ConfigurationWorkspaceState, EmptyPolicyCatalog,
     NodeAvailabilityFilter, NodeGroupIcon, NodeGroupMatcher, NodeGroupStrategy, NodeIdentity,
-    NodePolicyGroup, NodeWorkspaceState, PolicyCatalog, PolicyGroup, PolicyGroupId, PolicyNode,
-    PolicyRule, PolicyWorkspaceState, PrimaryWorkspace, ProxyId, ProxyMode, RouteEvidence,
-    WindowSizeClass,
+    NodePolicyGroup, NodeWorkspaceState, PolicyCandidateKind, PolicyCatalog, PolicyGroup,
+    PolicyGroupId, PolicyGroupKind, PolicyNode, PolicyRule, PolicyWorkspaceState, PrimaryWorkspace,
+    ProxyId, ProxyMode, RouteEvidence, WindowSizeClass,
 };
 
 fn streaming() -> PolicyGroupId {
@@ -103,11 +103,12 @@ fn policy_catalog_requires_a_group_and_preserves_runtime_data() -> Result<(), Em
     let group = PolicyGroup {
         id: PolicyGroupId::new(String::from("AI 自动选择")),
         name: String::from("AI 自动选择"),
-        kind: String::from("URLTest"),
+        kind: PolicyGroupKind::UrlTest,
         target: String::from("新加坡 SG-02"),
         nodes: vec![PolicyNode {
             id: ProxyId::new(String::from("新加坡 SG-02")),
             name: String::from("新加坡 SG-02"),
+            kind: PolicyCandidateKind::NodeGroup,
             provider: Some(String::from("Provider A")),
             detail: String::from("VLESS"),
             latency_ms: Some(54),
@@ -127,11 +128,23 @@ fn policy_catalog_requires_a_group_and_preserves_runtime_data() -> Result<(), Em
     let selected = catalog.select(Some(&PolicyGroupId::new("AI 自动选择")));
 
     assert_eq!(selected.target, "新加坡 SG-02");
+    assert_eq!(selected.nodes[0].kind, PolicyCandidateKind::NodeGroup);
     assert_eq!(selected.nodes[0].latency_ms, Some(54));
     assert_eq!(selected.rules[0].hit_count, Some(9));
     assert_eq!(catalog.iter().count(), 1);
     assert_eq!(PolicyCatalog::try_new(Vec::new()), Err(EmptyPolicyCatalog));
     Ok(())
+}
+
+#[test]
+fn only_selector_groups_allow_manual_node_selection() {
+    assert!(PolicyGroupKind::Selector.allows_manual_selection());
+    assert!(!PolicyGroupKind::UrlTest.allows_manual_selection());
+    assert!(!PolicyGroupKind::Fallback.allows_manual_selection());
+    assert!(!PolicyGroupKind::LoadBalance.allows_manual_selection());
+    assert!(!PolicyGroupKind::Direct.allows_manual_selection());
+    assert_eq!(PolicyGroupKind::UrlTest.label(), "自动选择");
+    assert_eq!(PolicyGroupKind::Fallback.label(), "故障转移");
 }
 
 #[test]
@@ -246,6 +259,7 @@ fn node_workspace_tracks_collapsed_source_groups_independently() {
 fn node_policy_group_validates_identity_and_name_matching() {
     let mut group = NodePolicyGroup::new("group-1", "香港自动").expect("valid group");
     assert_eq!(group.strategy, NodeGroupStrategy::Manual);
+    assert_eq!(group.test_interval_secs, 600);
     assert_eq!(group.icon, NodeGroupIcon::Bolt);
     assert!(group.matches("subscription:one", "Hong Kong 01"));
 
@@ -261,6 +275,20 @@ fn node_policy_group_validates_identity_and_name_matching() {
     assert_eq!(group.name, "HK · 最低延迟");
     assert!(NodePolicyGroup::new("../unsafe", "Unsafe").is_err());
     assert!(group.rename("\n").is_err());
+}
+
+#[test]
+fn user_named_automatic_group_owns_a_validated_test_interval() {
+    let mut group = NodePolicyGroup::new("group-interval", "我的香港优选").expect("valid group");
+    group.strategy = NodeGroupStrategy::LowestLatency;
+
+    group
+        .set_test_interval_secs(300)
+        .expect("supported interval");
+    assert_eq!(group.name, "我的香港优选");
+    assert_eq!(group.test_interval_secs, 300);
+    assert!(group.set_test_interval_secs(0).is_err());
+    assert!(group.set_test_interval_secs(86_401).is_err());
 }
 
 #[test]

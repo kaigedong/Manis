@@ -464,6 +464,15 @@ impl RelayApp {
             NodeGroupMatcher::NameContains(value) => format!("名称包含 “{value}”"),
             NodeGroupMatcher::Explicit(nodes) => format!("明确选择 {} 个节点", nodes.len()),
         };
+        let strategy_summary = if group.strategy == NodeGroupStrategy::LowestLatency {
+            format!(
+                "{} · 每 {} 秒检查",
+                group.strategy.label(),
+                group.test_interval_secs
+            )
+        } else {
+            group.strategy.label().to_owned()
+        };
         div()
             .p_4()
             .rounded_md()
@@ -495,8 +504,7 @@ impl RelayApp {
                                     .text_size(px(10.0))
                                     .text_color(theme.text_secondary)
                                     .child(format!(
-                                        "{} · {matcher_summary} · 匹配 {matched} 个",
-                                        group.strategy.label()
+                                        "{strategy_summary} · {matcher_summary} · 匹配 {matched} 个"
                                     )),
                             ),
                     ),
@@ -1051,6 +1059,25 @@ impl RelayApp {
                         cx,
                     )),
             )
+            .when(
+                draft.strategy == NodeGroupStrategy::LowestLatency,
+                |editor| {
+                    editor.child(
+                        div()
+                            .mt_4()
+                            .child(Self::node_group_field_label("自动重新检查", theme))
+                            .child(Self::node_group_interval_selector(
+                                draft.test_interval_secs,
+                                theme,
+                                cx,
+                            ))
+                            .child(Self::node_group_helper(
+                                "每个自动策略组独立保存间隔，并写入 Relay 托管的 Mihomo 配置。",
+                                theme,
+                            )),
+                    )
+                },
+            )
             .child(
                 div()
                     .mt_4()
@@ -1241,6 +1268,62 @@ impl RelayApp {
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if let Some(draft) = this.node_group_draft.as_mut() {
                             draft.strategy = strategy;
+                            cx.notify();
+                        }
+                    })),
+            );
+        }
+        row
+    }
+
+    fn node_group_interval_selector(selected: u32, theme: Theme, cx: &mut Context<Self>) -> Div {
+        let choices = [
+            (60, "1 分钟"),
+            (300, "5 分钟"),
+            (600, "10 分钟"),
+            (1_800, "30 分钟"),
+        ];
+        let mut row = div().flex().flex_wrap().gap_2();
+        for (seconds, label) in choices {
+            let active = selected == seconds;
+            row = row.child(
+                div()
+                    .id(format!("node-group-interval-{seconds}"))
+                    .role(Role::Button)
+                    .aria_label(format!("每{label}自动检查"))
+                    .aria_toggled(if active {
+                        gpui::Toggled::True
+                    } else {
+                        gpui::Toggled::False
+                    })
+                    .tab_stop(true)
+                    .focusable()
+                    .cursor_pointer()
+                    .h(px(34.0))
+                    .px_3()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(if active {
+                        theme.action_primary
+                    } else {
+                        theme.outline_subtle
+                    })
+                    .bg(if active {
+                        theme.action_soft
+                    } else {
+                        theme.surface_low
+                    })
+                    .text_color(if active {
+                        theme.action_primary
+                    } else {
+                        theme.text_secondary
+                    })
+                    .flex()
+                    .items_center()
+                    .child(label)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if let Some(draft) = this.node_group_draft.as_mut() {
+                            draft.test_interval_secs = seconds;
                             cx.notify();
                         }
                     })),
@@ -1744,6 +1827,7 @@ impl RelayApp {
             editing_id: None,
             icon: NodeGroupIcon::Bolt,
             strategy: NodeGroupStrategy::Manual,
+            test_interval_secs: 600,
             matcher_kind: NodeGroupMatcherKind::All,
             explicit_members: BTreeSet::new(),
         });
@@ -1787,6 +1871,7 @@ impl RelayApp {
             editing_id: Some(group.id),
             icon: group.icon,
             strategy: group.strategy,
+            test_interval_secs: group.test_interval_secs,
             matcher_kind,
             explicit_members,
         });
@@ -1843,6 +1928,14 @@ impl RelayApp {
         }
         group.icon = draft.icon;
         group.strategy = draft.strategy;
+        if group
+            .set_test_interval_secs(draft.test_interval_secs)
+            .is_err()
+        {
+            "自动检查间隔无效".clone_into(&mut self.status);
+            cx.notify();
+            return;
+        }
         let matcher = match draft.matcher_kind {
             NodeGroupMatcherKind::All => NodeGroupMatcher::All,
             NodeGroupMatcherKind::NameContains => {

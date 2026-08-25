@@ -83,10 +83,17 @@ impl From<String> for ProxyId {
 pub struct PolicyNode {
     pub id: ProxyId,
     pub name: String,
+    pub kind: PolicyCandidateKind,
     pub provider: Option<String>,
     pub detail: String,
     pub latency_ms: Option<u16>,
     pub alive: Option<bool>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PolicyCandidateKind {
+    Node,
+    NodeGroup,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -102,11 +109,43 @@ pub struct PolicyRule {
 pub struct PolicyGroup {
     pub id: PolicyGroupId,
     pub name: String,
-    pub kind: String,
+    pub kind: PolicyGroupKind,
     pub target: String,
     pub nodes: Vec<PolicyNode>,
     pub rules: Vec<PolicyRule>,
     pub rules_total: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PolicyGroupKind {
+    Selector,
+    UrlTest,
+    Fallback,
+    LoadBalance,
+    Direct,
+}
+
+impl PolicyGroupKind {
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Selector => "手动选择",
+            Self::UrlTest => "自动选择",
+            Self::Fallback => "故障转移",
+            Self::LoadBalance => "负载均衡",
+            Self::Direct => "直连",
+        }
+    }
+
+    #[must_use]
+    pub const fn allows_manual_selection(self) -> bool {
+        matches!(self, Self::Selector)
+    }
+
+    #[must_use]
+    pub const fn is_automatic(self) -> bool {
+        matches!(self, Self::UrlTest | Self::Fallback | Self::LoadBalance)
+    }
 }
 
 impl PolicyGroup {
@@ -457,6 +496,7 @@ pub struct NodePolicyGroup {
     pub name: String,
     pub icon: NodeGroupIcon,
     pub strategy: NodeGroupStrategy,
+    pub test_interval_secs: u32,
     pub matcher: NodeGroupMatcher,
 }
 
@@ -477,6 +517,7 @@ impl NodePolicyGroup {
             name: name.to_owned(),
             icon: NodeGroupIcon::default(),
             strategy: NodeGroupStrategy::default(),
+            test_interval_secs: 600,
             matcher: NodeGroupMatcher::default(),
         })
     }
@@ -502,6 +543,18 @@ impl NodePolicyGroup {
             return Err(NodeGroupError::InvalidMatcher);
         }
         self.matcher = matcher;
+        Ok(())
+    }
+
+    /// Sets how often Mihomo reevaluates this automatic strategy group.
+    ///
+    /// # Errors
+    /// Returns [`NodeGroupError::InvalidTestInterval`] outside 30 seconds to 24 hours.
+    pub fn set_test_interval_secs(&mut self, seconds: u32) -> Result<(), NodeGroupError> {
+        if !(30..=86_400).contains(&seconds) {
+            return Err(NodeGroupError::InvalidTestInterval);
+        }
+        self.test_interval_secs = seconds;
         Ok(())
     }
 
@@ -557,6 +610,9 @@ impl NodePolicyGroup {
         if !self.matcher.is_valid() {
             return Err(NodeGroupError::InvalidMatcher);
         }
+        if !(30..=86_400).contains(&self.test_interval_secs) {
+            return Err(NodeGroupError::InvalidTestInterval);
+        }
         Ok(())
     }
 }
@@ -569,6 +625,7 @@ pub enum NodeGroupError {
     InvalidStrategy,
     InvalidMatcher,
     InvalidMember,
+    InvalidTestInterval,
 }
 
 impl fmt::Display for NodeGroupError {
@@ -580,6 +637,7 @@ impl fmt::Display for NodeGroupError {
             Self::InvalidStrategy => "node group strategy is invalid",
             Self::InvalidMatcher => "node group matcher is invalid",
             Self::InvalidMember => "node group member is invalid",
+            Self::InvalidTestInterval => "node group test interval is invalid",
         })
     }
 }

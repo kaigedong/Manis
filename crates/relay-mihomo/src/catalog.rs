@@ -1,7 +1,8 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use relay_core::{
-    EmptyPolicyCatalog, PolicyCatalog, PolicyGroup, PolicyGroupId, PolicyNode, PolicyRule, ProxyId,
+    EmptyPolicyCatalog, PolicyCandidateKind, PolicyCatalog, PolicyGroup, PolicyGroupId,
+    PolicyGroupKind as CorePolicyGroupKind, PolicyNode, PolicyRule, ProxyId,
 };
 
 use crate::{GroupKind, MihomoSnapshot, Proxy};
@@ -21,15 +22,26 @@ pub fn to_policy_catalog(snapshot: &MihomoSnapshot) -> Result<PolicyCatalog, Emp
         .map(|proxy| (proxy.name.as_str(), proxy))
         .collect();
 
-    let groups = snapshot
-        .policy_groups()
+    let runtime_groups = snapshot.policy_groups();
+    let group_names = runtime_groups
+        .iter()
+        .map(|group| group.name.clone())
+        .collect::<HashSet<_>>();
+
+    let groups = runtime_groups
         .into_iter()
         .filter(|group| group.hidden != Some(true))
         .map(|group| {
             let nodes = group
                 .nodes
                 .iter()
-                .map(|name| policy_node(name, proxies.get(name.as_str()).copied()))
+                .map(|name| {
+                    policy_node(
+                        name,
+                        proxies.get(name.as_str()).copied(),
+                        group_names.contains(name.as_str()),
+                    )
+                })
                 .collect();
             let rules: Vec<_> = snapshot
                 .rules
@@ -47,7 +59,7 @@ pub fn to_policy_catalog(snapshot: &MihomoSnapshot) -> Result<PolicyCatalog, Emp
             PolicyGroup {
                 id: PolicyGroupId::new(group.name.clone()),
                 name: group.name,
-                kind: group_kind_label(group.kind).to_owned(),
+                kind: policy_group_kind(group.kind),
                 target: group
                     .current
                     .or_else(|| group.nodes.first().cloned())
@@ -62,10 +74,15 @@ pub fn to_policy_catalog(snapshot: &MihomoSnapshot) -> Result<PolicyCatalog, Emp
     PolicyCatalog::try_new(groups)
 }
 
-fn policy_node(name: &str, proxy: Option<&Proxy>) -> PolicyNode {
+fn policy_node(name: &str, proxy: Option<&Proxy>, is_group: bool) -> PolicyNode {
     PolicyNode {
         id: ProxyId::new(name),
         name: name.to_owned(),
+        kind: if is_group {
+            PolicyCandidateKind::NodeGroup
+        } else {
+            PolicyCandidateKind::Node
+        },
         provider: proxy.and_then(|proxy| proxy.provider_name.clone()),
         detail: proxy.map_or_else(|| "类型未知".to_owned(), |proxy| proxy.proxy_type.clone()),
         latency_ms: proxy.and_then(|proxy| rounded_latency(proxy.latest_latency_ms())),
@@ -78,11 +95,11 @@ fn rounded_latency(latency: Option<f64>) -> Option<u16> {
     latency.map(|latency| latency.round().clamp(0.0, f64::from(u16::MAX)) as u16)
 }
 
-fn group_kind_label(kind: GroupKind) -> &'static str {
+fn policy_group_kind(kind: GroupKind) -> CorePolicyGroupKind {
     match kind {
-        GroupKind::Selector => "手动选择",
-        GroupKind::UrlTest => "自动测速",
-        GroupKind::Fallback => "故障转移",
-        GroupKind::LoadBalance => "负载均衡",
+        GroupKind::Selector => CorePolicyGroupKind::Selector,
+        GroupKind::UrlTest => CorePolicyGroupKind::UrlTest,
+        GroupKind::Fallback => CorePolicyGroupKind::Fallback,
+        GroupKind::LoadBalance => CorePolicyGroupKind::LoadBalance,
     }
 }

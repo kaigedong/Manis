@@ -3,6 +3,7 @@ use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::time::Duration;
 
+use relay_core::{PolicyCandidateKind, PolicyGroupKind};
 #[cfg(unix)]
 use relay_mihomo::UnixSocketTransport;
 use relay_mihomo::{
@@ -462,15 +463,16 @@ fn maps_snapshot_to_owned_policy_catalog() -> Result<(), Box<dyn std::error::Err
 
     assert_eq!(groups.len(), 3);
     assert_eq!(groups[0].name, "Proxy");
-    assert_eq!(groups[0].kind, "手动选择");
+    assert_eq!(groups[0].kind, PolicyGroupKind::Selector);
     assert_eq!(groups[0].target, "Japan 01");
     assert_eq!(groups[0].nodes[0].name, "Japan 01");
+    assert_eq!(groups[0].nodes[0].kind, PolicyCandidateKind::Node);
     assert_eq!(groups[0].nodes[0].provider.as_deref(), Some("airport"));
     assert_eq!(groups[0].nodes[0].latency_ms, Some(51));
     assert_eq!(groups[0].nodes[1].latency_ms, None);
     assert_eq!(groups[0].rules_count(), 1);
     assert_eq!(groups[0].rules[0].hit_count, Some(12));
-    assert_eq!(groups[1].kind, "自动测速");
+    assert_eq!(groups[1].kind, PolicyGroupKind::UrlTest);
     Ok(())
 }
 

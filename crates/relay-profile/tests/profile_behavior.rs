@@ -242,7 +242,10 @@ fn qx_sources_with_groups_compiles_user_groups_before_auto_and_proxy() {
     let streaming = UserPolicyGroup {
         name: Name::parse("Streaming").expect("valid user group"),
         icon: Some("https://assets.example.invalid/streaming.png".to_owned()),
-        kind: UserPolicyGroupKind::UrlTest { tolerance: 80 },
+        kind: UserPolicyGroupKind::UrlTest {
+            tolerance: 80,
+            interval_secs: 300,
+        },
         provider_indexes: vec![0],
         direct_proxies: vec![saved_name],
         filter: Some("HK|JP|US".to_owned()),
@@ -270,6 +273,7 @@ fn qx_sources_with_groups_compiles_user_groups_before_auto_and_proxy() {
     assert!(yaml.contains("icon: \"https://assets.example.invalid/streaming.png\""));
     assert!(yaml.contains("filter: \"HK|JP|US\""));
     assert!(yaml.contains("tolerance: 80"));
+    assert!(yaml.contains("interval: 300"));
     assert!(yaml.contains("name: \"Manual Saved\""));
     assert!(yaml.contains("type: \"select\""));
     assert!(yaml.find("name: \"Streaming\"") < yaml.find("name: \"Auto\""));

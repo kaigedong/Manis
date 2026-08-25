@@ -1,4 +1,7 @@
-use relay_core::{PolicyCatalog, PolicyGroup, PolicyGroupId, PolicyNode, PolicyRule, ProxyId};
+use relay_core::{
+    PolicyCandidateKind, PolicyCatalog, PolicyGroup, PolicyGroupId, PolicyGroupKind, PolicyNode,
+    PolicyRule, ProxyId,
+};
 
 pub(crate) fn catalog() -> PolicyCatalog {
     let streaming_nodes = common_nodes();
@@ -14,7 +17,7 @@ pub(crate) fn catalog() -> PolicyCatalog {
     let primary = group(
         "streaming",
         "视频服务",
-        "手动选择",
+        PolicyGroupKind::Selector,
         "香港 HK-01",
         12,
         streaming_nodes.clone(),
@@ -24,7 +27,7 @@ pub(crate) fn catalog() -> PolicyCatalog {
         group(
             "search",
             "搜索与 AI",
-            "自动选择",
+            PolicyGroupKind::UrlTest,
             "新加坡 SG-02",
             8,
             search_nodes.clone(),
@@ -33,7 +36,7 @@ pub(crate) fn catalog() -> PolicyCatalog {
         group(
             "development",
             "开发服务",
-            "故障转移",
+            PolicyGroupKind::Fallback,
             "日本 JP-03",
             17,
             streaming_nodes.clone(),
@@ -42,7 +45,7 @@ pub(crate) fn catalog() -> PolicyCatalog {
         group(
             "social",
             "社交网络",
-            "负载均衡",
+            PolicyGroupKind::LoadBalance,
             "新加坡 SG-02",
             9,
             search_nodes,
@@ -51,7 +54,7 @@ pub(crate) fn catalog() -> PolicyCatalog {
         group(
             "direct",
             "国内直连",
-            "直连",
+            PolicyGroupKind::Direct,
             "DIRECT",
             31,
             vec![node(
@@ -72,7 +75,7 @@ pub(crate) fn catalog() -> PolicyCatalog {
 fn group(
     id: &str,
     name: &str,
-    kind: &str,
+    kind: PolicyGroupKind,
     target: &str,
     rules_total: usize,
     nodes: Vec<PolicyNode>,
@@ -81,7 +84,7 @@ fn group(
     PolicyGroup {
         id: PolicyGroupId::new(id),
         name: name.to_owned(),
-        kind: kind.to_owned(),
+        kind,
         target: target.to_owned(),
         nodes,
         rules,
@@ -132,6 +135,7 @@ fn node(
     PolicyNode {
         id: ProxyId::new(id),
         name: name.to_owned(),
+        kind: PolicyCandidateKind::Node,
         provider: provider.map(str::to_owned),
         detail: detail.to_owned(),
         latency_ms,
