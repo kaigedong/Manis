@@ -82,3 +82,5 @@
 - HTTPS 校验与 QX 结构预览完成 TDD 红→绿；输入支持键盘、粘贴、选区、IME、单行与 16 KiB 限制，所有错误和 trace 都不携带链接。
 - 宽屏/紧凑截图夹具实际输入 `example.invalid` 并成功生成 `1 个来源 · 2 个策略组 · 2 条规则`；最终 Visual Verdict 95/100 `pass`。当前进入全量验证、提交和带 trace 重启。
 - 最终 workspace 62 个常规测试通过、2 个环境依赖测试默认 ignored；fmt、严格 Clippy、全目标 build、diff check 和 worktree/Git 历史敏感域名扫描全部通过。
+- 修复来源输入占位文本参与点击定位的问题：空内容的鼠标命中和所有编辑/IME 区间现在都会收敛到合法 UTF-8 边界，加入陈旧选区清空后继续输入的崩溃回归测试。
+- 来源入口升级为 HTTP/HTTPS 订阅与 `vless://` 单节点识别；删除假的 `1/2/2` 结构计数，接入 Mihomo `GET /providers/proxies` 并按 provider 展示实际节点、协议、存活状态与延迟。真实 Clash Verge Unix socket smoke test、全量测试、严格 Clippy 和 Visual Verdict 97/100 均通过。

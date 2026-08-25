@@ -11,7 +11,7 @@ use relay_mihomo::ObservedRouteEvidence;
 use crate::{
     demo,
     diagnostics::{UiEvent, trace_ui},
-    mihomo::{self, ControllerRuntime, ControllerState, LoadedSnapshot},
+    mihomo::{self, ControllerRuntime, ControllerState, LoadedProvider, LoadedSnapshot},
     subscription::{SubscriptionInputError, SubscriptionPreview},
     subscription_input::{SubscriptionInputChanged, SubscriptionTextInput},
     theme::Theme,
@@ -19,7 +19,7 @@ use crate::{
 
 mod configuration;
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 enum SubscriptionFeedback {
     #[default]
     Idle,
@@ -35,6 +35,7 @@ pub struct RelayApp {
     runtime: ControllerRuntime,
     controller: ControllerState,
     observed_routes: Vec<ObservedRouteEvidence>,
+    source_providers: Vec<LoadedProvider>,
     proxy_enabled: bool,
     inspector_open: bool,
     dark: bool,
@@ -67,6 +68,7 @@ impl RelayApp {
             runtime,
             controller: ControllerState::Demo,
             observed_routes: Vec::new(),
+            source_providers: Vec::new(),
             proxy_enabled: true,
             inspector_open: false,
             dark: false,
@@ -179,6 +181,7 @@ impl RelayApp {
         self.workspace
             .replace_source_selection(group, selected_node);
         self.catalog = snapshot.catalog;
+        self.source_providers = snapshot.providers;
         self.observed_routes = snapshot.observed_routes;
         self.status = format!(
             "已读取 {} 个策略组 · {} 条活动连接",

@@ -43,9 +43,12 @@ fn capture_configuration(
         cx.simulate_click(window, point(px(275.0), px(145.0)), Modifiers::none());
         refresh(cx, window)?;
         save_screenshot(cx, window, "configuration-wide-subscription-focused.png")?;
-        cx.simulate_input(window, "https://example.invalid/subscription");
+        cx.simulate_input(
+            window,
+            "vless://00000000-0000-4000-8000-000000000000@edge.example.invalid:443?security=tls&type=ws#Tokyo%20Edge",
+        );
         refresh(cx, window)?;
-        cx.simulate_click(window, point(px(370.0), px(405.0)), Modifiers::none());
+        cx.simulate_click(window, point(px(370.0), px(370.0)), Modifiers::none());
         refresh(cx, window)?;
         save_screenshot(cx, window, "configuration-wide-subscription-preview.png")?;
     }
@@ -53,7 +56,10 @@ fn capture_configuration(
     if (width - 720.0).abs() < f32::EPSILON {
         cx.simulate_click(window, point(px(180.0), px(145.0)), Modifiers::none());
         refresh(cx, window)?;
-        cx.simulate_input(window, "https://example.invalid/subscription");
+        cx.simulate_input(
+            window,
+            "vless://00000000-0000-4000-8000-000000000000@edge.example.invalid:443?security=tls&type=ws#Tokyo%20Edge",
+        );
         refresh(cx, window)?;
         cx.simulate_click(window, point(px(360.0), px(390.0)), Modifiers::none());
         refresh(cx, window)?;
@@ -129,6 +135,10 @@ fn capture_connected(
     refresh(cx, window)?;
     save_screenshot(cx, window, "native-wide-connected.png")?;
 
+    cx.simulate_click(window, point(px(110.0), px(120.0)), Modifiers::none());
+    refresh(cx, window)?;
+    save_screenshot(cx, window, "configuration-wide-connected-sources.png")?;
+
     server
         .join()
         .map_err(|_| "Mihomo fixture server thread panicked")??;
@@ -188,7 +198,7 @@ fn spawn_mihomo_fixture() -> Result<FixtureServer, Box<dyn std::error::Error>> {
     let listener = TcpListener::bind("127.0.0.1:0")?;
     let endpoint = format!("http://{}", listener.local_addr()?);
     let server = std::thread::spawn(move || -> std::io::Result<()> {
-        for _ in 0..4 {
+        for _ in 0..5 {
             let (mut stream, _) = listener.accept()?;
             let mut request_line = String::new();
             BufReader::new(stream.try_clone()?).read_line(&mut request_line)?;
@@ -215,6 +225,9 @@ fn fixture_response(path: &str) -> &'static str {
         "/version" => r#"{"meta":true,"version":"v1.19.12"}"#,
         "/proxies" => {
             r#"{"proxies":{"AI 自动选择":{"name":"AI 自动选择","type":"Selector","now":"新加坡 SG-02","all":["新加坡 SG-02","日本 JP-03"],"alive":true},"视频服务":{"name":"视频服务","type":"URLTest","now":"香港 HK-01","all":["香港 HK-01","美国 US-01"],"alive":true},"新加坡 SG-02":{"name":"新加坡 SG-02","type":"VLESS","alive":true,"provider-name":"Provider A","history":[{"delay":54}]},"日本 JP-03":{"name":"日本 JP-03","type":"Trojan","alive":true,"provider-name":"Provider B","history":[{"delay":67}]},"香港 HK-01":{"name":"香港 HK-01","type":"Hysteria2","alive":true,"provider-name":"Provider A","history":[{"delay":38}]},"美国 US-01":{"name":"美国 US-01","type":"VLESS","alive":true,"provider-name":"Provider A","history":[{"delay":142}]}}}"#
+        }
+        "/providers/proxies" => {
+            r#"{"providers":{"Provider A":{"name":"Provider A","type":"Proxy","vehicleType":"HTTP","proxies":[{"name":"香港 HK-01","type":"Hysteria2","alive":true,"history":[{"delay":38}]},{"name":"新加坡 SG-02","type":"VLESS","alive":true,"history":[{"delay":54}]},{"name":"美国 US-01","type":"VLESS","alive":true,"history":[{"delay":142}]}]},"Provider B":{"name":"Provider B","type":"Proxy","vehicleType":"HTTP","proxies":[{"name":"日本 JP-03","type":"Trojan","alive":true,"history":[{"delay":67}]}]}}}"#
         }
         "/rules" => {
             r#"{"rules":[{"index":27,"type":"DOMAIN-SUFFIX","payload":"openai.com","proxy":"AI 自动选择","extra":{"hitCount":12}},{"index":28,"type":"DOMAIN-SUFFIX","payload":"google.com","proxy":"AI 自动选择","extra":{"hitCount":4}},{"index":18,"type":"DOMAIN-SUFFIX","payload":"youtube.com","proxy":"视频服务","extra":{"hitCount":32}}]}"#

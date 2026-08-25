@@ -21,6 +21,7 @@ impl ReadonlyTransport for FakeTransport {
         match path {
             "/version" => Ok(r#"{"meta":true,"version":"v1.19.0","ignored":1}"#.to_owned()),
             "/proxies" => Ok(proxy_fixture()),
+            "/providers/proxies" => Ok(provider_fixture()),
             "/rules" => Ok(rule_fixture()),
             "/connections" => Ok(connection_fixture()),
             _ => Err(MihomoError::InvalidResponse(format!(
@@ -83,11 +84,36 @@ fn fetch_snapshot_requests_exact_readonly_endpoints() -> Result<(), Box<dyn std:
 
     assert_eq!(
         transport.requests.borrow().as_slice(),
-        ["/version", "/proxies", "/rules", "/connections"]
+        [
+            "/version",
+            "/proxies",
+            "/providers/proxies",
+            "/rules",
+            "/connections"
+        ]
     );
     assert_eq!(snapshot.version.version.as_deref(), Some("v1.19.0"));
     assert!(snapshot.version.meta);
 
+    Ok(())
+}
+
+#[test]
+fn parses_all_proxy_provider_nodes_for_source_browsing() -> Result<(), Box<dyn std::error::Error>> {
+    let transport = FakeTransport::default();
+    let snapshot = MihomoClient::new(ControllerConfig::default(), &transport).fetch_snapshot()?;
+
+    assert_eq!(snapshot.providers.len(), 1);
+    assert_eq!(snapshot.providers[0].name, "airport");
+    assert_eq!(snapshot.providers[0].vehicle_type.as_deref(), Some("HTTP"));
+    assert_eq!(snapshot.providers[0].proxies.len(), 2);
+    assert_eq!(snapshot.providers[0].proxies[0].name, "Japan 01");
+    assert_eq!(snapshot.providers[0].proxies[0].proxy_type, "VLESS");
+    assert_eq!(
+        snapshot.providers[0].proxies[0].latest_latency_ms(),
+        Some(51.0)
+    );
+    assert_eq!(snapshot.providers[0].proxies[1].alive, Some(false));
     Ok(())
 }
 
@@ -347,6 +373,36 @@ fn proxy_fixture() -> String {
           "name": "US 01",
           "type": "ss",
           "history": [{"delay": 0}]
+        }
+      }
+    }
+    "#
+    .to_owned()
+}
+
+fn provider_fixture() -> String {
+    r#"
+    {
+      "providers": {
+        "airport": {
+          "name": "airport",
+          "type": "Proxy",
+          "vehicleType": "HTTP",
+          "updatedAt": "2026-08-25T00:00:00Z",
+          "proxies": [
+            {
+              "name": "Japan 01",
+              "type": "VLESS",
+              "alive": true,
+              "history": [{"delay": 51}]
+            },
+            {
+              "name": "US 01",
+              "type": "Trojan",
+              "alive": false,
+              "history": []
+            }
+          ]
         }
       }
     }

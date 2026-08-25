@@ -205,12 +205,14 @@ impl SubscriptionTextInput {
     }
 
     fn move_to(&mut self, offset: usize, cx: &mut Context<Self>) {
+        let offset = clamp_offset(&self.content, offset);
         self.selected_range = offset..offset;
         self.selection_reversed = false;
         cx.notify();
     }
 
     fn select_to(&mut self, offset: usize, cx: &mut Context<Self>) {
+        let offset = clamp_offset(&self.content, offset);
         if self.selection_reversed {
             self.selected_range.start = offset;
         } else {
@@ -239,6 +241,9 @@ impl SubscriptionTextInput {
     }
 
     fn index_for_mouse_position(&self, position: Point<Pixels>) -> usize {
+        if self.content.is_empty() {
+            return 0;
+        }
         let (Some(bounds), Some(line)) = (self.last_bounds, self.last_layout.as_ref()) else {
             return 0;
         };
@@ -278,12 +283,38 @@ impl SubscriptionTextInput {
     }
 
     fn range_to_utf16(&self, range: &Range<usize>) -> Range<usize> {
+        let range = normalize_range(&self.content, range.clone());
         self.offset_to_utf16(range.start)..self.offset_to_utf16(range.end)
     }
 
     fn range_from_utf16(&self, range: &Range<usize>) -> Range<usize> {
         self.offset_from_utf16(range.start)..self.offset_from_utf16(range.end)
     }
+}
+
+fn clamp_offset(content: &str, offset: usize) -> usize {
+    let mut offset = offset.min(content.len());
+    while !content.is_char_boundary(offset) {
+        offset -= 1;
+    }
+    offset
+}
+
+fn normalize_range(content: &str, range: Range<usize>) -> Range<usize> {
+    let start = clamp_offset(content, range.start);
+    let end = clamp_offset(content, range.end);
+    start.min(end)..start.max(end)
+}
+
+fn replace_content(content: &str, range: Range<usize>, new_text: &str) -> (String, usize) {
+    let range = normalize_range(content, range);
+    let mut result =
+        String::with_capacity(content.len() - (range.end - range.start) + new_text.len());
+    result.push_str(&content[..range.start]);
+    result.push_str(new_text);
+    result.push_str(&content[range.end..]);
+    let cursor = range.start + new_text.len();
+    (result, cursor)
 }
 
 impl gpui::EventEmitter<SubscriptionInputChanged> for SubscriptionTextInput {}
@@ -302,7 +333,7 @@ impl EntityInputHandler for SubscriptionTextInput {
         _: &mut Window,
         _: &mut Context<Self>,
     ) -> Option<String> {
-        let range = self.range_from_utf16(&range_utf16);
+        let range = normalize_range(&self.content, self.range_from_utf16(&range_utf16));
         actual_range.replace(self.range_to_utf16(&range));
         Some(self.content[range].to_string())
     }
@@ -314,7 +345,8 @@ impl EntityInputHandler for SubscriptionTextInput {
         _: &mut Context<Self>,
     ) -> Option<UTF16Selection> {
         Some(UTF16Selection {
-            range: self.range_to_utf16(&self.selected_range),
+            range: self
+                .range_to_utf16(&normalize_range(&self.content, self.selected_range.clone())),
             reversed: self.selection_reversed,
         })
     }
@@ -336,25 +368,22 @@ impl EntityInputHandler for SubscriptionTextInput {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let range = range_utf16
-            .as_ref()
-            .map(|range| self.range_from_utf16(range))
-            .or(self.marked_range.clone())
-            .unwrap_or_else(|| self.selected_range.clone());
+        let range = normalize_range(
+            &self.content,
+            range_utf16
+                .as_ref()
+                .map(|range| self.range_from_utf16(range))
+                .or(self.marked_range.clone())
+                .unwrap_or_else(|| self.selected_range.clone()),
+        );
         let single_line = new_text.replace(['\r', '\n'], "");
         let new_len = self.content.len() - (range.end - range.start) + single_line.len();
         if new_len > MAX_SUBSCRIPTION_BYTES {
             window.play_system_bell();
             return;
         }
-        self.content = format!(
-            "{}{}{}",
-            &self.content[..range.start],
-            single_line,
-            &self.content[range.end..]
-        )
-        .into();
-        let cursor = range.start + single_line.len();
+        let (content, cursor) = replace_content(&self.content, range, &single_line);
+        self.content = content.into();
         self.selected_range = cursor..cursor;
         self.selection_reversed = false;
         self.marked_range = None;
@@ -370,36 +399,32 @@ impl EntityInputHandler for SubscriptionTextInput {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let range = range_utf16
-            .as_ref()
-            .map(|range| self.range_from_utf16(range))
-            .or(self.marked_range.clone())
-            .unwrap_or_else(|| self.selected_range.clone());
+        let range = normalize_range(
+            &self.content,
+            range_utf16
+                .as_ref()
+                .map(|range| self.range_from_utf16(range))
+                .or(self.marked_range.clone())
+                .unwrap_or_else(|| self.selected_range.clone()),
+        );
         let single_line = new_text.replace(['\r', '\n'], "");
         let new_len = self.content.len() - (range.end - range.start) + single_line.len();
         if new_len > MAX_SUBSCRIPTION_BYTES {
             window.play_system_bell();
             return;
         }
-        self.content = format!(
-            "{}{}{}",
-            &self.content[..range.start],
-            single_line,
-            &self.content[range.end..]
-        )
-        .into();
+        let (content, cursor) = replace_content(&self.content, range.clone(), &single_line);
+        self.content = content.into();
         self.marked_range =
             (!single_line.is_empty()).then_some(range.start..range.start + single_line.len());
         self.selected_range = new_selected_range_utf16
             .as_ref()
             .map(|selection| self.range_from_utf16(selection))
             .map_or_else(
-                || {
-                    let cursor = range.start + single_line.len();
-                    cursor..cursor
-                },
+                || cursor..cursor,
                 |selection| range.start + selection.start..range.start + selection.end,
             );
+        self.selected_range = normalize_range(&self.content, self.selected_range.clone());
         self.selection_reversed = false;
         cx.emit(SubscriptionInputChanged);
         cx.notify();
@@ -413,7 +438,7 @@ impl EntityInputHandler for SubscriptionTextInput {
         _: &mut Context<Self>,
     ) -> Option<Bounds<Pixels>> {
         let line = self.last_layout.as_ref()?;
-        let range = self.range_from_utf16(&range_utf16);
+        let range = normalize_range(&self.content, self.range_from_utf16(&range_utf16));
         Some(Bounds::from_corners(
             point(
                 bounds.left() + line.x_for_index(range.start) - self.last_scroll_x,
@@ -448,6 +473,14 @@ struct PrepaintState {
     cursor: Option<PaintQuad>,
     selection: Option<PaintQuad>,
     scroll_x: Pixels,
+}
+
+fn display_text(content: &SharedString) -> SharedString {
+    if content.is_empty() {
+        "粘贴 HTTP/HTTPS 订阅或 vless:// 节点链接".into()
+    } else {
+        content.clone()
+    }
 }
 
 impl IntoElement for SubscriptionTextElement {
@@ -494,11 +527,7 @@ impl Element for SubscriptionTextElement {
     ) -> Self::PrepaintState {
         let input = self.input.read(cx);
         let content = input.content.clone();
-        let display_text: SharedString = if content.is_empty() {
-            "https://example.com/subscribe?token=…".into()
-        } else {
-            content.clone()
-        };
+        let display_text = display_text(&content);
         let style = window.text_style();
         let run = TextRun {
             len: display_text.len(),
@@ -512,7 +541,14 @@ impl Element for SubscriptionTextElement {
             underline: None,
             strikethrough: None,
         };
-        let runs = if let Some(marked) = input.marked_range.as_ref() {
+        let marked = input
+            .marked_range
+            .as_ref()
+            .map(|range| normalize_range(&content, range.clone()));
+        let runs = if let Some(marked) = marked
+            .as_ref()
+            .filter(|range| !content.is_empty() && !range.is_empty())
+        {
             vec![
                 TextRun {
                     len: marked.start,
@@ -542,10 +578,15 @@ impl Element for SubscriptionTextElement {
         let line = window
             .text_system()
             .shape_line(display_text, font_size, &runs, None);
-        let cursor_x = line.x_for_index(input.cursor_offset());
+        let cursor_offset = if content.is_empty() {
+            0
+        } else {
+            clamp_offset(&content, input.cursor_offset())
+        };
+        let cursor_x = line.x_for_index(cursor_offset);
         let visible_width = bounds.size.width - px(4.0);
         let scroll_x = (cursor_x - visible_width).max(px(0.0));
-        let selected = input.selected_range.clone();
+        let selected = normalize_range(&content, input.selected_range.clone());
         let (selection, cursor) = if selected.is_empty() {
             (
                 None,
@@ -662,5 +703,28 @@ impl gpui::Render for SubscriptionTextInput {
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .child(SubscriptionTextElement { input: cx.entity() })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{normalize_range, replace_content};
+
+    #[test]
+    fn stale_selection_on_empty_placeholder_is_clamped_before_editing() {
+        let range = normalize_range("", 14..14);
+        let (content, cursor) = replace_content("", range, "vless://fixture");
+
+        assert_eq!(content, "vless://fixture");
+        assert_eq!(cursor, content.len());
+    }
+
+    #[test]
+    fn edit_ranges_are_ordered_and_clamped_to_utf8_boundaries() {
+        assert_eq!(
+            normalize_range("中a", std::ops::Range { start: 99, end: 1 },),
+            0..4
+        );
+        assert_eq!(normalize_range("中a", 2..3), 0..3);
     }
 }

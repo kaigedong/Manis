@@ -25,6 +25,22 @@ fn secret_url_is_redacted_in_debug_and_errors() {
 }
 
 #[test]
+fn subscription_url_accepts_http_and_https_without_exposing_values() {
+    let http = SecretUrl::parse_subscription(
+        "http://subscription.example.invalid/client?token=fixture-secret",
+    )
+    .expect("plain HTTP providers are supported by Mihomo");
+    let https = SecretUrl::parse_subscription(
+        "https://subscription.example.invalid/client?token=fixture-secret",
+    )
+    .expect("HTTPS providers are supported by Mihomo");
+
+    assert_eq!(format!("{http:?}"), "SecretUrl(<redacted>)");
+    assert_eq!(format!("{https:?}"), "SecretUrl(<redacted>)");
+    assert!(SecretUrl::parse_subscription("vless://not-a-provider").is_err());
+}
+
+#[test]
 fn qx_default_renders_ordered_minimal_mihomo_yaml() {
     let profile = Profile::qx_default(fixture_secret()).expect("default profile is valid");
     let yaml = render_mihomo_yaml(&profile).expect("default profile renders");

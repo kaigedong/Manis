@@ -183,11 +183,27 @@ pub(crate) struct RuntimeSnapshot {
 
 pub(crate) struct LoadedSnapshot {
     pub catalog: PolicyCatalog,
+    pub providers: Vec<LoadedProvider>,
     pub version: String,
     pub active_connections: usize,
     pub download_total: u64,
     pub upload_total: u64,
     pub observed_routes: Vec<ObservedRouteEvidence>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct LoadedProvider {
+    pub name: String,
+    pub vehicle_type: Option<String>,
+    pub nodes: Vec<LoadedProviderNode>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct LoadedProviderNode {
+    pub name: String,
+    pub protocol: String,
+    pub latency_label: Option<String>,
+    pub alive: Option<bool>,
 }
 
 #[derive(Debug)]
@@ -515,6 +531,26 @@ pub(crate) fn configured_endpoint() -> String {
 pub(crate) fn load(endpoint: &str) -> Result<LoadedSnapshot, LoadError> {
     let snapshot = fetch_snapshot(endpoint)?;
     let catalog = to_policy_catalog(&snapshot)?;
+    let providers = snapshot
+        .providers
+        .iter()
+        .map(|provider| LoadedProvider {
+            name: provider.name.clone(),
+            vehicle_type: provider.vehicle_type.clone(),
+            nodes: provider
+                .proxies
+                .iter()
+                .map(|proxy| LoadedProviderNode {
+                    name: proxy.name.clone(),
+                    protocol: proxy.proxy_type.clone(),
+                    latency_label: proxy
+                        .latest_latency_ms()
+                        .map(|delay| format!("{delay:.0} ms")),
+                    alive: proxy.alive,
+                })
+                .collect(),
+        })
+        .collect();
     let version = snapshot
         .version
         .version
@@ -527,6 +563,7 @@ pub(crate) fn load(endpoint: &str) -> Result<LoadedSnapshot, LoadError> {
 
     Ok(LoadedSnapshot {
         catalog,
+        providers,
         version,
         active_connections,
         download_total,
@@ -770,6 +807,12 @@ mod tests {
         let endpoint = std::env::var(super::CONTROLLER_ENV)?;
         let snapshot = super::load(&endpoint)?;
         assert!(snapshot.catalog.iter().count() > 0);
+        assert!(
+            snapshot
+                .providers
+                .iter()
+                .any(|provider| !provider.nodes.is_empty())
+        );
         assert!(!snapshot.version.is_empty());
         Ok(())
     }

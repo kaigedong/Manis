@@ -7,7 +7,8 @@ use relay_core::{ConfigurationSection, WindowSizeClass};
 use super::{RelayApp, SubscriptionFeedback};
 use crate::{
     diagnostics::{UiEvent, trace_ui},
-    subscription::validate_subscription_preview,
+    mihomo::LoadedProvider,
+    subscription::{SourceKind, SourceNodePreview, validate_subscription_preview},
     subscription_input::SubscriptionTextInput,
     theme::Theme,
 };
@@ -111,7 +112,7 @@ impl RelayApp {
                             )
                             .when(!compact, |header| {
                                 header.child(div().mt_1().text_color(theme.text_secondary).child(
-                                    "输入订阅 → 校验策略 → 启用配置；当前链接只保留在内存中",
+                                    "添加来源 → 查看节点 → 编排策略；当前草稿只保留在内存中",
                                 ))
                             }),
                     )
@@ -133,7 +134,12 @@ impl RelayApp {
     fn configuration_flow_strip(&self, theme: Theme, cx: &mut Context<Self>) -> Div {
         let mut strip = div().flex().gap_2();
         for (section, index, label, detail) in [
-            (ConfigurationSection::Sources, "01", "订阅源", "粘贴链接"),
+            (
+                ConfigurationSection::Sources,
+                "01",
+                "代理来源",
+                "订阅 / URI",
+            ),
             (ConfigurationSection::Groups, "02", "策略组", "3 个出口"),
             (ConfigurationSection::Rules, "03", "规则", "2 条有序"),
         ] {
@@ -296,7 +302,7 @@ impl RelayApp {
             .as_ref()
             .expect("subscription input is initialized before rendering")
             .clone();
-        let feedback = self.subscription_feedback;
+        let feedback = &self.subscription_feedback;
 
         let panel = div()
             .id("configuration-source")
@@ -312,21 +318,21 @@ impl RelayApp {
                     .text_size(px(11.0))
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(theme.text_tertiary)
-                    .child("01 · 订阅源"),
+                    .child("01 · 代理来源"),
             )
             .child(
                 div()
                     .mt_3()
                     .text_size(px(17.0))
                     .font_weight(FontWeight::BOLD)
-                    .child("添加 HTTPS 订阅"),
+                    .child("添加代理来源"),
             )
             .child(
                 div()
                     .mt_1()
                     .text_size(px(11.0))
                     .text_color(theme.text_secondary)
-                    .child("粘贴 Clash/Mihomo 兼容订阅链接，先在本地检查策略结构。"),
+                    .child("支持 HTTP/HTTPS 订阅，也支持单个 vless:// 节点链接。"),
             )
             .child(
                 div()
@@ -334,11 +340,12 @@ impl RelayApp {
                     .mb_1()
                     .text_size(px(11.0))
                     .font_weight(FontWeight::SEMIBOLD)
-                    .child("订阅链接"),
+                    .child("来源地址"),
             )
             .child(input.clone())
             .child(Self::subscription_actions(input, theme, cx))
             .child(Self::subscription_feedback(feedback, theme))
+            .child(Self::source_nodes(feedback, &self.source_providers, theme))
             .child(
                 div()
                     .mt_3()
@@ -377,7 +384,7 @@ impl RelayApp {
                 div()
                     .id("subscription-preview")
                     .role(Role::Button)
-                    .aria_label("校验订阅并生成策略预览")
+                    .aria_label("识别代理来源并预览节点")
                     .tab_stop(true)
                     .focusable()
                     .cursor_pointer()
@@ -391,7 +398,7 @@ impl RelayApp {
                     .items_center()
                     .justify_center()
                     .flex_1()
-                    .child("校验并预览")
+                    .child("识别并预览")
                     .on_click(cx.listener(move |this, _, _, cx| {
                         let result = {
                             let input = input.read(cx);
@@ -399,15 +406,21 @@ impl RelayApp {
                         };
                         match result {
                             Ok(preview) => {
+                                let direct_node = preview.kind == SourceKind::VlessNode;
                                 this.subscription_feedback = SubscriptionFeedback::Valid(preview);
-                                "订阅格式有效 · 已生成本地策略预览 · 尚未保存或联网"
-                                    .clone_into(&mut this.status);
-                                trace_ui(UiEvent::SubscriptionPreviewSucceeded);
+                                if direct_node {
+                                    "VLESS 节点已识别 · 可在来源节点中查看 · 尚未保存"
+                                        .clone_into(&mut this.status);
+                                } else {
+                                    "订阅地址已识别 · 启用后由 Mihomo 拉取节点 · 尚未保存"
+                                        .clone_into(&mut this.status);
+                                }
+                                trace_ui(UiEvent::SourceRecognitionSucceeded);
                             }
                             Err(error) => {
                                 this.subscription_feedback = SubscriptionFeedback::Invalid(error);
-                                this.status = format!("订阅校验失败：{error}");
-                                trace_ui(UiEvent::SubscriptionPreviewFailed);
+                                this.status = format!("来源识别失败：{error}");
+                                trace_ui(UiEvent::SourceRecognitionFailed);
                             }
                         }
                         cx.notify();
@@ -442,13 +455,13 @@ impl RelayApp {
             )
     }
 
-    fn subscription_feedback(feedback: SubscriptionFeedback, theme: Theme) -> Div {
+    fn subscription_feedback(feedback: &SubscriptionFeedback, theme: Theme) -> Div {
         match feedback {
             SubscriptionFeedback::Idle => div()
                 .mt_3()
                 .text_size(px(11.0))
                 .text_color(theme.text_secondary)
-                .child("等待输入 · 仅接受完整 HTTPS 地址"),
+                .child("等待输入 · HTTP/HTTPS 订阅或 vless:// 节点"),
             SubscriptionFeedback::Valid(preview) => div()
                 .mt_3()
                 .p_3()
@@ -458,17 +471,26 @@ impl RelayApp {
                     div()
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(theme.status_success)
-                        .child("链接格式有效"),
+                        .child(match preview.kind {
+                            SourceKind::HttpSubscription => "HTTP 订阅已识别",
+                            SourceKind::HttpsSubscription => "HTTPS 订阅已识别",
+                            SourceKind::VlessNode => "VLESS 节点已识别",
+                        }),
                 )
                 .child(
                     div()
                         .mt_1()
                         .text_size(px(11.0))
                         .text_color(theme.text_secondary)
-                        .child(format!(
-                            "{} 个来源 · {} 个策略组 · {} 条有序规则",
-                            preview.providers, preview.groups, preview.rules
-                        )),
+                        .child(match preview.kind {
+                            SourceKind::HttpSubscription => {
+                                "明文传输可能暴露订阅凭据；建议优先使用 HTTPS"
+                            }
+                            SourceKind::HttpsSubscription => {
+                                "地址有效；启用后由 Mihomo 拉取并解析全部节点"
+                            }
+                            SourceKind::VlessNode => "已解析为 1 个可预览的直接节点",
+                        }),
                 ),
             SubscriptionFeedback::Invalid(error) => div()
                 .mt_3()
@@ -480,7 +502,7 @@ impl RelayApp {
                 .child(
                     div()
                         .font_weight(FontWeight::SEMIBOLD)
-                        .child("无法生成预览"),
+                        .child("无法识别来源"),
                 )
                 .child(
                     div()
@@ -490,6 +512,180 @@ impl RelayApp {
                         .child(error.to_string()),
                 ),
         }
+    }
+
+    fn source_nodes(
+        feedback: &SubscriptionFeedback,
+        providers: &[LoadedProvider],
+        theme: Theme,
+    ) -> Div {
+        let direct_nodes = match feedback {
+            SubscriptionFeedback::Valid(preview) if preview.kind == SourceKind::VlessNode => {
+                Some(preview.nodes.as_slice())
+            }
+            _ => None,
+        };
+        let total = direct_nodes.map_or_else(
+            || providers.iter().map(|provider| provider.nodes.len()).sum(),
+            <[SourceNodePreview]>::len,
+        );
+        let list_title = if direct_nodes.is_none() && !providers.is_empty() {
+            "Mihomo 当前节点"
+        } else {
+            "来源节点"
+        };
+        let mut section = div()
+            .mt_3()
+            .pt_3()
+            .border_t_1()
+            .border_color(theme.outline_subtle)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .text_size(px(11.0))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(list_title),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(theme.text_tertiary)
+                            .child(format!("{total} 个")),
+                    ),
+            );
+
+        if let Some(nodes) = direct_nodes {
+            for node in nodes {
+                section = section.child(Self::direct_node_row(node, theme));
+            }
+            return section;
+        }
+
+        if providers.is_empty() {
+            return section.child(
+                div()
+                    .mt_2()
+                    .p_3()
+                    .rounded_md()
+                    .bg(theme.surface_low)
+                    .text_size(px(11.0))
+                    .text_color(theme.text_secondary)
+                    .child(match feedback {
+                        SubscriptionFeedback::Valid(_) => {
+                            "这份订阅还是内存草稿。启用并连接 Mihomo 后，这里会列出全部节点。"
+                        }
+                        _ => "识别来源后，这里会显示直接节点或 Mihomo 已载入的订阅节点。",
+                    }),
+            );
+        }
+
+        let mut list = div()
+            .id("source-node-list")
+            .mt_2()
+            .max_h(px(280.0))
+            .overflow_y_scroll();
+        for provider in providers {
+            list = list.child(Self::provider_block(provider, theme));
+        }
+        section.child(list)
+    }
+
+    fn direct_node_row(node: &SourceNodePreview, theme: Theme) -> Div {
+        div()
+            .mt_2()
+            .p_3()
+            .rounded_md()
+            .border_1()
+            .border_color(theme.outline_subtle)
+            .bg(theme.surface_low)
+            .child(
+                div()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(node.name.clone()),
+            )
+            .child(
+                div()
+                    .mt_1()
+                    .text_size(px(10.0))
+                    .text_color(theme.text_secondary)
+                    .child(format!(
+                        "{} · {} · {}",
+                        node.protocol, node.endpoint, node.detail
+                    )),
+            )
+    }
+
+    fn provider_block(provider: &LoadedProvider, theme: Theme) -> Div {
+        let mut block = div()
+            .mb_2()
+            .rounded_md()
+            .border_1()
+            .border_color(theme.outline_subtle);
+        block = block.child(
+            div()
+                .px_3()
+                .py_2()
+                .bg(theme.surface_low)
+                .flex()
+                .items_center()
+                .justify_between()
+                .child(
+                    div()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(provider.name.clone()),
+                )
+                .child(
+                    div()
+                        .text_size(px(10.0))
+                        .text_color(theme.text_tertiary)
+                        .child(format!("{} 个节点", provider.nodes.len())),
+                ),
+        );
+        for node in &provider.nodes {
+            let state = match (node.alive, node.latency_label.as_ref()) {
+                (Some(false), _) => "不可用".to_owned(),
+                (_, Some(latency)) => latency.clone(),
+                _ => "未测速".to_owned(),
+            };
+            block = block.child(
+                div()
+                    .px_3()
+                    .py_2()
+                    .border_t_1()
+                    .border_color(theme.outline_subtle)
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .child(
+                        div()
+                            .min_w(px(0.0))
+                            .flex_1()
+                            .child(node.name.clone())
+                            .child(
+                                div()
+                                    .text_size(px(10.0))
+                                    .text_color(theme.text_tertiary)
+                                    .child(node.protocol.clone()),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(if node.alive == Some(false) {
+                                theme.text_tertiary
+                            } else {
+                                theme.status_success
+                            })
+                            .child(state),
+                    ),
+            );
+        }
+        block
     }
 
     fn group_panel(theme: Theme, cx: &mut Context<Self>) -> Div {

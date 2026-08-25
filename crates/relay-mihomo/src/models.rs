@@ -15,8 +15,16 @@ pub struct VersionInfo {
 pub struct MihomoSnapshot {
     pub version: VersionInfo,
     pub proxies: Vec<Proxy>,
+    pub providers: Vec<ProxyProvider>,
     pub rules: Vec<Rule>,
     pub connections: ConnectionsState,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProxyProvider {
+    pub name: String,
+    pub vehicle_type: Option<String>,
+    pub proxies: Vec<Proxy>,
 }
 
 impl MihomoSnapshot {
@@ -288,6 +296,51 @@ impl ProxiesResponse {
             .into_iter()
             .map(|(map_name, proxy)| proxy.into_proxy(map_name))
             .collect()
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct ProvidersResponse {
+    #[serde(default)]
+    providers: HashMap<String, RawProvider>,
+}
+
+impl ProvidersResponse {
+    pub(crate) fn into_providers(self) -> Vec<ProxyProvider> {
+        let mut providers: Vec<_> = self
+            .providers
+            .into_iter()
+            .map(|(map_name, provider)| provider.into_provider(map_name))
+            .collect();
+        providers.sort_by(|left, right| left.name.cmp(&right.name));
+        providers
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct RawProvider {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(rename = "vehicleType", default, alias = "vehicle-type")]
+    vehicle_type: Option<String>,
+    #[serde(default)]
+    proxies: Vec<RawProxy>,
+}
+
+impl RawProvider {
+    fn into_provider(self, map_name: String) -> ProxyProvider {
+        let name = self.name.unwrap_or(map_name);
+        let proxies = self
+            .proxies
+            .into_iter()
+            .enumerate()
+            .map(|(index, proxy)| proxy.into_proxy(format!("节点 {}", index + 1)))
+            .collect();
+        ProxyProvider {
+            name,
+            vehicle_type: self.vehicle_type,
+            proxies,
+        }
     }
 }
 

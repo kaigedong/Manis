@@ -14,7 +14,7 @@ Relay 是一个使用 Rust 与 GPUI 构建的跨平台代理策略工作台。�
 - macOS 原生运行和 Metal 离屏截图已验证
 - Windows、Linux 已配置对应的 GPUI 平台依赖，仍需各自原生 CI/设备验证
 
-当前 Mihomo 集成严格只读：点击“连接 Mihomo”后仅请求官方的 `GET /version`、`GET /proxies`、`GET /rules` 和 `GET /connections`。它不会修改 Mihomo 配置、切换节点或改动系统代理设置。
+当前 Mihomo 集成严格只读：点击“连接 Mihomo”后仅请求官方的 `GET /version`、`GET /proxies`、`GET /providers/proxies`、`GET /rules` 和 `GET /connections`。来源页使用 provider 接口列出 Mihomo 已载入的全部订阅节点；这些读取不会修改 Mihomo 配置、切换节点或改动系统代理设置。
 
 ## 运行
 
@@ -88,9 +88,9 @@ cargo run -p relay-ui
 
 ### 在应用里输入订阅链接
 
-打开“配置 → 订阅源”，链接输入框会直接显示并自动获得焦点。粘贴完整 HTTPS 订阅地址后点击“校验并预览”，Relay 会在本地生成安全的 QX 风格结构摘要；“清除”会立即删除内存草稿。
+打开“配置 → 订阅源”，链接输入框会直接显示并自动获得焦点。入口可识别 HTTP/HTTPS 订阅地址以及单个 `vless://` 节点链接；HTTP 会显示明文风险提示，VLESS 会立即解析为一个不含 UUID 的安全节点预览。“清除”会立即删除内存草稿。
 
-当前应用内流程只做格式校验与策略结构预览：链接仅保存在进程内存中，关闭应用即清除，不会写入日志、Git、配置文件，也不会发起订阅请求。真正保存并交给 Mihomo 仍使用上面的私有文件开发模式，后续再接入三平台凭据存储和明确的“启用配置”动作。
+远程订阅在应用内仍是待启用的内存草稿：Relay 不会假装已经拉取节点。启用并连接 Mihomo 后，来源页通过 `/providers/proxies` 展示内核实际载入的 provider 与全部节点。草稿关闭应用即清除，不会写入日志、Git 或配置文件；真正保存并交给 Mihomo 仍使用上面的私有文件开发模式，后续再接入三平台凭据存储和明确的“启用配置”动作。
 
 ## 验证
 

@@ -1,12 +1,13 @@
 use serde::Deserialize;
 
-use crate::models::{ProxiesResponse, RulesResponse};
+use crate::models::{ProvidersResponse, ProxiesResponse, RulesResponse};
 use crate::{
     ConnectionsState, ControllerConfig, MihomoError, MihomoSnapshot, ReadonlyTransport, VersionInfo,
 };
 
 const VERSION_ENDPOINT: &str = "/version";
 const PROXIES_ENDPOINT: &str = "/proxies";
+const PROVIDERS_ENDPOINT: &str = "/providers/proxies";
 const RULES_ENDPOINT: &str = "/rules";
 const CONNECTIONS_ENDPOINT: &str = "/connections";
 
@@ -25,7 +26,7 @@ where
         Self { config, transport }
     }
 
-    /// Fetches `/version`, `/proxies`, `/rules`, and `/connections` and returns one UI-ready snapshot.
+    /// Fetches the read-only controller data needed for policy and source browsing.
     ///
     /// # Errors
     ///
@@ -36,12 +37,16 @@ where
         let proxies = self
             .fetch_json::<ProxiesResponse>(PROXIES_ENDPOINT)?
             .into_proxies();
+        let providers = self
+            .fetch_json::<ProvidersResponse>(PROVIDERS_ENDPOINT)?
+            .into_providers();
         let rules = self.fetch_json::<RulesResponse>(RULES_ENDPOINT)?.rules;
         let connections = self.fetch_json::<ConnectionsState>(CONNECTIONS_ENDPOINT)?;
 
         Ok(MihomoSnapshot {
             version,
             proxies,
+            providers,
             rules,
             connections,
         })

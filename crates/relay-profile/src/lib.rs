@@ -22,6 +22,18 @@ impl SecretUrl {
         }
         Ok(Self(input.to_owned()))
     }
+
+    /// Parses an HTTP or HTTPS Mihomo proxy-provider URL while keeping its value out of
+    /// diagnostics.
+    ///
+    /// # Errors
+    /// Returns [`ProfileError::InvalidUrl`] without including any part of `input`.
+    pub fn parse_subscription(input: &str) -> Result<Self, ProfileError> {
+        if !is_subscription_url(input) || input.len() > MAX_SECRET_URL_BYTES {
+            return Err(ProfileError::InvalidUrl);
+        }
+        Ok(Self(input.to_owned()))
+    }
 }
 
 impl fmt::Debug for SecretUrl {
@@ -506,14 +518,22 @@ fn validate_provider_refs(providers: &[Name], known: &HashSet<Name>) -> Result<(
 }
 
 fn is_https_url(input: &str) -> bool {
+    is_url_with_scheme(input, "https://")
+}
+
+fn is_subscription_url(input: &str) -> bool {
+    is_url_with_scheme(input, "https://") || is_url_with_scheme(input, "http://")
+}
+
+fn is_url_with_scheme(input: &str, scheme: &str) -> bool {
     if input.is_empty()
         || input.trim() != input
         || input.chars().any(char::is_control)
-        || !input.starts_with("https://")
+        || !input.starts_with(scheme)
     {
         return false;
     }
-    let remainder = &input["https://".len()..];
+    let remainder = &input[scheme.len()..];
     let authority = remainder.split(['/', '?', '#']).next().unwrap_or_default();
     !authority.is_empty() && !authority.contains('@') && !authority.starts_with(':')
 }
