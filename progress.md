@@ -61,3 +61,18 @@
 - 独立安全复核首轮为 MEDIUM（High 0、Medium 2）：修复 Mihomo validation/launch 子进程继承 Relay secret/input 环境变量；订阅模式现在先解析并验证托管 controller，Windows/不支持平台会在读取或落盘 secret 之前 fail closed。等待二次安全 verdict。
 - 二次安全 verdict 为 LOW（High/Medium 0）；Windows ACL 是被 fail-closed 路径隔离的后续项，`cargo audit` 未安装但新 crate 为纯标准库且没有引入外部依赖。
 - 最终 55 个常规测试通过、2 个默认 ignored；本机 Mihomo 生成配置 ignored 校验另行实际通过。fmt、workspace all-targets、严格 Clippy、build、diff check、worktree/Git 历史敏感模式扫描全部通过；更新后的 GPUI 应用已重新启动。
+- 开始应用内配置工作区阶段。按既有 Signal Patch Bay 视觉世界做 Operate 模式的局部扩展，不重新选择品牌方向；本里程碑呈现订阅源安全状态、QX 风格策略组和有序规则，不伪造尚未实现的 keychain/file-picker/持久化能力。
+- Impeccable context 确认 PRODUCT.md、DESIGN.md 与原生 GPUI shipping 基线有效；本阶段采用 code-led 局部扩展，继承系统字体、青绿动作色、铜色仅路由轨迹、三档响应式结构。
+- 错误记录：代码映射 explorer 因 GPT-5.3-Codex-Spark 用量上限立即失败；未产生文件改动，改由主代理本地结构搜索继续。
+- 错误记录：按仓库指导尝试 `omx explore`，当前版本明确返回 hard-deprecated；遵循其迁移提示改用正常 Codex 本地结构搜索，不再重试该命令。
+- 已完成现有 GPUI 导航、`RelayApp` 状态、响应式渲染分支和原生截图入口的第一轮映射；确认配置入口目前没有交互。
+- 下一步先用核心层测试定义真实导航与不持有密钥的配置选择状态，再接入 GPUI 配置工作区。
+- 核心层 TDD 已完成红灯到绿灯：新增顶层工作区、配置分区和有界规则选择状态，12 个 `relay-core` 行为测试通过。
+- 侧栏“策略组/配置”现已是可聚焦、可点击的真实导航；配置页完成宽屏三栏与中/窄屏单任务分区，订阅来源只使用不含 URL/path/token 的安全枚举摘要。
+- 配置页已映射现有 QX 默认编译结构（subscription → Auto/Proxy → GEOIP/MATCH），所选规则通过铜色 Route Probe 解释依赖路径；所有写入类能力均保持未呈现。
+- 第一轮宽/中/窄原生截图已生成；Visual Verdict 78/100 未过门槛，进入唯一一轮聚焦修正：中窄屏展示完整分区、压缩 Route Probe，并收窄铜色语义。
+- 第二轮已修复分区可见性与铜色选中面，reviewer 文本判定 pass 但数值仅 88/100；按 90 分硬门槛继续一次机械抛光，不扩大交互或产品范围。
+- 第三轮确认全展开不适合作为中窄屏最终形态；开始收敛为三段摘要导航控制单一详情，保持完整可发现性并恢复工具型信息密度。
+- 最终响应式形态已完成并通过 Visual Verdict 94/100：中窄屏三段摘要导航控制单一详情，compact rules 点击截图证明规则与紧凑 Route Probe 同屏可见；进入独立终审和发布前验证。
+- 独立终审首轮 disposition 为 `do-not-ship`，唯一 blocking 是 4 个未实现的伪导航入口；已删除这些入口，只保留真实可点击/可聚焦/具辅助名称的“策略组 / 配置”。
+- 导航修正后 Visual Verdict 93/100 `pass`，独立 finish reviewer 最终 disposition `ship`；workspace 59 个常规测试通过、2 个默认 ignored，严格 Clippy、build、fmt、diff check 均通过。

@@ -1,6 +1,7 @@
 use relay_core::{
-    CompactNavigation, EmptyPolicyCatalog, PolicyCatalog, PolicyGroup, PolicyGroupId, PolicyNode,
-    PolicyRule, PolicyWorkspaceState, ProxyId, RouteEvidence, WindowSizeClass,
+    CompactNavigation, ConfigurationSection, ConfigurationWorkspaceState, EmptyPolicyCatalog,
+    PolicyCatalog, PolicyGroup, PolicyGroupId, PolicyNode, PolicyRule, PolicyWorkspaceState,
+    PrimaryWorkspace, ProxyId, RouteEvidence, WindowSizeClass,
 };
 
 fn streaming() -> PolicyGroupId {
@@ -159,4 +160,36 @@ fn process_dependent_rule_requires_an_actual_connection() {
         RouteEvidence::NeedsConnection { reason, .. }
             if reason.contains("进程")
     ));
+}
+
+#[test]
+fn primary_workspace_switches_between_policy_operation_and_configuration() {
+    let mut active = PrimaryWorkspace::default();
+
+    assert_eq!(active, PrimaryWorkspace::Policies);
+    active = PrimaryWorkspace::Configuration;
+    assert_eq!(active, PrimaryWorkspace::Configuration);
+}
+
+#[test]
+fn configuration_selection_tracks_only_safe_local_identifiers() {
+    let mut state = ConfigurationWorkspaceState::default();
+
+    assert_eq!(state.section, ConfigurationSection::Sources);
+    assert_eq!(state.selected_rule, 0);
+
+    state.select_section(ConfigurationSection::Rules);
+    state.select_rule(3, 3);
+
+    assert_eq!(state.section, ConfigurationSection::Rules);
+    assert_eq!(state.selected_rule, 2);
+}
+
+#[test]
+fn configuration_rule_selection_handles_an_empty_preview() {
+    let mut state = ConfigurationWorkspaceState::default();
+
+    state.select_rule(9, 0);
+
+    assert_eq!(state.selected_rule, 0);
 }

@@ -78,13 +78,50 @@ pub(crate) enum ControllerRuntime {
     Managed {
         endpoint: String,
         manager: Arc<Mutex<EngineManager>>,
+        profile_source: RuntimeProfileSource,
     },
     Invalid {
         message: String,
     },
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RuntimeProfileSource {
+    ExternalController,
+    ExistingConfig,
+    PrivateSubscription,
+    Invalid,
+}
+
+impl RuntimeProfileSource {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::ExternalController => "外部控制器",
+            Self::ExistingConfig => "已有 Mihomo 配置",
+            Self::PrivateSubscription => "私有 HTTPS 订阅",
+            Self::Invalid => "配置不可用",
+        }
+    }
+
+    pub(crate) fn detail(self) -> &'static str {
+        match self {
+            Self::ExternalController => "Relay 只读取控制器；未连接时使用示例预览",
+            Self::ExistingConfig => "由 Relay 启动，但不解析或展示配置文件内容",
+            Self::PrivateSubscription => "链接已隐藏；只向私有 Mihomo 配置写入",
+            Self::Invalid => "请检查本机启动参数；敏感输入不会显示在这里",
+        }
+    }
+}
+
 impl ControllerRuntime {
+    pub(crate) fn profile_source(&self) -> RuntimeProfileSource {
+        match self {
+            Self::External { .. } => RuntimeProfileSource::ExternalController,
+            Self::Managed { profile_source, .. } => *profile_source,
+            Self::Invalid { .. } => RuntimeProfileSource::Invalid,
+        }
+    }
+
     pub(crate) fn endpoint_label(&self) -> String {
         match self {
             Self::External { endpoint } => endpoint.clone(),
@@ -285,6 +322,7 @@ fn build_subscription_runtime(
         config_file,
         data_dir,
         controller,
+        RuntimeProfileSource::PrivateSubscription,
     ))
 }
 
@@ -379,6 +417,7 @@ fn build_managed_runtime_in(
         config_file,
         data_dir,
         controller,
+        RuntimeProfileSource::ExistingConfig,
     ))
 }
 
@@ -398,6 +437,7 @@ fn build_managed_runtime_with_controller(
     config_file: PathBuf,
     data_dir: PathBuf,
     controller: ControllerEndpoint,
+    profile_source: RuntimeProfileSource,
 ) -> ControllerRuntime {
     let endpoint = controller.uri();
     let config = ManagedEngineConfig::new(binary, config_file, data_dir, controller);
@@ -409,6 +449,7 @@ fn build_managed_runtime_with_controller(
     ControllerRuntime::Managed {
         endpoint,
         manager: Arc::new(Mutex::new(manager)),
+        profile_source,
     }
 }
 
@@ -569,6 +610,26 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use relay_engine::ControllerEndpoint;
+
+    #[test]
+    fn runtime_profile_source_exposes_only_safe_copy() {
+        use super::RuntimeProfileSource;
+
+        assert_eq!(
+            RuntimeProfileSource::PrivateSubscription.label(),
+            "私有 HTTPS 订阅"
+        );
+        assert!(
+            RuntimeProfileSource::PrivateSubscription
+                .detail()
+                .contains("链接已隐藏")
+        );
+        assert!(
+            !RuntimeProfileSource::PrivateSubscription
+                .detail()
+                .contains("token")
+        );
+    }
 
     #[test]
     fn selects_external_existing_and_subscription_runtime_inputs() -> Result<(), String> {

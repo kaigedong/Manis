@@ -5,9 +5,45 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     capture(&mut cx, 1420.0, 900.0, "native-wide.png")?;
     capture(&mut cx, 1060.0, 800.0, "native-medium.png")?;
     capture(&mut cx, 720.0, 720.0, "native-compact.png")?;
+    capture_configuration(&mut cx, 1420.0, 900.0, "configuration-wide.png")?;
+    capture_configuration(&mut cx, 1060.0, 800.0, "configuration-medium.png")?;
+    capture_configuration(&mut cx, 720.0, 720.0, "configuration-compact.png")?;
     capture_compact_flow(&mut cx)?;
     capture_connected(&mut cx)?;
     capture_live_when_configured(&mut cx)?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn capture_configuration(
+    cx: &mut gpui::VisualTestAppContext,
+    width: f32,
+    height: f32,
+    file_name: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use gpui::{AnyWindowHandle, AppContext, Modifiers, point, px, size};
+    use relay_ui::RelayApp;
+
+    let window = cx.open_offscreen_window(size(px(width), px(height)), |_, cx| {
+        cx.new(|_| RelayApp::new())
+    })?;
+    let window: AnyWindowHandle = window.into();
+
+    refresh(cx, window)?;
+    let navigation_x = if width >= 1_280.0 { 110.0 } else { 30.0 };
+    cx.simulate_click(
+        window,
+        point(px(navigation_x), px(120.0)),
+        Modifiers::none(),
+    );
+    refresh(cx, window)?;
+    save_screenshot(cx, window, file_name)?;
+
+    if (width - 720.0).abs() < f32::EPSILON {
+        cx.simulate_click(window, point(px(548.0), px(145.0)), Modifiers::none());
+        refresh(cx, window)?;
+        save_screenshot(cx, window, "configuration-compact-rules.png")?;
+    }
     Ok(())
 }
 

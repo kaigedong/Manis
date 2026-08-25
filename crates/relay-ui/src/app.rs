@@ -3,8 +3,8 @@ use gpui::{
     Window, div, prelude::*, px,
 };
 use relay_core::{
-    CompactNavigation, PolicyCatalog, PolicyGroup, PolicyNode, PolicyWorkspaceState, ProxyId,
-    WindowSizeClass,
+    CompactNavigation, ConfigurationWorkspaceState, PolicyCatalog, PolicyGroup, PolicyNode,
+    PolicyWorkspaceState, PrimaryWorkspace, ProxyId, WindowSizeClass,
 };
 use relay_mihomo::ObservedRouteEvidence;
 
@@ -14,7 +14,11 @@ use crate::{
     theme::Theme,
 };
 
+mod configuration;
+
 pub struct RelayApp {
+    primary_workspace: PrimaryWorkspace,
+    configuration: ConfigurationWorkspaceState,
     workspace: PolicyWorkspaceState,
     catalog: PolicyCatalog,
     runtime: ControllerRuntime,
@@ -42,6 +46,8 @@ impl RelayApp {
     fn with_runtime(runtime: ControllerRuntime) -> Self {
         let status = runtime.initial_status();
         Self {
+            primary_workspace: PrimaryWorkspace::default(),
+            configuration: ConfigurationWorkspaceState::default(),
             workspace: PolicyWorkspaceState::demo(),
             catalog: demo::catalog(),
             runtime,
@@ -298,8 +304,11 @@ impl RelayApp {
             )
     }
 
-    fn navigation(&self, theme: Theme, size_class: WindowSizeClass) -> Div {
-        let labels = ["概览", "策略组", "规则", "连接", "配置", "日志"];
+    fn navigation(&self, theme: Theme, size_class: WindowSizeClass, cx: &mut Context<Self>) -> Div {
+        let entries = [
+            ("策略组", PrimaryWorkspace::Policies),
+            ("配置", PrimaryWorkspace::Configuration),
+        ];
         let show_labels = size_class == WindowSizeClass::Wide;
         let source_label = if show_labels {
             self.controller.compact_label()
@@ -327,9 +336,15 @@ impl RelayApp {
             .bg(theme.surface_low)
             .border_r_1()
             .border_color(theme.outline_subtle)
-            .children(labels.into_iter().map(|label| {
-                let selected = label == "策略组";
+            .children(entries.into_iter().map(|(label, workspace)| {
+                let selected = workspace == self.primary_workspace;
                 div()
+                    .id(format!("navigation-{label}"))
+                    .role(Role::Button)
+                    .aria_label(label)
+                    .tab_stop(true)
+                    .focusable()
+                    .cursor_pointer()
                     .h(px(40.0))
                     .px_3()
                     .rounded_md()
@@ -346,6 +361,14 @@ impl RelayApp {
                         FontWeight::NORMAL
                     })
                     .child(if show_labels { label } else { &label[..3] })
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.primary_workspace = workspace;
+                        this.status = match workspace {
+                            PrimaryWorkspace::Policies => "已打开策略组工作区".to_owned(),
+                            PrimaryWorkspace::Configuration => "已打开安全配置预览".to_owned(),
+                        };
+                        cx.notify();
+                    }))
             }))
             .child(div().flex_1())
             .child(
@@ -1118,6 +1141,7 @@ impl Render for RelayApp {
             !compact || self.workspace.compact_navigation == CompactNavigation::GroupDetail;
         let overlay_inspector = size_class != WindowSizeClass::Wide;
         let show_inspector = size_class == WindowSizeClass::Wide || self.inspector_open;
+        let policies_active = self.primary_workspace == PrimaryWorkspace::Policies;
 
         div()
             .size_full()
@@ -1133,8 +1157,11 @@ impl Render for RelayApp {
                     .flex_1()
                     .overflow_hidden()
                     .flex()
-                    .child(self.navigation(theme, size_class))
-                    .when(show_groups, |main| {
+                    .child(self.navigation(theme, size_class, cx))
+                    .when(!policies_active, |main| {
+                        main.child(self.configuration_workspace(theme, size_class, cx))
+                    })
+                    .when(policies_active && show_groups, |main| {
                         main.child(
                             self.policy_list(
                                 theme,
@@ -1150,10 +1177,10 @@ impl Render for RelayApp {
                             .when(compact, Styled::flex_1),
                         )
                     })
-                    .when(show_detail, |main| {
+                    .when(policies_active && show_detail, |main| {
                         main.child(self.detail(theme, compact, cx))
                     })
-                    .when(show_inspector, |main| {
+                    .when(policies_active && show_inspector, |main| {
                         main.child(self.inspector(theme, overlay_inspector, cx))
                     }),
             )

@@ -111,3 +111,19 @@
 - 官方警告 Unix socket 与 Windows named pipe 控制器不校验 API secret，因此这些控制端点只能创建在 Relay 私有运行目录或采用受限管道权限；这与现有托管引擎“私有 runtime + fail closed”的安全边界一致。
 - 独立官方资料核验确认上述 provider/策略组/规则语法适用于 Mihomo `v1.19.30`。provider 内容的正式类型为 `yaml`、`uri`、`base64`；节点列表型 Clash/V2Board 订阅可直接作为 provider 输入，但返回完整顶层 Clash 配置的链接不属于官方 provider-content 契约，需要后续导入/转换流程。
 - 最小 `mihomo -t` fixture 可以不声明任何代理监听端口，仅包含 `mode`、provider、策略组、规则和 `profile.store-selected`；产品实际启用代理时再显式开放只绑定回环的 mixed listener。这样当前阶段验证配置编译不会抢占 Clash Verge 的本地端口。
+
+## 应用内配置工作区结构发现（2026-08-25）
+
+- 现有侧栏 6 个入口全部是静态文本，选中态硬编码为“策略组”；配置工作区必须先建立真实可点击的顶层工作区状态，不能继续呈现视觉上可点但没有行为的导航。
+- `RelayApp` 当前只持有 `PolicyWorkspaceState`，渲染分支集中在 `Render::render`；最小改动路径是在 `relay-core` 增加可测试的顶层/配置选择状态，在 `relay-ui` 增加独立配置工作区渲染分支。
+- 现有紧凑布局由 `PolicyWorkspaceState::compact_navigation` 控制策略组列表/详情；配置视图应自行使用单列卡片流适配窄屏，避免复用策略组的返回栈语义。
+- 原生截图程序已经覆盖宽/中/窄三档并支持点击坐标；可新增只使用演示状态的配置工作区截图，不接触本机订阅路径、URL 或 token。
+- `ControllerRuntime` 目前只保留 External/Managed/Invalid，订阅编译成功后会丢失“已有配置”与“私有订阅”的来源区别。为了在 UI 安全展示来源，运行时需要只携带不含路径/URL 的枚举标签，而不是把敏感输入复制进视图状态。
+- 配置预设的真实编译结构是单一 `subscription` provider、`Auto` URLTest、`Proxy` Select，以及有序 `GEOIP,CN,DIRECT,no-resolve` / `MATCH,Proxy` 两条规则；配置工作区直接映射这份现有领域模型，不引入另一套虚构配置语义。
+- 设计代理建议把 Route Probe 作为唯一显著交互，铜色路径从所选规则流向策略组和出口，并明确标注“本地配置预览”而非实时命中；实现采用这一建议，同时拒绝尚未存在的添加订阅、重排保存和实时同步按钮。
+- 第一轮原生视觉门禁为 78/100 `revise`：宽屏三栏成立且无泄密/溢出，但中窄屏只呈现当前分区导致 02/03 工作流不可见，Route Probe 纵向留白过多；选中规则的浅铜整行底色也过于接近普通选择态。
+- 第二轮 reviewer 给出 88/100 且文字 verdict 为 `pass`，但低于技能 90 分硬门槛，不能视为放行；02/03 可见性和铜色语义已解决，剩余只需消除宽屏 stretch 空白并增加滚动底部留白。
+- 第三轮 82/100 揭示“全部分区展开”的过度修正：可发现性提高，但中窄屏成为稀疏长页面。最终响应式方案应是始终可见的三段摘要导航 + 单一活动分区 + 紧凑 Route Probe，既不隐藏工作流，也不堆叠全部详情。
+- 最终原生视觉门禁 94/100 `pass`：三段摘要导航、规则点击态、Route Probe、宽屏顶部对齐和敏感信息边界全部通过；无横向溢出、状态栏遮挡或 URL/token/path 泄露。
+- Impeccable 独立终审发现阻断项：侧栏仍把 4 个未实现入口渲染成导航式行，即使降色不可聚焦也会构成伪 affordance。最终修正为只保留真实的“策略组 / 配置”两个 workspace，并为 compact 单字标签增加完整辅助名称。
+- 导航修正后的最终 Visual Verdict 为 93/100 `pass`，二项侧栏留白仍平衡；独立 finish reviewer 复核唯一 blocking 已解决，最终 disposition 为 `ship`。

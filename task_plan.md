@@ -55,6 +55,15 @@
 - [completed] 5. 将显式订阅开发模式接入托管 engine，保留现有配置与外部模式
 - [completed] 6. 用 fixture/本机 Mihomo 校验、安全复核、全量验证和 Git 提交
 
+## 应用内配置工作区阶段
+
+- [completed] 1. 映射现有 GPUI 导航、状态、响应式布局与截图交互边界
+- [completed] 2. 以 TDD 建立不持有订阅密钥的配置工作区 view model
+- [completed] 3. 实现订阅源、策略组和有序规则的宽/中/窄原生界面
+- [completed] 4. 接入安全运行状态与 profile 预览，避免伪造持久化能力
+- [completed] 5. 生成原生截图并按 Visual Verdict 完成视觉修正
+- [completed] 6. 完成独立终审、全量验证、敏感信息扫描与 Git 提交
+
 ## 固定约束
 - 实现框架：Rust + GPUI
 - 目标平台：Windows、macOS、Linux
@@ -77,3 +86,5 @@
 | 首次 live screenshot 误选内置 GLOBAL 且把空 host/0 ms 当有效值 | 1 | GLOBAL 排在普通策略之后，空 host 回退目标 IP，0 ms 视为未知；第二轮视觉判定通过 |
 | live screenshot 命令使用 zsh 只读变量名 `status` | 1 | 不重试该变量名；改用任务专用 `task_exit_code` 后成功 |
 | 一次 `cargo test` 误传多个位置过滤参数 | 1 | Cargo 只接受一个 TESTNAME；改为运行整个 `relay-engine` 测试集并读取三项预期失败 |
+| GPUI 代码映射 explorer 命中 GPT-5.3-Codex-Spark 用量上限 | 1 | 不重试同一模型；由主代理使用本地结构搜索完成映射，保留独立 designer 评审 |
+| `omx explore` 已被当前 OMX 硬弃用 | 1 | 按命令自身迁移提示停止重试，改用正常 `rg`/定向读取；验证类噪声命令仍可用 sparkshell |
