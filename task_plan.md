@@ -72,6 +72,15 @@
 - [completed] 4. 加入统一脱敏 UI/连接事件日志与运行说明
 - [completed] 5. 完成原生交互截图、视觉门禁、全量验证和 Git 提交
 
+## 应用内订阅输入修复
+
+- [completed] 1. 用 trace 证明点击事件已收到，并定位真正缺失的是输入控件
+- [completed] 2. 以 TDD 定义 HTTPS 校验、QX 结构预览与脱敏错误契约
+- [completed] 3. 实现支持键盘、粘贴、选择和 IME 的原生 GPUI 单行输入
+- [completed] 4. 将诊断折叠区替换为始终可见的输入、校验、清除和结果反馈
+- [completed] 5. 生成宽屏/紧凑成功状态截图并通过 Visual Verdict
+- [completed] 6. 完成全量验证、安全扫描、Git 提交和应用重启
+
 ## 固定约束
 - 实现框架：Rust + GPUI
 - 目标平台：Windows、macOS、Linux
@@ -96,3 +105,4 @@
 | 一次 `cargo test` 误传多个位置过滤参数 | 1 | Cargo 只接受一个 TESTNAME；改为运行整个 `relay-engine` 测试集并读取三项预期失败 |
 | GPUI 代码映射 explorer 命中 GPT-5.3-Codex-Spark 用量上限 | 1 | 不重试同一模型；由主代理使用本地结构搜索完成映射，保留独立 designer 评审 |
 | `omx explore` 已被当前 OMX 硬弃用 | 1 | 按命令自身迁移提示停止重试，改用正常 `rg`/定向读取；验证类噪声命令仍可用 sparkshell |
+| GPUI 输入范式 explorer 命中 GPT-5.3-Codex-Spark 用量上限 | 1 | 不重试同一模型；直接采用项目锁定 GPUI revision 的官方 `examples/input.rs` 范式 |

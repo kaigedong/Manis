@@ -1,9 +1,14 @@
-use gpui::{Context, Div, FontWeight, ParentElement, Role, Stateful, Styled, div, prelude::*, px};
+use gpui::{
+    Context, Div, Entity, FontWeight, ParentElement, Role, Stateful, Styled, Window, div,
+    prelude::*, px,
+};
 use relay_core::{ConfigurationSection, WindowSizeClass};
 
-use super::RelayApp;
+use super::{RelayApp, SubscriptionFeedback};
 use crate::{
     diagnostics::{UiEvent, trace_ui},
+    subscription::validate_subscription_preview,
+    subscription_input::SubscriptionTextInput,
     theme::Theme,
 };
 
@@ -36,7 +41,7 @@ impl RelayApp {
                 .flex()
                 .items_start()
                 .gap_3()
-                .child(self.source_panel(theme, cx).w(px(270.0)).flex_shrink_0())
+                .child(self.source_panel(theme, cx).w(px(320.0)).flex_shrink_0())
                 .child(
                     div()
                         .flex_1()
@@ -47,7 +52,7 @@ impl RelayApp {
                         .child(Self::group_panel(theme, cx))
                         .child(self.rule_panel(theme, cx)),
                 )
-                .child(self.route_probe(theme, false).w(px(300.0)).flex_shrink_0())
+                .child(self.route_probe(theme, false).w(px(280.0)).flex_shrink_0())
         } else {
             let active = match self.configuration.section {
                 ConfigurationSection::Sources => self.source_panel(theme, cx),
@@ -106,7 +111,7 @@ impl RelayApp {
                             )
                             .when(!compact, |header| {
                                 header.child(div().mt_1().text_color(theme.text_secondary).child(
-                                    "订阅源 → 策略组 → 有序规则；当前仅预览，不写入运行中的 Mihomo",
+                                    "输入订阅 → 校验策略 → 启用配置；当前链接只保留在内存中",
                                 ))
                             }),
                     )
@@ -119,7 +124,7 @@ impl RelayApp {
                             .text_size(px(10.0))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(theme.action_primary)
-                            .child("安全预览"),
+                            .child("内存草稿"),
                     ),
             )
             .when(wide, |header| header.child(div().mt_3().child(tabs)))
@@ -128,7 +133,7 @@ impl RelayApp {
     fn configuration_flow_strip(&self, theme: Theme, cx: &mut Context<Self>) -> Div {
         let mut strip = div().flex().gap_2();
         for (section, index, label, detail) in [
-            (ConfigurationSection::Sources, "01", "订阅源", "安全来源"),
+            (ConfigurationSection::Sources, "01", "订阅源", "粘贴链接"),
             (ConfigurationSection::Groups, "02", "策略组", "3 个出口"),
             (ConfigurationSection::Rules, "03", "规则", "2 条有序"),
         ] {
@@ -188,12 +193,13 @@ impl RelayApp {
                     .text_color(theme.text_secondary)
                     .child(detail),
             )
-            .on_click(cx.listener(move |this, _, _, cx| {
+            .on_click(cx.listener(move |this, _, window, cx| {
                 let event = match section {
                     ConfigurationSection::Sources => {
-                        this.configuration.open_source_diagnostics();
-                        "已展开订阅源安全诊断 · 未读取凭据".clone_into(&mut this.status);
-                        UiEvent::SourceDiagnosticsOpened
+                        this.configuration.select_section(section);
+                        this.focus_subscription_input(window, cx);
+                        "订阅输入已聚焦 · 链接只保留在内存中".clone_into(&mut this.status);
+                        UiEvent::SubscriptionInputFocused
                     }
                     ConfigurationSection::Groups => {
                         this.configuration.select_section(section);
@@ -252,12 +258,13 @@ impl RelayApp {
             .flex()
             .items_center()
             .child(label)
-            .on_click(cx.listener(move |this, _, _, cx| {
+            .on_click(cx.listener(move |this, _, window, cx| {
                 let event = match section {
                     ConfigurationSection::Sources => {
-                        this.configuration.open_source_diagnostics();
-                        "已展开订阅源安全诊断 · 未读取凭据".clone_into(&mut this.status);
-                        UiEvent::SourceDiagnosticsOpened
+                        this.configuration.select_section(section);
+                        this.focus_subscription_input(window, cx);
+                        "订阅输入已聚焦 · 链接只保留在内存中".clone_into(&mut this.status);
+                        UiEvent::SubscriptionInputFocused
                     }
                     ConfigurationSection::Groups => {
                         this.configuration.select_section(section);
@@ -275,21 +282,26 @@ impl RelayApp {
             }))
     }
 
+    fn focus_subscription_input(&self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(input) = self.subscription_input.as_ref() {
+            let focus_handle = input.read(cx).input_focus_handle();
+            window.focus(&focus_handle, cx);
+        }
+    }
+
     fn source_panel(&self, theme: Theme, cx: &mut Context<Self>) -> Div {
         let source = self.runtime.profile_source();
-        let diagnostics_open = self.configuration.source_diagnostics_open;
+        let input = self
+            .subscription_input
+            .as_ref()
+            .expect("subscription input is initialized before rendering")
+            .clone();
+        let feedback = self.subscription_feedback;
+
         let panel = div()
             .id("configuration-source")
-            .role(Role::Button)
-            .aria_label(if diagnostics_open {
-                "收起订阅源安全诊断"
-            } else {
-                "查看订阅源安全诊断"
-            })
-            .tab_stop(true)
-            .focusable()
-            .cursor_pointer()
-            .min_h(px(190.0))
+            .w_full()
+            .min_h(px(330.0))
             .p_4()
             .rounded_md()
             .border_1()
@@ -304,104 +316,180 @@ impl RelayApp {
             )
             .child(
                 div()
-                    .mt_4()
-                    .flex()
-                    .items_center()
-                    .gap_3()
-                    .child(
-                        div()
-                            .size(px(12.0))
-                            .rounded_full()
-                            .border_2()
-                            .border_color(theme.action_primary),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(16.0))
-                            .font_weight(FontWeight::BOLD)
-                            .child(source.label()),
-                    ),
+                    .mt_3()
+                    .text_size(px(17.0))
+                    .font_weight(FontWeight::BOLD)
+                    .child("添加 HTTPS 订阅"),
             )
             .child(
-                div()
-                    .mt_2()
-                    .text_color(theme.text_secondary)
-                    .child(source.detail()),
-            )
-            .child(
-                div()
-                    .mt_5()
-                    .pt_3()
-                    .border_t_1()
-                    .border_color(theme.outline_subtle)
-                    .text_size(px(11.0))
-                    .text_color(theme.text_tertiary)
-                    .child("刷新周期 24 小时 · 健康检查 10 分钟"),
-            )
-            .when(diagnostics_open, |panel| {
-                panel.child(Self::source_diagnostics(theme, source.label()))
-            })
-            .child(
-                div()
-                    .mt_2()
-                    .px_2()
-                    .py_1()
-                    .rounded_sm()
-                    .bg(theme.surface_low)
-                    .text_size(px(10.0))
-                    .text_color(theme.text_secondary)
-                    .child(if diagnostics_open {
-                        "订阅 URL、token 与本机路径均不显示 · 点击收起"
-                    } else {
-                        "订阅 URL、token 与本机路径均不显示 · 点击查看诊断"
-                    }),
-            )
-            .on_click(cx.listener(|this, _, _, cx| {
-                let was_open = this.configuration.source_diagnostics_open;
-                this.configuration.toggle_source_diagnostics();
-                if was_open {
-                    "已收起订阅源安全诊断".clone_into(&mut this.status);
-                    trace_ui(UiEvent::SourceDiagnosticsClosed);
-                } else {
-                    "已展开订阅源安全诊断 · 未读取凭据".clone_into(&mut this.status);
-                    trace_ui(UiEvent::SourceDiagnosticsOpened);
-                }
-                cx.notify();
-            }));
-        div().w_full().child(panel)
-    }
-
-    fn source_diagnostics(theme: Theme, source_label: &'static str) -> Div {
-        let mut diagnostics = div()
-            .mt_3()
-            .pt_3()
-            .border_t_1()
-            .border_color(theme.outline_subtle)
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(theme.action_primary)
-                    .child(div().size(px(7.0)).rounded_full().bg(theme.action_primary))
-                    .child("安全诊断已展开"),
-            );
-        for detail in [
-            format!("来源模式 · {source_label}"),
-            "凭据状态 · 已隐藏，未进入界面状态".to_owned(),
-            "当前能力 · 只读预览，未启用配置写入".to_owned(),
-            "调试日志 · 仅记录事件名，不记录订阅值".to_owned(),
-        ] {
-            diagnostics = diagnostics.child(
                 div()
                     .mt_1()
                     .text_size(px(11.0))
                     .text_color(theme.text_secondary)
-                    .child(detail),
+                    .child("粘贴 Clash/Mihomo 兼容订阅链接，先在本地检查策略结构。"),
+            )
+            .child(
+                div()
+                    .mt_4()
+                    .mb_1()
+                    .text_size(px(11.0))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child("订阅链接"),
+            )
+            .child(input.clone())
+            .child(Self::subscription_actions(input, theme, cx))
+            .child(Self::subscription_feedback(feedback, theme))
+            .child(
+                div()
+                    .mt_3()
+                    .pt_3()
+                    .border_t_1()
+                    .border_color(theme.outline_subtle)
+                    .text_size(px(10.0))
+                    .text_color(theme.text_tertiary)
+                    .child("只保留在内存中 · 关闭应用即清除 · 调试日志不记录链接"),
+            )
+            .child(
+                div()
+                    .mt_2()
+                    .text_size(px(10.0))
+                    .text_color(theme.text_tertiary)
+                    .child(format!(
+                        "当前运行来源 · {} · {}",
+                        source.label(),
+                        source.detail()
+                    )),
             );
+        div().w_full().child(panel)
+    }
+
+    fn subscription_actions(
+        input: Entity<SubscriptionTextInput>,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let clear_input = input.clone();
+        div()
+            .mt_2()
+            .flex()
+            .gap_2()
+            .child(
+                div()
+                    .id("subscription-preview")
+                    .role(Role::Button)
+                    .aria_label("校验订阅并生成策略预览")
+                    .tab_stop(true)
+                    .focusable()
+                    .cursor_pointer()
+                    .h(px(36.0))
+                    .px_3()
+                    .rounded_md()
+                    .bg(theme.action_primary)
+                    .text_color(theme.action_on_primary)
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .flex_1()
+                    .child("校验并预览")
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        let result = {
+                            let input = input.read(cx);
+                            validate_subscription_preview(input.value())
+                        };
+                        match result {
+                            Ok(preview) => {
+                                this.subscription_feedback = SubscriptionFeedback::Valid(preview);
+                                "订阅格式有效 · 已生成本地策略预览 · 尚未保存或联网"
+                                    .clone_into(&mut this.status);
+                                trace_ui(UiEvent::SubscriptionPreviewSucceeded);
+                            }
+                            Err(error) => {
+                                this.subscription_feedback = SubscriptionFeedback::Invalid(error);
+                                this.status = format!("订阅校验失败：{error}");
+                                trace_ui(UiEvent::SubscriptionPreviewFailed);
+                            }
+                        }
+                        cx.notify();
+                    })),
+            )
+            .child(
+                div()
+                    .id("subscription-clear")
+                    .role(Role::Button)
+                    .aria_label("清除订阅链接草稿")
+                    .tab_stop(true)
+                    .focusable()
+                    .cursor_pointer()
+                    .h(px(36.0))
+                    .px_3()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(theme.outline_subtle)
+                    .bg(theme.surface_high)
+                    .text_color(theme.text_secondary)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child("清除")
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        clear_input.update(cx, SubscriptionTextInput::clear);
+                        this.subscription_feedback = SubscriptionFeedback::Idle;
+                        "已清除订阅链接草稿".clone_into(&mut this.status);
+                        trace_ui(UiEvent::SubscriptionDraftCleared);
+                        cx.notify();
+                    })),
+            )
+    }
+
+    fn subscription_feedback(feedback: SubscriptionFeedback, theme: Theme) -> Div {
+        match feedback {
+            SubscriptionFeedback::Idle => div()
+                .mt_3()
+                .text_size(px(11.0))
+                .text_color(theme.text_secondary)
+                .child("等待输入 · 仅接受完整 HTTPS 地址"),
+            SubscriptionFeedback::Valid(preview) => div()
+                .mt_3()
+                .p_3()
+                .rounded_md()
+                .bg(theme.action_soft)
+                .child(
+                    div()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(theme.status_success)
+                        .child("链接格式有效"),
+                )
+                .child(
+                    div()
+                        .mt_1()
+                        .text_size(px(11.0))
+                        .text_color(theme.text_secondary)
+                        .child(format!(
+                            "{} 个来源 · {} 个策略组 · {} 条有序规则",
+                            preview.providers, preview.groups, preview.rules
+                        )),
+                ),
+            SubscriptionFeedback::Invalid(error) => div()
+                .mt_3()
+                .p_3()
+                .rounded_md()
+                .border_1()
+                .border_color(theme.outline_strong)
+                .bg(theme.surface_low)
+                .child(
+                    div()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child("无法生成预览"),
+                )
+                .child(
+                    div()
+                        .mt_1()
+                        .text_size(px(11.0))
+                        .text_color(theme.text_secondary)
+                        .child(error.to_string()),
+                ),
         }
-        diagnostics
     }
 
     fn group_panel(theme: Theme, cx: &mut Context<Self>) -> Div {

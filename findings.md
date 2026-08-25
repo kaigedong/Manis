@@ -135,3 +135,12 @@
 - 调试日志使用 std-only、环境开关的固定事件枚举；日志行只含时间、级别和事件名，不接受动态字符串，从类型边界避免 URL/token/path/节点名进入 trace。
 - 原生点击脚本在 `RELAY_UI_TRACE=debug` 下实际输出 workspace、订阅诊断、规则、主题、路由解释和 Mihomo 连接事件；输出格式稳定，未出现任何动态来源值。
 - 订阅诊断首轮视觉门禁 88/100，原因是卡片内嵌高强调卡；改为细分隔线 + 状态点 + 内联文本后，最终 Visual Verdict 94/100 `pass`。
+
+## 应用内订阅输入（2026-08-25）
+
+- `RELAY_UI_TRACE=debug` 的真实点击记录持续出现 `configuration.source_diagnostics.opened/closed`，证明 GPUI 命中与通知链正常；用户“没反应”的根因是旧界面只展开低辨识度诊断文本，而且根本没有输入控件。
+- 旧的诊断展开状态从 `relay-core` 删除：它不是领域状态，也不提供用户价值。订阅源现在始终显示真实输入框，点击 tab/流程步骤会直接聚焦输入。
+- 输入实现采用项目固定 GPUI revision 的 `EntityInputHandler` / `ElementInputHandler` 官方范式，不新增依赖；支持 UTF-16/UTF-8 映射、IME 标记文本、鼠标选区、左右移动、Home/End、退格、删除、全选和粘贴。
+- 输入限制为单行、最大 16 KiB；校验调用已有 `SecretUrl` 与 `Profile::qx_default`，错误只返回固定枚举，不格式化原始链接。trace 同样只增加固定事件名。
+- 应用内链接当前仅存在内存并用于本地格式/结构预览，不写文件、不联网、不伪装成已经导入；真正启用仍由私有订阅文件开发模式承担。
+- 宽屏与紧凑夹具都实际输入 `example.invalid` 保留域名并点击成功，trace 出现 `configuration.subscription_preview.succeeded`；最终 Visual Verdict 95/100 `pass`，无溢出或敏感数据。

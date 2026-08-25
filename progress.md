@@ -78,3 +78,7 @@
 - 导航修正后 Visual Verdict 93/100 `pass`，独立 finish reviewer 最终 disposition `ship`；workspace 59 个常规测试通过、2 个默认 ignored，严格 Clippy、build、fmt、diff check 均通过。
 - 开始修复“订阅源点击无变化”和调试日志不足：TDD 已锁定安全诊断展开/收起状态；订阅源 tab 与卡片开始接入真实可见反馈，新增 `RELAY_UI_TRACE=debug` 固定事件日志，禁止动态敏感字段。
 - 修复完成：订阅源 tab 默认点击会展开安全诊断，订阅卡片可再次收起/展开；原生宽窄点击截图与结构化 trace 已验证，Visual Verdict 94/100。workspace 61 个常规测试通过、2 个默认 ignored，严格 Clippy、build、fmt 与 diff check 全部通过。
+- 用户反馈仍无法输入后，trace 证明点击链正常，确认旧“安全诊断”并非订阅配置功能；已删除该无价值状态并实现真正的原生 GPUI 单行输入。
+- HTTPS 校验与 QX 结构预览完成 TDD 红→绿；输入支持键盘、粘贴、选区、IME、单行与 16 KiB 限制，所有错误和 trace 都不携带链接。
+- 宽屏/紧凑截图夹具实际输入 `example.invalid` 并成功生成 `1 个来源 · 2 个策略组 · 2 条规则`；最终 Visual Verdict 95/100 `pass`。当前进入全量验证、提交和带 trace 重启。
+- 最终 workspace 62 个常规测试通过、2 个环境依赖测试默认 ignored；fmt、严格 Clippy、全目标 build、diff check 和 worktree/Git 历史敏感域名扫描全部通过。

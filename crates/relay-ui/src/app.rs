@@ -1,6 +1,6 @@
 use gpui::{
-    Context, Div, FontWeight, IntoElement, ParentElement, Render, Role, Stateful, Styled, Toggled,
-    Window, div, prelude::*, px,
+    Context, Div, Entity, FontWeight, IntoElement, ParentElement, Render, Role, Stateful, Styled,
+    Subscription, Toggled, Window, div, prelude::*, px,
 };
 use relay_core::{
     CompactNavigation, ConfigurationWorkspaceState, PolicyCatalog, PolicyGroup, PolicyNode,
@@ -12,10 +12,20 @@ use crate::{
     demo,
     diagnostics::{UiEvent, trace_ui},
     mihomo::{self, ControllerRuntime, ControllerState, LoadedSnapshot},
+    subscription::{SubscriptionInputError, SubscriptionPreview},
+    subscription_input::{SubscriptionInputChanged, SubscriptionTextInput},
     theme::Theme,
 };
 
 mod configuration;
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum SubscriptionFeedback {
+    #[default]
+    Idle,
+    Valid(SubscriptionPreview),
+    Invalid(SubscriptionInputError),
+}
 
 pub struct RelayApp {
     primary_workspace: PrimaryWorkspace,
@@ -29,6 +39,9 @@ pub struct RelayApp {
     inspector_open: bool,
     dark: bool,
     status: String,
+    subscription_input: Option<Entity<SubscriptionTextInput>>,
+    subscription_feedback: SubscriptionFeedback,
+    subscription_input_events: Option<Subscription>,
 }
 
 impl RelayApp {
@@ -58,7 +71,27 @@ impl RelayApp {
             inspector_open: false,
             dark: false,
             status,
+            subscription_input: None,
+            subscription_feedback: SubscriptionFeedback::Idle,
+            subscription_input_events: None,
         }
+    }
+
+    fn ensure_subscription_input(&mut self, theme: Theme, cx: &mut Context<Self>) {
+        if let Some(input) = self.subscription_input.as_ref() {
+            input.update(cx, |input, cx| input.set_theme(theme, self.dark, cx));
+            return;
+        }
+
+        let input = cx.new(|cx| SubscriptionTextInput::new(theme, self.dark, cx));
+        let events = cx.subscribe(&input, |this, _input, _: &SubscriptionInputChanged, cx| {
+            if this.subscription_feedback != SubscriptionFeedback::Idle {
+                this.subscription_feedback = SubscriptionFeedback::Idle;
+                cx.notify();
+            }
+        });
+        self.subscription_input = Some(input);
+        self.subscription_input_events = Some(events);
     }
 
     fn theme(&self) -> Theme {
@@ -1153,6 +1186,7 @@ impl Render for RelayApp {
         self.workspace.resize(width);
         let size_class = self.workspace.size_class;
         let theme = self.theme();
+        self.ensure_subscription_input(theme, cx);
         let compact = size_class == WindowSizeClass::Compact;
         let show_groups =
             !compact || self.workspace.compact_navigation == CompactNavigation::GroupList;

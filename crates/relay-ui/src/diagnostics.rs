@@ -8,8 +8,10 @@ pub(crate) enum UiEvent {
     WorkspaceConfigurationOpened,
     ConfigurationGroupsOpened,
     ConfigurationRulesOpened,
-    SourceDiagnosticsOpened,
-    SourceDiagnosticsClosed,
+    SubscriptionInputFocused,
+    SubscriptionPreviewSucceeded,
+    SubscriptionPreviewFailed,
+    SubscriptionDraftCleared,
     PolicyPreviewOpened,
     RulePreviewOpened,
     MihomoConnectStarted,
@@ -31,8 +33,10 @@ impl UiEvent {
             Self::WorkspaceConfigurationOpened => "workspace.configuration.opened",
             Self::ConfigurationGroupsOpened => "configuration.groups.opened",
             Self::ConfigurationRulesOpened => "configuration.rules.opened",
-            Self::SourceDiagnosticsOpened => "configuration.source_diagnostics.opened",
-            Self::SourceDiagnosticsClosed => "configuration.source_diagnostics.closed",
+            Self::SubscriptionInputFocused => "configuration.subscription_input.focused",
+            Self::SubscriptionPreviewSucceeded => "configuration.subscription_preview.succeeded",
+            Self::SubscriptionPreviewFailed => "configuration.subscription_preview.failed",
+            Self::SubscriptionDraftCleared => "configuration.subscription_draft.cleared",
             Self::PolicyPreviewOpened => "configuration.policy_preview.opened",
             Self::RulePreviewOpened => "configuration.rule_preview.opened",
             Self::MihomoConnectStarted => "mihomo.connect.started",
@@ -80,11 +84,11 @@ mod tests {
 
     #[test]
     fn ui_trace_is_structured_and_contains_no_dynamic_values() {
-        let line = format_event(42, UiEvent::SourceDiagnosticsOpened);
+        let line = format_event(42, UiEvent::SubscriptionInputFocused);
 
         assert_eq!(
             line,
-            "relay_ui ts_ms=42 level=DEBUG event=configuration.source_diagnostics.opened"
+            "relay_ui ts_ms=42 level=DEBUG event=configuration.subscription_input.focused"
         );
         assert!(!line.contains("token"));
         assert!(!line.contains("http"));

@@ -1,9 +1,10 @@
 use gpui::{App, AppContext, Bounds, WindowBounds, WindowOptions, px, size};
 use gpui_platform::application;
-use relay_ui::RelayApp;
+use relay_ui::{RelayApp, init};
 
 fn main() {
     application().run(|cx: &mut App| {
+        init(cx);
         let window_size = size(px(1420.0), px(900.0));
         let bounds = Bounds::centered(None, window_size, cx);
 

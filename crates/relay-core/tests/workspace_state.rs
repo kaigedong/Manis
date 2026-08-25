@@ -193,17 +193,3 @@ fn configuration_rule_selection_handles_an_empty_preview() {
 
     assert_eq!(state.selected_rule, 0);
 }
-
-#[test]
-fn subscription_source_diagnostics_have_explicit_open_and_toggle_feedback() {
-    let mut state = ConfigurationWorkspaceState::default();
-
-    assert!(!state.source_diagnostics_open);
-
-    state.open_source_diagnostics();
-    assert_eq!(state.section, ConfigurationSection::Sources);
-    assert!(state.source_diagnostics_open);
-
-    state.toggle_source_diagnostics();
-    assert!(!state.source_diagnostics_open);
-}
