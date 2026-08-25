@@ -7,6 +7,7 @@ use std::io::{self, Write as _};
 use std::path::{Component, Path, PathBuf};
 
 const MAX_SECRET_URL_BYTES: usize = 16 * 1024;
+const MAX_SUBSCRIPTION_NAME_BYTES: usize = 96;
 
 #[derive(Clone, Eq, PartialEq)]
 pub struct SecretUrl(String);
@@ -39,6 +40,23 @@ impl SecretUrl {
     #[must_use]
     pub fn is_https(&self) -> bool {
         self.0.starts_with("https://")
+    }
+
+    /// Returns a bounded user-facing subscription label from an explicit `name` query field.
+    ///
+    /// Other query values, including bearer tokens, are never used as display fallbacks.
+    #[must_use]
+    pub fn subscription_name(&self) -> Option<String> {
+        let query = self.0.split_once('?')?.1.split('#').next()?;
+        query.split('&').find_map(|field| {
+            let (key, value) = field.split_once('=')?;
+            if !key.eq_ignore_ascii_case("name") {
+                return None;
+            }
+            let decoded = decode_query_value(value)?;
+            let name = decoded.trim();
+            is_plain_value(name, MAX_SUBSCRIPTION_NAME_BYTES).then(|| name.to_owned())
+        })
     }
 }
 
@@ -569,6 +587,40 @@ fn is_https_url(input: &str) -> bool {
 
 fn is_subscription_url(input: &str) -> bool {
     is_url_with_scheme(input, "https://") || is_url_with_scheme(input, "http://")
+}
+
+fn decode_query_value(value: &str) -> Option<String> {
+    let input = value.as_bytes();
+    let mut output = Vec::with_capacity(input.len());
+    let mut index = 0;
+    while index < input.len() {
+        match input[index] {
+            b'%' => {
+                let high = hex_value(*input.get(index + 1)?)?;
+                let low = hex_value(*input.get(index + 2)?)?;
+                output.push((high << 4) | low);
+                index += 3;
+            }
+            b'+' => {
+                output.push(b' ');
+                index += 1;
+            }
+            byte => {
+                output.push(byte);
+                index += 1;
+            }
+        }
+    }
+    String::from_utf8(output).ok()
+}
+
+fn hex_value(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
+    }
 }
 
 fn is_url_with_scheme(input: &str, scheme: &str) -> bool {

@@ -43,6 +43,47 @@ fn subscription_url_accepts_http_and_https_without_exposing_values() {
 }
 
 #[test]
+fn subscription_name_uses_only_a_bounded_explicit_name_parameter() {
+    let named = SecretUrl::parse_subscription(
+        "https://subscription.example.invalid/client?token=fixture-secret&name=NaiU_Net",
+    )
+    .expect("fixture subscription is valid");
+    let encoded = SecretUrl::parse_subscription(
+        "https://subscription.example.invalid/client?name=%E6%9C%BA%E5%9C%BA+%41&token=hidden",
+    )
+    .expect("encoded fixture subscription is valid");
+    let unnamed = SecretUrl::parse_subscription(
+        "https://subscription.example.invalid/client?token=fixture-secret",
+    )
+    .expect("unnamed fixture subscription is valid");
+    let unsafe_name = SecretUrl::parse_subscription(
+        "https://subscription.example.invalid/client?name=bad%0Aname&token=fixture-secret",
+    )
+    .expect("URL itself remains valid");
+    let bounded_name = SecretUrl::parse_subscription(&format!(
+        "https://subscription.example.invalid/client?name={}",
+        "a".repeat(96)
+    ))
+    .expect("bounded fixture subscription is valid");
+    let oversized_name = SecretUrl::parse_subscription(&format!(
+        "https://subscription.example.invalid/client?name={}",
+        "a".repeat(97)
+    ))
+    .expect("oversized fixture subscription is still a valid URL");
+
+    assert_eq!(named.subscription_name().as_deref(), Some("NaiU_Net"));
+    assert_eq!(encoded.subscription_name().as_deref(), Some("机场 A"));
+    assert_eq!(unnamed.subscription_name(), None);
+    assert_eq!(unsafe_name.subscription_name(), None);
+    assert_eq!(
+        bounded_name.subscription_name().as_deref(),
+        Some("a".repeat(96).as_str())
+    );
+    assert_eq!(oversized_name.subscription_name(), None);
+    assert!(!format!("{named:?}").contains("fixture-secret"));
+}
+
+#[test]
 fn subscription_preview_profile_avoids_geodata_and_health_check_downloads() {
     let subscription = SecretUrl::parse_subscription(
         "https://subscription.example.invalid/client?token=fixture-secret",

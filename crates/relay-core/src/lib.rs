@@ -1,4 +1,9 @@
-use std::{collections::BTreeMap, error::Error, fmt, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    error::Error,
+    fmt,
+    sync::Arc,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WindowSizeClass {
@@ -179,9 +184,22 @@ pub enum NodeAvailabilityFilter {
     Untested,
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+impl NodeAvailabilityFilter {
+    #[must_use]
+    pub fn includes(self, alive: Option<bool>) -> bool {
+        match self {
+            Self::All => true,
+            Self::Available => alive == Some(true),
+            Self::Unavailable => alive == Some(false),
+            Self::Untested => alive.is_none(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct NodeWorkspaceState {
     pub filter: NodeAvailabilityFilter,
+    collapsed_groups: BTreeSet<String>,
 }
 
 impl NodeWorkspaceState {
@@ -190,13 +208,22 @@ impl NodeWorkspaceState {
     }
 
     #[must_use]
-    pub fn includes(self, alive: Option<bool>) -> bool {
-        match self.filter {
-            NodeAvailabilityFilter::All => true,
-            NodeAvailabilityFilter::Available => alive == Some(true),
-            NodeAvailabilityFilter::Unavailable => alive == Some(false),
-            NodeAvailabilityFilter::Untested => alive.is_none(),
+    pub fn includes(&self, alive: Option<bool>) -> bool {
+        self.filter.includes(alive)
+    }
+
+    pub fn toggle_group(&mut self, group_id: &str) {
+        if group_id.is_empty() {
+            return;
         }
+        if !self.collapsed_groups.remove(group_id) {
+            self.collapsed_groups.insert(group_id.to_owned());
+        }
+    }
+
+    #[must_use]
+    pub fn is_group_collapsed(&self, group_id: &str) -> bool {
+        self.collapsed_groups.contains(group_id)
     }
 }
 

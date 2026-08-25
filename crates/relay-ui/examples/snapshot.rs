@@ -30,7 +30,10 @@ fn capture_remote_subscription_preview(
 
     let listener = TcpListener::bind("127.0.0.1:0")?;
     listener.set_nonblocking(true)?;
-    let subscription_url = format!("http://{}/subscription", listener.local_addr()?);
+    let subscription_url = format!(
+        "http://{}/subscription?name=Fixture%20Transit",
+        listener.local_addr()?
+    );
     let stop = Arc::new(AtomicBool::new(false));
     let server_stop = stop.clone();
     let server = std::thread::spawn(move || -> std::io::Result<()> {
@@ -118,13 +121,15 @@ fn capture_restored_subscription_views(
     use relay_ui::RelayApp;
     use std::time::Duration;
 
-    for (width, height, navigation_x, configuration_file, nodes_file) in [
+    for (width, height, navigation_x, configuration_file, nodes_file, collapsed_file, group_y) in [
         (
             1420.0,
             900.0,
             110.0,
             "configuration-wide-import-restored.png",
             "nodes-wide-imported.png",
+            "nodes-wide-imported-collapsed.png",
+            310.0,
         ),
         (
             720.0,
@@ -132,6 +137,8 @@ fn capture_restored_subscription_views(
             30.0,
             "configuration-compact-import-restored.png",
             "nodes-compact-imported.png",
+            "nodes-compact-imported-collapsed.png",
+            290.0,
         ),
     ] {
         let window_store = store.to_owned();
@@ -162,6 +169,16 @@ fn capture_restored_subscription_views(
         );
         refresh(cx, window)?;
         save_screenshot(cx, window, nodes_file)?;
+        cx.simulate_click(
+            window,
+            point(
+                px(if width >= 1_280.0 { 500.0 } else { 300.0 }),
+                px(group_y),
+            ),
+            Modifiers::none(),
+        );
+        refresh(cx, window)?;
+        save_screenshot(cx, window, collapsed_file)?;
     }
     Ok(())
 }

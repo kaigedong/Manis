@@ -7,6 +7,15 @@ use crate::{
     theme::Theme,
 };
 
+const IMPORTED_SUBSCRIPTION_GROUP_ID: &str = "subscription:primary";
+
+struct NodeSourceGroup<'a> {
+    id: String,
+    name: String,
+    detail: String,
+    providers: Vec<&'a LoadedProvider>,
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct NodeCounts {
     total: usize,
@@ -18,15 +27,29 @@ struct NodeCounts {
 impl NodeCounts {
     fn from_providers(providers: &[LoadedProvider]) -> Self {
         let mut counts = Self::default();
-        for node in providers.iter().flat_map(|provider| &provider.nodes) {
-            counts.total += 1;
-            match node.alive {
-                Some(true) => counts.available += 1,
-                Some(false) => counts.unavailable += 1,
-                None => counts.untested += 1,
-            }
+        for provider in providers {
+            counts.add_provider(provider);
         }
         counts
+    }
+
+    fn from_provider_refs(providers: &[&LoadedProvider]) -> Self {
+        let mut counts = Self::default();
+        for provider in providers {
+            counts.add_provider(provider);
+        }
+        counts
+    }
+
+    fn add_provider(&mut self, provider: &LoadedProvider) {
+        for node in &provider.nodes {
+            self.total += 1;
+            match node.alive {
+                Some(true) => self.available += 1,
+                Some(false) => self.unavailable += 1,
+                None => self.untested += 1,
+            }
+        }
     }
 
     fn count_for(self, filter: NodeAvailabilityFilter) -> usize {
@@ -53,9 +76,9 @@ impl RelayApp {
         } else {
             &self.source_providers
         };
+        let groups = self.node_source_groups(imported, providers);
         let counts = NodeCounts::from_providers(providers);
         let filter = self.node_workspace.filter;
-        let visible_count = counts.count_for(filter);
         let loading = imported
             && matches!(
                 self.imported_subscription_state,
@@ -89,7 +112,7 @@ impl RelayApp {
             .flex_col()
             .bg(theme.surface_base)
             .child(Self::node_workspace_header(
-                providers.len(),
+                groups.len(),
                 counts,
                 filter,
                 origin,
@@ -98,10 +121,9 @@ impl RelayApp {
                 theme,
                 cx,
             ))
-            .child(Self::node_workspace_body(
-                providers,
+            .child(self.node_workspace_body(
+                &groups,
                 filter,
-                visible_count,
                 loading,
                 unavailable,
                 compact,
@@ -110,9 +132,56 @@ impl RelayApp {
             ))
     }
 
+    fn node_source_groups<'a>(
+        &self,
+        imported: bool,
+        providers: &'a [LoadedProvider],
+    ) -> Vec<NodeSourceGroup<'a>> {
+        if providers.is_empty() {
+            return Vec::new();
+        }
+        if imported {
+            let name = self
+                .imported_subscription
+                .as_ref()
+                .and_then(relay_profile::SecretUrl::subscription_name)
+                .unwrap_or_else(|| "订阅 1".to_owned());
+            let transport = self
+                .imported_subscription
+                .as_ref()
+                .map_or("订阅", |source| {
+                    if source.is_https() {
+                        "HTTPS 订阅"
+                    } else {
+                        "HTTP 订阅"
+                    }
+                });
+            return vec![NodeSourceGroup {
+                id: IMPORTED_SUBSCRIPTION_GROUP_ID.to_owned(),
+                name,
+                detail: format!("{transport} · 重启后自动恢复"),
+                providers: providers.iter().collect(),
+            }];
+        }
+
+        providers
+            .iter()
+            .enumerate()
+            .map(|(index, provider)| NodeSourceGroup {
+                id: format!("mihomo:{index}"),
+                name: provider.name.clone(),
+                detail: provider.vehicle_type.as_ref().map_or_else(
+                    || "Mihomo 来源".to_owned(),
+                    |vehicle| format!("Mihomo 来源 · {vehicle}"),
+                ),
+                providers: vec![provider],
+            })
+            .collect()
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn node_workspace_header(
-        provider_count: usize,
+        group_count: usize,
         counts: NodeCounts,
         filter: NodeAvailabilityFilter,
         origin: &'static str,
@@ -149,7 +218,7 @@ impl RelayApp {
                                     .text_size(px(12.0))
                                     .text_color(theme.text_secondary)
                                     .child(format!(
-                                        "{origin} · {provider_count} 个来源 · 在这里查看出口健康状态"
+                                        "{origin} · {group_count} 个分组 · 在这里查看出口健康状态"
                                     )),
                             ),
                     )
@@ -169,9 +238,9 @@ impl RelayApp {
 
     #[allow(clippy::too_many_arguments)]
     fn node_workspace_body(
-        providers: &[LoadedProvider],
+        &self,
+        groups: &[NodeSourceGroup<'_>],
         filter: NodeAvailabilityFilter,
-        visible_count: usize,
         loading: bool,
         unavailable: bool,
         compact: bool,
@@ -185,32 +254,25 @@ impl RelayApp {
             .overflow_y_scroll()
             .px(if compact { px(12.0) } else { px(24.0) })
             .py_4()
-            .when(loading && providers.is_empty(), |body| {
+            .when(loading && groups.is_empty(), |body| {
                 body.child(Self::node_message_panel(
                     "正在恢复节点",
                     "Relay 正在通过隔离 Mihomo 重新读取已导入订阅。",
                     theme,
                 ))
             })
-            .when(unavailable && providers.is_empty(), |body| {
+            .when(unavailable && groups.is_empty(), |body| {
                 body.child(Self::node_message_panel(
                     "暂时无法读取节点",
                     "订阅仍安全保存在本机。请前往配置页检查来源，原链接不会显示。",
                     theme,
                 ))
             })
-            .when(!loading && !unavailable && providers.is_empty(), |body| {
+            .when(!loading && !unavailable && groups.is_empty(), |body| {
                 body.child(Self::node_empty_state(compact, theme, cx))
             })
-            .when(!providers.is_empty() && visible_count == 0, |body| {
-                body.child(Self::node_message_panel(
-                    "这个筛选下没有节点",
-                    "切换到“全部”即可重新查看完整节点列表。",
-                    theme,
-                ))
-            })
-            .when(!providers.is_empty() && visible_count > 0, |body| {
-                body.child(Self::node_table(providers, filter, compact, theme))
+            .when(!groups.is_empty(), |body| {
+                body.child(self.node_group_list(groups, filter, compact, theme, cx))
             })
     }
 
@@ -410,33 +472,145 @@ impl RelayApp {
             }))
     }
 
-    fn node_table(
-        providers: &[LoadedProvider],
+    fn node_group_list(
+        &self,
+        groups: &[NodeSourceGroup<'_>],
         filter: NodeAvailabilityFilter,
         compact: bool,
         theme: Theme,
+        cx: &mut Context<Self>,
     ) -> Div {
-        let mut table = div()
+        let mut list = div().flex().flex_col().gap_3();
+        for group in groups {
+            list = list.child(self.node_group(group, filter, compact, theme, cx));
+        }
+        list
+    }
+
+    fn node_group(
+        &self,
+        group: &NodeSourceGroup<'_>,
+        filter: NodeAvailabilityFilter,
+        compact: bool,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let counts = NodeCounts::from_provider_refs(&group.providers);
+        let visible_count = counts.count_for(filter);
+        let collapsed = self.node_workspace.is_group_collapsed(&group.id);
+        let group_id = group.id.clone();
+        let action = if collapsed { "展开" } else { "收起" };
+        let header = div()
+            .id(format!("node-group-header-{}", group.id))
+            .role(Role::Button)
+            .aria_label(format!("{action}节点分组{}", group.name))
+            .tab_stop(true)
+            .focusable()
+            .cursor_pointer()
+            .min_h(px(58.0))
+            .px(if compact { px(12.0) } else { px(16.0) })
+            .py_3()
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_3()
+            .bg(theme.surface_low)
+            .child(
+                div()
+                    .min_w(px(0.0))
+                    .flex_1()
+                    .overflow_x_hidden()
+                    .child(
+                        div()
+                            .overflow_x_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(group.name.clone()),
+                    )
+                    .child(
+                        div()
+                            .mt_1()
+                            .text_size(px(10.0))
+                            .text_color(theme.text_tertiary)
+                            .child(group.detail.clone()),
+                    ),
+            )
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .child(
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(theme.text_secondary)
+                            .child(format!(
+                                "{} 个节点 · {} 个可用",
+                                counts.total, counts.available
+                            )),
+                    )
+                    .child(
+                        div()
+                            .min_w(px(32.0))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(theme.action_primary)
+                            .child(action),
+                    ),
+            )
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.node_workspace.toggle_group(&group_id);
+                "已更新节点分组展开状态".clone_into(&mut this.status);
+                cx.notify();
+            }));
+
+        div()
             .rounded_md()
             .border_1()
             .border_color(theme.outline_subtle)
             .bg(theme.surface_high)
-            .overflow_hidden();
+            .overflow_hidden()
+            .child(header)
+            .when(!collapsed && visible_count == 0, |container| {
+                container.child(
+                    div()
+                        .px_4()
+                        .py_3()
+                        .border_t_1()
+                        .border_color(theme.outline_subtle)
+                        .text_size(px(11.0))
+                        .text_color(theme.text_secondary)
+                        .child("这个分组中没有符合当前筛选的节点。"),
+                )
+            })
+            .when(!collapsed && visible_count > 0, |container| {
+                container.child(Self::node_group_table(group, filter, compact, theme))
+            })
+    }
 
+    fn node_group_table(
+        group: &NodeSourceGroup<'_>,
+        filter: NodeAvailabilityFilter,
+        compact: bool,
+        theme: Theme,
+    ) -> Div {
+        let mut table = div();
         if !compact {
             table = table.child(Self::node_table_header(theme));
         }
 
-        for (provider_index, provider) in providers.iter().enumerate() {
+        for (provider_index, provider) in group.providers.iter().enumerate() {
             for (node_index, node) in provider.nodes.iter().enumerate() {
-                if !(relay_core::NodeWorkspaceState { filter }).includes(node.alive) {
+                if !filter.includes(node.alive) {
                     continue;
                 }
                 table = table.child(Self::workspace_node_row(
+                    &group.id,
                     provider_index,
                     node_index,
-                    provider,
                     node,
+                    &group.name,
                     compact,
                     theme,
                 ));
@@ -469,10 +643,11 @@ impl RelayApp {
     }
 
     fn workspace_node_row(
+        group_id: &str,
         provider_index: usize,
         node_index: usize,
-        provider: &LoadedProvider,
         node: &LoadedProviderNode,
+        source_name: &str,
         compact: bool,
         theme: Theme,
     ) -> Stateful<Div> {
@@ -483,12 +658,12 @@ impl RelayApp {
         };
         let latency = node.latency_label.as_deref().unwrap_or("—");
         let content = if compact {
-            Self::compact_node_row_content(provider, node, state, latency, color, theme)
+            Self::compact_node_row_content(source_name, node, state, latency, color, theme)
         } else {
-            Self::wide_node_row_content(provider, node, state, latency, color, theme)
+            Self::wide_node_row_content(source_name, node, state, latency, color, theme)
         };
         div()
-            .id(format!("node-row-{provider_index}-{node_index}"))
+            .id(format!("node-row-{group_id}-{provider_index}-{node_index}"))
             .min_h(if compact { px(64.0) } else { px(52.0) })
             .px(if compact { px(12.0) } else { px(16.0) })
             .py_2()
@@ -498,7 +673,7 @@ impl RelayApp {
     }
 
     fn compact_node_row_content(
-        provider: &LoadedProvider,
+        source_name: &str,
         node: &LoadedProviderNode,
         state: &'static str,
         latency: &str,
@@ -524,7 +699,7 @@ impl RelayApp {
                             .mt_1()
                             .text_size(px(10.0))
                             .text_color(theme.text_tertiary)
-                            .child(format!("{} · {}", provider.name, node.protocol)),
+                            .child(format!("{source_name} · {}", node.protocol)),
                     ),
             )
             .child(
@@ -548,7 +723,7 @@ impl RelayApp {
     }
 
     fn wide_node_row_content(
-        provider: &LoadedProvider,
+        source_name: &str,
         node: &LoadedProviderNode,
         state: &'static str,
         latency: &str,
@@ -570,7 +745,7 @@ impl RelayApp {
                 div()
                     .w(px(180.0))
                     .text_color(theme.text_secondary)
-                    .child(provider.name.clone()),
+                    .child(source_name.to_owned()),
             )
             .child(
                 div()

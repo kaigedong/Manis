@@ -199,6 +199,21 @@ fn node_workspace_filters_known_and_untested_availability() {
 }
 
 #[test]
+fn node_workspace_tracks_collapsed_source_groups_independently() {
+    let mut state = NodeWorkspaceState::default();
+
+    assert!(!state.is_group_collapsed("subscription:primary"));
+    assert!(!state.is_group_collapsed("saved"));
+
+    state.toggle_group("subscription:primary");
+    assert!(state.is_group_collapsed("subscription:primary"));
+    assert!(!state.is_group_collapsed("saved"));
+
+    state.toggle_group("subscription:primary");
+    assert!(!state.is_group_collapsed("subscription:primary"));
+}
+
+#[test]
 fn configuration_selection_tracks_only_safe_local_identifiers() {
     let mut state = ConfigurationWorkspaceState::default();
 

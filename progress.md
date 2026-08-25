@@ -98,3 +98,6 @@
 - 新增一级“节点”工作区，直接复用已导入订阅（无导入时回退到当前 Mihomo）的 provider/node 数据；展示节点总数、来源数、协议、可用/不可用/未测速状态和延迟，不重复下载也不复制领域数据。
 - 节点页支持“全部 / 可用 / 不可用 / 未测速”筛选、刷新节点与管理来源；宽屏使用高密度表格，紧凑窗口重排为双行节点列表。第一轮 Visual Verdict 86/100 的导航截断和操作缺失已修正，最终 92/100 `pass`。
 - 独立 UI 终审 disposition 为 `ship`，没有阻断项；workspace 77 个常规测试通过、3 个环境依赖测试默认 ignored，严格 Clippy、全目标 build、fmt、diff check 和敏感模式扫描全部通过。
+- 节点工作区升级为来源分组：同一订阅的所有节点进入一个可独立折叠的分组，组名只读取显式安全 `name` 参数；缺失时使用“订阅 1”，不以 URL host/path/token 兜底。未来持久化的单个 VLESS 将进入稳定 ID 为 `saved` 的独立“已保存”组。
+- 宽屏与紧凑布局分别验证展开、折叠四种原生状态；终版 Visual Verdict 94/100 `pass`，分组结构、计数和折叠动作在两种尺寸下均清晰且无溢出。
+- 独立终审 disposition 为 `ship`，High/Medium/Low 均为 0；workspace 79 个常规测试通过、3 个环境依赖测试默认 ignored，严格 Clippy、全目标 build、fmt、diff check 及 worktree/Git 历史敏感模式扫描全部通过。
