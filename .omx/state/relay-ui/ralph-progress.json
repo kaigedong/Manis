@@ -1,0 +1,31 @@
+{
+  "score": 95,
+  "verdict": "pass",
+  "category_match": true,
+  "threshold": 90,
+  "threshold_met": true,
+  "references": [
+    "/Users/bobo/.planning/qx_policy_client_ui/relay-direction-board.png",
+    "/Users/bobo/.planning/qx_policy_client_ui/reference-fluent2.png",
+    "/Users/bobo/.planning/qx_policy_client_ui/reference-m3-expressive.png"
+  ],
+  "generated_screenshots": [
+    "/Users/bobo/.planning/qx_policy_client_ui/.impeccable/review/desktop.png",
+    "/Users/bobo/.planning/qx_policy_client_ui/.impeccable/review/medium.png",
+    "/Users/bobo/.planning/qx_policy_client_ui/.impeccable/review/compact-dark.png"
+  ],
+  "differences": [
+    "The medium route inspector is intentionally a side sheet rather than the persistent third pane shown at wide width.",
+    "The compact window removes the policy list while editing a group instead of shrinking all three panes.",
+    "The prototype uses the system UI font stack rather than a branded downloadable typeface."
+  ],
+  "suggestions": [
+    "Keep the inspector transition transform-only so the preview remains smooth.",
+    "Preserve the copper route line as the only strong non-semantic accent.",
+    "Carry the same single-task compact behavior and accessible control names into the GPUI view model."
+  ],
+  "next_actions": [
+    "Document tokens, components, responsive states, and GPUI event flow."
+  ],
+  "reasoning": "The prototype clearly expresses the selected Signal Patch Bay world while retaining familiar desktop list-detail behavior. Wide, medium, compact, light, and dark states remain legible, and the route chain stays the dominant product-specific interaction without turning ordinary controls into audio hardware. The final correction clearly labels the inspector as local rule prediction with demo data, reserves Mihomo /connections for observed truth, and restores the compact system-proxy control's accessible name."
+}
