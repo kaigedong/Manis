@@ -134,6 +134,14 @@
 - [completed] 5. 生成宽屏/紧凑原生截图并通过 Visual Verdict
 - [completed] 6. 完成全仓验证、Git 提交和仅 Relay UI 重启
 
+## 导入节点测速反馈
+
+- [completed] 1. 复现并定位导入来源状态语义、运行反馈和已保存 VLESS 超时链路
+- [completed] 2. 以 TDD 锁定中性测速控件、无伪健康状态和逐行运行态
+- [completed] 3. 实现 GPUI 延迟栏旋转反馈；已保存 VLESS 测速保持延期，不在本轮改动
+- [completed] 4. 生成宽屏/紧凑截图、验证运行态并通过 Visual Verdict
+- [completed] 5. 完成全仓验证、Git 提交和仅 Relay UI 重启
+
 ## 固定约束
 - 实现框架：Rust + GPUI
 - 目标平台：Windows、macOS、Linux

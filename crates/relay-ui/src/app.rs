@@ -823,9 +823,9 @@ impl RelayApp {
         listener: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
     ) -> Stateful<Div> {
         let bar_color = if running {
-            theme.text_tertiary
-        } else {
             theme.action_primary
+        } else {
+            theme.text_secondary
         };
         div()
             .id(format!("group-benchmark-{id}"))
@@ -841,16 +841,8 @@ impl RelayApp {
             .flex_shrink_0()
             .rounded_md()
             .border_1()
-            .border_color(if running {
-                theme.outline_subtle
-            } else {
-                theme.action_primary
-            })
-            .bg(if running {
-                theme.surface_low
-            } else {
-                theme.action_soft
-            })
+            .border_color(theme.outline_subtle)
+            .bg(theme.surface_high)
             .flex()
             .items_end()
             .justify_center()

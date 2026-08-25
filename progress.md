@@ -163,3 +163,16 @@
 - 全 workspace 测试通过：124 passed、5 ignored；fmt、严格 Clippy、diff check、私有订阅域名/token 扫描以及真实 Clash Verge Unix controller 只读 smoke test全部通过。
 - 原生宽屏/紧凑截图已生成，Visual Verdict 94/100 `pass`；当前仅剩提交与只重启 Relay UI。
 - Git 提交 `feat(ui): unify group speed tests` 已创建；仅停止旧 Relay UI PID 19410，并以相同 Unix controller 启动新 PID 25096。Clash Verge PID 14173 与 verge-mihomo PID 14201 保持运行且未被停止或修改。
+
+# 2026-08-25 导入节点测速反馈与 VLESS 诊断
+
+- 用户指出导入来源图标像选中态、节点“可用”语义失真、测速中缺少逐行反馈，并报告已保存 VLESS 测速长期无结果。
+- Motion thesis：唯一循环动画放在正在等待结果的延迟单元格，用旋转缺口环表示“该节点尚在探测”；分组按钮只做中性控制，不使用选中背景；完成或失败立即停止动画。预算为每个当前可见节点一个纯旋转几何元素，不改变布局、不阻塞 GPUI。
+- 实际向 Clash Verge Unix controller 请求已保存 VLESS 名称得到 HTTP 404，完整代理表也确认不存在；根因是外部控制器从未加载 Relay 私有 VLESS，而旧路径仍对外部控制器做单节点测速。
+- 用户明确拒绝临时 Mihomo 绕路方案；已撤销 VLESS 隔离测速测试与实现方向。正确后续是 Relay 自己托管的 Mihomo 加载已保存 VLESS 后复用正式测速链，本轮不实现该架构阶段。
+- TDD RED 继续只锁定导入节点的运行/成功/失败延迟状态；按用户要求，本轮不改动已保存 VLESS 的测速实现。
+- TDD GREEN：导入节点状态映射覆盖运行中、部分失败和成功延迟；来源标题、宽屏状态列与紧凑状态标签不再显示“可用”。
+- GPUI 延迟栏使用 8 点、720ms 循环旋转反馈，只有 `Running` 状态启动；成功、失败和空闲状态均为静态文本。
+- 宽屏与 720px 紧凑原生截图通过 Visual Verdict 95/100 `pass`；中性测速按钮、列表列宽和响应式布局均无溢出或错位。
+- 全 workspace 验证通过：126 passed、5 ignored；格式、严格 Clippy、diff check 和私有订阅域名/token 扫描均通过。
+- Git 提交 `fix(ui): clarify imported node benchmarks` 已创建；仅停止旧 Relay UI PID 25096，并以相同 Unix controller 启动新 PID 28809。Clash Verge PID 14173 与 verge-mihomo PID 14201 保持运行且未被停止或修改。

@@ -241,3 +241,9 @@
 - 自动组合法 `now` 会更新目录目标与节点延迟；LoadBalance 没有单一 `now` 时明确提示“没有单一固定出口”，不伪造赢家。
 - 测速日志只写固定事件名 `group_benchmark.started/succeeded/failed`，不记录组名、节点名、URL 或 token。
 - 宽屏、720px 紧凑、浅色与深色 GPUI 原生截图均无重叠或溢出；Visual Verdict 94/100 `pass`。
+
+## 已保存 VLESS 测速边界（2026-08-25）
+
+- 已复现外部 Clash Verge controller 对 Relay 私有 VLESS 节点测速返回 HTTP 404；代理目录中不存在该节点，因此不是“等待更久就会成功”。
+- 用户决定不采用临时隔离 Mihomo 作为补丁。长期正确边界是 Relay 自己托管的 Mihomo 加载已保存 VLESS，测速与实际代理共用同一内核和配置。
+- 在托管内核阶段完成前，“已保存”来源的测速操作应即时给出不可测速说明，不能向外部 controller 发出必然失败的请求，也不能长时间显示运行态。

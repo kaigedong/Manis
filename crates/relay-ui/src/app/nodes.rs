@@ -1,6 +1,10 @@
 use std::collections::BTreeSet;
+use std::time::Duration;
 
-use gpui::{Context, Div, FontWeight, ParentElement, Role, Stateful, Styled, div, prelude::*, px};
+use gpui::{
+    Animation, AnimationExt as _, Context, Div, FontWeight, ParentElement, Role, Stateful, Styled,
+    div, prelude::*, px,
+};
 use relay_core::{
     NodeAvailabilityFilter, NodeGroupIcon, NodeGroupMatcher, NodeGroupStrategy, NodeIdentity,
     NodePolicyGroup, PrimaryWorkspace, WindowSizeClass,
@@ -32,6 +36,28 @@ struct NodeGroupMemberView {
     protocol: String,
     latency_label: Option<String>,
     alive: Option<bool>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum SourceNodeLatencyState {
+    Idle(Option<String>),
+    Running,
+    Measured(u16),
+    Failed,
+}
+
+impl SourceNodeLatencyState {
+    fn from_benchmark(node: &LoadedProviderNode, benchmark: &GroupBenchmarkState) -> Self {
+        match benchmark {
+            GroupBenchmarkState::Idle => Self::Idle(node.latency_label.clone()),
+            GroupBenchmarkState::Running { .. } => Self::Running,
+            GroupBenchmarkState::Complete { delays, .. } => match delays.get(&node.name).copied() {
+                Some(delay) if delay > 0 => Self::Measured(delay),
+                Some(_) | None => Self::Failed,
+            },
+            GroupBenchmarkState::Failed { .. } => Self::Failed,
+        }
+    }
 }
 
 const MAX_GROUP_BENCHMARK_NODES: usize = 512;
@@ -2432,10 +2458,7 @@ impl RelayApp {
                         div()
                             .text_size(px(10.0))
                             .text_color(theme.text_secondary)
-                            .child(format!(
-                                "{} 个节点 · {} 个可用",
-                                counts.total, counts.available
-                            )),
+                            .child(format!("{} 个节点", counts.total)),
                     )
                     .child(
                         div()
@@ -2545,7 +2568,6 @@ impl RelayApp {
             .child(div().flex_1().child("节点"))
             .child(div().w(px(180.0)).child("来源"))
             .child(div().w(px(100.0)).child("协议"))
-            .child(div().w(px(82.0)).child("状态"))
             .child(
                 div()
                     .w(px(72.0))
@@ -2562,30 +2584,12 @@ impl RelayApp {
         compact: bool,
         theme: Theme,
     ) -> Stateful<Div> {
-        let fresh_delay = match benchmark {
-            GroupBenchmarkState::Complete { delays, .. } => delays.get(&node.name).copied(),
-            _ => None,
-        };
-        let (state, color, latency) = match fresh_delay {
-            Some(0) => ("失败", theme.route_trace, "失败".to_owned()),
-            Some(delay) => ("可用", theme.status_success, format!("{delay} ms")),
-            None => {
-                let (state, color) = match node.alive {
-                    Some(true) => ("可用", theme.status_success),
-                    Some(false) => ("不可用", theme.text_secondary),
-                    None => ("未测速", theme.text_tertiary),
-                };
-                (
-                    state,
-                    color,
-                    node.latency_label.clone().unwrap_or_else(|| "—".to_owned()),
-                )
-            }
-        };
+        let latency = SourceNodeLatencyState::from_benchmark(node, benchmark);
+        let spinner_id = format!("{row_id}-latency");
         let content = if compact {
-            Self::compact_node_row_content(source_name, node, state, &latency, color, theme)
+            Self::compact_node_row_content(source_name, node, &latency, &spinner_id, theme)
         } else {
-            Self::wide_node_row_content(source_name, node, state, &latency, color, theme)
+            Self::wide_node_row_content(source_name, node, &latency, &spinner_id, theme)
         };
         div()
             .id(row_id)
@@ -2600,9 +2604,8 @@ impl RelayApp {
     fn compact_node_row_content(
         source_name: &str,
         node: &LoadedProviderNode,
-        state: &'static str,
-        latency: &str,
-        color: gpui::Rgba,
+        latency: &SourceNodeLatencyState,
+        spinner_id: &str,
         theme: Theme,
     ) -> Div {
         div()
@@ -2630,19 +2633,17 @@ impl RelayApp {
             .child(
                 div()
                     .flex_shrink_0()
+                    .min_w(px(48.0))
                     .text_align(gpui::TextAlign::Right)
                     .child(
                         div()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(color)
-                            .child(state),
-                    )
-                    .child(
-                        div()
-                            .mt_1()
-                            .text_size(px(10.0))
-                            .text_color(theme.text_tertiary)
-                            .child(latency.to_owned()),
+                            .min_h(px(18.0))
+                            .flex()
+                            .items_center()
+                            .justify_end()
+                            .child(Self::source_node_latency_content(
+                                latency, spinner_id, theme,
+                            )),
                     ),
             )
     }
@@ -2650,9 +2651,8 @@ impl RelayApp {
     fn wide_node_row_content(
         source_name: &str,
         node: &LoadedProviderNode,
-        state: &'static str,
-        latency: &str,
-        color: gpui::Rgba,
+        latency: &SourceNodeLatencyState,
+        spinner_id: &str,
         theme: Theme,
     ) -> Div {
         div()
@@ -2681,18 +2681,102 @@ impl RelayApp {
             )
             .child(
                 div()
-                    .w(px(82.0))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(color)
-                    .child(state),
-            )
-            .child(
-                div()
                     .w(px(72.0))
-                    .text_align(gpui::TextAlign::Right)
-                    .text_color(theme.text_secondary)
-                    .child(latency.to_owned()),
+                    .min_h(px(18.0))
+                    .flex()
+                    .items_center()
+                    .justify_end()
+                    .child(Self::source_node_latency_content(
+                        latency, spinner_id, theme,
+                    )),
             )
+    }
+
+    fn source_node_latency_content(
+        latency: &SourceNodeLatencyState,
+        spinner_id: &str,
+        theme: Theme,
+    ) -> Div {
+        let cell = div()
+            .min_w(px(42.0))
+            .flex()
+            .items_center()
+            .justify_end()
+            .font_weight(FontWeight::SEMIBOLD)
+            .text_size(px(11.0));
+        match latency {
+            SourceNodeLatencyState::Running => cell.child(Self::source_node_latency_spinner(
+                spinner_id.to_owned(),
+                theme,
+            )),
+            SourceNodeLatencyState::Measured(delay) => cell
+                .text_color(theme.status_success)
+                .child(format!("{delay} ms")),
+            SourceNodeLatencyState::Failed => cell.text_color(theme.route_trace).child("失败"),
+            SourceNodeLatencyState::Idle(previous) => cell
+                .text_color(theme.text_tertiary)
+                .child(previous.clone().unwrap_or_else(|| "—".to_owned())),
+        }
+    }
+
+    fn source_node_latency_spinner(id: String, theme: Theme) -> impl IntoElement {
+        div().relative().size(px(14.0)).with_animation(
+            id,
+            Animation::new(Duration::from_millis(720)).repeat(),
+            move |spinner, delta| {
+                let active = Self::source_node_latency_spinner_frame(delta);
+                (0..8).fold(spinner, |spinner, index| {
+                    spinner.child(Self::source_node_latency_dot(
+                        index,
+                        active,
+                        theme.action_primary,
+                    ))
+                })
+            },
+        )
+    }
+
+    fn source_node_latency_spinner_frame(delta: f32) -> usize {
+        if delta < 0.125 {
+            0
+        } else if delta < 0.25 {
+            1
+        } else if delta < 0.375 {
+            2
+        } else if delta < 0.5 {
+            3
+        } else if delta < 0.625 {
+            4
+        } else if delta < 0.75 {
+            5
+        } else if delta < 0.875 {
+            6
+        } else {
+            7
+        }
+    }
+
+    fn source_node_latency_dot(index: usize, active: usize, color: gpui::Rgba) -> Div {
+        const POSITIONS: [(f32, f32); 8] = [
+            (5.5, 0.0),
+            (9.5, 1.5),
+            (11.0, 5.5),
+            (9.5, 9.5),
+            (5.5, 11.0),
+            (1.5, 9.5),
+            (0.0, 5.5),
+            (1.5, 1.5),
+        ];
+        const OPACITY: [f32; 8] = [1.0, 0.82, 0.68, 0.54, 0.42, 0.32, 0.24, 0.18];
+        let distance = (index + 8 - active) % 8;
+        let (left, top) = POSITIONS[index];
+        div()
+            .absolute()
+            .left(px(left))
+            .top(px(top))
+            .size(px(3.0))
+            .rounded_full()
+            .bg(color.opacity(OPACITY[distance]))
     }
 
     fn node_empty_state(compact: bool, theme: Theme, cx: &mut Context<Self>) -> Div {
@@ -2758,7 +2842,7 @@ impl RelayApp {
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
-    use super::NodeCounts;
+    use super::{NodeCounts, RelayApp, SourceNodeLatencyState};
     use crate::app::{GroupBenchmarkState, GroupBenchmarkSummary, NodeGroupRuntimeState};
     use crate::mihomo::{LoadedProvider, LoadedProviderNode};
 
@@ -2796,6 +2880,56 @@ mod tests {
         assert_eq!(summary.minimum_ms, Some(42));
         assert_eq!(summary.maximum_ms, Some(80));
         assert_eq!(summary.average_ms, Some(61));
+    }
+
+    #[test]
+    fn imported_node_latency_uses_running_and_failure_states_without_health_labels() {
+        let node = LoadedProviderNode {
+            name: "Saved Edge".to_owned(),
+            protocol: "VLESS".to_owned(),
+            latency_label: Some("88 ms".to_owned()),
+            alive: Some(true),
+        };
+
+        assert_eq!(
+            SourceNodeLatencyState::from_benchmark(
+                &node,
+                &GroupBenchmarkState::Running { generation: 2 },
+            ),
+            SourceNodeLatencyState::Running,
+        );
+        assert_eq!(
+            SourceNodeLatencyState::from_benchmark(
+                &node,
+                &GroupBenchmarkState::Complete {
+                    generation: 2,
+                    summary: GroupBenchmarkSummary::default(),
+                    delays: BTreeMap::new(),
+                },
+            ),
+            SourceNodeLatencyState::Failed,
+        );
+        assert_eq!(
+            SourceNodeLatencyState::from_benchmark(
+                &node,
+                &GroupBenchmarkState::Complete {
+                    generation: 2,
+                    summary: GroupBenchmarkSummary::default(),
+                    delays: BTreeMap::from([("Saved Edge".to_owned(), 47)]),
+                },
+            ),
+            SourceNodeLatencyState::Measured(47),
+        );
+    }
+
+    #[test]
+    fn imported_node_latency_spinner_advances_through_eight_frames() {
+        assert_eq!(RelayApp::source_node_latency_spinner_frame(0.0), 0);
+        assert_eq!(RelayApp::source_node_latency_spinner_frame(0.124), 0);
+        assert_eq!(RelayApp::source_node_latency_spinner_frame(0.125), 1);
+        assert_eq!(RelayApp::source_node_latency_spinner_frame(0.5), 4);
+        assert_eq!(RelayApp::source_node_latency_spinner_frame(0.875), 7);
+        assert_eq!(RelayApp::source_node_latency_spinner_frame(1.0), 7);
     }
 
     #[test]
