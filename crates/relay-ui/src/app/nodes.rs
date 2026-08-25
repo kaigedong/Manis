@@ -7,7 +7,8 @@ use relay_core::{
 };
 
 use super::{
-    ImportedSubscriptionState, NodeGroupDraft, NodeGroupMatcherKind, RelayApp, SourceRuntimeApply,
+    ImportedSubscriptionState, NodeGroupBenchmarkState, NodeGroupBenchmarkSummary, NodeGroupDraft,
+    NodeGroupMatcherKind, RelayApp, SourceRuntimeApply,
 };
 use crate::{
     mihomo::{self, LoadedProvider, LoadedProviderNode},
@@ -22,6 +23,8 @@ struct NodeSourceGroup<'a> {
     providers: Vec<&'a LoadedProvider>,
     saved_nodes: Vec<&'a SourceNodePreview>,
 }
+
+const MAX_GROUP_BENCHMARK_NODES: usize = 512;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct NodeCounts {
@@ -428,6 +431,13 @@ impl RelayApp {
         cx: &mut Context<Self>,
     ) -> Div {
         let matched = self.node_group_match_count(group);
+        let benchmark = self
+            .node_group_benchmarks
+            .get(&group.id)
+            .copied()
+            .unwrap_or_default();
+        let benchmarking = benchmark.is_running();
+        let benchmark_id = group.id.clone();
         let group_id = group.id.clone();
         let remove_id = group.id.clone();
         let matcher_summary = match &group.matcher {
@@ -468,11 +478,23 @@ impl RelayApp {
                             ),
                     ),
             )
+            .child(Self::node_group_benchmark_status(benchmark, matched, theme))
             .child(
                 div()
                     .mt_3()
                     .flex()
+                    .flex_wrap()
                     .gap_2()
+                    .child(Self::node_group_benchmark_button(
+                        &group.id,
+                        benchmarking,
+                        theme,
+                        cx.listener(move |this, _, _, cx| {
+                            if !benchmarking {
+                                this.start_node_group_benchmark(&benchmark_id, cx);
+                            }
+                        }),
+                    ))
                     .child(Self::node_group_text_button(
                         format!("node-group-edit-{group_id}"),
                         "编辑",
@@ -490,6 +512,85 @@ impl RelayApp {
                         }),
                     )),
             )
+    }
+
+    fn node_group_benchmark_status(
+        state: NodeGroupBenchmarkState,
+        matched: usize,
+        theme: Theme,
+    ) -> Div {
+        let (label, color) = match state {
+            NodeGroupBenchmarkState::Idle => ("尚未测速".to_owned(), theme.text_tertiary),
+            NodeGroupBenchmarkState::Running { .. } => {
+                (format!("正在测试 {matched} 个节点…"), theme.action_primary)
+            }
+            NodeGroupBenchmarkState::Complete { summary, .. } => {
+                let label = match (summary.average_ms, summary.minimum_ms, summary.maximum_ms) {
+                    (Some(average), Some(minimum), Some(maximum)) => format!(
+                        "平均 {average} ms · 最低 {minimum} ms · 最高 {maximum} ms · {}/{} 成功",
+                        summary.succeeded, summary.total
+                    ),
+                    _ => format!("0/{} 成功", summary.total),
+                };
+                (label, theme.status_success)
+            }
+            NodeGroupBenchmarkState::Failed { .. } => (
+                "测速失败 · 请检查 Mihomo 连接与网络后重试".to_owned(),
+                theme.route_trace,
+            ),
+        };
+        div()
+            .mt_3()
+            .pt_3()
+            .border_t_1()
+            .border_color(theme.outline_subtle)
+            .text_size(px(11.0))
+            .text_color(color)
+            .child(label)
+    }
+
+    fn node_group_benchmark_button(
+        id: &str,
+        running: bool,
+        theme: Theme,
+        listener: impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
+    ) -> Stateful<Div> {
+        let label = if running { "测速中…" } else { "测速" };
+        div()
+            .id(format!("node-group-benchmark-{id}"))
+            .role(Role::Button)
+            .aria_label(if running {
+                "分组测速中"
+            } else {
+                "测试分组延迟"
+            })
+            .tab_stop(!running)
+            .focusable()
+            .cursor_pointer()
+            .h(px(32.0))
+            .px_3()
+            .rounded_md()
+            .border_1()
+            .border_color(if running {
+                theme.outline_subtle
+            } else {
+                theme.action_primary
+            })
+            .bg(if running {
+                theme.surface_low
+            } else {
+                theme.action_soft
+            })
+            .text_color(if running {
+                theme.text_tertiary
+            } else {
+                theme.action_primary
+            })
+            .font_weight(FontWeight::SEMIBOLD)
+            .flex()
+            .items_center()
+            .child(label)
+            .on_click(listener)
     }
 
     fn node_group_icon_badge(icon: NodeGroupIcon, theme: Theme) -> Div {
@@ -948,6 +1049,119 @@ impl RelayApp {
             .count()
     }
 
+    fn node_group_candidate_names(&self, group: &NodePolicyGroup) -> Vec<String> {
+        self.node_inventory()
+            .into_iter()
+            .filter(|node| group.matches(&node.source_id, &node.node_name))
+            .map(|node| node.node_name)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect()
+    }
+
+    fn start_node_group_benchmark(&mut self, id: &str, cx: &mut Context<Self>) {
+        let Some(group) = self
+            .node_policy_groups
+            .iter()
+            .find(|group| group.id == id)
+            .cloned()
+        else {
+            return;
+        };
+        if matches!(
+            self.node_group_benchmarks.get(id),
+            Some(NodeGroupBenchmarkState::Running { .. })
+        ) {
+            return;
+        }
+        if self.node_group_benchmark_active_generation.is_some() {
+            "已有分组正在测速，请等待完成后再试".clone_into(&mut self.status);
+            cx.notify();
+            return;
+        }
+        let candidate_names = self.node_group_candidate_names(&group);
+        if candidate_names.is_empty() {
+            "当前分组没有可测速节点，请先调整匹配规则".clone_into(&mut self.status);
+            cx.notify();
+            return;
+        }
+        if candidate_names.len() > MAX_GROUP_BENCHMARK_NODES {
+            format!(
+                "分组包含 {} 个节点，请先用名称或明确选择收窄到 {} 个以内",
+                candidate_names.len(),
+                MAX_GROUP_BENCHMARK_NODES
+            )
+            .clone_into(&mut self.status);
+            cx.notify();
+            return;
+        }
+
+        self.node_group_benchmark_generation = self.node_group_benchmark_generation.wrapping_add(1);
+        let generation = self.node_group_benchmark_generation;
+        self.node_group_benchmarks.insert(
+            group.id.clone(),
+            NodeGroupBenchmarkState::Running { generation },
+        );
+        self.node_group_benchmark_active_generation = Some(generation);
+        self.status = format!(
+            "正在测试分组“{}”的 {} 个节点",
+            group.name,
+            candidate_names.len()
+        );
+
+        let runtime = self.runtime.clone();
+        let group_id = group.id.clone();
+        let group_name = group.name.clone();
+        let total = candidate_names.len();
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let result = executor
+                .spawn(async move { runtime.test_node_group_delay(&group_name, &candidate_names) })
+                .await;
+            this.update(cx, |this, cx| {
+                if this.node_group_benchmark_active_generation != Some(generation) {
+                    return;
+                }
+                this.node_group_benchmark_active_generation = None;
+                if !this
+                    .node_policy_groups
+                    .iter()
+                    .any(|group| group.id == group_id)
+                {
+                    cx.notify();
+                    return;
+                }
+                let Some(state) = this.node_group_benchmarks.get_mut(&group_id) else {
+                    cx.notify();
+                    return;
+                };
+                let accepted = match result {
+                    Ok(delays) => state.complete(
+                        generation,
+                        NodeGroupBenchmarkSummary::from_delays(total, delays),
+                    ),
+                    Err(_error) => state.fail(generation),
+                };
+                if accepted {
+                    this.status = match *state {
+                        NodeGroupBenchmarkState::Complete { summary, .. } => format!(
+                            "分组测速完成：{}/{} 个节点成功",
+                            summary.succeeded, summary.total
+                        ),
+                        NodeGroupBenchmarkState::Failed { .. } => {
+                            "分组测速失败，请检查 Mihomo 连接与网络后重试".to_owned()
+                        }
+                        _ => return,
+                    };
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
     fn start_node_group_create(&mut self, cx: &mut Context<Self>) {
         self.node_group_draft = Some(NodeGroupDraft {
             editing_id: None,
@@ -1097,6 +1311,7 @@ impl RelayApp {
             self.node_policy_groups
                 .sort_by(|left, right| left.id.cmp(&right.id));
         }
+        self.node_group_benchmarks.remove(&group.id);
         self.node_group_draft = None;
         self.status = format!("分组“{}”已保存，正在应用托管配置", group.name);
         self.apply_node_policy_groups(store_dir, format!("分组“{}”已保存", group.name), cx);
@@ -1119,6 +1334,7 @@ impl RelayApp {
             return;
         }
         let group = self.node_policy_groups.remove(index);
+        self.node_group_benchmarks.remove(id);
         if self
             .node_group_draft
             .as_ref()
@@ -1739,6 +1955,7 @@ impl RelayApp {
 #[cfg(test)]
 mod tests {
     use super::NodeCounts;
+    use crate::app::{NodeGroupBenchmarkState, NodeGroupBenchmarkSummary};
     use crate::mihomo::{LoadedProvider, LoadedProviderNode};
 
     #[test]
@@ -1763,6 +1980,46 @@ mod tests {
                 untested: 1,
             }
         );
+    }
+
+    #[test]
+    fn group_benchmark_summary_counts_failures_and_latency_range() {
+        let summary = NodeGroupBenchmarkSummary::from_delays(4, [80, 42]);
+
+        assert_eq!(summary.total, 4);
+        assert_eq!(summary.succeeded, 2);
+        assert_eq!(summary.failed, 2);
+        assert_eq!(summary.minimum_ms, Some(42));
+        assert_eq!(summary.maximum_ms, Some(80));
+        assert_eq!(summary.average_ms, Some(61));
+    }
+
+    #[test]
+    fn group_benchmark_state_ignores_a_stale_completion() {
+        let mut state = NodeGroupBenchmarkState::Running { generation: 7 };
+        let outdated_summary = NodeGroupBenchmarkSummary::from_delays(2, [90]);
+        assert!(!state.complete(6, outdated_summary));
+        assert_eq!(state, NodeGroupBenchmarkState::Running { generation: 7 });
+
+        let current = NodeGroupBenchmarkSummary::from_delays(2, [55, 75]);
+        assert!(state.complete(7, current));
+        assert!(matches!(
+            state,
+            NodeGroupBenchmarkState::Complete {
+                summary: NodeGroupBenchmarkSummary {
+                    average_ms: Some(65),
+                    ..
+                },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn benchmark_state_reports_running_only_for_active_variant() {
+        assert!(NodeGroupBenchmarkState::Running { generation: 1 }.is_running());
+        assert!(!NodeGroupBenchmarkState::Idle.is_running());
+        assert!(!NodeGroupBenchmarkState::Failed { generation: 1 }.is_running());
     }
 
     fn node(alive: Option<bool>) -> LoadedProviderNode {

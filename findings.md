@@ -196,3 +196,14 @@
 - 用户策略组必须被 `Proxy` 主选择组引用，否则即使出现在 Mihomo API 中也无法成为规则的实际出口。编译顺序应是用户组 → Auto → Proxy，并让 `Proxy` 候选包含用户组。
 - 分组 YAML 已使用 Clash Verge 随附的真实 `verge-mihomo -t` 通过校验；名称包含会转义为 Mihomo provider `filter`，手动 VLESS 则使用显式 `proxies` 引用。
 - 安全复核未发现节点分组新增的 Critical/High 风险。既有 HTTP 订阅兼容会让公网 `http://` token 在网络上明文传输，风险等级 MEDIUM；用户明确要求 HTTP 来源兼容，本轮保持功能并继续以 HTTP 标签显式展示，后续应增加“不安全 HTTP”确认或默认仅允许回环 HTTP。
+
+## 分组级节点测速边界（2026-08-25）
+
+- Mihomo 官方 API 提供 `GET /group/{group_name}/delay?url=...&timeout=5000`，直接返回节点名到 `uint16` 延迟的映射；单节点也支持 `GET /proxies/{name}/delay` 返回 `{ delay }`。来源：https://wiki.metacubex.one/en/api/
+- Relay 托管模式可以优先直接测试已编译进 Mihomo 的用户组；外部 Clash Verge controller 不包含 Relay 本地分组时，应回退到对当前匹配节点逐个调用单节点 delay API，并限制并发，不能在 GPUI 主线程串行等待。
+- 测试 URL 使用固定 HTTPS 204 探测地址，超时固定为 5 秒；路径段和查询参数必须按 UTF-8 percent-encoding，不能把节点名或 URL 原样拼进 HTTP request line。
+- 分组测速是易失运行状态，不持久化进私有分组文件；使用分组稳定 ID + generation 隔离删除、改名、重复点击后返回的过期结果。
+- 外部 controller 的“只读”边界应精确定义为“不修改配置”：用户点击测速仍会让 Mihomo 主动发出固定 HTTPS 探测请求，因此运行来源说明必须明确提示这一点。
+- 单组最多使用 8 个阻塞 worker，应用级再采用 single-flight 防止多个分组同时放大线程和探测流量；其他分组仍可在当前任务完成后逐一测试。
+- single-flight 使用独立 active generation，不依赖可能在保存/删除时清除的卡片状态；后台任务返回前，即使原分组已被编辑或删除，也不会放行第二个测速任务。
+- 最终安全复核确认本轮新增测速无 Critical/High/Medium 问题；保留的产品级行为是用户明确点击外部 controller 测速时，Mihomo 会发出固定 HTTPS 探测。

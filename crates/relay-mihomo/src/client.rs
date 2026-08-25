@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
@@ -13,6 +15,11 @@ const PROVIDERS_ENDPOINT: &str = "/providers/proxies";
 const RULES_ENDPOINT: &str = "/rules";
 const CONNECTIONS_ENDPOINT: &str = "/connections";
 const CONFIGS_ENDPOINT: &str = "/configs";
+
+#[derive(Debug, Deserialize)]
+struct ProxyDelayResponse {
+    delay: u16,
+}
 
 #[derive(Debug, Clone)]
 pub struct MihomoClient<T> {
@@ -75,6 +82,42 @@ where
             .into_providers())
     }
 
+    /// Tests all nodes in a policy group and returns fresh latency values keyed by node name.
+    ///
+    /// # Errors
+    /// Returns an error if the controller request fails or the delay payload cannot be decoded.
+    pub fn fetch_group_delay(
+        &self,
+        group_name: &str,
+        test_url: &str,
+        timeout_ms: u16,
+    ) -> Result<BTreeMap<String, u16>, MihomoError> {
+        let endpoint = format!(
+            "/group/{}/delay?url={}&timeout={timeout_ms}",
+            percent_encode_component(group_name),
+            percent_encode_component(test_url)
+        );
+        self.fetch_json(&endpoint)
+    }
+
+    /// Tests one proxy node and returns its fresh latency in milliseconds.
+    ///
+    /// # Errors
+    /// Returns an error if the controller request fails or the delay payload cannot be decoded.
+    pub fn fetch_proxy_delay(
+        &self,
+        proxy_name: &str,
+        test_url: &str,
+        timeout_ms: u16,
+    ) -> Result<u16, MihomoError> {
+        let endpoint = format!(
+            "/proxies/{}/delay?url={}&timeout={timeout_ms}",
+            percent_encode_component(proxy_name),
+            percent_encode_component(test_url)
+        );
+        Ok(self.fetch_json::<ProxyDelayResponse>(&endpoint)?.delay)
+    }
+
     /// Fetches Mihomo's mutable runtime configuration surface from `/configs`.
     ///
     /// # Errors
@@ -117,5 +160,30 @@ where
             endpoint: endpoint.to_owned(),
             source,
         })
+    }
+}
+
+fn percent_encode_component(input: &str) -> String {
+    let mut encoded = String::with_capacity(input.len());
+    for byte in input.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                encoded.push(char::from(byte));
+            }
+            _ => {
+                encoded.push('%');
+                encoded.push(hex_digit(byte >> 4));
+                encoded.push(hex_digit(byte & 0x0f));
+            }
+        }
+    }
+    encoded
+}
+
+fn hex_digit(value: u8) -> char {
+    match value {
+        0..=9 => char::from(b'0' + value),
+        10..=15 => char::from(b'A' + value - 10),
+        _ => unreachable!("nibble must be in 0..=15"),
     }
 }

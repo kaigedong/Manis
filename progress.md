@@ -118,6 +118,12 @@
 - 2026-08-25：用户组已编译进 Relay 托管 Mihomo：手动=`select`、延迟优选=`url-test`，Proxy 主组引用所有用户组；外部 controller 继续只读。全仓测试、严格 Clippy 和格式检查已通过，Visual Verdict 93/100。
 - 2026-08-25：真实使用 Clash Verge 自带 `verge-mihomo -t` 验证了带 `filter`/`url-test` 的用户分组 YAML，配置校验成功。独立安全复核未发现 Critical/High；保留一项既有 MEDIUM 风险：公网 HTTP 订阅会明文传输 token，这是兼容 HTTP 来源的产品边界，不是本轮新增。
 - 2026-08-25：功能提交 `acea9e5`；仅停止旧 Relay UI PID 89215，并以新二进制连接既有 Clash Verge Unix controller 启动 PID 805。Clash Verge PID 19351 与 Mihomo PID 19379 保持运行且未被修改。
+- 2026-08-25：开始“分组级节点测速”阶段。产品边界锁定为每个用户节点分组独立发起测速，只测试该组当前匹配的候选节点，并在分组卡片显示有界后台任务的实时状态与汇总结果。
+- 2026-08-25：完成官方 API 与现有 transport 边界映射；分组测速状态 TDD 红→绿，覆盖成功/失败计数、最低/最高/平均延迟及 generation 过期结果隔离。
+- 2026-08-25：分组卡片已接入未测速、运行、汇总和失败四态；Relay 托管组优先调用 group delay，外部 Clash Verge 按当前候选逐节点回退，固定 8 worker 且应用内仅允许一个分组测速任务。
+- 2026-08-25：真实 Clash Verge Unix controller 单节点 HTTPS 204 探测返回有效延迟；宽屏/720px 原生 GPUI 截图无截断或溢出，Visual Verdict 95/100 `pass`。
+- 2026-08-25：全 workspace 109 个常规测试通过、5 个环境依赖测试默认 ignored；fmt、all-targets check、严格 Clippy 和 diff check 全部通过。安全复核未发现 Critical/High，固定探测 URL、percent encoding、错误脱敏和单任务并发边界均已验证。
+- 2026-08-25：仅停止旧 Relay UI PID 805，并以通过验证的新二进制连接既有 Clash Verge Unix controller 启动 PID 6498；Clash Verge PID 19351 与 Mihomo PID 19379 未被停止或修改。
 ## 2026-08-25（续）
 
 - 已恢复会话并完成当前边界盘点：`relay-profile` 尚无顶层直连代理模型，`EngineManager` 尚无安全的配置替换/重启事务，`relay-mihomo` 的只读传输会一次性缓冲响应，不能直接承载 `/connections` 与 `/logs` 长连接。

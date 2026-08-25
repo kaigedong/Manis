@@ -58,6 +58,9 @@ const PREVIEW_PROVIDER_DELAY: Duration = Duration::from_millis(250);
 const LIVE_CONNECTION_INTERVAL: Duration = Duration::from_millis(750);
 const LIVE_LOG_MAILBOX_CAPACITY: usize = 256;
 const LIVE_RETRY_MAX: Duration = Duration::from_secs(5);
+const GROUP_DELAY_TEST_URL: &str = "https://www.gstatic.com/generate_204";
+const GROUP_DELAY_TIMEOUT_MS: u16 = 5_000;
+const GROUP_DELAY_WORKERS: usize = 8;
 static NEXT_PREVIEW_WORKSPACE: AtomicU64 = AtomicU64::new(0);
 static NEXT_STORED_SOURCE: AtomicU64 = AtomicU64::new(0);
 
@@ -155,7 +158,7 @@ impl RuntimeProfileSource {
 
     pub(crate) fn detail(self) -> &'static str {
         match self {
-            Self::ExternalController => "Relay 只读取控制器；未连接时使用示例预览",
+            Self::ExternalController => "Relay 不修改外部配置；测速会让内核发起 HTTPS 探测",
             Self::ExistingConfig => "由 Relay 启动，但不解析或展示配置文件内容",
             Self::PrivateSubscription => "链接已隐藏；只向私有 Mihomo 配置写入",
             Self::Invalid => "请检查本机启动参数；敏感输入不会显示在这里",
@@ -246,6 +249,50 @@ impl ControllerRuntime {
             Self::Invalid { message } => return Err(LoadError::Runtime(message.clone())),
         };
         set_tun_enabled(&endpoint, enabled).map_err(LoadError::from)
+    }
+
+    pub(crate) fn test_node_group_delay(
+        &self,
+        group_name: &str,
+        candidate_names: &[String],
+    ) -> Result<Vec<u16>, LoadError> {
+        if candidate_names.is_empty() {
+            return Err(LoadError::Runtime("当前分组没有可测速节点".to_owned()));
+        }
+        let (endpoint, managed) = match self {
+            Self::External { endpoint } => (endpoint.clone(), false),
+            Self::Managed { manager, .. } => {
+                let endpoint = {
+                    let mut manager = manager.lock().map_err(|_poisoned| {
+                        LoadError::Runtime("托管内核状态锁已损坏".to_owned())
+                    })?;
+                    match manager.running_endpoint()? {
+                        Some(endpoint) => endpoint,
+                        None => manager.start()?,
+                    }
+                };
+                (endpoint.uri(), true)
+            }
+            Self::Invalid { message } => return Err(LoadError::Runtime(message.clone())),
+        };
+
+        if managed {
+            match fetch_group_delay(&endpoint, group_name) {
+                Ok(delays) => {
+                    let candidates = candidate_names.iter().collect::<BTreeSet<_>>();
+                    return Ok(delays
+                        .into_iter()
+                        .filter_map(|(name, delay)| candidates.contains(&name).then_some(delay))
+                        .collect());
+                }
+                Err(MihomoError::HttpStatus {
+                    status_code: 404, ..
+                }) => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+
+        fetch_proxy_delays_bounded(&endpoint, candidate_names)
     }
 
     #[allow(clippy::too_many_lines)]
@@ -2166,6 +2213,91 @@ fn fetch_snapshot(endpoint: &str) -> Result<MihomoSnapshot, MihomoError> {
     MihomoClient::new(config, StdHttpTransport::default()).fetch_snapshot()
 }
 
+fn fetch_group_delay(
+    endpoint: &str,
+    group_name: &str,
+) -> Result<std::collections::BTreeMap<String, u16>, MihomoError> {
+    #[cfg(unix)]
+    if let Some(socket_path) = unix_socket_path(endpoint)? {
+        return MihomoClient::new(
+            with_configured_secret(ControllerConfig::default()),
+            UnixSocketTransport::new(socket_path),
+        )
+        .fetch_group_delay(group_name, GROUP_DELAY_TEST_URL, GROUP_DELAY_TIMEOUT_MS);
+    }
+
+    #[cfg(not(unix))]
+    if endpoint.starts_with("unix://") {
+        return Err(MihomoError::InvalidConfig(
+            "Unix controller sockets are not supported on this platform".to_owned(),
+        ));
+    }
+
+    let config = with_configured_secret(ControllerConfig::new(endpoint)?);
+    MihomoClient::new(config, StdHttpTransport::default()).fetch_group_delay(
+        group_name,
+        GROUP_DELAY_TEST_URL,
+        GROUP_DELAY_TIMEOUT_MS,
+    )
+}
+
+fn fetch_proxy_delay(endpoint: &str, proxy_name: &str) -> Result<u16, MihomoError> {
+    #[cfg(unix)]
+    if let Some(socket_path) = unix_socket_path(endpoint)? {
+        return MihomoClient::new(
+            with_configured_secret(ControllerConfig::default()),
+            UnixSocketTransport::new(socket_path),
+        )
+        .fetch_proxy_delay(proxy_name, GROUP_DELAY_TEST_URL, GROUP_DELAY_TIMEOUT_MS);
+    }
+
+    #[cfg(not(unix))]
+    if endpoint.starts_with("unix://") {
+        return Err(MihomoError::InvalidConfig(
+            "Unix controller sockets are not supported on this platform".to_owned(),
+        ));
+    }
+
+    let config = with_configured_secret(ControllerConfig::new(endpoint)?);
+    MihomoClient::new(config, StdHttpTransport::default()).fetch_proxy_delay(
+        proxy_name,
+        GROUP_DELAY_TEST_URL,
+        GROUP_DELAY_TIMEOUT_MS,
+    )
+}
+
+fn fetch_proxy_delays_bounded(
+    endpoint: &str,
+    candidate_names: &[String],
+) -> Result<Vec<u16>, LoadError> {
+    let worker_count = candidate_names.len().min(GROUP_DELAY_WORKERS);
+    let chunk_size = candidate_names.len().div_ceil(worker_count);
+    let delays = thread::scope(|scope| {
+        let handles = candidate_names
+            .chunks(chunk_size)
+            .map(|chunk| {
+                scope.spawn(move || {
+                    chunk
+                        .iter()
+                        .filter_map(|name| fetch_proxy_delay(endpoint, name).ok())
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect::<Vec<_>>();
+        handles
+            .into_iter()
+            .filter_map(|handle| handle.join().ok())
+            .flatten()
+            .collect::<Vec<_>>()
+    });
+    if delays.is_empty() {
+        return Err(LoadError::Runtime(
+            "所有节点测速均失败，请检查 Mihomo 连接与网络后重试".to_owned(),
+        ));
+    }
+    Ok(delays)
+}
+
 fn set_tun_enabled(endpoint: &str, enabled: bool) -> Result<(), MihomoError> {
     #[cfg(unix)]
     if let Some(socket_path) = unix_socket_path(endpoint)? {
@@ -2716,6 +2848,35 @@ mod tests {
     fn rejects_relative_unix_controller_endpoint() {
         assert!(super::unix_socket_path("unix://relative.sock").is_err());
         assert!(super::unix_socket_path("unix://").is_err());
+    }
+
+    #[test]
+    fn external_group_benchmark_keeps_partial_proxy_results()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let endpoint = format!("http://{}", listener.local_addr()?);
+        let server = std::thread::spawn(move || -> std::io::Result<()> {
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept()?;
+                let mut request_line = String::new();
+                BufReader::new(stream.try_clone()?).read_line(&mut request_line)?;
+                let response = if request_line.contains("Working%20Node") {
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 12\r\nConnection: close\r\n\r\n{\"delay\":64}"
+                } else {
+                    "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                };
+                stream.write_all(response.as_bytes())?;
+            }
+            Ok(())
+        });
+        let runtime = super::ControllerRuntime::External { endpoint };
+        let delays = runtime.test_node_group_delay(
+            "Local Group",
+            &["Working Node".to_owned(), "Offline Node".to_owned()],
+        )?;
+        server.join().map_err(|_| "fixture server panicked")??;
+        assert_eq!(delays, vec![64]);
+        Ok(())
     }
 
     #[test]

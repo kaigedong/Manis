@@ -113,12 +113,34 @@ fn capture_remote_subscription_preview(
     cx.simulate_click(window, point(px(370.0), px(370.0)), Modifiers::none());
     refresh(cx, window)?;
 
+    write_node_group_fixture(&store)?;
     capture_restored_subscription_views(cx, &store)?;
     stop.store(true, Ordering::Relaxed);
     server.join().map_err(|_| "fixture server panicked")??;
     if fixture_root.exists() {
         std::fs::remove_dir_all(fixture_root)?;
     }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn write_node_group_fixture(store: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let path = store.join("group-deadbeef.group");
+    std::fs::write(
+        &path,
+        concat!(
+            "relay-node-group-v1\n",
+            "id\tgroup-deadbeef\n",
+            "name\t46697874757265204175746f\n",
+            "icon\tbolt\n",
+            "strategy\tlatency\n",
+            "matcher\tall\n",
+            "filter\t"
+        ),
+    )?;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
     Ok(())
 }
 

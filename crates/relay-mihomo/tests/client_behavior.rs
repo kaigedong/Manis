@@ -48,6 +48,12 @@ impl ReadonlyTransport for FakeTransport {
             "/version" => Ok(r#"{"meta":true,"version":"v1.19.0","ignored":1}"#.to_owned()),
             "/proxies" => Ok(proxy_fixture()),
             "/providers/proxies" => Ok(provider_fixture()),
+            "/group/Auto%20%F0%9F%8C%90%2FHK/delay?url=https%3A%2F%2Fwww.gstatic.com%2Fgenerate_204%3Fx%3D1%26ok%3Dtrue&timeout=5000" => {
+                Ok(r#"{"Japan 01":51,"US 01":238}"#.to_owned())
+            }
+            "/proxies/Japan%2001%20%5B%E5%80%8D%E7%8E%87%C3%971%5D/delay?url=http%3A%2F%2Fcp.cloudflare.com%2Fgenerate_204&timeout=1500" => {
+                Ok(r#"{"delay":47}"#.to_owned())
+            }
             "/rules" => Ok(rule_fixture()),
             "/connections" => Ok(connection_fixture()),
             "/configs" => Ok(config_fixture()),
@@ -159,6 +165,51 @@ fn provider_preview_requests_only_the_provider_endpoint() -> Result<(), Box<dyn 
     );
     assert_eq!(providers.len(), 1);
     assert_eq!(providers[0].proxies.len(), 2);
+    Ok(())
+}
+
+#[test]
+fn fetch_group_delay_encodes_name_and_query_and_parses_node_latencies()
+-> Result<(), Box<dyn std::error::Error>> {
+    let transport = FakeTransport::default();
+    let client = MihomoClient::new(ControllerConfig::default(), &transport);
+
+    let delays = client.fetch_group_delay(
+        "Auto 🌐/HK",
+        "https://www.gstatic.com/generate_204?x=1&ok=true",
+        5000,
+    )?;
+
+    assert_eq!(
+        transport.requests.borrow().as_slice(),
+        [RecordedRequest::get(
+            "/group/Auto%20%F0%9F%8C%90%2FHK/delay?url=https%3A%2F%2Fwww.gstatic.com%2Fgenerate_204%3Fx%3D1%26ok%3Dtrue&timeout=5000"
+        )]
+    );
+    assert_eq!(delays.get("Japan 01"), Some(&51));
+    assert_eq!(delays.get("US 01"), Some(&238));
+    Ok(())
+}
+
+#[test]
+fn fetch_proxy_delay_encodes_name_and_query_and_parses_delay()
+-> Result<(), Box<dyn std::error::Error>> {
+    let transport = FakeTransport::default();
+    let client = MihomoClient::new(ControllerConfig::default(), &transport);
+
+    let delay = client.fetch_proxy_delay(
+        "Japan 01 [倍率×1]",
+        "http://cp.cloudflare.com/generate_204",
+        1500,
+    )?;
+
+    assert_eq!(
+        transport.requests.borrow().as_slice(),
+        [RecordedRequest::get(
+            "/proxies/Japan%2001%20%5B%E5%80%8D%E7%8E%87%C3%971%5D/delay?url=http%3A%2F%2Fcp.cloudflare.com%2Fgenerate_204&timeout=1500"
+        )]
+    );
+    assert_eq!(delay, 47);
     Ok(())
 }
 

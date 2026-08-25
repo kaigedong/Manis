@@ -107,6 +107,15 @@
 - [completed] 5. 生成宽屏/紧凑原生截图并通过 Visual Verdict
 - [completed] 6. 完成安全复核、全仓验证、Git 提交和应用重启
 
+## 分组级节点测速
+
+- [completed] 1. 映射 Mihomo 延迟 API、现有节点身份和分组匹配边界
+- [completed] 2. 以 TDD 建立分组测速状态、结果汇总与过期请求隔离
+- [completed] 3. 实现有界并发的分组节点测速服务，兼容 HTTP/Unix controller
+- [completed] 4. 在分组卡片加入测速操作、进行中/结果/错误状态和响应式反馈
+- [completed] 5. 完成真实 controller 验证、原生截图与 Visual Verdict
+- [completed] 6. 完成安全复核、全仓验证、Git 提交和 Relay 重启
+
 ## 固定约束
 - 实现框架：Rust + GPUI
 - 目标平台：Windows、macOS、Linux

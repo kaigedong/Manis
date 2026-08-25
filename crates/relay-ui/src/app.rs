@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -136,6 +136,77 @@ struct NodeGroupDraft {
     explicit_members: BTreeSet<NodeIdentity>,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct NodeGroupBenchmarkSummary {
+    total: usize,
+    succeeded: usize,
+    failed: usize,
+    minimum_ms: Option<u16>,
+    maximum_ms: Option<u16>,
+    average_ms: Option<u16>,
+}
+
+impl NodeGroupBenchmarkSummary {
+    fn from_delays(total: usize, delays: impl IntoIterator<Item = u16>) -> Self {
+        let delays = delays.into_iter().collect::<Vec<_>>();
+        let succeeded = delays.len().min(total);
+        let sum = delays.iter().map(|delay| u64::from(*delay)).sum::<u64>();
+        let divisor = u64::try_from(delays.len()).unwrap_or(1);
+        Self {
+            total,
+            succeeded,
+            failed: total.saturating_sub(succeeded),
+            minimum_ms: delays.iter().copied().min(),
+            maximum_ms: delays.iter().copied().max(),
+            average_ms: (!delays.is_empty()).then(|| {
+                let rounded = (sum + divisor / 2) / divisor;
+                u16::try_from(rounded).unwrap_or(u16::MAX)
+            }),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum NodeGroupBenchmarkState {
+    #[default]
+    Idle,
+    Running {
+        generation: u64,
+    },
+    Complete {
+        generation: u64,
+        summary: NodeGroupBenchmarkSummary,
+    },
+    Failed {
+        generation: u64,
+    },
+}
+
+impl NodeGroupBenchmarkState {
+    fn is_running(self) -> bool {
+        matches!(self, Self::Running { .. })
+    }
+
+    fn complete(&mut self, generation: u64, summary: NodeGroupBenchmarkSummary) -> bool {
+        if !matches!(self, Self::Running { generation: current } if *current == generation) {
+            return false;
+        }
+        *self = Self::Complete {
+            generation,
+            summary,
+        };
+        true
+    }
+
+    fn fail(&mut self, generation: u64) -> bool {
+        if !matches!(self, Self::Running { generation: current } if *current == generation) {
+            return false;
+        }
+        *self = Self::Failed { generation };
+        true
+    }
+}
+
 pub struct RelayApp {
     primary_workspace: PrimaryWorkspace,
     configuration: ConfigurationWorkspaceState,
@@ -153,6 +224,9 @@ pub struct RelayApp {
     saved_vless_nodes: Vec<StoredVlessNode>,
     node_policy_groups: Vec<NodePolicyGroup>,
     node_group_draft: Option<NodeGroupDraft>,
+    node_group_benchmarks: BTreeMap<String, NodeGroupBenchmarkState>,
+    node_group_benchmark_generation: u64,
+    node_group_benchmark_active_generation: Option<u64>,
     source_store_error: Option<SubscriptionStoreError>,
     proxy_mode: ProxyMode,
     proxy_mode_busy: bool,
@@ -284,6 +358,9 @@ impl RelayApp {
             saved_vless_nodes,
             node_policy_groups,
             node_group_draft: None,
+            node_group_benchmarks: BTreeMap::new(),
+            node_group_benchmark_generation: 0,
+            node_group_benchmark_active_generation: None,
             source_store_error,
             proxy_mode: ProxyMode::Off,
             proxy_mode_busy: false,
