@@ -117,6 +117,7 @@
 - 2026-08-25：节点页已明确分成上方“导入的节点”和下方“节点分组”；完成创建、重命名、图标、手动/延迟优选、全部/名称/明确选择规则、私有持久化与删除交互。
 - 2026-08-25：用户组已编译进 Relay 托管 Mihomo：手动=`select`、延迟优选=`url-test`，Proxy 主组引用所有用户组；外部 controller 继续只读。全仓测试、严格 Clippy 和格式检查已通过，Visual Verdict 93/100。
 - 2026-08-25：真实使用 Clash Verge 自带 `verge-mihomo -t` 验证了带 `filter`/`url-test` 的用户分组 YAML，配置校验成功。独立安全复核未发现 Critical/High；保留一项既有 MEDIUM 风险：公网 HTTP 订阅会明文传输 token，这是兼容 HTTP 来源的产品边界，不是本轮新增。
+- 2026-08-25：功能提交 `acea9e5`；仅停止旧 Relay UI PID 89215，并以新二进制连接既有 Clash Verge Unix controller 启动 PID 805。Clash Verge PID 19351 与 Mihomo PID 19379 保持运行且未被修改。
 ## 2026-08-25（续）
 
 - 已恢复会话并完成当前边界盘点：`relay-profile` 尚无顶层直连代理模型，`EngineManager` 尚无安全的配置替换/重启事务，`relay-mihomo` 的只读传输会一次性缓冲响应，不能直接承载 `/connections` 与 `/logs` 长连接。

@@ -105,7 +105,7 @@
 - [completed] 3. 持久化用户分组并编译为 Relay 托管 Mihomo 策略组
 - [completed] 4. 在节点页分离“导入的节点”与“节点分组”，实现完整编辑交互
 - [completed] 5. 生成宽屏/紧凑原生截图并通过 Visual Verdict
-- [in_progress] 6. 完成安全复核、全仓验证、Git 提交和应用重启
+- [completed] 6. 完成安全复核、全仓验证、Git 提交和应用重启
 
 ## 固定约束
 - 实现框架：Rust + GPUI
