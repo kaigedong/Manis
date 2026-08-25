@@ -3,7 +3,7 @@ use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::time::Duration;
 
-use relay_core::{PolicyCandidateKind, PolicyGroupKind};
+use relay_core::{PolicyCandidateKind, PolicyGroupKind, RoutingMode};
 #[cfg(unix)]
 use relay_mihomo::UnixSocketTransport;
 use relay_mihomo::{
@@ -176,6 +176,7 @@ fn fetch_snapshot_requests_exact_readonly_endpoints() -> Result<(), Box<dyn std:
     assert_eq!(snapshot.version.version.as_deref(), Some("v1.19.0"));
     assert!(snapshot.version.meta);
     assert_eq!(snapshot.runtime.mixed_port, Some(7890));
+    assert_eq!(snapshot.runtime.mode, RoutingMode::Rule);
     assert!(snapshot.runtime.tun.enable);
 
     Ok(())
@@ -411,16 +412,48 @@ fn fetch_runtime_config_parses_known_fields_and_tolerates_missing_values()
             port: Some(7891),
             socks_port: Some(7892),
             mixed_port: Some(7890),
+            mode: RoutingMode::Rule,
             tun: RuntimeTunConfig { enable: true }
         }
     );
 
     let minimal: RuntimeConfig = serde_json::from_str(r#"{"mode":"rule"}"#)?;
+    assert_eq!(minimal.mode, RoutingMode::Rule);
     assert_eq!(minimal.port, None);
     assert_eq!(minimal.socks_port, None);
     assert_eq!(minimal.mixed_port, None);
     assert!(!minimal.tun.enable);
 
+    let global: RuntimeConfig = serde_json::from_str(r#"{"mode":"GLOBAL"}"#)?;
+    assert_eq!(global.mode, RoutingMode::Global);
+
+    for payload in [
+        r"{}",
+        r#"{"mode":null}"#,
+        r#"{"mode":"unknown"}"#,
+        r#"{"mode":42}"#,
+    ] {
+        let config: RuntimeConfig = serde_json::from_str(payload)?;
+        assert_eq!(config.mode, RoutingMode::Rule, "{payload}");
+    }
+
+    Ok(())
+}
+
+#[test]
+fn set_routing_mode_patches_exact_mode_body() -> Result<(), Box<dyn std::error::Error>> {
+    let transport = FakeTransport::default();
+    let client = MihomoClient::new(ControllerConfig::default(), &transport);
+
+    client.set_routing_mode(RoutingMode::Global)?;
+
+    assert_eq!(
+        transport.requests.borrow().as_slice(),
+        [RecordedRequest::patch(
+            "/configs",
+            serde_json::json!({"mode":"global"})
+        )]
+    );
     Ok(())
 }
 
@@ -516,6 +549,25 @@ fn std_http_transport_sends_json_patch_with_bearer_auth() -> Result<(), Box<dyn 
     assert!(request.contains("Content-Length: 23\r\n"));
     assert!(request.ends_with(r#"{"tun":{"enable":true}}"#));
     assert_eq!(response, "");
+
+    Ok(())
+}
+
+#[test]
+fn std_http_client_sends_routing_mode_patch() -> Result<(), Box<dyn std::error::Error>> {
+    let (address, handle) =
+        spawn_one_response_server("HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")?;
+
+    let config = ControllerConfig::new(format!("http://{address}"))?
+        .with_secret("controller-token")
+        .with_timeouts(Duration::from_secs(1), Duration::from_secs(1));
+    MihomoClient::new(config, StdHttpTransport::default()).set_routing_mode(RoutingMode::Direct)?;
+    let request = handle.join().map_err(|_| "server thread panicked")?;
+
+    assert!(request.starts_with("PATCH /configs HTTP/1.1\r\n"));
+    assert!(request.contains("Authorization: Bearer controller-token\r\n"));
+    assert!(request.contains("Content-Type: application/json\r\n"));
+    assert!(request.ends_with(r#"{"mode":"direct"}"#));
 
     Ok(())
 }
@@ -623,6 +675,39 @@ fn unix_socket_transport_sends_json_patch_without_auth() -> Result<(), Box<dyn s
     assert!(request.contains("Content-Type: application/json\r\n"));
     assert!(!request.contains("Authorization:"));
     assert!(request.ends_with(r#"{"tun":{"enable":false}}"#));
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn unix_socket_client_sends_routing_mode_patch() -> Result<(), Box<dyn std::error::Error>> {
+    use std::os::unix::net::UnixListener;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let unique = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let socket_path = std::env::temp_dir().join(format!(
+        "relay-mihomo-mode-{}-{unique}.sock",
+        std::process::id()
+    ));
+    let listener = UnixListener::bind(&socket_path)?;
+    let server = std::thread::spawn(move || -> std::io::Result<String> {
+        let (mut stream, _) = listener.accept()?;
+        let mut request = [0_u8; 2048];
+        let read = stream.read(&mut request)?;
+        stream.write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")?;
+        Ok(String::from_utf8_lossy(&request[..read]).into_owned())
+    });
+
+    let config = ControllerConfig::default().with_secret("uds-token");
+    MihomoClient::new(config, UnixSocketTransport::new(&socket_path))
+        .set_routing_mode(RoutingMode::Rule)?;
+    let request = server.join().map_err(|_| "server thread panicked")??;
+    std::fs::remove_file(&socket_path)?;
+
+    assert!(request.starts_with("PATCH /configs HTTP/1.1\r\n"));
+    assert!(request.contains("Content-Type: application/json\r\n"));
+    assert!(!request.contains("Authorization:"));
+    assert!(request.ends_with(r#"{"mode":"rule"}"#));
     Ok(())
 }
 

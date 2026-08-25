@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use relay_core::RoutingMode;
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -48,6 +49,8 @@ pub struct RuntimeConfig {
     pub socks_port: Option<u16>,
     #[serde(rename = "mixed-port", default, alias = "mixedPort")]
     pub mixed_port: Option<u16>,
+    #[serde(default, deserialize_with = "deserialize_routing_mode")]
+    pub mode: RoutingMode,
     #[serde(default)]
     pub tun: RuntimeTunConfig,
 }
@@ -56,6 +59,19 @@ pub struct RuntimeConfig {
 pub struct RuntimeTunConfig {
     #[serde(default)]
     pub enable: bool,
+}
+
+fn deserialize_routing_mode<'de, Deserializer>(
+    deserializer: Deserializer,
+) -> Result<RoutingMode, Deserializer::Error>
+where
+    Deserializer: serde::Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    Ok(match value {
+        Value::String(value) => RoutingMode::parse_wire_value(&value).unwrap_or_default(),
+        _ => RoutingMode::default(),
+    })
 }
 
 impl MihomoSnapshot {

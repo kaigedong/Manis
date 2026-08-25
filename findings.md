@@ -254,3 +254,29 @@
 - 策略组使用 Mihomo 官方 `/group/{name}/delay`，响应本身是一次性节点延迟映射；其运行期仍应立即显示组按钮与候选行动画，响应返回后原子刷新全部结果和自动组当前出口。
 - 用户已手动连接真实 Mihomo；“演示组 404”不再是当前唯一问题。现有策略组 UI 在运行期只改变柱形图标颜色，候选行没有运行态，错误又只落到底部状态栏，造成“点击无用”的体验。
 - 策略列表 3px 竖线与卡片已有的背景/边框选中态重复，违反当前设计系统克制边框语言，应直接删除而非换色。
+
+## 运行状态、路由模式与 QX 规则导入（2026-08-25）
+
+- 当前应用其实已有窗口底部 28px `status_bar`，展示 Mihomo 状态、controller、操作消息和累计上下行；若用户所说“状态栏”指 macOS 菜单栏/Windows/Linux 系统托盘，则当前完全没有，需要确认术语。
+- 当前顶部“关闭代理 / 系统代理 / TUN 代理”是流量接入层，决定系统流量如何进入 Mihomo；用户提出的“直连 / 全局 / 规则”是 Mihomo 路由决策层，两者必须拆成两个独立状态，不能合并成一个模式开关。
+- 当前 runtime 只读取 `/configs` 的端口和 TUN 状态，并只支持 PATCH `tun.enable`；尚未读取/切换 Mihomo `mode`，因此直连/全局/规则不是已有能力的改文案，而是一条新的 controller 写入链。
+- Mihomo 快照已包含 `GLOBAL` Selector，已有 PUT `/proxies/{group}` 能力可复用为全局出口选择；节点库存目前不能直接把节点设为 GLOBAL 当前项，需要显式的“全局出口”状态与选择反馈。
+- 用户给出的 `airports.list` 是规则列表，不是节点订阅或完整 QX 配置。实际有 119 条有效规则：111 条 `DOMAIN-KEYWORD`、4 条 `DOMAIN-SUFFIX`、4 条 `DOMAIN`；每条第三列为 `PROXY/proxy`。
+- QX 官方 sample.conf 说明 `[filter_remote]` 可通过 `force-policy` 覆盖远程文件每条规则自己的策略名。因此 Relay 导入时应要求用户选择目标策略组，并把文件内 `PROXY` 视为可覆盖的源策略标签，而不是假定本地一定存在名为 Proxy 的组。
+- 当前 `relay-profile::Rule` 仅支持 DOMAIN、DOMAIN-SUFFIX、GEOIP、MATCH，缺少该样本占多数的 DOMAIN-KEYWORD；规则导入必须先扩展受支持语法、逐行校验、注释/空行处理、大小写策略映射、去重和错误行报告，再编译到 Mihomo。
+- 用户已确认“状态栏”明确指系统状态栏/托盘图标：macOS 菜单栏、Windows 通知区域、Linux 桌面托盘，不是现有窗口底栏。
+- 当前锁定的 GPUI revision 没有公开托盘/状态项 API；本机 crates.io 的 GPUI 0.2.2 源码虽有 macOS `status_item`，仍不是 Windows/Linux 跨平台能力，不能靠升级 GPUI 解决三平台目标。
+- `tray-icon` 0.24.2 支持 macOS/Windows/Linux，许可证 MIT OR Apache-2.0、MSRV 1.73（低于项目 1.88）；macOS 要求在主线程事件循环已运行后创建，Windows/Linux 要求创建线程同时运行 Win32/GTK 事件循环。
+- `tray-icon` 的 Linux 默认后端依赖 GTK3 与 libappindicator/ayatana-appindicator，意味着构建/发行要声明系统包要求；禁用 `libxdo` 可避免与托盘无关的剪切/复制系统依赖，但 GTK/appindicator 仍是 Linux 托盘必要后端。
+- `tray-icon` 是当前最合理的统一边界，但它是新的直接依赖；工作协议要求新增依赖必须获得用户明确授权。在获得授权前可以完成领域状态和 Mihomo 路由 API，但不能把托盘功能伪装成已交付。
+- 真实 Clash Verge controller 当前 `/configs.mode` 为 `rule`；其内置 `GLOBAL` 是 Selector，候选包含 DIRECT/REJECT、全部订阅节点和策略组，证明“全局模式 + 选定节点”可以直接映射为 PATCH `/configs` 与 PUT `/proxies/GLOBAL`，不需要自行实现转发逻辑。
+- 现有 Relay 对外部 controller 的配置写入保持只读边界；直连/全局/规则以及 GLOBAL 切换首版应只对 Relay 托管 Mihomo 开放，不能为了当前演示连接静默修改 Clash Verge 的进程状态。
+- GPUI `Application` 支持 `QuitMode::Explicit`，可以让关闭主窗口后托盘继续存活；`App::windows()`、窗口 `activate_window()` 与 `on_reopen` 可作为“显示 Relay”菜单动作的生命周期基础。
+- 锁定 GPUI 虽然重导出了 `http_client` trait，但原生 `gpui_platform::application()` 没有注入具体 HTTP client，默认仍是 NullHttpClient；规则 URL 下载不能假装复用一个实际不存在的客户端。QX HTTPS 导入还需要明确的下载实现或新的 TLS HTTP 依赖。
+- 依赖专项调研确认 `tray-icon` 0.24.2 由 Tauri Apps 维护，三平台覆盖、MIT OR Apache-2.0 与本项目兼容，活跃度和文档质量明显优于 `tray-item`；原生 FFI 则等同自行维护三套托盘库。来源：https://crates.io/crates/tray-icon 与 https://github.com/tauri-apps/tray-icon
+- 推荐的生命周期边界是 binary shell（`main.rs`）持有 tray handle，并通过有限 `ShellCommand` 桥接 GPUI；托盘对象不能塞进 `RelayApp::render` 状态，否则主线程销毁顺序、窗口重建和测试替身都会互相污染。
+- 路由架构应保持 managed-only mutation：`RoutingMode` 读取 `/configs.mode`，切换时 PATCH `/configs`；全局节点通过既有 Selector PUT 写 `GLOBAL`。外部 controller 若未来要开放写入，应是明确的独立 opt-in，而不是本轮顺手放宽信任边界。
+- 路由模式与接入模式已在状态、API 和视觉三层分离：接入仍只负责系统流量如何进入 Mihomo，路由只负责 Mihomo 如何处理已进入的流量；两者的忙碌态和失败日志也互不复用。
+- GLOBAL 节点选择以运行时返回的候选集为唯一真值，UI 不会把仅存在于本地库存、但不在 Mihomo GLOBAL `all` 中的名称伪装成可选出口。
+- QX 规则解析器保留每条规则的源策略标签，并要求调用方提供映射；这与 QX `force-policy` 语义一致，能够把 `PROXY/proxy` 映射到用户选择的本地策略组，而无需硬编码组名。
+- QX URL 下载不能由当前 GPUI 原生 NullHttpClient 完成；正式实现需要 Rust TLS HTTP 客户端。系统 `curl` 虽可作为开发诊断工具，但不作为三平台产品实现，以免引入隐性外部运行依赖。

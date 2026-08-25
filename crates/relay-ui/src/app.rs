@@ -10,7 +10,7 @@ use gpui::{
 use relay_core::{
     CompactNavigation, ConfigurationWorkspaceState, NodeGroupIcon, NodeGroupStrategy, NodeIdentity,
     NodePolicyGroup, NodeWorkspaceState, PolicyCatalog, PolicyGroup, PolicyNode,
-    PolicyWorkspaceState, PrimaryWorkspace, ProxyId, ProxyMode, WindowSizeClass,
+    PolicyWorkspaceState, PrimaryWorkspace, ProxyId, ProxyMode, RoutingMode, WindowSizeClass,
 };
 use relay_mihomo::{Connection, ObservedRouteEvidence, RuntimeConfig};
 use relay_profile::SecretUrl;
@@ -376,6 +376,9 @@ pub struct RelayApp {
     source_store_error: Option<SubscriptionStoreError>,
     proxy_mode: ProxyMode,
     proxy_mode_busy: bool,
+    routing_mode: RoutingMode,
+    routing_mode_busy: Option<RoutingMode>,
+    global_selection_busy: Option<String>,
     proxy_runtime: RuntimeConfig,
     system_proxy: Arc<Mutex<SystemProxySession>>,
     active_connections: Vec<Connection>,
@@ -392,6 +395,57 @@ pub struct RelayApp {
     subscription_input_events: Option<Subscription>,
     node_group_name_input: Option<Entity<SubscriptionTextInput>>,
     node_group_filter_input: Option<Entity<SubscriptionTextInput>>,
+}
+
+struct StoredWorkspace {
+    imported_subscriptions: Vec<ImportedSubscription>,
+    saved_vless_nodes: Vec<StoredVlessNode>,
+    collapsed_groups: Vec<String>,
+    node_policy_groups: Vec<NodePolicyGroup>,
+    routing_mode: RoutingMode,
+    error: Option<SubscriptionStoreError>,
+}
+
+impl StoredWorkspace {
+    fn load(directory: Option<&PathBuf>) -> Self {
+        let Some(directory) = directory else {
+            return Self {
+                imported_subscriptions: Vec::new(),
+                saved_vless_nodes: Vec::new(),
+                collapsed_groups: Vec::new(),
+                node_policy_groups: Vec::new(),
+                routing_mode: RoutingMode::Rule,
+                error: None,
+            };
+        };
+        let subscriptions = mihomo::load_subscription_sources_in(directory);
+        let nodes = mihomo::load_vless_sources_in(directory);
+        let collapsed = mihomo::load_collapsed_groups_in(directory);
+        let policy_groups = mihomo::load_node_policy_groups_in(directory);
+        let routing_mode = mihomo::load_routing_mode_in(directory);
+        let error = [
+            subscriptions.is_err(),
+            nodes.is_err(),
+            collapsed.is_err(),
+            policy_groups.is_err(),
+            routing_mode.is_err(),
+        ]
+        .into_iter()
+        .any(std::convert::identity)
+        .then_some(SubscriptionStoreError::StoredSourceUnavailable);
+        Self {
+            imported_subscriptions: subscriptions
+                .unwrap_or_default()
+                .into_iter()
+                .map(ImportedSubscription::from_stored)
+                .collect(),
+            saved_vless_nodes: nodes.unwrap_or_default(),
+            collapsed_groups: collapsed.unwrap_or_default(),
+            node_policy_groups: policy_groups.unwrap_or_default(),
+            routing_mode: routing_mode.unwrap_or_default(),
+            error,
+        }
+    }
 }
 
 impl RelayApp {
@@ -433,48 +487,19 @@ impl RelayApp {
         subscription_store_dir: Option<PathBuf>,
     ) -> Self {
         let mut status = runtime.initial_status();
-        let (
+        let StoredWorkspace {
             imported_subscriptions,
             saved_vless_nodes,
             collapsed_groups,
             node_policy_groups,
-            source_store_error,
-        ) = subscription_store_dir.as_ref().map_or_else(
-            || (Vec::new(), Vec::new(), Vec::new(), Vec::new(), None),
-            |directory| {
-                let subscriptions = mihomo::load_subscription_sources_in(directory);
-                let nodes = mihomo::load_vless_sources_in(directory);
-                let collapsed = mihomo::load_collapsed_groups_in(directory);
-                let policy_groups = mihomo::load_node_policy_groups_in(directory);
-                match (subscriptions, nodes, collapsed, policy_groups) {
-                    (Ok(subscriptions), Ok(nodes), Ok(collapsed), Ok(policy_groups)) => (
-                        subscriptions
-                            .into_iter()
-                            .map(ImportedSubscription::from_stored)
-                            .collect(),
-                        nodes,
-                        collapsed,
-                        policy_groups,
-                        None,
-                    ),
-                    (subscriptions, nodes, collapsed, policy_groups) => (
-                        subscriptions
-                            .unwrap_or_default()
-                            .into_iter()
-                            .map(ImportedSubscription::from_stored)
-                            .collect(),
-                        nodes.unwrap_or_default(),
-                        collapsed.unwrap_or_default(),
-                        policy_groups.unwrap_or_default(),
-                        Some(SubscriptionStoreError::StoredSourceUnavailable),
-                    ),
-                }
-            },
-        );
+            routing_mode,
+            error: source_store_error,
+        } = StoredWorkspace::load(subscription_store_dir.as_ref());
         if let Some(directory) = subscription_store_dir.as_ref()
             && (!imported_subscriptions.is_empty()
                 || !saved_vless_nodes.is_empty()
-                || !node_policy_groups.is_empty())
+                || !node_policy_groups.is_empty()
+                || routing_mode != RoutingMode::Rule)
         {
             status = match runtime.apply_saved_sources(directory) {
                 Ok(GeneratedProfileApply::Updated) => "已将保存来源写入 Relay 托管配置".to_owned(),
@@ -513,6 +538,9 @@ impl RelayApp {
             source_store_error,
             proxy_mode: ProxyMode::Off,
             proxy_mode_busy: false,
+            routing_mode,
+            routing_mode_busy: None,
+            global_selection_busy: None,
             proxy_runtime: RuntimeConfig::default(),
             system_proxy: Arc::new(Mutex::new(SystemProxySession::default())),
             active_connections: Vec::new(),
@@ -1197,6 +1225,7 @@ impl RelayApp {
         } else {
             ProxyMode::Off
         };
+        self.routing_mode = snapshot.runtime.mode;
         self.proxy_runtime = snapshot.runtime;
         self.status = format!(
             "已读取 {} 个策略组 · {} 条活动连接",
@@ -1499,6 +1528,149 @@ impl RelayApp {
         cx.notify();
     }
 
+    fn apply_routing_mode(&mut self, requested: RoutingMode, cx: &mut Context<Self>) {
+        if self.routing_mode_busy.is_some() || requested == self.routing_mode {
+            return;
+        }
+        if !matches!(self.controller, ControllerState::Connected { .. }) {
+            trace_ui(UiEvent::RoutingModeFailed);
+            "请先连接 Mihomo，再切换路由模式".clone_into(&mut self.status);
+            cx.notify();
+            return;
+        }
+        if matches!(self.runtime, ControllerRuntime::External { .. }) {
+            trace_ui(UiEvent::RoutingModeFailed);
+            "外部控制器保持只读；请使用 Relay 托管内核切换路由模式".clone_into(&mut self.status);
+            cx.notify();
+            return;
+        }
+
+        self.routing_mode_busy = Some(requested);
+        self.status = format!("正在切换到{}…", requested.label());
+        let runtime = self.runtime.clone();
+        let store_dir = self.subscription_store_dir.clone();
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let result = executor
+                .spawn(async move {
+                    runtime.set_routing_mode(requested)?;
+                    let persistence = store_dir
+                        .as_deref()
+                        .map(|directory| mihomo::save_routing_mode_in(directory, requested))
+                        .transpose();
+                    Ok::<_, mihomo::LoadError>(persistence)
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                this.routing_mode_busy = None;
+                match result {
+                    Ok(persistence) => {
+                        this.routing_mode = requested;
+                        this.proxy_runtime.mode = requested;
+                        trace_ui(UiEvent::RoutingModeChanged);
+                        this.status = match requested {
+                            RoutingMode::Global => this.global_target().map_or_else(
+                                || "全局模式已生效；请在节点页选择全局出口".to_owned(),
+                                |target| format!("全局模式已生效 · 当前出口 {target}"),
+                            ),
+                            _ => format!("{}已生效", requested.label()),
+                        };
+                        if persistence.is_err() {
+                            this.status.push_str(" · 但未能保存重启偏好");
+                        }
+                    }
+                    Err(error) => {
+                        trace_ui(UiEvent::RoutingModeFailed);
+                        this.status = format!("路由模式切换失败：{error}");
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn select_global_node(&mut self, selected_name: String, cx: &mut Context<Self>) {
+        if self.global_selection_busy.is_some() {
+            return;
+        }
+        if !matches!(self.controller, ControllerState::Connected { .. }) {
+            trace_ui(UiEvent::GlobalNodeSelectionFailed);
+            "请先连接 Mihomo，再选择全局节点".clone_into(&mut self.status);
+            cx.notify();
+            return;
+        }
+        if matches!(self.runtime, ControllerRuntime::External { .. }) {
+            trace_ui(UiEvent::GlobalNodeSelectionFailed);
+            "外部控制器保持只读；请使用 Relay 托管内核选择全局节点".clone_into(&mut self.status);
+            cx.notify();
+            return;
+        }
+        let is_candidate = self
+            .catalog
+            .iter()
+            .find(|group| group.name.eq_ignore_ascii_case("GLOBAL"))
+            .is_some_and(|group| group.nodes.iter().any(|node| node.name == selected_name));
+        if !is_candidate {
+            trace_ui(UiEvent::GlobalNodeSelectionFailed);
+            "这个节点不在 Mihomo 的 GLOBAL 候选项中".clone_into(&mut self.status);
+            cx.notify();
+            return;
+        }
+
+        self.global_selection_busy = Some(selected_name.clone());
+        self.status = format!("正在选择全局节点“{selected_name}”…");
+        let runtime = self.runtime.clone();
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let result = executor
+                .spawn({
+                    let selected_name = selected_name.clone();
+                    async move { runtime.select_global_node(&selected_name) }
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                this.global_selection_busy = None;
+                match result {
+                    Ok(snapshot) => {
+                        let current = snapshot.current.as_deref().unwrap_or(&selected_name);
+                        let _ = this.catalog.apply_selector_target("GLOBAL", current);
+                        trace_ui(UiEvent::GlobalNodeSelected);
+                        this.status = if this.routing_mode == RoutingMode::Global {
+                            format!("全局出口已切换到“{current}”")
+                        } else {
+                            format!("已保存全局出口“{current}”；切换到全局模式后生效")
+                        };
+                    }
+                    Err(error) => {
+                        trace_ui(UiEvent::GlobalNodeSelectionFailed);
+                        this.status = format!("全局节点切换失败：{error}");
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn global_target(&self) -> Option<&str> {
+        self.catalog
+            .iter()
+            .find(|group| group.name.eq_ignore_ascii_case("GLOBAL"))
+            .map(|group| group.target.as_str())
+    }
+
+    fn is_global_candidate(&self, name: &str) -> bool {
+        self.catalog
+            .iter()
+            .find(|group| group.name.eq_ignore_ascii_case("GLOBAL"))
+            .is_some_and(|group| group.nodes.iter().any(|node| node.name == name))
+    }
+
     #[allow(clippy::too_many_lines)]
     fn chrome(&self, theme: Theme, size_class: WindowSizeClass, cx: &mut Context<Self>) -> Div {
         let compact = size_class == WindowSizeClass::Compact;
@@ -1590,8 +1762,10 @@ impl RelayApp {
                     })),
             )
             .child(self.proxy_control(theme, size_class != WindowSizeClass::Wide, cx))
+            .child(self.routing_control(theme, size_class != WindowSizeClass::Wide, cx))
     }
 
+    #[allow(clippy::too_many_lines)]
     fn proxy_control(&self, theme: Theme, compact: bool, cx: &mut Context<Self>) -> Stateful<Div> {
         if compact {
             let next = self.proxy_mode.next();
@@ -1611,10 +1785,23 @@ impl RelayApp {
                 .text_color(theme.text_primary)
                 .flex()
                 .items_center()
+                .gap_2()
                 .child(if self.proxy_mode_busy {
-                    "切换中…"
+                    "接入 · 切换中…"
                 } else {
-                    self.proxy_mode.label()
+                    match self.proxy_mode {
+                        ProxyMode::Off => "接入 · 关闭",
+                        ProxyMode::System => "接入 · 系统",
+                        ProxyMode::Tun => "接入 · TUN",
+                    }
+                })
+                .when(!self.proxy_mode_busy, |control| {
+                    control.child(
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(theme.text_tertiary)
+                            .child("↻"),
+                    )
                 })
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.apply_proxy_mode(next, cx);
@@ -1630,7 +1817,14 @@ impl RelayApp {
             .border_color(theme.outline_subtle)
             .bg(theme.surface_high)
             .flex()
-            .items_center();
+            .items_center()
+            .child(
+                div()
+                    .px_2()
+                    .text_size(px(10.0))
+                    .text_color(theme.text_tertiary)
+                    .child("接入"),
+            );
         for mode in [ProxyMode::Off, ProxyMode::System, ProxyMode::Tun] {
             let selected = mode == self.proxy_mode;
             control = control.child(
@@ -1674,6 +1868,124 @@ impl RelayApp {
                     })
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.apply_proxy_mode(mode, cx);
+                    })),
+            );
+        }
+        control
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn routing_control(
+        &self,
+        theme: Theme,
+        compact: bool,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        if compact {
+            let next = match self.routing_mode {
+                RoutingMode::Direct => RoutingMode::Global,
+                RoutingMode::Global => RoutingMode::Rule,
+                RoutingMode::Rule => RoutingMode::Direct,
+            };
+            return div()
+                .id("routing-mode-cycle")
+                .role(Role::Button)
+                .aria_label("切换路由模式")
+                .tab_stop(true)
+                .focusable()
+                .cursor_pointer()
+                .h(px(34.0))
+                .px_3()
+                .rounded_md()
+                .border_1()
+                .border_color(theme.outline_subtle)
+                .bg(theme.surface_high)
+                .text_color(theme.text_primary)
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(if self.routing_mode_busy.is_some() {
+                    "路由 · 切换中…"
+                } else {
+                    match self.routing_mode {
+                        RoutingMode::Direct => "路由 · 直连",
+                        RoutingMode::Global => "路由 · 全局",
+                        RoutingMode::Rule => "路由 · 规则",
+                    }
+                })
+                .when(self.routing_mode_busy.is_none(), |control| {
+                    control.child(
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(theme.text_tertiary)
+                            .child("↻"),
+                    )
+                })
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.apply_routing_mode(next, cx);
+                }));
+        }
+
+        let mut control = div()
+            .id("routing-modes")
+            .h(px(34.0))
+            .p(px(2.0))
+            .rounded_md()
+            .border_1()
+            .border_color(theme.outline_subtle)
+            .bg(theme.surface_high)
+            .flex()
+            .items_center()
+            .child(
+                div()
+                    .px_2()
+                    .text_size(px(10.0))
+                    .text_color(theme.text_tertiary)
+                    .child("路由"),
+            );
+        for mode in [RoutingMode::Direct, RoutingMode::Global, RoutingMode::Rule] {
+            let selected = mode == self.routing_mode;
+            control = control.child(
+                div()
+                    .id(format!("routing-mode-{mode:?}"))
+                    .role(Role::Button)
+                    .aria_label(mode.label())
+                    .aria_toggled(if selected {
+                        Toggled::True
+                    } else {
+                        Toggled::False
+                    })
+                    .tab_stop(true)
+                    .focusable()
+                    .cursor_pointer()
+                    .h_full()
+                    .px_3()
+                    .rounded_sm()
+                    .flex()
+                    .items_center()
+                    .text_size(px(11.0))
+                    .font_weight(if selected {
+                        FontWeight::SEMIBOLD
+                    } else {
+                        FontWeight::NORMAL
+                    })
+                    .bg(if selected {
+                        theme.action_primary
+                    } else {
+                        theme.surface_high
+                    })
+                    .text_color(if selected {
+                        theme.action_on_primary
+                    } else {
+                        theme.text_secondary
+                    })
+                    .child(if self.routing_mode_busy == Some(mode) {
+                        "切换中…"
+                    } else {
+                        mode.label()
+                    })
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.apply_routing_mode(mode, cx);
                     })),
             );
         }
@@ -2761,6 +3073,11 @@ impl Render for RelayApp {
 mod tests {
     use std::fs;
 
+    use relay_core::{
+        PolicyCandidateKind, PolicyCatalog, PolicyGroup, PolicyGroupId, PolicyGroupKind,
+        PolicyNode, ProxyId,
+    };
+
     use super::{ImportedSubscriptionState, RelayApp};
     use crate::mihomo;
     use crate::subscription::SourceKind;
@@ -2786,5 +3103,35 @@ mod tests {
             ImportedSubscriptionState::Pending(SourceKind::HttpsSubscription)
         );
         fs::remove_dir_all(root).expect("remove fixture");
+    }
+
+    #[test]
+    fn global_node_state_comes_from_the_runtime_global_selector() {
+        let mut app = RelayApp::with_controller("http://127.0.0.1:9090");
+        app.catalog = PolicyCatalog::try_new(vec![PolicyGroup {
+            id: PolicyGroupId::new("GLOBAL"),
+            name: "GLOBAL".to_owned(),
+            kind: PolicyGroupKind::Selector,
+            target: "Tokyo".to_owned(),
+            nodes: ["Tokyo", "Singapore"]
+                .into_iter()
+                .map(|name| PolicyNode {
+                    id: ProxyId::new(name),
+                    name: name.to_owned(),
+                    kind: PolicyCandidateKind::Node,
+                    provider: None,
+                    detail: "VLESS".to_owned(),
+                    latency_ms: None,
+                    alive: None,
+                })
+                .collect(),
+            rules_total: 0,
+            rules: Vec::new(),
+        }])
+        .expect("fixture global group");
+
+        assert_eq!(app.global_target(), Some("Tokyo"));
+        assert!(app.is_global_candidate("Singapore"));
+        assert!(!app.is_global_candidate("Unknown"));
     }
 }

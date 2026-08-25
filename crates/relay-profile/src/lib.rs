@@ -91,6 +91,7 @@ impl Name {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Profile {
+    pub mode: ProfileMode,
     pub mixed_port: u16,
     pub log_level: LogLevel,
     pub store_selected: bool,
@@ -110,6 +111,7 @@ impl Profile {
         let automatic_name = Name::parse("Auto")?;
         let proxy_name = Name::parse("Proxy")?;
         let profile = Self {
+            mode: ProfileMode::Rule,
             mixed_port: 7890,
             log_level: LogLevel::Warning,
             store_selected: true,
@@ -161,6 +163,16 @@ impl Profile {
         };
         profile.validate()?;
         Ok(profile)
+    }
+
+    pub fn set_mode(&mut self, mode: ProfileMode) {
+        self.mode = mode;
+    }
+
+    #[must_use]
+    pub fn with_mode(mut self, mode: ProfileMode) -> Self {
+        self.set_mode(mode);
+        self
     }
 
     /// Builds a QX-style policy profile from persisted subscriptions and manual VLESS nodes.
@@ -259,6 +271,7 @@ impl Profile {
             },
         ]);
         let profile = Self {
+            mode: ProfileMode::Rule,
             mixed_port,
             log_level: LogLevel::Warning,
             store_selected: true,
@@ -291,6 +304,7 @@ impl Profile {
         let provider_name = Name::parse("subscription")?;
         let preview_name = Name::parse("Preview")?;
         let profile = Self {
+            mode: ProfileMode::Rule,
             mixed_port,
             log_level: LogLevel::Silent,
             store_selected: false,
@@ -381,7 +395,9 @@ impl Profile {
                 return Err(ProfileError::MissingTerminalMatch);
             }
             match rule {
-                Rule::Domain { value, policy } | Rule::DomainSuffix { value, policy } => {
+                Rule::Domain { value, policy }
+                | Rule::DomainKeyword { value, policy }
+                | Rule::DomainSuffix { value, policy } => {
                     if !is_rule_value(value) {
                         return Err(ProfileError::InvalidValue("domain rule"));
                     }
@@ -401,6 +417,25 @@ impl Profile {
             }
         }
         Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ProfileMode {
+    Direct,
+    Global,
+    #[default]
+    Rule,
+}
+
+impl ProfileMode {
+    #[must_use]
+    pub const fn as_mihomo_mode(self) -> &'static str {
+        match self {
+            Self::Direct => "direct",
+            Self::Global => "global",
+            Self::Rule => "rule",
+        }
     }
 }
 
@@ -681,6 +716,10 @@ pub enum Rule {
         value: String,
         policy: PolicyRef,
     },
+    DomainKeyword {
+        value: String,
+        policy: PolicyRef,
+    },
     DomainSuffix {
         value: String,
         policy: PolicyRef,
@@ -694,6 +733,177 @@ pub enum Rule {
         policy: PolicyRef,
     },
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum QxRuleKind {
+    Domain,
+    DomainKeyword,
+    DomainSuffix,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct QxRule {
+    pub kind: QxRuleKind,
+    pub value: String,
+    pub source_policy: Name,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct QxRuleList {
+    pub rules: Vec<QxRule>,
+    pub diagnostics: Vec<QxRuleDiagnostic>,
+}
+
+impl QxRuleList {
+    /// Parses a Quantumult X rule-list document into valid rules plus line diagnostics.
+    #[must_use]
+    pub fn parse(input: &str) -> Self {
+        let mut rules = Vec::new();
+        let mut diagnostics = Vec::new();
+        for (index, raw_line) in input.lines().enumerate() {
+            let line_number = index + 1;
+            let line = raw_line.trim();
+            if line.is_empty()
+                || line.starts_with('#')
+                || line.starts_with("//")
+                || line.starts_with(';')
+            {
+                continue;
+            }
+            let fields = line.split(',').map(str::trim).collect::<Vec<_>>();
+            if fields.len() != 3 {
+                diagnostics.push(QxRuleDiagnostic {
+                    line_number,
+                    kind: QxRuleDiagnosticKind::InvalidFieldCount,
+                    detail: "expected rule type, value, and policy".to_owned(),
+                });
+                continue;
+            }
+            let Some(kind) = parse_qx_rule_kind(fields[0]) else {
+                diagnostics.push(QxRuleDiagnostic {
+                    line_number,
+                    kind: QxRuleDiagnosticKind::UnsupportedRuleType,
+                    detail: "unsupported rule type".to_owned(),
+                });
+                continue;
+            };
+            if !is_rule_value(fields[1]) {
+                diagnostics.push(QxRuleDiagnostic {
+                    line_number,
+                    kind: QxRuleDiagnosticKind::InvalidValue,
+                    detail: "rule value is empty or contains unsafe characters".to_owned(),
+                });
+                continue;
+            }
+            let Ok(source_policy) = Name::parse(fields[2]) else {
+                diagnostics.push(QxRuleDiagnostic {
+                    line_number,
+                    kind: QxRuleDiagnosticKind::InvalidPolicy,
+                    detail: "policy name is empty or contains unsafe characters".to_owned(),
+                });
+                continue;
+            };
+            rules.push(QxRule {
+                kind,
+                value: fields[1].to_owned(),
+                source_policy,
+            });
+        }
+        Self { rules, diagnostics }
+    }
+
+    /// Returns unique source policy labels in first-seen order.
+    #[must_use]
+    pub fn source_policies(&self) -> Vec<Name> {
+        let mut seen = HashSet::new();
+        let mut policies = Vec::new();
+        for rule in &self.rules {
+            if seen.insert(rule.source_policy.as_str().to_ascii_lowercase()) {
+                policies.push(rule.source_policy.clone());
+            }
+        }
+        policies
+    }
+
+    /// Converts parsed QX rules with caller-provided policy mapping.
+    ///
+    /// # Errors
+    /// Returns the first source policy that the caller did not map.
+    pub fn to_profile_rules(
+        &self,
+        mut map_policy: impl FnMut(&Name) -> Option<PolicyRef>,
+    ) -> Result<Vec<Rule>, QxRuleImportError> {
+        self.rules
+            .iter()
+            .map(|rule| {
+                let policy = map_policy(&rule.source_policy).ok_or_else(|| {
+                    QxRuleImportError::MissingPolicyMapping {
+                        source_policy: rule.source_policy.clone(),
+                    }
+                })?;
+                Ok(match rule.kind {
+                    QxRuleKind::Domain => Rule::Domain {
+                        value: rule.value.clone(),
+                        policy,
+                    },
+                    QxRuleKind::DomainKeyword => Rule::DomainKeyword {
+                        value: rule.value.clone(),
+                        policy,
+                    },
+                    QxRuleKind::DomainSuffix => Rule::DomainSuffix {
+                        value: rule.value.clone(),
+                        policy,
+                    },
+                })
+            })
+            .collect()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct QxRuleDiagnostic {
+    pub line_number: usize,
+    pub kind: QxRuleDiagnosticKind,
+    pub detail: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum QxRuleDiagnosticKind {
+    InvalidFieldCount,
+    UnsupportedRuleType,
+    InvalidValue,
+    InvalidPolicy,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum QxRuleImportError {
+    MissingPolicyMapping { source_policy: Name },
+}
+
+impl QxRuleImportError {
+    #[must_use]
+    pub fn source_policy(&self) -> &Name {
+        match self {
+            Self::MissingPolicyMapping { source_policy } => source_policy,
+        }
+    }
+}
+
+impl fmt::Display for QxRuleImportError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingPolicyMapping { source_policy } => {
+                write!(
+                    formatter,
+                    "QX source policy `{}` has no local policy mapping",
+                    source_policy.as_str()
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for QxRuleImportError {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProfileError {
@@ -778,7 +988,9 @@ impl std::error::Error for WriteError {
 pub fn render_mihomo_yaml(profile: &Profile) -> Result<String, ProfileError> {
     profile.validate()?;
     let mut yaml = String::new();
-    yaml.push_str("mode: \"rule\"\nallow-lan: false\nbind-address: \"127.0.0.1\"\n");
+    writeln!(yaml, "mode: {}", quoted(profile.mode.as_mihomo_mode()))
+        .expect("String write cannot fail");
+    yaml.push_str("allow-lan: false\nbind-address: \"127.0.0.1\"\n");
     writeln!(yaml, "mixed-port: {}", profile.mixed_port).expect("String write cannot fail");
     writeln!(
         yaml,
@@ -1303,6 +1515,18 @@ fn is_rule_value(value: &str) -> bool {
     is_plain_value(value, 1024) && !value.contains(',')
 }
 
+fn parse_qx_rule_kind(value: &str) -> Option<QxRuleKind> {
+    if value.eq_ignore_ascii_case("DOMAIN") {
+        Some(QxRuleKind::Domain)
+    } else if value.eq_ignore_ascii_case("DOMAIN-KEYWORD") {
+        Some(QxRuleKind::DomainKeyword)
+    } else if value.eq_ignore_ascii_case("DOMAIN-SUFFIX") {
+        Some(QxRuleKind::DomainSuffix)
+    } else {
+        None
+    }
+}
+
 fn is_safe_relative_path(value: &str) -> bool {
     !value.is_empty()
         && !value.chars().any(char::is_control)
@@ -1528,6 +1752,9 @@ fn render_transport_path_host(
 fn render_rule(rule: &Rule) -> String {
     match rule {
         Rule::Domain { value, policy } => format!("DOMAIN,{value},{}", policy_name(policy)),
+        Rule::DomainKeyword { value, policy } => {
+            format!("DOMAIN-KEYWORD,{value},{}", policy_name(policy))
+        }
         Rule::DomainSuffix { value, policy } => {
             format!("DOMAIN-SUFFIX,{value},{}", policy_name(policy))
         }

@@ -188,3 +188,18 @@
 - GPUI 成功截图确认策略组候选延迟从 54/67 ms 刷新为 31/88 ms，完成摘要显示 2/2、最低 31、平均 60；第二轮 Visual Verdict 96/100 `pass`。
 - 最终验证通过：全 workspace 128 passed、5 ignored；`cargo fmt --check`、严格 Clippy、`git diff --check` 和敏感订阅域名/token 扫描全部通过。
 - Git 提交 `fix(ui): stream group benchmark results` 已创建；仅停止旧 Relay UI PID 28809，并以同一 Unix controller 启动新 PID 33768。Clash Verge PID 14173 与 verge-mihomo PID 14201 保持运行且未被停止或修改。
+
+# 2026-08-25 运行状态、路由模式与 QX 规则导入
+
+- 已启动 planning-with-files-zh 与 Impeccable shape，仅做需求与架构确认，尚未修改生产代码。
+- 已核对现有底部状态栏、两层模式语义、Mihomo GLOBAL 选择能力和用户提供的 QX 规则文件；确认该文件可解析，但当前领域模型缺少 DOMAIN-KEYWORD 和远程规则源持久化。
+- 用户确认目标是三平台系统托盘/菜单栏图标。已核对锁定 GPUI 与本地依赖树：没有可直接复用的跨平台托盘 API；正在评估 `tray-icon` 的事件循环、Linux 系统包和依赖许可边界。
+- 已用真实 Mihomo 只读确认 `mode=rule` 和 GLOBAL 候选语义；同时确认 GPUI 可支持托盘驻留所需的 Explicit 生命周期，但托盘本身和 HTTPS 规则下载仍各自需要明确依赖方案。
+- 依赖与架构两项独立评审均推荐 `tray-icon + binary shell command bridge`；已向用户请求新增依赖授权，同时并行进入 RoutingMode 与 `/configs` PATCH 的 TDD 红→绿实现。
+- `RoutingMode::{Direct, Global, Rule}`、`RuntimeConfig.mode` 和 `/configs` PATCH 已完成 TDD；未知/缺失 mode 安全回落规则模式，HTTP/Unix controller 共用同一 API。
+- GPUI 顶栏现在把“接入”和“路由”显示为两个独立分段控件；720px 紧凑窗使用带维度前缀的循环控件，避免把“关闭代理”误解成“直连”。
+- 节点页新增 GLOBAL 候选与当前出口展示：Relay 托管内核可切换，外部 Clash Verge controller 显示“当前 · 只读”且不会发送 PUT；路由模式偏好写入私有 store 并参与下一次托管配置生成。
+- `relay-profile` 已加入 DOMAIN-KEYWORD、QX 规则列表解析、结构化错误行、源策略标签映射，以及可持久渲染的 ProfileMode；代表性 airports.list 语义测试已通过。
+- 已生成宽屏、720px 紧凑和真实 controller 节点页截图；新增 `nodes-wide-connected-global.png` 专门验证全局出口列和只读边界。系统托盘与 HTTPS 规则下载仍等待用户明确批准两个直接依赖。
+- 首轮 Visual Verdict 88/100 指出窄窗控件与只读状态的交互暗示不足；改成带循环标记的紧凑控件和纯文本 `● 当前 / 外部只读` 后，第二轮为 91/100 `pass`。
+- 最终本阶段验证通过：143 passed、5 ignored；workspace fmt、all-targets Clippy `-D warnings`、diff check 和用户私有订阅域名/token 扫描均通过。

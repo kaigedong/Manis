@@ -3,8 +3,8 @@ use std::path::Path;
 
 use relay_profile::{
     HealthCheck, LogLevel, Name, OutboundProxy, PolicyGroup, PolicyGroupKind, PolicyRef, Profile,
-    ProxyProvider, Rule, SecretUrl, UserPolicyGroup, UserPolicyGroupKind, VlessProxy,
-    render_mihomo_yaml, write_private_atomic,
+    ProfileMode, ProxyProvider, QxRuleDiagnosticKind, QxRuleKind, QxRuleList, Rule, SecretUrl,
+    UserPolicyGroup, UserPolicyGroupKind, VlessProxy, render_mihomo_yaml, write_private_atomic,
 };
 
 fn fixture_secret() -> SecretUrl {
@@ -106,6 +106,7 @@ fn qx_default_renders_ordered_minimal_mihomo_yaml() {
     let profile = Profile::qx_default(fixture_secret()).expect("default profile is valid");
     let yaml = render_mihomo_yaml(&profile).expect("default profile renders");
 
+    assert_eq!(profile.mode, ProfileMode::Rule);
     assert!(yaml.contains("mode: \"rule\""));
     assert!(yaml.contains("allow-lan: false"));
     assert!(yaml.contains("bind-address: \"127.0.0.1\""));
@@ -125,6 +126,42 @@ fn qx_default_renders_ordered_minimal_mihomo_yaml() {
             < yaml.find("proxy-groups:").expect("groups section")
     );
     assert!(yaml.find("- \"GEOIP,CN,DIRECT,no-resolve\"") < yaml.find("- \"MATCH,Proxy\""));
+}
+
+#[test]
+fn generated_profiles_default_to_rule_mode_for_compatibility() {
+    let preview = Profile::subscription_preview(fixture_secret(), 17_891)
+        .expect("preview profile should build");
+    let vless = VlessProxy::parse_share_link(
+        "vless://00000000-0000-4000-8000-000000000000@edge.example.invalid:443?encryption=none&security=tls&type=ws&path=%2Frelay#Saved",
+    )
+    .expect("fixture VLESS should parse");
+    let sources = Profile::qx_sources(vec![fixture_secret()], vec![vless], 17_890)
+        .expect("source profile should build");
+
+    assert_eq!(ProfileMode::default(), ProfileMode::Rule);
+    assert_eq!(preview.mode, ProfileMode::Rule);
+    assert_eq!(sources.mode, ProfileMode::Rule);
+}
+
+#[test]
+fn profile_mode_can_be_persisted_and_rendered_for_all_mihomo_modes() {
+    let cases = [
+        (ProfileMode::Direct, "direct"),
+        (ProfileMode::Global, "global"),
+        (ProfileMode::Rule, "rule"),
+    ];
+
+    for (mode, wire_label) in cases {
+        let mut profile = Profile::qx_default(fixture_secret()).expect("default profile is valid");
+        profile.set_mode(mode);
+
+        let yaml = render_mihomo_yaml(&profile).expect("profile should render");
+
+        assert_eq!(profile.mode, mode);
+        assert_eq!(mode.as_mihomo_mode(), wire_label);
+        assert!(yaml.contains(&format!("mode: \"{wire_label}\"")));
+    }
 }
 
 #[test]
@@ -336,8 +373,110 @@ fn qx_sources_with_groups_rejects_bad_user_group_references_and_names() {
 }
 
 #[test]
+fn domain_keyword_rules_validate_and_render_to_mihomo_yaml() {
+    let mut profile = Profile::qx_default(fixture_secret()).expect("default profile is valid");
+    profile.rules.insert(
+        0,
+        Rule::DomainKeyword {
+            value: "google".to_owned(),
+            policy: PolicyRef::Group(Name::parse("Proxy").expect("valid group")),
+        },
+    );
+
+    let yaml = render_mihomo_yaml(&profile).expect("profile should render");
+
+    assert!(yaml.contains("- \"DOMAIN-KEYWORD,google,Proxy\""));
+    assert!(yaml.find("- \"DOMAIN-KEYWORD,google,Proxy\"") < yaml.find("- \"MATCH,Proxy\""));
+}
+
+#[test]
+fn quantumult_x_rule_list_parses_rules_and_reports_actionable_diagnostics() {
+    let parsed = QxRuleList::parse(
+        r"
+# comment
+DOMAIN-KEYWORD,google,PROXY
+DOMAIN-SUFFIX,githubusercontent.com,PROXY
+DOMAIN,example.com,proxy
+IP-CIDR,192.0.2.0/24,DIRECT
+DOMAIN-SUFFIX,,PROXY
+DOMAIN,bad.example,DIRECT,unexpected
+",
+    );
+
+    assert_eq!(parsed.rules.len(), 3);
+    assert_eq!(parsed.rules[0].kind, QxRuleKind::DomainKeyword);
+    assert_eq!(parsed.rules[0].value, "google");
+    assert_eq!(parsed.rules[0].source_policy.as_str(), "PROXY");
+    assert_eq!(parsed.rules[1].kind, QxRuleKind::DomainSuffix);
+    assert_eq!(parsed.rules[2].kind, QxRuleKind::Domain);
+    assert_eq!(parsed.rules[2].source_policy.as_str(), "proxy");
+    assert_eq!(parsed.source_policies().len(), 1);
+    assert!(
+        parsed
+            .source_policies()
+            .iter()
+            .any(|name| name.as_str() == "PROXY")
+    );
+    assert_eq!(parsed.diagnostics.len(), 3);
+    assert_eq!(parsed.diagnostics[0].line_number, 6);
+    assert_eq!(
+        parsed.diagnostics[0].kind,
+        QxRuleDiagnosticKind::UnsupportedRuleType
+    );
+    assert_eq!(parsed.diagnostics[1].line_number, 7);
+    assert_eq!(
+        parsed.diagnostics[1].kind,
+        QxRuleDiagnosticKind::InvalidValue
+    );
+    assert_eq!(parsed.diagnostics[2].line_number, 8);
+    assert_eq!(
+        parsed.diagnostics[2].kind,
+        QxRuleDiagnosticKind::InvalidFieldCount
+    );
+}
+
+#[test]
+fn quantumult_x_rule_list_maps_source_policies_to_local_profile_rules() {
+    let parsed = QxRuleList::parse(
+        r"
+DOMAIN-KEYWORD,google,PROXY
+DOMAIN-SUFFIX,githubusercontent.com,PROXY
+DOMAIN,example.com,proxy
+",
+    );
+    assert!(parsed.diagnostics.is_empty());
+    let proxy = Name::parse("Proxy").expect("valid group");
+    let mapped_rules = parsed
+        .to_profile_rules(|source| {
+            (source.as_str().eq_ignore_ascii_case("PROXY")).then(|| PolicyRef::Group(proxy.clone()))
+        })
+        .expect("all fixture policies should map");
+
+    let mut profile = Profile::qx_default(fixture_secret()).expect("default profile is valid");
+    profile.rules.splice(0..0, mapped_rules);
+    let yaml = render_mihomo_yaml(&profile).expect("mapped QX rules should render");
+
+    assert!(yaml.contains("- \"DOMAIN-KEYWORD,google,Proxy\""));
+    assert!(yaml.contains("- \"DOMAIN-SUFFIX,githubusercontent.com,Proxy\""));
+    assert!(yaml.contains("- \"DOMAIN,example.com,Proxy\""));
+}
+
+#[test]
+fn quantumult_x_rule_list_requires_policy_mapping_before_import() {
+    let parsed = QxRuleList::parse("DOMAIN-KEYWORD,google,PROXY\n");
+
+    let error = parsed
+        .to_profile_rules(|_source| None)
+        .expect_err("unmapped source policy should be actionable");
+
+    assert_eq!(error.source_policy().as_str(), "PROXY");
+    assert!(error.to_string().contains("PROXY"));
+}
+
+#[test]
 fn renderer_escapes_double_quoted_yaml_scalars() {
     let profile = Profile {
+        mode: ProfileMode::Rule,
         mixed_port: 7891,
         log_level: LogLevel::Silent,
         store_selected: true,
@@ -381,6 +520,7 @@ fn validation_rejects_invalid_names_duplicates_dangling_refs_and_missing_match()
     let provider_name = Name::parse("subscription").expect("valid provider");
     let group_name = Name::parse("Proxy").expect("valid group");
     let duplicate_groups = Profile {
+        mode: ProfileMode::Rule,
         mixed_port: 7890,
         log_level: LogLevel::Warning,
         store_selected: true,

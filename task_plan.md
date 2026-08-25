@@ -150,6 +150,14 @@
 - [completed] 4. 用真实 Mihomo 策略组及宽屏/紧凑 GPUI 截图完成验证和 Visual Verdict
 - [completed] 5. 完成全仓检查、Git 提交并仅重启 Relay UI
 
+## 运行状态、路由模式与 QX 规则导入
+
+- [completed] 1. 核对现有状态栏、代理接入模式、Mihomo 路由模式和 QX 远程规则语义
+- [completed] 2. 确认状态栏是应用内运行栏还是系统托盘/菜单栏，以及首轮交付边界
+- [completed] 3. 设计并实现“关闭/系统/TUN”与“直连/全局/规则”两层互不混淆的控制模型
+- [completed] 4. 实现托管 Mihomo 的全局出口节点选择、路由模式持久化与 QX 规则解析/策略映射
+- [in_progress] 5. 完成原生视觉、全仓验证和 Git 提交；托盘及 HTTPS 规则下载等待新增依赖授权
+
 ## 固定约束
 - 实现框架：Rust + GPUI
 - 目标平台：Windows、macOS、Linux
@@ -184,3 +192,4 @@
 | 两个测速代码映射 explorer 同时命中 Spark 用量上限 | 1 | 不重试该模型；改用主代理本地 `rg`/定向读取，必要时使用非 Spark 专项角色 |
 | 新 `PolicyCatalog` RED 测试首轮遗漏 `BTreeMap` import | 1 | 先补测试文件标准库 import；保留缺少生产 API 的预期红灯 |
 | 增量 worker join 使用 `for_each` 被严格 Clippy 拒绝 | 1 | 按 lint 建议改为显式 `for`，让线程回收行为更直观 |
+| 仓库局部 `.codex/prompts` 不存在 | 1 | 按 AGENTS 约定改读用户级 `/Users/bobo/.codex/prompts`，不重复查找缺失路径 |

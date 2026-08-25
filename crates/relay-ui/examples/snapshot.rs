@@ -433,6 +433,13 @@ fn capture_connected(
     refresh(cx, window)?;
     save_screenshot(cx, window, "native-wide-connected.png")?;
 
+    cx.simulate_click(window, point(px(110.0), px(80.0)), Modifiers::none());
+    refresh(cx, window)?;
+    save_screenshot(cx, window, "nodes-wide-connected-global.png")?;
+
+    cx.simulate_click(window, point(px(110.0), px(117.0)), Modifiers::none());
+    refresh(cx, window)?;
+
     cx.simulate_click(window, point(px(270.0), px(236.0)), Modifiers::none());
     for _ in 0..24 {
         std::thread::sleep(std::time::Duration::from_millis(25));
@@ -589,7 +596,7 @@ fn fixture_response(path: &str) -> &'static str {
     match path {
         "/version" => r#"{"meta":true,"version":"v1.19.12"}"#,
         "/proxies" => {
-            r#"{"proxies":{"AI 自动选择":{"name":"AI 自动选择","type":"Selector","now":"新加坡 SG-02","all":["新加坡 SG-02","日本 JP-03"],"alive":true},"视频服务":{"name":"视频服务","type":"URLTest","now":"香港 HK-01","all":["香港 HK-01","美国 US-01"],"alive":true},"新加坡 SG-02":{"name":"新加坡 SG-02","type":"VLESS","alive":true,"provider-name":"Provider A","history":[{"delay":54}]},"日本 JP-03":{"name":"日本 JP-03","type":"Trojan","alive":true,"provider-name":"Provider B","history":[{"delay":67}]},"香港 HK-01":{"name":"香港 HK-01","type":"Hysteria2","alive":true,"provider-name":"Provider A","history":[{"delay":38}]},"美国 US-01":{"name":"美国 US-01","type":"VLESS","alive":true,"provider-name":"Provider A","history":[{"delay":142}]}}}"#
+            r#"{"proxies":{"GLOBAL":{"name":"GLOBAL","type":"Selector","now":"新加坡 SG-02","all":["香港 HK-01","新加坡 SG-02","日本 JP-03","美国 US-01","DIRECT"],"alive":true},"AI 自动选择":{"name":"AI 自动选择","type":"Selector","now":"新加坡 SG-02","all":["新加坡 SG-02","日本 JP-03"],"alive":true},"视频服务":{"name":"视频服务","type":"URLTest","now":"香港 HK-01","all":["香港 HK-01","美国 US-01"],"alive":true},"新加坡 SG-02":{"name":"新加坡 SG-02","type":"VLESS","alive":true,"provider-name":"Provider A","history":[{"delay":54}]},"日本 JP-03":{"name":"日本 JP-03","type":"Trojan","alive":true,"provider-name":"Provider B","history":[{"delay":67}]},"香港 HK-01":{"name":"香港 HK-01","type":"Hysteria2","alive":true,"provider-name":"Provider A","history":[{"delay":38}]},"美国 US-01":{"name":"美国 US-01","type":"VLESS","alive":true,"provider-name":"Provider A","history":[{"delay":142}]}}}"#
         }
         "/proxies/AI%20%E8%87%AA%E5%8A%A8%E9%80%89%E6%8B%A9" => {
             r#"{"name":"AI 自动选择","type":"Selector","now":"新加坡 SG-02","all":["新加坡 SG-02","日本 JP-03"]}"#
@@ -603,7 +610,9 @@ fn fixture_response(path: &str) -> &'static str {
         "/connections" => {
             r#"{"downloadTotal":7340032,"uploadTotal":1572864,"connections":[{"id":"fixture","metadata":{"host":"openai.com","process":"Safari","destinationPort":443},"chains":["新加坡 SG-02","AI 自动选择"],"providerChains":[["Provider A","新加坡 SG-02"]],"rule":"DOMAIN-SUFFIX","rulePayload":"openai.com","upload":2048,"download":8192}]}"#
         }
-        "/configs" => r#"{"mixed-port":7890,"port":0,"socks-port":0,"tun":{"enable":false}}"#,
+        "/configs" => {
+            r#"{"mixed-port":7890,"port":0,"socks-port":0,"mode":"rule","tun":{"enable":false}}"#
+        }
         _ => r"{}",
     }
 }

@@ -5,7 +5,7 @@ use relay_core::{
     NodeAvailabilityFilter, NodeGroupIcon, NodeGroupMatcher, NodeGroupStrategy, NodeIdentity,
     NodePolicyGroup, NodeWorkspaceState, PolicyCandidateKind, PolicyCatalog, PolicyGroup,
     PolicyGroupId, PolicyGroupKind, PolicyNode, PolicyRule, PolicyWorkspaceState, PrimaryWorkspace,
-    ProxyId, ProxyMode, RouteEvidence, WindowSizeClass,
+    ProxyId, ProxyMode, RouteEvidence, RoutingMode, WindowSizeClass,
 };
 
 fn streaming() -> PolicyGroupId {
@@ -185,6 +185,81 @@ fn policy_catalog_applies_fresh_group_delays_and_automatic_winner() -> Result<()
 }
 
 #[test]
+fn policy_catalog_records_validated_selector_targets_by_id_or_name()
+-> Result<(), EmptyPolicyCatalog> {
+    let mut catalog = PolicyCatalog::try_new(vec![
+        PolicyGroup {
+            id: PolicyGroupId::new("global-id"),
+            name: "GLOBAL".to_owned(),
+            kind: PolicyGroupKind::Selector,
+            target: "DIRECT".to_owned(),
+            nodes: vec![
+                PolicyNode {
+                    id: ProxyId::new("DIRECT"),
+                    name: "DIRECT".to_owned(),
+                    kind: PolicyCandidateKind::Node,
+                    provider: None,
+                    detail: "Direct".to_owned(),
+                    latency_ms: None,
+                    alive: None,
+                },
+                PolicyNode {
+                    id: ProxyId::new("Proxy"),
+                    name: "Proxy".to_owned(),
+                    kind: PolicyCandidateKind::NodeGroup,
+                    provider: None,
+                    detail: "Selector".to_owned(),
+                    latency_ms: Some(38),
+                    alive: Some(true),
+                },
+            ],
+            rules: Vec::new(),
+            rules_total: 0,
+        },
+        PolicyGroup {
+            id: PolicyGroupId::new("auto"),
+            name: "Auto".to_owned(),
+            kind: PolicyGroupKind::UrlTest,
+            target: "Proxy".to_owned(),
+            nodes: vec![PolicyNode {
+                id: ProxyId::new("Proxy"),
+                name: "Proxy".to_owned(),
+                kind: PolicyCandidateKind::Node,
+                provider: None,
+                detail: "VLESS".to_owned(),
+                latency_ms: None,
+                alive: None,
+            }],
+            rules: Vec::new(),
+            rules_total: 0,
+        },
+    ])?;
+
+    assert!(catalog.apply_selector_target("global-id", "Proxy"));
+    assert_eq!(
+        catalog
+            .select(Some(&PolicyGroupId::new("global-id")))
+            .target,
+        "Proxy"
+    );
+    assert!(catalog.apply_selector_target("GLOBAL", "DIRECT"));
+    assert_eq!(
+        catalog
+            .select(Some(&PolicyGroupId::new("global-id")))
+            .target,
+        "DIRECT"
+    );
+    assert!(!catalog.apply_selector_target("GLOBAL", "Missing"));
+    assert!(!catalog.apply_selector_target("missing-group", "Proxy"));
+    assert!(!catalog.apply_selector_target("Auto", "Proxy"));
+    assert_eq!(
+        catalog.select(Some(&PolicyGroupId::new("auto"))).target,
+        "Proxy"
+    );
+    Ok(())
+}
+
+#[test]
 fn only_selector_groups_allow_manual_node_selection() {
     assert!(PolicyGroupKind::Selector.allows_manual_selection());
     assert!(!PolicyGroupKind::UrlTest.allows_manual_selection());
@@ -256,6 +331,30 @@ fn proxy_mode_cycles_through_off_system_and_tun() {
     assert_eq!(ProxyMode::System.next(), ProxyMode::Tun);
     assert_eq!(ProxyMode::Tun.next(), ProxyMode::Off);
     assert_eq!(ProxyMode::System.label(), "系统代理");
+}
+
+#[test]
+fn routing_mode_has_stable_labels_and_wire_values() {
+    assert_eq!(RoutingMode::Direct.label(), "直连");
+    assert_eq!(RoutingMode::Global.label(), "全局");
+    assert_eq!(RoutingMode::Rule.label(), "规则");
+    assert_eq!(RoutingMode::Direct.wire_value(), "direct");
+    assert_eq!(RoutingMode::Global.wire_value(), "global");
+    assert_eq!(RoutingMode::Rule.wire_value(), "rule");
+    assert_eq!(
+        RoutingMode::parse_wire_value("DIRECT"),
+        Some(RoutingMode::Direct)
+    );
+    assert_eq!(
+        RoutingMode::parse_wire_value(" global "),
+        Some(RoutingMode::Global)
+    );
+    assert_eq!(
+        RoutingMode::parse_wire_value("Rule"),
+        Some(RoutingMode::Rule)
+    );
+    assert_eq!(RoutingMode::parse_wire_value("script"), None);
+    assert_eq!(RoutingMode::default(), RoutingMode::Rule);
 }
 
 #[test]

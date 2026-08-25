@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use relay_core::RoutingMode;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
@@ -151,6 +152,19 @@ where
     /// Returns an error if the controller request fails or the payload cannot be decoded.
     pub fn fetch_runtime_config(&self) -> Result<RuntimeConfig, MihomoError> {
         self.fetch_json::<RuntimeConfig>(CONFIGS_ENDPOINT)
+    }
+
+    /// Switches Mihomo's routing mode through `/configs`.
+    ///
+    /// # Errors
+    /// Returns an error if the PATCH request fails or the body cannot be serialized.
+    pub fn set_routing_mode(&self, mode: RoutingMode) -> Result<(), MihomoError> {
+        self.transport.patch_json(
+            &self.config,
+            CONFIGS_ENDPOINT,
+            &serde_json::json!({ "mode": mode.wire_value() }),
+        )?;
+        Ok(())
     }
 
     /// Toggles `tun.enable` while preserving every other currently reported TUN field.

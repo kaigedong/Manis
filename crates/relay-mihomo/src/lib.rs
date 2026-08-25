@@ -21,3 +21,4 @@ pub use models::{
     MihomoPolicyGroup, MihomoSnapshot, ObservedRouteEvidence, PolicyGroup, Proxy, ProxyProvider,
     Rule, RuleExtra, RuntimeConfig, RuntimeTunConfig, VersionInfo,
 };
+pub use relay_core::RoutingMode;

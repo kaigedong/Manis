@@ -234,6 +234,32 @@ impl PolicyCatalog {
         }
         true
     }
+
+    /// Records a selector group's validated target without rebuilding the catalog.
+    ///
+    /// `group_id_or_name` may match either the stable group ID or the display name. `target` may
+    /// match a candidate ID or name, but the catalog stores the candidate's display name.
+    /// Returns `false` for missing groups, non-selector groups, or targets outside the candidates.
+    pub fn apply_selector_target(&mut self, group_id_or_name: &str, target: &str) -> bool {
+        let Some(group) = std::iter::once(&mut self.primary)
+            .chain(&mut self.remaining)
+            .find(|group| group.id.as_str() == group_id_or_name || group.name == group_id_or_name)
+        else {
+            return false;
+        };
+        if !group.kind.allows_manual_selection() {
+            return false;
+        }
+        let Some(candidate) = group
+            .nodes
+            .iter()
+            .find(|node| node.id.as_str() == target || node.name == target)
+        else {
+            return false;
+        };
+        candidate.name.clone_into(&mut group.target);
+        true
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -289,6 +315,44 @@ impl ProxyMode {
             Self::Off => Self::System,
             Self::System => Self::Tun,
             Self::Tun => Self::Off,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum RoutingMode {
+    Direct,
+    Global,
+    #[default]
+    Rule,
+}
+
+impl RoutingMode {
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Direct => "直连",
+            Self::Global => "全局",
+            Self::Rule => "规则",
+        }
+    }
+
+    #[must_use]
+    pub const fn wire_value(self) -> &'static str {
+        match self {
+            Self::Direct => "direct",
+            Self::Global => "global",
+            Self::Rule => "rule",
+        }
+    }
+
+    #[must_use]
+    pub fn parse_wire_value(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "direct" => Some(Self::Direct),
+            "global" => Some(Self::Global),
+            "rule" => Some(Self::Rule),
+            _ => None,
         }
     }
 }

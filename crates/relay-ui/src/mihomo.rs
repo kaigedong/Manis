@@ -11,7 +11,7 @@ use std::{env, error::Error, fmt};
 
 use relay_core::{
     EmptyPolicyCatalog, NodeGroupIcon, NodeGroupMatcher, NodeGroupStrategy, NodeIdentity,
-    NodePolicyGroup, PolicyCatalog,
+    NodePolicyGroup, PolicyCatalog, RoutingMode,
 };
 use relay_engine::{
     ControllerEndpoint, EngineError, EngineManager, ManagedEngineConfig, ProbeStatus,
@@ -25,8 +25,8 @@ use relay_mihomo::{
     VersionInfo, to_policy_catalog,
 };
 use relay_profile::{
-    Name, Profile, SecretUrl, UserPolicyGroup, UserPolicyGroupKind, VlessProxy, render_mihomo_yaml,
-    write_private_atomic,
+    Name, Profile, ProfileMode, SecretUrl, UserPolicyGroup, UserPolicyGroupKind, VlessProxy,
+    render_mihomo_yaml, write_private_atomic,
 };
 
 use crate::subscription::VlessSource;
@@ -47,6 +47,7 @@ const STORED_SUBSCRIPTION_SUFFIX: &str = ".url";
 const SAVED_VLESS_PREFIX: &str = "saved-";
 const SAVED_VLESS_SUFFIX: &str = ".vless";
 const WORKSPACE_STATE_FILE: &str = "workspace.state";
+const ROUTING_MODE_FILE: &str = "routing.mode";
 const NODE_POLICY_GROUP_PREFIX: &str = "group-";
 const NODE_POLICY_GROUP_SUFFIX: &str = ".group";
 const NODE_POLICY_GROUP_VERSION: &str = "relay-node-group-v1";
@@ -273,6 +274,69 @@ impl ControllerRuntime {
         set_tun_enabled(&endpoint, enabled).map_err(LoadError::from)
     }
 
+    pub(crate) fn set_routing_mode(&self, mode: RoutingMode) -> Result<(), LoadError> {
+        let endpoint = match self {
+            Self::Managed { manager, .. } => {
+                let mut manager = manager
+                    .lock()
+                    .map_err(|_poisoned| LoadError::Runtime("托管内核状态锁已损坏".to_owned()))?;
+                manager
+                    .running_endpoint()?
+                    .ok_or_else(|| LoadError::Runtime("Mihomo 尚未运行，请先连接内核".to_owned()))?
+                    .uri()
+            }
+            Self::External { .. } => {
+                return Err(LoadError::Runtime(
+                    "外部控制器保持只读；路由模式仅支持 Relay 托管内核".to_owned(),
+                ));
+            }
+            Self::Invalid { message } => return Err(LoadError::Runtime(message.clone())),
+        };
+        set_routing_mode(&endpoint, mode).map_err(LoadError::from)
+    }
+
+    pub(crate) fn select_global_node(
+        &self,
+        selected_name: &str,
+    ) -> Result<NodeGroupRuntimeSnapshot, LoadError> {
+        let endpoint = match self {
+            Self::Managed { manager, .. } => {
+                let mut manager = manager
+                    .lock()
+                    .map_err(|_poisoned| LoadError::Runtime("托管内核状态锁已损坏".to_owned()))?;
+                manager
+                    .running_endpoint()?
+                    .ok_or_else(|| LoadError::Runtime("Mihomo 尚未运行，请先连接内核".to_owned()))?
+                    .uri()
+            }
+            Self::External { .. } => {
+                return Err(LoadError::Runtime(
+                    "外部控制器保持只读；全局节点仅支持 Relay 托管内核".to_owned(),
+                ));
+            }
+            Self::Invalid { message } => return Err(LoadError::Runtime(message.clone())),
+        };
+        let group = fetch_policy_group(&endpoint, "GLOBAL")?;
+        if !group
+            .proxy_type
+            .as_deref()
+            .is_some_and(is_selector_proxy_type)
+        {
+            return Err(LoadError::Runtime(
+                "Mihomo 的 GLOBAL 不是可手动选择的策略组".to_owned(),
+            ));
+        }
+        if !group.all.iter().any(|candidate| candidate == selected_name) {
+            return Err(LoadError::Runtime(
+                "所选节点不在 Mihomo 的 GLOBAL 候选项中".to_owned(),
+            ));
+        }
+        put_policy_group_selection(&endpoint, "GLOBAL", selected_name)?;
+        fetch_policy_group(&endpoint, "GLOBAL")
+            .map(policy_group_runtime_snapshot)
+            .map_err(LoadError::from)
+    }
+
     pub(crate) fn test_node_group_delay(
         &self,
         group_name: &str,
@@ -492,9 +556,12 @@ impl ControllerRuntime {
             &vless_nodes,
             subscriptions.len(),
         )?;
-        let profile =
+        let mut profile =
             Profile::qx_sources_with_groups(subscriptions, vless_nodes, user_groups, mixed_port)
                 .map_err(|error| LoadError::Runtime(error.to_string()))?;
+        let routing_mode = load_routing_mode_in(store_dir)
+            .map_err(|_error| LoadError::Runtime("无法读取已保存的路由模式".to_owned()))?;
+        profile.set_mode(profile_mode(routing_mode));
         let yaml =
             render_mihomo_yaml(&profile).map_err(|error| LoadError::Runtime(error.to_string()))?;
         let candidate_path =
@@ -1110,6 +1177,56 @@ pub(crate) fn load_collapsed_groups_in(
     _directory: &Path,
 ) -> Result<Vec<String>, SubscriptionStoreError> {
     Ok(Vec::new())
+}
+
+#[cfg(not(windows))]
+pub(crate) fn save_routing_mode_in(
+    directory: &Path,
+    mode: RoutingMode,
+) -> Result<(), SubscriptionStoreError> {
+    write_private_atomic(directory, ROUTING_MODE_FILE, mode.wire_value().as_bytes())
+        .map(|_path| ())
+        .map_err(|_error| SubscriptionStoreError::StoreUnavailable)
+}
+
+#[cfg(windows)]
+pub(crate) fn save_routing_mode_in(
+    _directory: &Path,
+    _mode: RoutingMode,
+) -> Result<(), SubscriptionStoreError> {
+    Err(SubscriptionStoreError::StoreUnavailable)
+}
+
+#[cfg(not(windows))]
+pub(crate) fn load_routing_mode_in(
+    directory: &Path,
+) -> Result<RoutingMode, SubscriptionStoreError> {
+    require_clean_absolute_store(directory)?;
+    let path = directory.join(ROUTING_MODE_FILE);
+    let contents = match fs::symlink_metadata(&path) {
+        Ok(_) => read_private_source_allow_empty(&path)?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(RoutingMode::Rule);
+        }
+        Err(_error) => return Err(SubscriptionStoreError::StoredSourceUnavailable),
+    };
+    RoutingMode::parse_wire_value(contents.trim())
+        .ok_or(SubscriptionStoreError::StoredSourceUnavailable)
+}
+
+#[cfg(windows)]
+pub(crate) fn load_routing_mode_in(
+    _directory: &Path,
+) -> Result<RoutingMode, SubscriptionStoreError> {
+    Ok(RoutingMode::Rule)
+}
+
+fn profile_mode(mode: RoutingMode) -> ProfileMode {
+    match mode {
+        RoutingMode::Direct => ProfileMode::Direct,
+        RoutingMode::Global => ProfileMode::Global,
+        RoutingMode::Rule => ProfileMode::Rule,
+    }
 }
 
 pub(crate) fn new_node_policy_group_id() -> String {
@@ -2563,6 +2680,27 @@ fn set_tun_enabled(endpoint: &str, enabled: bool) -> Result<(), MihomoError> {
     MihomoClient::new(config, StdHttpTransport::default()).set_tun_enabled(enabled)
 }
 
+fn set_routing_mode(endpoint: &str, mode: RoutingMode) -> Result<(), MihomoError> {
+    #[cfg(unix)]
+    if let Some(socket_path) = unix_socket_path(endpoint)? {
+        return MihomoClient::new(
+            with_configured_secret(ControllerConfig::default()),
+            UnixSocketTransport::new(socket_path),
+        )
+        .set_routing_mode(mode);
+    }
+
+    #[cfg(not(unix))]
+    if endpoint.starts_with("unix://") {
+        return Err(MihomoError::InvalidConfig(
+            "Unix controller sockets are not supported on this platform".to_owned(),
+        ));
+    }
+
+    let config = with_configured_secret(ControllerConfig::new(endpoint)?);
+    MihomoClient::new(config, StdHttpTransport::default()).set_routing_mode(mode)
+}
+
 fn fetch_version(endpoint: &str) -> Result<VersionInfo, MihomoError> {
     #[cfg(unix)]
     if let Some(socket_path) = unix_socket_path(endpoint)? {
@@ -2730,6 +2868,24 @@ mod tests {
             );
         }
 
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn routing_mode_round_trips_in_the_private_workspace_store()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use relay_core::RoutingMode;
+
+        let root = test_temp_dir("relay-routing-mode-store");
+        let store = root.join("subscriptions");
+        assert_eq!(super::load_routing_mode_in(&store)?, RoutingMode::Rule);
+
+        super::save_routing_mode_in(&store, RoutingMode::Global)?;
+        assert_eq!(super::load_routing_mode_in(&store)?, RoutingMode::Global);
+
+        super::save_routing_mode_in(&store, RoutingMode::Direct)?;
+        assert_eq!(super::load_routing_mode_in(&store)?, RoutingMode::Direct);
         fs::remove_dir_all(root)?;
         Ok(())
     }
@@ -3246,6 +3402,8 @@ mod tests {
     #[test]
     fn external_runtime_keeps_relay_node_groups_local_only()
     -> Result<(), Box<dyn std::error::Error>> {
+        use relay_core::RoutingMode;
+
         let runtime = super::ControllerRuntime::External {
             endpoint: "http://127.0.0.1:9".to_owned(),
         };
@@ -3257,6 +3415,8 @@ mod tests {
                 .select_node_group_node("Relay Group", "Candidate")
                 .is_err()
         );
+        assert!(runtime.set_routing_mode(RoutingMode::Global).is_err());
+        assert!(runtime.select_global_node("Candidate").is_err());
         Ok(())
     }
 

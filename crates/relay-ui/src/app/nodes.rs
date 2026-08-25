@@ -1,6 +1,8 @@
 use std::collections::BTreeSet;
 
-use gpui::{Context, Div, FontWeight, ParentElement, Role, Stateful, Styled, div, prelude::*, px};
+use gpui::{
+    Context, Div, FontWeight, ParentElement, Role, Stateful, Styled, Toggled, div, prelude::*, px,
+};
 use relay_core::{
     NodeAvailabilityFilter, NodeGroupIcon, NodeGroupMatcher, NodeGroupStrategy, NodeIdentity,
     NodePolicyGroup, PrimaryWorkspace, WindowSizeClass,
@@ -310,7 +312,7 @@ impl RelayApp {
             .py_4()
             .child(Self::node_section_heading(
                 "导入的节点",
-                "按来源查看已经导入的节点；这里只管理库存，不决定流量走向。",
+                "按来源查看已经导入的节点；可为全局模式指定一个出口。",
                 theme,
             ))
             .when(loading && groups.is_empty(), |body| {
@@ -2509,18 +2511,19 @@ impl RelayApp {
                 )
             })
             .when(!collapsed && visible_count > 0, |container| {
-                container.child(Self::node_group_table(
-                    group, filter, &benchmark, compact, theme,
-                ))
+                container
+                    .child(self.node_group_table(group, filter, &benchmark, compact, theme, cx))
             })
     }
 
     fn node_group_table(
+        &self,
         group: &NodeSourceGroup<'_>,
         filter: NodeAvailabilityFilter,
         benchmark: &GroupBenchmarkState,
         compact: bool,
         theme: Theme,
+        cx: &mut Context<Self>,
     ) -> Div {
         let mut table = div();
         if !compact {
@@ -2532,13 +2535,14 @@ impl RelayApp {
                 if !filter.includes(node.alive) {
                     continue;
                 }
-                table = table.child(Self::workspace_node_row(
+                table = table.child(self.workspace_node_row(
                     format!("node-row-{}-{provider_index}-{node_index}", group.id),
                     node,
                     &group.name,
                     benchmark,
                     compact,
                     theme,
+                    cx,
                 ));
             }
         }
@@ -2552,7 +2556,7 @@ impl RelayApp {
                 latency_label: None,
                 alive: None,
             };
-            table = table.child(Self::workspace_node_row(
+            table = table.child(self.workspace_node_row(
                 format!(
                     "node-row-{}-{}-{node_index}",
                     group.id,
@@ -2563,6 +2567,7 @@ impl RelayApp {
                 benchmark,
                 compact,
                 theme,
+                cx,
             ));
         }
         table
@@ -2588,19 +2593,37 @@ impl RelayApp {
                     .text_align(gpui::TextAlign::Right)
                     .child("延迟"),
             )
+            .child(
+                div()
+                    .w(px(76.0))
+                    .text_align(gpui::TextAlign::Right)
+                    .child("全局出口"),
+            )
     }
 
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
     fn workspace_node_row(
+        &self,
         row_id: String,
         node: &LoadedProviderNode,
         source_name: &str,
         benchmark: &GroupBenchmarkState,
         compact: bool,
         theme: Theme,
+        cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let latency = benchmark.node_state(&node.name);
         let idle_latency = node.latency_label.clone().unwrap_or_else(|| "—".to_owned());
         let spinner_id = format!("{row_id}-latency");
+        let global_candidate = self.is_global_candidate(&node.name);
+        let global_selected = self.global_target() == Some(node.name.as_str());
+        let global_busy = self.global_selection_busy.as_deref() == Some(node.name.as_str());
+        let global_writable = matches!(
+            self.runtime,
+            crate::mihomo::ControllerRuntime::Managed { .. }
+        );
+        let selection_locked = self.global_selection_busy.is_some();
+        let selected_name = node.name.clone();
         let content = if compact {
             Self::compact_node_row_content(
                 source_name,
@@ -2625,9 +2648,121 @@ impl RelayApp {
             .min_h(if compact { px(64.0) } else { px(52.0) })
             .px(if compact { px(12.0) } else { px(16.0) })
             .py_2()
+            .flex()
+            .items_center()
+            .gap_3()
             .border_t_1()
             .border_color(theme.outline_subtle)
             .child(content)
+            .when(global_candidate, |row| {
+                if global_writable {
+                    row.child(
+                        div()
+                            .id(format!("global-node-{selected_name}"))
+                            .role(Role::Button)
+                            .aria_label(format!("选择{selected_name}作为全局出口"))
+                            .aria_toggled(if global_selected {
+                                Toggled::True
+                            } else {
+                                Toggled::False
+                            })
+                            .tab_stop(true)
+                            .focusable()
+                            .cursor_pointer()
+                            .flex_shrink_0()
+                            .h(px(28.0))
+                            .min_w(if compact { px(54.0) } else { px(76.0) })
+                            .px_2()
+                            .rounded_md()
+                            .border_1()
+                            .border_color(if global_selected {
+                                theme.action_primary
+                            } else {
+                                theme.outline_subtle
+                            })
+                            .bg(
+                                if global_selected
+                                    && self.routing_mode == relay_core::RoutingMode::Global
+                                {
+                                    theme.action_primary
+                                } else if global_selected {
+                                    theme.action_soft
+                                } else {
+                                    theme.surface_high
+                                },
+                            )
+                            .text_color(
+                                if global_selected
+                                    && self.routing_mode == relay_core::RoutingMode::Global
+                                {
+                                    theme.action_on_primary
+                                } else if global_selected {
+                                    theme.action_primary
+                                } else {
+                                    theme.text_secondary
+                                },
+                            )
+                            .text_size(px(10.0))
+                            .font_weight(if global_selected {
+                                FontWeight::SEMIBOLD
+                            } else {
+                                FontWeight::NORMAL
+                            })
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(if global_busy {
+                                "切换中…"
+                            } else if global_selected
+                                && self.routing_mode == relay_core::RoutingMode::Global
+                            {
+                                "使用中"
+                            } else if global_selected {
+                                "已保存"
+                            } else {
+                                "设为全局"
+                            })
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                if !selection_locked {
+                                    this.select_global_node(selected_name.clone(), cx);
+                                }
+                            })),
+                    )
+                } else {
+                    row.child(
+                        div()
+                            .flex_shrink_0()
+                            .w(if compact { px(58.0) } else { px(76.0) })
+                            .text_align(gpui::TextAlign::Center)
+                            .text_size(px(10.0))
+                            .font_weight(if global_selected {
+                                FontWeight::SEMIBOLD
+                            } else {
+                                FontWeight::NORMAL
+                            })
+                            .text_color(if global_selected {
+                                theme.action_primary
+                            } else {
+                                theme.text_tertiary
+                            })
+                            .child(if global_selected {
+                                "● 当前"
+                            } else {
+                                "外部只读"
+                            }),
+                    )
+                }
+            })
+            .when(!compact && !global_candidate, |row| {
+                row.child(
+                    div()
+                        .w(px(76.0))
+                        .flex_shrink_0()
+                        .text_align(gpui::TextAlign::Center)
+                        .text_color(theme.text_tertiary)
+                        .child("—"),
+                )
+            })
     }
 
     fn compact_node_row_content(
@@ -2639,6 +2774,8 @@ impl RelayApp {
         theme: Theme,
     ) -> Div {
         div()
+            .min_w(px(0.0))
+            .flex_1()
             .flex()
             .items_center()
             .justify_between()
@@ -2690,6 +2827,8 @@ impl RelayApp {
         theme: Theme,
     ) -> Div {
         div()
+            .min_w(px(0.0))
+            .flex_1()
             .flex()
             .items_center()
             .gap_3()
