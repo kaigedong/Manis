@@ -147,3 +147,4 @@
 - 原生宽屏/720px 紧凑详情截图已生成；Visual Verdict 94/100，通过 90 分门禁，无重叠、截断或横向溢出。
 - 安全复核为 LOW：0 个 Critical/High/Medium；已将误导性的 `ReadonlyTransport` 重命名为 `ControllerTransport`，并把 Selector 类型校验收紧为 ASCII 大小写不敏感的精确匹配。
 - 全仓验证通过：118 passed、5 ignored；workspace 全目标 Clippy `-D warnings` 通过；对正在运行的 Clash Verge Unix controller 只读 smoke test 通过。
+- Git 提交 `d0dc12f feat(ui): add strategy group controls` 已创建；Relay 已换成新构建进程 PID 13356，Clash Verge 与 verge-mihomo PID 19351/19379 保持未动。

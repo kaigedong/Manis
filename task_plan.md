@@ -123,7 +123,7 @@
 - [completed] 3. 实现 HTTP/Unix controller 的组详情读取与手动节点切换
 - [completed] 4. 在节点页实现宽屏/紧凑策略组详情、逐节点反馈和自动组当前优选
 - [completed] 5. 完成真实 controller/托管 fixture 验证、原生截图与 Visual Verdict
-- [in_progress] 6. 完成安全复核、全仓验证、Git 提交和 Relay 重启
+- [completed] 6. 完成安全复核、全仓验证、Git 提交和 Relay 重启
 
 ## 固定约束
 - 实现框架：Rust + GPUI
