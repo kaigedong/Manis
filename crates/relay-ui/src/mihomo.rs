@@ -1,7 +1,11 @@
 use std::fs;
 use std::io::Read;
+use std::net::TcpListener;
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{env, error::Error, fmt};
 
 use relay_core::{EmptyPolicyCatalog, PolicyCatalog};
@@ -24,8 +28,12 @@ const CONFIG_ENV: &str = "RELAY_MIHOMO_CONFIG";
 const DATA_DIR_ENV: &str = "RELAY_MIHOMO_DATA_DIR";
 const SUBSCRIPTION_FILE_ENV: &str = "RELAY_MIHOMO_SUBSCRIPTION_FILE";
 const MIXED_PORT_ENV: &str = "RELAY_MIHOMO_MIXED_PORT";
+const PREVIEW_BINARY_ENV: &str = "RELAY_MIHOMO_PREVIEW_BINARY";
 const DEFAULT_MANAGED_MIXED_PORT: u16 = 17_890;
 const MAX_SUBSCRIPTION_FILE_BYTES: u64 = 16 * 1024;
+const PREVIEW_PROVIDER_ATTEMPTS: usize = 80;
+const PREVIEW_PROVIDER_DELAY: Duration = Duration::from_millis(250);
+static NEXT_PREVIEW_WORKSPACE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug)]
 pub(crate) enum ControllerState {
@@ -204,6 +212,234 @@ pub(crate) struct LoadedProviderNode {
     pub protocol: String,
     pub latency_label: Option<String>,
     pub alive: Option<bool>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SubscriptionPreviewError {
+    UnsupportedPlatform,
+    BinaryUnavailable,
+    InvalidSource,
+    WorkspaceUnavailable,
+    ProfileUnavailable,
+    EngineUnavailable,
+    ProviderUnavailable,
+    EmptyProvider,
+}
+
+impl fmt::Display for SubscriptionPreviewError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::UnsupportedPlatform => "当前平台尚不能启动隔离的 Mihomo 预览进程",
+            Self::BinaryUnavailable => "找不到 Mihomo 内核；请安装 Clash Verge Rev 或配置预览内核",
+            Self::InvalidSource => "订阅地址无效，请检查后重试",
+            Self::WorkspaceUnavailable => "无法创建私有预览空间，请检查临时目录权限",
+            Self::ProfileUnavailable => "无法生成安全的订阅预览配置",
+            Self::EngineUnavailable => "Mihomo 预览进程启动失败",
+            Self::ProviderUnavailable => "Mihomo 无法下载或解析这份订阅，请检查网络和订阅状态",
+            Self::EmptyProvider => "订阅可以访问，但没有解析出任何代理节点",
+        })
+    }
+}
+
+impl Error for SubscriptionPreviewError {}
+
+struct PreviewWorkspace {
+    path: PathBuf,
+}
+
+impl PreviewWorkspace {
+    fn create() -> Result<Self, std::io::Error> {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        #[cfg(unix)]
+        let temp_root = PathBuf::from("/tmp");
+        #[cfg(not(unix))]
+        let temp_root = env::temp_dir();
+        for _ in 0..16 {
+            let sequence = NEXT_PREVIEW_WORKSPACE.fetch_add(1, Ordering::Relaxed);
+            let path = temp_root.join(format!(
+                "relay-p-{:x}-{nonce:x}-{sequence:x}",
+                std::process::id()
+            ));
+            let mut builder = fs::DirBuilder::new();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::DirBuilderExt;
+                builder.mode(0o700);
+            }
+            match builder.create(&path) {
+                Ok(()) => return Ok(Self { path }),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            "could not reserve a unique preview workspace",
+        ))
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for PreviewWorkspace {
+    fn drop(&mut self) {
+        if let Ok(metadata) = fs::symlink_metadata(&self.path)
+            && metadata.is_dir()
+            && !metadata.file_type().is_symlink()
+        {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+}
+
+pub(crate) fn preview_subscription(
+    input: &str,
+) -> Result<Vec<LoadedProvider>, SubscriptionPreviewError> {
+    let binary = discover_preview_binary()?;
+    preview_subscription_with_binary(input, &binary)
+}
+
+fn preview_subscription_with_binary(
+    input: &str,
+    binary: &Path,
+) -> Result<Vec<LoadedProvider>, SubscriptionPreviewError> {
+    #[cfg(not(unix))]
+    {
+        let _ = (input, binary);
+        return Err(SubscriptionPreviewError::UnsupportedPlatform);
+    }
+
+    #[cfg(unix)]
+    {
+        let subscription = SecretUrl::parse_subscription(input)
+            .map_err(|_error| SubscriptionPreviewError::InvalidSource)?;
+        let binary = canonical_binary(binary)?;
+        let workspace = PreviewWorkspace::create()
+            .map_err(|_error| SubscriptionPreviewError::WorkspaceUnavailable)?;
+        let mixed_port = reserve_preview_port()?;
+        let profile = Profile::subscription_preview(subscription, mixed_port)
+            .map_err(|_error| SubscriptionPreviewError::ProfileUnavailable)?;
+        let yaml = render_mihomo_yaml(&profile)
+            .map_err(|_error| SubscriptionPreviewError::ProfileUnavailable)?;
+        let config_file = write_private_atomic(workspace.path(), "preview.yaml", yaml.as_bytes())
+            .map_err(|_error| SubscriptionPreviewError::WorkspaceUnavailable)?;
+        let controller = ControllerEndpoint::UnixSocket(workspace.path().join("controller.sock"));
+        let config =
+            ManagedEngineConfig::new(binary, config_file, workspace.path().to_owned(), controller);
+        let mut manager = EngineManager::new(
+            config,
+            ReadinessPolicy::default(),
+            Box::new(MihomoReadinessProbe),
+        );
+        let endpoint = manager
+            .start()
+            .map_err(|_error| SubscriptionPreviewError::EngineUnavailable)?;
+        let providers = wait_for_preview_providers(&endpoint);
+        manager
+            .stop()
+            .map_err(|_error| SubscriptionPreviewError::EngineUnavailable)?;
+        providers
+    }
+}
+
+fn discover_preview_binary() -> Result<PathBuf, SubscriptionPreviewError> {
+    if let Some(explicit) = env::var_os(PREVIEW_BINARY_ENV) {
+        return canonical_binary(Path::new(&explicit));
+    }
+
+    let executable_name = if cfg!(windows) {
+        "mihomo.exe"
+    } else {
+        "mihomo"
+    };
+    let mut candidates = Vec::new();
+    if let Ok(current_exe) = env::current_exe()
+        && let Some(directory) = current_exe.parent()
+    {
+        candidates.push(directory.join(executable_name));
+    }
+    if let Some(path) = env::var_os("PATH") {
+        candidates.extend(env::split_paths(&path).map(|directory| directory.join(executable_name)));
+    }
+    #[cfg(target_os = "macos")]
+    candidates.push(PathBuf::from(
+        "/Applications/Clash Verge.app/Contents/MacOS/verge-mihomo",
+    ));
+
+    candidates
+        .into_iter()
+        .find_map(|candidate| canonical_binary(&candidate).ok())
+        .ok_or(SubscriptionPreviewError::BinaryUnavailable)
+}
+
+fn canonical_binary(path: &Path) -> Result<PathBuf, SubscriptionPreviewError> {
+    let canonical = path
+        .canonicalize()
+        .map_err(|_error| SubscriptionPreviewError::BinaryUnavailable)?;
+    canonical
+        .is_file()
+        .then_some(canonical)
+        .ok_or(SubscriptionPreviewError::BinaryUnavailable)
+}
+
+fn reserve_preview_port() -> Result<u16, SubscriptionPreviewError> {
+    TcpListener::bind("127.0.0.1:0")
+        .and_then(|listener| listener.local_addr())
+        .map(|address| address.port())
+        .map_err(|_error| SubscriptionPreviewError::WorkspaceUnavailable)
+}
+
+#[cfg(unix)]
+fn wait_for_preview_providers(
+    endpoint: &ControllerEndpoint,
+) -> Result<Vec<LoadedProvider>, SubscriptionPreviewError> {
+    let ControllerEndpoint::UnixSocket(socket_path) = endpoint else {
+        return Err(SubscriptionPreviewError::UnsupportedPlatform);
+    };
+    let client = MihomoClient::new(
+        ControllerConfig::default(),
+        UnixSocketTransport::new(socket_path),
+    );
+    for attempt in 0..PREVIEW_PROVIDER_ATTEMPTS {
+        if let Ok(providers) = client.fetch_proxy_providers() {
+            let providers = load_subscription_provider(&providers);
+            if providers.iter().any(|provider| !provider.nodes.is_empty()) {
+                return Ok(providers);
+            }
+        }
+        if attempt + 1 < PREVIEW_PROVIDER_ATTEMPTS {
+            thread::sleep(PREVIEW_PROVIDER_DELAY);
+        }
+    }
+    match client.fetch_proxy_providers() {
+        Ok(providers)
+            if providers.iter().any(|provider| {
+                provider.name == "subscription" && !provider.proxies.is_empty()
+            }) =>
+        {
+            Ok(load_subscription_provider(&providers))
+        }
+        Ok(_) => Err(SubscriptionPreviewError::EmptyProvider),
+        Err(_) => Err(SubscriptionPreviewError::ProviderUnavailable),
+    }
+}
+
+#[cfg(unix)]
+fn load_subscription_provider(providers: &[relay_mihomo::ProxyProvider]) -> Vec<LoadedProvider> {
+    providers
+        .iter()
+        .filter(|provider| provider.name == "subscription")
+        .map(|provider| {
+            let mut loaded = load_provider(provider);
+            "订阅预览".clone_into(&mut loaded.name);
+            loaded
+        })
+        .collect()
 }
 
 #[derive(Debug)]
@@ -531,26 +767,7 @@ pub(crate) fn configured_endpoint() -> String {
 pub(crate) fn load(endpoint: &str) -> Result<LoadedSnapshot, LoadError> {
     let snapshot = fetch_snapshot(endpoint)?;
     let catalog = to_policy_catalog(&snapshot)?;
-    let providers = snapshot
-        .providers
-        .iter()
-        .map(|provider| LoadedProvider {
-            name: provider.name.clone(),
-            vehicle_type: provider.vehicle_type.clone(),
-            nodes: provider
-                .proxies
-                .iter()
-                .map(|proxy| LoadedProviderNode {
-                    name: proxy.name.clone(),
-                    protocol: proxy.proxy_type.clone(),
-                    latency_label: proxy
-                        .latest_latency_ms()
-                        .map(|delay| format!("{delay:.0} ms")),
-                    alive: proxy.alive,
-                })
-                .collect(),
-        })
-        .collect();
+    let providers = load_providers(&snapshot.providers);
     let version = snapshot
         .version
         .version
@@ -570,6 +787,29 @@ pub(crate) fn load(endpoint: &str) -> Result<LoadedSnapshot, LoadError> {
         upload_total,
         observed_routes,
     })
+}
+
+fn load_providers(providers: &[relay_mihomo::ProxyProvider]) -> Vec<LoadedProvider> {
+    providers.iter().map(load_provider).collect()
+}
+
+fn load_provider(provider: &relay_mihomo::ProxyProvider) -> LoadedProvider {
+    LoadedProvider {
+        name: provider.name.clone(),
+        vehicle_type: provider.vehicle_type.clone(),
+        nodes: provider
+            .proxies
+            .iter()
+            .map(|proxy| LoadedProviderNode {
+                name: proxy.name.clone(),
+                protocol: proxy.proxy_type.clone(),
+                latency_label: proxy
+                    .latest_latency_ms()
+                    .map(|delay| format!("{delay:.0} ms")),
+                alive: proxy.alive,
+            })
+            .collect(),
+    }
 }
 
 fn fetch_snapshot(endpoint: &str) -> Result<MihomoSnapshot, MihomoError> {
@@ -643,8 +883,13 @@ fn unix_socket_path(endpoint: &str) -> Result<Option<PathBuf>, MihomoError> {
 mod tests {
     use std::ffi::OsString;
     use std::fs;
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpListener;
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::Duration;
 
     use relay_engine::ControllerEndpoint;
 
@@ -666,6 +911,92 @@ mod tests {
                 .detail()
                 .contains("token")
         );
+    }
+
+    #[test]
+    fn preview_workspace_is_private_and_removed_on_drop() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let workspace = super::PreviewWorkspace::create()?;
+        let path = workspace.path().to_owned();
+        assert!(path.is_dir());
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(&path)?.permissions().mode() & 0o077, 0);
+        }
+
+        drop(workspace);
+        assert!(!path.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn preview_errors_never_expose_subscription_input() {
+        let input = "https://subscription.example.invalid/private-token";
+        let error = super::preview_subscription_with_binary(input, Path::new("/missing/mihomo"))
+            .expect_err("missing preview binary should fail safely");
+
+        assert!(!error.to_string().contains("private-token"));
+        assert!(!format!("{error:?}").contains("private-token"));
+    }
+
+    #[test]
+    #[ignore = "requires RELAY_MIHOMO_TEST_BINARY pointing to a local Mihomo executable"]
+    fn real_mihomo_previews_all_nodes_from_a_subscription() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let binary = std::env::var_os("RELAY_MIHOMO_TEST_BINARY")
+            .ok_or("RELAY_MIHOMO_TEST_BINARY is required")?;
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        listener.set_nonblocking(true)?;
+        let subscription_url = format!("http://{}/subscription", listener.local_addr()?);
+        let stop = Arc::new(AtomicBool::new(false));
+        let server_stop = stop.clone();
+        let server = std::thread::spawn(move || -> std::io::Result<()> {
+            let body = r#"proxies:
+  - name: "Fixture Alpha"
+    type: ss
+    server: 127.0.0.1
+    port: 443
+    cipher: aes-128-gcm
+    password: fixture-alpha
+  - name: "Fixture Beta"
+    type: ss
+    server: 127.0.0.1
+    port: 8443
+    cipher: aes-128-gcm
+    password: fixture-beta
+"#;
+            while !server_stop.load(Ordering::Relaxed) {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        let mut request_line = String::new();
+                        BufReader::new(stream.try_clone()?).read_line(&mut request_line)?;
+                        let response = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: text/yaml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        );
+                        stream.write_all(response.as_bytes())?;
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            Ok(())
+        });
+
+        let result = super::preview_subscription_with_binary(&subscription_url, Path::new(&binary));
+        stop.store(true, Ordering::Relaxed);
+        server.join().map_err(|_| "fixture server panicked")??;
+        let providers = result?;
+
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0].nodes.len(), 2);
+        assert_eq!(providers[0].nodes[0].name, "Fixture Alpha");
+        assert_eq!(providers[0].nodes[1].name, "Fixture Beta");
+        Ok(())
     }
 
     #[test]

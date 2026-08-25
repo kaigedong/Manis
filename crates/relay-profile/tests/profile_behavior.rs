@@ -41,6 +41,23 @@ fn subscription_url_accepts_http_and_https_without_exposing_values() {
 }
 
 #[test]
+fn subscription_preview_profile_avoids_geodata_and_health_check_downloads() {
+    let subscription = SecretUrl::parse_subscription(
+        "https://subscription.example.invalid/client?token=fixture-secret",
+    )
+    .expect("fixture subscription is valid");
+    let profile = Profile::subscription_preview(subscription, 17_891)
+        .expect("preview profile should be valid");
+    let yaml = render_mihomo_yaml(&profile).expect("preview profile should render");
+
+    assert!(yaml.contains("name: \"Preview\""));
+    assert!(yaml.contains("- \"MATCH,Preview\""));
+    assert!(yaml.contains("enable: false"));
+    assert!(!yaml.contains("GEOIP"));
+    assert!(!yaml.contains("url-test"));
+}
+
+#[test]
 fn qx_default_renders_ordered_minimal_mihomo_yaml() {
     let profile = Profile::qx_default(fixture_secret()).expect("default profile is valid");
     let yaml = render_mihomo_yaml(&profile).expect("default profile renders");

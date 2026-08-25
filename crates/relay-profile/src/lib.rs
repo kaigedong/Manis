@@ -128,6 +128,46 @@ impl Profile {
         Ok(profile)
     }
 
+    /// Builds a minimal isolated profile used only to let Mihomo fetch and parse one provider.
+    ///
+    /// # Errors
+    /// Returns a redacted validation error when the port or generated references are invalid.
+    pub fn subscription_preview(
+        subscription: SecretUrl,
+        mixed_port: u16,
+    ) -> Result<Self, ProfileError> {
+        let provider_name = Name::parse("subscription")?;
+        let preview_name = Name::parse("Preview")?;
+        let profile = Self {
+            mixed_port,
+            log_level: LogLevel::Silent,
+            store_selected: false,
+            providers: vec![ProxyProvider {
+                name: provider_name.clone(),
+                url: subscription,
+                interval_secs: 86_400,
+                path: "./proxy_providers/subscription.yaml".to_owned(),
+                health_check: HealthCheck {
+                    enabled: false,
+                    interval_secs: 600,
+                    url: "https://www.gstatic.com/generate_204".to_owned(),
+                },
+            }],
+            groups: vec![PolicyGroup {
+                name: preview_name.clone(),
+                kind: PolicyGroupKind::Select {
+                    proxies: Vec::new(),
+                    use_providers: vec![provider_name],
+                },
+            }],
+            rules: vec![Rule::Match {
+                policy: PolicyRef::Group(preview_name),
+            }],
+        };
+        profile.validate()?;
+        Ok(profile)
+    }
+
     /// Validates names, references, paths, intervals, and rule termination.
     ///
     /// # Errors

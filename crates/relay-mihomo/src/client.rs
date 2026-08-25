@@ -2,7 +2,8 @@ use serde::Deserialize;
 
 use crate::models::{ProvidersResponse, ProxiesResponse, RulesResponse};
 use crate::{
-    ConnectionsState, ControllerConfig, MihomoError, MihomoSnapshot, ReadonlyTransport, VersionInfo,
+    ConnectionsState, ControllerConfig, MihomoError, MihomoSnapshot, ProxyProvider,
+    ReadonlyTransport, VersionInfo,
 };
 
 const VERSION_ENDPOINT: &str = "/version";
@@ -37,9 +38,7 @@ where
         let proxies = self
             .fetch_json::<ProxiesResponse>(PROXIES_ENDPOINT)?
             .into_proxies();
-        let providers = self
-            .fetch_json::<ProvidersResponse>(PROVIDERS_ENDPOINT)?
-            .into_providers();
+        let providers = self.fetch_proxy_providers()?;
         let rules = self.fetch_json::<RulesResponse>(RULES_ENDPOINT)?.rules;
         let connections = self.fetch_json::<ConnectionsState>(CONNECTIONS_ENDPOINT)?;
 
@@ -60,6 +59,16 @@ where
     /// version payload.
     pub fn fetch_version(&self) -> Result<VersionInfo, MihomoError> {
         self.fetch_json::<VersionInfo>(VERSION_ENDPOINT)
+    }
+
+    /// Fetches all proxy providers and their parsed nodes without reading unrelated runtime data.
+    ///
+    /// # Errors
+    /// Returns an error if the controller request fails or the provider payload cannot be decoded.
+    pub fn fetch_proxy_providers(&self) -> Result<Vec<ProxyProvider>, MihomoError> {
+        Ok(self
+            .fetch_json::<ProvidersResponse>(PROVIDERS_ENDPOINT)?
+            .into_providers())
     }
 
     fn fetch_json<Response>(&self, endpoint: &str) -> Result<Response, MihomoError>

@@ -84,3 +84,7 @@
 - 最终 workspace 62 个常规测试通过、2 个环境依赖测试默认 ignored；fmt、严格 Clippy、全目标 build、diff check 和 worktree/Git 历史敏感域名扫描全部通过。
 - 修复来源输入占位文本参与点击定位的问题：空内容的鼠标命中和所有编辑/IME 区间现在都会收敛到合法 UTF-8 边界，加入陈旧选区清空后继续输入的崩溃回归测试。
 - 来源入口升级为 HTTP/HTTPS 订阅与 `vless://` 单节点识别；删除假的 `1/2/2` 结构计数，接入 Mihomo `GET /providers/proxies` 并按 provider 展示实际节点、协议、存活状态与延迟。真实 Clash Verge Unix socket smoke test、全量测试、严格 Clippy 和 Visual Verdict 97/100 均通过。
+- 用户指出上一轮只识别 URL、展示当前控制器节点，并没有读取输入订阅中的节点；重新将验收标准锁定为“实际下载、解析并在配置页完整列出该订阅的节点”。
+- 新增短生命周期隔离订阅预览：Relay 生成不含 geodata/健康检查的最小 profile，启动私有 Mihomo，通过 provider-only 控制器接口读取结果，完成后停止进程并删除 `0700` 临时目录、配置与缓存；错误与 trace 不携带 URL。
+- 配置页新增异步读取、成功、空订阅和失败状态；远程预览只展示本次订阅的来源与节点，不再混入已连接 Clash Verge 的当前节点，连续编辑通过 generation 丢弃陈旧结果。
+- 使用 Clash Verge 内置 Mihomo 与本地两节点 HTTP fixture 完成真实端到端测试，页面实际显示 `1 个来源 · 2 个节点` 以及两个节点行；macOS Unix socket 路径上限导致的首轮超时已通过短私有 runtime 路径修复。

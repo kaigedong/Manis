@@ -8,7 +8,9 @@ use super::{RelayApp, SubscriptionFeedback};
 use crate::{
     diagnostics::{UiEvent, trace_ui},
     mihomo::LoadedProvider,
-    subscription::{SourceKind, SourceNodePreview, validate_subscription_preview},
+    subscription::{
+        SourceKind, SourceNodePreview, SubscriptionPreview, validate_subscription_preview,
+    },
     subscription_input::SubscriptionTextInput,
     theme::Theme,
 };
@@ -303,6 +305,20 @@ impl RelayApp {
             .expect("subscription input is initialized before rendering")
             .clone();
         let feedback = &self.subscription_feedback;
+        let previewing_remote = matches!(
+            feedback,
+            SubscriptionFeedback::Loading(_)
+                | SubscriptionFeedback::Valid(SubscriptionPreview {
+                    kind: SourceKind::HttpSubscription | SourceKind::HttpsSubscription,
+                    ..
+                })
+                | SubscriptionFeedback::PreviewFailed(_)
+        );
+        let displayed_providers = if previewing_remote {
+            self.subscription_preview_providers.as_slice()
+        } else {
+            self.source_providers.as_slice()
+        };
 
         let panel = div()
             .id("configuration-source")
@@ -343,9 +359,18 @@ impl RelayApp {
                     .child("来源地址"),
             )
             .child(input.clone())
-            .child(Self::subscription_actions(input, theme, cx))
-            .child(Self::subscription_feedback(feedback, theme))
-            .child(Self::source_nodes(feedback, &self.source_providers, theme))
+            .child(Self::subscription_actions(
+                input,
+                matches!(feedback, SubscriptionFeedback::Loading(_)),
+                theme,
+                cx,
+            ))
+            .child(Self::subscription_feedback(
+                feedback,
+                &self.subscription_preview_providers,
+                theme,
+            ))
+            .child(Self::source_nodes(feedback, displayed_providers, theme))
             .child(
                 div()
                     .mt_3()
@@ -372,6 +397,7 @@ impl RelayApp {
 
     fn subscription_actions(
         input: Entity<SubscriptionTextInput>,
+        loading: bool,
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Div {
@@ -387,43 +413,35 @@ impl RelayApp {
                     .aria_label("识别代理来源并预览节点")
                     .tab_stop(true)
                     .focusable()
-                    .cursor_pointer()
+                    .when(!loading, gpui::Styled::cursor_pointer)
                     .h(px(36.0))
                     .px_3()
                     .rounded_md()
-                    .bg(theme.action_primary)
-                    .text_color(theme.action_on_primary)
+                    .bg(if loading {
+                        theme.action_soft
+                    } else {
+                        theme.action_primary
+                    })
+                    .text_color(if loading {
+                        theme.action_primary
+                    } else {
+                        theme.action_on_primary
+                    })
                     .font_weight(FontWeight::SEMIBOLD)
                     .flex()
                     .items_center()
                     .justify_center()
                     .flex_1()
-                    .child("识别并预览")
+                    .child(if loading {
+                        "正在读取节点…"
+                    } else {
+                        "读取订阅节点"
+                    })
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        let result = {
-                            let input = input.read(cx);
-                            validate_subscription_preview(input.value())
-                        };
-                        match result {
-                            Ok(preview) => {
-                                let direct_node = preview.kind == SourceKind::VlessNode;
-                                this.subscription_feedback = SubscriptionFeedback::Valid(preview);
-                                if direct_node {
-                                    "VLESS 节点已识别 · 可在来源节点中查看 · 尚未保存"
-                                        .clone_into(&mut this.status);
-                                } else {
-                                    "订阅地址已识别 · 启用后由 Mihomo 拉取节点 · 尚未保存"
-                                        .clone_into(&mut this.status);
-                                }
-                                trace_ui(UiEvent::SourceRecognitionSucceeded);
-                            }
-                            Err(error) => {
-                                this.subscription_feedback = SubscriptionFeedback::Invalid(error);
-                                this.status = format!("来源识别失败：{error}");
-                                trace_ui(UiEvent::SourceRecognitionFailed);
-                            }
+                        if loading {
+                            return;
                         }
-                        cx.notify();
+                        this.submit_source_preview(&input, cx);
                     })),
             )
             .child(
@@ -448,6 +466,9 @@ impl RelayApp {
                     .on_click(cx.listener(move |this, _, _, cx| {
                         clear_input.update(cx, SubscriptionTextInput::clear);
                         this.subscription_feedback = SubscriptionFeedback::Idle;
+                        this.subscription_preview_providers.clear();
+                        this.subscription_preview_generation =
+                            this.subscription_preview_generation.wrapping_add(1);
                         "已清除订阅链接草稿".clone_into(&mut this.status);
                         trace_ui(UiEvent::SubscriptionDraftCleared);
                         cx.notify();
@@ -455,63 +476,174 @@ impl RelayApp {
             )
     }
 
-    fn subscription_feedback(feedback: &SubscriptionFeedback, theme: Theme) -> Div {
+    fn submit_source_preview(
+        &mut self,
+        input: &Entity<SubscriptionTextInput>,
+        cx: &mut Context<Self>,
+    ) {
+        let (input_value, result) = {
+            let input = input.read(cx);
+            (
+                input.value().to_owned(),
+                validate_subscription_preview(input.value()),
+            )
+        };
+        match result {
+            Ok(preview) if preview.kind == SourceKind::VlessNode => {
+                self.subscription_preview_generation =
+                    self.subscription_preview_generation.wrapping_add(1);
+                self.subscription_preview_providers.clear();
+                self.subscription_feedback = SubscriptionFeedback::Valid(preview);
+                "VLESS 节点已识别 · 可在来源节点中查看 · 尚未保存".clone_into(&mut self.status);
+                trace_ui(UiEvent::SourceRecognitionSucceeded);
+                cx.notify();
+            }
+            Ok(preview) => {
+                trace_ui(UiEvent::SourceRecognitionSucceeded);
+                self.preview_remote_subscription(input_value, preview, cx);
+            }
+            Err(error) => {
+                self.subscription_preview_generation =
+                    self.subscription_preview_generation.wrapping_add(1);
+                self.subscription_preview_providers.clear();
+                self.subscription_feedback = SubscriptionFeedback::InvalidInput(error);
+                self.status = format!("来源识别失败：{error}");
+                trace_ui(UiEvent::SourceRecognitionFailed);
+                cx.notify();
+            }
+        }
+    }
+
+    fn subscription_feedback(
+        feedback: &SubscriptionFeedback,
+        providers: &[LoadedProvider],
+        theme: Theme,
+    ) -> Div {
         match feedback {
             SubscriptionFeedback::Idle => div()
                 .mt_3()
                 .text_size(px(11.0))
                 .text_color(theme.text_secondary)
                 .child("等待输入 · HTTP/HTTPS 订阅或 vless:// 节点"),
-            SubscriptionFeedback::Valid(preview) => div()
-                .mt_3()
-                .p_3()
-                .rounded_md()
-                .bg(theme.action_soft)
-                .child(
-                    div()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(theme.status_success)
-                        .child(match preview.kind {
-                            SourceKind::HttpSubscription => "HTTP 订阅已识别",
-                            SourceKind::HttpsSubscription => "HTTPS 订阅已识别",
-                            SourceKind::VlessNode => "VLESS 节点已识别",
-                        }),
-                )
-                .child(
-                    div()
-                        .mt_1()
-                        .text_size(px(11.0))
-                        .text_color(theme.text_secondary)
-                        .child(match preview.kind {
-                            SourceKind::HttpSubscription => {
-                                "明文传输可能暴露订阅凭据；建议优先使用 HTTPS"
-                            }
-                            SourceKind::HttpsSubscription => {
-                                "地址有效；启用后由 Mihomo 拉取并解析全部节点"
-                            }
-                            SourceKind::VlessNode => "已解析为 1 个可预览的直接节点",
-                        }),
-                ),
-            SubscriptionFeedback::Invalid(error) => div()
-                .mt_3()
-                .p_3()
-                .rounded_md()
-                .border_1()
-                .border_color(theme.outline_strong)
-                .bg(theme.surface_low)
-                .child(
-                    div()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .child("无法识别来源"),
-                )
-                .child(
-                    div()
-                        .mt_1()
-                        .text_size(px(11.0))
-                        .text_color(theme.text_secondary)
-                        .child(error.to_string()),
-                ),
+            SubscriptionFeedback::Loading(kind) => Self::subscription_loading(*kind, theme),
+            SubscriptionFeedback::Valid(preview) => {
+                Self::subscription_valid(preview, providers, theme)
+            }
+            SubscriptionFeedback::InvalidInput(error) => {
+                Self::subscription_error("无法识别来源", error.to_string(), None, theme)
+            }
+            SubscriptionFeedback::PreviewFailed(error) => Self::subscription_error(
+                "无法读取订阅节点",
+                error.to_string(),
+                Some("链接仍保留在输入框中；检查后可再次读取。"),
+                theme,
+            ),
         }
+    }
+
+    fn subscription_loading(kind: SourceKind, theme: Theme) -> Div {
+        let title = match kind {
+            SourceKind::HttpSubscription => "正在读取 HTTP 订阅",
+            SourceKind::HttpsSubscription => "正在读取 HTTPS 订阅",
+            SourceKind::VlessNode => "正在解析 VLESS 节点",
+        };
+        div()
+            .mt_3()
+            .p_3()
+            .rounded_md()
+            .bg(theme.action_soft)
+            .child(
+                div()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(theme.action_primary)
+                    .child(title),
+            )
+            .child(
+                div()
+                    .mt_1()
+                    .text_size(px(11.0))
+                    .text_color(theme.text_secondary)
+                    .child("隔离的 Mihomo 正在下载并解析节点，通常需要几秒。"),
+            )
+    }
+
+    fn subscription_valid(
+        preview: &SubscriptionPreview,
+        providers: &[LoadedProvider],
+        theme: Theme,
+    ) -> Div {
+        let (title, detail) = match preview.kind {
+            SourceKind::HttpSubscription => (
+                "HTTP 订阅预览完成",
+                "节点已实际读取；HTTP 明文传输可能暴露订阅凭据",
+            ),
+            SourceKind::HttpsSubscription => (
+                "HTTPS 订阅预览完成",
+                "节点已由 Mihomo 实际下载并解析，可在下方完整浏览",
+            ),
+            SourceKind::VlessNode => ("VLESS 节点已识别", "已解析为 1 个可预览的直接节点"),
+        };
+        let node_count: usize = providers.iter().map(|provider| provider.nodes.len()).sum();
+
+        div()
+            .mt_3()
+            .p_3()
+            .rounded_md()
+            .bg(theme.action_soft)
+            .child(
+                div()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(theme.status_success)
+                    .child(title),
+            )
+            .child(
+                div()
+                    .mt_1()
+                    .text_size(px(11.0))
+                    .text_color(theme.text_secondary)
+                    .child(detail),
+            )
+            .when(preview.kind != SourceKind::VlessNode, |card| {
+                card.child(
+                    div()
+                        .mt_2()
+                        .text_size(px(11.0))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(format!("{} 个来源 · {node_count} 个节点", providers.len())),
+                )
+            })
+    }
+
+    fn subscription_error(
+        title: &'static str,
+        message: String,
+        recovery: Option<&'static str>,
+        theme: Theme,
+    ) -> Div {
+        div()
+            .mt_3()
+            .p_3()
+            .rounded_md()
+            .border_1()
+            .border_color(theme.outline_strong)
+            .bg(theme.surface_low)
+            .child(div().font_weight(FontWeight::SEMIBOLD).child(title))
+            .child(
+                div()
+                    .mt_1()
+                    .text_size(px(11.0))
+                    .text_color(theme.text_secondary)
+                    .child(message),
+            )
+            .when_some(recovery, |card, recovery| {
+                card.child(
+                    div()
+                        .mt_2()
+                        .text_size(px(10.0))
+                        .text_color(theme.text_tertiary)
+                        .child(recovery),
+                )
+            })
     }
 
     fn source_nodes(
@@ -529,7 +661,18 @@ impl RelayApp {
             || providers.iter().map(|provider| provider.nodes.len()).sum(),
             <[SourceNodePreview]>::len,
         );
-        let list_title = if direct_nodes.is_none() && !providers.is_empty() {
+        let remote_preview = matches!(
+            feedback,
+            SubscriptionFeedback::Loading(_)
+                | SubscriptionFeedback::Valid(SubscriptionPreview {
+                    kind: SourceKind::HttpSubscription | SourceKind::HttpsSubscription,
+                    ..
+                })
+                | SubscriptionFeedback::PreviewFailed(_)
+        );
+        let list_title = if remote_preview {
+            "订阅节点"
+        } else if direct_nodes.is_none() && !providers.is_empty() {
             "Mihomo 当前节点"
         } else {
             "来源节点"
@@ -554,7 +697,11 @@ impl RelayApp {
                         div()
                             .text_size(px(10.0))
                             .text_color(theme.text_tertiary)
-                            .child(format!("{total} 个")),
+                            .child(if matches!(feedback, SubscriptionFeedback::Loading(_)) {
+                                "读取中".to_owned()
+                            } else {
+                                format!("{total} 个")
+                            }),
                     ),
             );
 
@@ -575,9 +722,11 @@ impl RelayApp {
                     .text_size(px(11.0))
                     .text_color(theme.text_secondary)
                     .child(match feedback {
-                        SubscriptionFeedback::Valid(_) => {
-                            "这份订阅还是内存草稿。启用并连接 Mihomo 后，这里会列出全部节点。"
+                        SubscriptionFeedback::Loading(_) => "正在等待 Mihomo 返回节点列表…",
+                        SubscriptionFeedback::PreviewFailed(_) => {
+                            "没有可展示的节点；修正上方问题后重新读取。"
                         }
+                        SubscriptionFeedback::Valid(_) => "订阅没有返回可展示的代理节点。",
                         _ => "识别来源后，这里会显示直接节点或 Mihomo 已载入的订阅节点。",
                     }),
             );

@@ -11,8 +11,11 @@ use relay_mihomo::ObservedRouteEvidence;
 use crate::{
     demo,
     diagnostics::{UiEvent, trace_ui},
-    mihomo::{self, ControllerRuntime, ControllerState, LoadedProvider, LoadedSnapshot},
-    subscription::{SubscriptionInputError, SubscriptionPreview},
+    mihomo::{
+        self, ControllerRuntime, ControllerState, LoadedProvider, LoadedSnapshot,
+        SubscriptionPreviewError,
+    },
+    subscription::{SourceKind, SubscriptionInputError, SubscriptionPreview},
     subscription_input::{SubscriptionInputChanged, SubscriptionTextInput},
     theme::Theme,
 };
@@ -23,8 +26,10 @@ mod configuration;
 enum SubscriptionFeedback {
     #[default]
     Idle,
+    Loading(SourceKind),
     Valid(SubscriptionPreview),
-    Invalid(SubscriptionInputError),
+    InvalidInput(SubscriptionInputError),
+    PreviewFailed(SubscriptionPreviewError),
 }
 
 pub struct RelayApp {
@@ -36,6 +41,8 @@ pub struct RelayApp {
     controller: ControllerState,
     observed_routes: Vec<ObservedRouteEvidence>,
     source_providers: Vec<LoadedProvider>,
+    subscription_preview_providers: Vec<LoadedProvider>,
+    subscription_preview_generation: u64,
     proxy_enabled: bool,
     inspector_open: bool,
     dark: bool,
@@ -69,6 +76,8 @@ impl RelayApp {
             controller: ControllerState::Demo,
             observed_routes: Vec::new(),
             source_providers: Vec::new(),
+            subscription_preview_providers: Vec::new(),
+            subscription_preview_generation: 0,
             proxy_enabled: true,
             inspector_open: false,
             dark: false,
@@ -89,11 +98,62 @@ impl RelayApp {
         let events = cx.subscribe(&input, |this, _input, _: &SubscriptionInputChanged, cx| {
             if this.subscription_feedback != SubscriptionFeedback::Idle {
                 this.subscription_feedback = SubscriptionFeedback::Idle;
+                this.subscription_preview_providers.clear();
+                this.subscription_preview_generation =
+                    this.subscription_preview_generation.wrapping_add(1);
                 cx.notify();
             }
         });
         self.subscription_input = Some(input);
         self.subscription_input_events = Some(events);
+    }
+
+    fn preview_remote_subscription(
+        &mut self,
+        input: String,
+        preview: SubscriptionPreview,
+        cx: &mut Context<Self>,
+    ) {
+        self.subscription_preview_generation = self.subscription_preview_generation.wrapping_add(1);
+        let generation = self.subscription_preview_generation;
+        self.subscription_preview_providers.clear();
+        self.subscription_feedback = SubscriptionFeedback::Loading(preview.kind);
+        "正在隔离的 Mihomo 中下载并解析订阅节点".clone_into(&mut self.status);
+        trace_ui(UiEvent::SourcePreviewStarted);
+
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let result = executor
+                .spawn(async move { mihomo::preview_subscription(&input) })
+                .await;
+            this.update(cx, |this, cx| {
+                if this.subscription_preview_generation != generation {
+                    return;
+                }
+                match result {
+                    Ok(providers) => {
+                        let node_count: usize =
+                            providers.iter().map(|provider| provider.nodes.len()).sum();
+                        let provider_count = providers.len();
+                        this.subscription_preview_providers = providers;
+                        this.subscription_feedback = SubscriptionFeedback::Valid(preview);
+                        this.status = format!(
+                            "订阅预览完成 · {provider_count} 个来源 · {node_count} 个节点 · 尚未保存"
+                        );
+                        trace_ui(UiEvent::SourcePreviewSucceeded);
+                    }
+                    Err(error) => {
+                        this.subscription_feedback = SubscriptionFeedback::PreviewFailed(error);
+                        this.status = format!("订阅预览失败：{error}");
+                        trace_ui(UiEvent::SourcePreviewFailed);
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
     }
 
     fn theme(&self) -> Theme {

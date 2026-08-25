@@ -8,10 +8,89 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     capture_configuration(&mut cx, 1420.0, 900.0, "configuration-wide.png")?;
     capture_configuration(&mut cx, 1060.0, 800.0, "configuration-medium.png")?;
     capture_configuration(&mut cx, 720.0, 720.0, "configuration-compact.png")?;
+    capture_remote_subscription_preview(&mut cx)?;
     capture_compact_flow(&mut cx)?;
     capture_connected(&mut cx)?;
     capture_live_when_configured(&mut cx)?;
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn capture_remote_subscription_preview(
+    cx: &mut gpui::VisualTestAppContext,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use gpui::{AnyWindowHandle, AppContext, Modifiers, point, px, size};
+    use relay_ui::RelayApp;
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpListener;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::Duration;
+
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    listener.set_nonblocking(true)?;
+    let subscription_url = format!("http://{}/subscription", listener.local_addr()?);
+    let stop = Arc::new(AtomicBool::new(false));
+    let server_stop = stop.clone();
+    let server = std::thread::spawn(move || -> std::io::Result<()> {
+        let body = r#"proxies:
+  - name: "Tokyo Edge"
+    type: ss
+    server: 127.0.0.1
+    port: 443
+    cipher: aes-128-gcm
+    password: fixture-alpha
+  - name: "Singapore Core"
+    type: ss
+    server: 127.0.0.1
+    port: 8443
+    cipher: aes-128-gcm
+    password: fixture-beta
+"#;
+        while !server_stop.load(Ordering::Relaxed) {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    let mut request_line = String::new();
+                    BufReader::new(stream.try_clone()?).read_line(&mut request_line)?;
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: text/yaml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    stream.write_all(response.as_bytes())?;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(())
+    });
+
+    let window = cx.open_offscreen_window(size(px(1420.0), px(900.0)), |_, cx| {
+        cx.new(|_| RelayApp::new())
+    })?;
+    let window: AnyWindowHandle = window.into();
+    refresh(cx, window)?;
+    cx.simulate_click(window, point(px(110.0), px(120.0)), Modifiers::none());
+    refresh(cx, window)?;
+    cx.simulate_click(window, point(px(400.0), px(342.0)), Modifiers::none());
+    refresh(cx, window)?;
+    cx.simulate_input(window, &subscription_url);
+    refresh(cx, window)?;
+    cx.simulate_click(window, point(px(370.0), px(370.0)), Modifiers::none());
+    for _ in 0..40 {
+        std::thread::sleep(Duration::from_millis(25));
+        refresh(cx, window)?;
+    }
+    let capture = save_screenshot(
+        cx,
+        window,
+        "configuration-wide-remote-subscription-nodes.png",
+    );
+    stop.store(true, Ordering::Relaxed);
+    server.join().map_err(|_| "fixture server panicked")??;
+    capture
 }
 
 #[cfg(target_os = "macos")]

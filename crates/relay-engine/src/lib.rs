@@ -12,12 +12,13 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 const DEFAULT_VALIDATION_TIMEOUT: Duration = Duration::from_secs(10);
-const RELAY_ENV_VARS: [&str; 7] = [
+const RELAY_ENV_VARS: [&str; 8] = [
     "RELAY_MIHOMO_BINARY",
     "RELAY_MIHOMO_CONFIG",
     "RELAY_MIHOMO_CONTROLLER",
     "RELAY_MIHOMO_DATA_DIR",
     "RELAY_MIHOMO_MIXED_PORT",
+    "RELAY_MIHOMO_PREVIEW_BINARY",
     "RELAY_MIHOMO_SECRET",
     "RELAY_MIHOMO_SUBSCRIPTION_FILE",
 ];

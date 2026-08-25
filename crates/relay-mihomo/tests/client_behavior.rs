@@ -99,6 +99,23 @@ fn fetch_snapshot_requests_exact_readonly_endpoints() -> Result<(), Box<dyn std:
 }
 
 #[test]
+fn provider_preview_requests_only_the_provider_endpoint() -> Result<(), Box<dyn std::error::Error>>
+{
+    let transport = FakeTransport::default();
+    let client = MihomoClient::new(ControllerConfig::default(), &transport);
+
+    let providers = client.fetch_proxy_providers()?;
+
+    assert_eq!(
+        transport.requests.borrow().as_slice(),
+        ["/providers/proxies"]
+    );
+    assert_eq!(providers.len(), 1);
+    assert_eq!(providers[0].proxies.len(), 2);
+    Ok(())
+}
+
+#[test]
 fn parses_all_proxy_provider_nodes_for_source_browsing() -> Result<(), Box<dyn std::error::Error>> {
     let transport = FakeTransport::default();
     let snapshot = MihomoClient::new(ControllerConfig::default(), &transport).fetch_snapshot()?;

@@ -8,13 +8,14 @@ Relay 是一个使用 Rust 与 GPUI 构建的跨平台代理策略工作台。�
 
 - 原生 GPUI 窗口，可在宽、中、窄三档尺寸间自适应
 - 一键读取 Mihomo 策略组、节点、规则、延迟与活跃连接；未连接时保留演示状态
+- 在配置页实际下载 HTTP/HTTPS 订阅，并在保存前列出其中的全部节点
 - 可选择连接外部 Mihomo，或由 Relay 校验并托管一个独立 Mihomo 子进程
 - 可解释的本地路由预测链，并明确区别于 Mihomo 已观察连接
 - 浅色/深色主题、系统代理演示开关与键盘可聚焦控件
 - macOS 原生运行和 Metal 离屏截图已验证
 - Windows、Linux 已配置对应的 GPUI 平台依赖，仍需各自原生 CI/设备验证
 
-当前 Mihomo 集成严格只读：点击“连接 Mihomo”后仅请求官方的 `GET /version`、`GET /proxies`、`GET /providers/proxies`、`GET /rules` 和 `GET /connections`。来源页使用 provider 接口列出 Mihomo 已载入的全部订阅节点；这些读取不会修改 Mihomo 配置、切换节点或改动系统代理设置。
+当前 Mihomo 控制器集成严格只读：点击“连接 Mihomo”后仅请求官方的 `GET /version`、`GET /proxies`、`GET /providers/proxies`、`GET /rules` 和 `GET /connections`。来源页使用 provider 接口列出 Mihomo 已载入的全部订阅节点；这些读取不会修改 Mihomo 配置、切换节点或改动系统代理设置。配置页的订阅预览会另起一个短生命周期、隔离目录的 Mihomo，只用于下载并解析待预览的订阅。
 
 ## 运行
 
@@ -88,9 +89,15 @@ cargo run -p relay-ui
 
 ### 在应用里输入订阅链接
 
-打开“配置 → 订阅源”，链接输入框会直接显示并自动获得焦点。入口可识别 HTTP/HTTPS 订阅地址以及单个 `vless://` 节点链接；HTTP 会显示明文风险提示，VLESS 会立即解析为一个不含 UUID 的安全节点预览。“清除”会立即删除内存草稿。
+打开“配置 → 订阅源”，链接输入框会直接显示并自动获得焦点。入口可识别 HTTP/HTTPS 订阅地址以及单个 `vless://` 节点链接；点击“读取订阅节点”后，HTTP/HTTPS 订阅会由隔离的 Mihomo 实际下载和解析，页面显示真实来源数、节点总数，并在可滚动列表中列出每个节点的名称与协议。HTTP 会显示明文风险提示，VLESS 会立即解析为一个不含 UUID 的安全节点预览。“清除”会立即删除内存草稿和预览结果。
 
-远程订阅在应用内仍是待启用的内存草稿：Relay 不会假装已经拉取节点。启用并连接 Mihomo 后，来源页通过 `/providers/proxies` 展示内核实际载入的 provider 与全部节点。草稿关闭应用即清除，不会写入日志、Git 或配置文件；真正保存并交给 Mihomo 仍使用上面的私有文件开发模式，后续再接入三平台凭据存储和明确的“启用配置”动作。
+预览进程使用权限为 `0700` 的临时目录，配置和 Mihomo 缓存在预览结束后删除；日志和错误不会包含订阅 URL。Relay 会依次查找 `RELAY_MIHOMO_PREVIEW_BINARY`、应用同目录的 `mihomo`、`PATH`，并在 macOS 上回退到 Clash Verge 的内置 Mihomo。需要显式指定时可这样启动：
+
+```bash
+RELAY_MIHOMO_PREVIEW_BINARY=/absolute/path/to/mihomo cargo run -p relay-ui
+```
+
+订阅链接和预览结果当前仍只保存在内存中，关闭应用即清除，不会写入日志、Git 或持久配置。真正“保存并启用”仍使用上面的私有文件开发模式，后续再接入三平台凭据存储和明确的启用动作。隔离预览目前支持 macOS/Linux；Windows 还需补齐 named-pipe 控制器传输。
 
 ## 验证
 
@@ -113,6 +120,13 @@ cargo run -p relay-ui --example snapshot
 ```bash
 RELAY_MIHOMO_CONTROLLER=unix:///tmp/verge/verge-mihomo.sock \
 cargo test -p relay-ui reads_a_live_controller_snapshot -- --ignored
+```
+
+隔离订阅预览也有默认忽略的真实 Mihomo 集成测试，可显式提供测试二进制运行；测试使用本地两节点订阅 fixture，不请求私人订阅：
+
+```bash
+RELAY_MIHOMO_TEST_BINARY=/absolute/path/to/mihomo \
+cargo test -p relay-ui real_mihomo_previews_all_nodes_from_a_subscription -- --ignored
 ```
 
 可选 live screenshot 还要求 `RELAY_MIHOMO_LIVE_SCREENSHOT` 指向系统临时目录，工具会拒绝把真实节点信息写进仓库。
