@@ -62,3 +62,9 @@
 - HTTP 状态行、普通 Header、chunk-size 和 trailer 都使用限长读取，Header/trailer 另有 64 KiB 聚合上限，避免恶意回环服务在换行前迫使进程无限分配内存。
 - 从 `/rules` 得到的规则用于本地预测展示，从 `/connections` 得到的 `rule/rulePayload/chains` 才标为“最近已观察”；两种证据不会合并成一个虚假的确定结果。
 - 当前快照是用户点击连接/刷新时获取的一次性读模型；持续流量和连接更新以后应使用节流轮询或 WebSocket，并加入 generation 以丢弃过期回包。
+- Clash Verge Rev 在 macOS 上可通过 `external-controller-unix` 运行 Mihomo；直接使用 Unix socket 可以复用正在运行的真实配置，而不需要下载、解析或持久化订阅 URL。
+- 真实 API 再次证明未被 UI 使用的漂移字段不应强绑定类型：`fixed` 在不同版本/组类型中可能是布尔值或节点名，忽略它比创建无业务价值的兼容枚举更稳健。
+- 内置 `GLOBAL` 是有效但通常不是用户首要操作的组；保留它并排序到普通策略组之后，比按名称硬删除更符合可发现性。
+- Mihomo 延迟历史中的 `0` 表示未知/未测速而不是零延迟；显示层应渲染为缺失值。连接 metadata 的空 host 同样应回退到 destination IP。
+- `external-controller-unix` 依赖 Unix 文件权限而不是 Bearer secret；Relay 的 Unix transport 不发送 `Authorization`，并在连接前拒绝普通文件和符号链接 socket。
+- 真实控制器错误 body 可能包含不适合普通 UI 的诊断内容；结构化错误保留状态码，但用户可见文案只显示 HTTP status/reason。

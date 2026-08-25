@@ -1,5 +1,11 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
+#[cfg(unix)]
+use std::os::unix::fs::FileTypeExt;
+#[cfg(unix)]
+use std::os::unix::net::UnixStream;
+#[cfg(unix)]
+use std::path::{Path, PathBuf};
 
 use crate::{ControllerConfig, MihomoError};
 
@@ -50,7 +56,7 @@ impl Default for StdHttpTransport {
 impl ReadonlyTransport for StdHttpTransport {
     fn get(&self, config: &ControllerConfig, path: &str) -> Result<String, MihomoError> {
         validate_path(path)?;
-        let request = build_get_request(config, path)?;
+        let request = build_get_request(config, path, true)?;
         let mut addresses = (config.host(), config.port()).to_socket_addrs()?;
         let Some(address) = addresses.find(|address| address.ip().is_loopback()) else {
             return Err(MihomoError::InvalidConfig(format!(
@@ -59,14 +65,76 @@ impl ReadonlyTransport for StdHttpTransport {
             )));
         };
 
-        let mut stream = TcpStream::connect_timeout(&address, config.connect_timeout())?;
+        let stream = TcpStream::connect_timeout(&address, config.connect_timeout())?;
         stream.set_read_timeout(Some(config.read_timeout()))?;
         stream.set_write_timeout(Some(config.connect_timeout()))?;
-        stream.write_all(request.as_bytes())?;
-        stream.flush()?;
 
-        decode_http_response(stream, self.body_limit)
+        send_request(stream, &request, self.body_limit)
     }
+}
+
+/// Read-only HTTP transport over a local Unix domain socket.
+#[cfg(unix)]
+#[derive(Debug, Clone)]
+pub struct UnixSocketTransport {
+    socket_path: PathBuf,
+    body_limit: usize,
+}
+
+#[cfg(unix)]
+impl UnixSocketTransport {
+    #[must_use]
+    pub fn new(socket_path: impl Into<PathBuf>) -> Self {
+        Self {
+            socket_path: socket_path.into(),
+            body_limit: DEFAULT_BODY_LIMIT_BYTES,
+        }
+    }
+
+    #[must_use]
+    pub fn with_body_limit(mut self, body_limit: usize) -> Self {
+        self.body_limit = body_limit;
+        self
+    }
+
+    #[must_use]
+    pub fn socket_path(&self) -> &Path {
+        &self.socket_path
+    }
+}
+
+#[cfg(unix)]
+impl ReadonlyTransport for UnixSocketTransport {
+    fn get(&self, config: &ControllerConfig, path: &str) -> Result<String, MihomoError> {
+        validate_path(path)?;
+        if !self.socket_path.is_absolute() {
+            return Err(MihomoError::InvalidConfig(
+                "Unix controller socket path must be absolute".to_owned(),
+            ));
+        }
+        let metadata = std::fs::symlink_metadata(&self.socket_path)?;
+        if metadata.file_type().is_symlink() || !metadata.file_type().is_socket() {
+            return Err(MihomoError::InvalidConfig(
+                "Unix controller path must be a socket and not a symlink".to_owned(),
+            ));
+        }
+
+        let request = build_get_request(config, path, false)?;
+        let stream = UnixStream::connect(&self.socket_path)?;
+        stream.set_read_timeout(Some(config.read_timeout()))?;
+        stream.set_write_timeout(Some(config.connect_timeout()))?;
+        send_request(stream, &request, self.body_limit)
+    }
+}
+
+fn send_request(
+    mut stream: impl Read + Write,
+    request: &str,
+    body_limit: usize,
+) -> Result<String, MihomoError> {
+    stream.write_all(request.as_bytes())?;
+    stream.flush()?;
+    decode_http_response(stream, body_limit)
 }
 
 fn validate_path(path: &str) -> Result<(), MihomoError> {
@@ -80,13 +148,17 @@ fn validate_path(path: &str) -> Result<(), MihomoError> {
     Ok(())
 }
 
-fn build_get_request(config: &ControllerConfig, path: &str) -> Result<String, MihomoError> {
+fn build_get_request(
+    config: &ControllerConfig,
+    path: &str,
+    include_authorization: bool,
+) -> Result<String, MihomoError> {
     let mut request = format!(
         "GET {path} HTTP/1.1\r\nHost: {}\r\nAccept: application/json\r\nUser-Agent: relay-mihomo/0.1\r\nConnection: close\r\n",
         config.authority()
     );
 
-    if let Some(secret) = config.secret() {
+    if let Some(secret) = config.secret().filter(|_secret| include_authorization) {
         if secret.bytes().any(|byte| byte.is_ascii_control()) {
             return Err(MihomoError::InvalidConfig(
                 "controller secret must not contain control characters".to_owned(),
@@ -334,8 +406,12 @@ mod tests {
 
     #[test]
     fn request_builder_omits_empty_secret() {
-        let request = build_get_request(&ControllerConfig::default().with_secret(""), "/version")
-            .expect("an empty secret should be omitted");
+        let request = build_get_request(
+            &ControllerConfig::default().with_secret(""),
+            "/version",
+            true,
+        )
+        .expect("an empty secret should be omitted");
         assert!(!request.contains("Authorization:"));
     }
 
@@ -344,6 +420,7 @@ mod tests {
         let result = build_get_request(
             &ControllerConfig::default().with_secret("token\r\nX-Injected: yes"),
             "/version",
+            true,
         );
         assert!(result.is_err());
     }

@@ -32,3 +32,13 @@
 - 独立安全复核发现 HTTP 行在事后限长可能造成本地内存 DoS；改为读取时即限长并覆盖状态行、Header、chunk-size、trailer，复核结论为 resolved。
 - 最终 `fmt`、workspace 全目标测试、严格 Clippy、原生截图生成和 `git diff --check` 全部通过；仅保留 GPUI 上游 `block 0.1.6` 的 future-incompatibility 提示。
 - 独立连接态视觉终审为 94/100 `pass`，没有阻断视觉或无障碍问题。
+- 通过用户现有 Clash Verge Mihomo 的 Unix socket 执行真实只读 smoke test；订阅凭据未写入仓库、命令日志、测试夹具或文档。
+- 新增 macOS/Linux `UnixSocketTransport` 与 `unix:///absolute/path` endpoint，保持同一 GET-only、Bearer、超时和响应限额边界；Windows 对 Unix endpoint 返回明确错误。
+- 真实 `/proxies` 揭示 `fixed` 字段可能从布尔值漂移为节点名；删除未使用的强类型绑定并加入字符串回归样本，完整目录解析通过。
+- 根据真实数据修正：普通自定义策略优先于内置 GLOBAL、空 host 回退 destination IP、0 ms 视为未知延迟。
+- live smoke test 默认 `#[ignore]`；live screenshot 必须显式启用且输出路径必须位于系统临时目录，因此真实节点/流量不会进入 Git。
+- 第二轮真实 GPUI 截图视觉判定 95/100 `pass`，大规模节点/规则仍保持清楚层级与滚动行为。
+- 独立安全复核确认订阅 URL/token 未出现在 worktree 或 Git 历史；Unix transport 增加“必须为非 symlink socket”检查，并明确不转发 Bearer secret。
+- live screenshot 使用 canonical parent 校验、拒绝已有目标文件，防止 `..`/symlink 绕回仓库；控制器 HTTP 错误 body 不再展示到 UI。
+- `.gitignore` 增加 `.env`、订阅导出和 live artifact 防线，降低以后手工测试误提交敏感文件的风险。
+- 最终 workspace 31 个常规测试、真实控制器 ignored smoke、严格 Clippy、fixture/live 原生截图和 `git diff --check` 全部通过；安全复核降为 LOW，无未解决 High/Medium 问题。

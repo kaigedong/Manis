@@ -5,3 +5,8 @@
 *.profraw
 coverage/
 /dist/
+.env
+.env.*
+!.env.example
+*.subscription.*
+*.mihomo-live.*

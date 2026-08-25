@@ -1,9 +1,13 @@
+#[cfg(unix)]
+use std::path::PathBuf;
 use std::{env, error::Error, fmt};
 
 use relay_core::{EmptyPolicyCatalog, PolicyCatalog};
+#[cfg(unix)]
+use relay_mihomo::UnixSocketTransport;
 use relay_mihomo::{
-    ControllerConfig, MihomoClient, MihomoError, ObservedRouteEvidence, StdHttpTransport,
-    to_policy_catalog,
+    ControllerConfig, MihomoClient, MihomoError, MihomoSnapshot, ObservedRouteEvidence,
+    StdHttpTransport, to_policy_catalog,
 };
 
 const CONTROLLER_ENV: &str = "RELAY_MIHOMO_CONTROLLER";
@@ -110,12 +114,7 @@ pub(crate) fn configured_endpoint() -> String {
 }
 
 pub(crate) fn load(endpoint: &str) -> Result<LoadedSnapshot, LoadError> {
-    let mut config = ControllerConfig::new(endpoint)?;
-    if let Ok(secret) = env::var(SECRET_ENV) {
-        config = config.with_secret(secret);
-    }
-
-    let snapshot = MihomoClient::new(config, StdHttpTransport::default()).fetch_snapshot()?;
+    let snapshot = fetch_snapshot(endpoint)?;
     let catalog = to_policy_catalog(&snapshot)?;
     let version = snapshot
         .version
@@ -135,4 +134,74 @@ pub(crate) fn load(endpoint: &str) -> Result<LoadedSnapshot, LoadError> {
         upload_total,
         observed_routes,
     })
+}
+
+fn fetch_snapshot(endpoint: &str) -> Result<MihomoSnapshot, MihomoError> {
+    #[cfg(unix)]
+    if let Some(socket_path) = unix_socket_path(endpoint)? {
+        let config = ControllerConfig::default();
+        return MihomoClient::new(config, UnixSocketTransport::new(socket_path)).fetch_snapshot();
+    }
+
+    #[cfg(not(unix))]
+    if endpoint.starts_with("unix://") {
+        return Err(MihomoError::InvalidConfig(
+            "Unix controller sockets are not supported on this platform".to_owned(),
+        ));
+    }
+
+    let config = with_configured_secret(ControllerConfig::new(endpoint)?);
+    MihomoClient::new(config, StdHttpTransport::default()).fetch_snapshot()
+}
+
+fn with_configured_secret(mut config: ControllerConfig) -> ControllerConfig {
+    if let Ok(secret) = env::var(SECRET_ENV) {
+        config = config.with_secret(secret);
+    }
+    config
+}
+
+#[cfg(unix)]
+fn unix_socket_path(endpoint: &str) -> Result<Option<PathBuf>, MihomoError> {
+    let Some(path) = endpoint.strip_prefix("unix://") else {
+        return Ok(None);
+    };
+    let path = PathBuf::from(path);
+    if !path.is_absolute() {
+        return Err(MihomoError::InvalidConfig(
+            "Unix controller socket path must be absolute".to_owned(),
+        ));
+    }
+
+    Ok(Some(path))
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::path::Path;
+
+    #[test]
+    fn parses_absolute_unix_controller_endpoint() -> Result<(), Box<dyn std::error::Error>> {
+        let path = super::unix_socket_path("unix:///tmp/verge/mihomo.sock")?
+            .ok_or("expected a Unix socket path")?;
+        assert_eq!(path, Path::new("/tmp/verge/mihomo.sock"));
+        assert!(super::unix_socket_path("http://127.0.0.1:9090")?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_relative_unix_controller_endpoint() {
+        assert!(super::unix_socket_path("unix://relative.sock").is_err());
+        assert!(super::unix_socket_path("unix://").is_err());
+    }
+
+    #[test]
+    #[ignore = "requires RELAY_MIHOMO_CONTROLLER and a running controller"]
+    fn reads_a_live_controller_snapshot() -> Result<(), Box<dyn std::error::Error>> {
+        let endpoint = std::env::var(super::CONTROLLER_ENV)?;
+        let snapshot = super::load(&endpoint)?;
+        assert!(snapshot.catalog.iter().count() > 0);
+        assert!(!snapshot.version.is_empty());
+        Ok(())
+    }
 }

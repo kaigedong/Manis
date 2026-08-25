@@ -28,9 +28,10 @@ impl MihomoSnapshot {
             .filter_map(PolicyGroup::from_proxy)
             .collect();
         groups.sort_by(|left, right| {
-            left.kind
-                .sort_rank()
-                .cmp(&right.kind.sort_rank())
+            left.name
+                .eq_ignore_ascii_case("GLOBAL")
+                .cmp(&right.name.eq_ignore_ascii_case("GLOBAL"))
+                .then_with(|| left.kind.sort_rank().cmp(&right.kind.sort_rank()))
                 .then_with(|| left.name.cmp(&right.name))
         });
         groups
@@ -55,7 +56,6 @@ pub struct Proxy {
     pub alive: Option<bool>,
     pub history: Vec<DelayHistory>,
     pub provider_name: Option<String>,
-    pub fixed: Option<bool>,
     pub hidden: Option<bool>,
 }
 
@@ -65,7 +65,7 @@ impl Proxy {
         self.history.iter().rev().find_map(|history| {
             history
                 .delay
-                .filter(|delay| delay.is_finite() && *delay >= 0.0)
+                .filter(|delay| delay.is_finite() && *delay > 0.0)
         })
     }
 }
@@ -122,7 +122,6 @@ pub struct PolicyGroup {
     pub latest_latency_ms: Option<f64>,
     pub alive: Option<bool>,
     pub provider_name: Option<String>,
-    pub fixed: Option<bool>,
     pub hidden: Option<bool>,
 }
 
@@ -136,7 +135,6 @@ impl PolicyGroup {
             latest_latency_ms: proxy.latest_latency_ms(),
             alive: proxy.alive,
             provider_name: proxy.provider_name.clone(),
-            fixed: proxy.fixed,
             hidden: proxy.hidden,
         })
     }
@@ -256,8 +254,17 @@ impl ObservedRouteEvidence {
             host: connection
                 .metadata
                 .host
-                .clone()
-                .or_else(|| connection.metadata.destination_ip.clone()),
+                .as_ref()
+                .filter(|host| !host.trim().is_empty())
+                .cloned()
+                .or_else(|| {
+                    connection
+                        .metadata
+                        .destination_ip
+                        .as_ref()
+                        .filter(|address| !address.trim().is_empty())
+                        .cloned()
+                }),
             process: connection.metadata.process.clone(),
             rule: connection.rule.clone(),
             rule_payload: connection.rule_payload.clone(),
@@ -306,8 +313,6 @@ struct RawProxy {
     )]
     provider_name: Option<String>,
     #[serde(default)]
-    fixed: Option<bool>,
-    #[serde(default)]
     hidden: Option<bool>,
 }
 
@@ -324,7 +329,6 @@ impl RawProxy {
             alive: self.alive,
             history: self.history,
             provider_name: self.provider_name,
-            fixed: self.fixed,
             hidden: self.hidden,
         }
     }

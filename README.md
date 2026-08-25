@@ -31,7 +31,14 @@ RELAY_MIHOMO_SECRET='your-controller-secret' \
 cargo run -p relay-ui
 ```
 
-这一里程碑的标准库 HTTP 传输只允许 `localhost`、IPv4/IPv6 回环地址，避免通过明文网络泄露控制器密钥；远程控制器、HTTPS、Unix socket 和 Windows named pipe 尚未支持。Mihomo 需要先启用 [`external-controller`](https://wiki.metacubex.one/en/config/general/)；接口形状参考其[官方 API 文档](https://wiki.metacubex.one/en/api/)。
+这一里程碑的标准库 HTTP 传输只允许 `localhost`、IPv4/IPv6 回环地址，避免通过明文网络泄露控制器密钥。macOS/Linux 也可直接连接 Clash Verge Rev 等应用暴露的 Unix socket：
+
+```bash
+RELAY_MIHOMO_CONTROLLER=unix:///tmp/verge/verge-mihomo.sock \
+cargo run -p relay-ui
+```
+
+Unix socket 依赖操作系统文件权限，Relay 会确认目标确实是 socket 且不是符号链接，并且不会向它转发 `RELAY_MIHOMO_SECRET`。远程控制器、HTTPS 和 Windows named pipe 尚未支持。Mihomo 需要先启用 [`external-controller`](https://wiki.metacubex.one/en/config/general/) 或 `external-controller-unix`；接口形状参考其[官方 API 文档](https://wiki.metacubex.one/en/api/)。
 
 ## 验证
 
@@ -48,6 +55,15 @@ cargo run -p relay-ui --example snapshot
 ```
 
 输出位于 `.impeccable/review/native-*.png`。截图直接来自 GPUI 渲染纹理，不依赖系统录屏权限。
+
+真实控制器 smoke test 默认忽略，只有显式提供 endpoint 才会运行：
+
+```bash
+RELAY_MIHOMO_CONTROLLER=unix:///tmp/verge/verge-mihomo.sock \
+cargo test -p relay-ui reads_a_live_controller_snapshot -- --ignored
+```
+
+可选 live screenshot 还要求 `RELAY_MIHOMO_LIVE_SCREENSHOT` 指向系统临时目录，工具会拒绝把真实节点信息写进仓库。
 
 ## 代码结构
 

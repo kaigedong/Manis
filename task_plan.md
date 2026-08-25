@@ -28,6 +28,15 @@
 - [complete] 5. 分离本地预测与 `/connections` 已观察证据，并生成真实连接快照
 - [complete] 6. 完成安全复核、文档、全量验证和 Git 提交
 
+## 真实订阅兼容验证阶段
+
+- [complete] 1. 通过现有 Clash Verge Mihomo 控制器确认真实 API 可用
+- [complete] 2. 以失败测试建立 macOS/Linux Unix socket 只读传输
+- [complete] 3. 修复真实 `/proxies` 字段漂移、默认组排序和缺失值语义
+- [complete] 4. 用默认忽略的 live smoke test 验证真实目录映射
+- [complete] 5. 将 live screenshot 限制到系统临时目录并完成视觉复核
+- [complete] 6. 完成全量验证、安全复核和 Git 提交
+
 ## 固定约束
 - 实现框架：Rust + GPUI
 - 目标平台：Windows、macOS、Linux
@@ -46,3 +55,6 @@
 | 严格 Clippy 将声明式视图长度和 `RRGGBB` 色值视为问题 | 1 | 修复实际告警，仅对四个组合视图和标准色值表示做窄范围豁免 |
 | 明文控制器地址可能把 Bearer secret 发往远端 | 1 | 本阶段限制为 localhost/IPv4/IPv6 回环地址，并二次验证 DNS 解析结果 |
 | Bearer secret 可包含 HTTP 控制字符 | 1 | 请求构造前拒绝控制字符，并以回归测试覆盖 header injection |
+| 真实 Mihomo 将 `fixed` 返回为节点名而非布尔值 | 1 | 删除 UI 未使用的脆弱字段绑定，让 Serde 按未知字段忽略并保留兼容性回归样本 |
+| 首次 live screenshot 误选内置 GLOBAL 且把空 host/0 ms 当有效值 | 1 | GLOBAL 排在普通策略之后，空 host 回退目标 IP，0 ms 视为未知；第二轮视觉判定通过 |
+| live screenshot 命令使用 zsh 只读变量名 `status` | 1 | 不重试该变量名；改用任务专用 `task_exit_code` 后成功 |

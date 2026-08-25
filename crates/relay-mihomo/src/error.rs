@@ -35,11 +35,8 @@ impl fmt::Display for MihomoError {
             Self::HttpStatus {
                 status_code,
                 reason,
-                body_preview,
-            } => write!(
-                formatter,
-                "controller returned HTTP {status_code} {reason}: {body_preview}"
-            ),
+                body_preview: _,
+            } => write!(formatter, "controller returned HTTP {status_code} {reason}"),
             Self::Io(source) => write!(formatter, "controller I/O failed: {source}"),
             Self::Json { endpoint, source } => {
                 write!(

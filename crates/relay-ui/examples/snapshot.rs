@@ -7,6 +7,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     capture(&mut cx, 720.0, 720.0, "native-compact.png")?;
     capture_compact_flow(&mut cx)?;
     capture_connected(&mut cx)?;
+    capture_live_when_configured(&mut cx)?;
     Ok(())
 }
 
@@ -76,6 +77,51 @@ fn capture_connected(
     server
         .join()
         .map_err(|_| "Mihomo fixture server thread panicked")??;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn capture_live_when_configured(
+    cx: &mut gpui::VisualTestAppContext,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use gpui::{AnyWindowHandle, AppContext, Modifiers, point, px, size};
+    use relay_ui::RelayApp;
+    use std::path::PathBuf;
+
+    let Ok(endpoint) = std::env::var("RELAY_MIHOMO_LIVE_CONTROLLER") else {
+        return Ok(());
+    };
+    let output = PathBuf::from(
+        std::env::var_os("RELAY_MIHOMO_LIVE_SCREENSHOT")
+            .ok_or("RELAY_MIHOMO_LIVE_SCREENSHOT is required when live capture is enabled")?,
+    );
+    validate_live_output(&output)?;
+
+    let window = cx.open_offscreen_window(size(px(1420.0), px(900.0)), |_, cx| {
+        cx.new(|_| RelayApp::with_controller(endpoint))
+    })?;
+    let window: AnyWindowHandle = window.into();
+
+    refresh(cx, window)?;
+    cx.simulate_click(window, point(px(480.0), px(80.0)), Modifiers::none());
+    refresh(cx, window)?;
+    save_screenshot_at(cx, window, &output)
+}
+
+#[cfg(target_os = "macos")]
+fn validate_live_output(output: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    if std::fs::symlink_metadata(output).is_ok() {
+        return Err("live screenshot output must be a new file".into());
+    }
+
+    let temp_root = std::env::temp_dir().canonicalize()?;
+    let parent = output
+        .parent()
+        .ok_or("live screenshot output must have a parent directory")?
+        .canonicalize()?;
+    if !parent.starts_with(temp_root) {
+        return Err("live screenshots must stay inside the system temporary directory".into());
+    }
     Ok(())
 }
 
@@ -152,7 +198,34 @@ fn save_screenshot(
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
+fn save_screenshot_at(
+    cx: &mut gpui::VisualTestAppContext,
+    window: gpui::AnyWindowHandle,
+    output: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let screenshot = cx.capture_screenshot(window)?;
+    screenshot.save(&output)?;
+    println!("saved {}", output.display());
+    Ok(())
+}
+
 #[cfg(not(target_os = "macos"))]
 fn main() {
     eprintln!("native snapshot capture is currently available on macOS only");
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    #[test]
+    fn live_output_path_must_resolve_inside_system_temp() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let temp = std::env::temp_dir();
+        let safe = temp.join(format!("relay-live-test-{}.png", std::process::id()));
+        super::validate_live_output(&safe)?;
+
+        let escaped = temp.join("..").join("relay-live-escaped.png");
+        assert!(super::validate_live_output(&escaped).is_err());
+        Ok(())
+    }
 }

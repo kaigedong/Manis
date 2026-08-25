@@ -1,10 +1,10 @@
 {
-  "score": 97,
+  "score": 95,
   "verdict": "pass",
   "category_match": true,
   "threshold": 90,
   "threshold_met": true,
-  "independent_review": {
+  "fixture_independent_review": {
     "score": 94,
     "verdict": "pass",
     "category_match": true,
@@ -25,20 +25,16 @@
     "/Users/bobo/.planning/qx_policy_client_ui/.impeccable/review/native-wide-connected.png"
   ],
   "differences": [
-    "The native medium route inspector is intentionally hidden until invoked rather than persistently consuming workspace width.",
-    "The native compact inspector overlays the detail task as a 340 px side sheet instead of shrinking every pane.",
-    "The GPUI navigation rail uses readable Chinese initials instead of a bundled icon asset set.",
-    "The connected fixture intentionally reduces the catalog to two real controller groups, leaving more white space than the richer demo catalog."
+    "The live catalog is substantially denser than the fixture and relies on the existing scroll container for dozens of candidate nodes.",
+    "Nested policy groups appear as selectable members inside the primary selector, matching Mihomo's actual composition model."
   ],
   "suggestions": [
-    "Preserve the copper signal line as the only strong non-semantic accent.",
-    "Keep compact list and detail as separate tasks rather than forcing multi-pane compression.",
-    "Replace navigation initials only when a deliberate cross-platform icon asset pipeline is introduced.",
-    "Keep predicted routes in copper and observed /connections evidence in teal so provenance remains unambiguous."
+    "Keep the synthetic GLOBAL group available but sorted after ordinary user policy groups.",
+    "Consider a future metadata-node classifier only if it can be based on provider semantics rather than fragile name heuristics."
   ],
   "next_actions": [
-    "Run the complete Rust workspace verification suite.",
-    "Document the read-only controller boundary and commit the Mihomo integration milestone."
+    "Commit the verified Unix socket and real-controller compatibility milestone.",
+    "Keep future live subscription artifacts outside the repository using the documented ignored smoke workflow."
   ],
-  "reasoning": "The connected GPUI state preserves the Signal Patch Bay hierarchy while clearly replacing demo content with controller-derived groups, nodes, rules, latency, version, connection count, and traffic totals. Copper prediction and teal observed evidence remain visually distinct, so the interface does not overclaim what Mihomo actually routed."
+  "reasoning": "The second live capture opens on the user's actionable custom policy, scales cleanly to hundreds of rules and dozens of nodes, and renders missing host/latency values honestly. The built-in GLOBAL group remains accessible without dominating the first-use hierarchy."
 }

@@ -3,6 +3,8 @@ use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::time::Duration;
 
+#[cfg(unix)]
+use relay_mihomo::UnixSocketTransport;
 use relay_mihomo::{
     ControllerConfig, GroupKind, MihomoClient, MihomoError, ReadonlyTransport, StdHttpTransport,
     to_policy_catalog,
@@ -97,7 +99,7 @@ fn parses_flexible_proxy_json_and_extracts_policy_groups() -> Result<(), Box<dyn
 
     let groups = snapshot.policy_groups();
 
-    assert_eq!(groups.len(), 2);
+    assert_eq!(groups.len(), 3);
     assert_eq!(groups[0].name, "Proxy");
     assert_eq!(groups[0].kind, GroupKind::Selector);
     assert_eq!(groups[0].current.as_deref(), Some("Japan 01"));
@@ -106,6 +108,7 @@ fn parses_flexible_proxy_json_and_extracts_policy_groups() -> Result<(), Box<dyn
     assert_eq!(groups[0].provider_name.as_deref(), Some("airport"));
     assert_eq!(groups[1].kind, GroupKind::UrlTest);
     assert_eq!(groups[1].latest_latency_ms, None);
+    assert_eq!(groups[2].name, "GLOBAL");
 
     Ok(())
 }
@@ -144,7 +147,7 @@ fn exposes_observed_route_evidence_from_connections() -> Result<(), Box<dyn std:
     let evidence = snapshot.observed_routes();
 
     assert_eq!(evidence.len(), 1);
-    assert_eq!(evidence[0].host.as_deref(), Some("example.com"));
+    assert_eq!(evidence[0].host.as_deref(), Some("93.184.216.34"));
     assert_eq!(evidence[0].process.as_deref(), Some("curl"));
     assert_eq!(evidence[0].rule.as_deref(), Some("DOMAIN-SUFFIX"));
     assert_eq!(evidence[0].rule_payload.as_deref(), Some("example.com"));
@@ -165,13 +168,14 @@ fn maps_snapshot_to_owned_policy_catalog() -> Result<(), Box<dyn std::error::Err
     let catalog = to_policy_catalog(&snapshot)?;
     let groups: Vec<_> = catalog.iter().collect();
 
-    assert_eq!(groups.len(), 2);
+    assert_eq!(groups.len(), 3);
     assert_eq!(groups[0].name, "Proxy");
     assert_eq!(groups[0].kind, "手动选择");
     assert_eq!(groups[0].target, "Japan 01");
     assert_eq!(groups[0].nodes[0].name, "Japan 01");
     assert_eq!(groups[0].nodes[0].provider.as_deref(), Some("airport"));
     assert_eq!(groups[0].nodes[0].latency_ms, Some(51));
+    assert_eq!(groups[0].nodes[1].latency_ms, None);
     assert_eq!(groups[0].rules_count(), 1);
     assert_eq!(groups[0].rules[0].hit_count, Some(12));
     assert_eq!(groups[1].kind, "自动测速");
@@ -220,6 +224,7 @@ fn std_http_transport_rejects_http_error_status() -> Result<(), Box<dyn std::err
         }
     ));
     assert!(!format!("{err}").contains("controller-token"));
+    assert!(!format!("{err}").contains("secret denie"));
 
     Ok(())
 }
@@ -241,6 +246,56 @@ fn std_http_transport_caps_response_body() -> Result<(), Box<dyn std::error::Err
     Ok(())
 }
 
+#[cfg(unix)]
+#[test]
+fn unix_socket_transport_sends_readonly_http_request() -> Result<(), Box<dyn std::error::Error>> {
+    use std::os::unix::net::UnixListener;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let unique = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let socket_path =
+        std::env::temp_dir().join(format!("relay-mihomo-{}-{unique}.sock", std::process::id()));
+    let listener = UnixListener::bind(&socket_path)?;
+    let server = std::thread::spawn(move || -> std::io::Result<String> {
+        let (mut stream, _) = listener.accept()?;
+        let mut request = [0_u8; 2048];
+        let read = stream.read(&mut request)?;
+        stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\n{\"meta\":true}")?;
+        Ok(String::from_utf8_lossy(&request[..read]).into_owned())
+    });
+
+    let config = ControllerConfig::default().with_secret("uds-token");
+    let body = UnixSocketTransport::new(&socket_path).get(&config, "/version")?;
+    let request = server.join().map_err(|_| "server thread panicked")??;
+    std::fs::remove_file(&socket_path)?;
+
+    assert_eq!(body, r#"{"meta":true}"#);
+    assert!(request.starts_with("GET /version HTTP/1.1\r\n"));
+    assert!(!request.contains("Authorization:"));
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn unix_socket_transport_rejects_non_socket_paths() -> Result<(), Box<dyn std::error::Error>> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let unique = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let path = std::env::temp_dir().join(format!(
+        "relay-mihomo-regular-{}-{unique}",
+        std::process::id()
+    ));
+    std::fs::write(&path, b"not a socket")?;
+
+    let error = UnixSocketTransport::new(&path)
+        .get(&ControllerConfig::default(), "/version")
+        .expect_err("regular files must be rejected before connecting");
+    std::fs::remove_file(path)?;
+
+    assert!(matches!(error, MihomoError::InvalidConfig(_)));
+    Ok(())
+}
+
 fn proxy_fixture() -> String {
     r#"
     {
@@ -253,7 +308,7 @@ fn proxy_fixture() -> String {
           "history": [{"delay": 44}, {"delay": null}, {"delay": 38}],
           "providerName": "airport",
           "alive": true,
-          "fixed": false,
+          "fixed": "Japan 01",
           "hidden": false
         },
         "Auto": {
@@ -263,11 +318,22 @@ fn proxy_fixture() -> String {
           "all": ["Japan 01", "US 01"],
           "history": null
         },
+        "GLOBAL": {
+          "name": "GLOBAL",
+          "type": "Selector",
+          "now": "DIRECT",
+          "all": ["DIRECT", "Proxy"]
+        },
         "Japan 01": {
           "name": "Japan 01",
           "type": "ss",
           "history": [{"delay": 51}],
           "provider-name": "airport"
+        },
+        "US 01": {
+          "name": "US 01",
+          "type": "ss",
+          "history": [{"delay": 0}]
         }
       }
     }
@@ -310,7 +376,7 @@ fn connection_fixture() -> String {
         {
           "id": "abc",
           "metadata": {
-            "host": "example.com",
+            "host": "",
             "destinationIP": "93.184.216.34",
             "process": "curl",
             "destinationPort": 443,
