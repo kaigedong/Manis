@@ -3,6 +3,7 @@ members = [
     "crates/relay-core",
     "crates/relay-engine",
     "crates/relay-mihomo",
+    "crates/relay-profile",
     "crates/relay-ui",
 ]
 resolver = "2"

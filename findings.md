@@ -100,3 +100,14 @@
 - loopback TCP secret 不能通过 `-secret` 进入进程 argv，也不能只靠“用户 YAML 应该配置了同值 secret”的假设；因此本阶段完全禁用托管 TCP，外部 loopback controller 继续由已有只读客户端支持。
 - `Command::status()` 会让恶意/损坏的 validation 永久阻塞；标准 spawner 改为 child + `try_wait`，默认 10 秒 deadline，超时后 kill 并 wait，fixture 回归在 2 秒门槛内通过。
 - 安全终审为 LOW 且无 High/Medium：托管 TCP 与尚未实现 transport 的 Windows pipe 都在 UI 配置阶段 fail closed；engine 层仍独立拒绝 managed TCP，形成纵深防线。残余只有 Unix 父目录 symlink/TOCTOU 的本地加固项与未安装 `cargo-audit`。
+## 订阅与配置编译官方证据（2026-08-25）
+
+- Mihomo 官方 `proxy-providers` 文档规定：HTTP provider 使用 `type: http` 与 `url`；`path` 可省略但应保持唯一，且默认受 `-d` 指定 HomeDir 的目录约束；`interval` 以秒为单位。provider 自身可配置 `health-check`，包括 `enable`、`url`、`interval`、`timeout`、`lazy` 与期望状态码。
+- 官方 provider 内容规范接受三类互斥格式：带顶层 `proxies:` 的 YAML、逐行代理 URI、以及 URI 内容的 Base64；三类不可混合。因此常见 URI/Base64 订阅可以直接交给 Mihomo provider 解析，但具体供应商返回的完整 Clash 配置仍需运行时验证，不能仅凭 URL 形态假定兼容。
+- 官方策略组支持 `select`、`url-test`、`fallback` 等类型；`proxies` 引用出站或其他策略组，`use` 引用 proxy provider。策略组的 `url` 只检查直接列入 `proxies` 的节点，通过 `use` 引入的节点应依赖 provider 的 `health-check`。
+- 官方规则按配置顺序自上而下匹配，第一条命中即生效；`DOMAIN`、`DOMAIN-SUFFIX`、`GEOIP` 与兜底 `MATCH` 均为正式支持的规则类型。这与目标中的“QX 风格：有序规则 → 策略组 → provider 节点”模型一致。
+- 官方通用配置确认 `mode: rule` 是默认的有序规则匹配模式；`profile.store-selected: true` 会持久化 API 对策略组的选择，适合实现 QX 式“选一次、下次仍沿用”。
+- 官方将 `mixed-port` 定义为同时支持 HTTP(S) 与 SOCKS5 的本地代理入口。首个订阅开发模式应只绑定回环地址并使用显式端口，避免与现有 Clash Verge 端口冲突；最终产品再通过端口分配/冲突检测完善体验。
+- 官方警告 Unix socket 与 Windows named pipe 控制器不校验 API secret，因此这些控制端点只能创建在 Relay 私有运行目录或采用受限管道权限；这与现有托管引擎“私有 runtime + fail closed”的安全边界一致。
+- 独立官方资料核验确认上述 provider/策略组/规则语法适用于 Mihomo `v1.19.30`。provider 内容的正式类型为 `yaml`、`uri`、`base64`；节点列表型 Clash/V2Board 订阅可直接作为 provider 输入，但返回完整顶层 Clash 配置的链接不属于官方 provider-content 契约，需要后续导入/转换流程。
+- 最小 `mihomo -t` fixture 可以不声明任何代理监听端口，仅包含 `mode`、provider、策略组、规则和 `profile.store-selected`；产品实际启用代理时再显式开放只绑定回环的 mixed listener。这样当前阶段验证配置编译不会抢占 Clash Verge 的本地端口。

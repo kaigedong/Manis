@@ -12,6 +12,15 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 const DEFAULT_VALIDATION_TIMEOUT: Duration = Duration::from_secs(10);
+const RELAY_ENV_VARS: [&str; 7] = [
+    "RELAY_MIHOMO_BINARY",
+    "RELAY_MIHOMO_CONFIG",
+    "RELAY_MIHOMO_CONTROLLER",
+    "RELAY_MIHOMO_DATA_DIR",
+    "RELAY_MIHOMO_MIXED_PORT",
+    "RELAY_MIHOMO_SECRET",
+    "RELAY_MIHOMO_SUBSCRIPTION_FILE",
+];
 
 /// A private controller address reserved for a Relay-managed Mihomo process.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -368,6 +377,9 @@ fn resolved_command(spec: &CommandSpec) -> Command {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    for variable in RELAY_ENV_VARS {
+        command.env_remove(variable);
+    }
     command
 }
 
@@ -835,8 +847,8 @@ mod tests {
 
     use super::{
         CommandSpec, ControllerEndpoint, EngineManager, EngineState, ManagedChild,
-        ManagedEngineConfig, ProbeStatus, ProcessExit, ProcessSpawner, ReadinessPolicy,
-        ReadinessProbe,
+        ManagedEngineConfig, ProbeStatus, ProcessExit, ProcessSpawner, RELAY_ENV_VARS,
+        ReadinessPolicy, ReadinessProbe, resolved_command,
     };
 
     static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
@@ -1005,6 +1017,20 @@ mod tests {
                 layout.data_dir.join("controller.sock").into_os_string(),
             ]
         );
+    }
+
+    #[test]
+    fn child_commands_explicitly_remove_relay_environment() {
+        let layout = TempLayout::new();
+        let command = resolved_command(&layout.config().launch_command());
+        let removed = command
+            .get_envs()
+            .filter_map(|(name, value)| value.is_none().then_some(name))
+            .collect::<Vec<_>>();
+
+        for variable in RELAY_ENV_VARS {
+            assert!(removed.contains(&std::ffi::OsStr::new(variable)));
+        }
     }
 
     #[test]

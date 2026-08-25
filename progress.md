@@ -50,3 +50,14 @@
 - 增加 ready 后崩溃探测：刷新前会先 `try_wait`，已退出的 owned child 被 reap 并允许下一次重新启动；不会卡在陈旧 Ready 状态。worktree 与 Git 历史的订阅域名/token 模式扫描均无命中。
 - 安全复核的 Unix runtime、argv secret 与 validation timeout 均已修复；二次复核指出无法证明用户 YAML 的 TCP secret 生效，因此进一步在 engine/UI 两层禁用托管 TCP并删除 engine secret 状态。外部 loopback TCP 不受影响，等待最终安全 verdict。
 - 最终安全 verdict 为 LOW，High/Medium 为 0；托管 Windows pipe 同样在配置阶段明确提示尚未开放，不再启动后才超时。最终 45 个常规测试、真实 controller ignored smoke、fmt、严格 Clippy、diff check 全部通过；当前新编译 GPUI 应用已启动并持续运行。
+- 开始订阅与 QX 风格配置编译阶段：目标是让 Mihomo 自己通过 `proxy-providers` 获取订阅，Relay 只编译策略组和顺序规则；继续禁止订阅进入 Git/日志，本阶段不新增第三方依赖。
+- 架构核验完成：新增 std-only `relay-profile` 作为“密钥感知领域模型 + Mihomo YAML 编译 + 私有原子写入”边界；`relay-engine` 继续只管理进程，`relay-mihomo` 继续只读 controller，现有外部/已有配置模式保持兼容。
+- 开发订阅入口改为私有文件路径，而不是原始 URL 环境变量，避免 URL 进入 shell 历史与进程环境；私有输入文件的内容绝不进入错误消息。
+- 错误记录：首次按仓库相对路径读取 `.codex/prompts/executor.md` 失败（仓库没有该目录），已改用用户级路径；一次进度补丁因目标行措辞不完全一致而未应用，读取文件尾部后已用精确上下文重试。两次失败均未改动代码。
+- `relay-profile` TDD 红灯确认后转绿：6 个行为测试覆盖 HTTPS secret 脱敏、确定性 YAML/转义、规则顺序、非法引用/终止规则、Unix `0700/0600` 与 symlink 防线；UI 新增 3 个私有订阅文件/模式选择测试。
+- 显式订阅开发模式使用 `RELAY_MIHOMO_SUBSCRIPTION_FILE`，要求仓库外绝对普通文件、单行 HTTPS、最大 16 KiB，Unix 权限 `0600` 或更严格；与已有 `RELAY_MIHOMO_CONFIG` 互斥，默认回环 mixed port `17890`。
+- 使用本机 Clash Verge 附带的 Mihomo `v1.19.30` 和 `example.invalid` fixture 运行真实 `mihomo -t`，生成配置校验成功；未读取或请求用户真实订阅。Mihomo 在临时 runtime 下载 GEOIP fixture 后目录已清理。
+- 错误记录：首次大补丁遇到实现代理正处于“删除旧文件、准备重写”窗口，目标文件短暂不存在导致补丁未应用；中止停滞代理后由主代理重新添加实现。首轮编译遗漏 `fmt::Write` trait，首轮严格 Clippy 命中两个机械风格警告，均已定位并修正。
+- 独立安全复核首轮为 MEDIUM（High 0、Medium 2）：修复 Mihomo validation/launch 子进程继承 Relay secret/input 环境变量；订阅模式现在先解析并验证托管 controller，Windows/不支持平台会在读取或落盘 secret 之前 fail closed。等待二次安全 verdict。
+- 二次安全 verdict 为 LOW（High/Medium 0）；Windows ACL 是被 fail-closed 路径隔离的后续项，`cargo audit` 未安装但新 crate 为纯标准库且没有引入外部依赖。
+- 最终 55 个常规测试通过、2 个默认 ignored；本机 Mihomo 生成配置 ignored 校验另行实际通过。fmt、workspace all-targets、严格 Clippy、build、diff check、worktree/Git 历史敏感模式扫描全部通过；更新后的 GPUI 应用已重新启动。

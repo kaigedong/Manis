@@ -9,5 +9,6 @@ coverage/
 .env.*
 !.env.example
 *.subscription.*
+relay-generated.yaml
 *.mihomo-live.*
 .omx/

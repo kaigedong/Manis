@@ -46,6 +46,15 @@
 - [complete] 5. 接入 GPUI 的托管/外部控制器状态，但暂不下载二进制或订阅
 - [complete] 6. 完成安全复核、全量验证、文档和 Git 提交
 
+## 订阅与 QX 风格配置编译阶段
+
+- [completed] 1. 核验 Mihomo `proxy-providers`、策略组、规则与最小运行配置契约
+- [completed] 2. 以 TDD 建立不泄露订阅密钥的 Relay profile 领域模型
+- [completed] 3. 实现确定性、安全转义的 Mihomo YAML 编译器
+- [completed] 4. 实现 `0700` runtime 与 `0600` 原子配置写入
+- [completed] 5. 将显式订阅开发模式接入托管 engine，保留现有配置与外部模式
+- [completed] 6. 用 fixture/本机 Mihomo 校验、安全复核、全量验证和 Git 提交
+
 ## 固定约束
 - 实现框架：Rust + GPUI
 - 目标平台：Windows、macOS、Linux

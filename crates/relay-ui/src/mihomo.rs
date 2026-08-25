@@ -1,6 +1,6 @@
-use std::path::Path;
-#[cfg(unix)]
-use std::path::PathBuf;
+use std::fs;
+use std::io::Read;
+use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::{env, error::Error, fmt};
 
@@ -15,12 +15,17 @@ use relay_mihomo::{
     ControllerConfig, MihomoClient, MihomoError, MihomoSnapshot, ObservedRouteEvidence,
     StdHttpTransport, VersionInfo, to_policy_catalog,
 };
+use relay_profile::{Profile, SecretUrl, render_mihomo_yaml, write_private_atomic};
 
 const CONTROLLER_ENV: &str = "RELAY_MIHOMO_CONTROLLER";
 const SECRET_ENV: &str = "RELAY_MIHOMO_SECRET";
 const BINARY_ENV: &str = "RELAY_MIHOMO_BINARY";
 const CONFIG_ENV: &str = "RELAY_MIHOMO_CONFIG";
 const DATA_DIR_ENV: &str = "RELAY_MIHOMO_DATA_DIR";
+const SUBSCRIPTION_FILE_ENV: &str = "RELAY_MIHOMO_SUBSCRIPTION_FILE";
+const MIXED_PORT_ENV: &str = "RELAY_MIHOMO_MIXED_PORT";
+const DEFAULT_MANAGED_MIXED_PORT: u16 = 17_890;
+const MAX_SUBSCRIPTION_FILE_BYTES: u64 = 16 * 1024;
 
 #[derive(Clone, Debug)]
 pub(crate) enum ControllerState {
@@ -207,17 +212,144 @@ impl ReadinessProbe for MihomoReadinessProbe {
 pub(crate) fn configured_runtime() -> ControllerRuntime {
     let binary = env::var_os(BINARY_ENV);
     let config_file = env::var_os(CONFIG_ENV);
-    match (binary, config_file) {
-        (None, None) => ControllerRuntime::External {
+    let subscription_file = env::var_os(SUBSCRIPTION_FILE_ENV);
+    match select_runtime_input(binary, config_file, subscription_file) {
+        Ok(RuntimeInput::External) => ControllerRuntime::External {
             endpoint: configured_endpoint(),
         },
-        (Some(binary), Some(config_file)) => {
-            build_managed_runtime(PathBuf::from(binary), PathBuf::from(config_file))
-                .unwrap_or_else(|message| ControllerRuntime::Invalid { message })
+        Ok(RuntimeInput::ExistingConfig {
+            binary,
+            config_file,
+        }) => build_managed_runtime(PathBuf::from(binary), PathBuf::from(config_file))
+            .unwrap_or_else(|message| ControllerRuntime::Invalid { message }),
+        Ok(RuntimeInput::SubscriptionFile {
+            binary,
+            subscription_file,
+        }) => build_subscription_runtime(PathBuf::from(binary), &PathBuf::from(subscription_file))
+            .unwrap_or_else(|message| ControllerRuntime::Invalid { message }),
+        Err(message) => ControllerRuntime::Invalid { message },
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum RuntimeInput {
+    External,
+    ExistingConfig {
+        binary: std::ffi::OsString,
+        config_file: std::ffi::OsString,
+    },
+    SubscriptionFile {
+        binary: std::ffi::OsString,
+        subscription_file: std::ffi::OsString,
+    },
+}
+
+fn select_runtime_input(
+    binary: Option<std::ffi::OsString>,
+    config_file: Option<std::ffi::OsString>,
+    subscription_file: Option<std::ffi::OsString>,
+) -> Result<RuntimeInput, String> {
+    match (binary, config_file, subscription_file) {
+        (None, None, None) => Ok(RuntimeInput::External),
+        (Some(binary), Some(config_file), None) => Ok(RuntimeInput::ExistingConfig {
+            binary,
+            config_file,
+        }),
+        (Some(binary), None, Some(subscription_file)) => Ok(RuntimeInput::SubscriptionFile {
+            binary,
+            subscription_file,
+        }),
+        (_, Some(_), Some(_)) => Err(format!(
+            "{CONFIG_ENV} 与 {SUBSCRIPTION_FILE_ENV} 不能同时设置"
+        )),
+        _ => Err(format!(
+            "{BINARY_ENV} 必须与 {CONFIG_ENV} 或 {SUBSCRIPTION_FILE_ENV} 之一同时设置"
+        )),
+    }
+}
+
+fn build_subscription_runtime(
+    binary: PathBuf,
+    subscription_file: &Path,
+) -> Result<ControllerRuntime, String> {
+    let data_dir = configured_data_dir()?;
+    let controller = configured_managed_controller(&data_dir)?;
+    let subscription = read_private_subscription(subscription_file)?;
+    let mut profile = Profile::qx_default(subscription).map_err(|error| error.to_string())?;
+    profile.mixed_port = configured_mixed_port()?;
+    let yaml = render_mihomo_yaml(&profile).map_err(|error| error.to_string())?;
+    let config_file = write_private_atomic(&data_dir, "relay-generated.yaml", yaml.as_bytes())
+        .map_err(|error| error.to_string())?;
+    Ok(build_managed_runtime_with_controller(
+        binary,
+        config_file,
+        data_dir,
+        controller,
+    ))
+}
+
+fn read_private_subscription(path: &Path) -> Result<SecretUrl, String> {
+    if !path.is_absolute() || !has_only_clean_components(path) {
+        return Err(format!("{SUBSCRIPTION_FILE_ENV} 必须是无跳转段的绝对路径"));
+    }
+    let metadata =
+        fs::symlink_metadata(path).map_err(|_source| "无法读取私有订阅文件元数据".to_owned())?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err("私有订阅来源必须是普通文件，不能是符号链接".to_owned());
+    }
+    let file = fs::File::open(path).map_err(|_source| "无法打开私有订阅文件".to_owned())?;
+    let opened_metadata = file
+        .metadata()
+        .map_err(|_source| "无法读取已打开订阅文件的元数据".to_owned())?;
+    if opened_metadata.len() > MAX_SUBSCRIPTION_FILE_BYTES {
+        return Err("私有订阅文件超过 16 KiB 限制".to_owned());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        if metadata.dev() != opened_metadata.dev() || metadata.ino() != opened_metadata.ino() {
+            return Err("私有订阅文件在读取期间发生变化".to_owned());
         }
-        _ => ControllerRuntime::Invalid {
-            message: format!("{BINARY_ENV} 与 {CONFIG_ENV} 必须同时设置"),
-        },
+        if opened_metadata.permissions().mode() & 0o077 != 0 {
+            return Err("私有订阅文件权限必须为 0600 或更严格".to_owned());
+        }
+    }
+    let mut contents = String::new();
+    file.take(MAX_SUBSCRIPTION_FILE_BYTES + 1)
+        .read_to_string(&mut contents)
+        .map_err(|_source| "私有订阅文件必须是有效 UTF-8 文本".to_owned())?;
+    if contents.len() as u64 > MAX_SUBSCRIPTION_FILE_BYTES {
+        return Err("私有订阅文件超过 16 KiB 限制".to_owned());
+    }
+    let value = contents.trim_end_matches(['\r', '\n']);
+    if value.is_empty() || value.lines().count() != 1 || value.trim() != value {
+        return Err("私有订阅文件必须只包含一行 HTTPS URL".to_owned());
+    }
+    SecretUrl::parse_https(value)
+        .map_err(|_error| "私有订阅文件必须只包含一个有效 HTTPS URL".to_owned())
+}
+
+fn has_only_clean_components(path: &Path) -> bool {
+    path.components().all(|component| {
+        matches!(
+            component,
+            Component::Prefix(_) | Component::RootDir | Component::Normal(_)
+        )
+    })
+}
+
+fn configured_mixed_port() -> Result<u16, String> {
+    match env::var(MIXED_PORT_ENV) {
+        Ok(value) => value
+            .parse::<u16>()
+            .ok()
+            .filter(|port| *port != 0)
+            .ok_or_else(|| format!("{MIXED_PORT_ENV} 必须是 1 到 65535 的端口")),
+        Err(env::VarError::NotPresent) => Ok(DEFAULT_MANAGED_MIXED_PORT),
+        Err(env::VarError::NotUnicode(_value)) => {
+            Err(format!("{MIXED_PORT_ENV} 必须是有效 Unicode"))
+        }
     }
 }
 
@@ -225,28 +357,59 @@ fn build_managed_runtime(
     binary: PathBuf,
     config_file: PathBuf,
 ) -> Result<ControllerRuntime, String> {
-    let data_dir = env::var_os(DATA_DIR_ENV)
+    let data_dir = configured_data_dir()?;
+    build_managed_runtime_in(binary, config_file, data_dir)
+}
+
+fn configured_data_dir() -> Result<PathBuf, String> {
+    env::var_os(DATA_DIR_ENV)
         .map(PathBuf::from)
         .or_else(default_data_dir)
-        .ok_or_else(|| format!("无法确定数据目录，请设置 {DATA_DIR_ENV}"))?;
+        .ok_or_else(|| format!("无法确定数据目录，请设置 {DATA_DIR_ENV}"))
+}
+
+fn build_managed_runtime_in(
+    binary: PathBuf,
+    config_file: PathBuf,
+    data_dir: PathBuf,
+) -> Result<ControllerRuntime, String> {
+    let controller = configured_managed_controller(&data_dir)?;
+    Ok(build_managed_runtime_with_controller(
+        binary,
+        config_file,
+        data_dir,
+        controller,
+    ))
+}
+
+fn configured_managed_controller(data_dir: &Path) -> Result<ControllerEndpoint, String> {
     let controller = match env::var(CONTROLLER_ENV) {
         Ok(endpoint) => parse_managed_endpoint(&endpoint)?,
-        Err(env::VarError::NotPresent) => default_managed_endpoint(&data_dir)?,
+        Err(env::VarError::NotPresent) => default_managed_endpoint(data_dir)?,
         Err(env::VarError::NotUnicode(_value)) => {
             return Err(format!("{CONTROLLER_ENV} 必须是有效 Unicode"));
         }
     };
-    let config = ManagedEngineConfig::new(binary, config_file, data_dir, controller.clone());
+    Ok(controller)
+}
+
+fn build_managed_runtime_with_controller(
+    binary: PathBuf,
+    config_file: PathBuf,
+    data_dir: PathBuf,
+    controller: ControllerEndpoint,
+) -> ControllerRuntime {
     let endpoint = controller.uri();
+    let config = ManagedEngineConfig::new(binary, config_file, data_dir, controller);
     let manager = EngineManager::new(
         config,
         ReadinessPolicy::default(),
         Box::new(MihomoReadinessProbe),
     );
-    Ok(ControllerRuntime::Managed {
+    ControllerRuntime::Managed {
         endpoint,
         manager: Arc::new(Mutex::new(manager)),
-    })
+    }
 }
 
 fn parse_managed_endpoint(endpoint: &str) -> Result<ControllerEndpoint, String> {
@@ -400,9 +563,116 @@ fn unix_socket_path(endpoint: &str) -> Result<Option<PathBuf>, MihomoError> {
 
 #[cfg(all(test, unix))]
 mod tests {
-    use std::path::Path;
+    use std::ffi::OsString;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::{Path, PathBuf};
 
     use relay_engine::ControllerEndpoint;
+
+    #[test]
+    fn selects_external_existing_and_subscription_runtime_inputs() -> Result<(), String> {
+        assert_eq!(
+            super::select_runtime_input(None, None, None)?,
+            super::RuntimeInput::External
+        );
+        assert_eq!(
+            super::select_runtime_input(
+                Some(OsString::from("mihomo")),
+                Some(OsString::from("config.yaml")),
+                None,
+            )?,
+            super::RuntimeInput::ExistingConfig {
+                binary: OsString::from("mihomo"),
+                config_file: OsString::from("config.yaml"),
+            }
+        );
+        assert_eq!(
+            super::select_runtime_input(
+                Some(OsString::from("mihomo")),
+                None,
+                Some(OsString::from("relay.subscription.secret")),
+            )?,
+            super::RuntimeInput::SubscriptionFile {
+                binary: OsString::from("mihomo"),
+                subscription_file: OsString::from("relay.subscription.secret"),
+            }
+        );
+        assert!(
+            super::select_runtime_input(
+                Some(OsString::from("mihomo")),
+                Some(OsString::from("config.yaml")),
+                Some(OsString::from("relay.subscription.secret")),
+            )
+            .is_err()
+        );
+        assert!(super::select_runtime_input(Some(OsString::from("mihomo")), None, None).is_err());
+        assert!(
+            super::select_runtime_input(
+                None,
+                None,
+                Some(OsString::from("relay.subscription.secret")),
+            )
+            .is_err()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn reads_only_private_single_line_https_subscription_files()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = test_temp_dir("relay-ui-subscription");
+        let source = root.join("relay.subscription.secret");
+        fs::write(
+            &source,
+            "https://subscription.example.invalid/client?token=fixture-secret\n",
+        )?;
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o600))?;
+
+        let secret = super::read_private_subscription(&source)?;
+        assert_eq!(format!("{secret:?}"), "SecretUrl(<redacted>)");
+        assert!(!format!("{secret:?}").contains("fixture-secret"));
+
+        fs::write(
+            &source,
+            "http://subscription.example.invalid/fixture-secret",
+        )?;
+        let message = super::read_private_subscription(&source).expect_err("http must fail");
+        assert!(!message.contains("fixture-secret"));
+        assert!(!message.contains("subscription.example.invalid"));
+
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_public_or_symlink_subscription_files() -> Result<(), Box<dyn std::error::Error>> {
+        let root = test_temp_dir("relay-ui-subscription-safety");
+        let source = root.join("relay.subscription.secret");
+        fs::write(
+            &source,
+            "https://subscription.example.invalid/fixture-secret",
+        )?;
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o644))?;
+        assert!(super::read_private_subscription(&source).is_err());
+
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o600))?;
+        let link = root.join("link.subscription.secret");
+        std::os::unix::fs::symlink(&source, &link)?;
+        assert!(super::read_private_subscription(&link).is_err());
+
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    fn test_temp_dir(name: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!("{name}-{}", std::process::id()));
+        if path.exists() {
+            fs::remove_dir_all(&path).expect("remove stale test directory");
+        }
+        fs::create_dir(&path).expect("create test directory");
+        path
+    }
 
     #[test]
     fn parses_absolute_unix_controller_endpoint() -> Result<(), Box<dyn std::error::Error>> {

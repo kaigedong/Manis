@@ -52,7 +52,29 @@ RELAY_MIHOMO_DATA_DIR=/absolute/path/to/relay-runtime \
 cargo run -p relay-ui
 ```
 
-macOS/Linux 默认在平台用户数据目录内创建权限为 `0700` 的 Relay 专用 runtime，并使用目录内的 Unix socket。托管 TCP 暂不开放，因为 Relay 还不能验证用户 YAML 是否真的启用了同值 controller secret；外部 loopback TCP controller 不受影响。密钥不会进入 Mihomo 的进程参数。这一阶段不会下载 Mihomo、解析或保存订阅 URL，也不会把用户配置复制进仓库。Windows named-pipe 启动参数已经建模，但 Relay 的 named-pipe controller transport 尚未完成，因此 Windows 当前仍使用外部 loopback HTTP controller。
+macOS/Linux 默认在平台用户数据目录内创建权限为 `0700` 的 Relay 专用 runtime，并使用目录内的 Unix socket。托管 TCP 暂不开放，因为 Relay 还不能验证用户 YAML 是否真的启用了同值 controller secret；外部 loopback TCP controller 不受影响。密钥不会进入 Mihomo 的进程参数。Windows named-pipe 启动参数已经建模，但 Relay 的 named-pipe controller transport 尚未完成，因此 Windows 当前仍使用外部 loopback HTTP controller。
+
+### 从私有订阅生成 QX 风格配置（显式开发模式）
+
+Relay 现在可以把一个 HTTPS 订阅编译为最小 Mihomo 配置：订阅作为 `proxy-provider`，`Proxy` 提供手动选择，`Auto` 进行延迟优选，规则按顺序执行并由 `MATCH,Proxy` 兜底。订阅由 Mihomo 获取，Relay 不下载或解析节点内容。
+
+先在仓库之外创建只包含一行订阅 URL 的文件，并把权限设为 `0600`。Relay 会拒绝相对路径、符号链接、多行/非 HTTPS 内容、超过 16 KiB 的文件和组/其他用户可读的权限。不要把 URL 直接写进命令行或环境变量：
+
+```bash
+install -m 600 /dev/null /absolute/path/to/relay.subscription.secret
+${EDITOR:?set EDITOR} /absolute/path/to/relay.subscription.secret
+```
+
+然后提供 Mihomo 可执行文件和该私有文件路径；它与 `RELAY_MIHOMO_CONFIG` 模式互斥：
+
+```bash
+RELAY_MIHOMO_BINARY=/absolute/path/to/mihomo \
+RELAY_MIHOMO_SUBSCRIPTION_FILE=/absolute/path/to/relay.subscription.secret \
+RELAY_MIHOMO_DATA_DIR=/absolute/path/to/relay-runtime \
+cargo run -p relay-ui
+```
+
+生成的 `relay-generated.yaml` 位于 Relay runtime，macOS/Linux 上目录为 `0700`、文件为 `0600`，写入采用同目录临时文件替换；错误和 Debug 输出不会包含订阅内容。默认 mixed port 是回环地址上的 `17890`，可用 `RELAY_MIHOMO_MIXED_PORT` 显式覆盖。Windows 托管订阅模式会在读取/写入订阅前明确失败，等待 named-pipe transport 与私有 ACL 存储完成；profile 领域模型和 YAML 编译器本身保持平台无关。
 
 ## 验证
 
@@ -83,6 +105,7 @@ cargo test -p relay-ui reads_a_live_controller_snapshot -- --ignored
 
 - `crates/relay-core`：与渲染框架无关的窗口尺寸、策略选择和路由证据状态
 - `crates/relay-engine`：隔离路径、命令计划、配置预检、就绪探测与 owned-child 生命周期
+- `crates/relay-profile`：QX 风格 profile 领域模型、Mihomo YAML 编译与私有原子写入
 - `crates/relay-mihomo`：只读控制器配置、HTTP 传输、容错 JSON 模型和领域目录映射
 - `crates/relay-ui`：GPUI 应用、主题、演示/控制器数据与自适应视图
 - `DESIGN.md`：视觉 token、组件和响应式行为
