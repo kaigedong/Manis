@@ -19,12 +19,10 @@ pub(crate) struct UiLogEntry {
 pub(crate) enum UiEvent {
     WorkspacePoliciesOpened,
     WorkspaceNodesOpened,
+    WorkspaceRoutingRulesOpened,
     WorkspaceActivityOpened,
     WorkspaceLogsOpened,
     WorkspaceConfigurationOpened,
-    ConfigurationGroupsOpened,
-    ConfigurationRulesOpened,
-    SubscriptionInputFocused,
     SourceRecognitionSucceeded,
     SourceRecognitionFailed,
     SourceImportStarted,
@@ -38,7 +36,6 @@ pub(crate) enum UiEvent {
     SourceRemoveFailed,
     SubscriptionDraftCleared,
     PolicyPreviewOpened,
-    RulePreviewOpened,
     MihomoConnectStarted,
     MihomoConnectSucceeded,
     MihomoConnectFailed,
@@ -65,12 +62,10 @@ impl UiEvent {
         match self {
             Self::WorkspacePoliciesOpened => "workspace.policies.opened",
             Self::WorkspaceNodesOpened => "workspace.nodes.opened",
+            Self::WorkspaceRoutingRulesOpened => "workspace.routing_rules.opened",
             Self::WorkspaceActivityOpened => "workspace.activity.opened",
             Self::WorkspaceLogsOpened => "workspace.logs.opened",
             Self::WorkspaceConfigurationOpened => "workspace.configuration.opened",
-            Self::ConfigurationGroupsOpened => "configuration.groups.opened",
-            Self::ConfigurationRulesOpened => "configuration.rules.opened",
-            Self::SubscriptionInputFocused => "configuration.subscription_input.focused",
             Self::SourceRecognitionSucceeded => "configuration.source_recognition.succeeded",
             Self::SourceRecognitionFailed => "configuration.source_recognition.failed",
             Self::SourceImportStarted => "configuration.source_import.started",
@@ -84,7 +79,6 @@ impl UiEvent {
             Self::SourceRemoveFailed => "configuration.source_remove.failed",
             Self::SubscriptionDraftCleared => "configuration.subscription_draft.cleared",
             Self::PolicyPreviewOpened => "configuration.policy_preview.opened",
-            Self::RulePreviewOpened => "configuration.rule_preview.opened",
             Self::MihomoConnectStarted => "mihomo.connect.started",
             Self::MihomoConnectSucceeded => "mihomo.connect.succeeded",
             Self::MihomoConnectFailed => "mihomo.connect.failed",
@@ -164,11 +158,11 @@ mod tests {
 
     #[test]
     fn ui_trace_is_structured_and_contains_no_dynamic_values() {
-        let line = format_event(42, UiEvent::SubscriptionInputFocused);
+        let line = format_event(42, UiEvent::WorkspaceRoutingRulesOpened);
 
         assert_eq!(
             line,
-            "relay_ui ts_ms=42 level=DEBUG event=configuration.subscription_input.focused"
+            "relay_ui ts_ms=42 level=DEBUG event=workspace.routing_rules.opened"
         );
         assert!(!line.contains("token"));
         assert!(!line.contains("http"));

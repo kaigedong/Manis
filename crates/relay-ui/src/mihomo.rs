@@ -176,10 +176,10 @@ impl RuntimeProfileSource {
 
     pub(crate) fn detail(self) -> &'static str {
         match self {
-            Self::ExternalController => "Relay 不修改外部配置；测速会让内核发起 HTTPS 探测",
-            Self::ExistingConfig => "由 Relay 启动，但不解析或展示配置文件内容",
-            Self::PrivateSubscription => "链接已隐藏；只向私有 Mihomo 配置写入",
-            Self::Invalid => "请检查本机启动参数；敏感输入不会显示在这里",
+            Self::ExternalController => "外部控制器保持只读",
+            Self::ExistingConfig => "使用已有 Mihomo 配置",
+            Self::PrivateSubscription => "链接已隐藏 · 已写入 Relay 托管配置",
+            Self::Invalid => "请检查本机启动参数",
         }
     }
 }

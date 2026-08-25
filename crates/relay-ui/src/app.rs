@@ -8,9 +8,9 @@ use gpui::{
     Render, Role, Stateful, Styled, Subscription, Toggled, Window, div, prelude::*, px,
 };
 use relay_core::{
-    CompactNavigation, ConfigurationWorkspaceState, NodeGroupIcon, NodeGroupStrategy, NodeIdentity,
-    NodePolicyGroup, NodeWorkspaceState, PolicyCatalog, PolicyGroup, PolicyNode,
-    PolicyWorkspaceState, PrimaryWorkspace, ProxyId, ProxyMode, RoutingMode, WindowSizeClass,
+    CompactNavigation, NodeGroupIcon, NodeGroupStrategy, NodeIdentity, NodePolicyGroup,
+    NodeWorkspaceState, PolicyCatalog, PolicyGroup, PolicyNode, PolicyWorkspaceState,
+    PrimaryWorkspace, ProxyId, ProxyMode, RoutingMode, WindowSizeClass,
 };
 use relay_mihomo::{Connection, ObservedRouteEvidence, RuntimeConfig};
 use relay_profile::{QxRuleList, SecretUrl};
@@ -373,7 +373,6 @@ impl NodeGroupRuntimeState {
 
 pub struct RelayApp {
     primary_workspace: PrimaryWorkspace,
-    configuration: ConfigurationWorkspaceState,
     node_workspace: NodeWorkspaceState,
     workspace: PolicyWorkspaceState,
     catalog: PolicyCatalog,
@@ -548,7 +547,6 @@ impl RelayApp {
         node_workspace.replace_collapsed_groups(collapsed_groups.iter().map(String::as_str));
         Self {
             primary_workspace: PrimaryWorkspace::default(),
-            configuration: ConfigurationWorkspaceState::default(),
             node_workspace,
             workspace: PolicyWorkspaceState::demo(),
             catalog: demo::catalog(),
@@ -2061,6 +2059,7 @@ impl RelayApp {
         let entries = [
             ("节点", "节点", PrimaryWorkspace::Nodes),
             ("策略组", "策略", PrimaryWorkspace::Policies),
+            ("分流规则", "规则", PrimaryWorkspace::RoutingRules),
             ("网络活动", "活动", PrimaryWorkspace::Activity),
             ("日志", "日志", PrimaryWorkspace::Logs),
             ("配置", "配置", PrimaryWorkspace::Configuration),
@@ -2128,6 +2127,10 @@ impl RelayApp {
                                 trace_ui(UiEvent::WorkspaceNodesOpened);
                                 "已打开节点工作区".to_owned()
                             }
+                            PrimaryWorkspace::RoutingRules => {
+                                trace_ui(UiEvent::WorkspaceRoutingRulesOpened);
+                                "已打开分流规则".to_owned()
+                            }
                             PrimaryWorkspace::Activity => {
                                 trace_ui(UiEvent::WorkspaceActivityOpened);
                                 "已打开网络活动".to_owned()
@@ -2138,7 +2141,7 @@ impl RelayApp {
                             }
                             PrimaryWorkspace::Configuration => {
                                 trace_ui(UiEvent::WorkspaceConfigurationOpened);
-                                "已打开安全配置预览".to_owned()
+                                "已打开代理来源".to_owned()
                             }
                         };
                         cx.notify();
@@ -3077,6 +3080,7 @@ impl Render for RelayApp {
         let show_inspector = size_class == WindowSizeClass::Wide || self.inspector_open;
         let policies_active = self.primary_workspace == PrimaryWorkspace::Policies;
         let nodes_active = self.primary_workspace == PrimaryWorkspace::Nodes;
+        let routing_rules_active = self.primary_workspace == PrimaryWorkspace::RoutingRules;
         let activity_active = self.primary_workspace == PrimaryWorkspace::Activity;
         let logs_active = self.primary_workspace == PrimaryWorkspace::Logs;
 
@@ -3097,6 +3101,9 @@ impl Render for RelayApp {
                     .child(self.navigation(theme, size_class, cx))
                     .when(nodes_active, |main| {
                         main.child(self.node_workspace(theme, size_class, cx))
+                    })
+                    .when(routing_rules_active, |main| {
+                        main.child(self.routing_rules_workspace(theme, size_class, cx))
                     })
                     .when(activity_active, |main| {
                         main.child(self.activity_workspace(theme, size_class, cx))

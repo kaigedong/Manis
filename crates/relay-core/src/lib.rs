@@ -273,6 +273,7 @@ pub enum PrimaryWorkspace {
     #[default]
     Policies,
     Nodes,
+    RoutingRules,
     Activity,
     Logs,
     Configuration,
@@ -280,10 +281,11 @@ pub enum PrimaryWorkspace {
 
 impl PrimaryWorkspace {
     #[must_use]
-    pub const fn navigation_order() -> &'static [Self; 5] {
+    pub const fn navigation_order() -> &'static [Self; 6] {
         &[
             Self::Nodes,
             Self::Policies,
+            Self::RoutingRules,
             Self::Activity,
             Self::Logs,
             Self::Configuration,
@@ -757,31 +759,6 @@ fn valid_plain_node_group_value(value: &str, max_bytes: usize) -> bool {
         && value.len() <= max_bytes
         && value.trim() == value
         && !value.chars().any(char::is_control)
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum ConfigurationSection {
-    #[default]
-    Sources,
-    Groups,
-    Rules,
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct ConfigurationWorkspaceState {
-    pub section: ConfigurationSection,
-    pub selected_rule: usize,
-}
-
-impl ConfigurationWorkspaceState {
-    pub fn select_section(&mut self, section: ConfigurationSection) {
-        self.section = section;
-    }
-
-    pub fn select_rule(&mut self, index: usize, rule_count: usize) {
-        self.selected_rule = index.min(rule_count.saturating_sub(1));
-        self.section = ConfigurationSection::Rules;
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

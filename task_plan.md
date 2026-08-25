@@ -159,6 +159,15 @@
 - [completed] 5. 接入跨平台系统托盘，以及 QX HTTPS 规则下载、策略映射、私有持久化与托管配置生成
 - [completed] 6. 完成原生视觉、全仓验证、Git 提交和仅 Relay UI 重启
 
+## 配置瘦身与分流规则工作区
+
+- [completed] 1. 盘点现有配置页信息与交互，确定保留、迁移和删除清单
+- [completed] 2. 以回归测试锁定“配置”和“分流规则”两个独立工作区及导航状态
+- [completed] 3. 将配置页收敛为代理来源与规则订阅源的添加、删除和必要状态
+- [completed] 4. 新增只读分流规则页，展示来源分组、匹配顺序、目标策略与系统兜底
+- [completed] 5. 完成宽屏/紧凑原生截图、Visual Verdict 和必要视觉修正
+- [completed] 6. 完成全仓验证、敏感信息扫描、Git 提交并仅重启 Relay UI
+
 ## 固定约束
 - 实现框架：Rust + GPUI
 - 目标平台：Windows、macOS、Linux
@@ -194,3 +203,5 @@
 | 新 `PolicyCatalog` RED 测试首轮遗漏 `BTreeMap` import | 1 | 先补测试文件标准库 import；保留缺少生产 API 的预期红灯 |
 | 增量 worker join 使用 `for_each` 被严格 Clippy 拒绝 | 1 | 按 lint 建议改为显式 `for`，让线程回收行为更直观 |
 | 仓库局部 `.codex/prompts` 不存在 | 1 | 按 AGENTS 约定改读用户级 `/Users/bobo/.codex/prompts`，不重复查找缺失路径 |
+| 配置瘦身时删除了仍被安全回归测试使用的运行来源说明方法 | 1 | 恢复精简后的固定说明，并在来源页保留一行真实应用边界；不删除安全测试 |
+| 原生截图进程连续创建离屏窗口后返回 `WouldBlock` | 1 | 为每个截图场景显式关闭 GPUI 离屏窗口；完整截图链路复跑通过 |

@@ -129,10 +129,6 @@ impl SubscriptionTextInput {
         cx.notify();
     }
 
-    pub(crate) fn input_focus_handle(&self) -> FocusHandle {
-        self.focus_handle.clone()
-    }
-
     pub(crate) fn clear(&mut self, cx: &mut Context<Self>) {
         self.clear_content();
         cx.emit(SubscriptionInputChanged);

@@ -9,6 +9,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     capture_configuration(&mut cx, 1420.0, 900.0, "configuration-wide.png")?;
     capture_configuration(&mut cx, 1060.0, 800.0, "configuration-medium.png")?;
     capture_configuration(&mut cx, 720.0, 720.0, "configuration-compact.png")?;
+    capture_routing_rules(&mut cx)?;
     capture_remote_subscription_preview(&mut cx)?;
     capture_compact_flow(&mut cx)?;
     capture_connected(&mut cx)?;
@@ -31,7 +32,8 @@ fn capture_automatic_policy(
     refresh(cx, window)?;
     cx.simulate_click(window, point(px(380.0), px(312.0)), Modifiers::none());
     refresh(cx, window)?;
-    save_screenshot(cx, window, "native-wide-automatic-policy.png")
+    save_screenshot(cx, window, "native-wide-automatic-policy.png")?;
+    close_window(cx, window)
 }
 
 #[cfg(target_os = "macos")]
@@ -105,13 +107,13 @@ fn capture_remote_subscription_preview(
     })?;
     let window: AnyWindowHandle = window.into();
     refresh(cx, window)?;
-    cx.simulate_click(window, point(px(110.0), px(240.0)), Modifiers::none());
+    cx.simulate_click(window, point(px(110.0), px(284.0)), Modifiers::none());
     refresh(cx, window)?;
-    cx.simulate_click(window, point(px(400.0), px(342.0)), Modifiers::none());
+    cx.simulate_click(window, point(px(400.0), px(270.0)), Modifiers::none());
     refresh(cx, window)?;
     cx.simulate_input(window, &subscription_url);
     refresh(cx, window)?;
-    cx.simulate_click(window, point(px(370.0), px(370.0)), Modifiers::none());
+    cx.simulate_click(window, point(px(700.0), px(320.0)), Modifiers::none());
     for _ in 0..40 {
         std::thread::sleep(Duration::from_millis(25));
         refresh(cx, window)?;
@@ -122,16 +124,17 @@ fn capture_remote_subscription_preview(
         "configuration-wide-remote-subscription-nodes.png",
     )?;
 
-    cx.simulate_click(window, point(px(400.0), px(342.0)), Modifiers::none());
+    cx.simulate_click(window, point(px(400.0), px(270.0)), Modifiers::none());
     refresh(cx, window)?;
     cx.simulate_input(
         window,
         "vless://00000000-0000-4000-8000-000000000000@edge.example.invalid:443?security=tls&type=ws#Saved%20Edge",
     );
     refresh(cx, window)?;
-    cx.simulate_click(window, point(px(370.0), px(370.0)), Modifiers::none());
+    cx.simulate_click(window, point(px(700.0), px(320.0)), Modifiers::none());
     refresh(cx, window)?;
 
+    close_window(cx, window)?;
     write_node_group_fixture(&store)?;
     capture_restored_subscription_views(cx, &store)?;
     stop.store(true, Ordering::Relaxed);
@@ -208,7 +211,7 @@ fn capture_restored_subscription_views(
         refresh(cx, window)?;
         cx.simulate_click(
             window,
-            point(px(navigation_x), px(240.0)),
+            point(px(navigation_x), px(284.0)),
             Modifiers::none(),
         );
         for _ in 0..40 {
@@ -248,6 +251,7 @@ fn capture_restored_subscription_views(
         );
         refresh(cx, window)?;
         save_screenshot(cx, window, collapsed_file)?;
+        close_window(cx, window)?;
 
         let detail_store = store.to_owned();
         let detail_window = cx.open_offscreen_window(size(px(width), px(height)), |_, cx| {
@@ -304,6 +308,7 @@ fn capture_restored_subscription_views(
                 "nodes-compact-policy-group-detail.png"
             },
         )?;
+        close_window(cx, detail_window)?;
     }
     Ok(())
 }
@@ -327,14 +332,14 @@ fn capture_configuration(
     let navigation_x = if width >= 1_280.0 { 110.0 } else { 30.0 };
     cx.simulate_click(
         window,
-        point(px(navigation_x), px(240.0)),
+        point(px(navigation_x), px(284.0)),
         Modifiers::none(),
     );
     refresh(cx, window)?;
     save_screenshot(cx, window, file_name)?;
 
     if width >= 1_280.0 {
-        cx.simulate_click(window, point(px(275.0), px(145.0)), Modifiers::none());
+        cx.simulate_click(window, point(px(400.0), px(270.0)), Modifiers::none());
         refresh(cx, window)?;
         save_screenshot(cx, window, "configuration-wide-subscription-focused.png")?;
         cx.simulate_input(
@@ -342,28 +347,118 @@ fn capture_configuration(
             "vless://00000000-0000-4000-8000-000000000000@edge.example.invalid:443?security=tls&type=ws#Tokyo%20Edge",
         );
         refresh(cx, window)?;
-        cx.simulate_click(window, point(px(370.0), px(370.0)), Modifiers::none());
+        cx.simulate_click(window, point(px(700.0), px(320.0)), Modifiers::none());
         refresh(cx, window)?;
         save_screenshot(cx, window, "configuration-wide-subscription-preview.png")?;
     }
 
     if (width - 720.0).abs() < f32::EPSILON {
-        cx.simulate_click(window, point(px(180.0), px(145.0)), Modifiers::none());
+        cx.simulate_click(window, point(px(300.0), px(239.0)), Modifiers::none());
         refresh(cx, window)?;
         cx.simulate_input(
             window,
             "vless://00000000-0000-4000-8000-000000000000@edge.example.invalid:443?security=tls&type=ws#Tokyo%20Edge",
         );
         refresh(cx, window)?;
-        cx.simulate_click(window, point(px(360.0), px(390.0)), Modifiers::none());
+        cx.simulate_click(window, point(px(500.0), px(284.0)), Modifiers::none());
         refresh(cx, window)?;
         save_screenshot(cx, window, "configuration-compact-subscription-preview.png")?;
-
-        cx.simulate_click(window, point(px(548.0), px(145.0)), Modifiers::none());
-        refresh(cx, window)?;
-        save_screenshot(cx, window, "configuration-compact-rules.png")?;
     }
+    close_window(cx, window)
+}
+
+#[cfg(target_os = "macos")]
+fn capture_routing_rules(
+    cx: &mut gpui::VisualTestAppContext,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use gpui::{AnyWindowHandle, AppContext, Modifiers, point, px, size};
+    use relay_ui::RelayApp;
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = std::env::temp_dir().join(format!(
+        "relay-routing-rules-snapshot-{}",
+        std::process::id()
+    ));
+    if root.exists() {
+        std::fs::remove_dir_all(&root)?;
+    }
+    let store = root.join("subscriptions");
+    std::fs::create_dir_all(&store)?;
+    std::fs::set_permissions(&store, std::fs::Permissions::from_mode(0o700))?;
+    let content = concat!(
+        "DOMAIN-SUFFIX,openai.com,PROXY\n",
+        "DOMAIN-SUFFIX,google.com,PROXY\n",
+        "DOMAIN-KEYWORD,youtube,PROXY\n",
+        "DOMAIN-KEYWORD,netflix,PROXY\n",
+        "DOMAIN,api.anthropic.com,PROXY\n",
+        "DOMAIN-SUFFIX,github.com,PROXY\n",
+        "DOMAIN-KEYWORD,telegram,PROXY\n",
+        "DOMAIN-SUFFIX,wikipedia.org,PROXY\n",
+    );
+    let source_file = store.join("qx-rule-deadbeef.qxrules");
+    std::fs::write(
+        &source_file,
+        [
+            "relay-qx-rule-source-v1".to_owned(),
+            "id\tqx-rule-deadbeef".to_owned(),
+            format!(
+                "url\t{}",
+                snapshot_hex("https://rules.example.invalid/media.list")
+            ),
+            format!("target\t{}", snapshot_hex("Proxy")),
+            format!("content\t{}", snapshot_hex(content)),
+        ]
+        .join("\n"),
+    )?;
+    std::fs::set_permissions(source_file, std::fs::Permissions::from_mode(0o600))?;
+
+    for (width, height, navigation_x, file_name) in [
+        (1420.0, 900.0, 110.0, "routing-rules-wide.png"),
+        (720.0, 720.0, 30.0, "routing-rules-compact.png"),
+    ] {
+        let window_store = store.clone();
+        let window = cx.open_offscreen_window(size(px(width), px(height)), |_, cx| {
+            cx.new(|_| {
+                RelayApp::with_controller_and_subscription_store(
+                    "http://127.0.0.1:9090",
+                    window_store,
+                )
+            })
+        })?;
+        let window: AnyWindowHandle = window.into();
+        refresh(cx, window)?;
+        if width >= 1_280.0 {
+            cx.simulate_click(
+                window,
+                point(px(navigation_x), px(284.0)),
+                Modifiers::none(),
+            );
+            refresh(cx, window)?;
+            save_screenshot(cx, window, "configuration-wide-rule-source.png")?;
+        }
+        cx.simulate_click(
+            window,
+            point(px(navigation_x), px(158.0)),
+            Modifiers::none(),
+        );
+        refresh(cx, window)?;
+        save_screenshot(cx, window, file_name)?;
+        close_window(cx, window)?;
+    }
+
+    std::fs::remove_dir_all(root)?;
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn snapshot_hex(value: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(value.len() * 2);
+    for byte in value.bytes() {
+        encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+        encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    encoded
 }
 
 #[cfg(target_os = "macos")]
@@ -382,7 +477,8 @@ fn capture(
     let window: AnyWindowHandle = window.into();
 
     refresh(cx, window)?;
-    save_screenshot(cx, window, file_name)
+    save_screenshot(cx, window, file_name)?;
+    close_window(cx, window)
 }
 
 #[cfg(target_os = "macos")]
@@ -408,7 +504,8 @@ fn capture_compact_flow(
 
     cx.simulate_click(window, point(px(664.0), px(80.0)), Modifiers::none());
     refresh(cx, window)?;
-    save_screenshot(cx, window, "native-compact-dark-inspector.png")
+    save_screenshot(cx, window, "native-compact-dark-inspector.png")?;
+    close_window(cx, window)
 }
 
 #[cfg(target_os = "macos")]
@@ -450,18 +547,19 @@ fn capture_connected(
     cx.advance_clock(std::time::Duration::from_millis(500));
     refresh(cx, window)?;
 
-    cx.simulate_click(window, point(px(110.0), px(158.0)), Modifiers::none());
+    cx.simulate_click(window, point(px(110.0), px(199.0)), Modifiers::none());
     refresh(cx, window)?;
     save_screenshot(cx, window, "activity-wide-connected.png")?;
 
-    cx.simulate_click(window, point(px(110.0), px(199.0)), Modifiers::none());
+    cx.simulate_click(window, point(px(110.0), px(240.0)), Modifiers::none());
     refresh(cx, window)?;
     save_screenshot(cx, window, "logs-wide-connected.png")?;
 
-    cx.simulate_click(window, point(px(110.0), px(240.0)), Modifiers::none());
+    cx.simulate_click(window, point(px(110.0), px(284.0)), Modifiers::none());
     refresh(cx, window)?;
     save_screenshot(cx, window, "configuration-wide-connected-sources.png")?;
 
+    close_window(cx, window)?;
     server.stop()?;
     Ok(())
 }
@@ -491,7 +589,8 @@ fn capture_live_when_configured(
     refresh(cx, window)?;
     cx.simulate_click(window, point(px(480.0), px(80.0)), Modifiers::none());
     refresh(cx, window)?;
-    save_screenshot_at(cx, window, &output)
+    save_screenshot_at(cx, window, &output)?;
+    close_window(cx, window)
 }
 
 #[cfg(target_os = "macos")]
@@ -624,6 +723,16 @@ fn refresh(
 ) -> Result<(), Box<dyn std::error::Error>> {
     cx.run_until_parked();
     cx.update_window(window, |_, window, _| window.refresh())?;
+    cx.run_until_parked();
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn close_window(
+    cx: &mut gpui::VisualTestAppContext,
+    window: gpui::AnyWindowHandle,
+) -> Result<(), Box<dyn std::error::Error>> {
+    cx.update_window(window, |_, window, _| window.remove_window())?;
     cx.run_until_parked();
     Ok(())
 }

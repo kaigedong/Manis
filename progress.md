@@ -213,3 +213,15 @@
 - 原生宽屏和 720px 紧凑截图完成；紧凑路由说明改为完整单行摘要后 Visual Verdict 93/100 `pass`，无状态栏裁切。
 - 全 workspace 验证通过：148 passed、6 ignored；fmt、严格 Clippy、all-targets check、build、diff check 和私有订阅域名/token 扫描全部通过。仅保留上游 `block 0.1.6` 的未来兼容提示。
 - 仅停止旧 Relay UI PID 47280，并以新构建二进制连接同一 Clash Verge Unix controller 启动 Relay UI PID 48994；托盘初始化未报错，来源恢复成功。Clash Verge PID 14173 与 verge-mihomo PID 14201 保持运行且未被停止或修改。
+
+# 2026-08-26 配置瘦身与分流规则工作区
+
+- 用户要求重新划分信息架构：配置页统一管理代理订阅、单节点和 QX 规则订阅源；独立一级页面“分流规则”只展示导入后真正生效的规则。
+- 本轮采用 Impeccable `distill`：先逐项证明元素价值，再保留最少可完成任务的信息；不改变既有 Relay 视觉语言、私有存储或外部 controller 只读边界。
+- 导航回归测试完成 RED→GREEN：`PrimaryWorkspace::RoutingRules` 已进入节点、策略组之后；配置页面和规则页面成为两个独立工作区。
+- 首轮删除旧运行来源说明时，安全回归测试发现 `detail()` 仍用于验证私有来源不会暴露链接；已恢复更短的固定说明并保留测试，不重复删除该安全边界。
+- 首轮视觉判定 82/100：样式成立，但规则订阅管理仍误放在分流规则页；随后迁回配置页，并把分流规则页收敛为只读生效顺序。
+- 第二轮 Visual Verdict 90/100 `pass`：宽屏和 720px 紧凑布局职责清楚，滚动区增加 56px 底部空间，固定状态栏不会永久遮挡最后一项。
+- GPUI 原生截图工具现会逐场景关闭离屏窗口，完整截图链路已成功跑完，不再因窗口资源耗尽返回 `WouldBlock`。
+- 最终验证通过：workspace 146 passed、6 ignored；严格 Clippy、fmt、all-targets check、build、diff check 与私密订阅扫描全部通过，仅保留上游 `block 0.1.6` 的未来兼容提示。
+- 仅停止旧 Relay UI PID 48994，并以同一 Clash Verge Unix controller 启动新 PID 52813；Clash Verge PID 14173 与 verge-mihomo PID 14201 均保持运行且未被修改。

@@ -1,11 +1,11 @@
 use std::collections::BTreeMap;
 
 use relay_core::{
-    CompactNavigation, ConfigurationSection, ConfigurationWorkspaceState, EmptyPolicyCatalog,
-    NodeAvailabilityFilter, NodeGroupIcon, NodeGroupMatcher, NodeGroupStrategy, NodeIdentity,
-    NodePolicyGroup, NodeWorkspaceState, PolicyCandidateKind, PolicyCatalog, PolicyGroup,
-    PolicyGroupId, PolicyGroupKind, PolicyNode, PolicyRule, PolicyWorkspaceState, PrimaryWorkspace,
-    ProxyId, ProxyMode, RouteEvidence, RoutingMode, WindowSizeClass,
+    CompactNavigation, EmptyPolicyCatalog, NodeAvailabilityFilter, NodeGroupIcon, NodeGroupMatcher,
+    NodeGroupStrategy, NodeIdentity, NodePolicyGroup, NodeWorkspaceState, PolicyCandidateKind,
+    PolicyCatalog, PolicyGroup, PolicyGroupId, PolicyGroupKind, PolicyNode, PolicyRule,
+    PolicyWorkspaceState, PrimaryWorkspace, ProxyId, ProxyMode, RouteEvidence, RoutingMode,
+    WindowSizeClass,
 };
 
 fn streaming() -> PolicyGroupId {
@@ -307,17 +307,20 @@ fn primary_workspace_switches_between_policy_operation_and_configuration() {
     assert_eq!(active, PrimaryWorkspace::Policies);
     active = PrimaryWorkspace::Nodes;
     assert_eq!(active, PrimaryWorkspace::Nodes);
+    active = PrimaryWorkspace::RoutingRules;
+    assert_eq!(active, PrimaryWorkspace::RoutingRules);
     active = PrimaryWorkspace::Configuration;
     assert_eq!(active, PrimaryWorkspace::Configuration);
 }
 
 #[test]
-fn primary_navigation_places_nodes_first_and_exposes_activity_and_logs() {
+fn primary_navigation_places_routing_rules_between_policies_and_runtime_diagnostics() {
     assert_eq!(
         PrimaryWorkspace::navigation_order(),
         &[
             PrimaryWorkspace::Nodes,
             PrimaryWorkspace::Policies,
+            PrimaryWorkspace::RoutingRules,
             PrimaryWorkspace::Activity,
             PrimaryWorkspace::Logs,
             PrimaryWorkspace::Configuration,
@@ -461,26 +464,4 @@ fn node_policy_group_tracks_explicit_members_and_cycles_icons() {
     assert_eq!(NodeGroupIcon::Compass.next(), NodeGroupIcon::Bolt);
 }
 
-#[test]
-fn configuration_selection_tracks_only_safe_local_identifiers() {
-    let mut state = ConfigurationWorkspaceState::default();
-
-    assert_eq!(state.section, ConfigurationSection::Sources);
-    assert_eq!(state.selected_rule, 0);
-
-    state.select_section(ConfigurationSection::Rules);
-    state.select_rule(3, 3);
-
-    assert_eq!(state.section, ConfigurationSection::Rules);
-    assert_eq!(state.selected_rule, 2);
-}
-
-#[test]
-fn configuration_rule_selection_handles_an_empty_preview() {
-    let mut state = ConfigurationWorkspaceState::default();
-
-    state.select_rule(9, 0);
-
-    assert_eq!(state.selected_rule, 0);
-}
 use std::collections::BTreeSet;
