@@ -4,3 +4,4 @@
 *.log
 *.profraw
 coverage/
+/dist/

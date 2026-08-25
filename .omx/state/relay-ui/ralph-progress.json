@@ -1,5 +1,5 @@
 {
-  "score": 95,
+  "score": 96,
   "verdict": "pass",
   "category_match": true,
   "threshold": 90,
@@ -10,22 +10,26 @@
     "/Users/bobo/.planning/qx_policy_client_ui/reference-m3-expressive.png"
   ],
   "generated_screenshots": [
-    "/Users/bobo/.planning/qx_policy_client_ui/.impeccable/review/desktop.png",
-    "/Users/bobo/.planning/qx_policy_client_ui/.impeccable/review/medium.png",
-    "/Users/bobo/.planning/qx_policy_client_ui/.impeccable/review/compact-dark.png"
+    "/Users/bobo/.planning/qx_policy_client_ui/.impeccable/review/native-wide.png",
+    "/Users/bobo/.planning/qx_policy_client_ui/.impeccable/review/native-medium.png",
+    "/Users/bobo/.planning/qx_policy_client_ui/.impeccable/review/native-compact.png",
+    "/Users/bobo/.planning/qx_policy_client_ui/.impeccable/review/native-compact-detail.png",
+    "/Users/bobo/.planning/qx_policy_client_ui/.impeccable/review/native-compact-dark-detail.png",
+    "/Users/bobo/.planning/qx_policy_client_ui/.impeccable/review/native-compact-dark-inspector.png"
   ],
   "differences": [
-    "The medium route inspector is intentionally a side sheet rather than the persistent third pane shown at wide width.",
-    "The compact window removes the policy list while editing a group instead of shrinking all three panes.",
-    "The prototype uses the system UI font stack rather than a branded downloadable typeface."
+    "The native medium route inspector is intentionally hidden until invoked rather than persistently consuming workspace width.",
+    "The native compact inspector overlays the detail task as a 340 px side sheet instead of shrinking every pane.",
+    "The GPUI navigation rail uses readable Chinese initials instead of a bundled icon asset set."
   ],
   "suggestions": [
-    "Keep the inspector transition transform-only so the preview remains smooth.",
-    "Preserve the copper route line as the only strong non-semantic accent.",
-    "Carry the same single-task compact behavior and accessible control names into the GPUI view model."
+    "Preserve the copper signal line as the only strong non-semantic accent.",
+    "Keep compact list and detail as separate tasks rather than forcing multi-pane compression.",
+    "Replace navigation initials only when a deliberate cross-platform icon asset pipeline is introduced."
   ],
   "next_actions": [
-    "Document tokens, components, responsive states, and GPUI event flow."
+    "Ship the verified native GPUI visual milestone as a Git commit.",
+    "Keep Mihomo integration outside this visual milestone so demo and observed connection states cannot be confused."
   ],
-  "reasoning": "The prototype clearly expresses the selected Signal Patch Bay world while retaining familiar desktop list-detail behavior. Wide, medium, compact, light, and dark states remain legible, and the route chain stays the dominant product-specific interaction without turning ordinary controls into audio hardware. The final correction clearly labels the inspector as local rule prediction with demo data, reserves Mihomo /connections for observed truth, and restores the compact system-proxy control's accessible name."
+  "reasoning": "The native GPUI implementation preserves the selected Signal Patch Bay direction across wide, medium, and compact window classes. Direct texture captures confirm legible light and dark themes, single-task compact navigation, and a distinctive connected route chain; simulated clicks also prove policy selection, theme switching, and inspector opening in the compact flow."
 }

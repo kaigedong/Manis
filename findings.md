@@ -42,3 +42,12 @@
 - 官方 `/connections` 返回实际连接的 `chains`、`providerChains`、`rule`、`rulePayload`，应作为“已观察连接”的权威来源。
 - 官方 API 没有面向任意域名的 dry-run 匹配端点；涉及进程、源地址、端口、网络类型或解析后 IP 的规则不能被简单域名输入可靠判定，因此界面必须把“预测”与“已观察”分开。
 - 独立 finish review 初次发现路由权威性措辞和窄屏开关 accessible name 两个问题；修复并重拍同尺寸截图后，两项均判定 resolved，最终 disposition 为 `ship`。
+
+## GPUI 实现结论
+
+- 采用 Zed 官方仓库同一提交中的 `gpui` 与 `gpui_platform`，避免两个 crate 的内部接口漂移；未采用已滞后的 `create-gpui-app` 模板。
+- 当前跨平台入口应使用 `gpui_platform::application().run(...)`；macOS 开启 `font-kit`，Linux 开启 `wayland` 与 `x11`，Windows 使用原生平台默认特性。
+- GPUI 的 `VisualTestAppContext` 可直接创建离屏原生窗口、模拟鼠标输入并捕获实际渲染纹理，适合规避 macOS 屏幕录制权限对自动化验收的影响。
+- 状态模型放在不依赖 GPUI 的 `relay-core`，使策略选择、断点切换和路由证据可在三平台一致测试；GPUI 只负责事件和渲染。
+- macOS 已完成编译、启动、视觉和交互验证。Windows/Linux 的依赖路径已经声明，但仍需要原生 runner 验证工具链、字体、输入、窗口装饰与系统代理集成。
+- 依赖树中的 `block 0.1.6` 来自 GPUI 上游并触发 Rust future-incompatibility 提示；当前不阻断构建，后续升级固定提交时需复查。
