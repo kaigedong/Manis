@@ -111,6 +111,12 @@
 - 2026-08-25：最终 workspace 96 个常规测试通过、4 个环境依赖测试默认 ignored；fmt、严格 Clippy、全目标 build、diff check 以及工作树/Git 历史敏感域名和长 token 扫描全部通过。
 - 2026-08-25：独立安全二次复核为 `LOW / SHIP`，Critical/High/Medium 均为 0；确认外部控制器写入边界和大小写 URL 脱敏两项旧问题已修复。未新增依赖，CVE 扫描工具在本机未安装。
 - 2026-08-25：仅停止旧 Relay UI PID 79169，并以当前通过验证的二进制连接既有 Clash Verge Unix controller 启动新 PID 89215；未终止或修改 Mihomo/Clash Verge。无终端 `nohup` 在当前 macOS GPUI 环境会立即退出，因此最终使用持有 PTY 的运行会话保持应用生命周期。
+- 2026-08-25：开始“节点库存与用户策略分组”阶段。验收锁定为节点页上半区展示按来源导入的节点，下半区展示用户策略分组；分组可创建、重命名、换图标，并配置手动成员或“候选匹配 + 延迟优选”规则。
+- 2026-08-25：Impeccable 上下文确认继续使用既有 Signal Patch Bay / Operate 视觉世界；不复制 QX 外观，只复用其“节点库存与策略组分离”的产品逻辑。
+- 2026-08-25：分组领域模型完成首轮 TDD 红→绿：18 个 `relay-core` 行为测试通过；模型覆盖安全 ID/名称、四种图标、手动/延迟优选、全部/名称/显式成员匹配、稳定来源节点身份和 128 成员上限。
+- 2026-08-25：节点页已明确分成上方“导入的节点”和下方“节点分组”；完成创建、重命名、图标、手动/延迟优选、全部/名称/明确选择规则、私有持久化与删除交互。
+- 2026-08-25：用户组已编译进 Relay 托管 Mihomo：手动=`select`、延迟优选=`url-test`，Proxy 主组引用所有用户组；外部 controller 继续只读。全仓测试、严格 Clippy 和格式检查已通过，Visual Verdict 93/100。
+- 2026-08-25：真实使用 Clash Verge 自带 `verge-mihomo -t` 验证了带 `filter`/`url-test` 的用户分组 YAML，配置校验成功。独立安全复核未发现 Critical/High；保留一项既有 MEDIUM 风险：公网 HTTP 订阅会明文传输 token，这是兼容 HTTP 来源的产品边界，不是本轮新增。
 ## 2026-08-25（续）
 
 - 已恢复会话并完成当前边界盘点：`relay-profile` 尚无顶层直连代理模型，`EngineManager` 尚无安全的配置替换/重启事务，`relay-mihomo` 的只读传输会一次性缓冲响应，不能直接承载 `/connections` 与 `/logs` 长连接。

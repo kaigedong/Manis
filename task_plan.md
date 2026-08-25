@@ -98,6 +98,15 @@
 - [completed] 5. 完成 GPUI 实时状态、错误/空状态和响应式视觉验证
 - [completed] 6. 完成安全复核、全量验证、Git 提交和应用重启
 
+## 节点库存与用户策略分组
+
+- [completed] 1. 映射现有节点来源、持久化、策略编译与响应式界面边界
+- [completed] 2. 以 TDD 建立可重命名、换图标和规则化选点的分组领域模型
+- [completed] 3. 持久化用户分组并编译为 Relay 托管 Mihomo 策略组
+- [completed] 4. 在节点页分离“导入的节点”与“节点分组”，实现完整编辑交互
+- [completed] 5. 生成宽屏/紧凑原生截图并通过 Visual Verdict
+- [in_progress] 6. 完成安全复核、全仓验证、Git 提交和应用重启
+
 ## 固定约束
 - 实现框架：Rust + GPUI
 - 目标平台：Windows、macOS、Linux
@@ -123,3 +132,7 @@
 | GPUI 代码映射 explorer 命中 GPT-5.3-Codex-Spark 用量上限 | 1 | 不重试同一模型；由主代理使用本地结构搜索完成映射，保留独立 designer 评审 |
 | `omx explore` 已被当前 OMX 硬弃用 | 1 | 按命令自身迁移提示停止重试，改用正常 `rg`/定向读取；验证类噪声命令仍可用 sparkshell |
 | GPUI 输入范式 explorer 命中 GPT-5.3-Codex-Spark 用量上限 | 1 | 不重试同一模型；直接采用项目锁定 GPUI revision 的官方 `examples/input.rs` 范式 |
+| 节点分组测试首个补丁的 import 上下文与当前文件不一致 | 1 | 读取实际 import 与测试位置后，用精确上下文重新应用；首个失败未修改代码 |
+| 只读 UX 子任务遗留了与领域模型冲突的半成品改动 | 1 | 中断该子任务，移除伪延迟阈值/协议规则模型，保留可复用输入改造后统一实现 |
+| 首轮严格 Clippy 报告缺少 Errors 文档与声明式 UI 行数限制 | 1 | 补齐公开 Result 文档、派生 Default，并仅对声明式渲染/事务函数做局部 allow |
+| `relay-ui` RED 测试撞上 profile 执行代理的中间编辑窗口 | 1 | 不重试并发编译；等待其完成独占文件后再运行，避免误判共享工作树中的暂态错误 |

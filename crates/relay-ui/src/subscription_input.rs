@@ -53,7 +53,10 @@ pub(crate) fn init(cx: &mut App) {
 
 pub(crate) struct SubscriptionTextInput {
     focus_handle: FocusHandle,
+    element_id: SharedString,
     content: SharedString,
+    placeholder: SharedString,
+    max_bytes: usize,
     selected_range: Range<usize>,
     selection_reversed: bool,
     marked_range: Option<Range<usize>>,
@@ -68,9 +71,30 @@ pub(crate) struct SubscriptionTextInput {
 
 impl SubscriptionTextInput {
     pub(crate) fn new(theme: Theme, dark: bool, cx: &mut Context<Self>) -> Self {
+        Self::new_field(
+            "subscription-url-input",
+            "粘贴 HTTP/HTTPS 订阅或 vless:// 节点链接",
+            MAX_SUBSCRIPTION_BYTES,
+            theme,
+            dark,
+            cx,
+        )
+    }
+
+    pub(crate) fn new_field(
+        element_id: impl Into<SharedString>,
+        placeholder: impl Into<SharedString>,
+        max_bytes: usize,
+        theme: Theme,
+        dark: bool,
+        cx: &mut Context<Self>,
+    ) -> Self {
         Self {
             focus_handle: cx.focus_handle(),
+            element_id: element_id.into(),
             content: "".into(),
+            placeholder: placeholder.into(),
+            max_bytes,
             selected_range: 0..0,
             selection_reversed: false,
             marked_range: None,
@@ -86,6 +110,23 @@ impl SubscriptionTextInput {
 
     pub(crate) fn value(&self) -> &str {
         &self.content
+    }
+
+    pub(crate) fn set_value_without_event(
+        &mut self,
+        value: impl Into<SharedString>,
+        cx: &mut Context<Self>,
+    ) {
+        let value = value.into();
+        let end = clamp_offset(&value, self.max_bytes.min(value.len()));
+        self.content = value[..end].into();
+        self.selected_range = self.content.len()..self.content.len();
+        self.selection_reversed = false;
+        self.marked_range = None;
+        self.last_layout = None;
+        self.last_bounds = None;
+        self.last_scroll_x = px(0.0);
+        cx.notify();
     }
 
     pub(crate) fn input_focus_handle(&self) -> FocusHandle {
@@ -410,7 +451,7 @@ impl EntityInputHandler for SubscriptionTextInput {
         );
         let single_line = new_text.replace(['\r', '\n'], "");
         let new_len = self.content.len() - (range.end - range.start) + single_line.len();
-        if new_len > MAX_SUBSCRIPTION_BYTES {
+        if new_len > self.max_bytes {
             window.play_system_bell();
             return;
         }
@@ -444,7 +485,7 @@ impl EntityInputHandler for SubscriptionTextInput {
         );
         let single_line = new_text.replace(['\r', '\n'], "");
         let new_len = self.content.len() - (range.end - range.start) + single_line.len();
-        if new_len > MAX_SUBSCRIPTION_BYTES {
+        if new_len > self.max_bytes {
             window.play_system_bell();
             return;
         }
@@ -510,9 +551,9 @@ struct PrepaintState {
     scroll_x: Pixels,
 }
 
-fn display_text(content: &SharedString) -> SharedString {
+fn display_text_with_placeholder(content: &SharedString, placeholder: &str) -> SharedString {
     if content.is_empty() {
-        "粘贴 HTTP/HTTPS 订阅或 vless:// 节点链接".into()
+        placeholder.into()
     } else {
         content.clone()
     }
@@ -562,7 +603,7 @@ impl Element for SubscriptionTextElement {
     ) -> Self::PrepaintState {
         let input = self.input.read(cx);
         let content = input.content.clone();
-        let display_text = display_text(&content);
+        let display_text = display_text_with_placeholder(&content, input.placeholder.as_ref());
         let style = window.text_style();
         let run = TextRun {
             len: display_text.len(),
@@ -705,7 +746,7 @@ impl gpui::Render for SubscriptionTextInput {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let focused = self.focus_handle.is_focused(window);
         div()
-            .id("subscription-url-input")
+            .id(self.element_id.clone())
             .key_context("SubscriptionInput")
             .track_focus(&self.focus_handle(cx))
             .cursor(if self.availability == InputAvailability::Enabled {

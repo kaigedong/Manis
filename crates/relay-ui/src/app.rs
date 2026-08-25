@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{BTreeSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -8,8 +8,9 @@ use gpui::{
     Subscription, Toggled, Window, div, prelude::*, px,
 };
 use relay_core::{
-    CompactNavigation, ConfigurationWorkspaceState, NodeWorkspaceState, PolicyCatalog, PolicyGroup,
-    PolicyNode, PolicyWorkspaceState, PrimaryWorkspace, ProxyId, ProxyMode, WindowSizeClass,
+    CompactNavigation, ConfigurationWorkspaceState, NodeGroupIcon, NodeGroupStrategy, NodeIdentity,
+    NodePolicyGroup, NodeWorkspaceState, PolicyCatalog, PolicyGroup, PolicyNode,
+    PolicyWorkspaceState, PrimaryWorkspace, ProxyId, ProxyMode, WindowSizeClass,
 };
 use relay_mihomo::{Connection, ObservedRouteEvidence, RuntimeConfig};
 use relay_profile::SecretUrl;
@@ -118,6 +119,23 @@ fn source_kind(subscription: &SecretUrl) -> SourceKind {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum NodeGroupMatcherKind {
+    #[default]
+    All,
+    NameContains,
+    Explicit,
+}
+
+#[derive(Clone, Debug)]
+struct NodeGroupDraft {
+    editing_id: Option<String>,
+    icon: NodeGroupIcon,
+    strategy: NodeGroupStrategy,
+    matcher_kind: NodeGroupMatcherKind,
+    explicit_members: BTreeSet<NodeIdentity>,
+}
+
 pub struct RelayApp {
     primary_workspace: PrimaryWorkspace,
     configuration: ConfigurationWorkspaceState,
@@ -133,6 +151,8 @@ pub struct RelayApp {
     subscription_store_dir: Option<PathBuf>,
     imported_subscriptions: Vec<ImportedSubscription>,
     saved_vless_nodes: Vec<StoredVlessNode>,
+    node_policy_groups: Vec<NodePolicyGroup>,
+    node_group_draft: Option<NodeGroupDraft>,
     source_store_error: Option<SubscriptionStoreError>,
     proxy_mode: ProxyMode,
     proxy_mode_busy: bool,
@@ -150,6 +170,8 @@ pub struct RelayApp {
     subscription_input: Option<Entity<SubscriptionTextInput>>,
     subscription_feedback: SubscriptionFeedback,
     subscription_input_events: Option<Subscription>,
+    node_group_name_input: Option<Entity<SubscriptionTextInput>>,
+    node_group_filter_input: Option<Entity<SubscriptionTextInput>>,
 }
 
 impl RelayApp {
@@ -191,38 +213,48 @@ impl RelayApp {
         subscription_store_dir: Option<PathBuf>,
     ) -> Self {
         let mut status = runtime.initial_status();
-        let (imported_subscriptions, saved_vless_nodes, collapsed_groups, source_store_error) =
-            subscription_store_dir.as_ref().map_or_else(
-                || (Vec::new(), Vec::new(), Vec::new(), None),
-                |directory| {
-                    let subscriptions = mihomo::load_subscription_sources_in(directory);
-                    let nodes = mihomo::load_vless_sources_in(directory);
-                    let collapsed = mihomo::load_collapsed_groups_in(directory);
-                    match (subscriptions, nodes, collapsed) {
-                        (Ok(subscriptions), Ok(nodes), Ok(collapsed)) => (
-                            subscriptions
-                                .into_iter()
-                                .map(ImportedSubscription::from_stored)
-                                .collect(),
-                            nodes,
-                            collapsed,
-                            None,
-                        ),
-                        (subscriptions, nodes, collapsed) => (
-                            subscriptions
-                                .unwrap_or_default()
-                                .into_iter()
-                                .map(ImportedSubscription::from_stored)
-                                .collect(),
-                            nodes.unwrap_or_default(),
-                            collapsed.unwrap_or_default(),
-                            Some(SubscriptionStoreError::StoredSourceUnavailable),
-                        ),
-                    }
-                },
-            );
+        let (
+            imported_subscriptions,
+            saved_vless_nodes,
+            collapsed_groups,
+            node_policy_groups,
+            source_store_error,
+        ) = subscription_store_dir.as_ref().map_or_else(
+            || (Vec::new(), Vec::new(), Vec::new(), Vec::new(), None),
+            |directory| {
+                let subscriptions = mihomo::load_subscription_sources_in(directory);
+                let nodes = mihomo::load_vless_sources_in(directory);
+                let collapsed = mihomo::load_collapsed_groups_in(directory);
+                let policy_groups = mihomo::load_node_policy_groups_in(directory);
+                match (subscriptions, nodes, collapsed, policy_groups) {
+                    (Ok(subscriptions), Ok(nodes), Ok(collapsed), Ok(policy_groups)) => (
+                        subscriptions
+                            .into_iter()
+                            .map(ImportedSubscription::from_stored)
+                            .collect(),
+                        nodes,
+                        collapsed,
+                        policy_groups,
+                        None,
+                    ),
+                    (subscriptions, nodes, collapsed, policy_groups) => (
+                        subscriptions
+                            .unwrap_or_default()
+                            .into_iter()
+                            .map(ImportedSubscription::from_stored)
+                            .collect(),
+                        nodes.unwrap_or_default(),
+                        collapsed.unwrap_or_default(),
+                        policy_groups.unwrap_or_default(),
+                        Some(SubscriptionStoreError::StoredSourceUnavailable),
+                    ),
+                }
+            },
+        );
         if let Some(directory) = subscription_store_dir.as_ref()
-            && (!imported_subscriptions.is_empty() || !saved_vless_nodes.is_empty())
+            && (!imported_subscriptions.is_empty()
+                || !saved_vless_nodes.is_empty()
+                || !node_policy_groups.is_empty())
         {
             status = match runtime.apply_saved_sources(directory) {
                 Ok(GeneratedProfileApply::Updated) => "已将保存来源写入 Relay 托管配置".to_owned(),
@@ -250,6 +282,8 @@ impl RelayApp {
             subscription_store_dir,
             imported_subscriptions,
             saved_vless_nodes,
+            node_policy_groups,
+            node_group_draft: None,
             source_store_error,
             proxy_mode: ProxyMode::Off,
             proxy_mode_busy: false,
@@ -267,6 +301,8 @@ impl RelayApp {
             subscription_input: None,
             subscription_feedback: SubscriptionFeedback::Idle,
             subscription_input_events: None,
+            node_group_name_input: None,
+            node_group_filter_input: None,
         }
     }
 
@@ -286,6 +322,42 @@ impl RelayApp {
         self.subscription_input = Some(input);
         self.subscription_input_events = Some(events);
         self.restore_imported_subscriptions(cx);
+    }
+
+    fn ensure_node_group_inputs(&mut self, theme: Theme, cx: &mut Context<Self>) {
+        for input in [
+            self.node_group_name_input.as_ref(),
+            self.node_group_filter_input.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            input.update(cx, |input, cx| input.set_theme(theme, self.dark, cx));
+        }
+        if self.node_group_name_input.is_none() {
+            self.node_group_name_input = Some(cx.new(|cx| {
+                SubscriptionTextInput::new_field(
+                    "node-group-name-input",
+                    "例如：香港自动优选",
+                    96,
+                    theme,
+                    self.dark,
+                    cx,
+                )
+            }));
+        }
+        if self.node_group_filter_input.is_none() {
+            self.node_group_filter_input = Some(cx.new(|cx| {
+                SubscriptionTextInput::new_field(
+                    "node-group-filter-input",
+                    "例如：Hong Kong",
+                    256,
+                    theme,
+                    self.dark,
+                    cx,
+                )
+            }));
+        }
     }
 
     fn import_remote_subscription(
@@ -1869,6 +1941,7 @@ impl Render for RelayApp {
         let size_class = self.workspace.size_class;
         let theme = self.theme();
         self.ensure_subscription_input(theme, cx);
+        self.ensure_node_group_inputs(theme, cx);
         let compact = size_class == WindowSizeClass::Compact;
         let show_groups =
             !compact || self.workspace.compact_navigation == CompactNavigation::GroupList;

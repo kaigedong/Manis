@@ -1,9 +1,16 @@
-use gpui::{Context, Div, FontWeight, ParentElement, Role, Stateful, Styled, div, prelude::*, px};
-use relay_core::{NodeAvailabilityFilter, PrimaryWorkspace, WindowSizeClass};
+use std::collections::BTreeSet;
 
-use super::{ImportedSubscriptionState, RelayApp};
+use gpui::{Context, Div, FontWeight, ParentElement, Role, Stateful, Styled, div, prelude::*, px};
+use relay_core::{
+    NodeAvailabilityFilter, NodeGroupIcon, NodeGroupMatcher, NodeGroupStrategy, NodeIdentity,
+    NodePolicyGroup, PrimaryWorkspace, WindowSizeClass,
+};
+
+use super::{
+    ImportedSubscriptionState, NodeGroupDraft, NodeGroupMatcherKind, RelayApp, SourceRuntimeApply,
+};
 use crate::{
-    mihomo::{LoadedProvider, LoadedProviderNode},
+    mihomo::{self, LoadedProvider, LoadedProviderNode},
     subscription::SourceNodePreview,
     theme::Theme,
 };
@@ -138,6 +145,7 @@ impl RelayApp {
                 filter,
                 loading,
                 unavailable,
+                size_class,
                 compact,
                 theme,
                 cx,
@@ -212,7 +220,7 @@ impl RelayApp {
 
     #[allow(clippy::too_many_arguments)]
     fn node_workspace_header(
-        group_count: usize,
+        source_count: usize,
         counts: NodeCounts,
         filter: NodeAvailabilityFilter,
         origin: &'static str,
@@ -249,7 +257,7 @@ impl RelayApp {
                                     .text_size(px(12.0))
                                     .text_color(theme.text_secondary)
                                     .child(format!(
-                                        "{origin} · {group_count} 个分组 · 在这里查看出口健康状态"
+                                        "{origin} · {source_count} 个来源 · 在这里查看出口健康状态"
                                     )),
                             ),
                     )
@@ -274,10 +282,12 @@ impl RelayApp {
         filter: NodeAvailabilityFilter,
         loading: bool,
         unavailable: bool,
+        size_class: WindowSizeClass,
         compact: bool,
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
+        let wide = size_class == WindowSizeClass::Wide;
         div()
             .id("nodes-scroll")
             .flex_1()
@@ -285,6 +295,11 @@ impl RelayApp {
             .overflow_y_scroll()
             .px(if compact { px(12.0) } else { px(24.0) })
             .py_4()
+            .child(Self::node_section_heading(
+                "导入的节点",
+                "按来源查看已经导入的节点；这里只管理库存，不决定流量走向。",
+                theme,
+            ))
             .when(loading && groups.is_empty(), |body| {
                 body.child(Self::node_message_panel(
                     "正在恢复节点",
@@ -305,6 +320,839 @@ impl RelayApp {
             .when(!groups.is_empty(), |body| {
                 body.child(self.node_group_list(groups, filter, compact, theme, cx))
             })
+            .child(self.node_group_workspace_section(wide, compact, theme, cx))
+    }
+
+    fn node_section_heading(title: &'static str, detail: &'static str, theme: Theme) -> Div {
+        div()
+            .mb_3()
+            .child(
+                div()
+                    .text_size(px(16.0))
+                    .font_weight(FontWeight::BOLD)
+                    .child(title),
+            )
+            .child(
+                div()
+                    .mt_1()
+                    .text_size(px(11.0))
+                    .text_color(theme.text_secondary)
+                    .child(detail),
+            )
+    }
+
+    fn node_group_workspace_section(
+        &self,
+        wide: bool,
+        compact: bool,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let mut section = div()
+            .mt_6()
+            .pt_5()
+            .border_t_1()
+            .border_color(theme.outline_subtle)
+            .child(
+                div()
+                    .flex()
+                    .items_start()
+                    .justify_between()
+                    .gap_3()
+                    .child(Self::node_section_heading(
+                        "节点分组",
+                        "用选择策略与匹配规则，把上方节点组织成可用于规则路由的策略组。",
+                        theme,
+                    ))
+                    .child(Self::node_group_add_button(theme, cx)),
+            );
+        if self.node_policy_groups.is_empty() && self.node_group_draft.is_none() {
+            section = section.child(
+                div()
+                    .p_5()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(theme.outline_subtle)
+                    .bg(theme.surface_high)
+                    .child(
+                        div()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child("还没有自定义分组"),
+                    )
+                    .child(
+                        div()
+                            .mt_1()
+                            .text_size(px(11.0))
+                            .text_color(theme.text_secondary)
+                            .child("可以创建手动选择组，或让 Relay 自动选择最低延迟节点。"),
+                    ),
+            );
+        }
+        let mut cards = div().grid().grid_cols(if wide { 2 } else { 1 }).gap_3();
+        for group in &self.node_policy_groups {
+            cards = cards.child(self.node_policy_group_card(group, theme, cx));
+        }
+        section
+            .when(!self.node_policy_groups.is_empty(), |section| {
+                section.child(cards)
+            })
+            .when_some(self.node_group_draft.as_ref(), |section, draft| {
+                section.child(self.node_group_editor(draft, compact, theme, cx))
+            })
+    }
+
+    fn node_group_add_button(theme: Theme, cx: &mut Context<Self>) -> Stateful<Div> {
+        div()
+            .id("node-group-add")
+            .role(Role::Button)
+            .aria_label("添加节点分组")
+            .tab_stop(true)
+            .focusable()
+            .cursor_pointer()
+            .h(px(36.0))
+            .px_4()
+            .rounded_md()
+            .bg(theme.action_primary)
+            .text_color(theme.action_on_primary)
+            .font_weight(FontWeight::SEMIBOLD)
+            .flex()
+            .items_center()
+            .child("添加分组")
+            .on_click(cx.listener(|this, _, _, cx| this.start_node_group_create(cx)))
+    }
+
+    fn node_policy_group_card(
+        &self,
+        group: &NodePolicyGroup,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let matched = self.node_group_match_count(group);
+        let group_id = group.id.clone();
+        let remove_id = group.id.clone();
+        let matcher_summary = match &group.matcher {
+            NodeGroupMatcher::All => "全部节点".to_owned(),
+            NodeGroupMatcher::NameContains(value) => format!("名称包含 “{value}”"),
+            NodeGroupMatcher::Explicit(nodes) => format!("明确选择 {} 个节点", nodes.len()),
+        };
+        div()
+            .p_4()
+            .rounded_md()
+            .border_1()
+            .border_color(theme.outline_subtle)
+            .bg(theme.surface_high)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .child(Self::node_group_icon_badge(group.icon, theme))
+                    .child(
+                        div()
+                            .min_w(px(0.0))
+                            .flex_1()
+                            .child(
+                                div()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(group.name.clone()),
+                            )
+                            .child(
+                                div()
+                                    .mt_1()
+                                    .text_size(px(10.0))
+                                    .text_color(theme.text_secondary)
+                                    .child(format!(
+                                        "{} · {matcher_summary} · 匹配 {matched} 个",
+                                        group.strategy.label()
+                                    )),
+                            ),
+                    ),
+            )
+            .child(
+                div()
+                    .mt_3()
+                    .flex()
+                    .gap_2()
+                    .child(Self::node_group_text_button(
+                        format!("node-group-edit-{group_id}"),
+                        "编辑",
+                        theme,
+                        cx.listener(move |this, _, _, cx| {
+                            this.start_node_group_edit(&group_id, cx);
+                        }),
+                    ))
+                    .child(Self::node_group_text_button(
+                        format!("node-group-remove-{remove_id}"),
+                        "删除",
+                        theme,
+                        cx.listener(move |this, _, _, cx| {
+                            this.remove_node_policy_group(&remove_id, cx);
+                        }),
+                    )),
+            )
+    }
+
+    fn node_group_icon_badge(icon: NodeGroupIcon, theme: Theme) -> Div {
+        div()
+            .size(px(40.0))
+            .flex_shrink_0()
+            .rounded_md()
+            .bg(theme.action_soft)
+            .text_color(theme.action_primary)
+            .text_size(px(10.0))
+            .font_weight(FontWeight::BOLD)
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(icon.label())
+    }
+
+    fn node_group_text_button(
+        id: String,
+        label: &'static str,
+        theme: Theme,
+        listener: impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
+    ) -> Stateful<Div> {
+        div()
+            .id(id)
+            .role(Role::Button)
+            .aria_label(label)
+            .tab_stop(true)
+            .focusable()
+            .cursor_pointer()
+            .h(px(32.0))
+            .px_3()
+            .rounded_md()
+            .border_1()
+            .border_color(theme.outline_subtle)
+            .text_color(theme.text_secondary)
+            .flex()
+            .items_center()
+            .child(label)
+            .on_click(listener)
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn node_group_editor(
+        &self,
+        draft: &NodeGroupDraft,
+        compact: bool,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let title = if draft.editing_id.is_some() {
+            "编辑节点分组"
+        } else {
+            "创建节点分组"
+        };
+        let name_input = self.node_group_name_input.clone();
+        let filter_input = self.node_group_filter_input.clone();
+        let mut editor = div()
+            .mt_3()
+            .p(if compact { px(14.0) } else { px(18.0) })
+            .rounded_md()
+            .border_1()
+            .border_color(theme.action_primary)
+            .bg(theme.surface_high)
+            .child(
+                div()
+                    .text_size(px(15.0))
+                    .font_weight(FontWeight::BOLD)
+                    .child(title),
+            )
+            .child(
+                div()
+                    .mt_4()
+                    .child(Self::node_group_field_label("分组名称", theme))
+                    .when_some(name_input, ParentElement::child),
+            )
+            .child(
+                div()
+                    .mt_4()
+                    .child(Self::node_group_field_label("分组图标", theme))
+                    .child(Self::node_group_icon_selector(draft.icon, theme, cx)),
+            )
+            .child(
+                div()
+                    .mt_4()
+                    .child(Self::node_group_field_label("选择策略", theme))
+                    .child(Self::node_group_strategy_selector(
+                        draft.strategy,
+                        theme,
+                        cx,
+                    )),
+            )
+            .child(
+                div()
+                    .mt_4()
+                    .child(Self::node_group_field_label("节点规则", theme))
+                    .child(Self::node_group_matcher_selector(
+                        draft.matcher_kind,
+                        theme,
+                        cx,
+                    )),
+            );
+        match draft.matcher_kind {
+            NodeGroupMatcherKind::All => {
+                editor = editor.child(Self::node_group_helper(
+                    "当前导入的全部节点都会加入这个分组。",
+                    theme,
+                ));
+            }
+            NodeGroupMatcherKind::NameContains => {
+                editor = editor.child(
+                    div()
+                        .mt_3()
+                        .child(Self::node_group_field_label("名称包含", theme))
+                        .when_some(filter_input, ParentElement::child),
+                );
+            }
+            NodeGroupMatcherKind::Explicit => {
+                editor = editor.child(self.node_group_member_picker(draft, theme, cx));
+            }
+        }
+        editor.child(
+            div()
+                .mt_5()
+                .flex()
+                .justify_end()
+                .gap_2()
+                .child(Self::node_group_text_button(
+                    "node-group-cancel".to_owned(),
+                    "取消",
+                    theme,
+                    cx.listener(|this, _, _, cx| {
+                        this.node_group_draft = None;
+                        cx.notify();
+                    }),
+                ))
+                .child(
+                    div()
+                        .id("node-group-save")
+                        .role(Role::Button)
+                        .aria_label("保存节点分组")
+                        .tab_stop(true)
+                        .focusable()
+                        .cursor_pointer()
+                        .h(px(32.0))
+                        .px_4()
+                        .rounded_md()
+                        .bg(theme.action_primary)
+                        .text_color(theme.action_on_primary)
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .flex()
+                        .items_center()
+                        .child("保存分组")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.save_node_policy_group(cx);
+                        })),
+                ),
+        )
+    }
+
+    fn node_group_field_label(label: &'static str, theme: Theme) -> Div {
+        div()
+            .mb_2()
+            .text_size(px(11.0))
+            .font_weight(FontWeight::SEMIBOLD)
+            .text_color(theme.text_secondary)
+            .child(label)
+    }
+
+    fn node_group_helper(copy: &'static str, theme: Theme) -> Div {
+        div()
+            .mt_3()
+            .text_size(px(10.0))
+            .text_color(theme.text_tertiary)
+            .child(copy)
+    }
+
+    fn node_group_icon_selector(
+        selected: NodeGroupIcon,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let mut row = div().flex().flex_wrap().gap_2();
+        for icon in [
+            NodeGroupIcon::Bolt,
+            NodeGroupIcon::Globe,
+            NodeGroupIcon::Shield,
+            NodeGroupIcon::Compass,
+        ] {
+            let active = selected == icon;
+            row = row.child(
+                div()
+                    .id(format!("node-group-icon-{}", icon.key()))
+                    .role(Role::Button)
+                    .aria_label(format!("使用{}图标", icon.label()))
+                    .aria_toggled(if active {
+                        gpui::Toggled::True
+                    } else {
+                        gpui::Toggled::False
+                    })
+                    .tab_stop(true)
+                    .focusable()
+                    .cursor_pointer()
+                    .h(px(34.0))
+                    .px_3()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(if active {
+                        theme.action_primary
+                    } else {
+                        theme.outline_subtle
+                    })
+                    .bg(if active {
+                        theme.action_soft
+                    } else {
+                        theme.surface_low
+                    })
+                    .text_color(if active {
+                        theme.action_primary
+                    } else {
+                        theme.text_secondary
+                    })
+                    .flex()
+                    .items_center()
+                    .child(icon.label())
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if let Some(draft) = this.node_group_draft.as_mut() {
+                            draft.icon = icon;
+                            cx.notify();
+                        }
+                    })),
+            );
+        }
+        row
+    }
+
+    fn node_group_strategy_selector(
+        selected: NodeGroupStrategy,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let mut row = div().flex().flex_wrap().gap_2();
+        for strategy in [NodeGroupStrategy::Manual, NodeGroupStrategy::LowestLatency] {
+            let active = selected == strategy;
+            row = row.child(
+                div()
+                    .id(format!("node-group-strategy-{}", strategy.key()))
+                    .role(Role::Button)
+                    .aria_label(strategy.label())
+                    .aria_toggled(if active {
+                        gpui::Toggled::True
+                    } else {
+                        gpui::Toggled::False
+                    })
+                    .tab_stop(true)
+                    .focusable()
+                    .cursor_pointer()
+                    .h(px(34.0))
+                    .px_3()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(if active {
+                        theme.action_primary
+                    } else {
+                        theme.outline_subtle
+                    })
+                    .bg(if active {
+                        theme.action_soft
+                    } else {
+                        theme.surface_low
+                    })
+                    .text_color(if active {
+                        theme.action_primary
+                    } else {
+                        theme.text_secondary
+                    })
+                    .flex()
+                    .items_center()
+                    .child(strategy.label())
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if let Some(draft) = this.node_group_draft.as_mut() {
+                            draft.strategy = strategy;
+                            cx.notify();
+                        }
+                    })),
+            );
+        }
+        row
+    }
+
+    fn node_group_matcher_selector(
+        selected: NodeGroupMatcherKind,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let choices = [
+            ("全部节点", NodeGroupMatcherKind::All),
+            ("名称包含", NodeGroupMatcherKind::NameContains),
+            ("明确选择", NodeGroupMatcherKind::Explicit),
+        ];
+        let mut row = div().flex().flex_wrap().gap_2();
+        for (label, matcher) in choices {
+            let active = selected == matcher;
+            row = row.child(
+                div()
+                    .id(format!("node-group-matcher-{matcher:?}"))
+                    .role(Role::Button)
+                    .aria_label(label)
+                    .aria_toggled(if active {
+                        gpui::Toggled::True
+                    } else {
+                        gpui::Toggled::False
+                    })
+                    .tab_stop(true)
+                    .focusable()
+                    .cursor_pointer()
+                    .h(px(34.0))
+                    .px_3()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(if active {
+                        theme.action_primary
+                    } else {
+                        theme.outline_subtle
+                    })
+                    .bg(if active {
+                        theme.action_soft
+                    } else {
+                        theme.surface_low
+                    })
+                    .text_color(if active {
+                        theme.action_primary
+                    } else {
+                        theme.text_secondary
+                    })
+                    .flex()
+                    .items_center()
+                    .child(label)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if let Some(draft) = this.node_group_draft.as_mut() {
+                            draft.matcher_kind = matcher;
+                            cx.notify();
+                        }
+                    })),
+            );
+        }
+        row
+    }
+
+    fn node_group_member_picker(
+        &self,
+        draft: &NodeGroupDraft,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let inventory = self.node_inventory();
+        let mut list = div()
+            .id("node-group-member-picker")
+            .mt_3()
+            .max_h(px(220.0))
+            .overflow_y_scroll()
+            .rounded_md()
+            .border_1()
+            .border_color(theme.outline_subtle);
+        if inventory.is_empty() {
+            return list.child(
+                div()
+                    .p_3()
+                    .text_size(px(11.0))
+                    .text_color(theme.text_secondary)
+                    .child("先在上方导入节点，再进行明确选择。"),
+            );
+        }
+        for member in inventory {
+            let selected = draft.explicit_members.contains(&member);
+            let member_for_click = member.clone();
+            list = list.child(
+                div()
+                    .id(format!(
+                        "node-group-member-{}-{}",
+                        member.source_id, member.node_name
+                    ))
+                    .role(Role::CheckBox)
+                    .aria_label(format!("选择节点{}", member.node_name))
+                    .tab_stop(true)
+                    .focusable()
+                    .cursor_pointer()
+                    .min_h(px(40.0))
+                    .px_3()
+                    .border_t_1()
+                    .border_color(theme.outline_subtle)
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .child(
+                        div()
+                            .size(px(16.0))
+                            .rounded_sm()
+                            .border_1()
+                            .border_color(if selected {
+                                theme.action_primary
+                            } else {
+                                theme.outline_strong
+                            })
+                            .bg(if selected {
+                                theme.action_primary
+                            } else {
+                                theme.surface_high
+                            }),
+                    )
+                    .child(div().flex_1().child(member.node_name.clone()))
+                    .child(
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(theme.text_tertiary)
+                            .child(member.source_id.clone()),
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if let Some(draft) = this.node_group_draft.as_mut() {
+                            if !draft.explicit_members.remove(&member_for_click) {
+                                draft.explicit_members.insert(member_for_click.clone());
+                            }
+                            cx.notify();
+                        }
+                    })),
+            );
+        }
+        list
+    }
+
+    fn node_inventory(&self) -> Vec<NodeIdentity> {
+        let has_local_sources =
+            !self.imported_subscriptions.is_empty() || !self.saved_vless_nodes.is_empty();
+        let mut inventory = BTreeSet::new();
+        for group in self.node_source_groups(has_local_sources) {
+            for provider in group.providers {
+                for node in &provider.nodes {
+                    if let Ok(identity) = NodeIdentity::new(&group.id, &node.name) {
+                        inventory.insert(identity);
+                    }
+                }
+            }
+            for node in group.saved_nodes {
+                if let Ok(identity) = NodeIdentity::new(&group.id, &node.name) {
+                    inventory.insert(identity);
+                }
+            }
+        }
+        inventory.into_iter().collect()
+    }
+
+    fn node_group_match_count(&self, group: &NodePolicyGroup) -> usize {
+        self.node_inventory()
+            .iter()
+            .filter(|node| group.matches(&node.source_id, &node.node_name))
+            .count()
+    }
+
+    fn start_node_group_create(&mut self, cx: &mut Context<Self>) {
+        self.node_group_draft = Some(NodeGroupDraft {
+            editing_id: None,
+            icon: NodeGroupIcon::Bolt,
+            strategy: NodeGroupStrategy::Manual,
+            matcher_kind: NodeGroupMatcherKind::All,
+            explicit_members: BTreeSet::new(),
+        });
+        if let Some(input) = self.node_group_name_input.as_ref() {
+            input.update(
+                cx,
+                crate::subscription_input::SubscriptionTextInput::clear_without_event,
+            );
+        }
+        if let Some(input) = self.node_group_filter_input.as_ref() {
+            input.update(
+                cx,
+                crate::subscription_input::SubscriptionTextInput::clear_without_event,
+            );
+        }
+        "正在创建节点分组".clone_into(&mut self.status);
+        cx.notify();
+    }
+
+    fn start_node_group_edit(&mut self, id: &str, cx: &mut Context<Self>) {
+        let Some(group) = self
+            .node_policy_groups
+            .iter()
+            .find(|group| group.id == id)
+            .cloned()
+        else {
+            return;
+        };
+        let (matcher_kind, filter, explicit_members) = match &group.matcher {
+            NodeGroupMatcher::All => (NodeGroupMatcherKind::All, "", BTreeSet::new()),
+            NodeGroupMatcher::NameContains(value) => (
+                NodeGroupMatcherKind::NameContains,
+                value.as_str(),
+                BTreeSet::new(),
+            ),
+            NodeGroupMatcher::Explicit(members) => {
+                (NodeGroupMatcherKind::Explicit, "", members.clone())
+            }
+        };
+        self.node_group_draft = Some(NodeGroupDraft {
+            editing_id: Some(group.id),
+            icon: group.icon,
+            strategy: group.strategy,
+            matcher_kind,
+            explicit_members,
+        });
+        if let Some(input) = self.node_group_name_input.as_ref() {
+            input.update(cx, |input, cx| {
+                input.set_value_without_event(group.name.clone(), cx);
+            });
+        }
+        if let Some(input) = self.node_group_filter_input.as_ref() {
+            input.update(cx, |input, cx| {
+                input.set_value_without_event(filter.to_owned(), cx);
+            });
+        }
+        self.status = format!("正在编辑分组“{}”", group.name);
+        cx.notify();
+    }
+
+    fn save_node_policy_group(&mut self, cx: &mut Context<Self>) {
+        let Some(draft) = self.node_group_draft.clone() else {
+            return;
+        };
+        let name = self
+            .node_group_name_input
+            .as_ref()
+            .map(|input| input.read(cx).value().trim().to_owned())
+            .unwrap_or_default();
+        let filter = self
+            .node_group_filter_input
+            .as_ref()
+            .map(|input| input.read(cx).value().trim().to_owned())
+            .unwrap_or_default();
+        let id = draft
+            .editing_id
+            .clone()
+            .unwrap_or_else(mihomo::new_node_policy_group_id);
+        let Ok(mut group) = NodePolicyGroup::new(&id, &name) else {
+            "分组名称不能为空，也不能包含换行或控制字符".clone_into(&mut self.status);
+            cx.notify();
+            return;
+        };
+        if self
+            .node_policy_groups
+            .iter()
+            .any(|existing| existing.id != id && existing.name == name)
+        {
+            "已有同名节点分组，请换一个名称".clone_into(&mut self.status);
+            cx.notify();
+            return;
+        }
+        if matches!(name.as_str(), "Auto" | "Proxy") {
+            "“Auto”和“Proxy”是 Relay 保留的策略组名称".clone_into(&mut self.status);
+            cx.notify();
+            return;
+        }
+        group.icon = draft.icon;
+        group.strategy = draft.strategy;
+        let matcher = match draft.matcher_kind {
+            NodeGroupMatcherKind::All => NodeGroupMatcher::All,
+            NodeGroupMatcherKind::NameContains => {
+                let Ok(matcher) = NodeGroupMatcher::name_contains(&filter) else {
+                    "请填写要匹配的节点名称".clone_into(&mut self.status);
+                    cx.notify();
+                    return;
+                };
+                matcher
+            }
+            NodeGroupMatcherKind::Explicit => {
+                if draft.explicit_members.is_empty() {
+                    "请至少选择一个节点".clone_into(&mut self.status);
+                    cx.notify();
+                    return;
+                }
+                NodeGroupMatcher::Explicit(draft.explicit_members)
+            }
+        };
+        if group.set_matcher(matcher).is_err() || self.node_group_match_count(&group) == 0 {
+            "当前规则没有匹配到任何已导入节点".clone_into(&mut self.status);
+            cx.notify();
+            return;
+        }
+        let Some(store_dir) = self.subscription_store_dir.clone() else {
+            "无法确定节点分组保存位置".clone_into(&mut self.status);
+            cx.notify();
+            return;
+        };
+        if let Err(error) = mihomo::save_node_policy_group_in(&store_dir, &group) {
+            self.status = format!("节点分组保存失败：{error}");
+            cx.notify();
+            return;
+        }
+        if let Some(existing) = self
+            .node_policy_groups
+            .iter_mut()
+            .find(|existing| existing.id == group.id)
+        {
+            existing.clone_from(&group);
+        } else {
+            self.node_policy_groups.push(group.clone());
+            self.node_policy_groups
+                .sort_by(|left, right| left.id.cmp(&right.id));
+        }
+        self.node_group_draft = None;
+        self.status = format!("分组“{}”已保存，正在应用托管配置", group.name);
+        self.apply_node_policy_groups(store_dir, format!("分组“{}”已保存", group.name), cx);
+    }
+
+    fn remove_node_policy_group(&mut self, id: &str, cx: &mut Context<Self>) {
+        let Some(store_dir) = self.subscription_store_dir.clone() else {
+            return;
+        };
+        let Some(index) = self
+            .node_policy_groups
+            .iter()
+            .position(|group| group.id == id)
+        else {
+            return;
+        };
+        if let Err(error) = mihomo::remove_node_policy_group_in(&store_dir, id) {
+            self.status = format!("节点分组删除失败：{error}");
+            cx.notify();
+            return;
+        }
+        let group = self.node_policy_groups.remove(index);
+        if self
+            .node_group_draft
+            .as_ref()
+            .and_then(|draft| draft.editing_id.as_deref())
+            == Some(id)
+        {
+            self.node_group_draft = None;
+        }
+        self.status = format!("分组“{}”已删除，正在应用托管配置", group.name);
+        self.apply_node_policy_groups(store_dir, format!("分组“{}”已删除", group.name), cx);
+    }
+
+    fn apply_node_policy_groups(
+        &mut self,
+        store_dir: std::path::PathBuf,
+        prefix: String,
+        cx: &mut Context<Self>,
+    ) {
+        let runtime = self.runtime.clone();
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let apply = executor
+                .spawn(async move {
+                    SourceRuntimeApply::from_result(runtime.apply_saved_sources(&store_dir))
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                this.status = format!("{prefix}{}", apply.status_suffix());
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
     }
 
     fn node_configuration_link(theme: Theme, cx: &mut Context<Self>) -> Stateful<Div> {

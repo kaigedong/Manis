@@ -3,7 +3,8 @@ use std::path::Path;
 
 use relay_profile::{
     HealthCheck, LogLevel, Name, OutboundProxy, PolicyGroup, PolicyGroupKind, PolicyRef, Profile,
-    ProxyProvider, Rule, SecretUrl, VlessProxy, render_mihomo_yaml, write_private_atomic,
+    ProxyProvider, Rule, SecretUrl, UserPolicyGroup, UserPolicyGroupKind, VlessProxy,
+    render_mihomo_yaml, write_private_atomic,
 };
 
 fn fixture_secret() -> SecretUrl {
@@ -208,6 +209,106 @@ fn qx_sources_routes_subscriptions_and_saved_nodes_through_auto_and_proxy() {
 }
 
 #[test]
+fn qx_sources_with_groups_compiles_user_groups_before_auto_and_proxy() {
+    let subscription = fixture_secret();
+    let saved = VlessProxy::parse_share_link(
+        "vless://00000000-0000-4000-8000-000000000000@edge.example.invalid:443?encryption=none&security=tls&type=ws&path=%2Frelay#Saved",
+    )
+    .expect("fixture VLESS should parse");
+    let saved_name = saved.name().clone();
+    let streaming = UserPolicyGroup {
+        name: Name::parse("Streaming").expect("valid user group"),
+        icon: Some("https://assets.example.invalid/streaming.png".to_owned()),
+        kind: UserPolicyGroupKind::UrlTest { tolerance: 80 },
+        provider_indexes: vec![0],
+        direct_proxies: vec![saved_name],
+        filter: Some("HK|JP|US".to_owned()),
+    };
+    let manual = UserPolicyGroup {
+        name: Name::parse("Manual Saved").expect("valid user group"),
+        icon: None,
+        kind: UserPolicyGroupKind::Select,
+        provider_indexes: Vec::new(),
+        direct_proxies: vec![Name::parse("Saved").expect("valid proxy")],
+        filter: None,
+    };
+
+    let profile = Profile::qx_sources_with_groups(
+        vec![subscription],
+        vec![saved],
+        vec![streaming, manual],
+        17_890,
+    )
+    .expect("profile with user groups should build");
+    let yaml = render_mihomo_yaml(&profile).expect("profile should render");
+
+    assert!(yaml.contains("name: \"Streaming\""));
+    assert!(yaml.contains("type: \"url-test\""));
+    assert!(yaml.contains("icon: \"https://assets.example.invalid/streaming.png\""));
+    assert!(yaml.contains("filter: \"HK|JP|US\""));
+    assert!(yaml.contains("tolerance: 80"));
+    assert!(yaml.contains("name: \"Manual Saved\""));
+    assert!(yaml.contains("type: \"select\""));
+    assert!(yaml.find("name: \"Streaming\"") < yaml.find("name: \"Auto\""));
+    assert!(yaml.find("name: \"Manual Saved\"") < yaml.find("name: \"Auto\""));
+    assert!(yaml.find("name: \"Auto\"") < yaml.find("name: \"Proxy\""));
+    assert!(yaml.contains("      - \"Streaming\""));
+    assert!(yaml.contains("      - \"Manual Saved\""));
+}
+
+#[test]
+fn qx_sources_with_groups_rejects_bad_user_group_references_and_names() {
+    let subscription = fixture_secret();
+    let saved = VlessProxy::parse_share_link(
+        "vless://00000000-0000-4000-8000-000000000000@edge.example.invalid:443?encryption=none&security=tls&type=ws&path=%2Frelay#Saved",
+    )
+    .expect("fixture VLESS should parse");
+    let valid = UserPolicyGroup {
+        name: Name::parse("Valid").expect("valid user group"),
+        icon: None,
+        kind: UserPolicyGroupKind::Select,
+        provider_indexes: vec![0],
+        direct_proxies: vec![Name::parse("Saved").expect("valid proxy")],
+        filter: None,
+    };
+
+    let mut bad_provider = valid.clone();
+    bad_provider.provider_indexes = vec![1];
+    assert!(
+        Profile::qx_sources_with_groups(
+            vec![subscription.clone()],
+            vec![saved.clone()],
+            vec![bad_provider],
+            17_890,
+        )
+        .is_err()
+    );
+
+    let mut bad_proxy = valid.clone();
+    bad_proxy.direct_proxies = vec![Name::parse("Missing").expect("valid name")];
+    assert!(
+        Profile::qx_sources_with_groups(
+            vec![subscription.clone()],
+            vec![saved.clone()],
+            vec![bad_proxy],
+            17_890,
+        )
+        .is_err()
+    );
+
+    let duplicate = valid.clone();
+    assert!(
+        Profile::qx_sources_with_groups(
+            vec![subscription],
+            vec![saved],
+            vec![valid, duplicate],
+            17_890,
+        )
+        .is_err()
+    );
+}
+
+#[test]
 fn renderer_escapes_double_quoted_yaml_scalars() {
     let profile = Profile {
         mixed_port: 7891,
@@ -227,9 +328,11 @@ fn renderer_escapes_double_quoted_yaml_scalars() {
         }],
         groups: vec![PolicyGroup {
             name: Name::parse("Proxy").expect("valid group"),
+            icon: None,
             kind: PolicyGroupKind::Select {
                 proxies: vec![PolicyRef::Direct],
                 use_providers: vec![Name::parse("subscription").expect("valid provider")],
+                filter: None,
             },
         }],
         rules: vec![Rule::Match {
@@ -269,18 +372,22 @@ fn validation_rejects_invalid_names_duplicates_dangling_refs_and_missing_match()
         groups: vec![
             PolicyGroup {
                 name: group_name.clone(),
+                icon: None,
                 kind: PolicyGroupKind::Select {
                     proxies: vec![PolicyRef::Group(
                         Name::parse("Missing").expect("valid group"),
                     )],
                     use_providers: vec![provider_name.clone()],
+                    filter: None,
                 },
             },
             PolicyGroup {
                 name: group_name.clone(),
+                icon: None,
                 kind: PolicyGroupKind::Select {
                     proxies: vec![PolicyRef::Direct],
                     use_providers: vec![provider_name],
+                    filter: None,
                 },
             },
         ],

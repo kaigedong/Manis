@@ -1,8 +1,9 @@
 use relay_core::{
     CompactNavigation, ConfigurationSection, ConfigurationWorkspaceState, EmptyPolicyCatalog,
-    NodeAvailabilityFilter, NodeWorkspaceState, PolicyCatalog, PolicyGroup, PolicyGroupId,
-    PolicyNode, PolicyRule, PolicyWorkspaceState, PrimaryWorkspace, ProxyId, ProxyMode,
-    RouteEvidence, WindowSizeClass,
+    NodeAvailabilityFilter, NodeGroupIcon, NodeGroupMatcher, NodeGroupStrategy, NodeIdentity,
+    NodePolicyGroup, NodeWorkspaceState, PolicyCatalog, PolicyGroup, PolicyGroupId, PolicyNode,
+    PolicyRule, PolicyWorkspaceState, PrimaryWorkspace, ProxyId, ProxyMode, RouteEvidence,
+    WindowSizeClass,
 };
 
 fn streaming() -> PolicyGroupId {
@@ -242,6 +243,50 @@ fn node_workspace_tracks_collapsed_source_groups_independently() {
 }
 
 #[test]
+fn node_policy_group_validates_identity_and_name_matching() {
+    let mut group = NodePolicyGroup::new("group-1", "香港自动").expect("valid group");
+    assert_eq!(group.strategy, NodeGroupStrategy::Manual);
+    assert_eq!(group.icon, NodeGroupIcon::Bolt);
+    assert!(group.matches("subscription:one", "Hong Kong 01"));
+
+    group.strategy = NodeGroupStrategy::LowestLatency;
+    group
+        .set_matcher(NodeGroupMatcher::name_contains("hong kong").expect("valid matcher"))
+        .expect("valid matcher update");
+    assert!(group.matches("subscription:one", "Hong Kong 01"));
+    assert!(group.matches("saved", "HONG KONG Backup"));
+    assert!(!group.matches("subscription:one", "Tokyo Edge"));
+
+    group.rename("HK · 最低延迟").expect("valid rename");
+    assert_eq!(group.name, "HK · 最低延迟");
+    assert!(NodePolicyGroup::new("../unsafe", "Unsafe").is_err());
+    assert!(group.rename("\n").is_err());
+}
+
+#[test]
+fn node_policy_group_tracks_explicit_members_and_cycles_icons() {
+    let mut group = NodePolicyGroup::new("group-2", "手动节点").expect("valid group");
+    group
+        .set_matcher(NodeGroupMatcher::Explicit(BTreeSet::default()))
+        .expect("valid matcher update");
+    let tokyo = NodeIdentity::new("subscription:one", "Tokyo Edge").expect("valid node");
+    let saved = NodeIdentity::new("saved", "Private Edge").expect("valid node");
+
+    assert!(group.toggle_member(tokyo.clone()));
+    assert!(group.toggle_member(saved.clone()));
+    assert!(group.matches(&tokyo.source_id, &tokyo.node_name));
+    assert!(group.matches(&saved.source_id, &saved.node_name));
+    assert!(!group.matches("subscription:two", "Tokyo Edge"));
+    assert!(!group.toggle_member(tokyo));
+    assert_eq!(group.member_count(), 1);
+
+    assert_eq!(NodeGroupIcon::Bolt.next(), NodeGroupIcon::Globe);
+    assert_eq!(NodeGroupIcon::Globe.next(), NodeGroupIcon::Shield);
+    assert_eq!(NodeGroupIcon::Shield.next(), NodeGroupIcon::Compass);
+    assert_eq!(NodeGroupIcon::Compass.next(), NodeGroupIcon::Bolt);
+}
+
+#[test]
 fn configuration_selection_tracks_only_safe_local_identifiers() {
     let mut state = ConfigurationWorkspaceState::default();
 
@@ -263,3 +308,4 @@ fn configuration_rule_selection_handles_an_empty_preview() {
 
     assert_eq!(state.selected_rule, 0);
 }
+use std::collections::BTreeSet;

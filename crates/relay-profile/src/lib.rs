@@ -9,6 +9,7 @@ use std::path::{Component, Path, PathBuf};
 const MAX_SECRET_URL_BYTES: usize = 16 * 1024;
 const MAX_SUBSCRIPTION_NAME_BYTES: usize = 96;
 const MAX_VLESS_FIELD_BYTES: usize = 1024;
+const GROUP_TEST_URL: &str = "https://www.gstatic.com/generate_204";
 
 #[derive(Clone, Eq, PartialEq)]
 pub struct SecretUrl(String);
@@ -82,7 +83,8 @@ impl Name {
         Ok(Self(input.to_owned()))
     }
 
-    fn as_str(&self) -> &str {
+    #[must_use]
+    pub fn as_str(&self) -> &str {
         &self.0
     }
 }
@@ -126,18 +128,23 @@ impl Profile {
             groups: vec![
                 PolicyGroup {
                     name: automatic_name.clone(),
+                    icon: None,
                     kind: PolicyGroupKind::UrlTest {
                         proxies: Vec::new(),
                         use_providers: vec![provider_name.clone()],
-                        url: "https://www.gstatic.com/generate_204".to_owned(),
+                        filter: None,
+                        url: GROUP_TEST_URL.to_owned(),
                         interval_secs: 600,
+                        tolerance: None,
                     },
                 },
                 PolicyGroup {
                     name: proxy_name.clone(),
+                    icon: None,
                     kind: PolicyGroupKind::Select {
                         proxies: vec![PolicyRef::Group(automatic_name), PolicyRef::Direct],
                         use_providers: vec![provider_name],
+                        filter: None,
                     },
                 },
             ],
@@ -165,6 +172,23 @@ impl Profile {
         vless_nodes: Vec<VlessProxy>,
         mixed_port: u16,
     ) -> Result<Self, ProfileError> {
+        Self::qx_sources_with_groups(subscriptions, vless_nodes, Vec::new(), mixed_port)
+    }
+
+    /// Builds a QX-style policy profile from persisted sources and user-defined node groups.
+    ///
+    /// User groups are compiled before the generated `Auto` and `Proxy` groups. The final `Proxy`
+    /// group references every user group so rule matching can route into those policies.
+    ///
+    /// # Errors
+    /// Returns a redacted validation error if a source set is empty, names collide, or a user
+    /// group references an unknown provider index or direct proxy name.
+    pub fn qx_sources_with_groups(
+        subscriptions: Vec<SecretUrl>,
+        vless_nodes: Vec<VlessProxy>,
+        user_groups: Vec<UserPolicyGroup>,
+        mixed_port: u16,
+    ) -> Result<Self, ProfileError> {
         if subscriptions.is_empty() && vless_nodes.is_empty() {
             return Err(ProfileError::InvalidValue("profile sources"));
         }
@@ -183,7 +207,7 @@ impl Profile {
                     health_check: HealthCheck {
                         enabled: true,
                         interval_secs: 600,
-                        url: "https://www.gstatic.com/generate_204".to_owned(),
+                        url: GROUP_TEST_URL.to_owned(),
                     },
                 })
             })
@@ -196,32 +220,56 @@ impl Profile {
             .iter()
             .map(|proxy| PolicyRef::Proxy(proxy.name().clone()))
             .collect::<Vec<_>>();
-        let mut select_refs = vec![PolicyRef::Group(automatic_name.clone()), PolicyRef::Direct];
+        let proxy_names = vless_nodes
+            .iter()
+            .map(|proxy| proxy.name().clone())
+            .collect::<HashSet<_>>();
+        let mut compiled_user_groups = compile_user_groups(
+            user_groups,
+            &provider_names,
+            &proxy_names,
+            GROUP_TEST_URL,
+            600,
+        )?;
+        let mut select_refs = compiled_user_groups
+            .iter()
+            .map(|group| PolicyRef::Group(group.name.clone()))
+            .collect::<Vec<_>>();
+        select_refs.push(PolicyRef::Group(automatic_name.clone()));
+        select_refs.push(PolicyRef::Direct);
         select_refs.extend(direct_refs.iter().cloned());
+        let mut groups = Vec::with_capacity(compiled_user_groups.len() + 2);
+        groups.append(&mut compiled_user_groups);
+        groups.extend([
+            PolicyGroup {
+                name: automatic_name.clone(),
+                icon: None,
+                kind: PolicyGroupKind::UrlTest {
+                    proxies: direct_refs,
+                    use_providers: provider_names.clone(),
+                    filter: None,
+                    url: GROUP_TEST_URL.to_owned(),
+                    interval_secs: 600,
+                    tolerance: None,
+                },
+            },
+            PolicyGroup {
+                name: proxy_name.clone(),
+                icon: None,
+                kind: PolicyGroupKind::Select {
+                    proxies: select_refs,
+                    use_providers: provider_names,
+                    filter: None,
+                },
+            },
+        ]);
         let profile = Self {
             mixed_port,
             log_level: LogLevel::Warning,
             store_selected: true,
             proxies: vless_nodes.into_iter().map(OutboundProxy::Vless).collect(),
             providers,
-            groups: vec![
-                PolicyGroup {
-                    name: automatic_name.clone(),
-                    kind: PolicyGroupKind::UrlTest {
-                        proxies: direct_refs,
-                        use_providers: provider_names.clone(),
-                        url: "https://www.gstatic.com/generate_204".to_owned(),
-                        interval_secs: 600,
-                    },
-                },
-                PolicyGroup {
-                    name: proxy_name.clone(),
-                    kind: PolicyGroupKind::Select {
-                        proxies: select_refs,
-                        use_providers: provider_names,
-                    },
-                },
-            ],
+            groups,
             rules: vec![
                 Rule::GeoIp {
                     country: "CN".to_owned(),
@@ -260,14 +308,16 @@ impl Profile {
                 health_check: HealthCheck {
                     enabled: false,
                     interval_secs: 600,
-                    url: "https://www.gstatic.com/generate_204".to_owned(),
+                    url: GROUP_TEST_URL.to_owned(),
                 },
             }],
             groups: vec![PolicyGroup {
                 name: preview_name.clone(),
+                icon: None,
                 kind: PolicyGroupKind::Select {
                     proxies: Vec::new(),
                     use_providers: vec![provider_name],
+                    filter: None,
                 },
             }],
             rules: vec![Rule::Match {
@@ -326,35 +376,7 @@ impl Profile {
             }
         }
 
-        for group in &self.groups {
-            match &group.kind {
-                PolicyGroupKind::Select {
-                    proxies,
-                    use_providers,
-                } => {
-                    if proxies.is_empty() && use_providers.is_empty() {
-                        return Err(ProfileError::InvalidValue("select group"));
-                    }
-                    validate_policy_refs(proxies, &group_names, &proxy_names)?;
-                    validate_provider_refs(use_providers, &provider_names)?;
-                }
-                PolicyGroupKind::UrlTest {
-                    proxies,
-                    use_providers,
-                    url,
-                    interval_secs,
-                } => {
-                    if (proxies.is_empty() && use_providers.is_empty())
-                        || *interval_secs == 0
-                        || !is_https_url(url)
-                    {
-                        return Err(ProfileError::InvalidValue("url-test group"));
-                    }
-                    validate_policy_refs(proxies, &group_names, &proxy_names)?;
-                    validate_provider_refs(use_providers, &provider_names)?;
-                }
-            }
-        }
+        validate_groups(&self.groups, &group_names, &proxy_names, &provider_names)?;
 
         if !matches!(self.rules.last(), Some(Rule::Match { .. })) {
             return Err(ProfileError::MissingTerminalMatch);
@@ -613,6 +635,7 @@ impl fmt::Debug for VlessProxy {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PolicyGroup {
     pub name: Name,
+    pub icon: Option<String>,
     pub kind: PolicyGroupKind,
 }
 
@@ -621,13 +644,32 @@ pub enum PolicyGroupKind {
     Select {
         proxies: Vec<PolicyRef>,
         use_providers: Vec<Name>,
+        filter: Option<String>,
     },
     UrlTest {
         proxies: Vec<PolicyRef>,
         use_providers: Vec<Name>,
+        filter: Option<String>,
         url: String,
         interval_secs: u32,
+        tolerance: Option<u16>,
     },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UserPolicyGroup {
+    pub name: Name,
+    pub icon: Option<String>,
+    pub kind: UserPolicyGroupKind,
+    pub provider_indexes: Vec<usize>,
+    pub direct_proxies: Vec<Name>,
+    pub filter: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum UserPolicyGroupKind {
+    Select,
+    UrlTest { tolerance: u16 },
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -784,43 +826,7 @@ pub fn render_mihomo_yaml(profile: &Profile) -> Result<String, ProfileError> {
     }
     yaml.push_str("proxy-groups:\n");
     for group in &profile.groups {
-        writeln!(yaml, "  - name: {}", quoted(group.name.as_str()))
-            .expect("String write cannot fail");
-        match &group.kind {
-            PolicyGroupKind::Select {
-                proxies,
-                use_providers,
-            } => {
-                yaml.push_str("    type: \"select\"\n");
-                if !proxies.is_empty() {
-                    yaml.push_str("    proxies:\n");
-                    for policy in proxies {
-                        writeln!(yaml, "      - {}", quoted(policy_name(policy)))
-                            .expect("String write cannot fail");
-                    }
-                }
-                render_provider_use(&mut yaml, use_providers);
-            }
-            PolicyGroupKind::UrlTest {
-                proxies,
-                use_providers,
-                url,
-                interval_secs,
-            } => {
-                yaml.push_str("    type: \"url-test\"\n");
-                if !proxies.is_empty() {
-                    yaml.push_str("    proxies:\n");
-                    for policy in proxies {
-                        writeln!(yaml, "      - {}", quoted(policy_name(policy)))
-                            .expect("String write cannot fail");
-                    }
-                }
-                render_provider_use(&mut yaml, use_providers);
-                writeln!(yaml, "    url: {}", quoted(url)).expect("String write cannot fail");
-                writeln!(yaml, "    interval: {interval_secs}").expect("String write cannot fail");
-                yaml.push_str("    lazy: true\n");
-            }
-        }
+        render_proxy_group(&mut yaml, group);
     }
     yaml.push_str("rules:\n");
     for rule in &profile.rules {
@@ -884,6 +890,83 @@ pub fn write_private_atomic(
     Ok(final_path)
 }
 
+fn compile_user_groups(
+    user_groups: Vec<UserPolicyGroup>,
+    provider_names: &[Name],
+    proxy_names: &HashSet<Name>,
+    test_url: &str,
+    interval_secs: u32,
+) -> Result<Vec<PolicyGroup>, ProfileError> {
+    let mut group_names = HashSet::new();
+    user_groups
+        .into_iter()
+        .map(|group| {
+            if !group_names.insert(group.name.clone()) {
+                return Err(ProfileError::DuplicateName);
+            }
+            if group.provider_indexes.is_empty() && group.direct_proxies.is_empty() {
+                return Err(ProfileError::InvalidValue("user proxy group"));
+            }
+            if group
+                .icon
+                .as_deref()
+                .is_some_and(|value| !is_group_metadata(value))
+                || group
+                    .filter
+                    .as_deref()
+                    .is_some_and(|value| !is_group_metadata(value))
+            {
+                return Err(ProfileError::InvalidValue("user proxy group"));
+            }
+
+            let mut seen_providers = HashSet::new();
+            let mut use_providers = Vec::with_capacity(group.provider_indexes.len());
+            for index in group.provider_indexes {
+                let Some(provider) = provider_names.get(index) else {
+                    return Err(ProfileError::DanglingReference);
+                };
+                if !seen_providers.insert(index) {
+                    return Err(ProfileError::DuplicateName);
+                }
+                use_providers.push(provider.clone());
+            }
+
+            let mut seen_proxies = HashSet::new();
+            let mut proxies = Vec::with_capacity(group.direct_proxies.len());
+            for name in group.direct_proxies {
+                if !proxy_names.contains(&name) {
+                    return Err(ProfileError::DanglingReference);
+                }
+                if !seen_proxies.insert(name.clone()) {
+                    return Err(ProfileError::DuplicateName);
+                }
+                proxies.push(PolicyRef::Proxy(name));
+            }
+
+            let kind = match group.kind {
+                UserPolicyGroupKind::Select => PolicyGroupKind::Select {
+                    proxies,
+                    use_providers,
+                    filter: group.filter,
+                },
+                UserPolicyGroupKind::UrlTest { tolerance } => PolicyGroupKind::UrlTest {
+                    proxies,
+                    use_providers,
+                    filter: group.filter,
+                    url: test_url.to_owned(),
+                    interval_secs,
+                    tolerance: Some(tolerance),
+                },
+            };
+            Ok(PolicyGroup {
+                name: group.name,
+                icon: group.icon,
+                kind,
+            })
+        })
+        .collect()
+}
+
 fn validate_policy_refs(
     policies: &[PolicyRef],
     groups: &HashSet<Name>,
@@ -893,6 +976,67 @@ fn validate_policy_refs(
         validate_policy_ref(policy, groups, proxies)?;
     }
     Ok(())
+}
+
+fn validate_groups(
+    groups: &[PolicyGroup],
+    group_names: &HashSet<Name>,
+    proxy_names: &HashSet<Name>,
+    provider_names: &HashSet<Name>,
+) -> Result<(), ProfileError> {
+    for group in groups {
+        if group
+            .icon
+            .as_deref()
+            .is_some_and(|value| !is_group_metadata(value))
+        {
+            return Err(ProfileError::InvalidValue("proxy group icon"));
+        }
+        match &group.kind {
+            PolicyGroupKind::Select {
+                proxies,
+                use_providers,
+                filter,
+            } => {
+                if proxies.is_empty() && use_providers.is_empty() {
+                    return Err(ProfileError::InvalidValue("select group"));
+                }
+                validate_group_filter(filter.as_ref())?;
+                validate_policy_refs(proxies, group_names, proxy_names)?;
+                validate_provider_refs(use_providers, provider_names)?;
+            }
+            PolicyGroupKind::UrlTest {
+                proxies,
+                use_providers,
+                filter,
+                url,
+                interval_secs,
+                tolerance: _,
+            } => {
+                if (proxies.is_empty() && use_providers.is_empty())
+                    || *interval_secs == 0
+                    || !is_https_url(url)
+                {
+                    return Err(ProfileError::InvalidValue("url-test group"));
+                }
+                validate_group_filter(filter.as_ref())?;
+                validate_policy_refs(proxies, group_names, proxy_names)?;
+                validate_provider_refs(use_providers, provider_names)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_group_filter(filter: Option<&String>) -> Result<(), ProfileError> {
+    if filter
+        .map(String::as_str)
+        .is_some_and(|value| !is_group_metadata(value))
+    {
+        Err(ProfileError::InvalidValue("proxy group filter"))
+    } else {
+        Ok(())
+    }
 }
 
 fn validate_policy_ref(
@@ -1151,6 +1295,10 @@ fn is_plain_value(value: &str, max_bytes: usize) -> bool {
         && !value.chars().any(char::is_control)
 }
 
+fn is_group_metadata(value: &str) -> bool {
+    is_plain_value(value, 1024)
+}
+
 fn is_rule_value(value: &str) -> bool {
     is_plain_value(value, 1024) && !value.contains(',')
 }
@@ -1194,6 +1342,61 @@ fn render_provider_use(yaml: &mut String, providers: &[Name]) {
     yaml.push_str("    use:\n");
     for provider in providers {
         writeln!(yaml, "      - {}", quoted(provider.as_str())).expect("String write cannot fail");
+    }
+}
+
+fn render_proxy_group(yaml: &mut String, group: &PolicyGroup) {
+    writeln!(yaml, "  - name: {}", quoted(group.name.as_str())).expect("String write cannot fail");
+    if let Some(icon) = &group.icon {
+        writeln!(yaml, "    icon: {}", quoted(icon)).expect("String write cannot fail");
+    }
+    match &group.kind {
+        PolicyGroupKind::Select {
+            proxies,
+            use_providers,
+            filter,
+        } => {
+            yaml.push_str("    type: \"select\"\n");
+            render_policy_refs(yaml, proxies);
+            render_group_filter(yaml, filter.as_ref());
+            render_provider_use(yaml, use_providers);
+        }
+        PolicyGroupKind::UrlTest {
+            proxies,
+            use_providers,
+            filter,
+            url,
+            interval_secs,
+            tolerance,
+        } => {
+            yaml.push_str("    type: \"url-test\"\n");
+            render_policy_refs(yaml, proxies);
+            render_group_filter(yaml, filter.as_ref());
+            render_provider_use(yaml, use_providers);
+            writeln!(yaml, "    url: {}", quoted(url)).expect("String write cannot fail");
+            writeln!(yaml, "    interval: {interval_secs}").expect("String write cannot fail");
+            if let Some(tolerance) = tolerance {
+                writeln!(yaml, "    tolerance: {tolerance}").expect("String write cannot fail");
+            }
+            yaml.push_str("    lazy: true\n");
+        }
+    }
+}
+
+fn render_policy_refs(yaml: &mut String, proxies: &[PolicyRef]) {
+    if proxies.is_empty() {
+        return;
+    }
+    yaml.push_str("    proxies:\n");
+    for policy in proxies {
+        writeln!(yaml, "      - {}", quoted(policy_name(policy)))
+            .expect("String write cannot fail");
+    }
+}
+
+fn render_group_filter(yaml: &mut String, filter: Option<&String>) {
+    if let Some(filter) = filter {
+        writeln!(yaml, "    filter: {}", quoted(filter)).expect("String write cannot fail");
     }
 }
 

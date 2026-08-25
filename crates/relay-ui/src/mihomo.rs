@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::fs;
 use std::io::Read;
 use std::net::TcpListener;
@@ -9,7 +9,10 @@ use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{env, error::Error, fmt};
 
-use relay_core::{EmptyPolicyCatalog, PolicyCatalog};
+use relay_core::{
+    EmptyPolicyCatalog, NodeGroupIcon, NodeGroupMatcher, NodeGroupStrategy, NodeIdentity,
+    NodePolicyGroup, PolicyCatalog,
+};
 use relay_engine::{
     ControllerEndpoint, EngineError, EngineManager, ManagedEngineConfig, ProbeStatus,
     ReadinessPolicy, ReadinessProbe, validate_managed_config,
@@ -21,7 +24,10 @@ use relay_mihomo::{
     MihomoLogEntry, MihomoSnapshot, ObservedRouteEvidence, RuntimeConfig, StdHttpTransport,
     VersionInfo, to_policy_catalog,
 };
-use relay_profile::{Profile, SecretUrl, VlessProxy, render_mihomo_yaml, write_private_atomic};
+use relay_profile::{
+    Name, Profile, SecretUrl, UserPolicyGroup, UserPolicyGroupKind, VlessProxy, render_mihomo_yaml,
+    write_private_atomic,
+};
 
 use crate::subscription::VlessSource;
 
@@ -41,6 +47,10 @@ const STORED_SUBSCRIPTION_SUFFIX: &str = ".url";
 const SAVED_VLESS_PREFIX: &str = "saved-";
 const SAVED_VLESS_SUFFIX: &str = ".vless";
 const WORKSPACE_STATE_FILE: &str = "workspace.state";
+const NODE_POLICY_GROUP_PREFIX: &str = "group-";
+const NODE_POLICY_GROUP_SUFFIX: &str = ".group";
+const NODE_POLICY_GROUP_VERSION: &str = "relay-node-group-v1";
+const MAX_NODE_POLICY_GROUPS: usize = 32;
 const GENERATED_PROFILE_FILE: &str = "relay-generated.yaml";
 const CANDIDATE_PROFILE_FILE: &str = "relay-generated.candidate.yaml";
 const PREVIEW_PROVIDER_ATTEMPTS: usize = 80;
@@ -238,6 +248,7 @@ impl ControllerRuntime {
         set_tun_enabled(&endpoint, enabled).map_err(LoadError::from)
     }
 
+    #[allow(clippy::too_many_lines)]
     pub(crate) fn apply_saved_sources(
         &self,
         store_dir: &Path,
@@ -253,12 +264,20 @@ impl ControllerRuntime {
         let base_subscription =
             read_private_subscription(&spec.subscription_file).map_err(LoadError::Runtime)?;
         let mut subscriptions = vec![base_subscription];
-        for stored in load_subscription_sources_in(store_dir)
-            .map_err(|_error| LoadError::Runtime("无法读取已保存的订阅来源".to_owned()))?
-        {
-            if !subscriptions.contains(&stored.source) {
-                subscriptions.push(stored.source);
-            }
+        let stored_subscriptions = load_subscription_sources_in(store_dir)
+            .map_err(|_error| LoadError::Runtime("无法读取已保存的订阅来源".to_owned()))?;
+        let mut stored_provider_indexes = HashMap::new();
+        for stored in &stored_subscriptions {
+            let provider_index = if let Some(index) = subscriptions
+                .iter()
+                .position(|subscription| subscription == &stored.source)
+            {
+                index
+            } else {
+                subscriptions.push(stored.source.clone());
+                subscriptions.len() - 1
+            };
+            stored_provider_indexes.insert(stored.id.as_str(), provider_index);
         }
         let mut vless_nodes = Vec::new();
         for stored in load_vless_sources_in(store_dir)
@@ -271,8 +290,17 @@ impl ControllerRuntime {
             vless_nodes.push(proxy);
         }
         let mixed_port = configured_mixed_port().map_err(LoadError::Runtime)?;
-        let profile = Profile::qx_sources(subscriptions, vless_nodes, mixed_port)
-            .map_err(|error| LoadError::Runtime(error.to_string()))?;
+        let policy_groups = load_node_policy_groups_in(store_dir)
+            .map_err(|_error| LoadError::Runtime("无法读取节点分组".to_owned()))?;
+        let user_groups = compile_node_policy_groups(
+            &policy_groups,
+            &stored_provider_indexes,
+            &vless_nodes,
+            subscriptions.len(),
+        )?;
+        let profile =
+            Profile::qx_sources_with_groups(subscriptions, vless_nodes, user_groups, mixed_port)
+                .map_err(|error| LoadError::Runtime(error.to_string()))?;
         let yaml =
             render_mihomo_yaml(&profile).map_err(|error| LoadError::Runtime(error.to_string()))?;
         let candidate_path =
@@ -888,6 +916,331 @@ pub(crate) fn load_collapsed_groups_in(
     _directory: &Path,
 ) -> Result<Vec<String>, SubscriptionStoreError> {
     Ok(Vec::new())
+}
+
+pub(crate) fn new_node_policy_group_id() -> String {
+    next_stored_source_id(NODE_POLICY_GROUP_PREFIX)
+}
+
+fn compile_node_policy_groups(
+    groups: &[NodePolicyGroup],
+    stored_provider_indexes: &HashMap<&str, usize>,
+    vless_nodes: &[VlessProxy],
+    provider_count: usize,
+) -> Result<Vec<UserPolicyGroup>, LoadError> {
+    groups
+        .iter()
+        .map(|group| {
+            let mut provider_indexes = Vec::new();
+            let mut direct_proxies = Vec::new();
+            let filter = match &group.matcher {
+                NodeGroupMatcher::All => {
+                    provider_indexes.extend(0..provider_count);
+                    direct_proxies.extend(vless_nodes.iter().map(|proxy| proxy.name().clone()));
+                    None
+                }
+                NodeGroupMatcher::NameContains(fragment) => {
+                    provider_indexes.extend(0..provider_count);
+                    let lowercase = fragment.to_lowercase();
+                    direct_proxies.extend(
+                        vless_nodes
+                            .iter()
+                            .filter(|proxy| {
+                                proxy.name().as_str().to_lowercase().contains(&lowercase)
+                            })
+                            .map(|proxy| proxy.name().clone()),
+                    );
+                    Some(format!("(?i){}", escape_regex(fragment)))
+                }
+                NodeGroupMatcher::Explicit(members) => {
+                    let mut provider_names = Vec::new();
+                    for member in members {
+                        if member.source_id == "saved" {
+                            if let Some(proxy) = vless_nodes
+                                .iter()
+                                .find(|proxy| proxy.name().as_str() == member.node_name)
+                            {
+                                direct_proxies.push(proxy.name().clone());
+                            }
+                            continue;
+                        }
+                        let Some(stored_id) = member.source_id.strip_prefix("subscription:") else {
+                            continue;
+                        };
+                        let Some(index) = stored_provider_indexes.get(stored_id).copied() else {
+                            continue;
+                        };
+                        if !provider_indexes.contains(&index) {
+                            provider_indexes.push(index);
+                        }
+                        provider_names.push(member.node_name.as_str());
+                    }
+                    (!provider_names.is_empty()).then(|| {
+                        format!(
+                            "^(?:{})$",
+                            provider_names
+                                .into_iter()
+                                .map(escape_regex)
+                                .collect::<Vec<_>>()
+                                .join("|")
+                        )
+                    })
+                }
+            };
+            if provider_indexes.is_empty() && direct_proxies.is_empty() {
+                return Err(LoadError::Runtime(format!(
+                    "节点分组“{}”没有匹配到可用节点",
+                    group.name
+                )));
+            }
+            let kind = match group.strategy {
+                NodeGroupStrategy::Manual => UserPolicyGroupKind::Select,
+                NodeGroupStrategy::LowestLatency => UserPolicyGroupKind::UrlTest { tolerance: 50 },
+            };
+            Ok(UserPolicyGroup {
+                name: Name::parse(&group.name)
+                    .map_err(|error| LoadError::Runtime(error.to_string()))?,
+                icon: None,
+                kind,
+                provider_indexes,
+                direct_proxies,
+                filter,
+            })
+        })
+        .collect()
+}
+
+fn escape_regex(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for character in value.chars() {
+        if matches!(
+            character,
+            '\\' | '.' | '+' | '*' | '?' | '(' | ')' | '|' | '[' | ']' | '{' | '}' | '^' | '$'
+        ) {
+            escaped.push('\\');
+        }
+        escaped.push(character);
+    }
+    escaped
+}
+
+#[cfg(not(windows))]
+pub(crate) fn save_node_policy_group_in(
+    directory: &Path,
+    group: &NodePolicyGroup,
+) -> Result<(), SubscriptionStoreError> {
+    group
+        .validate()
+        .map_err(|_error| SubscriptionStoreError::InvalidSource)?;
+    if !valid_stored_id(&group.id, NODE_POLICY_GROUP_PREFIX) {
+        return Err(SubscriptionStoreError::InvalidSource);
+    }
+    let contents = encode_node_policy_group(group)?;
+    let file_name = format!("{}{NODE_POLICY_GROUP_SUFFIX}", group.id);
+    write_private_atomic(directory, &file_name, contents.as_bytes())
+        .map(|_path| ())
+        .map_err(|_error| SubscriptionStoreError::StoreUnavailable)
+}
+
+#[cfg(windows)]
+pub(crate) fn save_node_policy_group_in(
+    _directory: &Path,
+    _group: &NodePolicyGroup,
+) -> Result<(), SubscriptionStoreError> {
+    Err(SubscriptionStoreError::StoreUnavailable)
+}
+
+#[cfg(not(windows))]
+pub(crate) fn load_node_policy_groups_in(
+    directory: &Path,
+) -> Result<Vec<NodePolicyGroup>, SubscriptionStoreError> {
+    let mut groups = Vec::new();
+    let Some(entries) = private_store_entries(directory)? else {
+        return Ok(groups);
+    };
+    for path in entries {
+        let Some(file_name) = path.file_name().and_then(std::ffi::OsStr::to_str) else {
+            continue;
+        };
+        let Some(id) = file_name.strip_suffix(NODE_POLICY_GROUP_SUFFIX) else {
+            continue;
+        };
+        if !valid_stored_id(id, NODE_POLICY_GROUP_PREFIX) {
+            continue;
+        }
+        let contents = read_private_source_allow_empty(&path)?;
+        let group = decode_node_policy_group(&contents, id)?;
+        groups.push(group);
+        if groups.len() > MAX_NODE_POLICY_GROUPS {
+            return Err(SubscriptionStoreError::StoredSourceUnavailable);
+        }
+    }
+    groups.sort_by(|left, right| left.id.cmp(&right.id));
+    Ok(groups)
+}
+
+#[cfg(windows)]
+pub(crate) fn load_node_policy_groups_in(
+    _directory: &Path,
+) -> Result<Vec<NodePolicyGroup>, SubscriptionStoreError> {
+    Ok(Vec::new())
+}
+
+#[cfg(not(windows))]
+pub(crate) fn remove_node_policy_group_in(
+    directory: &Path,
+    id: &str,
+) -> Result<(), SubscriptionStoreError> {
+    require_clean_absolute_store(directory)?;
+    if !valid_stored_id(id, NODE_POLICY_GROUP_PREFIX) {
+        return Err(SubscriptionStoreError::StoreUnavailable);
+    }
+    remove_private_source(&directory.join(format!("{id}{NODE_POLICY_GROUP_SUFFIX}")))
+}
+
+#[cfg(windows)]
+pub(crate) fn remove_node_policy_group_in(
+    _directory: &Path,
+    _id: &str,
+) -> Result<(), SubscriptionStoreError> {
+    Err(SubscriptionStoreError::StoreUnavailable)
+}
+
+fn encode_node_policy_group(group: &NodePolicyGroup) -> Result<String, SubscriptionStoreError> {
+    group
+        .validate()
+        .map_err(|_error| SubscriptionStoreError::InvalidSource)?;
+    let (matcher_key, filter, members): (&str, &str, Vec<&NodeIdentity>) = match &group.matcher {
+        NodeGroupMatcher::All => ("all", "", Vec::new()),
+        NodeGroupMatcher::NameContains(value) => ("name", value, Vec::new()),
+        NodeGroupMatcher::Explicit(members) => ("explicit", "", members.iter().collect()),
+    };
+    let mut lines = vec![
+        NODE_POLICY_GROUP_VERSION.to_owned(),
+        format!("id\t{}", group.id),
+        format!("name\t{}", encode_hex(&group.name)),
+        format!("icon\t{}", group.icon.key()),
+        format!("strategy\t{}", group.strategy.key()),
+        format!("matcher\t{matcher_key}"),
+        format!("filter\t{}", encode_hex(filter)),
+    ];
+    lines.extend(members.into_iter().map(|member| {
+        format!(
+            "member\t{}\t{}",
+            encode_hex(&member.source_id),
+            encode_hex(&member.node_name)
+        )
+    }));
+    let contents = lines.join("\n");
+    if contents.len() as u64 > MAX_SUBSCRIPTION_FILE_BYTES {
+        return Err(SubscriptionStoreError::InvalidSource);
+    }
+    Ok(contents)
+}
+
+fn decode_node_policy_group(
+    contents: &str,
+    expected_id: &str,
+) -> Result<NodePolicyGroup, SubscriptionStoreError> {
+    let mut lines = contents.lines();
+    if lines.next() != Some(NODE_POLICY_GROUP_VERSION) {
+        return Err(SubscriptionStoreError::StoredSourceUnavailable);
+    }
+    let mut id = None;
+    let mut name = None;
+    let mut icon = None;
+    let mut strategy = None;
+    let mut matcher = None;
+    let mut filter = None;
+    let mut members = BTreeSet::new();
+    for line in lines {
+        let fields = line.split('\t').collect::<Vec<_>>();
+        match fields.as_slice() {
+            ["id", value] if id.is_none() => id = Some((*value).to_owned()),
+            ["name", value] if name.is_none() => name = Some(decode_hex(value)?),
+            ["icon", value] if icon.is_none() => {
+                icon = Some(
+                    NodeGroupIcon::parse_key(value)
+                        .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?,
+                );
+            }
+            ["strategy", value] if strategy.is_none() => {
+                strategy = Some(
+                    NodeGroupStrategy::parse_key(value)
+                        .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?,
+                );
+            }
+            ["matcher", value] if matcher.is_none() => matcher = Some((*value).to_owned()),
+            ["filter", value] if filter.is_none() => filter = Some(decode_hex(value)?),
+            ["member", source, node] => {
+                members.insert(
+                    NodeIdentity::new(&decode_hex(source)?, &decode_hex(node)?)
+                        .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?,
+                );
+            }
+            _ => return Err(SubscriptionStoreError::StoredSourceUnavailable),
+        }
+    }
+    let id = id.ok_or(SubscriptionStoreError::StoredSourceUnavailable)?;
+    if id != expected_id {
+        return Err(SubscriptionStoreError::StoredSourceUnavailable);
+    }
+    let mut group = NodePolicyGroup::new(
+        &id,
+        &name.ok_or(SubscriptionStoreError::StoredSourceUnavailable)?,
+    )
+    .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
+    group.icon = icon.ok_or(SubscriptionStoreError::StoredSourceUnavailable)?;
+    group.strategy = strategy.ok_or(SubscriptionStoreError::StoredSourceUnavailable)?;
+    let filter = filter.ok_or(SubscriptionStoreError::StoredSourceUnavailable)?;
+    let parsed_matcher = match matcher.as_deref() {
+        Some("all") if filter.is_empty() && members.is_empty() => NodeGroupMatcher::All,
+        Some("name") if !filter.is_empty() && members.is_empty() => {
+            NodeGroupMatcher::name_contains(&filter)
+                .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?
+        }
+        Some("explicit") if filter.is_empty() => NodeGroupMatcher::Explicit(members),
+        _ => return Err(SubscriptionStoreError::StoredSourceUnavailable),
+    };
+    group
+        .set_matcher(parsed_matcher)
+        .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
+    group
+        .validate()
+        .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
+    Ok(group)
+}
+
+fn encode_hex(value: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(value.len() * 2);
+    for byte in value.bytes() {
+        encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+        encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    encoded
+}
+
+fn decode_hex(value: &str) -> Result<String, SubscriptionStoreError> {
+    if !value.len().is_multiple_of(2) {
+        return Err(SubscriptionStoreError::StoredSourceUnavailable);
+    }
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len() / 2);
+    for index in (0..bytes.len()).step_by(2) {
+        let high = decode_hex_digit(bytes[index])?;
+        let low = decode_hex_digit(bytes[index + 1])?;
+        decoded.push((high << 4) | low);
+    }
+    String::from_utf8(decoded).map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)
+}
+
+fn decode_hex_digit(value: u8) -> Result<u8, SubscriptionStoreError> {
+    match value {
+        b'0'..=b'9' => Ok(value - b'0'),
+        b'a'..=b'f' => Ok(value - b'a' + 10),
+        _ => Err(SubscriptionStoreError::StoredSourceUnavailable),
+    }
 }
 
 fn next_stored_source_id(prefix: &str) -> String {
@@ -1885,6 +2238,7 @@ fn unix_socket_path(endpoint: &str) -> Result<Option<PathBuf>, MihomoError> {
 
 #[cfg(all(test, unix))]
 mod tests {
+    use std::collections::BTreeSet;
     use std::ffi::OsString;
     use std::fs;
     use std::io::{BufRead, BufReader, Write};
@@ -2047,6 +2401,85 @@ mod tests {
         assert!(super::load_vless_sources_in(&store)?.is_empty());
 
         fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn source_store_round_trips_editable_node_policy_groups()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use relay_core::{
+            NodeGroupIcon, NodeGroupMatcher, NodeGroupStrategy, NodeIdentity, NodePolicyGroup,
+        };
+
+        let root = test_temp_dir("relay-node-policy-groups");
+        let store = root.join("subscriptions");
+        let mut group = NodePolicyGroup::new("group-a-1", "香港优选")?;
+        group.icon = NodeGroupIcon::Globe;
+        group.strategy = NodeGroupStrategy::LowestLatency;
+        group.set_matcher(NodeGroupMatcher::name_contains("Hong Kong")?)?;
+        super::save_node_policy_group_in(&store, &group)?;
+
+        let mut explicit = NodePolicyGroup::new("group-b-2", "手动出口")?;
+        explicit.icon = NodeGroupIcon::Shield;
+        explicit.set_matcher(NodeGroupMatcher::Explicit(BTreeSet::default()))?;
+        explicit.toggle_member(NodeIdentity::new("subscription:source-1", "Tokyo Edge")?);
+        explicit.toggle_member(NodeIdentity::new("saved", "Private Edge")?);
+        super::save_node_policy_group_in(&store, &explicit)?;
+
+        let groups = super::load_node_policy_groups_in(&store)?;
+        assert_eq!(groups, vec![group.clone(), explicit.clone()]);
+
+        group.rename("香港 · 自动")?;
+        group.icon = NodeGroupIcon::Compass;
+        super::save_node_policy_group_in(&store, &group)?;
+        let updated = super::load_node_policy_groups_in(&store)?;
+        assert_eq!(updated.len(), 2);
+        assert_eq!(updated[0], group);
+
+        super::remove_node_policy_group_in(&store, &explicit.id)?;
+        assert_eq!(super::load_node_policy_groups_in(&store)?.len(), 1);
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn node_policy_groups_compile_matchers_into_mihomo_candidates()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::collections::HashMap;
+
+        use relay_core::{NodeGroupMatcher, NodeGroupStrategy, NodeIdentity, NodePolicyGroup};
+        use relay_profile::{UserPolicyGroupKind, VlessProxy};
+
+        let saved = VlessProxy::parse_share_link(
+            "vless://00000000-0000-4000-8000-000000000000@edge.example.invalid:443?security=tls#Private%20Edge",
+        )?;
+        let indexes = HashMap::from([("source-a", 1_usize)]);
+
+        let mut latency = NodePolicyGroup::new("group-a-1", "香港优选")?;
+        latency.strategy = NodeGroupStrategy::LowestLatency;
+        latency.set_matcher(NodeGroupMatcher::name_contains("Hong Kong")?)?;
+
+        let mut explicit = NodePolicyGroup::new("group-b-2", "手动出口")?;
+        explicit.set_matcher(NodeGroupMatcher::Explicit(BTreeSet::default()))?;
+        explicit.toggle_member(NodeIdentity::new("subscription:source-a", "Tokyo (Fast)")?);
+        explicit.toggle_member(NodeIdentity::new("saved", "Private Edge")?);
+
+        let compiled =
+            super::compile_node_policy_groups(&[latency, explicit], &indexes, &[saved], 2)?;
+
+        assert_eq!(
+            compiled[0].kind,
+            UserPolicyGroupKind::UrlTest { tolerance: 50 }
+        );
+        assert_eq!(compiled[0].provider_indexes, vec![0, 1]);
+        assert_eq!(compiled[0].filter.as_deref(), Some("(?i)Hong Kong"));
+        assert_eq!(compiled[1].provider_indexes, vec![1]);
+        assert_eq!(
+            compiled[1].filter.as_deref(),
+            Some("^(?:Tokyo \\(Fast\\))$")
+        );
+        assert_eq!(compiled[1].direct_proxies.len(), 1);
         Ok(())
     }
 

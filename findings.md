@@ -175,3 +175,24 @@
 - 最终 Visual Verdict 为 91/100 `pass`。残余产品边界是 Windows 托管 named-pipe/owner-only ACL 尚未实现；相关路径继续 fail closed，不影响 macOS/Linux 托管模式和三平台外部 loopback controller。
 - 独立安全二次复核结论为 `LOW / SHIP`，Critical/High/Medium 均为 0；外部控制器在 UI 与 runtime 两层拒绝 TUN 写入，保存来源只对带 generated profile 的 Managed runtime 生效。
 - 安全复核另行通过 `relay-mihomo`、`relay-profile`、`relay-engine`、`relay-ui` 测试、锁定 metadata 和依赖树检查；`cargo-audit`、`cargo-deny`、`osv-scanner` 未安装，因此没有声明完成 CVE 数据库审计。本轮没有新增依赖。
+
+## 节点库存与用户策略分组初始边界（2026-08-25）
+
+- 当前节点页把“订阅来源折叠组”称为分组，但它本质是节点库存的来源分段；新功能必须在文案、间距和组件边界上将来源库存与用户可执行策略组区分开。
+- 现有 `NodeWorkspaceState` 只持有健康筛选与来源折叠 ID，适合继续管理页面浏览状态；用户策略组属于持久配置领域，不能塞进折叠状态。
+- 已有 `relay-profile` 能编译 `select` 和 `url-test`，因此首版无需发明新 Mihomo 类型：手动组映射为 `select`，延迟优选组映射为 `url-test`；名称/协议规则负责收敛候选节点。
+- 产品语义先采用两个正交维度：选择方式为“手动 / 延迟优选”，候选规则为“指定节点 / 全部 / 名称包含 / 协议匹配”。这比把“匹配”伪装成第三种选路算法更清楚，也能自然扩展来源、地区和标签条件。
+- 节点库存当前只暴露 `LoadedProviderNode { name, protocol, latency, alive }`，订阅节点没有额外稳定 ID；首版显式成员引用必须使用“来源稳定 ID + 节点名”，不能仅按列表下标持久化。
+- 现有私有来源存储采用独立文件、原子写入、Unix `0700/0600`、16 KiB 上限并拒绝 symlink；用户策略组应复用这些边界，使用单独版本化文件，不能和凭据文件混写。
+- 当前 profile 组模型只覆盖 `Select` 与 `UrlTest` 的 `proxies/use`，尚未表达 Mihomo 的候选过滤字段；实现名称/协议匹配前必须先核对官方 group filter 语法并在 profile 层做确定性转义/验证。
+- Windows 的用户持久化仍按既有安全策略 fail closed；本轮不能通过普通可写文件悄悄绕过 owner-only ACL 缺失。内存编辑和外部 controller 只读展示可以跨平台，落盘/托管应用维持既有平台边界。
+- Mihomo 官方 group common fields 支持 `filter`、`exclude-filter`、`exclude-type`、`icon`、`include-all-*`；其中 `filter` 只作用于 `use` 引入的 provider 和 include-all 出站，不能假设它会过滤显式 `proxies`。来源：https://wiki.metacubex.one/en/config/proxy-groups/
+- 官方 `url-test` 的“延迟优选”需要 `url`、`interval`，可选 `tolerance` 控制节点切换容差；首版分组可安全映射为 `select` / `url-test` 两类。来源：https://wiki.metacubex.one/en/config/proxy-groups/url-test/
+- 因 provider 节点是动态内容，显式选择订阅节点应编译为 provider `use` 加锚定名称正则；本地保存的 VLESS 则可直接放进 `proxies`。名称匹配同理对 provider 使用 escaped regex，对直连 VLESS 在编译前做同样的本地匹配。
+- “协议匹配”不能被直接建模为 Mihomo 的 include-type：官方只有 `exclude-type`，且不支持正则。为避免 UI/运行时不一致，首版不伪造协议包含规则；先交付全部节点、名称包含和显式成员，协议条件留到能确定性编译的后续扩展。
+- Workspace 当前没有给 `relay-ui` / `relay-core` 配置 Serde 依赖，且工作约束禁止无授权新增依赖；分组存储采用小型、版本化、长度受限的文本协议并复用私有原子文件工具，不引入 JSON/TOML 依赖。
+- 现有原生单行输入已经完整支持键盘、选区、粘贴和 IME，但占位文案、元素 ID、16 KiB 上限都绑定“订阅”。最小复用路径是把这些变成实例配置，保留现有类型和行为测试，再为分组名称/匹配词各创建独立 entity。
+- 原生截图夹具已有真实导入订阅、恢复、节点页宽/窄和折叠流程；新视觉证据可以在同一私有 fixture store 预置策略分组，新增“库存 + 分组 + 编辑器”宽/窄截图，不读取用户数据。
+- 用户策略组必须被 `Proxy` 主选择组引用，否则即使出现在 Mihomo API 中也无法成为规则的实际出口。编译顺序应是用户组 → Auto → Proxy，并让 `Proxy` 候选包含用户组。
+- 分组 YAML 已使用 Clash Verge 随附的真实 `verge-mihomo -t` 通过校验；名称包含会转义为 Mihomo provider `filter`，手动 VLESS 则使用显式 `proxies` 引用。
+- 安全复核未发现节点分组新增的 Critical/High 风险。既有 HTTP 订阅兼容会让公网 `http://` token 在网络上明文传输，风险等级 MEDIUM；用户明确要求 HTTP 来源兼容，本轮保持功能并继续以 HTTP 标签显式展示，后续应增加“不安全 HTTP”确认或默认仅允许回环 HTTP。

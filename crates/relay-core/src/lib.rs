@@ -282,6 +282,325 @@ impl NodeWorkspaceState {
     }
 }
 
+const MAX_NODE_GROUP_NAME_BYTES: usize = 96;
+const MAX_NODE_GROUP_MATCH_BYTES: usize = 256;
+const MAX_NODE_IDENTITY_NAME_BYTES: usize = 512;
+const MAX_NODE_GROUP_MEMBERS: usize = 128;
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum NodeGroupIcon {
+    #[default]
+    Bolt,
+    Globe,
+    Shield,
+    Compass,
+}
+
+impl NodeGroupIcon {
+    #[must_use]
+    pub const fn next(self) -> Self {
+        match self {
+            Self::Bolt => Self::Globe,
+            Self::Globe => Self::Shield,
+            Self::Shield => Self::Compass,
+            Self::Compass => Self::Bolt,
+        }
+    }
+
+    #[must_use]
+    pub const fn key(self) -> &'static str {
+        match self {
+            Self::Bolt => "bolt",
+            Self::Globe => "globe",
+            Self::Shield => "shield",
+            Self::Compass => "compass",
+        }
+    }
+
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Bolt => "闪电",
+            Self::Globe => "地球",
+            Self::Shield => "盾牌",
+            Self::Compass => "罗盘",
+        }
+    }
+
+    /// Parses the stable persistence key.
+    ///
+    /// # Errors
+    /// Returns [`NodeGroupError::InvalidIcon`] for unknown keys.
+    pub fn parse_key(value: &str) -> Result<Self, NodeGroupError> {
+        match value {
+            "bolt" => Ok(Self::Bolt),
+            "globe" => Ok(Self::Globe),
+            "shield" => Ok(Self::Shield),
+            "compass" => Ok(Self::Compass),
+            _ => Err(NodeGroupError::InvalidIcon),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum NodeGroupStrategy {
+    #[default]
+    Manual,
+    LowestLatency,
+}
+
+impl NodeGroupStrategy {
+    #[must_use]
+    pub const fn key(self) -> &'static str {
+        match self {
+            Self::Manual => "manual",
+            Self::LowestLatency => "latency",
+        }
+    }
+
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Manual => "手动选择",
+            Self::LowestLatency => "延迟优选",
+        }
+    }
+
+    /// Parses the stable persistence key.
+    ///
+    /// # Errors
+    /// Returns [`NodeGroupError::InvalidStrategy`] for unknown keys.
+    pub fn parse_key(value: &str) -> Result<Self, NodeGroupError> {
+        match value {
+            "manual" => Ok(Self::Manual),
+            "latency" => Ok(Self::LowestLatency),
+            _ => Err(NodeGroupError::InvalidStrategy),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct NodeIdentity {
+    pub source_id: String,
+    pub node_name: String,
+}
+
+impl NodeIdentity {
+    /// Creates a stable node identity from its source and display name.
+    ///
+    /// # Errors
+    /// Returns [`NodeGroupError::InvalidMember`] for unsafe or oversized values.
+    pub fn new(source_id: &str, node_name: &str) -> Result<Self, NodeGroupError> {
+        if !valid_node_group_id(source_id)
+            || !valid_plain_node_group_value(node_name, MAX_NODE_IDENTITY_NAME_BYTES)
+        {
+            return Err(NodeGroupError::InvalidMember);
+        }
+        Ok(Self {
+            source_id: source_id.to_owned(),
+            node_name: node_name.to_owned(),
+        })
+    }
+
+    fn is_valid(&self) -> bool {
+        valid_node_group_id(&self.source_id)
+            && valid_plain_node_group_value(&self.node_name, MAX_NODE_IDENTITY_NAME_BYTES)
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub enum NodeGroupMatcher {
+    #[default]
+    All,
+    NameContains(String),
+    Explicit(BTreeSet<NodeIdentity>),
+}
+
+impl NodeGroupMatcher {
+    /// Creates a case-insensitive node-name matcher.
+    ///
+    /// # Errors
+    /// Returns [`NodeGroupError::InvalidMatcher`] for empty, unsafe, or oversized values.
+    pub fn name_contains(value: &str) -> Result<Self, NodeGroupError> {
+        if !valid_plain_node_group_value(value, MAX_NODE_GROUP_MATCH_BYTES) {
+            return Err(NodeGroupError::InvalidMatcher);
+        }
+        Ok(Self::NameContains(value.to_owned()))
+    }
+
+    #[must_use]
+    pub const fn key(&self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::NameContains(_) => "name",
+            Self::Explicit(_) => "explicit",
+        }
+    }
+
+    fn is_valid(&self) -> bool {
+        match self {
+            Self::All => true,
+            Self::NameContains(value) => {
+                valid_plain_node_group_value(value, MAX_NODE_GROUP_MATCH_BYTES)
+            }
+            Self::Explicit(members) => {
+                members.len() <= MAX_NODE_GROUP_MEMBERS
+                    && members.iter().all(NodeIdentity::is_valid)
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NodePolicyGroup {
+    pub id: String,
+    pub name: String,
+    pub icon: NodeGroupIcon,
+    pub strategy: NodeGroupStrategy,
+    pub matcher: NodeGroupMatcher,
+}
+
+impl NodePolicyGroup {
+    /// Creates a policy group with manual selection and an all-node matcher.
+    ///
+    /// # Errors
+    /// Returns an ID or name validation error when either value is unsafe.
+    pub fn new(id: &str, name: &str) -> Result<Self, NodeGroupError> {
+        if !valid_node_group_id(id) {
+            return Err(NodeGroupError::InvalidId);
+        }
+        if !valid_plain_node_group_value(name, MAX_NODE_GROUP_NAME_BYTES) {
+            return Err(NodeGroupError::InvalidName);
+        }
+        Ok(Self {
+            id: id.to_owned(),
+            name: name.to_owned(),
+            icon: NodeGroupIcon::default(),
+            strategy: NodeGroupStrategy::default(),
+            matcher: NodeGroupMatcher::default(),
+        })
+    }
+
+    /// Updates the user-facing group name.
+    ///
+    /// # Errors
+    /// Returns [`NodeGroupError::InvalidName`] for empty, unsafe, or oversized values.
+    pub fn rename(&mut self, name: &str) -> Result<(), NodeGroupError> {
+        if !valid_plain_node_group_value(name, MAX_NODE_GROUP_NAME_BYTES) {
+            return Err(NodeGroupError::InvalidName);
+        }
+        name.clone_into(&mut self.name);
+        Ok(())
+    }
+
+    /// Replaces the candidate matcher after validating its bounds.
+    ///
+    /// # Errors
+    /// Returns [`NodeGroupError::InvalidMatcher`] when the matcher is unsafe or oversized.
+    pub fn set_matcher(&mut self, matcher: NodeGroupMatcher) -> Result<(), NodeGroupError> {
+        if !matcher.is_valid() {
+            return Err(NodeGroupError::InvalidMatcher);
+        }
+        self.matcher = matcher;
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn matches(&self, source_id: &str, node_name: &str) -> bool {
+        match &self.matcher {
+            NodeGroupMatcher::All => true,
+            NodeGroupMatcher::NameContains(value) => {
+                node_name.to_lowercase().contains(&value.to_lowercase())
+            }
+            NodeGroupMatcher::Explicit(members) => members.contains(&NodeIdentity {
+                source_id: source_id.to_owned(),
+                node_name: node_name.to_owned(),
+            }),
+        }
+    }
+
+    /// Adds a missing explicit member or removes an existing one.
+    ///
+    /// Returns `true` when the member is present after the operation.
+    pub fn toggle_member(&mut self, member: NodeIdentity) -> bool {
+        let NodeGroupMatcher::Explicit(members) = &mut self.matcher else {
+            return false;
+        };
+        if members.remove(&member) {
+            return false;
+        }
+        if members.len() >= MAX_NODE_GROUP_MEMBERS || !member.is_valid() {
+            return false;
+        }
+        members.insert(member)
+    }
+
+    #[must_use]
+    pub fn member_count(&self) -> usize {
+        match &self.matcher {
+            NodeGroupMatcher::Explicit(members) => members.len(),
+            NodeGroupMatcher::All | NodeGroupMatcher::NameContains(_) => 0,
+        }
+    }
+
+    /// Validates the complete group before persistence or configuration generation.
+    ///
+    /// # Errors
+    /// Returns the first invalid ID, name, or matcher field.
+    pub fn validate(&self) -> Result<(), NodeGroupError> {
+        if !valid_node_group_id(&self.id) {
+            return Err(NodeGroupError::InvalidId);
+        }
+        if !valid_plain_node_group_value(&self.name, MAX_NODE_GROUP_NAME_BYTES) {
+            return Err(NodeGroupError::InvalidName);
+        }
+        if !self.matcher.is_valid() {
+            return Err(NodeGroupError::InvalidMatcher);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NodeGroupError {
+    InvalidId,
+    InvalidName,
+    InvalidIcon,
+    InvalidStrategy,
+    InvalidMatcher,
+    InvalidMember,
+}
+
+impl fmt::Display for NodeGroupError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::InvalidId => "node group id is invalid",
+            Self::InvalidName => "node group name is invalid",
+            Self::InvalidIcon => "node group icon is invalid",
+            Self::InvalidStrategy => "node group strategy is invalid",
+            Self::InvalidMatcher => "node group matcher is invalid",
+            Self::InvalidMember => "node group member is invalid",
+        })
+    }
+}
+
+impl Error for NodeGroupError {}
+
+fn valid_node_group_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 160
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b':' | b'-' | b'_'))
+}
+
+fn valid_plain_node_group_value(value: &str, max_bytes: usize) -> bool {
+    !value.is_empty()
+        && value.len() <= max_bytes
+        && value.trim() == value
+        && !value.chars().any(char::is_control)
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum ConfigurationSection {
     #[default]

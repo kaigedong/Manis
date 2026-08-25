@@ -123,11 +123,14 @@ fn capture_remote_subscription_preview(
 }
 
 #[cfg(target_os = "macos")]
+#[allow(clippy::too_many_lines)]
 fn capture_restored_subscription_views(
     cx: &mut gpui::VisualTestAppContext,
     store: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use gpui::{AnyWindowHandle, AppContext, Modifiers, point, px, size};
+    use gpui::{
+        AnyWindowHandle, AppContext, Modifiers, ScrollDelta, ScrollWheelEvent, point, px, size,
+    };
     use relay_ui::RelayApp;
     use std::time::Duration;
 
@@ -175,6 +178,25 @@ fn capture_restored_subscription_views(
         cx.simulate_click(window, point(px(navigation_x), px(76.0)), Modifiers::none());
         refresh(cx, window)?;
         save_screenshot(cx, window, nodes_file)?;
+        cx.simulate_event(
+            window,
+            ScrollWheelEvent {
+                position: point(px(width - 100.0), px(height - 120.0)),
+                delta: ScrollDelta::Pixels(point(px(0.0), px(-620.0))),
+                modifiers: Modifiers::none(),
+                ..Default::default()
+            },
+        );
+        refresh(cx, window)?;
+        save_screenshot(
+            cx,
+            window,
+            if width >= 1_280.0 {
+                "nodes-wide-policy-groups.png"
+            } else {
+                "nodes-compact-policy-groups.png"
+            },
+        )?;
         cx.simulate_click(
             window,
             point(
