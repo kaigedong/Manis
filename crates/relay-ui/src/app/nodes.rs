@@ -4,16 +4,16 @@ use relay_core::{NodeAvailabilityFilter, PrimaryWorkspace, WindowSizeClass};
 use super::{ImportedSubscriptionState, RelayApp};
 use crate::{
     mihomo::{LoadedProvider, LoadedProviderNode},
+    subscription::SourceNodePreview,
     theme::Theme,
 };
-
-const IMPORTED_SUBSCRIPTION_GROUP_ID: &str = "subscription:primary";
 
 struct NodeSourceGroup<'a> {
     id: String,
     name: String,
     detail: String,
     providers: Vec<&'a LoadedProvider>,
+    saved_nodes: Vec<&'a SourceNodePreview>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -25,6 +25,7 @@ struct NodeCounts {
 }
 
 impl NodeCounts {
+    #[cfg(test)]
     fn from_providers(providers: &[LoadedProvider]) -> Self {
         let mut counts = Self::default();
         for provider in providers {
@@ -37,6 +38,18 @@ impl NodeCounts {
         let mut counts = Self::default();
         for provider in providers {
             counts.add_provider(provider);
+        }
+        counts
+    }
+
+    fn from_groups(groups: &[NodeSourceGroup<'_>]) -> Self {
+        let mut counts = Self::default();
+        for group in groups {
+            for provider in &group.providers {
+                counts.add_provider(provider);
+            }
+            counts.total += group.saved_nodes.len();
+            counts.untested += group.saved_nodes.len();
         }
         counts
     }
@@ -70,35 +83,34 @@ impl RelayApp {
         cx: &mut Context<Self>,
     ) -> Div {
         let compact = size_class == WindowSizeClass::Compact;
-        let imported = self.imported_subscription.is_some();
-        let providers = if imported {
-            &self.subscription_preview_providers
-        } else {
-            &self.source_providers
-        };
-        let groups = self.node_source_groups(imported, providers);
-        let counts = NodeCounts::from_providers(providers);
+        let has_local_sources =
+            !self.imported_subscriptions.is_empty() || !self.saved_vless_nodes.is_empty();
+        let groups = self.node_source_groups(has_local_sources);
+        let counts = NodeCounts::from_groups(&groups);
         let filter = self.node_workspace.filter;
-        let loading = imported
-            && matches!(
-                self.imported_subscription_state,
+        let loading = self.imported_subscriptions.iter().any(|subscription| {
+            matches!(
+                subscription.state,
                 ImportedSubscriptionState::Pending(_) | ImportedSubscriptionState::Refreshing(_)
-            );
+            )
+        });
         let refreshing = loading
-            || (!imported
+            || (!has_local_sources
                 && matches!(
                     self.controller,
                     crate::mihomo::ControllerState::Connecting { .. }
                 ));
-        let unavailable = imported
-            && matches!(
-                self.imported_subscription_state,
-                ImportedSubscriptionState::Unavailable(_, _)
-                    | ImportedSubscriptionState::StoreError(_)
-            );
-        let origin = if imported {
-            "已导入订阅"
-        } else if providers.is_empty() {
+        let unavailable = !self.imported_subscriptions.is_empty()
+            && self.imported_subscriptions.iter().all(|subscription| {
+                matches!(
+                    subscription.state,
+                    ImportedSubscriptionState::Unavailable(_, _)
+                        | ImportedSubscriptionState::StoreError(_)
+                )
+            });
+        let origin = if has_local_sources {
+            "本机来源"
+        } else if self.source_providers.is_empty() {
             "尚无节点来源"
         } else {
             "当前 Mihomo"
@@ -132,39 +144,57 @@ impl RelayApp {
             ))
     }
 
-    fn node_source_groups<'a>(
-        &self,
-        imported: bool,
-        providers: &'a [LoadedProvider],
-    ) -> Vec<NodeSourceGroup<'a>> {
-        if providers.is_empty() {
-            return Vec::new();
-        }
-        if imported {
-            let name = self
-                .imported_subscription
-                .as_ref()
-                .and_then(relay_profile::SecretUrl::subscription_name)
-                .unwrap_or_else(|| "订阅 1".to_owned());
-            let transport = self
-                .imported_subscription
-                .as_ref()
-                .map_or("订阅", |source| {
-                    if source.is_https() {
+    fn node_source_groups(&self, has_local_sources: bool) -> Vec<NodeSourceGroup<'_>> {
+        if has_local_sources {
+            let mut groups: Vec<_> = self
+                .imported_subscriptions
+                .iter()
+                .enumerate()
+                .map(|(index, subscription)| {
+                    let name = subscription
+                        .source
+                        .subscription_name()
+                        .unwrap_or_else(|| format!("订阅 {}", index + 1));
+                    let transport = if subscription.source.is_https() {
                         "HTTPS 订阅"
                     } else {
                         "HTTP 订阅"
+                    };
+                    let state = match subscription.state {
+                        ImportedSubscriptionState::Pending(_)
+                        | ImportedSubscriptionState::Refreshing(_) => "正在恢复",
+                        ImportedSubscriptionState::Ready(_) => "重启后自动恢复",
+                        ImportedSubscriptionState::Unavailable(_, _)
+                        | ImportedSubscriptionState::StoreError(_) => "当前不可用",
+                        ImportedSubscriptionState::Removing(_) => "正在移除",
+                        ImportedSubscriptionState::None => "尚未读取",
+                    };
+                    NodeSourceGroup {
+                        id: format!("subscription:{}", subscription.id),
+                        name,
+                        detail: format!("{transport} · {state}"),
+                        providers: subscription.providers.iter().collect(),
+                        saved_nodes: Vec::new(),
                     }
+                })
+                .collect();
+            if !self.saved_vless_nodes.is_empty() {
+                groups.push(NodeSourceGroup {
+                    id: "saved".to_owned(),
+                    name: "已保存".to_owned(),
+                    detail: "单独添加的 VLESS 节点 · 私有本机存储".to_owned(),
+                    providers: Vec::new(),
+                    saved_nodes: self
+                        .saved_vless_nodes
+                        .iter()
+                        .map(|saved| saved.source.preview())
+                        .collect(),
                 });
-            return vec![NodeSourceGroup {
-                id: IMPORTED_SUBSCRIPTION_GROUP_ID.to_owned(),
-                name,
-                detail: format!("{transport} · 重启后自动恢复"),
-                providers: providers.iter().collect(),
-            }];
+            }
+            return groups;
         }
 
-        providers
+        self.source_providers
             .iter()
             .enumerate()
             .map(|(index, provider)| NodeSourceGroup {
@@ -175,6 +205,7 @@ impl RelayApp {
                     |vehicle| format!("Mihomo 来源 · {vehicle}"),
                 ),
                 providers: vec![provider],
+                saved_nodes: Vec::new(),
             })
             .collect()
     }
@@ -343,10 +374,15 @@ impl RelayApp {
                 if refreshing {
                     return;
                 }
-                if let Some(subscription) = this.imported_subscription.as_ref() {
-                    let kind = super::source_kind(subscription);
-                    this.imported_subscription_state = ImportedSubscriptionState::Pending(kind);
-                    this.restore_imported_subscription(cx);
+                if !this.imported_subscriptions.is_empty() {
+                    for subscription in &mut this.imported_subscriptions {
+                        let kind = super::source_kind(&subscription.source);
+                        subscription.state = ImportedSubscriptionState::Pending(kind);
+                    }
+                    this.restore_imported_subscriptions(cx);
+                } else if !this.saved_vless_nodes.is_empty() {
+                    "已保存节点不需要重新下载".clone_into(&mut this.status);
+                    cx.notify();
                 } else {
                     this.connect_mihomo(cx);
                 }
@@ -495,7 +531,9 @@ impl RelayApp {
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Div {
-        let counts = NodeCounts::from_provider_refs(&group.providers);
+        let mut counts = NodeCounts::from_provider_refs(&group.providers);
+        counts.total += group.saved_nodes.len();
+        counts.untested += group.saved_nodes.len();
         let visible_count = counts.count_for(filter);
         let collapsed = self.node_workspace.is_group_collapsed(&group.id);
         let group_id = group.id.clone();
@@ -561,6 +599,7 @@ impl RelayApp {
             )
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.node_workspace.toggle_group(&group_id);
+                this.persist_node_workspace();
                 "已更新节点分组展开状态".clone_into(&mut this.status);
                 cx.notify();
             }));
@@ -615,6 +654,26 @@ impl RelayApp {
                     theme,
                 ));
             }
+        }
+        for (node_index, node) in group.saved_nodes.iter().enumerate() {
+            if !filter.includes(None) {
+                continue;
+            }
+            let loaded = LoadedProviderNode {
+                name: node.name.clone(),
+                protocol: node.protocol.to_owned(),
+                latency_label: None,
+                alive: None,
+            };
+            table = table.child(Self::workspace_node_row(
+                &group.id,
+                group.providers.len(),
+                node_index,
+                &loaded,
+                &group.name,
+                compact,
+                theme,
+            ));
         }
         table
     }

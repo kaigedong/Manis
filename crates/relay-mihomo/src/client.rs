@@ -1,9 +1,10 @@
 use serde::Deserialize;
+use serde_json::{Map, Value};
 
 use crate::models::{ProvidersResponse, ProxiesResponse, RulesResponse};
 use crate::{
     ConnectionsState, ControllerConfig, MihomoError, MihomoSnapshot, ProxyProvider,
-    ReadonlyTransport, VersionInfo,
+    ReadonlyTransport, RuntimeConfig, VersionInfo,
 };
 
 const VERSION_ENDPOINT: &str = "/version";
@@ -11,6 +12,7 @@ const PROXIES_ENDPOINT: &str = "/proxies";
 const PROVIDERS_ENDPOINT: &str = "/providers/proxies";
 const RULES_ENDPOINT: &str = "/rules";
 const CONNECTIONS_ENDPOINT: &str = "/connections";
+const CONFIGS_ENDPOINT: &str = "/configs";
 
 #[derive(Debug, Clone)]
 pub struct MihomoClient<T> {
@@ -41,6 +43,7 @@ where
         let providers = self.fetch_proxy_providers()?;
         let rules = self.fetch_json::<RulesResponse>(RULES_ENDPOINT)?.rules;
         let connections = self.fetch_json::<ConnectionsState>(CONNECTIONS_ENDPOINT)?;
+        let runtime = self.fetch_runtime_config()?;
 
         Ok(MihomoSnapshot {
             version,
@@ -48,6 +51,7 @@ where
             providers,
             rules,
             connections,
+            runtime,
         })
     }
 
@@ -69,6 +73,39 @@ where
         Ok(self
             .fetch_json::<ProvidersResponse>(PROVIDERS_ENDPOINT)?
             .into_providers())
+    }
+
+    /// Fetches Mihomo's mutable runtime configuration surface from `/configs`.
+    ///
+    /// # Errors
+    /// Returns an error if the controller request fails or the payload cannot be decoded.
+    pub fn fetch_runtime_config(&self) -> Result<RuntimeConfig, MihomoError> {
+        self.fetch_json::<RuntimeConfig>(CONFIGS_ENDPOINT)
+    }
+
+    /// Toggles `tun.enable` while preserving every other currently reported TUN field.
+    ///
+    /// # Errors
+    /// Returns an error if the controller cannot be read, the `tun` field is not an object or
+    /// `null`, or the PATCH request fails.
+    pub fn set_tun_enabled(&self, enabled: bool) -> Result<(), MihomoError> {
+        let config = self.fetch_json::<Value>(CONFIGS_ENDPOINT)?;
+        let mut tun = match config.get("tun") {
+            Some(Value::Object(tun)) => tun.clone(),
+            Some(Value::Null) | None => Map::new(),
+            Some(_other) => {
+                return Err(MihomoError::InvalidResponse(
+                    "/configs tun field was not an object".to_owned(),
+                ));
+            }
+        };
+        tun.insert("enable".to_owned(), Value::Bool(enabled));
+
+        let mut patch = Map::new();
+        patch.insert("tun".to_owned(), Value::Object(tun));
+        self.transport
+            .patch_json(&self.config, CONFIGS_ENDPOINT, &Value::Object(patch))?;
+        Ok(())
     }
 
     fn fetch_json<Response>(&self, endpoint: &str) -> Result<Response, MihomoError>

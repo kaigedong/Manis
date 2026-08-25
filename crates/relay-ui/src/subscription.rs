@@ -25,6 +25,18 @@ pub(crate) struct SubscriptionPreview {
     pub nodes: Vec<SourceNodePreview>,
 }
 
+#[derive(Clone, Eq, PartialEq)]
+pub(crate) struct VlessSource {
+    value: String,
+    preview: SourceNodePreview,
+}
+
+impl fmt::Debug for VlessSource {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("VlessSource(<redacted>)")
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SubscriptionInputError {
     Empty,
@@ -56,7 +68,7 @@ pub(crate) fn validate_subscription_preview(
         return Err(SubscriptionInputError::TooLong);
     }
     if input.starts_with("vless://") {
-        return parse_vless_preview(input);
+        return VlessSource::parse(input).map(VlessSource::into_preview);
     }
 
     let subscription = SecretUrl::parse_subscription(input)
@@ -72,7 +84,32 @@ pub(crate) fn validate_subscription_preview(
     })
 }
 
-fn parse_vless_preview(input: &str) -> Result<SubscriptionPreview, SubscriptionInputError> {
+impl VlessSource {
+    pub(crate) fn parse(input: &str) -> Result<Self, SubscriptionInputError> {
+        let preview = parse_vless_node(input)?;
+        Ok(Self {
+            value: input.to_owned(),
+            preview,
+        })
+    }
+
+    pub(crate) fn preview(&self) -> &SourceNodePreview {
+        &self.preview
+    }
+
+    pub(crate) fn expose_to<T>(&self, use_value: impl FnOnce(&str) -> T) -> T {
+        use_value(&self.value)
+    }
+
+    fn into_preview(self) -> SubscriptionPreview {
+        SubscriptionPreview {
+            kind: SourceKind::VlessNode,
+            nodes: vec![self.preview],
+        }
+    }
+}
+
+fn parse_vless_node(input: &str) -> Result<SourceNodePreview, SubscriptionInputError> {
     if input.trim() != input || input.chars().any(char::is_control) {
         return Err(SubscriptionInputError::InvalidVless);
     }
@@ -118,14 +155,11 @@ fn parse_vless_preview(input: &str) -> Result<SubscriptionPreview, SubscriptionI
         |value| format!("{security} · {value}"),
     );
 
-    Ok(SubscriptionPreview {
-        kind: SourceKind::VlessNode,
-        nodes: vec![SourceNodePreview {
-            name,
-            protocol: "VLESS",
-            endpoint,
-            detail,
-        }],
+    Ok(SourceNodePreview {
+        name,
+        protocol: "VLESS",
+        endpoint,
+        detail,
     })
 }
 
@@ -205,7 +239,7 @@ fn hex_value(value: u8) -> Option<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{SourceKind, SubscriptionInputError, validate_subscription_preview};
+    use super::{SourceKind, SubscriptionInputError, VlessSource, validate_subscription_preview};
 
     #[test]
     fn recognizes_http_and_https_subscription_sources() {
@@ -239,6 +273,18 @@ mod tests {
         assert_eq!(preview.nodes[0].endpoint, "edge.example.invalid:443");
         assert_eq!(preview.nodes[0].detail, "TLS · WebSocket");
         assert!(!format!("{preview:?}").contains("00000000"));
+    }
+
+    #[test]
+    fn vless_source_keeps_credentials_out_of_debug_output() {
+        let source = VlessSource::parse(
+            "vless://00000000-0000-4000-8000-000000000000@edge.example.invalid:443?security=tls#Saved",
+        )
+        .expect("fixture VLESS link should parse");
+
+        assert_eq!(source.preview().name, "Saved");
+        assert_eq!(format!("{source:?}"), "VlessSource(<redacted>)");
+        assert!(!format!("{source:?}").contains("00000000"));
     }
 
     #[test]

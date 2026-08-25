@@ -307,6 +307,7 @@ impl RelayApp {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     fn source_panel(&self, theme: Theme, cx: &mut Context<Self>) -> Div {
         let input = self
             .subscription_input
@@ -314,24 +315,36 @@ impl RelayApp {
             .expect("subscription input is initialized before rendering")
             .clone();
         let feedback = &self.subscription_feedback;
-        let has_imported_subscription = self.imported_subscription.is_some();
+        let has_imported_subscription = !self.imported_subscriptions.is_empty();
         let importing_remote = matches!(
             feedback,
             SubscriptionFeedback::Importing(_)
                 | SubscriptionFeedback::PreviewFailed(_)
                 | SubscriptionFeedback::StoreFailed(_)
         );
-        let displayed_providers = if has_imported_subscription || importing_remote {
-            self.subscription_preview_providers.as_slice()
+        let imported_providers: Vec<_> = self
+            .imported_subscriptions
+            .iter()
+            .flat_map(|subscription| subscription.providers.iter().cloned())
+            .collect();
+        let displayed_providers = if importing_remote {
+            self.subscription_preview_providers.clone()
+        } else if has_imported_subscription {
+            imported_providers
         } else {
-            self.source_providers.as_slice()
+            self.source_providers.clone()
         };
         let direct_input = input.read(cx).value().starts_with("vless://");
         let busy = matches!(feedback, SubscriptionFeedback::Importing(_))
-            || matches!(
-                self.imported_subscription_state,
-                ImportedSubscriptionState::Removing(_)
-            );
+            || self.imported_subscriptions.iter().any(|subscription| {
+                matches!(subscription.state, ImportedSubscriptionState::Removing(_))
+            });
+        let imported_loading = self.imported_subscriptions.iter().any(|subscription| {
+            matches!(
+                subscription.state,
+                ImportedSubscriptionState::Pending(_) | ImportedSubscriptionState::Refreshing(_)
+            )
+        });
 
         let panel = div()
             .id("configuration-source")
@@ -385,12 +398,21 @@ impl RelayApp {
                 has_imported_subscription,
                 theme,
             ))
-            .child(self.imported_subscription_card(theme, cx))
+            .when_some(self.source_store_error, |panel, error| {
+                panel.child(Self::subscription_error(
+                    "部分本地来源未能恢复",
+                    error.to_string(),
+                    Some("其余可安全读取的来源仍然保留；可检查用户数据目录权限。"),
+                    theme,
+                ))
+            })
+            .child(self.imported_subscription_cards(theme, cx))
+            .child(self.saved_vless_cards(theme, cx))
             .child(Self::source_nodes(
                 feedback,
-                self.imported_subscription_state,
+                imported_loading,
                 has_imported_subscription,
-                displayed_providers,
+                &displayed_providers,
                 theme,
             ))
             .child(self.source_panel_footer(has_imported_subscription, theme));
@@ -407,7 +429,7 @@ impl RelayApp {
             .text_size(px(10.0))
             .text_color(theme.text_tertiary)
             .child(if has_imported_subscription {
-                "订阅已保存到本机私有用户数据目录 · 调试日志不记录链接"
+                "多个来源分别保存到本机私有用户数据目录 · 调试日志不记录链接"
             } else {
                 "导入成功后持久保存 · 调试日志不记录链接"
             })
@@ -435,7 +457,7 @@ impl RelayApp {
                     .id("subscription-preview")
                     .role(Role::Button)
                     .aria_label(if direct_input {
-                        "预览 VLESS 节点"
+                        "保存 VLESS 节点"
                     } else {
                         "验证并导入订阅"
                     })
@@ -463,7 +485,7 @@ impl RelayApp {
                     .child(if busy {
                         "正在处理…"
                     } else if direct_input {
-                        "预览 VLESS 节点"
+                        "保存 VLESS 节点"
                     } else {
                         "导入订阅"
                     })
@@ -520,9 +542,21 @@ impl RelayApp {
         };
         match result {
             Ok(preview) if preview.kind == SourceKind::VlessNode => {
-                self.subscription_feedback = SubscriptionFeedback::Valid(preview);
-                "VLESS 节点已识别 · 可在来源节点中查看 · 尚未保存".clone_into(&mut self.status);
-                trace_ui(UiEvent::SourceRecognitionSucceeded);
+                match self.save_vless_source(&input_value) {
+                    Ok(()) => {
+                        self.subscription_feedback = SubscriptionFeedback::Valid(preview);
+                        if let Some(input) = self.subscription_input.as_ref() {
+                            input.update(cx, SubscriptionTextInput::clear_without_event);
+                        }
+                        "VLESS 节点已保存 · 已加入“已保存”分组".clone_into(&mut self.status);
+                        trace_ui(UiEvent::SourceImportSucceeded);
+                    }
+                    Err(error) => {
+                        self.subscription_feedback = SubscriptionFeedback::StoreFailed(error);
+                        self.status = format!("VLESS 节点保存失败：{error}");
+                        trace_ui(UiEvent::SourceImportFailed);
+                    }
+                }
                 cx.notify();
             }
             Ok(preview) => {
@@ -550,7 +584,7 @@ impl RelayApp {
                 .text_size(px(11.0))
                 .text_color(theme.text_secondary)
                 .child(if has_imported_subscription {
-                    "粘贴新的 HTTP/HTTPS 订阅可验证后替换；vless:// 仍提供安全预览"
+                    "可继续添加 HTTP/HTTPS 订阅，或保存单个 vless:// 节点"
                 } else {
                     "等待输入 · HTTP/HTTPS 订阅或 vless:// 节点"
                 }),
@@ -568,9 +602,9 @@ impl RelayApp {
                 theme,
             ),
             SubscriptionFeedback::StoreFailed(error) => Self::subscription_error(
-                "节点有效，但无法保存订阅",
+                "来源有效，但无法保存",
                 error.to_string(),
-                Some("旧的已导入订阅没有被替换；检查目录权限后重试。"),
+                Some("现有来源未受影响；检查目录权限后重试。"),
                 theme,
             ),
         }
@@ -580,7 +614,7 @@ impl RelayApp {
         let title = match kind {
             SourceKind::HttpSubscription => "正在验证并导入 HTTP 订阅",
             SourceKind::HttpsSubscription => "正在验证并导入 HTTPS 订阅",
-            SourceKind::VlessNode => "正在解析 VLESS 节点",
+            SourceKind::VlessNode => "正在保存 VLESS 节点",
         };
         div()
             .mt_3()
@@ -616,7 +650,7 @@ impl RelayApp {
                 "HTTPS 订阅预览完成",
                 "节点已由 Mihomo 实际下载并解析，可在下方完整浏览",
             ),
-            SourceKind::VlessNode => ("VLESS 节点已识别", "已解析为 1 个可预览的直接节点"),
+            SourceKind::VlessNode => ("VLESS 节点已保存", "已加入节点页的“已保存”分组"),
         };
         let node_count: usize = providers.iter().map(|provider| provider.nodes.len()).sum();
 
@@ -649,104 +683,183 @@ impl RelayApp {
             })
     }
 
-    fn imported_subscription_card(&self, theme: Theme, cx: &mut Context<Self>) -> Div {
-        let node_count: usize = self
-            .subscription_preview_providers
-            .iter()
-            .map(|provider| provider.nodes.len())
-            .sum();
-        let (title, detail, busy) = match self.imported_subscription_state {
-            ImportedSubscriptionState::None => return div(),
-            ImportedSubscriptionState::Pending(_) | ImportedSubscriptionState::Refreshing(_) => (
-                "正在恢复已导入订阅",
-                "订阅已保存在本机；正在重新读取节点。".to_owned(),
-                true,
-            ),
-            ImportedSubscriptionState::Ready(kind) => (
-                "订阅已导入",
-                format!(
-                    "{} · {} 个来源 · {node_count} 个节点 · 重启后自动恢复",
-                    source_kind_label(kind),
-                    self.subscription_preview_providers.len()
+    #[allow(clippy::too_many_lines)]
+    fn imported_subscription_cards(&self, theme: Theme, cx: &mut Context<Self>) -> Div {
+        let mut list = div();
+        for (index, subscription) in self.imported_subscriptions.iter().enumerate() {
+            let node_count: usize = subscription
+                .providers
+                .iter()
+                .map(|provider| provider.nodes.len())
+                .sum();
+            let name = subscription
+                .source
+                .subscription_name()
+                .unwrap_or_else(|| format!("订阅 {}", index + 1));
+            let (detail, busy, healthy) = match subscription.state {
+                ImportedSubscriptionState::None => continue,
+                ImportedSubscriptionState::Pending(_)
+                | ImportedSubscriptionState::Refreshing(_) => {
+                    ("已安全保存 · 正在恢复节点".to_owned(), true, true)
+                }
+                ImportedSubscriptionState::Ready(kind) => (
+                    format!(
+                        "{} · {} 个来源 · {node_count} 个节点 · 重启后自动恢复",
+                        source_kind_label(kind),
+                        subscription.providers.len()
+                    ),
+                    false,
+                    true,
                 ),
-                false,
-            ),
-            ImportedSubscriptionState::Unavailable(kind, error) => (
-                "订阅已保存 · 节点刷新失败",
-                format!(
-                    "{} · {error}；稍后可粘贴原链接重新导入。",
-                    source_kind_label(kind)
+                ImportedSubscriptionState::Unavailable(kind, error) => (
+                    format!("{} · {error} · 可稍后刷新", source_kind_label(kind)),
+                    false,
+                    false,
                 ),
-                false,
-            ),
-            ImportedSubscriptionState::StoreError(error) => (
-                "已保存订阅不可用",
-                format!("{error}；重新导入会尝试安全替换。"),
-                false,
-            ),
-            ImportedSubscriptionState::Removing(_) => (
-                "正在移除订阅",
-                "正在删除本机保存的订阅来源。".to_owned(),
-                true,
-            ),
-        };
-        let operation_busy = busy
-            || matches!(
-                self.subscription_feedback,
-                SubscriptionFeedback::Importing(_)
-            );
-        let removable = self.imported_subscription.is_some() && !operation_busy;
-
-        div()
-            .mt_3()
-            .p_3()
-            .rounded_md()
-            .border_1()
-            .border_color(theme.outline_subtle)
-            .bg(theme.action_soft)
-            .child(
+                ImportedSubscriptionState::StoreError(error) => {
+                    (format!("{error} · 本地来源没有被删除"), false, false)
+                }
+                ImportedSubscriptionState::Removing(_) => {
+                    ("正在删除本机保存的订阅".to_owned(), true, true)
+                }
+            };
+            let removable = !busy
+                && !matches!(
+                    self.subscription_feedback,
+                    SubscriptionFeedback::Importing(_)
+                );
+            let id = subscription.id.clone();
+            list = list.child(
                 div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap_3()
+                    .mt_3()
+                    .p_3()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(theme.outline_subtle)
+                    .bg(theme.action_soft)
                     .child(
                         div()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(theme.status_success)
-                            .child(title),
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_3()
+                            .child(
+                                div()
+                                    .min_w(px(0.0))
+                                    .overflow_x_hidden()
+                                    .whitespace_nowrap()
+                                    .text_ellipsis()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(if healthy {
+                                        theme.status_success
+                                    } else {
+                                        theme.route_trace
+                                    })
+                                    .child(name),
+                            )
+                            .when(removable, |header| {
+                                header.child(
+                                    div()
+                                        .id(format!("remove-{id}"))
+                                        .role(Role::Button)
+                                        .aria_label("移除这个订阅")
+                                        .tab_stop(true)
+                                        .focusable()
+                                        .cursor_pointer()
+                                        .px_2()
+                                        .py_1()
+                                        .rounded_md()
+                                        .border_1()
+                                        .border_color(theme.outline_subtle)
+                                        .bg(theme.surface_high)
+                                        .text_size(px(10.0))
+                                        .text_color(theme.text_secondary)
+                                        .child("移除")
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.remove_imported_subscription(id.clone(), cx);
+                                        })),
+                                )
+                            }),
                     )
-                    .when(removable, |header| {
-                        header.child(
-                            div()
-                                .id("remove-imported-subscription")
-                                .role(Role::Button)
-                                .aria_label("移除已导入订阅")
-                                .tab_stop(true)
-                                .focusable()
-                                .cursor_pointer()
-                                .px_2()
-                                .py_1()
-                                .rounded_md()
-                                .border_1()
-                                .border_color(theme.outline_subtle)
-                                .bg(theme.surface_high)
-                                .text_size(px(10.0))
-                                .text_color(theme.text_secondary)
-                                .child("移除订阅")
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.remove_imported_subscription(cx);
-                                })),
-                        )
-                    }),
-            )
-            .child(
+                    .child(
+                        div()
+                            .mt_1()
+                            .text_size(px(11.0))
+                            .text_color(theme.text_secondary)
+                            .child(detail),
+                    ),
+            );
+        }
+        list
+    }
+
+    fn saved_vless_cards(&self, theme: Theme, cx: &mut Context<Self>) -> Div {
+        let mut list = div();
+        for saved in &self.saved_vless_nodes {
+            let id = saved.id.clone();
+            let node = saved.source.preview();
+            list = list.child(
                 div()
-                    .mt_1()
-                    .text_size(px(11.0))
-                    .text_color(theme.text_secondary)
-                    .child(detail),
-            )
+                    .mt_3()
+                    .p_3()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(theme.outline_subtle)
+                    .bg(theme.surface_low)
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_3()
+                            .child(
+                                div()
+                                    .min_w(px(0.0))
+                                    .overflow_x_hidden()
+                                    .whitespace_nowrap()
+                                    .text_ellipsis()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(node.name.clone()),
+                            )
+                            .child(
+                                div()
+                                    .id(format!("remove-{id}"))
+                                    .role(Role::Button)
+                                    .aria_label("移除已保存节点")
+                                    .tab_stop(true)
+                                    .focusable()
+                                    .cursor_pointer()
+                                    .px_2()
+                                    .py_1()
+                                    .rounded_md()
+                                    .border_1()
+                                    .border_color(theme.outline_subtle)
+                                    .bg(theme.surface_high)
+                                    .text_size(px(10.0))
+                                    .text_color(theme.text_secondary)
+                                    .child("移除")
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        match this.remove_saved_vless_source(&id) {
+                                            Ok(()) => "已移除保存的 VLESS 节点"
+                                                .clone_into(&mut this.status),
+                                            Err(error) => {
+                                                this.status = format!("移除节点失败：{error}");
+                                            }
+                                        }
+                                        cx.notify();
+                                    })),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .mt_1()
+                            .text_size(px(11.0))
+                            .text_color(theme.text_secondary)
+                            .child(format!("{} · {}", node.protocol, node.detail)),
+                    ),
+            );
+        }
+        list
     }
 
     fn subscription_error(
@@ -783,7 +896,7 @@ impl RelayApp {
 
     fn source_nodes(
         feedback: &SubscriptionFeedback,
-        imported_state: ImportedSubscriptionState,
+        imported_loading: bool,
         has_imported_subscription: bool,
         providers: &[LoadedProvider],
         theme: Theme,
@@ -809,11 +922,7 @@ impl RelayApp {
                     | SubscriptionFeedback::PreviewFailed(_)
                     | SubscriptionFeedback::StoreFailed(_)
             );
-        let loading = matches!(feedback, SubscriptionFeedback::Importing(_))
-            || matches!(
-                imported_state,
-                ImportedSubscriptionState::Pending(_) | ImportedSubscriptionState::Refreshing(_)
-            );
+        let loading = matches!(feedback, SubscriptionFeedback::Importing(_)) || imported_loading;
         let list_title = if has_imported_subscription {
             "已导入节点"
         } else if remote_preview {

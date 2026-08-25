@@ -8,6 +8,7 @@ use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 
 use crate::{ControllerConfig, MihomoError};
+use serde_json::Value;
 
 pub const DEFAULT_BODY_LIMIT_BYTES: usize = 16 * 1024 * 1024;
 const HEADER_LIMIT_BYTES: usize = 64 * 1024;
@@ -22,6 +23,20 @@ pub trait ReadonlyTransport {
     /// Returns an error when the request path is invalid, the transport fails, the response is
     /// malformed, the status is non-successful, or the body exceeds the configured limit.
     fn get(&self, config: &ControllerConfig, path: &str) -> Result<String, MihomoError>;
+
+    /// Issues a `PATCH` request with a JSON body to a controller path and returns the response body.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the request path is invalid, the request cannot be serialized, the
+    /// transport fails, the response is malformed, the status is non-successful, or the body
+    /// exceeds the configured limit.
+    fn patch_json(
+        &self,
+        config: &ControllerConfig,
+        path: &str,
+        body: &Value,
+    ) -> Result<String, MihomoError>;
 }
 
 impl<T> ReadonlyTransport for &T
@@ -30,6 +45,15 @@ where
 {
     fn get(&self, config: &ControllerConfig, path: &str) -> Result<String, MihomoError> {
         (*self).get(config, path)
+    }
+
+    fn patch_json(
+        &self,
+        config: &ControllerConfig,
+        path: &str,
+        body: &Value,
+    ) -> Result<String, MihomoError> {
+        (*self).patch_json(config, path, body)
     }
 }
 
@@ -56,7 +80,34 @@ impl Default for StdHttpTransport {
 impl ReadonlyTransport for StdHttpTransport {
     fn get(&self, config: &ControllerConfig, path: &str) -> Result<String, MihomoError> {
         validate_path(path)?;
-        let request = build_get_request(config, path, true)?;
+        let request = build_request(config, "GET", path, None, true)?;
+        let mut addresses = (config.host(), config.port()).to_socket_addrs()?;
+        let Some(address) = addresses.find(|address| address.ip().is_loopback()) else {
+            return Err(MihomoError::InvalidConfig(format!(
+                "controller host {} did not resolve to a loopback address",
+                config.host()
+            )));
+        };
+
+        let stream = TcpStream::connect_timeout(&address, config.connect_timeout())?;
+        stream.set_read_timeout(Some(config.read_timeout()))?;
+        stream.set_write_timeout(Some(config.connect_timeout()))?;
+
+        send_request(stream, &request, self.body_limit)
+    }
+
+    fn patch_json(
+        &self,
+        config: &ControllerConfig,
+        path: &str,
+        body: &Value,
+    ) -> Result<String, MihomoError> {
+        validate_path(path)?;
+        let body = serde_json::to_string(body).map_err(|source| MihomoError::Json {
+            endpoint: path.to_owned(),
+            source,
+        })?;
+        let request = build_request(config, "PATCH", path, Some(&body), true)?;
         let mut addresses = (config.host(), config.port()).to_socket_addrs()?;
         let Some(address) = addresses.find(|address| address.ip().is_loopback()) else {
             return Err(MihomoError::InvalidConfig(format!(
@@ -107,24 +158,50 @@ impl UnixSocketTransport {
 impl ReadonlyTransport for UnixSocketTransport {
     fn get(&self, config: &ControllerConfig, path: &str) -> Result<String, MihomoError> {
         validate_path(path)?;
-        if !self.socket_path.is_absolute() {
-            return Err(MihomoError::InvalidConfig(
-                "Unix controller socket path must be absolute".to_owned(),
-            ));
-        }
-        let metadata = std::fs::symlink_metadata(&self.socket_path)?;
-        if metadata.file_type().is_symlink() || !metadata.file_type().is_socket() {
-            return Err(MihomoError::InvalidConfig(
-                "Unix controller path must be a socket and not a symlink".to_owned(),
-            ));
-        }
+        validate_unix_socket_path(&self.socket_path)?;
 
-        let request = build_get_request(config, path, false)?;
+        let request = build_request(config, "GET", path, None, false)?;
         let stream = UnixStream::connect(&self.socket_path)?;
         stream.set_read_timeout(Some(config.read_timeout()))?;
         stream.set_write_timeout(Some(config.connect_timeout()))?;
         send_request(stream, &request, self.body_limit)
     }
+
+    fn patch_json(
+        &self,
+        config: &ControllerConfig,
+        path: &str,
+        body: &Value,
+    ) -> Result<String, MihomoError> {
+        validate_path(path)?;
+        validate_unix_socket_path(&self.socket_path)?;
+        let body = serde_json::to_string(body).map_err(|source| MihomoError::Json {
+            endpoint: path.to_owned(),
+            source,
+        })?;
+
+        let request = build_request(config, "PATCH", path, Some(&body), false)?;
+        let stream = UnixStream::connect(&self.socket_path)?;
+        stream.set_read_timeout(Some(config.read_timeout()))?;
+        stream.set_write_timeout(Some(config.connect_timeout()))?;
+        send_request(stream, &request, self.body_limit)
+    }
+}
+
+#[cfg(unix)]
+fn validate_unix_socket_path(socket_path: &Path) -> Result<(), MihomoError> {
+    if !socket_path.is_absolute() {
+        return Err(MihomoError::InvalidConfig(
+            "Unix controller socket path must be absolute".to_owned(),
+        ));
+    }
+    let metadata = std::fs::symlink_metadata(socket_path)?;
+    if metadata.file_type().is_symlink() || !metadata.file_type().is_socket() {
+        return Err(MihomoError::InvalidConfig(
+            "Unix controller path must be a socket and not a symlink".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 fn send_request(
@@ -148,13 +225,15 @@ fn validate_path(path: &str) -> Result<(), MihomoError> {
     Ok(())
 }
 
-fn build_get_request(
+fn build_request(
     config: &ControllerConfig,
+    method: &str,
     path: &str,
+    body: Option<&str>,
     include_authorization: bool,
 ) -> Result<String, MihomoError> {
     let mut request = format!(
-        "GET {path} HTTP/1.1\r\nHost: {}\r\nAccept: application/json\r\nUser-Agent: relay-mihomo/0.1\r\nConnection: close\r\n",
+        "{method} {path} HTTP/1.1\r\nHost: {}\r\nAccept: application/json\r\nUser-Agent: relay-mihomo/0.1\r\nConnection: close\r\n",
         config.authority()
     );
 
@@ -169,7 +248,17 @@ fn build_get_request(
         request.push_str("\r\n");
     }
 
+    if let Some(body) = body {
+        request.push_str("Content-Type: application/json\r\n");
+        request.push_str("Content-Length: ");
+        request.push_str(&body.len().to_string());
+        request.push_str("\r\n");
+    }
+
     request.push_str("\r\n");
+    if let Some(body) = body {
+        request.push_str(body);
+    }
     Ok(request)
 }
 
@@ -401,14 +490,16 @@ fn preview(body: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_get_request, decode_http_response};
+    use super::{build_request, decode_http_response};
     use crate::ControllerConfig;
 
     #[test]
     fn request_builder_omits_empty_secret() {
-        let request = build_get_request(
+        let request = build_request(
             &ControllerConfig::default().with_secret(""),
+            "GET",
             "/version",
+            None,
             true,
         )
         .expect("an empty secret should be omitted");
@@ -417,9 +508,11 @@ mod tests {
 
     #[test]
     fn request_builder_rejects_secret_header_injection() {
-        let result = build_get_request(
+        let result = build_request(
             &ControllerConfig::default().with_secret("token\r\nX-Injected: yes"),
+            "GET",
             "/version",
+            None,
             true,
         );
         assert!(result.is_err());

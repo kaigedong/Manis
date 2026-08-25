@@ -1,8 +1,8 @@
 use relay_core::{
     CompactNavigation, ConfigurationSection, ConfigurationWorkspaceState, EmptyPolicyCatalog,
     NodeAvailabilityFilter, NodeWorkspaceState, PolicyCatalog, PolicyGroup, PolicyGroupId,
-    PolicyNode, PolicyRule, PolicyWorkspaceState, PrimaryWorkspace, ProxyId, RouteEvidence,
-    WindowSizeClass,
+    PolicyNode, PolicyRule, PolicyWorkspaceState, PrimaryWorkspace, ProxyId, ProxyMode,
+    RouteEvidence, WindowSizeClass,
 };
 
 fn streaming() -> PolicyGroupId {
@@ -175,6 +175,28 @@ fn primary_workspace_switches_between_policy_operation_and_configuration() {
 }
 
 #[test]
+fn primary_navigation_places_nodes_first_and_exposes_activity_and_logs() {
+    assert_eq!(
+        PrimaryWorkspace::navigation_order(),
+        &[
+            PrimaryWorkspace::Nodes,
+            PrimaryWorkspace::Policies,
+            PrimaryWorkspace::Activity,
+            PrimaryWorkspace::Logs,
+            PrimaryWorkspace::Configuration,
+        ]
+    );
+}
+
+#[test]
+fn proxy_mode_cycles_through_off_system_and_tun() {
+    assert_eq!(ProxyMode::Off.next(), ProxyMode::System);
+    assert_eq!(ProxyMode::System.next(), ProxyMode::Tun);
+    assert_eq!(ProxyMode::Tun.next(), ProxyMode::Off);
+    assert_eq!(ProxyMode::System.label(), "系统代理");
+}
+
+#[test]
 fn node_workspace_filters_known_and_untested_availability() {
     let mut state = NodeWorkspaceState::default();
 
@@ -211,6 +233,12 @@ fn node_workspace_tracks_collapsed_source_groups_independently() {
 
     state.toggle_group("subscription:primary");
     assert!(!state.is_group_collapsed("subscription:primary"));
+
+    state.replace_collapsed_groups(["subscription:one", "saved"]);
+    assert_eq!(
+        state.collapsed_group_ids().collect::<Vec<_>>(),
+        vec!["saved", "subscription:one"]
+    );
 }
 
 #[test]

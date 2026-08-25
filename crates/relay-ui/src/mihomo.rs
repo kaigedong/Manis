@@ -16,10 +16,12 @@ use relay_engine::{
 #[cfg(unix)]
 use relay_mihomo::UnixSocketTransport;
 use relay_mihomo::{
-    ControllerConfig, MihomoClient, MihomoError, MihomoSnapshot, ObservedRouteEvidence,
-    StdHttpTransport, VersionInfo, to_policy_catalog,
+    Connection, ControllerConfig, MihomoClient, MihomoError, MihomoSnapshot, ObservedRouteEvidence,
+    RuntimeConfig, StdHttpTransport, VersionInfo, to_policy_catalog,
 };
 use relay_profile::{Profile, SecretUrl, render_mihomo_yaml, write_private_atomic};
+
+use crate::subscription::VlessSource;
 
 const CONTROLLER_ENV: &str = "RELAY_MIHOMO_CONTROLLER";
 const SECRET_ENV: &str = "RELAY_MIHOMO_SECRET";
@@ -32,9 +34,15 @@ const PREVIEW_BINARY_ENV: &str = "RELAY_MIHOMO_PREVIEW_BINARY";
 const DEFAULT_MANAGED_MIXED_PORT: u16 = 17_890;
 const MAX_SUBSCRIPTION_FILE_BYTES: u64 = 16 * 1024;
 const IMPORTED_SUBSCRIPTION_FILE: &str = "subscription.url";
+const STORED_SUBSCRIPTION_PREFIX: &str = "source-";
+const STORED_SUBSCRIPTION_SUFFIX: &str = ".url";
+const SAVED_VLESS_PREFIX: &str = "saved-";
+const SAVED_VLESS_SUFFIX: &str = ".vless";
+const WORKSPACE_STATE_FILE: &str = "workspace.state";
 const PREVIEW_PROVIDER_ATTEMPTS: usize = 80;
 const PREVIEW_PROVIDER_DELAY: Duration = Duration::from_millis(250);
 static NEXT_PREVIEW_WORKSPACE: AtomicU64 = AtomicU64::new(0);
+static NEXT_STORED_SOURCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug)]
 pub(crate) enum ControllerState {
@@ -183,6 +191,23 @@ impl ControllerRuntime {
             Self::Invalid { message } => Err(LoadError::Runtime(message.clone())),
         }
     }
+
+    pub(crate) fn set_tun_enabled(&self, enabled: bool) -> Result<(), LoadError> {
+        let endpoint = match self {
+            Self::External { endpoint } => endpoint.clone(),
+            Self::Managed { manager, .. } => {
+                let mut manager = manager
+                    .lock()
+                    .map_err(|_poisoned| LoadError::Runtime("托管内核状态锁已损坏".to_owned()))?;
+                manager
+                    .running_endpoint()?
+                    .ok_or_else(|| LoadError::Runtime("Mihomo 尚未运行，请先连接内核".to_owned()))?
+                    .uri()
+            }
+            Self::Invalid { message } => return Err(LoadError::Runtime(message.clone())),
+        };
+        set_tun_enabled(&endpoint, enabled).map_err(LoadError::from)
+    }
 }
 
 pub(crate) struct RuntimeSnapshot {
@@ -198,6 +223,8 @@ pub(crate) struct LoadedSnapshot {
     pub download_total: u64,
     pub upload_total: u64,
     pub observed_routes: Vec<ObservedRouteEvidence>,
+    pub connections: Vec<Connection>,
+    pub runtime: RuntimeConfig,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -213,6 +240,28 @@ pub(crate) struct LoadedProviderNode {
     pub protocol: String,
     pub latency_label: Option<String>,
     pub alive: Option<bool>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct StoredSubscription {
+    pub id: String,
+    pub source: SecretUrl,
+}
+
+#[derive(Clone, Eq, PartialEq)]
+pub(crate) struct StoredVlessNode {
+    pub id: String,
+    pub source: VlessSource,
+}
+
+impl fmt::Debug for StoredVlessNode {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("StoredVlessNode")
+            .field("id", &self.id)
+            .field("source", &"<redacted>")
+            .finish()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -390,6 +439,353 @@ pub(crate) fn imported_subscription_store_dir() -> Result<PathBuf, SubscriptionS
 }
 
 #[cfg(not(windows))]
+pub(crate) fn save_subscription_source_in(
+    directory: &Path,
+    input: &str,
+) -> Result<StoredSubscription, SubscriptionStoreError> {
+    let source = SecretUrl::parse_subscription(input)
+        .map_err(|_error| SubscriptionStoreError::InvalidSource)?;
+    if let Some(existing) = load_subscription_sources_in(directory)?
+        .into_iter()
+        .find(|stored| stored.source == source)
+    {
+        return Ok(existing);
+    }
+    let id = next_stored_source_id(STORED_SUBSCRIPTION_PREFIX);
+    let file_name = format!("{id}{STORED_SUBSCRIPTION_SUFFIX}");
+    write_private_atomic(directory, &file_name, input.as_bytes())
+        .map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
+    Ok(StoredSubscription { id, source })
+}
+
+#[cfg(windows)]
+pub(crate) fn save_subscription_source_in(
+    _directory: &Path,
+    _input: &str,
+) -> Result<StoredSubscription, SubscriptionStoreError> {
+    Err(SubscriptionStoreError::StoreUnavailable)
+}
+
+#[cfg(not(windows))]
+pub(crate) fn load_subscription_sources_in(
+    directory: &Path,
+) -> Result<Vec<StoredSubscription>, SubscriptionStoreError> {
+    let mut sources = Vec::new();
+    let Some(entries) = private_store_entries(directory)? else {
+        return Ok(sources);
+    };
+    for path in entries {
+        let Some(file_name) = path.file_name().and_then(std::ffi::OsStr::to_str) else {
+            continue;
+        };
+        let id = if file_name == IMPORTED_SUBSCRIPTION_FILE {
+            "subscription:legacy".to_owned()
+        } else if let Some(id) = file_name.strip_suffix(STORED_SUBSCRIPTION_SUFFIX)
+            && valid_stored_id(id, STORED_SUBSCRIPTION_PREFIX)
+        {
+            id.to_owned()
+        } else {
+            continue;
+        };
+        let contents = read_private_source(&path)?;
+        let source = SecretUrl::parse_subscription(&contents)
+            .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
+        if !sources
+            .iter()
+            .any(|stored: &StoredSubscription| stored.source == source)
+        {
+            sources.push(StoredSubscription { id, source });
+        }
+    }
+    sources.sort_by(|left, right| left.id.cmp(&right.id));
+    Ok(sources)
+}
+
+#[cfg(windows)]
+pub(crate) fn load_subscription_sources_in(
+    directory: &Path,
+) -> Result<Vec<StoredSubscription>, SubscriptionStoreError> {
+    load_imported_subscription_in(directory).map(|source| {
+        source
+            .map(|source| {
+                vec![StoredSubscription {
+                    id: "subscription:legacy".to_owned(),
+                    source,
+                }]
+            })
+            .unwrap_or_default()
+    })
+}
+
+#[cfg(not(windows))]
+pub(crate) fn remove_subscription_source_in(
+    directory: &Path,
+    id: &str,
+) -> Result<(), SubscriptionStoreError> {
+    require_clean_absolute_store(directory)?;
+    let file_name = if id == "subscription:legacy" {
+        IMPORTED_SUBSCRIPTION_FILE.to_owned()
+    } else if valid_stored_id(id, STORED_SUBSCRIPTION_PREFIX) {
+        format!("{id}{STORED_SUBSCRIPTION_SUFFIX}")
+    } else {
+        return Err(SubscriptionStoreError::StoreUnavailable);
+    };
+    remove_private_source(&directory.join(file_name))
+}
+
+#[cfg(windows)]
+pub(crate) fn remove_subscription_source_in(
+    _directory: &Path,
+    _id: &str,
+) -> Result<(), SubscriptionStoreError> {
+    Err(SubscriptionStoreError::StoreUnavailable)
+}
+
+#[cfg(not(windows))]
+pub(crate) fn save_vless_source_in(
+    directory: &Path,
+    input: &str,
+) -> Result<StoredVlessNode, SubscriptionStoreError> {
+    let source =
+        VlessSource::parse(input).map_err(|_error| SubscriptionStoreError::InvalidSource)?;
+    if let Some(existing) = load_vless_sources_in(directory)?
+        .into_iter()
+        .find(|stored| stored.source == source)
+    {
+        return Ok(existing);
+    }
+    let id = next_stored_source_id(SAVED_VLESS_PREFIX);
+    let file_name = format!("{id}{SAVED_VLESS_SUFFIX}");
+    source.expose_to(|value| {
+        write_private_atomic(directory, &file_name, value.as_bytes())
+            .map_err(|_error| SubscriptionStoreError::StoreUnavailable)
+    })?;
+    Ok(StoredVlessNode { id, source })
+}
+
+#[cfg(windows)]
+pub(crate) fn save_vless_source_in(
+    _directory: &Path,
+    _input: &str,
+) -> Result<StoredVlessNode, SubscriptionStoreError> {
+    Err(SubscriptionStoreError::StoreUnavailable)
+}
+
+#[cfg(not(windows))]
+pub(crate) fn load_vless_sources_in(
+    directory: &Path,
+) -> Result<Vec<StoredVlessNode>, SubscriptionStoreError> {
+    let mut nodes = Vec::new();
+    let Some(entries) = private_store_entries(directory)? else {
+        return Ok(nodes);
+    };
+    for path in entries {
+        let Some(file_name) = path.file_name().and_then(std::ffi::OsStr::to_str) else {
+            continue;
+        };
+        let Some(id) = file_name.strip_suffix(SAVED_VLESS_SUFFIX) else {
+            continue;
+        };
+        if !valid_stored_id(id, SAVED_VLESS_PREFIX) {
+            continue;
+        }
+        let contents = read_private_source(&path)?;
+        let source = VlessSource::parse(&contents)
+            .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
+        nodes.push(StoredVlessNode {
+            id: id.to_owned(),
+            source,
+        });
+    }
+    nodes.sort_by(|left, right| left.id.cmp(&right.id));
+    Ok(nodes)
+}
+
+#[cfg(windows)]
+pub(crate) fn load_vless_sources_in(
+    _directory: &Path,
+) -> Result<Vec<StoredVlessNode>, SubscriptionStoreError> {
+    Ok(Vec::new())
+}
+
+#[cfg(not(windows))]
+pub(crate) fn remove_vless_source_in(
+    directory: &Path,
+    id: &str,
+) -> Result<(), SubscriptionStoreError> {
+    require_clean_absolute_store(directory)?;
+    if !valid_stored_id(id, SAVED_VLESS_PREFIX) {
+        return Err(SubscriptionStoreError::StoreUnavailable);
+    }
+    remove_private_source(&directory.join(format!("{id}{SAVED_VLESS_SUFFIX}")))
+}
+
+#[cfg(windows)]
+pub(crate) fn remove_vless_source_in(
+    _directory: &Path,
+    _id: &str,
+) -> Result<(), SubscriptionStoreError> {
+    Err(SubscriptionStoreError::StoreUnavailable)
+}
+
+#[cfg(not(windows))]
+pub(crate) fn save_collapsed_groups_in<'a>(
+    directory: &Path,
+    group_ids: impl IntoIterator<Item = &'a str>,
+) -> Result<(), SubscriptionStoreError> {
+    let mut ids: Vec<_> = group_ids
+        .into_iter()
+        .filter(|id| valid_workspace_group_id(id))
+        .collect();
+    ids.sort_unstable();
+    ids.dedup();
+    let contents = ids.join("\n");
+    write_private_atomic(directory, WORKSPACE_STATE_FILE, contents.as_bytes())
+        .map(|_path| ())
+        .map_err(|_error| SubscriptionStoreError::StoreUnavailable)
+}
+
+#[cfg(windows)]
+pub(crate) fn save_collapsed_groups_in<'a>(
+    _directory: &Path,
+    _group_ids: impl IntoIterator<Item = &'a str>,
+) -> Result<(), SubscriptionStoreError> {
+    Err(SubscriptionStoreError::StoreUnavailable)
+}
+
+#[cfg(not(windows))]
+pub(crate) fn load_collapsed_groups_in(
+    directory: &Path,
+) -> Result<Vec<String>, SubscriptionStoreError> {
+    require_clean_absolute_store(directory)?;
+    let path = directory.join(WORKSPACE_STATE_FILE);
+    let contents = match fs::symlink_metadata(&path) {
+        Ok(_) => read_private_source_allow_empty(&path)?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(_error) => return Err(SubscriptionStoreError::StoredSourceUnavailable),
+    };
+    contents
+        .lines()
+        .map(str::to_owned)
+        .map(|id| {
+            valid_workspace_group_id(&id)
+                .then_some(id)
+                .ok_or(SubscriptionStoreError::StoredSourceUnavailable)
+        })
+        .collect()
+}
+
+#[cfg(windows)]
+pub(crate) fn load_collapsed_groups_in(
+    _directory: &Path,
+) -> Result<Vec<String>, SubscriptionStoreError> {
+    Ok(Vec::new())
+}
+
+fn next_stored_source_id(prefix: &str) -> String {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let sequence = NEXT_STORED_SOURCE.fetch_add(1, Ordering::Relaxed);
+    format!("{prefix}{timestamp:x}-{sequence:x}")
+}
+
+fn valid_stored_id(id: &str, prefix: &str) -> bool {
+    id.strip_prefix(prefix).is_some_and(|suffix| {
+        !suffix.is_empty()
+            && suffix
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() || byte == b'-')
+    })
+}
+
+fn valid_workspace_group_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 160
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b':' | b'-' | b'_'))
+}
+
+#[cfg(not(windows))]
+fn private_store_entries(directory: &Path) -> Result<Option<Vec<PathBuf>>, SubscriptionStoreError> {
+    require_clean_absolute_store(directory)?;
+    let iterator = match fs::read_dir(directory) {
+        Ok(iterator) => iterator,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_error) => return Err(SubscriptionStoreError::StoredSourceUnavailable),
+    };
+    let mut paths = Vec::new();
+    for entry in iterator {
+        paths.push(
+            entry
+                .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?
+                .path(),
+        );
+    }
+    Ok(Some(paths))
+}
+
+#[cfg(not(windows))]
+fn read_private_source(path: &Path) -> Result<String, SubscriptionStoreError> {
+    let contents = read_private_source_allow_empty(path)?;
+    if contents.is_empty() || contents.lines().count() != 1 || contents.trim() != contents {
+        return Err(SubscriptionStoreError::StoredSourceUnavailable);
+    }
+    Ok(contents)
+}
+
+#[cfg(not(windows))]
+fn read_private_source_allow_empty(path: &Path) -> Result<String, SubscriptionStoreError> {
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(SubscriptionStoreError::StoredSourceUnavailable);
+    }
+    let file =
+        fs::File::open(path).map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
+    let opened_metadata = file
+        .metadata()
+        .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
+    if opened_metadata.len() > MAX_SUBSCRIPTION_FILE_BYTES {
+        return Err(SubscriptionStoreError::StoredSourceUnavailable);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        if metadata.dev() != opened_metadata.dev()
+            || metadata.ino() != opened_metadata.ino()
+            || opened_metadata.permissions().mode() & 0o077 != 0
+        {
+            return Err(SubscriptionStoreError::StoredSourceUnavailable);
+        }
+    }
+    let mut contents = String::new();
+    file.take(MAX_SUBSCRIPTION_FILE_BYTES + 1)
+        .read_to_string(&mut contents)
+        .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
+    if contents.len() as u64 > MAX_SUBSCRIPTION_FILE_BYTES {
+        return Err(SubscriptionStoreError::StoredSourceUnavailable);
+    }
+    Ok(contents)
+}
+
+#[cfg(not(windows))]
+fn remove_private_source(path: &Path) -> Result<(), SubscriptionStoreError> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+            Err(SubscriptionStoreError::StoredSourceUnavailable)
+        }
+        Ok(_) => fs::remove_file(path).map_err(|_error| SubscriptionStoreError::StoreUnavailable),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(_error) => Err(SubscriptionStoreError::StoreUnavailable),
+    }
+}
+
+#[cfg(not(windows))]
+#[allow(dead_code)]
 pub(crate) fn save_imported_subscription_in(
     directory: &Path,
     input: &str,
@@ -410,6 +806,7 @@ pub(crate) fn save_imported_subscription_in(
 }
 
 #[cfg(not(windows))]
+#[allow(dead_code)]
 pub(crate) fn load_imported_subscription_in(
     directory: &Path,
 ) -> Result<Option<SecretUrl>, SubscriptionStoreError> {
@@ -470,6 +867,7 @@ pub(crate) fn load_imported_subscription_in(
 }
 
 #[cfg(not(windows))]
+#[allow(dead_code)]
 pub(crate) fn remove_imported_subscription_in(
     directory: &Path,
 ) -> Result<(), SubscriptionStoreError> {
@@ -955,6 +1353,8 @@ pub(crate) fn load(endpoint: &str) -> Result<LoadedSnapshot, LoadError> {
     let download_total = snapshot.connections.download_total;
     let upload_total = snapshot.connections.upload_total;
     let observed_routes = snapshot.observed_routes();
+    let connections = snapshot.connections.connections.clone();
+    let runtime = snapshot.runtime.clone();
 
     Ok(LoadedSnapshot {
         catalog,
@@ -964,6 +1364,8 @@ pub(crate) fn load(endpoint: &str) -> Result<LoadedSnapshot, LoadError> {
         download_total,
         upload_total,
         observed_routes,
+        connections,
+        runtime,
     })
 }
 
@@ -1006,6 +1408,27 @@ fn fetch_snapshot(endpoint: &str) -> Result<MihomoSnapshot, MihomoError> {
 
     let config = with_configured_secret(ControllerConfig::new(endpoint)?);
     MihomoClient::new(config, StdHttpTransport::default()).fetch_snapshot()
+}
+
+fn set_tun_enabled(endpoint: &str, enabled: bool) -> Result<(), MihomoError> {
+    #[cfg(unix)]
+    if let Some(socket_path) = unix_socket_path(endpoint)? {
+        return MihomoClient::new(
+            ControllerConfig::default(),
+            UnixSocketTransport::new(socket_path),
+        )
+        .set_tun_enabled(enabled);
+    }
+
+    #[cfg(not(unix))]
+    if endpoint.starts_with("unix://") {
+        return Err(MihomoError::InvalidConfig(
+            "Unix controller sockets are not supported on this platform".to_owned(),
+        ));
+    }
+
+    let config = with_configured_secret(ControllerConfig::new(endpoint)?);
+    MihomoClient::new(config, StdHttpTransport::default()).set_tun_enabled(enabled)
 }
 
 fn fetch_version(endpoint: &str) -> Result<VersionInfo, MihomoError> {
@@ -1151,6 +1574,52 @@ mod tests {
                 0
             );
         }
+
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn source_store_keeps_multiple_subscriptions_saved_nodes_and_fold_state()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = test_temp_dir("relay-multi-source-store");
+        let store = root.join("subscriptions");
+        let first = super::save_subscription_source_in(
+            &store,
+            "https://first.example.invalid/client?token=fixture-one&name=First",
+        )?;
+        let second = super::save_subscription_source_in(
+            &store,
+            "https://second.example.invalid/client?token=fixture-two&name=Second",
+        )?;
+        let duplicate = super::save_subscription_source_in(
+            &store,
+            "https://first.example.invalid/client?token=fixture-one&name=First",
+        )?;
+        let saved = super::save_vless_source_in(
+            &store,
+            "vless://00000000-0000-4000-8000-000000000000@edge.example.invalid:443?security=tls#Saved",
+        )?;
+        super::save_collapsed_groups_in(&store, [first.id.as_str(), "saved", "../../unsafe"])?;
+
+        let subscriptions = super::load_subscription_sources_in(&store)?;
+        let nodes = super::load_vless_sources_in(&store)?;
+        assert_eq!(subscriptions.len(), 2);
+        assert_ne!(first.id, second.id);
+        assert_eq!(duplicate.id, first.id);
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].source.preview().name, "Saved");
+        assert!(!format!("{saved:?}").contains("00000000"));
+        assert_eq!(
+            super::load_collapsed_groups_in(&store)?,
+            vec!["saved".to_owned(), first.id.clone()]
+        );
+
+        super::remove_subscription_source_in(&store, &first.id)?;
+        super::remove_vless_source_in(&store, &saved.id)?;
+        assert_eq!(super::load_subscription_sources_in(&store)?.len(), 1);
+        assert!(super::load_vless_sources_in(&store)?.is_empty());
 
         fs::remove_dir_all(root)?;
         Ok(())

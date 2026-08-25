@@ -172,7 +172,50 @@ pub enum PrimaryWorkspace {
     #[default]
     Policies,
     Nodes,
+    Activity,
+    Logs,
     Configuration,
+}
+
+impl PrimaryWorkspace {
+    #[must_use]
+    pub const fn navigation_order() -> &'static [Self; 5] {
+        &[
+            Self::Nodes,
+            Self::Policies,
+            Self::Activity,
+            Self::Logs,
+            Self::Configuration,
+        ]
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ProxyMode {
+    #[default]
+    Off,
+    System,
+    Tun,
+}
+
+impl ProxyMode {
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Off => "关闭代理",
+            Self::System => "系统代理",
+            Self::Tun => "TUN 代理",
+        }
+    }
+
+    #[must_use]
+    pub const fn next(self) -> Self {
+        match self {
+            Self::Off => Self::System,
+            Self::System => Self::Tun,
+            Self::Tun => Self::Off,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -224,6 +267,18 @@ impl NodeWorkspaceState {
     #[must_use]
     pub fn is_group_collapsed(&self, group_id: &str) -> bool {
         self.collapsed_groups.contains(group_id)
+    }
+
+    pub fn replace_collapsed_groups<'a>(&mut self, group_ids: impl IntoIterator<Item = &'a str>) {
+        self.collapsed_groups = group_ids
+            .into_iter()
+            .filter(|group_id| !group_id.is_empty())
+            .map(str::to_owned)
+            .collect();
+    }
+
+    pub fn collapsed_group_ids(&self) -> impl Iterator<Item = &str> {
+        self.collapsed_groups.iter().map(String::as_str)
     }
 }
 

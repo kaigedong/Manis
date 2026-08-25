@@ -86,7 +86,7 @@ fn capture_remote_subscription_preview(
     })?;
     let window: AnyWindowHandle = window.into();
     refresh(cx, window)?;
-    cx.simulate_click(window, point(px(110.0), px(164.0)), Modifiers::none());
+    cx.simulate_click(window, point(px(110.0), px(240.0)), Modifiers::none());
     refresh(cx, window)?;
     cx.simulate_click(window, point(px(400.0), px(342.0)), Modifiers::none());
     refresh(cx, window)?;
@@ -102,6 +102,16 @@ fn capture_remote_subscription_preview(
         window,
         "configuration-wide-remote-subscription-nodes.png",
     )?;
+
+    cx.simulate_click(window, point(px(400.0), px(342.0)), Modifiers::none());
+    refresh(cx, window)?;
+    cx.simulate_input(
+        window,
+        "vless://00000000-0000-4000-8000-000000000000@edge.example.invalid:443?security=tls&type=ws#Saved%20Edge",
+    );
+    refresh(cx, window)?;
+    cx.simulate_click(window, point(px(370.0), px(370.0)), Modifiers::none());
+    refresh(cx, window)?;
 
     capture_restored_subscription_views(cx, &store)?;
     stop.store(true, Ordering::Relaxed);
@@ -154,7 +164,7 @@ fn capture_restored_subscription_views(
         refresh(cx, window)?;
         cx.simulate_click(
             window,
-            point(px(navigation_x), px(164.0)),
+            point(px(navigation_x), px(240.0)),
             Modifiers::none(),
         );
         for _ in 0..40 {
@@ -162,11 +172,7 @@ fn capture_restored_subscription_views(
             refresh(cx, window)?;
         }
         save_screenshot(cx, window, configuration_file)?;
-        cx.simulate_click(
-            window,
-            point(px(navigation_x), px(120.0)),
-            Modifiers::none(),
-        );
+        cx.simulate_click(window, point(px(navigation_x), px(76.0)), Modifiers::none());
         refresh(cx, window)?;
         save_screenshot(cx, window, nodes_file)?;
         cx.simulate_click(
@@ -202,7 +208,7 @@ fn capture_configuration(
     let navigation_x = if width >= 1_280.0 { 110.0 } else { 30.0 };
     cx.simulate_click(
         window,
-        point(px(navigation_x), px(164.0)),
+        point(px(navigation_x), px(240.0)),
         Modifiers::none(),
     );
     refresh(cx, window)?;
@@ -304,7 +310,15 @@ fn capture_connected(
     refresh(cx, window)?;
     save_screenshot(cx, window, "native-wide-connected.png")?;
 
-    cx.simulate_click(window, point(px(110.0), px(164.0)), Modifiers::none());
+    cx.simulate_click(window, point(px(110.0), px(158.0)), Modifiers::none());
+    refresh(cx, window)?;
+    save_screenshot(cx, window, "activity-wide-connected.png")?;
+
+    cx.simulate_click(window, point(px(110.0), px(199.0)), Modifiers::none());
+    refresh(cx, window)?;
+    save_screenshot(cx, window, "logs-wide-connected.png")?;
+
+    cx.simulate_click(window, point(px(110.0), px(240.0)), Modifiers::none());
     refresh(cx, window)?;
     save_screenshot(cx, window, "configuration-wide-connected-sources.png")?;
 
@@ -367,7 +381,7 @@ fn spawn_mihomo_fixture() -> Result<FixtureServer, Box<dyn std::error::Error>> {
     let listener = TcpListener::bind("127.0.0.1:0")?;
     let endpoint = format!("http://{}", listener.local_addr()?);
     let server = std::thread::spawn(move || -> std::io::Result<()> {
-        for _ in 0..5 {
+        for _ in 0..6 {
             let (mut stream, _) = listener.accept()?;
             let mut request_line = String::new();
             BufReader::new(stream.try_clone()?).read_line(&mut request_line)?;
@@ -404,6 +418,7 @@ fn fixture_response(path: &str) -> &'static str {
         "/connections" => {
             r#"{"downloadTotal":7340032,"uploadTotal":1572864,"connections":[{"id":"fixture","metadata":{"host":"openai.com","process":"Safari","destinationPort":443},"chains":["新加坡 SG-02","AI 自动选择"],"providerChains":[["Provider A","新加坡 SG-02"]],"rule":"DOMAIN-SUFFIX","rulePayload":"openai.com","upload":2048,"download":8192}]}"#
         }
+        "/configs" => r#"{"mixed-port":7890,"port":0,"socks-port":0,"tun":{"enable":false}}"#,
         _ => r"{}",
     }
 }

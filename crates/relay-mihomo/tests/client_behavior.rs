@@ -6,26 +6,70 @@ use std::time::Duration;
 #[cfg(unix)]
 use relay_mihomo::UnixSocketTransport;
 use relay_mihomo::{
-    ControllerConfig, GroupKind, MihomoClient, MihomoError, ReadonlyTransport, StdHttpTransport,
-    to_policy_catalog,
+    ControllerConfig, GroupKind, MihomoClient, MihomoError, ReadonlyTransport, RuntimeConfig,
+    RuntimeTunConfig, StdHttpTransport, to_policy_catalog,
 };
+use serde_json::Value;
 
 #[derive(Default)]
 struct FakeTransport {
-    requests: RefCell<Vec<String>>,
+    requests: RefCell<Vec<RecordedRequest>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct RecordedRequest {
+    method: &'static str,
+    path: String,
+    body: Option<Value>,
+}
+
+impl RecordedRequest {
+    fn get(path: &str) -> Self {
+        Self {
+            method: "GET",
+            path: path.to_owned(),
+            body: None,
+        }
+    }
+
+    fn patch(path: &str, body: Value) -> Self {
+        Self {
+            method: "PATCH",
+            path: path.to_owned(),
+            body: Some(body),
+        }
+    }
 }
 
 impl ReadonlyTransport for FakeTransport {
     fn get(&self, _config: &ControllerConfig, path: &str) -> Result<String, MihomoError> {
-        self.requests.borrow_mut().push(path.to_owned());
+        self.requests.borrow_mut().push(RecordedRequest::get(path));
         match path {
             "/version" => Ok(r#"{"meta":true,"version":"v1.19.0","ignored":1}"#.to_owned()),
             "/proxies" => Ok(proxy_fixture()),
             "/providers/proxies" => Ok(provider_fixture()),
             "/rules" => Ok(rule_fixture()),
             "/connections" => Ok(connection_fixture()),
+            "/configs" => Ok(config_fixture()),
             _ => Err(MihomoError::InvalidResponse(format!(
                 "unexpected path {path}"
+            ))),
+        }
+    }
+
+    fn patch_json(
+        &self,
+        _config: &ControllerConfig,
+        path: &str,
+        body: &Value,
+    ) -> Result<String, MihomoError> {
+        self.requests
+            .borrow_mut()
+            .push(RecordedRequest::patch(path, body.clone()));
+        match path {
+            "/configs" => Ok(String::new()),
+            _ => Err(MihomoError::InvalidResponse(format!(
+                "unexpected patch path {path}"
             ))),
         }
     }
@@ -85,15 +129,18 @@ fn fetch_snapshot_requests_exact_readonly_endpoints() -> Result<(), Box<dyn std:
     assert_eq!(
         transport.requests.borrow().as_slice(),
         [
-            "/version",
-            "/proxies",
-            "/providers/proxies",
-            "/rules",
-            "/connections"
+            RecordedRequest::get("/version"),
+            RecordedRequest::get("/proxies"),
+            RecordedRequest::get("/providers/proxies"),
+            RecordedRequest::get("/rules"),
+            RecordedRequest::get("/connections"),
+            RecordedRequest::get("/configs")
         ]
     );
     assert_eq!(snapshot.version.version.as_deref(), Some("v1.19.0"));
     assert!(snapshot.version.meta);
+    assert_eq!(snapshot.runtime.mixed_port, Some(7890));
+    assert!(snapshot.runtime.tun.enable);
 
     Ok(())
 }
@@ -108,7 +155,7 @@ fn provider_preview_requests_only_the_provider_endpoint() -> Result<(), Box<dyn 
 
     assert_eq!(
         transport.requests.borrow().as_slice(),
-        ["/providers/proxies"]
+        [RecordedRequest::get("/providers/proxies")]
     );
     assert_eq!(providers.len(), 1);
     assert_eq!(providers[0].proxies.len(), 2);
@@ -141,7 +188,10 @@ fn readiness_fetches_only_the_version_endpoint() -> Result<(), Box<dyn std::erro
 
     let version = client.fetch_version()?;
 
-    assert_eq!(transport.requests.borrow().as_slice(), ["/version"]);
+    assert_eq!(
+        transport.requests.borrow().as_slice(),
+        [RecordedRequest::get("/version")]
+    );
     assert_eq!(version.version.as_deref(), Some("v1.19.0"));
     assert!(version.meta);
     Ok(())
@@ -217,6 +267,60 @@ fn exposes_observed_route_evidence_from_connections() -> Result<(), Box<dyn std:
 }
 
 #[test]
+fn fetch_runtime_config_parses_known_fields_and_tolerates_missing_values()
+-> Result<(), Box<dyn std::error::Error>> {
+    let runtime = MihomoClient::new(ControllerConfig::default(), FakeTransport::default())
+        .fetch_runtime_config()?;
+
+    assert_eq!(
+        runtime,
+        RuntimeConfig {
+            port: Some(7891),
+            socks_port: Some(7892),
+            mixed_port: Some(7890),
+            tun: RuntimeTunConfig { enable: true }
+        }
+    );
+
+    let minimal: RuntimeConfig = serde_json::from_str(r#"{"mode":"rule"}"#)?;
+    assert_eq!(minimal.port, None);
+    assert_eq!(minimal.socks_port, None);
+    assert_eq!(minimal.mixed_port, None);
+    assert!(!minimal.tun.enable);
+
+    Ok(())
+}
+
+#[test]
+fn set_tun_enabled_preserves_existing_tun_fields_in_patch_body()
+-> Result<(), Box<dyn std::error::Error>> {
+    let transport = FakeTransport::default();
+    let client = MihomoClient::new(ControllerConfig::default(), &transport);
+
+    client.set_tun_enabled(false)?;
+
+    assert_eq!(
+        transport.requests.borrow().as_slice(),
+        [
+            RecordedRequest::get("/configs"),
+            RecordedRequest::patch(
+                "/configs",
+                serde_json::json!({
+                    "tun": {
+                        "enable": false,
+                        "stack": "system",
+                        "auto-route": true,
+                        "dns-hijack": ["any:53"]
+                    }
+                })
+            )
+        ]
+    );
+
+    Ok(())
+}
+
+#[test]
 fn maps_snapshot_to_owned_policy_catalog() -> Result<(), Box<dyn std::error::Error>> {
     let transport = FakeTransport::default();
     let snapshot = MihomoClient::new(ControllerConfig::default(), &transport).fetch_snapshot()?;
@@ -260,6 +364,40 @@ fn std_http_transport_sends_bearer_auth_and_accepts_chunked()
 }
 
 #[test]
+fn std_http_transport_sends_json_patch_with_bearer_auth() -> Result<(), Box<dyn std::error::Error>>
+{
+    let (address, handle) =
+        spawn_one_response_server("HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")?;
+
+    let config = ControllerConfig::new(format!("http://{address}"))?
+        .with_secret("controller-token")
+        .with_timeouts(Duration::from_secs(1), Duration::from_secs(1));
+    let body = serde_json::json!({"tun":{"enable":true}});
+    let response = StdHttpTransport::default().patch_json(&config, "/configs", &body)?;
+    let request = handle.join().map_err(|_| "server thread panicked")?;
+
+    assert!(request.starts_with("PATCH /configs HTTP/1.1\r\n"));
+    assert!(request.contains("Authorization: Bearer controller-token\r\n"));
+    assert!(request.contains("Content-Type: application/json\r\n"));
+    assert!(request.contains("Content-Length: 23\r\n"));
+    assert!(request.ends_with(r#"{"tun":{"enable":true}}"#));
+    assert_eq!(response, "");
+
+    Ok(())
+}
+
+#[test]
+fn std_http_transport_rejects_non_absolute_patch_paths() {
+    let result = StdHttpTransport::default().patch_json(
+        &ControllerConfig::default(),
+        "configs",
+        &serde_json::json!({"tun":{"enable":true}}),
+    );
+
+    assert!(matches!(result, Err(MihomoError::InvalidRequestPath(_))));
+}
+
+#[test]
 fn std_http_transport_rejects_http_error_status() -> Result<(), Box<dyn std::error::Error>> {
     let (address, handle) = spawn_one_response_server(
         "HTTP/1.1 401 Unauthorized\r\nContent-Length: 12\r\n\r\nsecret denied",
@@ -282,6 +420,42 @@ fn std_http_transport_rejects_http_error_status() -> Result<(), Box<dyn std::err
     assert!(!format!("{err}").contains("controller-token"));
     assert!(!format!("{err}").contains("secret denie"));
 
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn unix_socket_transport_sends_json_patch_without_auth() -> Result<(), Box<dyn std::error::Error>> {
+    use std::os::unix::net::UnixListener;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let unique = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let socket_path = std::env::temp_dir().join(format!(
+        "relay-mihomo-patch-{}-{unique}.sock",
+        std::process::id()
+    ));
+    let listener = UnixListener::bind(&socket_path)?;
+    let server = std::thread::spawn(move || -> std::io::Result<String> {
+        let (mut stream, _) = listener.accept()?;
+        let mut request = [0_u8; 2048];
+        let read = stream.read(&mut request)?;
+        stream.write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")?;
+        Ok(String::from_utf8_lossy(&request[..read]).into_owned())
+    });
+
+    let config = ControllerConfig::default().with_secret("uds-token");
+    UnixSocketTransport::new(&socket_path).patch_json(
+        &config,
+        "/configs",
+        &serde_json::json!({"tun":{"enable":false}}),
+    )?;
+    let request = server.join().map_err(|_| "server thread panicked")??;
+    std::fs::remove_file(&socket_path)?;
+
+    assert!(request.starts_with("PATCH /configs HTTP/1.1\r\n"));
+    assert!(request.contains("Content-Type: application/json\r\n"));
+    assert!(!request.contains("Authorization:"));
+    assert!(request.ends_with(r#"{"tun":{"enable":false}}"#));
     Ok(())
 }
 
@@ -478,6 +652,24 @@ fn connection_fixture() -> String {
           "start": "2026-08-25T00:00:00Z"
         }
       ]
+    }
+    "#
+    .to_owned()
+}
+
+fn config_fixture() -> String {
+    r#"
+    {
+      "port": 7891,
+      "socks-port": 7892,
+      "mixed-port": 7890,
+      "mode": "rule",
+      "tun": {
+        "enable": true,
+        "stack": "system",
+        "auto-route": true,
+        "dns-hijack": ["any:53"]
+      }
     }
     "#
     .to_owned()

@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 use gpui::{
     Context, Div, Entity, FontWeight, IntoElement, ParentElement, Render, Role, Stateful, Styled,
@@ -6,9 +7,9 @@ use gpui::{
 };
 use relay_core::{
     CompactNavigation, ConfigurationWorkspaceState, NodeWorkspaceState, PolicyCatalog, PolicyGroup,
-    PolicyNode, PolicyWorkspaceState, PrimaryWorkspace, ProxyId, WindowSizeClass,
+    PolicyNode, PolicyWorkspaceState, PrimaryWorkspace, ProxyId, ProxyMode, WindowSizeClass,
 };
-use relay_mihomo::ObservedRouteEvidence;
+use relay_mihomo::{Connection, ObservedRouteEvidence, RuntimeConfig};
 use relay_profile::SecretUrl;
 
 use crate::{
@@ -16,14 +17,17 @@ use crate::{
     diagnostics::{UiEvent, trace_ui},
     mihomo::{
         self, ControllerRuntime, ControllerState, LoadedProvider, LoadedSnapshot,
-        SubscriptionPreviewError, SubscriptionStoreError,
+        StoredSubscription, StoredVlessNode, SubscriptionPreviewError, SubscriptionStoreError,
     },
     subscription::{SourceKind, SubscriptionInputError, SubscriptionPreview},
     subscription_input::{SubscriptionInputChanged, SubscriptionTextInput},
+    system_proxy::{ProxyPorts, SystemProxySession},
     theme::Theme,
 };
 
+mod activity;
 mod configuration;
+mod logs;
 mod nodes;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -47,6 +51,28 @@ enum ImportedSubscriptionState {
     Unavailable(SourceKind, SubscriptionPreviewError),
     StoreError(SubscriptionStoreError),
     Removing(SourceKind),
+}
+
+#[derive(Clone, Debug)]
+struct ImportedSubscription {
+    id: String,
+    source: SecretUrl,
+    state: ImportedSubscriptionState,
+    providers: Vec<LoadedProvider>,
+    generation: u64,
+}
+
+impl ImportedSubscription {
+    fn from_stored(stored: StoredSubscription) -> Self {
+        let kind = source_kind(&stored.source);
+        Self {
+            id: stored.id,
+            source: stored.source,
+            state: ImportedSubscriptionState::Pending(kind),
+            providers: Vec::new(),
+            generation: 0,
+        }
+    }
 }
 
 enum ImportSubscriptionError {
@@ -75,9 +101,14 @@ pub struct RelayApp {
     subscription_preview_providers: Vec<LoadedProvider>,
     subscription_preview_generation: u64,
     subscription_store_dir: Option<PathBuf>,
-    imported_subscription: Option<SecretUrl>,
-    imported_subscription_state: ImportedSubscriptionState,
-    proxy_enabled: bool,
+    imported_subscriptions: Vec<ImportedSubscription>,
+    saved_vless_nodes: Vec<StoredVlessNode>,
+    source_store_error: Option<SubscriptionStoreError>,
+    proxy_mode: ProxyMode,
+    proxy_mode_busy: bool,
+    proxy_runtime: RuntimeConfig,
+    system_proxy: Arc<Mutex<SystemProxySession>>,
+    active_connections: Vec<Connection>,
     inspector_open: bool,
     dark: bool,
     status: String,
@@ -125,22 +156,42 @@ impl RelayApp {
         subscription_store_dir: Option<PathBuf>,
     ) -> Self {
         let status = runtime.initial_status();
-        let (imported_subscription, imported_subscription_state) = subscription_store_dir
-            .as_ref()
-            .map_or((None, ImportedSubscriptionState::None), |directory| {
-                match mihomo::load_imported_subscription_in(directory) {
-                    Ok(Some(subscription)) => {
-                        let kind = source_kind(&subscription);
-                        (Some(subscription), ImportedSubscriptionState::Pending(kind))
+        let (imported_subscriptions, saved_vless_nodes, collapsed_groups, source_store_error) =
+            subscription_store_dir.as_ref().map_or_else(
+                || (Vec::new(), Vec::new(), Vec::new(), None),
+                |directory| {
+                    let subscriptions = mihomo::load_subscription_sources_in(directory);
+                    let nodes = mihomo::load_vless_sources_in(directory);
+                    let collapsed = mihomo::load_collapsed_groups_in(directory);
+                    match (subscriptions, nodes, collapsed) {
+                        (Ok(subscriptions), Ok(nodes), Ok(collapsed)) => (
+                            subscriptions
+                                .into_iter()
+                                .map(ImportedSubscription::from_stored)
+                                .collect(),
+                            nodes,
+                            collapsed,
+                            None,
+                        ),
+                        (subscriptions, nodes, collapsed) => (
+                            subscriptions
+                                .unwrap_or_default()
+                                .into_iter()
+                                .map(ImportedSubscription::from_stored)
+                                .collect(),
+                            nodes.unwrap_or_default(),
+                            collapsed.unwrap_or_default(),
+                            Some(SubscriptionStoreError::StoredSourceUnavailable),
+                        ),
                     }
-                    Ok(None) => (None, ImportedSubscriptionState::None),
-                    Err(error) => (None, ImportedSubscriptionState::StoreError(error)),
-                }
-            });
+                },
+            );
+        let mut node_workspace = NodeWorkspaceState::default();
+        node_workspace.replace_collapsed_groups(collapsed_groups.iter().map(String::as_str));
         Self {
             primary_workspace: PrimaryWorkspace::default(),
             configuration: ConfigurationWorkspaceState::default(),
-            node_workspace: NodeWorkspaceState::default(),
+            node_workspace,
             workspace: PolicyWorkspaceState::demo(),
             catalog: demo::catalog(),
             runtime,
@@ -150,9 +201,14 @@ impl RelayApp {
             subscription_preview_providers: Vec::new(),
             subscription_preview_generation: 0,
             subscription_store_dir,
-            imported_subscription,
-            imported_subscription_state,
-            proxy_enabled: true,
+            imported_subscriptions,
+            saved_vless_nodes,
+            source_store_error,
+            proxy_mode: ProxyMode::Off,
+            proxy_mode_busy: false,
+            proxy_runtime: RuntimeConfig::default(),
+            system_proxy: Arc::new(Mutex::new(SystemProxySession::default())),
+            active_connections: Vec::new(),
             inspector_open: false,
             dark: false,
             status,
@@ -177,7 +233,7 @@ impl RelayApp {
         });
         self.subscription_input = Some(input);
         self.subscription_input_events = Some(events);
-        self.restore_imported_subscription(cx);
+        self.restore_imported_subscriptions(cx);
     }
 
     fn import_remote_subscription(
@@ -209,7 +265,7 @@ impl RelayApp {
                 .spawn(async move {
                     let providers = mihomo::preview_subscription(&input)
                         .map_err(ImportSubscriptionError::Preview)?;
-                    let subscription = mihomo::save_imported_subscription_in(&store_dir, &input)
+                    let subscription = mihomo::save_subscription_source_in(&store_dir, &input)
                         .map_err(ImportSubscriptionError::Store)?;
                     Ok::<_, ImportSubscriptionError>((subscription, providers))
                 })
@@ -226,15 +282,33 @@ impl RelayApp {
                         let node_count: usize =
                             providers.iter().map(|provider| provider.nodes.len()).sum();
                         let provider_count = providers.len();
-                        this.imported_subscription = Some(subscription);
-                        this.imported_subscription_state = ImportedSubscriptionState::Ready(kind);
+                        let stored_id = subscription.id.clone();
+                        if let Some(existing) = this
+                            .imported_subscriptions
+                            .iter_mut()
+                            .find(|existing| existing.id == stored_id)
+                        {
+                            existing.source = subscription.source;
+                            existing.state = ImportedSubscriptionState::Ready(kind);
+                            existing.providers.clone_from(&providers);
+                        } else {
+                            this.imported_subscriptions.push(ImportedSubscription {
+                                id: stored_id,
+                                source: subscription.source,
+                                state: ImportedSubscriptionState::Ready(kind),
+                                providers: providers.clone(),
+                                generation,
+                            });
+                        }
                         this.subscription_preview_providers = providers;
                         this.subscription_feedback = SubscriptionFeedback::Idle;
                         if let Some(input) = this.subscription_input.as_ref() {
                             input.update(cx, SubscriptionTextInput::clear_without_event);
                         }
-                        this.status =
-                            format!("订阅已导入 · {provider_count} 个来源 · {node_count} 个节点");
+                        this.status = format!(
+                            "订阅已导入 · 共 {} 个订阅组 · {provider_count} 个来源 · {node_count} 个节点",
+                            this.imported_subscriptions.len()
+                        );
                         trace_ui(UiEvent::SourceImportSucceeded);
                     }
                     Err(ImportSubscriptionError::Preview(error)) => {
@@ -256,42 +330,67 @@ impl RelayApp {
         cx.notify();
     }
 
-    fn restore_imported_subscription(&mut self, cx: &mut Context<Self>) {
-        let ImportedSubscriptionState::Pending(kind) = self.imported_subscription_state else {
+    fn restore_imported_subscriptions(&mut self, cx: &mut Context<Self>) {
+        let pending: Vec<_> = self
+            .imported_subscriptions
+            .iter()
+            .filter(|subscription| {
+                matches!(subscription.state, ImportedSubscriptionState::Pending(_))
+            })
+            .map(|subscription| subscription.id.clone())
+            .collect();
+        for id in pending {
+            self.restore_imported_subscription(id, cx);
+        }
+    }
+
+    fn restore_imported_subscription(&mut self, id: String, cx: &mut Context<Self>) {
+        let Some(subscription) = self
+            .imported_subscriptions
+            .iter_mut()
+            .find(|subscription| subscription.id == id)
+        else {
             return;
         };
-        let Some(subscription) = self.imported_subscription.clone() else {
-            self.imported_subscription_state = ImportedSubscriptionState::None;
+        let ImportedSubscriptionState::Pending(kind) = subscription.state else {
             return;
         };
+        let source = subscription.source.clone();
         self.subscription_preview_generation = self.subscription_preview_generation.wrapping_add(1);
         let generation = self.subscription_preview_generation;
-        self.imported_subscription_state = ImportedSubscriptionState::Refreshing(kind);
-        "正在恢复已导入订阅的节点".clone_into(&mut self.status);
+        subscription.generation = generation;
+        subscription.state = ImportedSubscriptionState::Refreshing(kind);
+        "正在恢复已导入订阅的节点组".clone_into(&mut self.status);
         trace_ui(UiEvent::SourceRestoreStarted);
 
         let executor = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
             let result = executor
-                .spawn(async move { mihomo::preview_imported_subscription(subscription) })
+                .spawn(async move { mihomo::preview_imported_subscription(source) })
                 .await;
             this.update(cx, |this, cx| {
-                if this.subscription_preview_generation != generation {
+                let Some(subscription) = this
+                    .imported_subscriptions
+                    .iter_mut()
+                    .find(|subscription| subscription.id == id)
+                else {
+                    return;
+                };
+                if subscription.generation != generation {
                     return;
                 }
                 match result {
                     Ok(providers) => {
                         let node_count: usize =
                             providers.iter().map(|provider| provider.nodes.len()).sum();
-                        this.subscription_preview_providers = providers;
-                        this.imported_subscription_state = ImportedSubscriptionState::Ready(kind);
-                        this.status = format!("已恢复导入订阅 · {node_count} 个节点");
+                        subscription.providers = providers;
+                        subscription.state = ImportedSubscriptionState::Ready(kind);
+                        this.status = format!("已恢复订阅节点组 · {node_count} 个节点");
                         trace_ui(UiEvent::SourceRestoreSucceeded);
                     }
                     Err(error) => {
-                        this.imported_subscription_state =
-                            ImportedSubscriptionState::Unavailable(kind, error);
-                        this.status = format!("已导入订阅刷新失败：{error}");
+                        subscription.state = ImportedSubscriptionState::Unavailable(kind, error);
+                        this.status = format!("订阅节点组刷新失败：{error}");
                         trace_ui(UiEvent::SourceRestoreFailed);
                     }
                 }
@@ -302,40 +401,51 @@ impl RelayApp {
         .detach();
     }
 
-    fn remove_imported_subscription(&mut self, cx: &mut Context<Self>) {
+    fn remove_imported_subscription(&mut self, id: String, cx: &mut Context<Self>) {
         let Some(store_dir) = self.subscription_store_dir.clone() else {
             return;
         };
-        let Some(subscription) = self.imported_subscription.as_ref() else {
+        let Some(subscription) = self
+            .imported_subscriptions
+            .iter_mut()
+            .find(|subscription| subscription.id == id)
+        else {
             return;
         };
-        let kind = source_kind(subscription);
+        let kind = source_kind(&subscription.source);
         self.subscription_preview_generation = self.subscription_preview_generation.wrapping_add(1);
         let generation = self.subscription_preview_generation;
+        subscription.generation = generation;
         self.subscription_feedback = SubscriptionFeedback::Idle;
-        self.imported_subscription_state = ImportedSubscriptionState::Removing(kind);
+        subscription.state = ImportedSubscriptionState::Removing(kind);
         "正在移除已导入订阅".clone_into(&mut self.status);
         trace_ui(UiEvent::SourceRemoveStarted);
 
         let executor = cx.background_executor().clone();
+        let remove_id = id.clone();
         cx.spawn(async move |this, cx| {
             let result = executor
-                .spawn(async move { mihomo::remove_imported_subscription_in(&store_dir) })
+                .spawn(async move { mihomo::remove_subscription_source_in(&store_dir, &remove_id) })
                 .await;
             this.update(cx, |this, cx| {
-                if this.subscription_preview_generation != generation {
+                let Some(index) = this
+                    .imported_subscriptions
+                    .iter()
+                    .position(|subscription| subscription.id == id)
+                else {
+                    return;
+                };
+                if this.imported_subscriptions[index].generation != generation {
                     return;
                 }
                 match result {
                     Ok(()) => {
-                        this.imported_subscription = None;
-                        this.imported_subscription_state = ImportedSubscriptionState::None;
-                        this.subscription_preview_providers.clear();
+                        this.imported_subscriptions.remove(index);
                         "已移除导入订阅".clone_into(&mut this.status);
                         trace_ui(UiEvent::SourceRemoveSucceeded);
                     }
                     Err(error) => {
-                        this.imported_subscription_state =
+                        this.imported_subscriptions[index].state =
                             ImportedSubscriptionState::StoreError(error);
                         this.status = format!("移除订阅失败：{error}");
                         trace_ui(UiEvent::SourceRemoveFailed);
@@ -346,6 +456,42 @@ impl RelayApp {
             .ok();
         })
         .detach();
+    }
+
+    fn save_vless_source(&mut self, input: &str) -> Result<(), SubscriptionStoreError> {
+        let Some(store_dir) = self.subscription_store_dir.as_ref() else {
+            return Err(SubscriptionStoreError::DataDirectoryUnavailable);
+        };
+        let stored = mihomo::save_vless_source_in(store_dir, input)?;
+        if !self
+            .saved_vless_nodes
+            .iter()
+            .any(|node| node.id == stored.id)
+        {
+            self.saved_vless_nodes.push(stored);
+        }
+        Ok(())
+    }
+
+    fn remove_saved_vless_source(&mut self, id: &str) -> Result<(), SubscriptionStoreError> {
+        let Some(store_dir) = self.subscription_store_dir.as_ref() else {
+            return Err(SubscriptionStoreError::DataDirectoryUnavailable);
+        };
+        mihomo::remove_vless_source_in(store_dir, id)?;
+        self.saved_vless_nodes.retain(|node| node.id != id);
+        Ok(())
+    }
+
+    fn persist_node_workspace(&mut self) {
+        let Some(store_dir) = self.subscription_store_dir.as_ref() else {
+            return;
+        };
+        if let Err(error) =
+            mihomo::save_collapsed_groups_in(store_dir, self.node_workspace.collapsed_group_ids())
+        {
+            self.source_store_error = Some(error);
+            "无法保存节点分组状态".clone_into(&mut self.status);
+        }
     }
 
     fn theme(&self) -> Theme {
@@ -435,6 +581,13 @@ impl RelayApp {
         self.catalog = snapshot.catalog;
         self.source_providers = snapshot.providers;
         self.observed_routes = snapshot.observed_routes;
+        self.active_connections = snapshot.connections;
+        self.proxy_mode = if snapshot.runtime.tun.enable {
+            ProxyMode::Tun
+        } else {
+            ProxyMode::Off
+        };
+        self.proxy_runtime = snapshot.runtime;
         self.status = format!(
             "已读取 {} 个策略组 · {} 条活动连接",
             self.catalog.iter().count(),
@@ -450,14 +603,119 @@ impl RelayApp {
     }
 
     #[allow(clippy::too_many_lines)]
+    fn apply_proxy_mode(&mut self, requested: ProxyMode, cx: &mut Context<Self>) {
+        if self.proxy_mode_busy || requested == self.proxy_mode {
+            return;
+        }
+        if !matches!(self.controller, ControllerState::Connected { .. }) {
+            trace_ui(UiEvent::ProxyModeFailed);
+            "请先连接 Mihomo，再切换代理模式".clone_into(&mut self.status);
+            cx.notify();
+            return;
+        }
+
+        let runtime = self.runtime.clone();
+        let system_proxy = self.system_proxy.clone();
+        let previous = self.proxy_mode;
+        let mixed_port = self.proxy_runtime.mixed_port.filter(|port| *port > 0);
+        let ports = ProxyPorts {
+            http: self
+                .proxy_runtime
+                .port
+                .filter(|port| *port > 0)
+                .or(mixed_port),
+            socks: self
+                .proxy_runtime
+                .socks_port
+                .filter(|port| *port > 0)
+                .or(mixed_port),
+        };
+        self.proxy_mode_busy = true;
+        self.status = format!("正在切换到{}…", requested.label());
+
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let result = executor
+                .spawn(async move {
+                    let mut system = system_proxy
+                        .lock()
+                        .map_err(|_| "系统代理状态锁已损坏".to_owned())?;
+                    match (previous, requested) {
+                        (ProxyMode::System, ProxyMode::Off) => {
+                            system.disable().map_err(|error| error.to_string())?;
+                        }
+                        (ProxyMode::Tun, ProxyMode::Off) => {
+                            runtime
+                                .set_tun_enabled(false)
+                                .map_err(|error| error.to_string())?;
+                        }
+                        (ProxyMode::Off, ProxyMode::System) => {
+                            system.enable(ports).map_err(|error| error.to_string())?;
+                        }
+                        (ProxyMode::Tun, ProxyMode::System) => {
+                            runtime
+                                .set_tun_enabled(false)
+                                .map_err(|error| error.to_string())?;
+                            if let Err(error) = system.enable(ports) {
+                                let rollback = runtime.set_tun_enabled(true);
+                                return Err(match rollback {
+                                    Ok(()) => error.to_string(),
+                                    Err(rollback) => {
+                                        format!("{error}；恢复原 TUN 模式也失败：{rollback}")
+                                    }
+                                });
+                            }
+                        }
+                        (ProxyMode::Off, ProxyMode::Tun) => {
+                            runtime
+                                .set_tun_enabled(true)
+                                .map_err(|error| error.to_string())?;
+                        }
+                        (ProxyMode::System, ProxyMode::Tun) => {
+                            system.disable().map_err(|error| error.to_string())?;
+                            if let Err(error) = runtime.set_tun_enabled(true) {
+                                let rollback = system.enable(ports);
+                                return Err(match rollback {
+                                    Ok(()) => error.to_string(),
+                                    Err(rollback) => {
+                                        format!("{error}；恢复原系统代理也失败：{rollback}")
+                                    }
+                                });
+                            }
+                        }
+                        _ => {}
+                    }
+                    Ok::<(), String>(())
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                this.proxy_mode_busy = false;
+                match result {
+                    Ok(()) => {
+                        this.proxy_mode = requested;
+                        match requested {
+                            ProxyMode::Off => trace_ui(UiEvent::SystemProxyDisabled),
+                            ProxyMode::System => trace_ui(UiEvent::SystemProxyEnabled),
+                            ProxyMode::Tun => trace_ui(UiEvent::TunProxyEnabled),
+                        }
+                        this.status = format!("{}已生效", requested.label());
+                    }
+                    Err(message) => {
+                        trace_ui(UiEvent::ProxyModeFailed);
+                        this.status = format!("代理模式切换失败：{message}");
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    #[allow(clippy::too_many_lines)]
     fn chrome(&self, theme: Theme, size_class: WindowSizeClass, cx: &mut Context<Self>) -> Div {
         let compact = size_class == WindowSizeClass::Compact;
-        let proxy_label = match (compact, self.proxy_enabled) {
-            (true, true) => "代理 · 开",
-            (true, false) => "代理 · 关",
-            (false, true) => "系统代理 · 开",
-            (false, false) => "系统代理 · 关",
-        };
         let theme_label = if self.dark { "浅色" } else { "深色" };
 
         div()
@@ -545,12 +803,56 @@ impl RelayApp {
                         cx.notify();
                     })),
             )
-            .child(
+            .child(self.proxy_control(theme, size_class != WindowSizeClass::Wide, cx))
+    }
+
+    fn proxy_control(&self, theme: Theme, compact: bool, cx: &mut Context<Self>) -> Stateful<Div> {
+        if compact {
+            let next = self.proxy_mode.next();
+            return div()
+                .id("proxy-mode-cycle")
+                .role(Role::Button)
+                .aria_label("切换代理模式")
+                .tab_stop(true)
+                .focusable()
+                .cursor_pointer()
+                .h(px(34.0))
+                .px_3()
+                .rounded_md()
+                .border_1()
+                .border_color(theme.outline_subtle)
+                .bg(theme.surface_high)
+                .text_color(theme.text_primary)
+                .flex()
+                .items_center()
+                .child(if self.proxy_mode_busy {
+                    "切换中…"
+                } else {
+                    self.proxy_mode.label()
+                })
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.apply_proxy_mode(next, cx);
+                }));
+        }
+
+        let mut control = div()
+            .id("proxy-modes")
+            .h(px(34.0))
+            .p(px(2.0))
+            .rounded_md()
+            .border_1()
+            .border_color(theme.outline_subtle)
+            .bg(theme.surface_high)
+            .flex()
+            .items_center();
+        for mode in [ProxyMode::Off, ProxyMode::System, ProxyMode::Tun] {
+            let selected = mode == self.proxy_mode;
+            control = control.child(
                 div()
-                    .id("system-proxy")
-                    .role(Role::Switch)
-                    .aria_label("系统代理")
-                    .aria_toggled(if self.proxy_enabled {
+                    .id(format!("proxy-mode-{mode:?}"))
+                    .role(Role::Button)
+                    .aria_label(mode.label())
+                    .aria_toggled(if selected {
                         Toggled::True
                     } else {
                         Toggled::False
@@ -558,47 +860,46 @@ impl RelayApp {
                     .tab_stop(true)
                     .focusable()
                     .cursor_pointer()
-                    .h(px(34.0))
+                    .h_full()
                     .px_3()
-                    .rounded_md()
-                    .border_1()
-                    .border_color(if self.proxy_enabled {
-                        theme.action_primary
+                    .rounded_sm()
+                    .flex()
+                    .items_center()
+                    .text_size(px(11.0))
+                    .font_weight(if selected {
+                        FontWeight::SEMIBOLD
                     } else {
-                        theme.outline_subtle
+                        FontWeight::NORMAL
                     })
-                    .bg(if self.proxy_enabled {
+                    .bg(if selected {
                         theme.action_primary
                     } else {
                         theme.surface_high
                     })
-                    .text_color(if self.proxy_enabled {
+                    .text_color(if selected {
                         theme.action_on_primary
                     } else {
-                        theme.text_primary
+                        theme.text_secondary
                     })
-                    .flex()
-                    .items_center()
-                    .child(proxy_label)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.proxy_enabled = !this.proxy_enabled;
-                        if this.proxy_enabled {
-                            trace_ui(UiEvent::SystemProxyEnabled);
-                            "演示：系统代理已开启"
-                        } else {
-                            trace_ui(UiEvent::SystemProxyDisabled);
-                            "演示：系统代理已关闭"
-                        }
-                        .clone_into(&mut this.status);
-                        cx.notify();
+                    .child(if self.proxy_mode_busy && selected {
+                        "切换中…"
+                    } else {
+                        mode.label()
+                    })
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.apply_proxy_mode(mode, cx);
                     })),
-            )
+            );
+        }
+        control
     }
 
     fn navigation(&self, theme: Theme, size_class: WindowSizeClass, cx: &mut Context<Self>) -> Div {
         let entries = [
-            ("策略组", "策略", PrimaryWorkspace::Policies),
             ("节点", "节点", PrimaryWorkspace::Nodes),
+            ("策略组", "策略", PrimaryWorkspace::Policies),
+            ("网络活动", "活动", PrimaryWorkspace::Activity),
+            ("日志", "日志", PrimaryWorkspace::Logs),
             ("配置", "配置", PrimaryWorkspace::Configuration),
         ];
         let show_labels = size_class == WindowSizeClass::Wide;
@@ -663,6 +964,14 @@ impl RelayApp {
                             PrimaryWorkspace::Nodes => {
                                 trace_ui(UiEvent::WorkspaceNodesOpened);
                                 "已打开节点工作区".to_owned()
+                            }
+                            PrimaryWorkspace::Activity => {
+                                trace_ui(UiEvent::WorkspaceActivityOpened);
+                                "已打开网络活动".to_owned()
+                            }
+                            PrimaryWorkspace::Logs => {
+                                trace_ui(UiEvent::WorkspaceLogsOpened);
+                                "已打开日志".to_owned()
                             }
                             PrimaryWorkspace::Configuration => {
                                 trace_ui(UiEvent::WorkspaceConfigurationOpened);
@@ -1451,6 +1760,8 @@ impl Render for RelayApp {
         let show_inspector = size_class == WindowSizeClass::Wide || self.inspector_open;
         let policies_active = self.primary_workspace == PrimaryWorkspace::Policies;
         let nodes_active = self.primary_workspace == PrimaryWorkspace::Nodes;
+        let activity_active = self.primary_workspace == PrimaryWorkspace::Activity;
+        let logs_active = self.primary_workspace == PrimaryWorkspace::Logs;
 
         div()
             .size_full()
@@ -1469,6 +1780,12 @@ impl Render for RelayApp {
                     .child(self.navigation(theme, size_class, cx))
                     .when(nodes_active, |main| {
                         main.child(self.node_workspace(theme, size_class, cx))
+                    })
+                    .when(activity_active, |main| {
+                        main.child(self.activity_workspace(theme, size_class, cx))
+                    })
+                    .when(logs_active, |main| {
+                        main.child(Self::logs_workspace(theme, size_class, cx))
                     })
                     .when(
                         self.primary_workspace == PrimaryWorkspace::Configuration,
@@ -1524,9 +1841,9 @@ mod tests {
 
         let app = RelayApp::with_controller_and_subscription_store("http://127.0.0.1:9090", store);
 
-        assert!(app.imported_subscription.is_some());
+        assert_eq!(app.imported_subscriptions.len(), 1);
         assert_eq!(
-            app.imported_subscription_state,
+            app.imported_subscriptions[0].state,
             ImportedSubscriptionState::Pending(SourceKind::HttpsSubscription)
         );
         fs::remove_dir_all(root).expect("remove fixture");

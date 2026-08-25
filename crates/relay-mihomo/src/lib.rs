@@ -16,5 +16,6 @@ pub use http::UnixSocketTransport;
 pub use http::{ReadonlyTransport, StdHttpTransport};
 pub use models::{
     Connection, ConnectionMetadata, ConnectionsState, DelayHistory, GroupKind, MihomoSnapshot,
-    ObservedRouteEvidence, PolicyGroup, Proxy, ProxyProvider, Rule, RuleExtra, VersionInfo,
+    ObservedRouteEvidence, PolicyGroup, Proxy, ProxyProvider, Rule, RuleExtra, RuntimeConfig,
+    RuntimeTunConfig, VersionInfo,
 };

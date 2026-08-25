@@ -18,6 +18,7 @@ pub struct MihomoSnapshot {
     pub providers: Vec<ProxyProvider>,
     pub rules: Vec<Rule>,
     pub connections: ConnectionsState,
+    pub runtime: RuntimeConfig,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -25,6 +26,24 @@ pub struct ProxyProvider {
     pub name: String,
     pub vehicle_type: Option<String>,
     pub proxies: Vec<Proxy>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+pub struct RuntimeConfig {
+    #[serde(default)]
+    pub port: Option<u16>,
+    #[serde(rename = "socks-port", default, alias = "socksPort")]
+    pub socks_port: Option<u16>,
+    #[serde(rename = "mixed-port", default, alias = "mixedPort")]
+    pub mixed_port: Option<u16>,
+    #[serde(default)]
+    pub tun: RuntimeTunConfig,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+pub struct RuntimeTunConfig {
+    #[serde(default)]
+    pub enable: bool,
 }
 
 impl MihomoSnapshot {
