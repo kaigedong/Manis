@@ -8,7 +8,7 @@ Relay 是一个使用 Rust 与 GPUI 构建的跨平台代理策略工作台。�
 
 - 原生 GPUI 窗口，可在宽、中、窄三档尺寸间自适应
 - 一键读取 Mihomo 策略组、节点、规则、延迟与活跃连接；未连接时保留演示状态
-- 在配置页实际下载 HTTP/HTTPS 订阅，并在保存前列出其中的全部节点
+- 在配置页验证并导入 HTTP/HTTPS 订阅，重启后自动恢复并列出全部节点
 - 可选择连接外部 Mihomo，或由 Relay 校验并托管一个独立 Mihomo 子进程
 - 可解释的本地路由预测链，并明确区别于 Mihomo 已观察连接
 - 浅色/深色主题、系统代理演示开关与键盘可聚焦控件
@@ -89,7 +89,7 @@ cargo run -p relay-ui
 
 ### 在应用里输入订阅链接
 
-打开“配置 → 订阅源”，链接输入框会直接显示并自动获得焦点。入口可识别 HTTP/HTTPS 订阅地址以及单个 `vless://` 节点链接；点击“读取订阅节点”后，HTTP/HTTPS 订阅会由隔离的 Mihomo 实际下载和解析，页面显示真实来源数、节点总数，并在可滚动列表中列出每个节点的名称与协议。HTTP 会显示明文风险提示，VLESS 会立即解析为一个不含 UUID 的安全节点预览。“清除”会立即删除内存草稿和预览结果。
+打开“配置 → 订阅源”，链接输入框会直接显示并自动获得焦点。入口可识别 HTTP/HTTPS 订阅地址以及单个 `vless://` 节点链接；点击“导入订阅”后，HTTP/HTTPS 订阅会先由隔离的 Mihomo 实际下载和解析，只有成功返回节点后才原子保存。页面显示真实来源数、节点总数，并在可滚动列表中列出每个节点的名称与协议。HTTP 会显示明文风险提示；`vless://` 当前仍只做不含 UUID 的安全节点预览，因此按钮会明确显示“预览 VLESS 节点”。
 
 预览进程使用权限为 `0700` 的临时目录，配置和 Mihomo 缓存在预览结束后删除；日志和错误不会包含订阅 URL。Relay 会依次查找 `RELAY_MIHOMO_PREVIEW_BINARY`、应用同目录的 `mihomo`、`PATH`，并在 macOS 上回退到 Clash Verge 的内置 Mihomo。需要显式指定时可这样启动：
 
@@ -97,7 +97,9 @@ cargo run -p relay-ui
 RELAY_MIHOMO_PREVIEW_BINARY=/absolute/path/to/mihomo cargo run -p relay-ui
 ```
 
-订阅链接和预览结果当前仍只保存在内存中，关闭应用即清除，不会写入日志、Git 或持久配置。真正“保存并启用”仍使用上面的私有文件开发模式，后续再接入三平台凭据存储和明确的启用动作。隔离预览目前支持 macOS/Linux；Windows 还需补齐 named-pipe 控制器传输。
+导入的订阅写入平台用户数据目录：macOS 为 `~/Library/Application Support/Relay/subscriptions`，Linux 为 `$XDG_DATA_HOME/relay/subscriptions`（缺省回退到 `~/.local/share/relay/subscriptions`）。目录和文件分别强制为 `0700`、`0600`，写入使用同目录临时文件原子替换；加载时拒绝符号链接、宽松权限、超限、多行或损坏内容。应用不会把恢复的 URL/token 回填到可见输入框，调试日志和错误也不包含它。重新导入只有在新订阅验证成功后才替换旧订阅，“移除订阅”只删除这一个持久来源。
+
+当前完成的是 macOS/Linux 订阅来源的持久导入与节点恢复；把它编译成运行中的 QX 风格策略并正式启用仍是下一阶段。Windows 会明确拒绝持久导入，直到 owner-only DACL、可靠原子替换和 named-pipe 控制器传输全部完成，不会把继承 ACL 的普通文件误称为私有存储。
 
 ## 验证
 
@@ -122,7 +124,7 @@ RELAY_MIHOMO_CONTROLLER=unix:///tmp/verge/verge-mihomo.sock \
 cargo test -p relay-ui reads_a_live_controller_snapshot -- --ignored
 ```
 
-隔离订阅预览也有默认忽略的真实 Mihomo 集成测试，可显式提供测试二进制运行；测试使用本地两节点订阅 fixture，不请求私人订阅：
+隔离订阅导入也有默认忽略的真实 Mihomo 集成测试，可显式提供测试二进制运行；测试使用本地两节点订阅 fixture，覆盖导入、关闭后的持久恢复和再次解析，不请求私人订阅：
 
 ```bash
 RELAY_MIHOMO_TEST_BINARY=/absolute/path/to/mihomo \

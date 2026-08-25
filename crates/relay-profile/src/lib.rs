@@ -34,6 +34,12 @@ impl SecretUrl {
         }
         Ok(Self(input.to_owned()))
     }
+
+    /// Reports whether this subscription uses encrypted HTTPS transport without exposing it.
+    #[must_use]
+    pub fn is_https(&self) -> bool {
+        self.0.starts_with("https://")
+    }
 }
 
 impl fmt::Debug for SecretUrl {

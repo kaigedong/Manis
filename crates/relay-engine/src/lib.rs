@@ -12,16 +12,26 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 const DEFAULT_VALIDATION_TIMEOUT: Duration = Duration::from_secs(10);
-const RELAY_ENV_VARS: [&str; 8] = [
-    "RELAY_MIHOMO_BINARY",
-    "RELAY_MIHOMO_CONFIG",
-    "RELAY_MIHOMO_CONTROLLER",
-    "RELAY_MIHOMO_DATA_DIR",
-    "RELAY_MIHOMO_MIXED_PORT",
-    "RELAY_MIHOMO_PREVIEW_BINARY",
-    "RELAY_MIHOMO_SECRET",
-    "RELAY_MIHOMO_SUBSCRIPTION_FILE",
+#[cfg(unix)]
+const CHILD_ENV_ALLOWLIST: [&str; 6] = [
+    "HOME",
+    "TMPDIR",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "LANG",
+    "LC_ALL",
 ];
+#[cfg(windows)]
+const CHILD_ENV_ALLOWLIST: [&str; 6] = [
+    "SystemRoot",
+    "WINDIR",
+    "TEMP",
+    "TMP",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+];
+#[cfg(not(any(unix, windows)))]
+const CHILD_ENV_ALLOWLIST: [&str; 0] = [];
 
 /// A private controller address reserved for a Relay-managed Mihomo process.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -372,15 +382,18 @@ impl ProcessSpawner for StdProcessSpawner {
 
 fn resolved_command(spec: &CommandSpec) -> Command {
     let mut command = Command::new(&spec.program);
+    command.env_clear();
+    for variable in CHILD_ENV_ALLOWLIST {
+        if let Some(value) = std::env::var_os(variable) {
+            command.env(variable, value);
+        }
+    }
     command
         .args(&spec.args)
         .current_dir(&spec.current_dir)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    for variable in RELAY_ENV_VARS {
-        command.env_remove(variable);
-    }
     command
 }
 
@@ -847,8 +860,8 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
 
     use super::{
-        CommandSpec, ControllerEndpoint, EngineManager, EngineState, ManagedChild,
-        ManagedEngineConfig, ProbeStatus, ProcessExit, ProcessSpawner, RELAY_ENV_VARS,
+        CHILD_ENV_ALLOWLIST, CommandSpec, ControllerEndpoint, EngineManager, EngineState,
+        ManagedChild, ManagedEngineConfig, ProbeStatus, ProcessExit, ProcessSpawner,
         ReadinessPolicy, ReadinessProbe, resolved_command,
     };
 
@@ -1021,16 +1034,20 @@ mod tests {
     }
 
     #[test]
-    fn child_commands_explicitly_remove_relay_environment() {
+    fn child_commands_inherit_only_the_minimum_environment_allowlist() {
         let layout = TempLayout::new();
         let command = resolved_command(&layout.config().launch_command());
-        let removed = command
+        let inherited = command
             .get_envs()
-            .filter_map(|(name, value)| value.is_none().then_some(name))
+            .filter_map(|(name, value)| value.map(|_| name))
             .collect::<Vec<_>>();
 
-        for variable in RELAY_ENV_VARS {
-            assert!(removed.contains(&std::ffi::OsStr::new(variable)));
+        for variable in inherited {
+            assert!(
+                CHILD_ENV_ALLOWLIST
+                    .iter()
+                    .any(|allowed| variable == std::ffi::OsStr::new(allowed))
+            );
         }
     }
 

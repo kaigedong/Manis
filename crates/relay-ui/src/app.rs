@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use gpui::{
     Context, Div, Entity, FontWeight, IntoElement, ParentElement, Render, Role, Stateful, Styled,
     Subscription, Toggled, Window, div, prelude::*, px,
@@ -7,13 +9,14 @@ use relay_core::{
     PolicyWorkspaceState, PrimaryWorkspace, ProxyId, WindowSizeClass,
 };
 use relay_mihomo::ObservedRouteEvidence;
+use relay_profile::SecretUrl;
 
 use crate::{
     demo,
     diagnostics::{UiEvent, trace_ui},
     mihomo::{
         self, ControllerRuntime, ControllerState, LoadedProvider, LoadedSnapshot,
-        SubscriptionPreviewError,
+        SubscriptionPreviewError, SubscriptionStoreError,
     },
     subscription::{SourceKind, SubscriptionInputError, SubscriptionPreview},
     subscription_input::{SubscriptionInputChanged, SubscriptionTextInput},
@@ -26,10 +29,36 @@ mod configuration;
 enum SubscriptionFeedback {
     #[default]
     Idle,
-    Loading(SourceKind),
+    Importing(SourceKind),
     Valid(SubscriptionPreview),
     InvalidInput(SubscriptionInputError),
     PreviewFailed(SubscriptionPreviewError),
+    StoreFailed(SubscriptionStoreError),
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum ImportedSubscriptionState {
+    #[default]
+    None,
+    Pending(SourceKind),
+    Refreshing(SourceKind),
+    Ready(SourceKind),
+    Unavailable(SourceKind, SubscriptionPreviewError),
+    StoreError(SubscriptionStoreError),
+    Removing(SourceKind),
+}
+
+enum ImportSubscriptionError {
+    Preview(SubscriptionPreviewError),
+    Store(SubscriptionStoreError),
+}
+
+fn source_kind(subscription: &SecretUrl) -> SourceKind {
+    if subscription.is_https() {
+        SourceKind::HttpsSubscription
+    } else {
+        SourceKind::HttpSubscription
+    }
 }
 
 pub struct RelayApp {
@@ -43,6 +72,9 @@ pub struct RelayApp {
     source_providers: Vec<LoadedProvider>,
     subscription_preview_providers: Vec<LoadedProvider>,
     subscription_preview_generation: u64,
+    subscription_store_dir: Option<PathBuf>,
+    imported_subscription: Option<SecretUrl>,
+    imported_subscription_state: ImportedSubscriptionState,
     proxy_enabled: bool,
     inspector_open: bool,
     dark: bool,
@@ -55,18 +87,54 @@ pub struct RelayApp {
 impl RelayApp {
     #[must_use]
     pub fn new() -> Self {
-        Self::with_runtime(mihomo::configured_runtime())
+        let store = mihomo::imported_subscription_store_dir();
+        Self::with_runtime_and_store(mihomo::configured_runtime(), store.ok())
     }
 
     #[must_use]
     pub fn with_controller(endpoint: impl Into<String>) -> Self {
-        Self::with_runtime(ControllerRuntime::External {
-            endpoint: endpoint.into(),
-        })
+        Self::with_runtime_and_store(
+            ControllerRuntime::External {
+                endpoint: endpoint.into(),
+            },
+            None,
+        )
     }
 
-    fn with_runtime(runtime: ControllerRuntime) -> Self {
+    /// Creates a deterministic app instance backed by an explicit subscription store.
+    ///
+    /// This is primarily useful for native visual tests and embedders that manage their own
+    /// application-data root.
+    #[must_use]
+    pub fn with_controller_and_subscription_store(
+        endpoint: impl Into<String>,
+        subscription_store_dir: PathBuf,
+    ) -> Self {
+        Self::with_runtime_and_store(
+            ControllerRuntime::External {
+                endpoint: endpoint.into(),
+            },
+            Some(subscription_store_dir),
+        )
+    }
+
+    fn with_runtime_and_store(
+        runtime: ControllerRuntime,
+        subscription_store_dir: Option<PathBuf>,
+    ) -> Self {
         let status = runtime.initial_status();
+        let (imported_subscription, imported_subscription_state) = subscription_store_dir
+            .as_ref()
+            .map_or((None, ImportedSubscriptionState::None), |directory| {
+                match mihomo::load_imported_subscription_in(directory) {
+                    Ok(Some(subscription)) => {
+                        let kind = source_kind(&subscription);
+                        (Some(subscription), ImportedSubscriptionState::Pending(kind))
+                    }
+                    Ok(None) => (None, ImportedSubscriptionState::None),
+                    Err(error) => (None, ImportedSubscriptionState::StoreError(error)),
+                }
+            });
         Self {
             primary_workspace: PrimaryWorkspace::default(),
             configuration: ConfigurationWorkspaceState::default(),
@@ -78,6 +146,9 @@ impl RelayApp {
             source_providers: Vec::new(),
             subscription_preview_providers: Vec::new(),
             subscription_preview_generation: 0,
+            subscription_store_dir,
+            imported_subscription,
+            imported_subscription_state,
             proxy_enabled: true,
             inspector_open: false,
             dark: false,
@@ -98,33 +169,108 @@ impl RelayApp {
         let events = cx.subscribe(&input, |this, _input, _: &SubscriptionInputChanged, cx| {
             if this.subscription_feedback != SubscriptionFeedback::Idle {
                 this.subscription_feedback = SubscriptionFeedback::Idle;
-                this.subscription_preview_providers.clear();
-                this.subscription_preview_generation =
-                    this.subscription_preview_generation.wrapping_add(1);
                 cx.notify();
             }
         });
         self.subscription_input = Some(input);
         self.subscription_input_events = Some(events);
+        self.restore_imported_subscription(cx);
     }
 
-    fn preview_remote_subscription(
+    fn import_remote_subscription(
         &mut self,
         input: String,
-        preview: SubscriptionPreview,
+        kind: SourceKind,
         cx: &mut Context<Self>,
     ) {
+        let Some(store_dir) = self.subscription_store_dir.clone() else {
+            self.subscription_feedback =
+                SubscriptionFeedback::StoreFailed(SubscriptionStoreError::DataDirectoryUnavailable);
+            "无法确定订阅保存位置".clone_into(&mut self.status);
+            trace_ui(UiEvent::SourceImportFailed);
+            cx.notify();
+            return;
+        };
         self.subscription_preview_generation = self.subscription_preview_generation.wrapping_add(1);
         let generation = self.subscription_preview_generation;
-        self.subscription_preview_providers.clear();
-        self.subscription_feedback = SubscriptionFeedback::Loading(preview.kind);
-        "正在隔离的 Mihomo 中下载并解析订阅节点".clone_into(&mut self.status);
-        trace_ui(UiEvent::SourcePreviewStarted);
+        self.subscription_feedback = SubscriptionFeedback::Importing(kind);
+        "正在验证节点并导入订阅".clone_into(&mut self.status);
+        trace_ui(UiEvent::SourceImportStarted);
+        if let Some(input) = self.subscription_input.as_ref() {
+            input.update(cx, |input, cx| input.set_enabled(false, cx));
+        }
 
         let executor = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
             let result = executor
-                .spawn(async move { mihomo::preview_subscription(&input) })
+                .spawn(async move {
+                    let providers = mihomo::preview_subscription(&input)
+                        .map_err(ImportSubscriptionError::Preview)?;
+                    let subscription = mihomo::save_imported_subscription_in(&store_dir, &input)
+                        .map_err(ImportSubscriptionError::Store)?;
+                    Ok::<_, ImportSubscriptionError>((subscription, providers))
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                if this.subscription_preview_generation != generation {
+                    return;
+                }
+                if let Some(input) = this.subscription_input.as_ref() {
+                    input.update(cx, |input, cx| input.set_enabled(true, cx));
+                }
+                match result {
+                    Ok((subscription, providers)) => {
+                        let node_count: usize =
+                            providers.iter().map(|provider| provider.nodes.len()).sum();
+                        let provider_count = providers.len();
+                        this.imported_subscription = Some(subscription);
+                        this.imported_subscription_state = ImportedSubscriptionState::Ready(kind);
+                        this.subscription_preview_providers = providers;
+                        this.subscription_feedback = SubscriptionFeedback::Idle;
+                        if let Some(input) = this.subscription_input.as_ref() {
+                            input.update(cx, SubscriptionTextInput::clear_without_event);
+                        }
+                        this.status =
+                            format!("订阅已导入 · {provider_count} 个来源 · {node_count} 个节点");
+                        trace_ui(UiEvent::SourceImportSucceeded);
+                    }
+                    Err(ImportSubscriptionError::Preview(error)) => {
+                        this.subscription_feedback = SubscriptionFeedback::PreviewFailed(error);
+                        this.status = format!("订阅导入失败：{error}");
+                        trace_ui(UiEvent::SourceImportFailed);
+                    }
+                    Err(ImportSubscriptionError::Store(error)) => {
+                        this.subscription_feedback = SubscriptionFeedback::StoreFailed(error);
+                        this.status = format!("订阅保存失败：{error}");
+                        trace_ui(UiEvent::SourceImportFailed);
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn restore_imported_subscription(&mut self, cx: &mut Context<Self>) {
+        let ImportedSubscriptionState::Pending(kind) = self.imported_subscription_state else {
+            return;
+        };
+        let Some(subscription) = self.imported_subscription.clone() else {
+            self.imported_subscription_state = ImportedSubscriptionState::None;
+            return;
+        };
+        self.subscription_preview_generation = self.subscription_preview_generation.wrapping_add(1);
+        let generation = self.subscription_preview_generation;
+        self.imported_subscription_state = ImportedSubscriptionState::Refreshing(kind);
+        "正在恢复已导入订阅的节点".clone_into(&mut self.status);
+        trace_ui(UiEvent::SourceRestoreStarted);
+
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let result = executor
+                .spawn(async move { mihomo::preview_imported_subscription(subscription) })
                 .await;
             this.update(cx, |this, cx| {
                 if this.subscription_preview_generation != generation {
@@ -134,18 +280,16 @@ impl RelayApp {
                     Ok(providers) => {
                         let node_count: usize =
                             providers.iter().map(|provider| provider.nodes.len()).sum();
-                        let provider_count = providers.len();
                         this.subscription_preview_providers = providers;
-                        this.subscription_feedback = SubscriptionFeedback::Valid(preview);
-                        this.status = format!(
-                            "订阅预览完成 · {provider_count} 个来源 · {node_count} 个节点 · 尚未保存"
-                        );
-                        trace_ui(UiEvent::SourcePreviewSucceeded);
+                        this.imported_subscription_state = ImportedSubscriptionState::Ready(kind);
+                        this.status = format!("已恢复导入订阅 · {node_count} 个节点");
+                        trace_ui(UiEvent::SourceRestoreSucceeded);
                     }
                     Err(error) => {
-                        this.subscription_feedback = SubscriptionFeedback::PreviewFailed(error);
-                        this.status = format!("订阅预览失败：{error}");
-                        trace_ui(UiEvent::SourcePreviewFailed);
+                        this.imported_subscription_state =
+                            ImportedSubscriptionState::Unavailable(kind, error);
+                        this.status = format!("已导入订阅刷新失败：{error}");
+                        trace_ui(UiEvent::SourceRestoreFailed);
                     }
                 }
                 cx.notify();
@@ -153,7 +297,52 @@ impl RelayApp {
             .ok();
         })
         .detach();
-        cx.notify();
+    }
+
+    fn remove_imported_subscription(&mut self, cx: &mut Context<Self>) {
+        let Some(store_dir) = self.subscription_store_dir.clone() else {
+            return;
+        };
+        let Some(subscription) = self.imported_subscription.as_ref() else {
+            return;
+        };
+        let kind = source_kind(subscription);
+        self.subscription_preview_generation = self.subscription_preview_generation.wrapping_add(1);
+        let generation = self.subscription_preview_generation;
+        self.subscription_feedback = SubscriptionFeedback::Idle;
+        self.imported_subscription_state = ImportedSubscriptionState::Removing(kind);
+        "正在移除已导入订阅".clone_into(&mut self.status);
+        trace_ui(UiEvent::SourceRemoveStarted);
+
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let result = executor
+                .spawn(async move { mihomo::remove_imported_subscription_in(&store_dir) })
+                .await;
+            this.update(cx, |this, cx| {
+                if this.subscription_preview_generation != generation {
+                    return;
+                }
+                match result {
+                    Ok(()) => {
+                        this.imported_subscription = None;
+                        this.imported_subscription_state = ImportedSubscriptionState::None;
+                        this.subscription_preview_providers.clear();
+                        "已移除导入订阅".clone_into(&mut this.status);
+                        trace_ui(UiEvent::SourceRemoveSucceeded);
+                    }
+                    Err(error) => {
+                        this.imported_subscription_state =
+                            ImportedSubscriptionState::StoreError(error);
+                        this.status = format!("移除订阅失败：{error}");
+                        trace_ui(UiEvent::SourceRemoveFailed);
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn theme(&self) -> Theme {
@@ -1301,5 +1490,37 @@ impl Render for RelayApp {
                     }),
             )
             .child(self.status_bar(theme))
+    }
+}
+
+#[cfg(all(test, not(windows)))]
+mod tests {
+    use std::fs;
+
+    use super::{ImportedSubscriptionState, RelayApp};
+    use crate::mihomo;
+    use crate::subscription::SourceKind;
+
+    #[test]
+    fn app_startup_detects_a_privately_imported_subscription() {
+        let root = std::env::temp_dir().join(format!("relay-app-import-{}", std::process::id()));
+        if root.exists() {
+            fs::remove_dir_all(&root).expect("remove stale fixture");
+        }
+        let store = root.join("subscriptions");
+        mihomo::save_imported_subscription_in(
+            &store,
+            "https://subscription.example.invalid/client?token=fixture",
+        )
+        .expect("save fixture subscription");
+
+        let app = RelayApp::with_controller_and_subscription_store("http://127.0.0.1:9090", store);
+
+        assert!(app.imported_subscription.is_some());
+        assert_eq!(
+            app.imported_subscription_state,
+            ImportedSubscriptionState::Pending(SourceKind::HttpsSubscription)
+        );
+        fs::remove_dir_all(root).expect("remove fixture");
     }
 }

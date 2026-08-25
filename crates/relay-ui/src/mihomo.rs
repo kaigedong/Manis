@@ -31,6 +31,7 @@ const MIXED_PORT_ENV: &str = "RELAY_MIHOMO_MIXED_PORT";
 const PREVIEW_BINARY_ENV: &str = "RELAY_MIHOMO_PREVIEW_BINARY";
 const DEFAULT_MANAGED_MIXED_PORT: u16 = 17_890;
 const MAX_SUBSCRIPTION_FILE_BYTES: u64 = 16 * 1024;
+const IMPORTED_SUBSCRIPTION_FILE: &str = "subscription.url";
 const PREVIEW_PROVIDER_ATTEMPTS: usize = 80;
 const PREVIEW_PROVIDER_DELAY: Duration = Duration::from_millis(250);
 static NEXT_PREVIEW_WORKSPACE: AtomicU64 = AtomicU64::new(0);
@@ -243,6 +244,27 @@ impl fmt::Display for SubscriptionPreviewError {
 
 impl Error for SubscriptionPreviewError {}
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SubscriptionStoreError {
+    DataDirectoryUnavailable,
+    InvalidSource,
+    StoreUnavailable,
+    StoredSourceUnavailable,
+}
+
+impl fmt::Display for SubscriptionStoreError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::DataDirectoryUnavailable => "无法确定 Relay 的用户数据目录",
+            Self::InvalidSource => "订阅地址无效，未执行导入",
+            Self::StoreUnavailable => "无法安全保存订阅，请检查用户数据目录权限",
+            Self::StoredSourceUnavailable => "已保存的订阅无法安全读取，需要重新导入",
+        })
+    }
+}
+
+impl Error for SubscriptionStoreError {}
+
 struct PreviewWorkspace {
     path: PathBuf,
 }
@@ -304,20 +326,34 @@ pub(crate) fn preview_subscription(
     preview_subscription_with_binary(input, &binary)
 }
 
+pub(crate) fn preview_imported_subscription(
+    subscription: SecretUrl,
+) -> Result<Vec<LoadedProvider>, SubscriptionPreviewError> {
+    let binary = discover_preview_binary()?;
+    preview_secret_subscription_with_binary(subscription, &binary)
+}
+
 fn preview_subscription_with_binary(
     input: &str,
     binary: &Path,
 ) -> Result<Vec<LoadedProvider>, SubscriptionPreviewError> {
+    let subscription = SecretUrl::parse_subscription(input)
+        .map_err(|_error| SubscriptionPreviewError::InvalidSource)?;
+    preview_secret_subscription_with_binary(subscription, binary)
+}
+
+fn preview_secret_subscription_with_binary(
+    subscription: SecretUrl,
+    binary: &Path,
+) -> Result<Vec<LoadedProvider>, SubscriptionPreviewError> {
     #[cfg(not(unix))]
     {
-        let _ = (input, binary);
+        let _ = (subscription, binary);
         return Err(SubscriptionPreviewError::UnsupportedPlatform);
     }
 
     #[cfg(unix)]
     {
-        let subscription = SecretUrl::parse_subscription(input)
-            .map_err(|_error| SubscriptionPreviewError::InvalidSource)?;
         let binary = canonical_binary(binary)?;
         let workspace = PreviewWorkspace::create()
             .map_err(|_error| SubscriptionPreviewError::WorkspaceUnavailable)?;
@@ -344,6 +380,139 @@ fn preview_subscription_with_binary(
             .stop()
             .map_err(|_error| SubscriptionPreviewError::EngineUnavailable)?;
         providers
+    }
+}
+
+pub(crate) fn imported_subscription_store_dir() -> Result<PathBuf, SubscriptionStoreError> {
+    default_relay_data_dir()
+        .map(|directory| directory.join("subscriptions"))
+        .ok_or(SubscriptionStoreError::DataDirectoryUnavailable)
+}
+
+#[cfg(not(windows))]
+pub(crate) fn save_imported_subscription_in(
+    directory: &Path,
+    input: &str,
+) -> Result<SecretUrl, SubscriptionStoreError> {
+    let subscription = SecretUrl::parse_subscription(input)
+        .map_err(|_error| SubscriptionStoreError::InvalidSource)?;
+    write_private_atomic(directory, IMPORTED_SUBSCRIPTION_FILE, input.as_bytes())
+        .map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
+    Ok(subscription)
+}
+
+#[cfg(windows)]
+pub(crate) fn save_imported_subscription_in(
+    _directory: &Path,
+    _input: &str,
+) -> Result<SecretUrl, SubscriptionStoreError> {
+    Err(SubscriptionStoreError::StoreUnavailable)
+}
+
+#[cfg(not(windows))]
+pub(crate) fn load_imported_subscription_in(
+    directory: &Path,
+) -> Result<Option<SecretUrl>, SubscriptionStoreError> {
+    require_clean_absolute_store(directory)?;
+    let path = directory.join(IMPORTED_SUBSCRIPTION_FILE);
+    let metadata = match fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_error) => return Err(SubscriptionStoreError::StoredSourceUnavailable),
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(SubscriptionStoreError::StoredSourceUnavailable);
+    }
+    let file =
+        fs::File::open(&path).map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
+    let opened_metadata = file
+        .metadata()
+        .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
+    if opened_metadata.len() > MAX_SUBSCRIPTION_FILE_BYTES {
+        return Err(SubscriptionStoreError::StoredSourceUnavailable);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        if metadata.dev() != opened_metadata.dev()
+            || metadata.ino() != opened_metadata.ino()
+            || opened_metadata.permissions().mode() & 0o077 != 0
+        {
+            return Err(SubscriptionStoreError::StoredSourceUnavailable);
+        }
+    }
+    let mut contents = String::new();
+    file.take(MAX_SUBSCRIPTION_FILE_BYTES + 1)
+        .read_to_string(&mut contents)
+        .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
+    if contents.len() as u64 > MAX_SUBSCRIPTION_FILE_BYTES
+        || contents.is_empty()
+        || contents.lines().count() != 1
+        || contents.trim() != contents
+    {
+        return Err(SubscriptionStoreError::StoredSourceUnavailable);
+    }
+    SecretUrl::parse_subscription(&contents)
+        .map(Some)
+        .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)
+}
+
+#[cfg(windows)]
+pub(crate) fn load_imported_subscription_in(
+    directory: &Path,
+) -> Result<Option<SecretUrl>, SubscriptionStoreError> {
+    if directory.join(IMPORTED_SUBSCRIPTION_FILE).exists() {
+        Err(SubscriptionStoreError::StoredSourceUnavailable)
+    } else {
+        Ok(None)
+    }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn remove_imported_subscription_in(
+    directory: &Path,
+) -> Result<(), SubscriptionStoreError> {
+    require_clean_absolute_store(directory)?;
+    let path = directory.join(IMPORTED_SUBSCRIPTION_FILE);
+    match fs::symlink_metadata(&path) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+            Err(SubscriptionStoreError::StoredSourceUnavailable)
+        }
+        Ok(_) => fs::remove_file(path).map_err(|_error| SubscriptionStoreError::StoreUnavailable),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(_error) => Err(SubscriptionStoreError::StoreUnavailable),
+    }
+}
+
+#[cfg(windows)]
+pub(crate) fn remove_imported_subscription_in(
+    _directory: &Path,
+) -> Result<(), SubscriptionStoreError> {
+    Err(SubscriptionStoreError::StoreUnavailable)
+}
+
+#[cfg(not(windows))]
+fn require_clean_absolute_store(directory: &Path) -> Result<(), SubscriptionStoreError> {
+    if !directory.is_absolute() || !has_only_clean_components(directory) {
+        return Err(SubscriptionStoreError::StoreUnavailable);
+    }
+    match fs::symlink_metadata(directory) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+            Err(SubscriptionStoreError::StoreUnavailable)
+        }
+        Ok(metadata) => {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if metadata.permissions().mode() & 0o077 != 0 {
+                    return Err(SubscriptionStoreError::StoredSourceUnavailable);
+                }
+            }
+            Ok(())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(_error) => Err(SubscriptionStoreError::StoreUnavailable),
     }
 }
 
@@ -735,29 +904,38 @@ fn default_managed_endpoint(_data_dir: &Path) -> Result<ControllerEndpoint, Stri
 }
 
 #[cfg(target_os = "macos")]
-fn default_data_dir() -> Option<PathBuf> {
+fn default_relay_data_dir() -> Option<PathBuf> {
     env::var_os("HOME")
         .map(PathBuf::from)
-        .map(|home| home.join("Library/Application Support/Relay/mihomo"))
+        .map(|home| home.join("Library/Application Support/Relay"))
 }
 
 #[cfg(windows)]
-fn default_data_dir() -> Option<PathBuf> {
+fn default_relay_data_dir() -> Option<PathBuf> {
     env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
-        .map(|root| root.join("Relay/mihomo"))
+        .map(|root| root.join("Relay"))
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
-fn default_data_dir() -> Option<PathBuf> {
+fn default_relay_data_dir() -> Option<PathBuf> {
     env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
-        .map(|root| root.join("relay/mihomo"))
+        .map(|root| root.join("relay"))
         .or_else(|| {
             env::var_os("HOME")
                 .map(PathBuf::from)
-                .map(|home| home.join(".local/share/relay/mihomo"))
+                .map(|home| home.join(".local/share/relay"))
         })
+}
+
+#[cfg(not(any(unix, windows)))]
+fn default_relay_data_dir() -> Option<PathBuf> {
+    None
+}
+
+fn default_data_dir() -> Option<PathBuf> {
+    default_relay_data_dir().map(|directory| directory.join("mihomo"))
 }
 
 pub(crate) fn configured_endpoint() -> String {
@@ -941,6 +1119,91 @@ mod tests {
         assert!(!format!("{error:?}").contains("private-token"));
     }
 
+    #[cfg(not(windows))]
+    #[test]
+    fn imported_subscription_round_trips_privately_and_replaces_atomically()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = test_temp_dir("relay-import-store");
+        let store = root.join("subscriptions");
+        let first = "https://first.example.invalid/client?token=fixture-one";
+        let second = "https://second.example.invalid/client?token=fixture-two";
+
+        let first_secret = super::save_imported_subscription_in(&store, first)?;
+        assert_eq!(
+            super::load_imported_subscription_in(&store)?,
+            Some(first_secret)
+        );
+        let second_secret = super::save_imported_subscription_in(&store, second)?;
+        assert_eq!(
+            super::load_imported_subscription_in(&store)?,
+            Some(second_secret)
+        );
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(fs::metadata(&store)?.permissions().mode() & 0o077, 0);
+            assert_eq!(
+                fs::metadata(store.join("subscription.url"))?
+                    .permissions()
+                    .mode()
+                    & 0o077,
+                0
+            );
+        }
+
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn imported_subscription_load_rejects_symlinks_and_redacts_corruption()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = test_temp_dir("relay-import-corrupt");
+        let store = root.join("subscriptions");
+        fs::create_dir(&store)?;
+        let secret_path = store.join("subscription.url");
+        fs::write(
+            &secret_path,
+            "https://example.invalid/?token=private-fixture\nsecond-line",
+        )?;
+
+        let error = super::load_imported_subscription_in(&store)
+            .expect_err("multi-line stored input must fail closed");
+        assert!(!error.to_string().contains("private-fixture"));
+        assert!(!format!("{error:?}").contains("private-fixture"));
+
+        #[cfg(unix)]
+        {
+            fs::remove_file(&secret_path)?;
+            let outside = root.join("outside.url");
+            fs::write(&outside, "https://example.invalid/subscription")?;
+            std::os::unix::fs::symlink(&outside, &secret_path)?;
+            assert!(super::load_imported_subscription_in(&store).is_err());
+        }
+
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn removing_an_imported_subscription_is_idempotent() -> Result<(), Box<dyn std::error::Error>> {
+        let root = test_temp_dir("relay-import-remove");
+        let store = root.join("subscriptions");
+        super::save_imported_subscription_in(
+            &store,
+            "https://example.invalid/client?token=fixture",
+        )?;
+
+        super::remove_imported_subscription_in(&store)?;
+        super::remove_imported_subscription_in(&store)?;
+        assert_eq!(super::load_imported_subscription_in(&store)?, None);
+
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
     #[test]
     #[ignore = "requires RELAY_MIHOMO_TEST_BINARY pointing to a local Mihomo executable"]
     fn real_mihomo_previews_all_nodes_from_a_subscription() -> Result<(), Box<dyn std::error::Error>>
@@ -988,14 +1251,24 @@ mod tests {
         });
 
         let result = super::preview_subscription_with_binary(&subscription_url, Path::new(&binary));
+        let import_root = test_temp_dir("relay-real-import");
+        let store = import_root.join("subscriptions");
+        super::save_imported_subscription_in(&store, &subscription_url)?;
+        let restored_secret = super::load_imported_subscription_in(&store)?
+            .ok_or("imported subscription should exist")?;
+        let restored =
+            super::preview_secret_subscription_with_binary(restored_secret, Path::new(&binary));
         stop.store(true, Ordering::Relaxed);
         server.join().map_err(|_| "fixture server panicked")??;
         let providers = result?;
+        let restored_providers = restored?;
 
         assert_eq!(providers.len(), 1);
         assert_eq!(providers[0].nodes.len(), 2);
         assert_eq!(providers[0].nodes[0].name, "Fixture Alpha");
         assert_eq!(providers[0].nodes[1].name, "Fixture Beta");
+        assert_eq!(restored_providers, providers);
+        fs::remove_dir_all(import_root)?;
         Ok(())
     }
 

@@ -4,7 +4,7 @@ use gpui::{
 };
 use relay_core::{ConfigurationSection, WindowSizeClass};
 
-use super::{RelayApp, SubscriptionFeedback};
+use super::{ImportedSubscriptionState, RelayApp, SubscriptionFeedback};
 use crate::{
     diagnostics::{UiEvent, trace_ui},
     mihomo::LoadedProvider,
@@ -14,6 +14,14 @@ use crate::{
     subscription_input::SubscriptionTextInput,
     theme::Theme,
 };
+
+fn source_kind_label(kind: SourceKind) -> &'static str {
+    match kind {
+        SourceKind::HttpSubscription => "HTTP 订阅",
+        SourceKind::HttpsSubscription => "HTTPS 订阅",
+        SourceKind::VlessNode => "VLESS 节点",
+    }
+}
 
 const RULE_COUNT: usize = 2;
 
@@ -113,9 +121,11 @@ impl RelayApp {
                                     .child("Operate · 配置工作区"),
                             )
                             .when(!compact, |header| {
-                                header.child(div().mt_1().text_color(theme.text_secondary).child(
-                                    "添加来源 → 查看节点 → 编排策略；当前草稿只保留在内存中",
-                                ))
+                                header.child(
+                                    div().mt_1().text_color(theme.text_secondary).child(
+                                        "导入来源 → 查看节点 → 编排策略；订阅源安全保存在本机",
+                                    ),
+                                )
                             }),
                     )
                     .child(
@@ -127,7 +137,7 @@ impl RelayApp {
                             .text_size(px(10.0))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(theme.action_primary)
-                            .child("内存草稿"),
+                            .child("本机配置"),
                     ),
             )
             .when(wide, |header| header.child(div().mt_3().child(tabs)))
@@ -206,7 +216,7 @@ impl RelayApp {
                     ConfigurationSection::Sources => {
                         this.configuration.select_section(section);
                         this.focus_subscription_input(window, cx);
-                        "订阅输入已聚焦 · 链接只保留在内存中".clone_into(&mut this.status);
+                        "订阅输入已聚焦 · 导入成功后安全保存在本机".clone_into(&mut this.status);
                         UiEvent::SubscriptionInputFocused
                     }
                     ConfigurationSection::Groups => {
@@ -271,7 +281,7 @@ impl RelayApp {
                     ConfigurationSection::Sources => {
                         this.configuration.select_section(section);
                         this.focus_subscription_input(window, cx);
-                        "订阅输入已聚焦 · 链接只保留在内存中".clone_into(&mut this.status);
+                        "订阅输入已聚焦 · 导入成功后安全保存在本机".clone_into(&mut this.status);
                         UiEvent::SubscriptionInputFocused
                     }
                     ConfigurationSection::Groups => {
@@ -298,27 +308,30 @@ impl RelayApp {
     }
 
     fn source_panel(&self, theme: Theme, cx: &mut Context<Self>) -> Div {
-        let source = self.runtime.profile_source();
         let input = self
             .subscription_input
             .as_ref()
             .expect("subscription input is initialized before rendering")
             .clone();
         let feedback = &self.subscription_feedback;
-        let previewing_remote = matches!(
+        let has_imported_subscription = self.imported_subscription.is_some();
+        let importing_remote = matches!(
             feedback,
-            SubscriptionFeedback::Loading(_)
-                | SubscriptionFeedback::Valid(SubscriptionPreview {
-                    kind: SourceKind::HttpSubscription | SourceKind::HttpsSubscription,
-                    ..
-                })
+            SubscriptionFeedback::Importing(_)
                 | SubscriptionFeedback::PreviewFailed(_)
+                | SubscriptionFeedback::StoreFailed(_)
         );
-        let displayed_providers = if previewing_remote {
+        let displayed_providers = if has_imported_subscription || importing_remote {
             self.subscription_preview_providers.as_slice()
         } else {
             self.source_providers.as_slice()
         };
+        let direct_input = input.read(cx).value().starts_with("vless://");
+        let busy = matches!(feedback, SubscriptionFeedback::Importing(_))
+            || matches!(
+                self.imported_subscription_state,
+                ImportedSubscriptionState::Removing(_)
+            );
 
         let panel = div()
             .id("configuration-source")
@@ -341,7 +354,7 @@ impl RelayApp {
                     .mt_3()
                     .text_size(px(17.0))
                     .font_weight(FontWeight::BOLD)
-                    .child("添加代理来源"),
+                    .child("管理代理来源"),
             )
             .child(
                 div()
@@ -361,43 +374,54 @@ impl RelayApp {
             .child(input.clone())
             .child(Self::subscription_actions(
                 input,
-                matches!(feedback, SubscriptionFeedback::Loading(_)),
+                busy,
+                direct_input,
                 theme,
                 cx,
             ))
             .child(Self::subscription_feedback(
                 feedback,
                 &self.subscription_preview_providers,
+                has_imported_subscription,
                 theme,
             ))
-            .child(Self::source_nodes(feedback, displayed_providers, theme))
-            .child(
-                div()
-                    .mt_3()
-                    .pt_3()
-                    .border_t_1()
-                    .border_color(theme.outline_subtle)
-                    .text_size(px(10.0))
-                    .text_color(theme.text_tertiary)
-                    .child("只保留在内存中 · 关闭应用即清除 · 调试日志不记录链接"),
-            )
-            .child(
-                div()
-                    .mt_2()
-                    .text_size(px(10.0))
-                    .text_color(theme.text_tertiary)
-                    .child(format!(
-                        "当前运行来源 · {} · {}",
-                        source.label(),
-                        source.detail()
-                    )),
-            );
+            .child(self.imported_subscription_card(theme, cx))
+            .child(Self::source_nodes(
+                feedback,
+                self.imported_subscription_state,
+                has_imported_subscription,
+                displayed_providers,
+                theme,
+            ))
+            .child(self.source_panel_footer(has_imported_subscription, theme));
         div().w_full().child(panel)
+    }
+
+    fn source_panel_footer(&self, has_imported_subscription: bool, theme: Theme) -> Div {
+        let source = self.runtime.profile_source();
+        div()
+            .mt_3()
+            .pt_3()
+            .border_t_1()
+            .border_color(theme.outline_subtle)
+            .text_size(px(10.0))
+            .text_color(theme.text_tertiary)
+            .child(if has_imported_subscription {
+                "订阅已保存到本机私有用户数据目录 · 调试日志不记录链接"
+            } else {
+                "导入成功后持久保存 · 调试日志不记录链接"
+            })
+            .child(div().mt_2().child(format!(
+                "当前运行来源 · {} · {}",
+                source.label(),
+                source.detail()
+            )))
     }
 
     fn subscription_actions(
         input: Entity<SubscriptionTextInput>,
-        loading: bool,
+        busy: bool,
+        direct_input: bool,
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Div {
@@ -410,19 +434,23 @@ impl RelayApp {
                 div()
                     .id("subscription-preview")
                     .role(Role::Button)
-                    .aria_label("识别代理来源并预览节点")
+                    .aria_label(if direct_input {
+                        "预览 VLESS 节点"
+                    } else {
+                        "验证并导入订阅"
+                    })
                     .tab_stop(true)
                     .focusable()
-                    .when(!loading, gpui::Styled::cursor_pointer)
+                    .when(!busy, gpui::Styled::cursor_pointer)
                     .h(px(36.0))
                     .px_3()
                     .rounded_md()
-                    .bg(if loading {
+                    .bg(if busy {
                         theme.action_soft
                     } else {
                         theme.action_primary
                     })
-                    .text_color(if loading {
+                    .text_color(if busy {
                         theme.action_primary
                     } else {
                         theme.action_on_primary
@@ -432,16 +460,18 @@ impl RelayApp {
                     .items_center()
                     .justify_center()
                     .flex_1()
-                    .child(if loading {
-                        "正在读取节点…"
+                    .child(if busy {
+                        "正在处理…"
+                    } else if direct_input {
+                        "预览 VLESS 节点"
                     } else {
-                        "读取订阅节点"
+                        "导入订阅"
                     })
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        if loading {
+                        if busy {
                             return;
                         }
-                        this.submit_source_preview(&input, cx);
+                        this.submit_source_import(&input, cx);
                     })),
             )
             .child(
@@ -451,7 +481,7 @@ impl RelayApp {
                     .aria_label("清除订阅链接草稿")
                     .tab_stop(true)
                     .focusable()
-                    .cursor_pointer()
+                    .when(!busy, gpui::Styled::cursor_pointer)
                     .h(px(36.0))
                     .px_3()
                     .rounded_md()
@@ -464,11 +494,11 @@ impl RelayApp {
                     .justify_center()
                     .child("清除")
                     .on_click(cx.listener(move |this, _, _, cx| {
+                        if busy {
+                            return;
+                        }
                         clear_input.update(cx, SubscriptionTextInput::clear);
                         this.subscription_feedback = SubscriptionFeedback::Idle;
-                        this.subscription_preview_providers.clear();
-                        this.subscription_preview_generation =
-                            this.subscription_preview_generation.wrapping_add(1);
                         "已清除订阅链接草稿".clone_into(&mut this.status);
                         trace_ui(UiEvent::SubscriptionDraftCleared);
                         cx.notify();
@@ -476,7 +506,7 @@ impl RelayApp {
             )
     }
 
-    fn submit_source_preview(
+    fn submit_source_import(
         &mut self,
         input: &Entity<SubscriptionTextInput>,
         cx: &mut Context<Self>,
@@ -490,9 +520,6 @@ impl RelayApp {
         };
         match result {
             Ok(preview) if preview.kind == SourceKind::VlessNode => {
-                self.subscription_preview_generation =
-                    self.subscription_preview_generation.wrapping_add(1);
-                self.subscription_preview_providers.clear();
                 self.subscription_feedback = SubscriptionFeedback::Valid(preview);
                 "VLESS 节点已识别 · 可在来源节点中查看 · 尚未保存".clone_into(&mut self.status);
                 trace_ui(UiEvent::SourceRecognitionSucceeded);
@@ -500,12 +527,9 @@ impl RelayApp {
             }
             Ok(preview) => {
                 trace_ui(UiEvent::SourceRecognitionSucceeded);
-                self.preview_remote_subscription(input_value, preview, cx);
+                self.import_remote_subscription(input_value, preview.kind, cx);
             }
             Err(error) => {
-                self.subscription_preview_generation =
-                    self.subscription_preview_generation.wrapping_add(1);
-                self.subscription_preview_providers.clear();
                 self.subscription_feedback = SubscriptionFeedback::InvalidInput(error);
                 self.status = format!("来源识别失败：{error}");
                 trace_ui(UiEvent::SourceRecognitionFailed);
@@ -517,6 +541,7 @@ impl RelayApp {
     fn subscription_feedback(
         feedback: &SubscriptionFeedback,
         providers: &[LoadedProvider],
+        has_imported_subscription: bool,
         theme: Theme,
     ) -> Div {
         match feedback {
@@ -524,8 +549,12 @@ impl RelayApp {
                 .mt_3()
                 .text_size(px(11.0))
                 .text_color(theme.text_secondary)
-                .child("等待输入 · HTTP/HTTPS 订阅或 vless:// 节点"),
-            SubscriptionFeedback::Loading(kind) => Self::subscription_loading(*kind, theme),
+                .child(if has_imported_subscription {
+                    "粘贴新的 HTTP/HTTPS 订阅可验证后替换；vless:// 仍提供安全预览"
+                } else {
+                    "等待输入 · HTTP/HTTPS 订阅或 vless:// 节点"
+                }),
+            SubscriptionFeedback::Importing(kind) => Self::subscription_loading(*kind, theme),
             SubscriptionFeedback::Valid(preview) => {
                 Self::subscription_valid(preview, providers, theme)
             }
@@ -538,13 +567,19 @@ impl RelayApp {
                 Some("链接仍保留在输入框中；检查后可再次读取。"),
                 theme,
             ),
+            SubscriptionFeedback::StoreFailed(error) => Self::subscription_error(
+                "节点有效，但无法保存订阅",
+                error.to_string(),
+                Some("旧的已导入订阅没有被替换；检查目录权限后重试。"),
+                theme,
+            ),
         }
     }
 
     fn subscription_loading(kind: SourceKind, theme: Theme) -> Div {
         let title = match kind {
-            SourceKind::HttpSubscription => "正在读取 HTTP 订阅",
-            SourceKind::HttpsSubscription => "正在读取 HTTPS 订阅",
+            SourceKind::HttpSubscription => "正在验证并导入 HTTP 订阅",
+            SourceKind::HttpsSubscription => "正在验证并导入 HTTPS 订阅",
             SourceKind::VlessNode => "正在解析 VLESS 节点",
         };
         div()
@@ -563,7 +598,7 @@ impl RelayApp {
                     .mt_1()
                     .text_size(px(11.0))
                     .text_color(theme.text_secondary)
-                    .child("隔离的 Mihomo 正在下载并解析节点，通常需要几秒。"),
+                    .child("隔离的 Mihomo 正在解析节点；成功后才会原子保存。"),
             )
     }
 
@@ -614,6 +649,106 @@ impl RelayApp {
             })
     }
 
+    fn imported_subscription_card(&self, theme: Theme, cx: &mut Context<Self>) -> Div {
+        let node_count: usize = self
+            .subscription_preview_providers
+            .iter()
+            .map(|provider| provider.nodes.len())
+            .sum();
+        let (title, detail, busy) = match self.imported_subscription_state {
+            ImportedSubscriptionState::None => return div(),
+            ImportedSubscriptionState::Pending(_) | ImportedSubscriptionState::Refreshing(_) => (
+                "正在恢复已导入订阅",
+                "订阅已保存在本机；正在重新读取节点。".to_owned(),
+                true,
+            ),
+            ImportedSubscriptionState::Ready(kind) => (
+                "订阅已导入",
+                format!(
+                    "{} · {} 个来源 · {node_count} 个节点 · 重启后自动恢复",
+                    source_kind_label(kind),
+                    self.subscription_preview_providers.len()
+                ),
+                false,
+            ),
+            ImportedSubscriptionState::Unavailable(kind, error) => (
+                "订阅已保存 · 节点刷新失败",
+                format!(
+                    "{} · {error}；稍后可粘贴原链接重新导入。",
+                    source_kind_label(kind)
+                ),
+                false,
+            ),
+            ImportedSubscriptionState::StoreError(error) => (
+                "已保存订阅不可用",
+                format!("{error}；重新导入会尝试安全替换。"),
+                false,
+            ),
+            ImportedSubscriptionState::Removing(_) => (
+                "正在移除订阅",
+                "正在删除本机保存的订阅来源。".to_owned(),
+                true,
+            ),
+        };
+        let operation_busy = busy
+            || matches!(
+                self.subscription_feedback,
+                SubscriptionFeedback::Importing(_)
+            );
+        let removable = self.imported_subscription.is_some() && !operation_busy;
+
+        div()
+            .mt_3()
+            .p_3()
+            .rounded_md()
+            .border_1()
+            .border_color(theme.outline_subtle)
+            .bg(theme.action_soft)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_3()
+                    .child(
+                        div()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(theme.status_success)
+                            .child(title),
+                    )
+                    .when(removable, |header| {
+                        header.child(
+                            div()
+                                .id("remove-imported-subscription")
+                                .role(Role::Button)
+                                .aria_label("移除已导入订阅")
+                                .tab_stop(true)
+                                .focusable()
+                                .cursor_pointer()
+                                .px_2()
+                                .py_1()
+                                .rounded_md()
+                                .border_1()
+                                .border_color(theme.outline_subtle)
+                                .bg(theme.surface_high)
+                                .text_size(px(10.0))
+                                .text_color(theme.text_secondary)
+                                .child("移除订阅")
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.remove_imported_subscription(cx);
+                                })),
+                        )
+                    }),
+            )
+            .child(
+                div()
+                    .mt_1()
+                    .text_size(px(11.0))
+                    .text_color(theme.text_secondary)
+                    .child(detail),
+            )
+    }
+
     fn subscription_error(
         title: &'static str,
         message: String,
@@ -648,6 +783,8 @@ impl RelayApp {
 
     fn source_nodes(
         feedback: &SubscriptionFeedback,
+        imported_state: ImportedSubscriptionState,
+        has_imported_subscription: bool,
         providers: &[LoadedProvider],
         theme: Theme,
     ) -> Div {
@@ -661,16 +798,25 @@ impl RelayApp {
             || providers.iter().map(|provider| provider.nodes.len()).sum(),
             <[SourceNodePreview]>::len,
         );
-        let remote_preview = matches!(
-            feedback,
-            SubscriptionFeedback::Loading(_)
-                | SubscriptionFeedback::Valid(SubscriptionPreview {
-                    kind: SourceKind::HttpSubscription | SourceKind::HttpsSubscription,
-                    ..
-                })
-                | SubscriptionFeedback::PreviewFailed(_)
-        );
-        let list_title = if remote_preview {
+        let remote_preview = has_imported_subscription
+            || matches!(
+                feedback,
+                SubscriptionFeedback::Importing(_)
+                    | SubscriptionFeedback::Valid(SubscriptionPreview {
+                        kind: SourceKind::HttpSubscription | SourceKind::HttpsSubscription,
+                        ..
+                    })
+                    | SubscriptionFeedback::PreviewFailed(_)
+                    | SubscriptionFeedback::StoreFailed(_)
+            );
+        let loading = matches!(feedback, SubscriptionFeedback::Importing(_))
+            || matches!(
+                imported_state,
+                ImportedSubscriptionState::Pending(_) | ImportedSubscriptionState::Refreshing(_)
+            );
+        let list_title = if has_imported_subscription {
+            "已导入节点"
+        } else if remote_preview {
             "订阅节点"
         } else if direct_nodes.is_none() && !providers.is_empty() {
             "Mihomo 当前节点"
@@ -697,7 +843,7 @@ impl RelayApp {
                         div()
                             .text_size(px(10.0))
                             .text_color(theme.text_tertiary)
-                            .child(if matches!(feedback, SubscriptionFeedback::Loading(_)) {
+                            .child(if loading {
                                 "读取中".to_owned()
                             } else {
                                 format!("{total} 个")
@@ -713,23 +859,12 @@ impl RelayApp {
         }
 
         if providers.is_empty() {
-            return section.child(
-                div()
-                    .mt_2()
-                    .p_3()
-                    .rounded_md()
-                    .bg(theme.surface_low)
-                    .text_size(px(11.0))
-                    .text_color(theme.text_secondary)
-                    .child(match feedback {
-                        SubscriptionFeedback::Loading(_) => "正在等待 Mihomo 返回节点列表…",
-                        SubscriptionFeedback::PreviewFailed(_) => {
-                            "没有可展示的节点；修正上方问题后重新读取。"
-                        }
-                        SubscriptionFeedback::Valid(_) => "订阅没有返回可展示的代理节点。",
-                        _ => "识别来源后，这里会显示直接节点或 Mihomo 已载入的订阅节点。",
-                    }),
-            );
+            return section.child(Self::empty_source_nodes(
+                feedback,
+                has_imported_subscription,
+                loading,
+                theme,
+            ));
         }
 
         let mut list = div()
@@ -741,6 +876,34 @@ impl RelayApp {
             list = list.child(Self::provider_block(provider, theme));
         }
         section.child(list)
+    }
+
+    fn empty_source_nodes(
+        feedback: &SubscriptionFeedback,
+        has_imported_subscription: bool,
+        loading: bool,
+        theme: Theme,
+    ) -> Div {
+        let copy = if loading {
+            "正在等待 Mihomo 返回节点列表…"
+        } else {
+            match feedback {
+                SubscriptionFeedback::PreviewFailed(_) => {
+                    "没有新节点可展示；旧的已导入订阅仍然保留。"
+                }
+                SubscriptionFeedback::Valid(_) => "订阅没有返回可展示的代理节点。",
+                _ if has_imported_subscription => "订阅已经保存，但当前没有可展示的节点。",
+                _ => "导入订阅后，这里会显示它包含的全部节点。",
+            }
+        };
+        div()
+            .mt_2()
+            .p_3()
+            .rounded_md()
+            .bg(theme.surface_low)
+            .text_size(px(11.0))
+            .text_color(theme.text_secondary)
+            .child(copy)
     }
 
     fn direct_node_row(node: &SourceNodePreview, theme: Theme) -> Div {

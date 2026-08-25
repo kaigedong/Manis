@@ -37,6 +37,8 @@ fn subscription_url_accepts_http_and_https_without_exposing_values() {
 
     assert_eq!(format!("{http:?}"), "SecretUrl(<redacted>)");
     assert_eq!(format!("{https:?}"), "SecretUrl(<redacted>)");
+    assert!(!http.is_https());
+    assert!(https.is_https());
     assert!(SecretUrl::parse_subscription("vless://not-a-provider").is_err());
 }
 

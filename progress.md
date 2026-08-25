@@ -88,3 +88,10 @@
 - 新增短生命周期隔离订阅预览：Relay 生成不含 geodata/健康检查的最小 profile，启动私有 Mihomo，通过 provider-only 控制器接口读取结果，完成后停止进程并删除 `0700` 临时目录、配置与缓存；错误与 trace 不携带 URL。
 - 配置页新增异步读取、成功、空订阅和失败状态；远程预览只展示本次订阅的来源与节点，不再混入已连接 Clash Verge 的当前节点，连续编辑通过 generation 丢弃陈旧结果。
 - 使用 Clash Verge 内置 Mihomo 与本地两节点 HTTP fixture 完成真实端到端测试，页面实际显示 `1 个来源 · 2 个节点` 以及两个节点行；macOS Unix socket 路径上限导致的首轮超时已通过短私有 runtime 路径修复。
+- 开始把“读取订阅”升级为真正的“导入”：只有隔离 Mihomo 成功解析节点后才持久保存，新导入失败时保留旧订阅；VLESS 仍明确标为预览，不伪装为已持久导入。
+- 新增用户数据目录内的单订阅存储：同目录临时文件原子替换，Unix `0700/0600`，恢复时拒绝 symlink、宽松权限、超限、多行和损坏内容；所有错误继续保持 URL/token 脱敏。
+- GPUI 新增导入中、已导入、启动恢复、恢复失败、保存失败和移除状态；导入成功后清空可见输入但不触发状态回滚，重启后自动重新读取节点。
+- 原生截图夹具改为显式临时 store，避免读取或覆盖用户真实订阅；新增“导入成功”和“全新 app 实例恢复同一订阅”的独立截图证据。
+- 持久导入安全复核首轮为 MEDIUM：Windows 缺少 owner-only DACL/可靠原子替换，因此改为 fail closed；Mihomo validation/launch 子进程改为最小环境白名单，不再继承父进程中的无关凭据。桌面端用户主动导入/恢复 URL 不构成跨主体 SSRF 权限提升，HTTP 与本地来源继续保留显式风险文案。
+- 二次安全复核结论为 macOS/Linux `LOW / SHIP`，没有剩余阻断项；Windows 继续明确不支持持久导入，直到 owner-only DACL、原子替换和 named-pipe 全部完成。
+- 最终 workspace 75 个常规测试通过、3 个环境依赖测试默认 ignored；真实 Mihomo 导入→持久读取→再次解析测试另行通过。严格 Clippy、全目标 build、fmt、diff check 和 worktree/Git 历史敏感模式扫描全部通过；Visual Verdict 96/100 `pass`。`cargo audit` 当前未安装，且本轮没有新增依赖。

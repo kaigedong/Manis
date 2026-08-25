@@ -28,6 +28,12 @@ actions!(
 
 pub(crate) struct SubscriptionInputChanged;
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum InputAvailability {
+    Enabled,
+    Disabled,
+}
+
 pub(crate) fn init(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("backspace", Backspace, Some("SubscriptionInput")),
@@ -55,6 +61,7 @@ pub(crate) struct SubscriptionTextInput {
     last_bounds: Option<Bounds<Pixels>>,
     last_scroll_x: Pixels,
     is_selecting: bool,
+    availability: InputAvailability,
     theme: Theme,
     dark: bool,
 }
@@ -71,6 +78,7 @@ impl SubscriptionTextInput {
             last_bounds: None,
             last_scroll_x: px(0.0),
             is_selecting: false,
+            availability: InputAvailability::Enabled,
             theme,
             dark,
         }
@@ -85,6 +93,17 @@ impl SubscriptionTextInput {
     }
 
     pub(crate) fn clear(&mut self, cx: &mut Context<Self>) {
+        self.clear_content();
+        cx.emit(SubscriptionInputChanged);
+        cx.notify();
+    }
+
+    pub(crate) fn clear_without_event(&mut self, cx: &mut Context<Self>) {
+        self.clear_content();
+        cx.notify();
+    }
+
+    fn clear_content(&mut self) {
         self.content = "".into();
         self.selected_range = 0..0;
         self.selection_reversed = false;
@@ -92,14 +111,24 @@ impl SubscriptionTextInput {
         self.last_layout = None;
         self.last_bounds = None;
         self.last_scroll_x = px(0.0);
-        cx.emit(SubscriptionInputChanged);
-        cx.notify();
     }
 
     pub(crate) fn set_theme(&mut self, theme: Theme, dark: bool, cx: &mut Context<Self>) {
         if self.dark != dark {
             self.theme = theme;
             self.dark = dark;
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn set_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        let availability = if enabled {
+            InputAvailability::Enabled
+        } else {
+            InputAvailability::Disabled
+        };
+        if self.availability != availability {
+            self.availability = availability;
             cx.notify();
         }
     }
@@ -368,6 +397,9 @@ impl EntityInputHandler for SubscriptionTextInput {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.availability == InputAvailability::Disabled {
+            return;
+        }
         let range = normalize_range(
             &self.content,
             range_utf16
@@ -399,6 +431,9 @@ impl EntityInputHandler for SubscriptionTextInput {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.availability == InputAvailability::Disabled {
+            return;
+        }
         let range = normalize_range(
             &self.content,
             range_utf16
@@ -673,7 +708,11 @@ impl gpui::Render for SubscriptionTextInput {
             .id("subscription-url-input")
             .key_context("SubscriptionInput")
             .track_focus(&self.focus_handle(cx))
-            .cursor(CursorStyle::IBeam)
+            .cursor(if self.availability == InputAvailability::Enabled {
+                CursorStyle::IBeam
+            } else {
+                CursorStyle::Arrow
+            })
             .h(px(38.0))
             .w_full()
             .px_3()

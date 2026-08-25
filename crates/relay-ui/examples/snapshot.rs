@@ -23,6 +23,7 @@ fn capture_remote_subscription_preview(
     use relay_ui::RelayApp;
     use std::io::{BufRead, BufReader, Write};
     use std::net::TcpListener;
+    use std::path::Path;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Duration;
@@ -67,8 +68,18 @@ fn capture_remote_subscription_preview(
         Ok(())
     });
 
+    let fixture_root =
+        std::env::temp_dir().join(format!("relay-ui-import-snapshot-{}", std::process::id()));
+    if Path::new(&fixture_root).exists() {
+        std::fs::remove_dir_all(&fixture_root)?;
+    }
+    let store = fixture_root.join("subscriptions");
+    let initial_store = store.clone();
+
     let window = cx.open_offscreen_window(size(px(1420.0), px(900.0)), |_, cx| {
-        cx.new(|_| RelayApp::new())
+        cx.new(|_| {
+            RelayApp::with_controller_and_subscription_store("http://127.0.0.1:9090", initial_store)
+        })
     })?;
     let window: AnyWindowHandle = window.into();
     refresh(cx, window)?;
@@ -83,14 +94,67 @@ fn capture_remote_subscription_preview(
         std::thread::sleep(Duration::from_millis(25));
         refresh(cx, window)?;
     }
-    let capture = save_screenshot(
+    save_screenshot(
         cx,
         window,
         "configuration-wide-remote-subscription-nodes.png",
-    );
+    )?;
+
+    capture_restored_subscription_views(cx, &store)?;
     stop.store(true, Ordering::Relaxed);
     server.join().map_err(|_| "fixture server panicked")??;
-    capture
+    if fixture_root.exists() {
+        std::fs::remove_dir_all(fixture_root)?;
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn capture_restored_subscription_views(
+    cx: &mut gpui::VisualTestAppContext,
+    store: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use gpui::{AnyWindowHandle, AppContext, Modifiers, point, px, size};
+    use relay_ui::RelayApp;
+    use std::time::Duration;
+
+    for (width, height, navigation_x, file_name) in [
+        (
+            1420.0,
+            900.0,
+            110.0,
+            "configuration-wide-import-restored.png",
+        ),
+        (
+            720.0,
+            720.0,
+            30.0,
+            "configuration-compact-import-restored.png",
+        ),
+    ] {
+        let window_store = store.to_owned();
+        let window = cx.open_offscreen_window(size(px(width), px(height)), |_, cx| {
+            cx.new(|_| {
+                RelayApp::with_controller_and_subscription_store(
+                    "http://127.0.0.1:9090",
+                    window_store,
+                )
+            })
+        })?;
+        let window: AnyWindowHandle = window.into();
+        refresh(cx, window)?;
+        cx.simulate_click(
+            window,
+            point(px(navigation_x), px(120.0)),
+            Modifiers::none(),
+        );
+        for _ in 0..40 {
+            std::thread::sleep(Duration::from_millis(25));
+            refresh(cx, window)?;
+        }
+        save_screenshot(cx, window, file_name)?;
+    }
+    Ok(())
 }
 
 #[cfg(target_os = "macos")]
@@ -104,7 +168,7 @@ fn capture_configuration(
     use relay_ui::RelayApp;
 
     let window = cx.open_offscreen_window(size(px(width), px(height)), |_, cx| {
-        cx.new(|_| RelayApp::new())
+        cx.new(|_| RelayApp::with_controller("http://127.0.0.1:9090"))
     })?;
     let window: AnyWindowHandle = window.into();
 
@@ -162,7 +226,7 @@ fn capture(
     use relay_ui::RelayApp;
 
     let window = cx.open_offscreen_window(size(px(width), px(height)), |_, cx| {
-        cx.new(|_| RelayApp::new())
+        cx.new(|_| RelayApp::with_controller("http://127.0.0.1:9090"))
     })?;
     let window: AnyWindowHandle = window.into();
 
@@ -178,7 +242,7 @@ fn capture_compact_flow(
     use relay_ui::RelayApp;
 
     let window = cx.open_offscreen_window(size(px(720.0), px(720.0)), |_, cx| {
-        cx.new(|_| RelayApp::new())
+        cx.new(|_| RelayApp::with_controller("http://127.0.0.1:9090"))
     })?;
     let window: AnyWindowHandle = window.into();
 
