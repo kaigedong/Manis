@@ -116,6 +116,15 @@
 - [completed] 5. 完成真实 controller 验证、原生截图与 Visual Verdict
 - [completed] 6. 完成安全复核、全仓验证、Git 提交和 Relay 重启
 
+## 策略组详情与实际选路
+
+- [completed] 1. 映射 Mihomo 当前选择/切换 API、Relay 托管边界和现有节点状态
+- [completed] 2. 以 TDD 建立策略组详情、节点级延迟与当前选择状态
+- [completed] 3. 实现 HTTP/Unix controller 的组详情读取与手动节点切换
+- [completed] 4. 在节点页实现宽屏/紧凑策略组详情、逐节点反馈和自动组当前优选
+- [completed] 5. 完成真实 controller/托管 fixture 验证、原生截图与 Visual Verdict
+- [in_progress] 6. 完成安全复核、全仓验证、Git 提交和 Relay 重启
+
 ## 固定约束
 - 实现框架：Rust + GPUI
 - 目标平台：Windows、macOS、Linux
@@ -145,3 +154,5 @@
 | 只读 UX 子任务遗留了与领域模型冲突的半成品改动 | 1 | 中断该子任务，移除伪延迟阈值/协议规则模型，保留可复用输入改造后统一实现 |
 | 首轮严格 Clippy 报告缺少 Errors 文档与声明式 UI 行数限制 | 1 | 补齐公开 Result 文档、派生 Default，并仅对声明式渲染/事务函数做局部 allow |
 | `relay-ui` RED 测试撞上 profile 执行代理的中间编辑窗口 | 1 | 不重试并发编译；等待其完成独占文件后再运行，避免误判共享工作树中的暂态错误 |
+| 策略组详情首轮 TDD 缺少 runtime 状态和逐节点测速映射 | 1 | 预期红灯；确认失败点正好覆盖新状态类型、完成签名和 delays 字段，进入最小实现 |
+| 逐节点测速返回类型改为 map 后托管过滤仍丢弃节点名 | 1 | 编译器指出 iterator item 仍是 `u16`；改为保留 `(name, delay)` 对后 collect |

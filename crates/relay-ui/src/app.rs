@@ -166,7 +166,7 @@ impl NodeGroupBenchmarkSummary {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 enum NodeGroupBenchmarkState {
     #[default]
     Idle,
@@ -176,6 +176,7 @@ enum NodeGroupBenchmarkState {
     Complete {
         generation: u64,
         summary: NodeGroupBenchmarkSummary,
+        delays: BTreeMap<String, u16>,
     },
     Failed {
         generation: u64,
@@ -183,23 +184,110 @@ enum NodeGroupBenchmarkState {
 }
 
 impl NodeGroupBenchmarkState {
-    fn is_running(self) -> bool {
+    fn is_running(&self) -> bool {
         matches!(self, Self::Running { .. })
     }
 
-    fn complete(&mut self, generation: u64, summary: NodeGroupBenchmarkSummary) -> bool {
+    fn complete(&mut self, generation: u64, total: usize, delays: BTreeMap<String, u16>) -> bool {
         if !matches!(self, Self::Running { generation: current } if *current == generation) {
             return false;
         }
+        let summary = NodeGroupBenchmarkSummary::from_delays(total, delays.values().copied());
         *self = Self::Complete {
             generation,
             summary,
+            delays,
         };
         true
     }
 
     fn fail(&mut self, generation: u64) -> bool {
         if !matches!(self, Self::Running { generation: current } if *current == generation) {
+            return false;
+        }
+        *self = Self::Failed { generation };
+        true
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+enum NodeGroupRuntimeState {
+    #[default]
+    LocalOnly,
+    Loading {
+        generation: u64,
+    },
+    Ready {
+        generation: u64,
+        current: Option<String>,
+        candidates: BTreeSet<String>,
+    },
+    Selecting {
+        generation: u64,
+        current: Option<String>,
+        candidates: BTreeSet<String>,
+        pending: String,
+    },
+    Failed {
+        generation: u64,
+    },
+}
+
+impl NodeGroupRuntimeState {
+    fn complete_refresh(
+        &mut self,
+        generation: u64,
+        current: Option<String>,
+        candidates: BTreeSet<String>,
+    ) -> bool {
+        if !matches!(
+            self,
+            Self::Loading { generation: active }
+                | Self::Selecting {
+                    generation: active,
+                    ..
+                } if *active == generation
+        ) {
+            return false;
+        }
+        *self = Self::Ready {
+            generation,
+            current,
+            candidates,
+        };
+        true
+    }
+
+    fn begin_selection(&mut self, generation: u64, selected: &str) -> bool {
+        let Self::Ready {
+            current,
+            candidates,
+            ..
+        } = self
+        else {
+            return false;
+        };
+        if !candidates.contains(selected) {
+            return false;
+        }
+        *self = Self::Selecting {
+            generation,
+            current: current.clone(),
+            candidates: candidates.clone(),
+            pending: selected.to_owned(),
+        };
+        true
+    }
+
+    fn fail(&mut self, generation: u64) -> bool {
+        if !matches!(
+            self,
+            Self::Loading { generation: active }
+                | Self::Selecting {
+                    generation: active,
+                    ..
+                } if *active == generation
+        ) {
             return false;
         }
         *self = Self::Failed { generation };
@@ -227,6 +315,9 @@ pub struct RelayApp {
     node_group_benchmarks: BTreeMap<String, NodeGroupBenchmarkState>,
     node_group_benchmark_generation: u64,
     node_group_benchmark_active_generation: Option<u64>,
+    selected_node_group_id: Option<String>,
+    node_group_runtime_states: BTreeMap<String, NodeGroupRuntimeState>,
+    node_group_runtime_generation: u64,
     source_store_error: Option<SubscriptionStoreError>,
     proxy_mode: ProxyMode,
     proxy_mode_busy: bool,
@@ -361,6 +452,9 @@ impl RelayApp {
             node_group_benchmarks: BTreeMap::new(),
             node_group_benchmark_generation: 0,
             node_group_benchmark_active_generation: None,
+            selected_node_group_id: None,
+            node_group_runtime_states: BTreeMap::new(),
+            node_group_runtime_generation: 0,
             source_store_error,
             proxy_mode: ProxyMode::Off,
             proxy_mode_busy: false,

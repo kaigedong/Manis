@@ -7,8 +7,8 @@ use relay_core::{
 };
 
 use super::{
-    ImportedSubscriptionState, NodeGroupBenchmarkState, NodeGroupBenchmarkSummary, NodeGroupDraft,
-    NodeGroupMatcherKind, RelayApp, SourceRuntimeApply,
+    ImportedSubscriptionState, NodeGroupBenchmarkState, NodeGroupDraft, NodeGroupMatcherKind,
+    NodeGroupRuntimeState, RelayApp, SourceRuntimeApply,
 };
 use crate::{
     mihomo::{self, LoadedProvider, LoadedProviderNode},
@@ -22,6 +22,15 @@ struct NodeSourceGroup<'a> {
     detail: String,
     providers: Vec<&'a LoadedProvider>,
     saved_nodes: Vec<&'a SourceNodePreview>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct NodeGroupMemberView {
+    identity: NodeIdentity,
+    source_name: String,
+    protocol: String,
+    latency_label: Option<String>,
+    alive: Option<bool>,
 }
 
 const MAX_GROUP_BENCHMARK_NODES: usize = 512;
@@ -395,13 +404,20 @@ impl RelayApp {
         for group in &self.node_policy_groups {
             cards = cards.child(self.node_policy_group_card(group, theme, cx));
         }
+        if !self.node_policy_groups.is_empty() {
+            section = section.child(cards);
+        }
+        if let Some(group) = self.selected_node_group_id.as_ref().and_then(|selected| {
+            self.node_policy_groups
+                .iter()
+                .find(|group| group.id == *selected)
+        }) {
+            section = section.child(self.node_policy_group_detail(group, compact, theme, cx));
+        }
+        if let Some(draft) = self.node_group_draft.as_ref() {
+            section = section.child(self.node_group_editor(draft, compact, theme, cx));
+        }
         section
-            .when(!self.node_policy_groups.is_empty(), |section| {
-                section.child(cards)
-            })
-            .when_some(self.node_group_draft.as_ref(), |section, draft| {
-                section.child(self.node_group_editor(draft, compact, theme, cx))
-            })
     }
 
     fn node_group_add_button(theme: Theme, cx: &mut Context<Self>) -> Stateful<Div> {
@@ -424,6 +440,7 @@ impl RelayApp {
             .on_click(cx.listener(|this, _, _, cx| this.start_node_group_create(cx)))
     }
 
+    #[allow(clippy::too_many_lines)]
     fn node_policy_group_card(
         &self,
         group: &NodePolicyGroup,
@@ -434,10 +451,12 @@ impl RelayApp {
         let benchmark = self
             .node_group_benchmarks
             .get(&group.id)
-            .copied()
+            .cloned()
             .unwrap_or_default();
         let benchmarking = benchmark.is_running();
+        let selected = self.selected_node_group_id.as_deref() == Some(group.id.as_str());
         let benchmark_id = group.id.clone();
+        let detail_id = group.id.clone();
         let group_id = group.id.clone();
         let remove_id = group.id.clone();
         let matcher_summary = match &group.matcher {
@@ -449,7 +468,11 @@ impl RelayApp {
             .p_4()
             .rounded_md()
             .border_1()
-            .border_color(theme.outline_subtle)
+            .border_color(if selected {
+                theme.action_primary
+            } else {
+                theme.outline_subtle
+            })
             .bg(theme.surface_high)
             .child(
                 div()
@@ -478,7 +501,9 @@ impl RelayApp {
                             ),
                     ),
             )
-            .child(Self::node_group_benchmark_status(benchmark, matched, theme))
+            .child(Self::node_group_benchmark_status(
+                &benchmark, matched, theme,
+            ))
             .child(
                 div()
                     .mt_3()
@@ -493,6 +518,18 @@ impl RelayApp {
                             if !benchmarking {
                                 this.start_node_group_benchmark(&benchmark_id, cx);
                             }
+                        }),
+                    ))
+                    .child(Self::node_group_text_button(
+                        format!("node-group-detail-{detail_id}"),
+                        if selected {
+                            "收起详情"
+                        } else {
+                            "查看详情"
+                        },
+                        theme,
+                        cx.listener(move |this, _, _, cx| {
+                            this.toggle_node_group_detail(&detail_id, cx);
                         }),
                     ))
                     .child(Self::node_group_text_button(
@@ -514,8 +551,339 @@ impl RelayApp {
             )
     }
 
+    fn node_policy_group_detail(
+        &self,
+        group: &NodePolicyGroup,
+        compact: bool,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let members = self.node_group_members(group);
+        let runtime_state = self
+            .node_group_runtime_states
+            .get(&group.id)
+            .cloned()
+            .unwrap_or_default();
+        let benchmark = self
+            .node_group_benchmarks
+            .get(&group.id)
+            .cloned()
+            .unwrap_or_default();
+        let close_id = group.id.clone();
+        let mut list = div().mt_3().border_t_1().border_color(theme.outline_subtle);
+        for member in members {
+            list = list.child(Self::node_group_member_row(
+                group,
+                member,
+                &runtime_state,
+                &benchmark,
+                compact,
+                self.runtime.manages_node_policy_groups(),
+                theme,
+                cx,
+            ));
+        }
+
+        div()
+            .mt_3()
+            .p(if compact { px(14.0) } else { px(18.0) })
+            .rounded_md()
+            .border_1()
+            .border_color(theme.action_primary)
+            .bg(theme.surface_high)
+            .child(
+                div()
+                    .flex()
+                    .items_start()
+                    .justify_between()
+                    .gap_3()
+                    .child(
+                        div()
+                            .min_w(px(0.0))
+                            .child(
+                                div()
+                                    .text_size(px(15.0))
+                                    .font_weight(FontWeight::BOLD)
+                                    .child(group.name.clone()),
+                            )
+                            .child(
+                                div()
+                                    .mt_1()
+                                    .text_size(px(11.0))
+                                    .text_color(theme.text_secondary)
+                                    .child(format!(
+                                        "{} · {} 个候选节点",
+                                        group.strategy.label(),
+                                        self.node_group_match_count(group)
+                                    )),
+                            ),
+                    )
+                    .child(Self::node_group_text_button(
+                        format!("node-group-detail-close-{close_id}"),
+                        "关闭",
+                        theme,
+                        cx.listener(move |this, _, _, cx| {
+                            this.toggle_node_group_detail(&close_id, cx);
+                        }),
+                    )),
+            )
+            .child(Self::node_group_runtime_banner(
+                group,
+                &runtime_state,
+                theme,
+                cx,
+            ))
+            .when(self.node_group_match_count(group) == 0, |detail| {
+                detail.child(
+                    div()
+                        .mt_3()
+                        .p_4()
+                        .rounded_md()
+                        .bg(theme.surface_low)
+                        .text_size(px(11.0))
+                        .text_color(theme.text_secondary)
+                        .child("当前规则没有匹配到节点，请编辑分组规则。"),
+                )
+            })
+            .when(self.node_group_match_count(group) > 0, |detail| {
+                detail.child(list)
+            })
+    }
+
+    fn node_group_runtime_banner(
+        group: &NodePolicyGroup,
+        state: &NodeGroupRuntimeState,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let (title, detail, color) = match state {
+            NodeGroupRuntimeState::LocalOnly => (
+                "本地候选 · 当前只读".to_owned(),
+                "Relay 不会改写外部控制器或已有配置；请使用 Relay 托管配置来切换此分组。"
+                    .to_owned(),
+                theme.text_secondary,
+            ),
+            NodeGroupRuntimeState::Loading { .. } => (
+                "正在读取当前出口…".to_owned(),
+                "正在从 Relay 托管 Mihomo 同步策略组状态。".to_owned(),
+                theme.action_primary,
+            ),
+            NodeGroupRuntimeState::Ready { current, .. } => {
+                let current = current.as_deref().unwrap_or("尚未选择");
+                if group.strategy == NodeGroupStrategy::Manual {
+                    (
+                        format!("当前使用：{current}"),
+                        "选择其他节点后会立即应用，并由 Mihomo 保存选择。".to_owned(),
+                        theme.status_success,
+                    )
+                } else {
+                    (
+                        format!("当前优选：{current}"),
+                        "最低延迟组由 Mihomo 自动测试并切换，不支持手动指定。".to_owned(),
+                        theme.status_success,
+                    )
+                }
+            }
+            NodeGroupRuntimeState::Selecting { pending, .. } => (
+                format!("正在切换到：{pending}"),
+                "等待 Mihomo 确认新的当前出口。".to_owned(),
+                theme.action_primary,
+            ),
+            NodeGroupRuntimeState::Failed { .. } => (
+                "无法读取分组运行状态".to_owned(),
+                "请启动或连接 Relay 托管 Mihomo 后重试。".to_owned(),
+                theme.route_trace,
+            ),
+        };
+        let retry_id = group.id.clone();
+        div()
+            .mt_3()
+            .p_3()
+            .rounded_md()
+            .bg(theme.surface_low)
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_3()
+            .child(
+                div()
+                    .min_w(px(0.0))
+                    .child(
+                        div()
+                            .text_size(px(11.0))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(color)
+                            .child(title),
+                    )
+                    .child(
+                        div()
+                            .mt_1()
+                            .text_size(px(10.0))
+                            .text_color(theme.text_secondary)
+                            .child(detail),
+                    ),
+            )
+            .when(
+                matches!(state, NodeGroupRuntimeState::Failed { .. }),
+                |banner| {
+                    banner.child(Self::node_group_text_button(
+                        format!("node-group-runtime-retry-{retry_id}"),
+                        "重试",
+                        theme,
+                        cx.listener(move |this, _, _, cx| {
+                            this.refresh_node_group_runtime(&retry_id, cx);
+                        }),
+                    ))
+                },
+            )
+    }
+
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+    fn node_group_member_row(
+        group: &NodePolicyGroup,
+        member: NodeGroupMemberView,
+        runtime_state: &NodeGroupRuntimeState,
+        benchmark: &NodeGroupBenchmarkState,
+        compact: bool,
+        managed: bool,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let current = match runtime_state {
+            NodeGroupRuntimeState::Ready { current, .. }
+            | NodeGroupRuntimeState::Selecting { current, .. } => current.as_deref(),
+            _ => None,
+        };
+        let is_current = current == Some(member.identity.node_name.as_str());
+        let selecting = matches!(
+            runtime_state,
+            NodeGroupRuntimeState::Selecting { pending, .. }
+                if pending == &member.identity.node_name
+        );
+        let selectable = managed
+            && group.strategy == NodeGroupStrategy::Manual
+            && matches!(
+                runtime_state,
+                NodeGroupRuntimeState::Ready { candidates, .. }
+                    if candidates.contains(&member.identity.node_name)
+            )
+            && !is_current;
+        let delay = match benchmark {
+            NodeGroupBenchmarkState::Complete { delays, .. } => delays
+                .get(&member.identity.node_name)
+                .map(|delay| format!("{delay} ms"))
+                .or(member.latency_label.clone()),
+            _ => member.latency_label.clone(),
+        }
+        .unwrap_or_else(|| "未测速".to_owned());
+        let (health, health_color) = match member.alive {
+            Some(true) => ("可用", theme.status_success),
+            Some(false) => ("不可用", theme.route_trace),
+            None => ("未检测", theme.text_tertiary),
+        };
+        let group_id = group.id.clone();
+        let node_name = member.identity.node_name.clone();
+        let action_label = if is_current {
+            "当前"
+        } else if selecting {
+            "切换中…"
+        } else if selectable {
+            "选择"
+        } else if group.strategy == NodeGroupStrategy::LowestLatency {
+            "自动"
+        } else {
+            "只读"
+        };
+        let action = div()
+            .id(format!(
+                "node-group-select-{}-{}",
+                group.id, member.identity.node_name
+            ))
+            .role(Role::Button)
+            .aria_label(format!(
+                "{} · {} · {action_label}",
+                group.name, member.identity.node_name
+            ))
+            .tab_stop(selectable)
+            .focusable()
+            .h(px(30.0))
+            .px_3()
+            .rounded_md()
+            .border_1()
+            .border_color(if selectable {
+                theme.action_primary
+            } else {
+                theme.outline_subtle
+            })
+            .bg(if is_current {
+                theme.action_soft
+            } else {
+                theme.surface_high
+            })
+            .text_size(px(10.0))
+            .text_color(if selectable || is_current {
+                theme.action_primary
+            } else {
+                theme.text_tertiary
+            })
+            .font_weight(FontWeight::SEMIBOLD)
+            .flex()
+            .items_center()
+            .child(action_label)
+            .when(selectable, |button| {
+                button
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.select_node_group_member(&group_id, &node_name, cx);
+                    }))
+            });
+        let metadata = format!("{} · {}", member.source_name, member.protocol);
+        div()
+            .min_h(if compact { px(58.0) } else { px(52.0) })
+            .py_2()
+            .flex()
+            .items_center()
+            .gap_3()
+            .child(
+                div()
+                    .min_w(px(0.0))
+                    .flex_1()
+                    .child(
+                        div()
+                            .font_weight(if is_current {
+                                FontWeight::BOLD
+                            } else {
+                                FontWeight::NORMAL
+                            })
+                            .child(member.identity.node_name),
+                    )
+                    .child(
+                        div()
+                            .mt_1()
+                            .text_size(px(10.0))
+                            .text_color(theme.text_secondary)
+                            .child(metadata),
+                    ),
+            )
+            .child(
+                div()
+                    .w(if compact { px(58.0) } else { px(72.0) })
+                    .text_size(px(10.0))
+                    .text_color(health_color)
+                    .child(health),
+            )
+            .child(
+                div()
+                    .w(if compact { px(62.0) } else { px(76.0) })
+                    .text_size(px(10.0))
+                    .text_color(theme.text_secondary)
+                    .child(delay),
+            )
+            .child(action)
+    }
+
     fn node_group_benchmark_status(
-        state: NodeGroupBenchmarkState,
+        state: &NodeGroupBenchmarkState,
         matched: usize,
         theme: Theme,
     ) -> Div {
@@ -1042,6 +1410,47 @@ impl RelayApp {
         inventory.into_iter().collect()
     }
 
+    fn node_group_members(&self, policy_group: &NodePolicyGroup) -> Vec<NodeGroupMemberView> {
+        let has_local_sources =
+            !self.imported_subscriptions.is_empty() || !self.saved_vless_nodes.is_empty();
+        let mut members = Vec::new();
+        for source_group in self.node_source_groups(has_local_sources) {
+            for provider in source_group.providers {
+                for node in &provider.nodes {
+                    let Ok(identity) = NodeIdentity::new(&source_group.id, &node.name) else {
+                        continue;
+                    };
+                    if policy_group.matches(&identity.source_id, &identity.node_name) {
+                        members.push(NodeGroupMemberView {
+                            identity,
+                            source_name: source_group.name.clone(),
+                            protocol: node.protocol.clone(),
+                            latency_label: node.latency_label.clone(),
+                            alive: node.alive,
+                        });
+                    }
+                }
+            }
+            for node in source_group.saved_nodes {
+                let Ok(identity) = NodeIdentity::new(&source_group.id, &node.name) else {
+                    continue;
+                };
+                if policy_group.matches(&identity.source_id, &identity.node_name) {
+                    members.push(NodeGroupMemberView {
+                        identity,
+                        source_name: source_group.name.clone(),
+                        protocol: node.protocol.to_owned(),
+                        latency_label: None,
+                        alive: None,
+                    });
+                }
+            }
+        }
+        members.sort_by(|left, right| left.identity.cmp(&right.identity));
+        members.dedup_by(|left, right| left.identity == right.identity);
+        members
+    }
+
     fn node_group_match_count(&self, group: &NodePolicyGroup) -> usize {
         self.node_inventory()
             .iter()
@@ -1059,6 +1468,167 @@ impl RelayApp {
             .collect()
     }
 
+    fn toggle_node_group_detail(&mut self, id: &str, cx: &mut Context<Self>) {
+        if self.selected_node_group_id.as_deref() == Some(id) {
+            self.selected_node_group_id = None;
+            cx.notify();
+            return;
+        }
+        if !self.node_policy_groups.iter().any(|group| group.id == id) {
+            return;
+        }
+        self.selected_node_group_id = Some(id.to_owned());
+        if self.runtime.manages_node_policy_groups() {
+            self.refresh_node_group_runtime(id, cx);
+        } else {
+            self.node_group_runtime_states
+                .insert(id.to_owned(), NodeGroupRuntimeState::LocalOnly);
+            "已打开分组详情；当前外部控制器保持只读".clone_into(&mut self.status);
+            cx.notify();
+        }
+    }
+
+    fn refresh_node_group_runtime(&mut self, id: &str, cx: &mut Context<Self>) {
+        let Some(group) = self
+            .node_policy_groups
+            .iter()
+            .find(|group| group.id == id)
+            .cloned()
+        else {
+            return;
+        };
+        if !self.runtime.manages_node_policy_groups() {
+            self.node_group_runtime_states
+                .insert(id.to_owned(), NodeGroupRuntimeState::LocalOnly);
+            cx.notify();
+            return;
+        }
+        self.node_group_runtime_generation = self.node_group_runtime_generation.wrapping_add(1);
+        let generation = self.node_group_runtime_generation;
+        self.node_group_runtime_states
+            .insert(id.to_owned(), NodeGroupRuntimeState::Loading { generation });
+        self.status = format!("正在读取分组“{}”的当前出口", group.name);
+        let runtime = self.runtime.clone();
+        let group_id = group.id.clone();
+        let group_name = group.name.clone();
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let result = executor
+                .spawn(async move { runtime.load_node_group_runtime(&group_name) })
+                .await;
+            this.update(cx, |this, cx| {
+                if !this
+                    .node_policy_groups
+                    .iter()
+                    .any(|group| group.id == group_id)
+                {
+                    return;
+                }
+                let Some(state) = this.node_group_runtime_states.get_mut(&group_id) else {
+                    return;
+                };
+                let accepted = match result {
+                    Ok(Some(snapshot)) => {
+                        state.complete_refresh(generation, snapshot.current, snapshot.candidates)
+                    }
+                    Ok(None) => {
+                        *state = NodeGroupRuntimeState::LocalOnly;
+                        true
+                    }
+                    Err(_error) => state.fail(generation),
+                };
+                if accepted {
+                    this.status = match state {
+                        NodeGroupRuntimeState::Ready { .. } => "已同步策略组当前出口".to_owned(),
+                        NodeGroupRuntimeState::LocalOnly => "当前控制器保持只读".to_owned(),
+                        NodeGroupRuntimeState::Failed { .. } => {
+                            "无法读取分组运行状态，请启动 Relay 托管 Mihomo 后重试".to_owned()
+                        }
+                        _ => return,
+                    };
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn select_node_group_member(
+        &mut self,
+        group_id: &str,
+        node_name: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(group) = self
+            .node_policy_groups
+            .iter()
+            .find(|group| group.id == group_id)
+            .cloned()
+        else {
+            return;
+        };
+        if group.strategy != NodeGroupStrategy::Manual || !self.runtime.manages_node_policy_groups()
+        {
+            "当前分组不支持手动切换".clone_into(&mut self.status);
+            cx.notify();
+            return;
+        }
+        self.node_group_runtime_generation = self.node_group_runtime_generation.wrapping_add(1);
+        let generation = self.node_group_runtime_generation;
+        let Some(state) = self.node_group_runtime_states.get_mut(group_id) else {
+            return;
+        };
+        if !state.begin_selection(generation, node_name) {
+            "节点不在 Mihomo 当前候选列表中，请刷新后重试".clone_into(&mut self.status);
+            cx.notify();
+            return;
+        }
+        self.status = format!("正在将“{}”切换到“{}”", group.name, node_name);
+        let runtime = self.runtime.clone();
+        let selected = node_name.to_owned();
+        let selected_for_request = selected.clone();
+        let group_id = group.id.clone();
+        let group_name = group.name.clone();
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let result =
+                executor
+                    .spawn(async move {
+                        runtime.select_node_group_node(&group_name, &selected_for_request)
+                    })
+                    .await;
+            this.update(cx, |this, cx| {
+                let Some(state) = this.node_group_runtime_states.get_mut(&group_id) else {
+                    return;
+                };
+                let accepted = match result {
+                    Ok(snapshot) => {
+                        state.complete_refresh(generation, snapshot.current, snapshot.candidates)
+                    }
+                    Err(_error) => state.fail(generation),
+                };
+                if accepted {
+                    this.status = match state {
+                        NodeGroupRuntimeState::Ready { .. } => {
+                            format!("已切换到“{selected}”；Mihomo 将保存本次选择")
+                        }
+                        NodeGroupRuntimeState::Failed { .. } => {
+                            "切换失败，请刷新分组状态后重试".to_owned()
+                        }
+                        _ => return,
+                    };
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    #[allow(clippy::too_many_lines)]
     fn start_node_group_benchmark(&mut self, id: &str, cx: &mut Context<Self>) {
         let Some(group) = self
             .node_policy_groups
@@ -1112,6 +1682,8 @@ impl RelayApp {
         let runtime = self.runtime.clone();
         let group_id = group.id.clone();
         let group_name = group.name.clone();
+        let refresh_after_success = group.strategy == NodeGroupStrategy::LowestLatency
+            && self.selected_node_group_id.as_deref() == Some(group.id.as_str());
         let total = candidate_names.len();
         let executor = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
@@ -1131,28 +1703,33 @@ impl RelayApp {
                     cx.notify();
                     return;
                 }
-                let Some(state) = this.node_group_benchmarks.get_mut(&group_id) else {
-                    cx.notify();
-                    return;
-                };
-                let accepted = match result {
-                    Ok(delays) => state.complete(
-                        generation,
-                        NodeGroupBenchmarkSummary::from_delays(total, delays),
-                    ),
-                    Err(_error) => state.fail(generation),
-                };
-                if accepted {
-                    this.status = match *state {
-                        NodeGroupBenchmarkState::Complete { summary, .. } => format!(
-                            "分组测速完成：{}/{} 个节点成功",
-                            summary.succeeded, summary.total
-                        ),
-                        NodeGroupBenchmarkState::Failed { .. } => {
-                            "分组测速失败，请检查 Mihomo 连接与网络后重试".to_owned()
-                        }
-                        _ => return,
+                let (accepted, succeeded) = {
+                    let Some(state) = this.node_group_benchmarks.get_mut(&group_id) else {
+                        cx.notify();
+                        return;
                     };
+                    let accepted = match result {
+                        Ok(delays) => state.complete(generation, total, delays),
+                        Err(_error) => state.fail(generation),
+                    };
+                    let succeeded = matches!(state, NodeGroupBenchmarkState::Complete { .. });
+                    if accepted {
+                        this.status = match state {
+                            NodeGroupBenchmarkState::Complete { summary, .. } => format!(
+                                "分组测速完成：{}/{} 个节点成功",
+                                summary.succeeded, summary.total
+                            ),
+                            NodeGroupBenchmarkState::Failed { .. } => {
+                                "分组测速失败，请检查 Mihomo 连接与网络后重试".to_owned()
+                            }
+                            _ => return,
+                        };
+                    }
+                    (accepted, succeeded)
+                };
+                if accepted && succeeded && refresh_after_success {
+                    this.refresh_node_group_runtime(&group_id, cx);
+                } else if accepted {
                     cx.notify();
                 }
             })
@@ -1312,6 +1889,7 @@ impl RelayApp {
                 .sort_by(|left, right| left.id.cmp(&right.id));
         }
         self.node_group_benchmarks.remove(&group.id);
+        self.node_group_runtime_states.remove(&group.id);
         self.node_group_draft = None;
         self.status = format!("分组“{}”已保存，正在应用托管配置", group.name);
         self.apply_node_policy_groups(store_dir, format!("分组“{}”已保存", group.name), cx);
@@ -1335,6 +1913,10 @@ impl RelayApp {
         }
         let group = self.node_policy_groups.remove(index);
         self.node_group_benchmarks.remove(id);
+        self.node_group_runtime_states.remove(id);
+        if self.selected_node_group_id.as_deref() == Some(id) {
+            self.selected_node_group_id = None;
+        }
         if self
             .node_group_draft
             .as_ref()
@@ -1363,7 +1945,11 @@ impl RelayApp {
                 .await;
             this.update(cx, |this, cx| {
                 this.status = format!("{prefix}{}", apply.status_suffix());
-                cx.notify();
+                if let Some(selected) = this.selected_node_group_id.clone() {
+                    this.refresh_node_group_runtime(&selected, cx);
+                } else {
+                    cx.notify();
+                }
             })
             .ok();
         })
@@ -1954,8 +2540,10 @@ impl RelayApp {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::{BTreeMap, BTreeSet};
+
     use super::NodeCounts;
-    use crate::app::{NodeGroupBenchmarkState, NodeGroupBenchmarkSummary};
+    use crate::app::{NodeGroupBenchmarkState, NodeGroupBenchmarkSummary, NodeGroupRuntimeState};
     use crate::mihomo::{LoadedProvider, LoadedProviderNode};
 
     #[test]
@@ -1997,21 +2585,22 @@ mod tests {
     #[test]
     fn group_benchmark_state_ignores_a_stale_completion() {
         let mut state = NodeGroupBenchmarkState::Running { generation: 7 };
-        let outdated_summary = NodeGroupBenchmarkSummary::from_delays(2, [90]);
-        assert!(!state.complete(6, outdated_summary));
+        let outdated = BTreeMap::from([("Tokyo".to_owned(), 90)]);
+        assert!(!state.complete(6, 2, outdated));
         assert_eq!(state, NodeGroupBenchmarkState::Running { generation: 7 });
 
-        let current = NodeGroupBenchmarkSummary::from_delays(2, [55, 75]);
-        assert!(state.complete(7, current));
+        let current = BTreeMap::from([("Tokyo".to_owned(), 55), ("Singapore".to_owned(), 75)]);
+        assert!(state.complete(7, 2, current));
         assert!(matches!(
-            state,
+            &state,
             NodeGroupBenchmarkState::Complete {
                 summary: NodeGroupBenchmarkSummary {
                     average_ms: Some(65),
                     ..
                 },
+                delays,
                 ..
-            }
+            } if delays.get("Tokyo") == Some(&55)
         ));
     }
 
@@ -2020,6 +2609,31 @@ mod tests {
         assert!(NodeGroupBenchmarkState::Running { generation: 1 }.is_running());
         assert!(!NodeGroupBenchmarkState::Idle.is_running());
         assert!(!NodeGroupBenchmarkState::Failed { generation: 1 }.is_running());
+    }
+
+    #[test]
+    fn group_runtime_state_rejects_stale_refresh_and_unknown_selection() {
+        let mut state = NodeGroupRuntimeState::Loading { generation: 4 };
+        assert!(!state.complete_refresh(
+            3,
+            Some("Tokyo".to_owned()),
+            BTreeSet::from(["Tokyo".to_owned()]),
+        ));
+        assert!(state.complete_refresh(
+            4,
+            Some("Tokyo".to_owned()),
+            BTreeSet::from(["Tokyo".to_owned(), "Singapore".to_owned()]),
+        ));
+        assert!(!state.begin_selection(5, "Unknown"));
+        assert!(state.begin_selection(5, "Singapore"));
+        assert!(matches!(
+            state,
+            NodeGroupRuntimeState::Selecting {
+                generation: 5,
+                ref pending,
+                ..
+            } if pending == "Singapore"
+        ));
     }
 
     fn node(alive: Option<bool>) -> LoadedProviderNode {

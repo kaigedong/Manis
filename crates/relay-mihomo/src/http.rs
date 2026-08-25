@@ -14,8 +14,8 @@ pub const DEFAULT_BODY_LIMIT_BYTES: usize = 16 * 1024 * 1024;
 const HEADER_LIMIT_BYTES: usize = 64 * 1024;
 const BODY_PREVIEW_BYTES: usize = 512;
 
-/// Read-only transport for Mihomo controller `GET` requests.
-pub trait ReadonlyTransport {
+/// Bounded request transport for the local Mihomo controller.
+pub trait ControllerTransport {
     /// Issues a `GET` request to a controller path and returns the response body.
     ///
     /// # Errors
@@ -37,11 +37,25 @@ pub trait ReadonlyTransport {
         path: &str,
         body: &Value,
     ) -> Result<String, MihomoError>;
+
+    /// Issues a `PUT` request with a JSON body to a controller path and returns the response body.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the request path is invalid, the request cannot be serialized, the
+    /// transport fails, the response is malformed, the status is non-successful, or the body
+    /// exceeds the configured limit.
+    fn put_json(
+        &self,
+        config: &ControllerConfig,
+        path: &str,
+        body: &Value,
+    ) -> Result<String, MihomoError>;
 }
 
-impl<T> ReadonlyTransport for &T
+impl<T> ControllerTransport for &T
 where
-    T: ReadonlyTransport + ?Sized,
+    T: ControllerTransport + ?Sized,
 {
     fn get(&self, config: &ControllerConfig, path: &str) -> Result<String, MihomoError> {
         (*self).get(config, path)
@@ -54,6 +68,15 @@ where
         body: &Value,
     ) -> Result<String, MihomoError> {
         (*self).patch_json(config, path, body)
+    }
+
+    fn put_json(
+        &self,
+        config: &ControllerConfig,
+        path: &str,
+        body: &Value,
+    ) -> Result<String, MihomoError> {
+        (*self).put_json(config, path, body)
     }
 }
 
@@ -77,7 +100,7 @@ impl Default for StdHttpTransport {
     }
 }
 
-impl ReadonlyTransport for StdHttpTransport {
+impl ControllerTransport for StdHttpTransport {
     fn get(&self, config: &ControllerConfig, path: &str) -> Result<String, MihomoError> {
         validate_path(path)?;
         let request = build_request(config, "GET", path, None, true)?;
@@ -122,9 +145,36 @@ impl ReadonlyTransport for StdHttpTransport {
 
         send_request(stream, &request, self.body_limit)
     }
+
+    fn put_json(
+        &self,
+        config: &ControllerConfig,
+        path: &str,
+        body: &Value,
+    ) -> Result<String, MihomoError> {
+        validate_path(path)?;
+        let body = serde_json::to_string(body).map_err(|source| MihomoError::Json {
+            endpoint: path.to_owned(),
+            source,
+        })?;
+        let request = build_request(config, "PUT", path, Some(&body), true)?;
+        let mut addresses = (config.host(), config.port()).to_socket_addrs()?;
+        let Some(address) = addresses.find(|address| address.ip().is_loopback()) else {
+            return Err(MihomoError::InvalidConfig(format!(
+                "controller host {} did not resolve to a loopback address",
+                config.host()
+            )));
+        };
+
+        let stream = TcpStream::connect_timeout(&address, config.connect_timeout())?;
+        stream.set_read_timeout(Some(config.read_timeout()))?;
+        stream.set_write_timeout(Some(config.connect_timeout()))?;
+
+        send_request(stream, &request, self.body_limit)
+    }
 }
 
-/// Read-only HTTP transport over a local Unix domain socket.
+/// Bounded HTTP transport over a local Unix domain socket.
 #[cfg(unix)]
 #[derive(Debug, Clone)]
 pub struct UnixSocketTransport {
@@ -155,7 +205,7 @@ impl UnixSocketTransport {
 }
 
 #[cfg(unix)]
-impl ReadonlyTransport for UnixSocketTransport {
+impl ControllerTransport for UnixSocketTransport {
     fn get(&self, config: &ControllerConfig, path: &str) -> Result<String, MihomoError> {
         validate_path(path)?;
         validate_unix_socket_path(&self.socket_path)?;
@@ -181,6 +231,26 @@ impl ReadonlyTransport for UnixSocketTransport {
         })?;
 
         let request = build_request(config, "PATCH", path, Some(&body), false)?;
+        let stream = UnixStream::connect(&self.socket_path)?;
+        stream.set_read_timeout(Some(config.read_timeout()))?;
+        stream.set_write_timeout(Some(config.connect_timeout()))?;
+        send_request(stream, &request, self.body_limit)
+    }
+
+    fn put_json(
+        &self,
+        config: &ControllerConfig,
+        path: &str,
+        body: &Value,
+    ) -> Result<String, MihomoError> {
+        validate_path(path)?;
+        validate_unix_socket_path(&self.socket_path)?;
+        let body = serde_json::to_string(body).map_err(|source| MihomoError::Json {
+            endpoint: path.to_owned(),
+            source,
+        })?;
+
+        let request = build_request(config, "PUT", path, Some(&body), false)?;
         let stream = UnixStream::connect(&self.socket_path)?;
         stream.set_read_timeout(Some(config.read_timeout()))?;
         stream.set_write_timeout(Some(config.connect_timeout()))?;

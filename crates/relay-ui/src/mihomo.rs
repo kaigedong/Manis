@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::fs;
 use std::io::Read;
 use std::net::TcpListener;
@@ -131,6 +131,12 @@ pub(crate) struct ManagedGeneratedProfile {
     subscription_file: PathBuf,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct NodeGroupRuntimeSnapshot {
+    pub current: Option<String>,
+    pub candidates: BTreeSet<String>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum GeneratedProfileApply {
     NotManaged,
@@ -167,6 +173,16 @@ impl RuntimeProfileSource {
 }
 
 impl ControllerRuntime {
+    pub(crate) fn manages_node_policy_groups(&self) -> bool {
+        matches!(
+            self,
+            Self::Managed {
+                generated_profile: Some(_),
+                ..
+            }
+        )
+    }
+
     pub(crate) fn profile_source(&self) -> RuntimeProfileSource {
         match self {
             Self::External { .. } => RuntimeProfileSource::ExternalController,
@@ -255,7 +271,7 @@ impl ControllerRuntime {
         &self,
         group_name: &str,
         candidate_names: &[String],
-    ) -> Result<Vec<u16>, LoadError> {
+    ) -> Result<std::collections::BTreeMap<String, u16>, LoadError> {
         if candidate_names.is_empty() {
             return Err(LoadError::Runtime("当前分组没有可测速节点".to_owned()));
         }
@@ -282,7 +298,7 @@ impl ControllerRuntime {
                     let candidates = candidate_names.iter().collect::<BTreeSet<_>>();
                     return Ok(delays
                         .into_iter()
-                        .filter_map(|(name, delay)| candidates.contains(&name).then_some(delay))
+                        .filter(|(name, _delay)| candidates.contains(name))
                         .collect());
                 }
                 Err(MihomoError::HttpStatus {
@@ -293,6 +309,78 @@ impl ControllerRuntime {
         }
 
         fetch_proxy_delays_bounded(&endpoint, candidate_names)
+    }
+
+    pub(crate) fn load_node_group_runtime(
+        &self,
+        group_name: &str,
+    ) -> Result<Option<NodeGroupRuntimeSnapshot>, LoadError> {
+        let Self::Managed {
+            manager,
+            generated_profile: Some(_),
+            ..
+        } = self
+        else {
+            return Ok(None);
+        };
+        let endpoint = {
+            let mut manager = manager
+                .lock()
+                .map_err(|_poisoned| LoadError::Runtime("托管内核状态锁已损坏".to_owned()))?;
+            manager
+                .running_endpoint()?
+                .ok_or_else(|| LoadError::Runtime("Mihomo 尚未运行，请先启动托管内核".to_owned()))?
+                .uri()
+        };
+        fetch_policy_group(&endpoint, group_name)
+            .map(policy_group_runtime_snapshot)
+            .map(Some)
+            .map_err(LoadError::from)
+    }
+
+    pub(crate) fn select_node_group_node(
+        &self,
+        group_name: &str,
+        selected_name: &str,
+    ) -> Result<NodeGroupRuntimeSnapshot, LoadError> {
+        let Self::Managed {
+            manager,
+            generated_profile: Some(_),
+            ..
+        } = self
+        else {
+            return Err(LoadError::Runtime(
+                "当前控制器不由 Relay 管理，不能修改其策略组".to_owned(),
+            ));
+        };
+        let endpoint = {
+            let mut manager = manager
+                .lock()
+                .map_err(|_poisoned| LoadError::Runtime("托管内核状态锁已损坏".to_owned()))?;
+            manager
+                .running_endpoint()?
+                .ok_or_else(|| LoadError::Runtime("Mihomo 尚未运行，请先启动托管内核".to_owned()))?
+                .uri()
+        };
+        let group = fetch_policy_group(&endpoint, group_name)?;
+        if !group
+            .proxy_type
+            .as_deref()
+            .is_some_and(is_selector_proxy_type)
+        {
+            return Err(LoadError::Runtime(
+                "只有手动选择策略组可以切换节点".to_owned(),
+            ));
+        }
+        if !group.all.iter().any(|candidate| candidate == selected_name) {
+            return Err(LoadError::Runtime(
+                "所选节点不在当前 Mihomo 策略组中".to_owned(),
+            ));
+        }
+        put_policy_group_selection(&endpoint, group_name, selected_name)?;
+        fetch_policy_group(&endpoint, group_name)
+            .map(policy_group_runtime_snapshot)
+            .map_err(LoadError::from)
     }
 
     #[allow(clippy::too_many_lines)]
@@ -2241,6 +2329,69 @@ fn fetch_group_delay(
     )
 }
 
+fn fetch_policy_group(
+    endpoint: &str,
+    group_name: &str,
+) -> Result<relay_mihomo::MihomoPolicyGroup, MihomoError> {
+    #[cfg(unix)]
+    if let Some(socket_path) = unix_socket_path(endpoint)? {
+        return MihomoClient::new(
+            with_configured_secret(ControllerConfig::default()),
+            UnixSocketTransport::new(socket_path),
+        )
+        .fetch_policy_group(group_name);
+    }
+
+    #[cfg(not(unix))]
+    if endpoint.starts_with("unix://") {
+        return Err(MihomoError::InvalidConfig(
+            "Unix controller sockets are not supported on this platform".to_owned(),
+        ));
+    }
+
+    let config = with_configured_secret(ControllerConfig::new(endpoint)?);
+    MihomoClient::new(config, StdHttpTransport::default()).fetch_policy_group(group_name)
+}
+
+fn put_policy_group_selection(
+    endpoint: &str,
+    group_name: &str,
+    selected_name: &str,
+) -> Result<(), MihomoError> {
+    #[cfg(unix)]
+    if let Some(socket_path) = unix_socket_path(endpoint)? {
+        return MihomoClient::new(
+            with_configured_secret(ControllerConfig::default()),
+            UnixSocketTransport::new(socket_path),
+        )
+        .select_policy_group_node(group_name, selected_name);
+    }
+
+    #[cfg(not(unix))]
+    if endpoint.starts_with("unix://") {
+        return Err(MihomoError::InvalidConfig(
+            "Unix controller sockets are not supported on this platform".to_owned(),
+        ));
+    }
+
+    let config = with_configured_secret(ControllerConfig::new(endpoint)?);
+    MihomoClient::new(config, StdHttpTransport::default())
+        .select_policy_group_node(group_name, selected_name)
+}
+
+fn policy_group_runtime_snapshot(
+    group: relay_mihomo::MihomoPolicyGroup,
+) -> NodeGroupRuntimeSnapshot {
+    NodeGroupRuntimeSnapshot {
+        current: group.current,
+        candidates: group.all.into_iter().collect(),
+    }
+}
+
+fn is_selector_proxy_type(proxy_type: &str) -> bool {
+    proxy_type.eq_ignore_ascii_case("Selector")
+}
+
 fn fetch_proxy_delay(endpoint: &str, proxy_name: &str) -> Result<u16, MihomoError> {
     #[cfg(unix)]
     if let Some(socket_path) = unix_socket_path(endpoint)? {
@@ -2269,7 +2420,7 @@ fn fetch_proxy_delay(endpoint: &str, proxy_name: &str) -> Result<u16, MihomoErro
 fn fetch_proxy_delays_bounded(
     endpoint: &str,
     candidate_names: &[String],
-) -> Result<Vec<u16>, LoadError> {
+) -> Result<BTreeMap<String, u16>, LoadError> {
     let worker_count = candidate_names.len().min(GROUP_DELAY_WORKERS);
     let chunk_size = candidate_names.len().div_ceil(worker_count);
     let delays = thread::scope(|scope| {
@@ -2279,7 +2430,11 @@ fn fetch_proxy_delays_bounded(
                 scope.spawn(move || {
                     chunk
                         .iter()
-                        .filter_map(|name| fetch_proxy_delay(endpoint, name).ok())
+                        .filter_map(|name| {
+                            fetch_proxy_delay(endpoint, name)
+                                .ok()
+                                .map(|delay| (name.clone(), delay))
+                        })
                         .collect::<Vec<_>>()
                 })
             })
@@ -2288,7 +2443,7 @@ fn fetch_proxy_delays_bounded(
             .into_iter()
             .filter_map(|handle| handle.join().ok())
             .flatten()
-            .collect::<Vec<_>>()
+            .collect::<BTreeMap<_, _>>()
     });
     if delays.is_empty() {
         return Err(LoadError::Runtime(
@@ -2875,8 +3030,47 @@ mod tests {
             &["Working Node".to_owned(), "Offline Node".to_owned()],
         )?;
         server.join().map_err(|_| "fixture server panicked")??;
-        assert_eq!(delays, vec![64]);
+        assert_eq!(delays.get("Working Node"), Some(&64));
+        assert!(!delays.contains_key("Offline Node"));
         Ok(())
+    }
+
+    #[test]
+    fn external_runtime_keeps_relay_node_groups_local_only()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let runtime = super::ControllerRuntime::External {
+            endpoint: "http://127.0.0.1:9".to_owned(),
+        };
+
+        assert!(!runtime.manages_node_policy_groups());
+        assert_eq!(runtime.load_node_group_runtime("Relay Group")?, None);
+        assert!(
+            runtime
+                .select_node_group_node("Relay Group", "Candidate")
+                .is_err()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn policy_group_snapshot_deduplicates_runtime_candidates() {
+        let snapshot = super::policy_group_runtime_snapshot(relay_mihomo::MihomoPolicyGroup {
+            name: Some("Relay Group".to_owned()),
+            proxy_type: Some("Selector".to_owned()),
+            current: Some("Tokyo".to_owned()),
+            all: vec!["Tokyo".to_owned(), "Tokyo".to_owned(), "Osaka".to_owned()],
+        });
+
+        assert_eq!(snapshot.current.as_deref(), Some("Tokyo"));
+        assert_eq!(
+            snapshot.candidates,
+            ["Osaka".to_owned(), "Tokyo".to_owned()]
+                .into_iter()
+                .collect()
+        );
+        assert!(super::is_selector_proxy_type("SELECTOR"));
+        assert!(!super::is_selector_proxy_type("select-or"));
+        assert!(!super::is_selector_proxy_type("URLTest"));
     }
 
     #[test]

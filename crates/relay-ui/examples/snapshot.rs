@@ -229,6 +229,62 @@ fn capture_restored_subscription_views(
         );
         refresh(cx, window)?;
         save_screenshot(cx, window, collapsed_file)?;
+
+        let detail_store = store.to_owned();
+        let detail_window = cx.open_offscreen_window(size(px(width), px(height)), |_, cx| {
+            cx.new(|_| {
+                RelayApp::with_controller_and_subscription_store(
+                    "http://127.0.0.1:9090",
+                    detail_store,
+                )
+            })
+        })?;
+        let detail_window: AnyWindowHandle = detail_window.into();
+        refresh(cx, detail_window)?;
+        cx.simulate_click(
+            detail_window,
+            point(px(navigation_x), px(76.0)),
+            Modifiers::none(),
+        );
+        refresh(cx, detail_window)?;
+        cx.simulate_event(
+            detail_window,
+            ScrollWheelEvent {
+                position: point(px(width - 100.0), px(height - 120.0)),
+                delta: ScrollDelta::Pixels(point(px(0.0), px(-620.0))),
+                modifiers: Modifiers::none(),
+                ..Default::default()
+            },
+        );
+        refresh(cx, detail_window)?;
+        cx.simulate_click(
+            detail_window,
+            point(
+                px(if width >= 1_280.0 { 360.0 } else { 183.0 }),
+                px(if width >= 1_280.0 { 824.0 } else { 645.0 }),
+            ),
+            Modifiers::none(),
+        );
+        refresh(cx, detail_window)?;
+        cx.simulate_event(
+            detail_window,
+            ScrollWheelEvent {
+                position: point(px(width - 100.0), px(height - 120.0)),
+                delta: ScrollDelta::Pixels(point(px(0.0), px(-360.0))),
+                modifiers: Modifiers::none(),
+                ..Default::default()
+            },
+        );
+        refresh(cx, detail_window)?;
+        save_screenshot(
+            cx,
+            detail_window,
+            if width >= 1_280.0 {
+                "nodes-wide-policy-group-detail.png"
+            } else {
+                "nodes-compact-policy-group-detail.png"
+            },
+        )?;
     }
     Ok(())
 }

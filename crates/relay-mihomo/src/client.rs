@@ -5,8 +5,8 @@ use serde_json::{Map, Value};
 
 use crate::models::{ProvidersResponse, ProxiesResponse, RulesResponse};
 use crate::{
-    ConnectionsState, ControllerConfig, MihomoError, MihomoSnapshot, ProxyProvider,
-    ReadonlyTransport, RuntimeConfig, VersionInfo,
+    ConnectionsState, ControllerConfig, ControllerTransport, MihomoError, MihomoPolicyGroup,
+    MihomoSnapshot, ProxyProvider, RuntimeConfig, VersionInfo,
 };
 
 const VERSION_ENDPOINT: &str = "/version";
@@ -29,7 +29,7 @@ pub struct MihomoClient<T> {
 
 impl<T> MihomoClient<T>
 where
-    T: ReadonlyTransport,
+    T: ControllerTransport,
 {
     #[must_use]
     pub fn new(config: ControllerConfig, transport: T) -> Self {
@@ -116,6 +116,33 @@ where
             percent_encode_component(test_url)
         );
         Ok(self.fetch_json::<ProxyDelayResponse>(&endpoint)?.delay)
+    }
+
+    /// Fetches minimal state for a Mihomo policy group or proxy entry.
+    ///
+    /// # Errors
+    /// Returns an error if the controller request fails or the payload cannot be decoded.
+    pub fn fetch_policy_group(&self, group_name: &str) -> Result<MihomoPolicyGroup, MihomoError> {
+        let endpoint = format!("/proxies/{}", percent_encode_component(group_name));
+        self.fetch_json(&endpoint)
+    }
+
+    /// Selects a candidate node for a Mihomo selector-style policy group.
+    ///
+    /// # Errors
+    /// Returns an error if the controller request fails or the request body cannot be serialized.
+    pub fn select_policy_group_node(
+        &self,
+        group_name: &str,
+        selected_name: &str,
+    ) -> Result<(), MihomoError> {
+        let endpoint = format!("/proxies/{}", percent_encode_component(group_name));
+        self.transport.put_json(
+            &self.config,
+            &endpoint,
+            &serde_json::json!({ "name": selected_name }),
+        )?;
+        Ok(())
     }
 
     /// Fetches Mihomo's mutable runtime configuration surface from `/configs`.

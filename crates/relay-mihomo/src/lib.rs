@@ -14,10 +14,10 @@ pub use config::ControllerConfig;
 pub use error::MihomoError;
 #[cfg(unix)]
 pub use http::UnixSocketTransport;
-pub use http::{ReadonlyTransport, StdHttpTransport};
+pub use http::{ControllerTransport, StdHttpTransport};
 pub use live::LiveController;
 pub use models::{
     Connection, ConnectionMetadata, ConnectionsState, DelayHistory, GroupKind, MihomoLogEntry,
-    MihomoSnapshot, ObservedRouteEvidence, PolicyGroup, Proxy, ProxyProvider, Rule, RuleExtra,
-    RuntimeConfig, RuntimeTunConfig, VersionInfo,
+    MihomoPolicyGroup, MihomoSnapshot, ObservedRouteEvidence, PolicyGroup, Proxy, ProxyProvider,
+    Rule, RuleExtra, RuntimeConfig, RuntimeTunConfig, VersionInfo,
 };

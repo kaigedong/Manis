@@ -16,7 +16,7 @@ Relay 是一个使用 Rust 与 GPUI 构建的跨平台代理策略工作台。�
 - macOS 原生运行和 Metal 离屏截图已验证
 - Windows、Linux 已配置对应的 GPUI 平台依赖，仍需各自原生 CI/设备验证
 
-当前 Mihomo 控制器集成严格只读：点击“连接 Mihomo”后仅请求官方的 `GET /version`、`GET /proxies`、`GET /providers/proxies`、`GET /rules` 和 `GET /connections`。来源页使用 provider 接口列出 Mihomo 已载入的全部订阅节点；这些读取不会修改 Mihomo 配置、切换节点或改动系统代理设置。配置页的订阅预览会另起一个短生命周期、隔离目录的 Mihomo，只用于下载并解析待预览的订阅。
+连接外部 Mihomo 时，Relay 保持只读，只请求官方的状态和来源接口，不会切换节点或改写其配置。只有 Relay 自己生成并托管的配置才开放 TUN 与手动策略组切换；切换前会再次校验分组类型和候选节点。配置页的订阅预览会另起一个短生命周期、隔离目录的 Mihomo，只用于下载并解析待预览的订阅。
 
 ## 运行
 
@@ -141,7 +141,7 @@ cargo test -p relay-ui real_mihomo_previews_all_nodes_from_a_subscription -- --i
 - `crates/relay-core`：与渲染框架无关的窗口尺寸、策略选择和路由证据状态
 - `crates/relay-engine`：隔离路径、命令计划、配置预检、就绪探测与 owned-child 生命周期
 - `crates/relay-profile`：QX 风格 profile 领域模型、Mihomo YAML 编译与私有原子写入
-- `crates/relay-mihomo`：只读控制器配置、HTTP 传输、容错 JSON 模型和领域目录映射
+- `crates/relay-mihomo`：受限控制器配置、有界 HTTP 传输、容错 JSON 模型和领域目录映射
 - `crates/relay-ui`：GPUI 应用、主题、演示/控制器数据与自适应视图
 - `DESIGN.md`：视觉 token、组件和响应式行为
 - `GPUI_IMPLEMENTATION.md`：状态边界、事件流和未来 Mihomo API 映射

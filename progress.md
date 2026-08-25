@@ -124,6 +124,10 @@
 - 2026-08-25：真实 Clash Verge Unix controller 单节点 HTTPS 204 探测返回有效延迟；宽屏/720px 原生 GPUI 截图无截断或溢出，Visual Verdict 95/100 `pass`。
 - 2026-08-25：全 workspace 109 个常规测试通过、5 个环境依赖测试默认 ignored；fmt、all-targets check、严格 Clippy 和 diff check 全部通过。安全复核未发现 Critical/High，固定探测 URL、percent encoding、错误脱敏和单任务并发边界均已验证。
 - 2026-08-25：仅停止旧 Relay UI PID 805，并以通过验证的新二进制连接既有 Clash Verge Unix controller 启动 PID 6498；Clash Verge PID 19351 与 Mihomo PID 19379 未被停止或修改。
+- 2026-08-25：开始“策略组详情与实际选路”阶段。验收锁定为点击分组后查看真实候选节点、逐节点延迟和当前出口；手动组允许切换，延迟优选组只展示 Mihomo 当前优选。外部 controller 不伪装成已应用 Relay 本地分组。
+- 2026-08-25：已核对 Mihomo 官方 group/proxy API：详情读取使用 GET，手动选择使用 PUT + JSON 并返回 204；现有 `profile.store-selected` 足以让托管内核保存选择。开始映射 GPUI 状态与 runtime 边界。
+- 2026-08-25：完成现有 transport、Proxy 模型、NodeWorkspace 和分组卡片映射；详情将保留节点页上下文，不做模态框。逐节点延迟需要把测速结果从纯汇总升级为节点名映射。
+- 2026-08-25：策略组详情 TDD 红灯已确认：当前缺少 `NodeGroupRuntimeState`，测速完成态也尚不能保存节点名到延迟映射；失败与预期新契约一致。
 ## 2026-08-25（续）
 
 - 已恢复会话并完成当前边界盘点：`relay-profile` 尚无顶层直连代理模型，`EngineManager` 尚无安全的配置替换/重启事务，`relay-mihomo` 的只读传输会一次性缓冲响应，不能直接承载 `/connections` 与 `/logs` 长连接。
@@ -133,3 +137,13 @@
 - Relay 托管配置现采用候选文件 `mihomo -t` 验证、私有原子替换、仅重启自有子进程和失败回滚；外部控制器/已有配置返回只读提示。
 - `/connections` 与 `/logs` 已接入 std-only 长连接读取，支持 chunked/相邻 JSON 帧、取消、退避重连、连接快照合并、日志有界队列和 400ms GPUI 节流。
 - 本机 Clash Verge Mihomo 已真实验证普通订阅配置与 REALITY+gRPC VLESS 通用夹具，两份 YAML 均通过 `mihomo -t`。
+# 2026-08-25 策略组详情状态层
+
+- 先写失败测试，锁定节点级测速结果必须按节点名保留，以及运行状态必须拒绝过期刷新和未知候选选择。
+- `cargo test -p relay-ui group_ --locked` 已由预期 RED 转为 4/4 GREEN。
+- Mihomo 客户端现已覆盖 HTTP/Unix 的策略组读取与 Selector PUT；下一步将边界接入 Relay 托管运行时和节点页。
+- Relay 运行时只对 `generated_profile: Some` 的托管配置读取/切换本地策略组；外部控制器与已有配置返回只读状态，不会因同名分组发生误写。
+- 节点页已接入内联详情、逐节点来源/协议/健康/延迟、当前出口、自动组选中项和手动选择动作；`cargo check -p relay-ui --locked` 通过且无项目警告。
+- 原生宽屏/720px 紧凑详情截图已生成；Visual Verdict 94/100，通过 90 分门禁，无重叠、截断或横向溢出。
+- 安全复核为 LOW：0 个 Critical/High/Medium；已将误导性的 `ReadonlyTransport` 重命名为 `ControllerTransport`，并把 Selector 类型校验收紧为 ASCII 大小写不敏感的精确匹配。
+- 全仓验证通过：118 passed、5 ignored；workspace 全目标 Clippy `-D warnings` 通过；对正在运行的 Clash Verge Unix controller 只读 smoke test 通过。

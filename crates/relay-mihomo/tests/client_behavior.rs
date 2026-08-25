@@ -6,7 +6,7 @@ use std::time::Duration;
 #[cfg(unix)]
 use relay_mihomo::UnixSocketTransport;
 use relay_mihomo::{
-    ControllerConfig, GroupKind, MihomoClient, MihomoError, ReadonlyTransport, RuntimeConfig,
+    ControllerConfig, ControllerTransport, GroupKind, MihomoClient, MihomoError, RuntimeConfig,
     RuntimeTunConfig, StdHttpTransport, to_policy_catalog,
 };
 use serde_json::Value;
@@ -39,9 +39,17 @@ impl RecordedRequest {
             body: Some(body),
         }
     }
+
+    fn put(path: &str, body: Value) -> Self {
+        Self {
+            method: "PUT",
+            path: path.to_owned(),
+            body: Some(body),
+        }
+    }
 }
 
-impl ReadonlyTransport for FakeTransport {
+impl ControllerTransport for FakeTransport {
     fn get(&self, _config: &ControllerConfig, path: &str) -> Result<String, MihomoError> {
         self.requests.borrow_mut().push(RecordedRequest::get(path));
         match path {
@@ -54,6 +62,10 @@ impl ReadonlyTransport for FakeTransport {
             "/proxies/Japan%2001%20%5B%E5%80%8D%E7%8E%87%C3%971%5D/delay?url=http%3A%2F%2Fcp.cloudflare.com%2Fgenerate_204&timeout=1500" => {
                 Ok(r#"{"delay":47}"#.to_owned())
             }
+            "/proxies/Proxy%2F%F0%9F%8C%90%20Select" => Ok(
+                r#"{"name":"Proxy/🌐 Select","type":"Selector","now":"Japan 01","all":["Japan 01","US 01"],"unexpected":true}"#
+                    .to_owned(),
+            ),
             "/rules" => Ok(rule_fixture()),
             "/connections" => Ok(connection_fixture()),
             "/configs" => Ok(config_fixture()),
@@ -76,6 +88,23 @@ impl ReadonlyTransport for FakeTransport {
             "/configs" => Ok(String::new()),
             _ => Err(MihomoError::InvalidResponse(format!(
                 "unexpected patch path {path}"
+            ))),
+        }
+    }
+
+    fn put_json(
+        &self,
+        _config: &ControllerConfig,
+        path: &str,
+        body: &Value,
+    ) -> Result<String, MihomoError> {
+        self.requests
+            .borrow_mut()
+            .push(RecordedRequest::put(path, body.clone()));
+        match path {
+            "/proxies/Proxy%2F%F0%9F%8C%90%20Select" => Ok(String::new()),
+            _ => Err(MihomoError::InvalidResponse(format!(
+                "unexpected put path {path}"
             ))),
         }
     }
@@ -210,6 +239,58 @@ fn fetch_proxy_delay_encodes_name_and_query_and_parses_delay()
         )]
     );
     assert_eq!(delay, 47);
+    Ok(())
+}
+
+#[test]
+fn fetch_policy_group_details_encodes_name_and_tolerates_response_drift()
+-> Result<(), Box<dyn std::error::Error>> {
+    let transport = FakeTransport::default();
+    let client = MihomoClient::new(ControllerConfig::default(), &transport);
+
+    let group = client.fetch_policy_group("Proxy/🌐 Select")?;
+
+    assert_eq!(
+        transport.requests.borrow().as_slice(),
+        [RecordedRequest::get(
+            "/proxies/Proxy%2F%F0%9F%8C%90%20Select"
+        )]
+    );
+    assert_eq!(group.name.as_deref(), Some("Proxy/🌐 Select"));
+    assert_eq!(group.proxy_type.as_deref(), Some("Selector"));
+    assert_eq!(group.current.as_deref(), Some("Japan 01"));
+    assert_eq!(group.all, ["Japan 01", "US 01"]);
+    Ok(())
+}
+
+#[test]
+fn fetch_policy_group_details_accepts_missing_group_fields()
+-> Result<(), Box<dyn std::error::Error>> {
+    let group: relay_mihomo::MihomoPolicyGroup =
+        serde_json::from_str(r#"{"name":"DIRECT","type":"Direct","ignored":true}"#)?;
+
+    assert_eq!(group.name.as_deref(), Some("DIRECT"));
+    assert_eq!(group.proxy_type.as_deref(), Some("Direct"));
+    assert_eq!(group.current, None);
+    assert!(group.all.is_empty());
+    Ok(())
+}
+
+#[test]
+fn select_policy_group_node_puts_exact_json_body_and_encoded_path()
+-> Result<(), Box<dyn std::error::Error>> {
+    let transport = FakeTransport::default();
+    let client = MihomoClient::new(ControllerConfig::default(), &transport);
+
+    client.select_policy_group_node("Proxy/🌐 Select", "US 01")?;
+
+    assert_eq!(
+        transport.requests.borrow().as_slice(),
+        [RecordedRequest::put(
+            "/proxies/Proxy%2F%F0%9F%8C%90%20Select",
+            serde_json::json!({"name":"US 01"})
+        )]
+    );
     Ok(())
 }
 
@@ -438,11 +519,44 @@ fn std_http_transport_sends_json_patch_with_bearer_auth() -> Result<(), Box<dyn 
 }
 
 #[test]
+fn std_http_transport_sends_json_put_with_bearer_auth() -> Result<(), Box<dyn std::error::Error>> {
+    let (address, handle) =
+        spawn_one_response_server("HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")?;
+
+    let config = ControllerConfig::new(format!("http://{address}"))?
+        .with_secret("controller-token")
+        .with_timeouts(Duration::from_secs(1), Duration::from_secs(1));
+    let body = serde_json::json!({"name":"US 01"});
+    let response = StdHttpTransport::default().put_json(&config, "/proxies/Proxy", &body)?;
+    let request = handle.join().map_err(|_| "server thread panicked")?;
+
+    assert!(request.starts_with("PUT /proxies/Proxy HTTP/1.1\r\n"));
+    assert!(request.contains("Authorization: Bearer controller-token\r\n"));
+    assert!(request.contains("Content-Type: application/json\r\n"));
+    assert!(request.contains("Content-Length: 16\r\n"));
+    assert!(request.ends_with(r#"{"name":"US 01"}"#));
+    assert_eq!(response, "");
+
+    Ok(())
+}
+
+#[test]
 fn std_http_transport_rejects_non_absolute_patch_paths() {
     let result = StdHttpTransport::default().patch_json(
         &ControllerConfig::default(),
         "configs",
         &serde_json::json!({"tun":{"enable":true}}),
+    );
+
+    assert!(matches!(result, Err(MihomoError::InvalidRequestPath(_))));
+}
+
+#[test]
+fn std_http_transport_rejects_non_absolute_put_paths() {
+    let result = StdHttpTransport::default().put_json(
+        &ControllerConfig::default(),
+        "proxies/Proxy",
+        &serde_json::json!({"name":"US 01"}),
     );
 
     assert!(matches!(result, Err(MihomoError::InvalidRequestPath(_))));
@@ -507,6 +621,42 @@ fn unix_socket_transport_sends_json_patch_without_auth() -> Result<(), Box<dyn s
     assert!(request.contains("Content-Type: application/json\r\n"));
     assert!(!request.contains("Authorization:"));
     assert!(request.ends_with(r#"{"tun":{"enable":false}}"#));
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn unix_socket_transport_sends_json_put_without_auth() -> Result<(), Box<dyn std::error::Error>> {
+    use std::os::unix::net::UnixListener;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let unique = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let socket_path = std::env::temp_dir().join(format!(
+        "relay-mihomo-put-{}-{unique}.sock",
+        std::process::id()
+    ));
+    let listener = UnixListener::bind(&socket_path)?;
+    let server = std::thread::spawn(move || -> std::io::Result<String> {
+        let (mut stream, _) = listener.accept()?;
+        let mut request = [0_u8; 2048];
+        let read = stream.read(&mut request)?;
+        stream.write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")?;
+        Ok(String::from_utf8_lossy(&request[..read]).into_owned())
+    });
+
+    let config = ControllerConfig::default().with_secret("uds-token");
+    UnixSocketTransport::new(&socket_path).put_json(
+        &config,
+        "/proxies/Proxy",
+        &serde_json::json!({"name":"US 01"}),
+    )?;
+    let request = server.join().map_err(|_| "server thread panicked")??;
+    std::fs::remove_file(&socket_path)?;
+
+    assert!(request.starts_with("PUT /proxies/Proxy HTTP/1.1\r\n"));
+    assert!(request.contains("Content-Type: application/json\r\n"));
+    assert!(!request.contains("Authorization:"));
+    assert!(request.ends_with(r#"{"name":"US 01"}"#));
     Ok(())
 }
 

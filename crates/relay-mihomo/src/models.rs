@@ -29,6 +29,18 @@ pub struct ProxyProvider {
 }
 
 #[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+pub struct MihomoPolicyGroup {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(rename = "type", default)]
+    pub proxy_type: Option<String>,
+    #[serde(rename = "now", default)]
+    pub current: Option<String>,
+    #[serde(default)]
+    pub all: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
 pub struct RuntimeConfig {
     #[serde(default)]
     pub port: Option<u16>,

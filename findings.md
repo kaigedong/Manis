@@ -10,7 +10,7 @@
 - UI 延续 Operate 模式与 Signal Patch Bay 视觉世界，只增加实时性和运行真值反馈，不重新设计品牌。
 - `relay-profile::Profile` 目前只有远程 `ProxyProvider`，渲染器只输出 `proxy-providers`/`proxy-groups`/`rules`；没有顶层 `proxies` 或 VLESS 密钥类型，因此 VLESS 必须先在该信任边界内成为脱敏强类型，不能从 UI 直接拼 YAML。
 - `ControllerRuntime::Managed` 持有 `Arc<Mutex<EngineManager>>`，但 `EngineManager` 只有 start/stop，没有安全更换配置或 restart API；若要让新增 VLESS 生效，必须定义“原子写新配置 → validation → 停旧进程 → 起新进程/失败恢复”的明确事务边界。
-- `relay-mihomo::ReadonlyTransport::get` 会把整个响应读完，不能用于 `/connections` 与 `/logs` 的长期流；实时流需要独立接口，不能破坏现有有上限的快照 GET/PATCH 语义。
+- `relay-mihomo::ControllerTransport::get` 会把整个响应读完，不能用于 `/connections` 与 `/logs` 的长期流；实时流需要独立接口，不能破坏现有有上限的快照 GET/PATCH 语义。
 - 当前网络活动只显示最近快照并由刷新按钮调用完整 `connect_mihomo`；日志页只读取 256 条固定 UI 事件环。实时升级要保持有界队列、合并 UI 通知，并明确区分“Relay 事件”和“Mihomo 内核日志”。
 - Mihomo 官方当前 VLESS schema 要求 `uuid`，支持 `flow=xtls-rprx-vision`、`packet-encoding`、TLS/servername/client-fingerprint/reality，以及 `ws/http/h2/grpc/xhttp` 传输；首轮不应声称任意 vless:// 查询参数都兼容，必须用白名单解析并对未支持参数 fail closed。
 - Mihomo 官方 API 明确 `/logs` 与 `/connections` 都支持长期 `GET`/`WS`；`/logs` 标准模式是一行一个 JSON，也可 `?format=structured`；`/connections?interval=milliseconds` 周期推送完整连接快照。因此 std-only 实现可优先选择 HTTP newline/连续 JSON 流，无需立即实现 WebSocket framing。
@@ -158,7 +158,7 @@
 - 输入限制为单行、最大 16 KiB；校验调用已有 `SecretUrl` 与 `Profile::qx_default`，错误只返回固定枚举，不格式化原始链接。trace 同样只增加固定事件名。
 - 应用内链接当前仅存在内存并用于本地格式/结构预览，不写文件、不联网、不伪装成已经导入；真正启用仍由私有订阅文件开发模式承担。
 - 宽屏与紧凑夹具都实际输入 `example.invalid` 保留域名并点击成功，trace 出现 `configuration.subscription_preview.succeeded`；最终 Visual Verdict 95/100 `pass`，无溢出或敏感数据。
-- 架构结论已落实：有限响应继续走 `ReadonlyTransport`；长连接另设 `LiveController`，避免 `/logs`/`/connections` 被旧的完整 body 缓冲路径卡死。
+- 架构结论已落实：有限响应继续走 `ControllerTransport`；长连接另设 `LiveController`，避免 `/logs`/`/connections` 被旧的完整 body 缓冲路径卡死。
 - Mihomo `/connections` 的 GET 分帧未承诺只用换行，因此实时解码器同时支持换行 JSON 与无分隔的相邻 JSON 值。
 - Mihomo 内核日志可能包含订阅下载失败 URL；展示前必须截断控制字符、限制 2048 字符并将 HTTP(S)/VLESS URL 替换为 `<redacted-url>`。
 - 保存来源的运行时应用必须在后台执行；真实 `mihomo -t` 可能触发首次 geodata 准备并耗时数秒，不能阻塞 GPUI 点击处理。
@@ -207,3 +207,17 @@
 - 单组最多使用 8 个阻塞 worker，应用级再采用 single-flight 防止多个分组同时放大线程和探测流量；其他分组仍可在当前任务完成后逐一测试。
 - single-flight 使用独立 active generation，不依赖可能在保存/删除时清除的卡片状态；后台任务返回前，即使原分组已被编辑或删除，也不会放行第二个测速任务。
 - 最终安全复核确认本轮新增测速无 Critical/High/Medium 问题；保留的产品级行为是用户明确点击外部 controller 测速时，Mihomo 会发出固定 HTTPS 探测。
+
+## 策略组详情与实际选路边界（2026-08-25）
+
+- Mihomo 官方 `GET /proxies/{group}` 返回策略组的 `type`、当前选择 `now` 和候选 `all`；`PUT /proxies/{group}` 携带 `{"name":"节点"}` 后以 HTTP 204 完成选择。来源：https://wiki.metacubex.one/en/api/
+- `Selector` 是手动选择组；`URLTest` 当前 `now` 由内核自动计算。本阶段手动组允许 PUT，自动组只展示当前优选，避免把自动策略误呈现成手动选择。
+- 官方 `profile.store-selected: true` 可以持久化 API 选择；现有 Relay profile 已启用该配置，因此托管内核的手动选择不需要在节点分组文件中重复保存敏感或易漂移状态。
+- Relay 本地用户分组只会编译进 Relay 托管 Mihomo；外部 Clash Verge controller 可能根本不存在同名组。详情页可以展示本地匹配候选与测速结果，但不能把外部同名组当作 Relay 分组并执行切换。
+- 现有 `relay-mihomo::Proxy` 已能容错解析 `current/all/type/history/alive/provider`，新单组 GET 应复用同一语义或最小 DTO，不能在 UI 再复制一套脆弱 JSON 模型。
+- `ControllerTransport` 承载有界的 GET/PATCH/PUT；选择 API 继续复用路径校验、loopback 限制、Unix socket 验证、body 上限与 Bearer 控制字符拒绝。
+- 安全复核确认：外部 controller 和 Relay 托管的已有配置都不会进入策略组 PUT 路径；只有 `Managed { generated_profile: Some(_) }` 且运行中的 owned endpoint 可以切换。
+- 策略组 PUT 前同时校验 Mihomo 返回类型严格为 `Selector`（忽略 ASCII 大小写）以及候选节点确实存在于 `all`；UI 层再以本地手动策略与运行态候选做第一层门禁。
+- 用户提供的私有订阅域名/token 未出现在工作区文本、当前 diff、tracked files 或 Git 历史；测试仅使用明确的 fixture token。
+- 节点页当前在同一纵向滚动区内呈现来源库存和用户分组卡片；最小详情交互采用卡片内“查看详情”展开，而不是模态框或新一级导航，宽窄布局都能保持上下文。
+- 现有测速状态只保存汇总并丢弃节点名到延迟的映射；要实现逐节点结果，必须把完成态升级为带有有界 `BTreeMap<String,u16>` 的非 `Copy` 状态，或用等价的独立有界映射。
