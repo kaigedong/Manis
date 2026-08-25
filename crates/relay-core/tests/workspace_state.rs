@@ -1,7 +1,8 @@
 use relay_core::{
     CompactNavigation, ConfigurationSection, ConfigurationWorkspaceState, EmptyPolicyCatalog,
-    PolicyCatalog, PolicyGroup, PolicyGroupId, PolicyNode, PolicyRule, PolicyWorkspaceState,
-    PrimaryWorkspace, ProxyId, RouteEvidence, WindowSizeClass,
+    NodeAvailabilityFilter, NodeWorkspaceState, PolicyCatalog, PolicyGroup, PolicyGroupId,
+    PolicyNode, PolicyRule, PolicyWorkspaceState, PrimaryWorkspace, ProxyId, RouteEvidence,
+    WindowSizeClass,
 };
 
 fn streaming() -> PolicyGroupId {
@@ -167,8 +168,34 @@ fn primary_workspace_switches_between_policy_operation_and_configuration() {
     let mut active = PrimaryWorkspace::default();
 
     assert_eq!(active, PrimaryWorkspace::Policies);
+    active = PrimaryWorkspace::Nodes;
+    assert_eq!(active, PrimaryWorkspace::Nodes);
     active = PrimaryWorkspace::Configuration;
     assert_eq!(active, PrimaryWorkspace::Configuration);
+}
+
+#[test]
+fn node_workspace_filters_known_and_untested_availability() {
+    let mut state = NodeWorkspaceState::default();
+
+    assert!(state.includes(Some(true)));
+    assert!(state.includes(Some(false)));
+    assert!(state.includes(None));
+
+    state.select_filter(NodeAvailabilityFilter::Available);
+    assert!(state.includes(Some(true)));
+    assert!(!state.includes(Some(false)));
+    assert!(!state.includes(None));
+
+    state.select_filter(NodeAvailabilityFilter::Unavailable);
+    assert!(!state.includes(Some(true)));
+    assert!(state.includes(Some(false)));
+    assert!(!state.includes(None));
+
+    state.select_filter(NodeAvailabilityFilter::Untested);
+    assert!(!state.includes(Some(true)));
+    assert!(!state.includes(Some(false)));
+    assert!(state.includes(None));
 }
 
 #[test]

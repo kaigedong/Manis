@@ -5,8 +5,8 @@ use gpui::{
     Subscription, Toggled, Window, div, prelude::*, px,
 };
 use relay_core::{
-    CompactNavigation, ConfigurationWorkspaceState, PolicyCatalog, PolicyGroup, PolicyNode,
-    PolicyWorkspaceState, PrimaryWorkspace, ProxyId, WindowSizeClass,
+    CompactNavigation, ConfigurationWorkspaceState, NodeWorkspaceState, PolicyCatalog, PolicyGroup,
+    PolicyNode, PolicyWorkspaceState, PrimaryWorkspace, ProxyId, WindowSizeClass,
 };
 use relay_mihomo::ObservedRouteEvidence;
 use relay_profile::SecretUrl;
@@ -24,6 +24,7 @@ use crate::{
 };
 
 mod configuration;
+mod nodes;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 enum SubscriptionFeedback {
@@ -64,6 +65,7 @@ fn source_kind(subscription: &SecretUrl) -> SourceKind {
 pub struct RelayApp {
     primary_workspace: PrimaryWorkspace,
     configuration: ConfigurationWorkspaceState,
+    node_workspace: NodeWorkspaceState,
     workspace: PolicyWorkspaceState,
     catalog: PolicyCatalog,
     runtime: ControllerRuntime,
@@ -138,6 +140,7 @@ impl RelayApp {
         Self {
             primary_workspace: PrimaryWorkspace::default(),
             configuration: ConfigurationWorkspaceState::default(),
+            node_workspace: NodeWorkspaceState::default(),
             workspace: PolicyWorkspaceState::demo(),
             catalog: demo::catalog(),
             runtime,
@@ -455,12 +458,7 @@ impl RelayApp {
             (false, true) => "系统代理 · 开",
             (false, false) => "系统代理 · 关",
         };
-        let theme_label = match (compact, self.dark) {
-            (true, true) => "浅",
-            (true, false) => "深",
-            (false, true) => "浅色",
-            (false, false) => "深色",
-        };
+        let theme_label = if self.dark { "浅色" } else { "深色" };
 
         div()
             .h(px(48.0))
@@ -599,8 +597,9 @@ impl RelayApp {
 
     fn navigation(&self, theme: Theme, size_class: WindowSizeClass, cx: &mut Context<Self>) -> Div {
         let entries = [
-            ("策略组", PrimaryWorkspace::Policies),
-            ("配置", PrimaryWorkspace::Configuration),
+            ("策略组", "策略", PrimaryWorkspace::Policies),
+            ("节点", "节点", PrimaryWorkspace::Nodes),
+            ("配置", "配置", PrimaryWorkspace::Configuration),
         ];
         let show_labels = size_class == WindowSizeClass::Wide;
         let source_label = if show_labels {
@@ -629,7 +628,7 @@ impl RelayApp {
             .bg(theme.surface_low)
             .border_r_1()
             .border_color(theme.outline_subtle)
-            .children(entries.into_iter().map(|(label, workspace)| {
+            .children(entries.into_iter().map(|(label, short_label, workspace)| {
                 let selected = workspace == self.primary_workspace;
                 div()
                     .id(format!("navigation-{label}"))
@@ -653,13 +652,17 @@ impl RelayApp {
                     } else {
                         FontWeight::NORMAL
                     })
-                    .child(if show_labels { label } else { &label[..3] })
+                    .child(if show_labels { label } else { short_label })
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.primary_workspace = workspace;
                         this.status = match workspace {
                             PrimaryWorkspace::Policies => {
                                 trace_ui(UiEvent::WorkspacePoliciesOpened);
                                 "已打开策略组工作区".to_owned()
+                            }
+                            PrimaryWorkspace::Nodes => {
+                                trace_ui(UiEvent::WorkspaceNodesOpened);
+                                "已打开节点工作区".to_owned()
                             }
                             PrimaryWorkspace::Configuration => {
                                 trace_ui(UiEvent::WorkspaceConfigurationOpened);
@@ -1447,6 +1450,7 @@ impl Render for RelayApp {
         let overlay_inspector = size_class != WindowSizeClass::Wide;
         let show_inspector = size_class == WindowSizeClass::Wide || self.inspector_open;
         let policies_active = self.primary_workspace == PrimaryWorkspace::Policies;
+        let nodes_active = self.primary_workspace == PrimaryWorkspace::Nodes;
 
         div()
             .size_full()
@@ -1463,9 +1467,13 @@ impl Render for RelayApp {
                     .overflow_hidden()
                     .flex()
                     .child(self.navigation(theme, size_class, cx))
-                    .when(!policies_active, |main| {
-                        main.child(self.configuration_workspace(theme, size_class, cx))
+                    .when(nodes_active, |main| {
+                        main.child(self.node_workspace(theme, size_class, cx))
                     })
+                    .when(
+                        self.primary_workspace == PrimaryWorkspace::Configuration,
+                        |main| main.child(self.configuration_workspace(theme, size_class, cx)),
+                    )
                     .when(policies_active && show_groups, |main| {
                         main.child(
                             self.policy_list(

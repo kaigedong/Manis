@@ -5,6 +5,7 @@ const TRACE_ENV: &str = "RELAY_UI_TRACE";
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum UiEvent {
     WorkspacePoliciesOpened,
+    WorkspaceNodesOpened,
     WorkspaceConfigurationOpened,
     ConfigurationGroupsOpened,
     ConfigurationRulesOpened,
@@ -39,6 +40,7 @@ impl UiEvent {
     fn as_str(self) -> &'static str {
         match self {
             Self::WorkspacePoliciesOpened => "workspace.policies.opened",
+            Self::WorkspaceNodesOpened => "workspace.nodes.opened",
             Self::WorkspaceConfigurationOpened => "workspace.configuration.opened",
             Self::ConfigurationGroupsOpened => "configuration.groups.opened",
             Self::ConfigurationRulesOpened => "configuration.rules.opened",

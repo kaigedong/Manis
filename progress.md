@@ -95,3 +95,6 @@
 - 持久导入安全复核首轮为 MEDIUM：Windows 缺少 owner-only DACL/可靠原子替换，因此改为 fail closed；Mihomo validation/launch 子进程改为最小环境白名单，不再继承父进程中的无关凭据。桌面端用户主动导入/恢复 URL 不构成跨主体 SSRF 权限提升，HTTP 与本地来源继续保留显式风险文案。
 - 二次安全复核结论为 macOS/Linux `LOW / SHIP`，没有剩余阻断项；Windows 继续明确不支持持久导入，直到 owner-only DACL、原子替换和 named-pipe 全部完成。
 - 最终 workspace 75 个常规测试通过、3 个环境依赖测试默认 ignored；真实 Mihomo 导入→持久读取→再次解析测试另行通过。严格 Clippy、全目标 build、fmt、diff check 和 worktree/Git 历史敏感模式扫描全部通过；Visual Verdict 96/100 `pass`。`cargo audit` 当前未安装，且本轮没有新增依赖。
+- 新增一级“节点”工作区，直接复用已导入订阅（无导入时回退到当前 Mihomo）的 provider/node 数据；展示节点总数、来源数、协议、可用/不可用/未测速状态和延迟，不重复下载也不复制领域数据。
+- 节点页支持“全部 / 可用 / 不可用 / 未测速”筛选、刷新节点与管理来源；宽屏使用高密度表格，紧凑窗口重排为双行节点列表。第一轮 Visual Verdict 86/100 的导航截断和操作缺失已修正，最终 92/100 `pass`。
+- 独立 UI 终审 disposition 为 `ship`，没有阻断项；workspace 77 个常规测试通过、3 个环境依赖测试默认 ignored，严格 Clippy、全目标 build、fmt、diff check 和敏感模式扫描全部通过。

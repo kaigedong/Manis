@@ -166,7 +166,38 @@ pub enum CompactNavigation {
 pub enum PrimaryWorkspace {
     #[default]
     Policies,
+    Nodes,
     Configuration,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum NodeAvailabilityFilter {
+    #[default]
+    All,
+    Available,
+    Unavailable,
+    Untested,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct NodeWorkspaceState {
+    pub filter: NodeAvailabilityFilter,
+}
+
+impl NodeWorkspaceState {
+    pub fn select_filter(&mut self, filter: NodeAvailabilityFilter) {
+        self.filter = filter;
+    }
+
+    #[must_use]
+    pub fn includes(self, alive: Option<bool>) -> bool {
+        match self.filter {
+            NodeAvailabilityFilter::All => true,
+            NodeAvailabilityFilter::Available => alive == Some(true),
+            NodeAvailabilityFilter::Unavailable => alive == Some(false),
+            NodeAvailabilityFilter::Untested => alive.is_none(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

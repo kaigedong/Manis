@@ -83,7 +83,7 @@ fn capture_remote_subscription_preview(
     })?;
     let window: AnyWindowHandle = window.into();
     refresh(cx, window)?;
-    cx.simulate_click(window, point(px(110.0), px(120.0)), Modifiers::none());
+    cx.simulate_click(window, point(px(110.0), px(164.0)), Modifiers::none());
     refresh(cx, window)?;
     cx.simulate_click(window, point(px(400.0), px(342.0)), Modifiers::none());
     refresh(cx, window)?;
@@ -118,18 +118,20 @@ fn capture_restored_subscription_views(
     use relay_ui::RelayApp;
     use std::time::Duration;
 
-    for (width, height, navigation_x, file_name) in [
+    for (width, height, navigation_x, configuration_file, nodes_file) in [
         (
             1420.0,
             900.0,
             110.0,
             "configuration-wide-import-restored.png",
+            "nodes-wide-imported.png",
         ),
         (
             720.0,
             720.0,
             30.0,
             "configuration-compact-import-restored.png",
+            "nodes-compact-imported.png",
         ),
     ] {
         let window_store = store.to_owned();
@@ -145,14 +147,21 @@ fn capture_restored_subscription_views(
         refresh(cx, window)?;
         cx.simulate_click(
             window,
-            point(px(navigation_x), px(120.0)),
+            point(px(navigation_x), px(164.0)),
             Modifiers::none(),
         );
         for _ in 0..40 {
             std::thread::sleep(Duration::from_millis(25));
             refresh(cx, window)?;
         }
-        save_screenshot(cx, window, file_name)?;
+        save_screenshot(cx, window, configuration_file)?;
+        cx.simulate_click(
+            window,
+            point(px(navigation_x), px(120.0)),
+            Modifiers::none(),
+        );
+        refresh(cx, window)?;
+        save_screenshot(cx, window, nodes_file)?;
     }
     Ok(())
 }
@@ -176,7 +185,7 @@ fn capture_configuration(
     let navigation_x = if width >= 1_280.0 { 110.0 } else { 30.0 };
     cx.simulate_click(
         window,
-        point(px(navigation_x), px(120.0)),
+        point(px(navigation_x), px(164.0)),
         Modifiers::none(),
     );
     refresh(cx, window)?;
@@ -278,7 +287,7 @@ fn capture_connected(
     refresh(cx, window)?;
     save_screenshot(cx, window, "native-wide-connected.png")?;
 
-    cx.simulate_click(window, point(px(110.0), px(120.0)), Modifiers::none());
+    cx.simulate_click(window, point(px(110.0), px(164.0)), Modifiers::none());
     refresh(cx, window)?;
     save_screenshot(cx, window, "configuration-wide-connected-sources.png")?;
 
