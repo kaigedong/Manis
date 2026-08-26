@@ -2,7 +2,7 @@ use gpui::{Div, FontWeight, ParentElement, Role, Styled, div, prelude::*, px};
 use relay_core::WindowSizeClass;
 
 use super::RelayApp;
-use crate::{diagnostics::recent_ui_logs, theme::Theme};
+use crate::{diagnostics::recent_ui_logs, localization::Language, theme::Theme};
 
 impl RelayApp {
     #[allow(clippy::too_many_lines)]
@@ -14,6 +14,7 @@ impl RelayApp {
     ) -> Div {
         let logs = recent_ui_logs();
         let count = logs.len() + self.kernel_logs.len();
+        let language = self.language();
         let mut rows = div()
             .id("logs-scroll")
             .flex_1()
@@ -28,7 +29,10 @@ impl RelayApp {
                     .items_center()
                     .justify_center()
                     .text_color(theme.text_tertiary)
-                    .child("还没有内核日志或 Relay UI 事件"),
+                    .child(language.text(
+                        "No kernel logs or Relay UI events yet",
+                        "还没有内核日志或 Relay UI 事件",
+                    )),
             );
         } else {
             for entry in self.kernel_logs.iter().rev() {
@@ -143,16 +147,17 @@ impl RelayApp {
                                 div()
                                     .text_size(px(18.0))
                                     .font_weight(FontWeight::SEMIBOLD)
-                                    .child("日志"),
+                                    .child(language.text("Logs", "日志")),
                             )
                             .child(
                                 div()
                                     .text_size(px(11.0))
                                     .text_color(theme.text_tertiary)
-                                    .child(format!(
-                                        "{count} 条 · Mihomo {} · 已丢弃 {} 条过载日志 · URL/令牌已脱敏",
-                                        self.live_status.logs,
-                                        self.dropped_kernel_logs
+                                    .child(logs_summary(
+                                        language,
+                                        count,
+                                        &self.live_status.logs,
+                                        self.dropped_kernel_logs,
                                     )),
                             ),
                     )
@@ -172,11 +177,24 @@ impl RelayApp {
                             .bg(theme.surface_high)
                             .flex()
                             .items_center()
-                            .child("重新连接")
+                            .child(language.text("Reconnect", "重新连接"))
                             .on_click(cx.listener(|this, _, _, cx| this.connect_mihomo(cx))),
                     ),
             )
             .child(rows)
+    }
+}
+
+fn logs_summary(language: Language, count: usize, live_status: &str, dropped: u64) -> String {
+    match language {
+        Language::English => format!(
+            "{count} entries · Mihomo {live_status} · dropped {dropped} overloaded logs · URLs/tokens redacted"
+        ),
+        Language::SimplifiedChinese => {
+            format!(
+                "{count} 条 · Mihomo {live_status} · 已丢弃 {dropped} 条过载日志 · URL/令牌已脱敏"
+            )
+        }
     }
 }
 
@@ -193,5 +211,22 @@ mod tests {
     #[test]
     fn log_time_is_bounded_and_readable() {
         assert_eq!(super::format_log_time(3_723_000), "01:02:03 UTC");
+    }
+
+    #[test]
+    fn log_summary_uses_selected_language() {
+        assert_eq!(
+            super::logs_summary(crate::localization::Language::English, 2, "connected", 1),
+            "2 entries · Mihomo connected · dropped 1 overloaded logs · URLs/tokens redacted"
+        );
+        assert_eq!(
+            super::logs_summary(
+                crate::localization::Language::SimplifiedChinese,
+                2,
+                "已连接",
+                1
+            ),
+            "2 条 · Mihomo 已连接 · 已丢弃 1 条过载日志 · URL/令牌已脱敏"
+        );
     }
 }

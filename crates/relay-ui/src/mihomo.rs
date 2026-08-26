@@ -96,19 +96,6 @@ pub(crate) enum ControllerState {
 }
 
 impl ControllerState {
-    pub(crate) fn compact_label(&self) -> String {
-        match self {
-            Self::Demo => "Mihomo 未连接 · 演示".to_owned(),
-            Self::Connecting { endpoint } => format!("正在连接 {endpoint}"),
-            Self::Connected {
-                version,
-                active_connections,
-                ..
-            } => format!("Mihomo {version} · {active_connections} 条连接"),
-            Self::Failed { message, .. } => format!("连接失败 · {message}"),
-        }
-    }
-
     pub(crate) fn endpoint(&self) -> Option<&str> {
         match self {
             Self::Demo => None,
@@ -934,16 +921,6 @@ impl RemoteSourceRefreshInterval {
             Self::SixHours => Some(6 * 60 * 60),
             Self::TwelveHours => Some(12 * 60 * 60),
             Self::Daily => Some(24 * 60 * 60),
-        }
-    }
-
-    pub(crate) fn label(self) -> &'static str {
-        match self {
-            Self::Manual => "手动",
-            Self::Hourly => "每 1 小时",
-            Self::SixHours => "每 6 小时",
-            Self::TwelveHours => "每 12 小时",
-            Self::Daily => "每天",
         }
     }
 
@@ -3931,7 +3908,6 @@ mod tests {
     fn remote_source_refresh_intervals_cycle_and_respect_last_success() {
         use super::RemoteSourceRefreshInterval as Interval;
 
-        assert_eq!(Interval::Manual.label(), "手动");
         assert_eq!(Interval::Manual.next(), Interval::Hourly);
         assert_eq!(Interval::Hourly.next(), Interval::SixHours);
         assert_eq!(Interval::SixHours.next(), Interval::TwelveHours);

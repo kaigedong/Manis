@@ -8,7 +8,7 @@ use gpui::{
     point, prelude::*, px, relative, size,
 };
 
-use crate::{subscription::MAX_SUBSCRIPTION_BYTES, theme::Theme};
+use crate::{localization::Language, subscription::MAX_SUBSCRIPTION_BYTES, theme::Theme};
 
 actions!(
     subscription_input,
@@ -70,10 +70,15 @@ pub(crate) struct SubscriptionTextInput {
 }
 
 impl SubscriptionTextInput {
-    pub(crate) fn new(theme: Theme, dark: bool, cx: &mut Context<Self>) -> Self {
+    pub(crate) fn new_with_language(
+        language: Language,
+        theme: Theme,
+        dark: bool,
+        cx: &mut Context<Self>,
+    ) -> Self {
         Self::new_field(
             "subscription-url-input",
-            "粘贴 HTTP/HTTPS 订阅或 vless:// 节点链接",
+            subscription_placeholder(language),
             MAX_SUBSCRIPTION_BYTES,
             theme,
             dark,
@@ -154,6 +159,18 @@ impl SubscriptionTextInput {
         if self.dark != dark {
             self.theme = theme;
             self.dark = dark;
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn set_language(&mut self, language: Language, cx: &mut Context<Self>) {
+        self.set_placeholder(subscription_placeholder(language), cx);
+    }
+
+    pub(crate) fn set_placeholder(&mut self, placeholder: &'static str, cx: &mut Context<Self>) {
+        if self.placeholder.as_ref() != placeholder {
+            self.placeholder = placeholder.into();
+            self.last_layout = None;
             cx.notify();
         }
     }
@@ -553,6 +570,13 @@ fn display_text_with_placeholder(content: &SharedString, placeholder: &str) -> S
     } else {
         content.clone()
     }
+}
+
+fn subscription_placeholder(language: Language) -> &'static str {
+    language.text(
+        "Paste an HTTP/HTTPS subscription or vless:// node link",
+        "粘贴 HTTP/HTTPS 订阅或 vless:// 节点链接",
+    )
 }
 
 impl IntoElement for SubscriptionTextElement {

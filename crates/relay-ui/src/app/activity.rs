@@ -3,6 +3,7 @@ use relay_core::WindowSizeClass;
 use relay_mihomo::Connection;
 
 use super::{RelayApp, format_bytes};
+use crate::localization::Language;
 use crate::theme::Theme;
 
 impl RelayApp {
@@ -19,6 +20,7 @@ impl RelayApp {
             .iter()
             .map(|item| item.download)
             .sum();
+        let language = self.language();
         let mut rows = div()
             .id("activity-scroll")
             .flex_1()
@@ -33,11 +35,14 @@ impl RelayApp {
                     .items_center()
                     .justify_center()
                     .text_color(theme.text_tertiary)
-                    .child("当前没有活动连接；实时流会在新连接建立后自动显示"),
+                    .child(language.text(
+                        "No active connections. Live traffic appears after a new connection starts.",
+                        "当前没有活动连接；实时流会在新连接建立后自动显示",
+                    )),
             );
         } else {
             for connection in &self.active_connections {
-                rows = rows.child(activity_row(connection, theme, compact));
+                rows = rows.child(activity_row(connection, theme, compact, language));
             }
         }
 
@@ -67,15 +72,16 @@ impl RelayApp {
                                 div()
                                     .text_size(px(18.0))
                                     .font_weight(FontWeight::SEMIBOLD)
-                                    .child("网络活动"),
+                                    .child(language.text("Network Activity", "网络活动")),
                             )
                             .child(
                                 div()
                                     .text_size(px(11.0))
                                     .text_color(theme.text_tertiary)
                                     .child(format!(
-                                        "{} 条活动连接 · ↓ {} · ↑ {} · {}",
+                                        "{} {} · ↓ {} · ↑ {} · {}",
                                         self.active_connections.len(),
+                                        language.text("active connections", "条活动连接"),
                                         format_bytes(total_download),
                                         format_bytes(total_upload),
                                         self.live_status.activity
@@ -98,7 +104,7 @@ impl RelayApp {
                             .bg(theme.surface_high)
                             .flex()
                             .items_center()
-                            .child("重新连接")
+                            .child(language.text("Reconnect", "重新连接"))
                             .on_click(cx.listener(|this, _, _, cx| this.connect_mihomo(cx))),
                     ),
             )
@@ -106,13 +112,13 @@ impl RelayApp {
     }
 }
 
-fn activity_row(connection: &Connection, theme: Theme, compact: bool) -> Div {
+fn activity_row(connection: &Connection, theme: Theme, compact: bool, language: Language) -> Div {
     let host = connection
         .metadata
         .host
         .as_deref()
         .or(connection.metadata.destination_ip.as_deref())
-        .unwrap_or("未知目标");
+        .unwrap_or_else(|| language.text("Unknown target", "未知目标"));
     let target = connection
         .metadata
         .destination_port
@@ -123,8 +129,11 @@ fn activity_row(connection: &Connection, theme: Theme, compact: bool) -> Div {
         .process
         .as_deref()
         .or(connection.metadata.process_path.as_deref())
-        .unwrap_or("未知进程");
-    let rule = connection.rule.as_deref().unwrap_or("未匹配规则");
+        .unwrap_or_else(|| language.text("Unknown process", "未知进程"));
+    let rule = connection
+        .rule
+        .as_deref()
+        .unwrap_or_else(|| language.text("No matched rule", "未匹配规则"));
     let chain = if connection.chains.is_empty() {
         "DIRECT".to_owned()
     } else {

@@ -14,6 +14,7 @@ use super::{
 };
 use crate::{
     diagnostics::{UiEvent, trace_ui},
+    localization::Language,
     mihomo::{self, LoadedProvider, LoadedProviderNode},
     subscription::SourceNodePreview,
     theme::Theme,
@@ -98,6 +99,132 @@ impl NodeCounts {
 }
 
 impl RelayApp {
+    fn node_group_strategy_label(strategy: NodeGroupStrategy, language: Language) -> &'static str {
+        match strategy {
+            NodeGroupStrategy::Manual => language.text("Manual Select", "手动选择"),
+            NodeGroupStrategy::LowestLatency => language.text("Lowest Latency", "延迟优选"),
+        }
+    }
+
+    fn node_group_icon_label(icon: NodeGroupIcon, language: Language) -> &'static str {
+        match icon {
+            NodeGroupIcon::Bolt => language.text("Bolt", "闪电"),
+            NodeGroupIcon::Globe => language.text("Globe", "地球"),
+            NodeGroupIcon::Shield => language.text("Shield", "盾牌"),
+            NodeGroupIcon::Compass => language.text("Compass", "罗盘"),
+        }
+    }
+
+    fn availability_filter_label(
+        filter: NodeAvailabilityFilter,
+        language: Language,
+    ) -> &'static str {
+        match filter {
+            NodeAvailabilityFilter::All => language.text("All", "全部"),
+            NodeAvailabilityFilter::Available => language.text("Available", "可用"),
+            NodeAvailabilityFilter::Unavailable => language.text("Unavailable", "不可用"),
+            NodeAvailabilityFilter::Untested => language.text("Untested", "未测速"),
+        }
+    }
+
+    fn source_count_label(count: usize, language: Language) -> String {
+        match language {
+            Language::English => format!("{count} sources"),
+            Language::SimplifiedChinese => format!("{count} 个来源"),
+        }
+    }
+
+    fn node_count_label(count: usize, language: Language) -> String {
+        match language {
+            Language::English => format!("{count} nodes"),
+            Language::SimplifiedChinese => format!("{count} 个节点"),
+        }
+    }
+
+    fn candidate_count_label(count: usize, language: Language) -> String {
+        match language {
+            Language::English => format!("{count} candidate nodes"),
+            Language::SimplifiedChinese => format!("{count} 个候选节点"),
+        }
+    }
+
+    fn matched_count_label(count: usize, language: Language) -> String {
+        match language {
+            Language::English => format!("{count} matched"),
+            Language::SimplifiedChinese => format!("匹配 {count} 个"),
+        }
+    }
+
+    fn check_interval_seconds_label(seconds: u32, language: Language) -> String {
+        match language {
+            Language::English => format!("checks every {seconds}s"),
+            Language::SimplifiedChinese => format!("每 {seconds} 秒检查"),
+        }
+    }
+
+    fn success_fraction_label(succeeded: usize, total: usize, language: Language) -> String {
+        match language {
+            Language::English => format!("{succeeded}/{total} succeeded"),
+            Language::SimplifiedChinese => format!("{succeeded}/{total} 成功"),
+        }
+    }
+
+    fn group_limit_label(count: usize, language: Language) -> String {
+        match language {
+            Language::English => format!("group contains {count} nodes"),
+            Language::SimplifiedChinese => format!("分组包含 {count} 个节点"),
+        }
+    }
+
+    fn single_test_limit_label(limit: usize, language: Language) -> String {
+        match language {
+            Language::English => format!("a single test supports up to {limit}"),
+            Language::SimplifiedChinese => format!("单次最多测试 {limit} 个"),
+        }
+    }
+
+    fn narrow_group_limit_label(limit: usize, language: Language) -> String {
+        match language {
+            Language::English => {
+                format!("narrow it to {limit} nodes or fewer by name or explicit selection")
+            }
+            Language::SimplifiedChinese => {
+                format!("请先用名称或明确选择收窄到 {limit} 个以内")
+            }
+        }
+    }
+
+    fn source_runtime_apply_suffix(apply: &SourceRuntimeApply, language: Language) -> String {
+        match apply {
+            SourceRuntimeApply::Applied(mihomo::GeneratedProfileApply::NotManaged) => language
+                .text(
+                    " · external/existing config is active, so config was not rewritten",
+                    " · 当前为外部/已有配置，未改写其配置",
+                )
+                .to_owned(),
+            SourceRuntimeApply::Applied(mihomo::GeneratedProfileApply::Updated) => language
+                .text(
+                    " · written to Relay-managed config",
+                    " · 已写入 Relay 托管配置",
+                )
+                .to_owned(),
+            SourceRuntimeApply::Applied(mihomo::GeneratedProfileApply::Restarted) => language
+                .text(
+                    " · Relay-managed kernel reloaded safely",
+                    " · Relay 托管内核已安全重载",
+                )
+                .to_owned(),
+            SourceRuntimeApply::Failed(message) => match language {
+                Language::English => {
+                    format!(" · saved, but managed config apply failed: {message}")
+                }
+                Language::SimplifiedChinese => {
+                    format!(" · 持久化已完成，但托管配置应用失败：{message}")
+                }
+            },
+        }
+    }
+
     pub(super) fn node_workspace(
         &self,
         theme: Theme,
@@ -107,7 +234,8 @@ impl RelayApp {
         let compact = size_class == WindowSizeClass::Compact;
         let has_local_sources =
             !self.imported_subscriptions.is_empty() || !self.saved_vless_nodes.is_empty();
-        let groups = self.node_source_groups(has_local_sources);
+        let language = self.language();
+        let groups = self.node_source_groups(has_local_sources, language);
         let counts = NodeCounts::from_groups(&groups);
         let filter = self.node_workspace.filter;
         let loading = self.imported_subscriptions.iter().any(|subscription| {
@@ -131,11 +259,11 @@ impl RelayApp {
                 )
             });
         let origin = if has_local_sources {
-            "本机来源"
+            language.text("Local sources", "本机来源")
         } else if self.source_providers.is_empty() {
-            "尚无节点来源"
+            language.text("No node sources", "尚无节点来源")
         } else {
-            "当前 Mihomo"
+            language.text("Current Mihomo", "当前 Mihomo")
         };
 
         div()
@@ -152,6 +280,7 @@ impl RelayApp {
                 origin,
                 refreshing,
                 compact,
+                language,
                 theme,
                 cx,
             ))
@@ -162,35 +291,47 @@ impl RelayApp {
                 unavailable,
                 size_class,
                 compact,
+                language,
                 theme,
                 cx,
             ))
     }
 
-    fn node_source_groups(&self, has_local_sources: bool) -> Vec<NodeSourceGroup<'_>> {
+    fn node_source_groups(
+        &self,
+        has_local_sources: bool,
+        language: Language,
+    ) -> Vec<NodeSourceGroup<'_>> {
         if has_local_sources {
             let mut groups: Vec<_> = self
                 .imported_subscriptions
                 .iter()
                 .enumerate()
                 .map(|(index, subscription)| {
-                    let name = subscription
-                        .source
-                        .subscription_name()
-                        .unwrap_or_else(|| format!("订阅 {}", index + 1));
+                    let name = subscription.source.subscription_name().unwrap_or_else(|| {
+                        format!("{} {}", language.text("Subscription", "订阅"), index + 1)
+                    });
                     let transport = if subscription.source.is_https() {
-                        "HTTPS 订阅"
+                        language.text("HTTPS subscription", "HTTPS 订阅")
                     } else {
-                        "HTTP 订阅"
+                        language.text("HTTP subscription", "HTTP 订阅")
                     };
                     let state = match subscription.state {
                         ImportedSubscriptionState::Pending(_)
-                        | ImportedSubscriptionState::Refreshing(_) => "正在恢复",
-                        ImportedSubscriptionState::Ready(_) => "重启后自动恢复",
+                        | ImportedSubscriptionState::Refreshing(_) => {
+                            language.text("Restoring", "正在恢复")
+                        }
+                        ImportedSubscriptionState::Ready(_) => {
+                            language.text("Restores after restart", "重启后自动恢复")
+                        }
                         ImportedSubscriptionState::Unavailable(_, _)
-                        | ImportedSubscriptionState::StoreError(_) => "当前不可用",
-                        ImportedSubscriptionState::Removing(_) => "正在移除",
-                        ImportedSubscriptionState::None => "尚未读取",
+                        | ImportedSubscriptionState::StoreError(_) => {
+                            language.text("Unavailable", "当前不可用")
+                        }
+                        ImportedSubscriptionState::Removing(_) => {
+                            language.text("Removing", "正在移除")
+                        }
+                        ImportedSubscriptionState::None => language.text("Not loaded", "尚未读取"),
                     };
                     NodeSourceGroup {
                         id: format!("subscription:{}", subscription.id),
@@ -204,8 +345,13 @@ impl RelayApp {
             if !self.saved_vless_nodes.is_empty() {
                 groups.push(NodeSourceGroup {
                     id: "saved".to_owned(),
-                    name: "已保存".to_owned(),
-                    detail: "单独添加的 VLESS 节点 · 私有本机存储".to_owned(),
+                    name: language.text("Saved", "已保存").to_owned(),
+                    detail: language
+                        .text(
+                            "Individually added VLESS nodes · private local storage",
+                            "单独添加的 VLESS 节点 · 私有本机存储",
+                        )
+                        .to_owned(),
                     providers: Vec::new(),
                     saved_nodes: self
                         .saved_vless_nodes
@@ -224,8 +370,13 @@ impl RelayApp {
                 id: format!("mihomo:{index}"),
                 name: provider.name.clone(),
                 detail: provider.vehicle_type.as_ref().map_or_else(
-                    || "Mihomo 来源".to_owned(),
-                    |vehicle| format!("Mihomo 来源 · {vehicle}"),
+                    || language.text("Mihomo source", "Mihomo 来源").to_owned(),
+                    |vehicle| {
+                        format!(
+                            "{} · {vehicle}",
+                            language.text("Mihomo source", "Mihomo 来源")
+                        )
+                    },
                 ),
                 providers: vec![provider],
                 saved_nodes: Vec::new(),
@@ -241,6 +392,7 @@ impl RelayApp {
         origin: &'static str,
         refreshing: bool,
         compact: bool,
+        language: Language,
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Div {
@@ -264,7 +416,11 @@ impl RelayApp {
                                 div()
                                     .text_size(if compact { px(20.0) } else { px(24.0) })
                                     .font_weight(FontWeight::BOLD)
-                                    .child(format!("节点 · {}", counts.total)),
+                                    .child(format!(
+                                        "{} · {}",
+                                        language.text("Nodes", "节点"),
+                                        counts.total
+                                    )),
                             )
                             .child(
                                 div()
@@ -272,7 +428,12 @@ impl RelayApp {
                                     .text_size(px(12.0))
                                     .text_color(theme.text_secondary)
                                     .child(format!(
-                                        "{origin} · {source_count} 个来源 · 在这里查看出口健康状态"
+                                        "{origin} · {} · {}",
+                                        Self::source_count_label(source_count, language),
+                                        language.text(
+                                            "Review exit health and global selections here",
+                                            "在这里查看出口健康状态"
+                                        )
                                     )),
                             ),
                     )
@@ -282,12 +443,14 @@ impl RelayApp {
                             .flex()
                             .items_center()
                             .gap_2()
-                            .child(Self::node_refresh_button(refreshing, theme, cx))
-                            .child(Self::node_configuration_link(theme, cx)),
+                            .child(Self::node_refresh_button(refreshing, language, theme, cx))
+                            .child(Self::node_configuration_link(language, theme, cx)),
                     ),
             )
-            .child(Self::node_health_summary(counts, compact, theme))
-            .child(Self::node_filter_bar(counts, filter, compact, theme, cx))
+            .child(Self::node_health_summary(counts, compact, language, theme))
+            .child(Self::node_filter_bar(
+                counts, filter, compact, language, theme, cx,
+            ))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -299,6 +462,7 @@ impl RelayApp {
         unavailable: bool,
         size_class: WindowSizeClass,
         compact: bool,
+        language: Language,
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
@@ -311,31 +475,40 @@ impl RelayApp {
             .px(if compact { px(12.0) } else { px(24.0) })
             .py_4()
             .child(Self::node_section_heading(
-                "导入的节点",
-                "按来源查看已经导入的节点；可为全局模式指定一个出口。",
+                language.text("Imported Nodes", "导入的节点"),
+                language.text(
+                    "Review imported nodes by source; choose one exit for global mode.",
+                    "按来源查看已经导入的节点；可为全局模式指定一个出口。",
+                ),
                 theme,
             ))
             .when(loading && groups.is_empty(), |body| {
                 body.child(Self::node_message_panel(
-                    "正在恢复节点",
-                    "Relay 正在通过隔离 Mihomo 重新读取已导入订阅。",
+                    language.text("Restoring nodes", "正在恢复节点"),
+                    language.text(
+                        "Relay is reloading imported subscriptions through isolated Mihomo.",
+                        "Relay 正在通过隔离 Mihomo 重新读取已导入订阅。",
+                    ),
                     theme,
                 ))
             })
             .when(unavailable && groups.is_empty(), |body| {
                 body.child(Self::node_message_panel(
-                    "暂时无法读取节点",
-                    "订阅仍安全保存在本机。请前往配置页检查来源，原链接不会显示。",
+                    language.text("Nodes are temporarily unavailable", "暂时无法读取节点"),
+                    language.text(
+                        "Subscriptions remain safely stored locally. Check sources in Configuration; original URLs stay hidden.",
+                        "订阅仍安全保存在本机。请前往配置页检查来源，原链接不会显示。",
+                    ),
                     theme,
                 ))
             })
             .when(!loading && !unavailable && groups.is_empty(), |body| {
-                body.child(Self::node_empty_state(compact, theme, cx))
+                body.child(Self::node_empty_state(compact, language, theme, cx))
             })
             .when(!groups.is_empty(), |body| {
-                body.child(self.node_group_list(groups, filter, compact, theme, cx))
+                body.child(self.node_group_list(groups, filter, compact, language, theme, cx))
             })
-            .child(self.node_group_workspace_section(wide, compact, theme, cx))
+            .child(self.node_group_workspace_section(wide, compact, language, theme, cx))
     }
 
     fn node_section_heading(title: &'static str, detail: &'static str, theme: Theme) -> Div {
@@ -360,6 +533,7 @@ impl RelayApp {
         &self,
         wide: bool,
         compact: bool,
+        language: Language,
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Div {
@@ -375,11 +549,14 @@ impl RelayApp {
                     .justify_between()
                     .gap_3()
                     .child(Self::node_section_heading(
-                        "节点分组",
-                        "用选择策略与匹配规则，把上方节点组织成可用于规则路由的策略组。",
+                        language.text("Node Groups", "节点分组"),
+                        language.text(
+                            "Organize imported nodes into routing-ready policy groups with selection strategies and match rules.",
+                            "用选择策略与匹配规则，把上方节点组织成可用于规则路由的策略组。",
+                        ),
                         theme,
                     ))
-                    .child(Self::node_group_add_button(theme, cx)),
+                    .child(Self::node_group_add_button(language, theme, cx)),
             );
         if self.node_policy_groups.is_empty() && self.node_group_draft.is_none() {
             section = section.child(
@@ -392,20 +569,23 @@ impl RelayApp {
                     .child(
                         div()
                             .font_weight(FontWeight::SEMIBOLD)
-                            .child("还没有自定义分组"),
+                            .child(language.text("No custom groups yet", "还没有自定义分组")),
                     )
                     .child(
                         div()
                             .mt_1()
                             .text_size(px(11.0))
                             .text_color(theme.text_secondary)
-                            .child("可以创建手动选择组，或让 Relay 自动选择最低延迟节点。"),
+                            .child(language.text(
+                                "Create a manual group, or let Relay automatically choose the lowest-latency node.",
+                                "可以创建手动选择组，或让 Relay 自动选择最低延迟节点。",
+                            )),
                     ),
             );
         }
         let mut cards = div().grid().grid_cols(if wide { 2 } else { 1 }).gap_3();
         for group in &self.node_policy_groups {
-            cards = cards.child(self.node_policy_group_card(group, theme, cx));
+            cards = cards.child(self.node_policy_group_card(group, language, theme, cx));
         }
         if !self.node_policy_groups.is_empty() {
             section = section.child(cards);
@@ -415,19 +595,24 @@ impl RelayApp {
                 .iter()
                 .find(|group| group.id == *selected)
         }) {
-            section = section.child(self.node_policy_group_detail(group, compact, theme, cx));
+            section =
+                section.child(self.node_policy_group_detail(group, compact, language, theme, cx));
         }
         if let Some(draft) = self.node_group_draft.as_ref() {
-            section = section.child(self.node_group_editor(draft, compact, theme, cx));
+            section = section.child(self.node_group_editor(draft, compact, language, theme, cx));
         }
         section
     }
 
-    fn node_group_add_button(theme: Theme, cx: &mut Context<Self>) -> Stateful<Div> {
+    fn node_group_add_button(
+        language: Language,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
         div()
             .id("node-group-add")
             .role(Role::Button)
-            .aria_label("添加节点分组")
+            .aria_label(language.text("Add node group", "添加节点分组"))
             .tab_stop(true)
             .focusable()
             .cursor_pointer()
@@ -439,7 +624,7 @@ impl RelayApp {
             .font_weight(FontWeight::SEMIBOLD)
             .flex()
             .items_center()
-            .child("添加分组")
+            .child(language.text("Add Group", "添加分组"))
             .on_click(cx.listener(|this, _, _, cx| this.start_node_group_create(cx)))
     }
 
@@ -447,6 +632,7 @@ impl RelayApp {
     fn node_policy_group_card(
         &self,
         group: &NodePolicyGroup,
+        language: Language,
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Div {
@@ -463,18 +649,24 @@ impl RelayApp {
         let group_id = group.id.clone();
         let remove_id = group.id.clone();
         let matcher_summary = match &group.matcher {
-            NodeGroupMatcher::All => "全部节点".to_owned(),
-            NodeGroupMatcher::NameContains(value) => format!("名称包含 “{value}”"),
-            NodeGroupMatcher::Explicit(nodes) => format!("明确选择 {} 个节点", nodes.len()),
+            NodeGroupMatcher::All => language.text("All nodes", "全部节点").to_owned(),
+            NodeGroupMatcher::NameContains(value) => {
+                format!("{} “{value}”", language.text("Name contains", "名称包含"))
+            }
+            NodeGroupMatcher::Explicit(nodes) => format!(
+                "{} {}",
+                language.text("Explicitly selected", "明确选择"),
+                Self::node_count_label(nodes.len(), language)
+            ),
         };
         let strategy_summary = if group.strategy == NodeGroupStrategy::LowestLatency {
             format!(
-                "{} · 每 {} 秒检查",
-                group.strategy.label(),
-                group.test_interval_secs
+                "{} · {}",
+                Self::node_group_strategy_label(group.strategy, language),
+                Self::check_interval_seconds_label(group.test_interval_secs, language)
             )
         } else {
-            group.strategy.label().to_owned()
+            Self::node_group_strategy_label(group.strategy, language).to_owned()
         };
         div()
             .p_4()
@@ -501,7 +693,7 @@ impl RelayApp {
                             }
                         }),
                     ))
-                    .child(Self::node_group_icon_badge(group.icon, theme))
+                    .child(Self::node_group_icon_badge(group.icon, language, theme))
                     .child(
                         div()
                             .min_w(px(0.0))
@@ -517,13 +709,14 @@ impl RelayApp {
                                     .text_size(px(10.0))
                                     .text_color(theme.text_secondary)
                                     .child(format!(
-                                        "{strategy_summary} · {matcher_summary} · 匹配 {matched} 个"
+                                        "{strategy_summary} · {matcher_summary} · {}",
+                                        Self::matched_count_label(matched, language)
                                     )),
                             ),
                     ),
             )
             .child(Self::node_group_benchmark_status(
-                &benchmark, matched, theme,
+                &benchmark, matched, language, theme,
             ))
             .child(
                 div()
@@ -534,9 +727,9 @@ impl RelayApp {
                     .child(Self::node_group_text_button(
                         format!("node-group-detail-{detail_id}"),
                         if selected {
-                            "收起详情"
+                            language.text("Hide Details", "收起详情")
                         } else {
-                            "查看详情"
+                            language.text("View Details", "查看详情")
                         },
                         theme,
                         cx.listener(move |this, _, _, cx| {
@@ -545,7 +738,7 @@ impl RelayApp {
                     ))
                     .child(Self::node_group_text_button(
                         format!("node-group-edit-{group_id}"),
-                        "编辑",
+                        language.text("Edit", "编辑"),
                         theme,
                         cx.listener(move |this, _, _, cx| {
                             this.start_node_group_edit(&group_id, cx);
@@ -553,7 +746,7 @@ impl RelayApp {
                     ))
                     .child(Self::node_group_text_button(
                         format!("node-group-remove-{remove_id}"),
-                        "删除",
+                        language.text("Delete", "删除"),
                         theme,
                         cx.listener(move |this, _, _, cx| {
                             this.remove_node_policy_group(&remove_id, cx);
@@ -566,6 +759,7 @@ impl RelayApp {
         &self,
         group: &NodePolicyGroup,
         compact: bool,
+        language: Language,
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Div {
@@ -590,6 +784,7 @@ impl RelayApp {
                 &benchmark,
                 compact,
                 self.runtime.manages_node_policy_groups(),
+                language,
                 theme,
                 cx,
             ));
@@ -623,15 +818,18 @@ impl RelayApp {
                                     .text_size(px(11.0))
                                     .text_color(theme.text_secondary)
                                     .child(format!(
-                                        "{} · {} 个候选节点",
-                                        group.strategy.label(),
-                                        self.node_group_match_count(group)
+                                        "{} · {}",
+                                        Self::node_group_strategy_label(group.strategy, language),
+                                        Self::candidate_count_label(
+                                            self.node_group_match_count(group),
+                                            language,
+                                        )
                                     )),
                             ),
                     )
                     .child(Self::node_group_text_button(
                         format!("node-group-detail-close-{close_id}"),
-                        "关闭",
+                        language.text("Close", "关闭"),
                         theme,
                         cx.listener(move |this, _, _, cx| {
                             this.toggle_node_group_detail(&close_id, cx);
@@ -641,6 +839,7 @@ impl RelayApp {
             .child(Self::node_group_runtime_banner(
                 group,
                 &runtime_state,
+                language,
                 theme,
                 cx,
             ))
@@ -653,7 +852,10 @@ impl RelayApp {
                         .bg(theme.surface_low)
                         .text_size(px(11.0))
                         .text_color(theme.text_secondary)
-                        .child("当前规则没有匹配到节点，请编辑分组规则。"),
+                        .child(language.text(
+                            "This rule does not match any nodes. Edit the group rule.",
+                            "当前规则没有匹配到节点，请编辑分组规则。",
+                        )),
                 )
             })
             .when(self.node_group_match_count(group) > 0, |detail| {
@@ -661,48 +863,86 @@ impl RelayApp {
             })
     }
 
+    #[allow(clippy::too_many_lines)]
     fn node_group_runtime_banner(
         group: &NodePolicyGroup,
         state: &NodeGroupRuntimeState,
+        language: Language,
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Div {
         let (title, detail, color) = match state {
             NodeGroupRuntimeState::LocalOnly => (
-                "本地候选 · 当前只读".to_owned(),
-                "Relay 不会改写外部控制器或已有配置；请使用 Relay 托管配置来切换此分组。"
+                language.text("Local candidates · read-only", "本地候选 · 当前只读").to_owned(),
+                language
+                    .text(
+                        "Relay will not rewrite external controllers or existing config. Use Relay-managed config to switch this group.",
+                        "Relay 不会改写外部控制器或已有配置；请使用 Relay 托管配置来切换此分组。",
+                    )
                     .to_owned(),
                 theme.text_secondary,
             ),
             NodeGroupRuntimeState::Loading { .. } => (
-                "正在读取当前出口…".to_owned(),
-                "正在从 Relay 托管 Mihomo 同步策略组状态。".to_owned(),
+                language.text("Loading current exit...", "正在读取当前出口…").to_owned(),
+                language
+                    .text(
+                        "Syncing policy group state from Relay-managed Mihomo.",
+                        "正在从 Relay 托管 Mihomo 同步策略组状态。",
+                    )
+                    .to_owned(),
                 theme.action_primary,
             ),
             NodeGroupRuntimeState::Ready { current, .. } => {
-                let current = current.as_deref().unwrap_or("尚未选择");
+                let current = current
+                    .as_deref()
+                    .unwrap_or_else(|| language.text("Not selected", "尚未选择"));
                 if group.strategy == NodeGroupStrategy::Manual {
                     (
-                        format!("当前使用：{current}"),
-                        "选择其他节点后会立即应用，并由 Mihomo 保存选择。".to_owned(),
+                        format!("{}: {current}", language.text("Current", "当前使用")),
+                        language
+                            .text(
+                                "Selecting another node applies immediately and Mihomo saves it.",
+                                "选择其他节点后会立即应用，并由 Mihomo 保存选择。",
+                            )
+                            .to_owned(),
                         theme.status_success,
                     )
                 } else {
                     (
-                        format!("当前优选：{current}"),
-                        "最低延迟组由 Mihomo 自动测试并切换，不支持手动指定。".to_owned(),
+                        format!("{}: {current}", language.text("Preferred", "当前优选")),
+                        language
+                            .text(
+                                "Lowest-latency groups are tested and switched by Mihomo automatically; manual selection is disabled.",
+                                "最低延迟组由 Mihomo 自动测试并切换，不支持手动指定。",
+                            )
+                            .to_owned(),
                         theme.status_success,
                     )
                 }
             }
             NodeGroupRuntimeState::Selecting { pending, .. } => (
-                format!("正在切换到：{pending}"),
-                "等待 Mihomo 确认新的当前出口。".to_owned(),
+                format!("{}: {pending}", language.text("Switching to", "正在切换到")),
+                language
+                    .text(
+                        "Waiting for Mihomo to confirm the new current exit.",
+                        "等待 Mihomo 确认新的当前出口。",
+                    )
+                    .to_owned(),
                 theme.action_primary,
             ),
             NodeGroupRuntimeState::Failed { .. } => (
-                "无法读取分组运行状态".to_owned(),
-                "请启动或连接 Relay 托管 Mihomo 后重试。".to_owned(),
+                language
+                    .text(
+                        "Could not load group runtime state",
+                        "无法读取分组运行状态",
+                    )
+                    .to_owned(),
+                language
+                    .text(
+                        "Start or connect Relay-managed Mihomo, then retry.",
+                        "请启动或连接 Relay 托管 Mihomo 后重试。",
+                    )
+                    .to_owned(),
                 theme.route_trace,
             ),
         };
@@ -739,7 +979,7 @@ impl RelayApp {
                 |banner| {
                     banner.child(Self::node_group_text_button(
                         format!("node-group-runtime-retry-{retry_id}"),
-                        "重试",
+                        language.text("Retry", "重试"),
                         theme,
                         cx.listener(move |this, _, _, cx| {
                             this.refresh_node_group_runtime(&retry_id, cx);
@@ -757,6 +997,7 @@ impl RelayApp {
         benchmark: &GroupBenchmarkState,
         compact: bool,
         managed: bool,
+        language: Language,
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Div {
@@ -785,22 +1026,22 @@ impl RelayApp {
             group.id, member.identity.node_name
         );
         let (health, health_color) = match member.alive {
-            Some(true) => ("可用", theme.status_success),
-            Some(false) => ("不可用", theme.route_trace),
-            None => ("未检测", theme.text_tertiary),
+            Some(true) => (language.text("Available", "可用"), theme.status_success),
+            Some(false) => (language.text("Unavailable", "不可用"), theme.route_trace),
+            None => (language.text("Untested", "未检测"), theme.text_tertiary),
         };
         let group_id = group.id.clone();
         let node_name = member.identity.node_name.clone();
         let action_label = if is_current {
-            "当前"
+            language.text("Current", "当前")
         } else if selecting {
-            "切换中…"
+            language.text("Switching...", "切换中…")
         } else if selectable {
-            "选择"
+            language.text("Select", "选择")
         } else if group.strategy == NodeGroupStrategy::LowestLatency {
-            "自动"
+            language.text("Auto", "自动")
         } else {
-            "只读"
+            language.text("Read-only", "只读")
         };
         let action = div()
             .id(format!(
@@ -892,7 +1133,7 @@ impl RelayApp {
                         member
                             .latency_label
                             .clone()
-                            .unwrap_or_else(|| "未测速".to_owned()),
+                            .unwrap_or_else(|| language.text("Untested", "未测速").to_owned()),
                         &spinner_id,
                         theme,
                     )),
@@ -903,25 +1144,42 @@ impl RelayApp {
     fn node_group_benchmark_status(
         state: &GroupBenchmarkState,
         matched: usize,
+        language: Language,
         theme: Theme,
     ) -> Div {
         let (label, color) = match state {
-            GroupBenchmarkState::Idle => ("尚未测速".to_owned(), theme.text_tertiary),
-            GroupBenchmarkState::Running { .. } => {
-                (format!("正在测试 {matched} 个节点…"), theme.action_primary)
-            }
+            GroupBenchmarkState::Idle => (
+                language.text("Not tested yet", "尚未测速").to_owned(),
+                theme.text_tertiary,
+            ),
+            GroupBenchmarkState::Running { .. } => (
+                format!(
+                    "{} {}...",
+                    language.text("Testing", "正在测试"),
+                    Self::node_count_label(matched, language)
+                ),
+                theme.action_primary,
+            ),
             GroupBenchmarkState::Complete { summary, .. } => {
                 let label = match (summary.average_ms, summary.minimum_ms, summary.maximum_ms) {
                     (Some(average), Some(minimum), Some(maximum)) => format!(
-                        "平均 {average} ms · 最低 {minimum} ms · 最高 {maximum} ms · {}/{} 成功",
-                        summary.succeeded, summary.total
+                        "{} {average} ms · {} {minimum} ms · {} {maximum} ms · {}",
+                        language.text("Avg", "平均"),
+                        language.text("Min", "最低"),
+                        language.text("Max", "最高"),
+                        Self::success_fraction_label(summary.succeeded, summary.total, language)
                     ),
-                    _ => format!("0/{} 成功", summary.total),
+                    _ => Self::success_fraction_label(0, summary.total, language),
                 };
                 (label, theme.status_success)
             }
             GroupBenchmarkState::Failed { .. } => (
-                "测速失败 · 请检查 Mihomo 连接与网络后重试".to_owned(),
+                language
+                    .text(
+                        "Test failed · check Mihomo connection and network, then retry",
+                        "测速失败 · 请检查 Mihomo 连接与网络后重试",
+                    )
+                    .to_owned(),
                 theme.route_trace,
             ),
         };
@@ -935,7 +1193,7 @@ impl RelayApp {
             .child(label)
     }
 
-    fn node_group_icon_badge(icon: NodeGroupIcon, theme: Theme) -> Div {
+    fn node_group_icon_badge(icon: NodeGroupIcon, language: Language, theme: Theme) -> Div {
         div()
             .size(px(40.0))
             .flex_shrink_0()
@@ -947,7 +1205,7 @@ impl RelayApp {
             .flex()
             .items_center()
             .justify_center()
-            .child(icon.label())
+            .child(Self::node_group_icon_label(icon, language))
     }
 
     fn node_group_text_button(
@@ -980,13 +1238,14 @@ impl RelayApp {
         &self,
         draft: &NodeGroupDraft,
         compact: bool,
+        language: Language,
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Div {
         let title = if draft.editing_id.is_some() {
-            "编辑节点分组"
+            language.text("Edit Node Group", "编辑节点分组")
         } else {
-            "创建节点分组"
+            language.text("Create Node Group", "创建节点分组")
         };
         let name_input = self.node_group_name_input.clone();
         let filter_input = self.node_group_filter_input.clone();
@@ -1006,21 +1265,31 @@ impl RelayApp {
             .child(
                 div()
                     .mt_4()
-                    .child(Self::node_group_field_label("分组名称", theme))
+                    .child(Self::node_group_field_label(
+                        language.text("Group Name", "分组名称"),
+                        theme,
+                    ))
                     .when_some(name_input, ParentElement::child),
             )
             .child(
                 div()
                     .mt_4()
-                    .child(Self::node_group_field_label("分组图标", theme))
-                    .child(Self::node_group_icon_selector(draft.icon, theme, cx)),
+                    .child(Self::node_group_field_label(
+                        language.text("Group Icon", "分组图标"),
+                        theme,
+                    ))
+                    .child(Self::node_group_icon_selector(draft.icon, language, theme, cx)),
             )
             .child(
                 div()
                     .mt_4()
-                    .child(Self::node_group_field_label("选择策略", theme))
+                    .child(Self::node_group_field_label(
+                        language.text("Selection Strategy", "选择策略"),
+                        theme,
+                    ))
                     .child(Self::node_group_strategy_selector(
                         draft.strategy,
+                        language,
                         theme,
                         cx,
                     )),
@@ -1031,14 +1300,21 @@ impl RelayApp {
                     editor.child(
                         div()
                             .mt_4()
-                            .child(Self::node_group_field_label("自动重新检查", theme))
+                            .child(Self::node_group_field_label(
+                                language.text("Automatic Recheck", "自动重新检查"),
+                                theme,
+                            ))
                             .child(Self::node_group_interval_selector(
                                 draft.test_interval_secs,
+                                language,
                                 theme,
                                 cx,
                             ))
                             .child(Self::node_group_helper(
-                                "每个自动策略组独立保存间隔，并写入 Relay 托管的 Mihomo 配置。",
+                                language.text(
+                                    "Each automatic group stores its own interval and writes it into Relay-managed Mihomo config.",
+                                    "每个自动策略组独立保存间隔，并写入 Relay 托管的 Mihomo 配置。",
+                                ),
                                 theme,
                             )),
                     )
@@ -1047,9 +1323,13 @@ impl RelayApp {
             .child(
                 div()
                     .mt_4()
-                    .child(Self::node_group_field_label("节点规则", theme))
+                    .child(Self::node_group_field_label(
+                        language.text("Node Rule", "节点规则"),
+                        theme,
+                    ))
                     .child(Self::node_group_matcher_selector(
                         draft.matcher_kind,
+                        language,
                         theme,
                         cx,
                     )),
@@ -1057,7 +1337,10 @@ impl RelayApp {
         match draft.matcher_kind {
             NodeGroupMatcherKind::All => {
                 editor = editor.child(Self::node_group_helper(
-                    "当前导入的全部节点都会加入这个分组。",
+                    language.text(
+                        "All currently imported nodes will be included in this group.",
+                        "当前导入的全部节点都会加入这个分组。",
+                    ),
                     theme,
                 ));
             }
@@ -1065,12 +1348,15 @@ impl RelayApp {
                 editor = editor.child(
                     div()
                         .mt_3()
-                        .child(Self::node_group_field_label("名称包含", theme))
+                        .child(Self::node_group_field_label(
+                            language.text("Name Contains", "名称包含"),
+                            theme,
+                        ))
                         .when_some(filter_input, ParentElement::child),
                 );
             }
             NodeGroupMatcherKind::Explicit => {
-                editor = editor.child(self.node_group_member_picker(draft, theme, cx));
+                editor = editor.child(self.node_group_member_picker(draft, language, theme, cx));
             }
         }
         editor.child(
@@ -1081,7 +1367,7 @@ impl RelayApp {
                 .gap_2()
                 .child(Self::node_group_text_button(
                     "node-group-cancel".to_owned(),
-                    "取消",
+                    language.text("Cancel", "取消"),
                     theme,
                     cx.listener(|this, _, _, cx| {
                         this.node_group_draft = None;
@@ -1092,7 +1378,7 @@ impl RelayApp {
                     div()
                         .id("node-group-save")
                         .role(Role::Button)
-                        .aria_label("保存节点分组")
+                        .aria_label(language.text("Save node group", "保存节点分组"))
                         .tab_stop(true)
                         .focusable()
                         .cursor_pointer()
@@ -1104,7 +1390,7 @@ impl RelayApp {
                         .font_weight(FontWeight::SEMIBOLD)
                         .flex()
                         .items_center()
-                        .child("保存分组")
+                        .child(language.text("Save Group", "保存分组"))
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.save_node_policy_group(cx);
                         })),
@@ -1131,6 +1417,7 @@ impl RelayApp {
 
     fn node_group_icon_selector(
         selected: NodeGroupIcon,
+        language: Language,
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Div {
@@ -1146,7 +1433,11 @@ impl RelayApp {
                 div()
                     .id(format!("node-group-icon-{}", icon.key()))
                     .role(Role::Button)
-                    .aria_label(format!("使用{}图标", icon.label()))
+                    .aria_label(format!(
+                        "{} {}",
+                        language.text("Use icon", "使用图标"),
+                        Self::node_group_icon_label(icon, language)
+                    ))
                     .aria_toggled(if active {
                         gpui::Toggled::True
                     } else {
@@ -1176,7 +1467,7 @@ impl RelayApp {
                     })
                     .flex()
                     .items_center()
-                    .child(icon.label())
+                    .child(Self::node_group_icon_label(icon, language))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if let Some(draft) = this.node_group_draft.as_mut() {
                             draft.icon = icon;
@@ -1190,6 +1481,7 @@ impl RelayApp {
 
     fn node_group_strategy_selector(
         selected: NodeGroupStrategy,
+        language: Language,
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Div {
@@ -1200,7 +1492,7 @@ impl RelayApp {
                 div()
                     .id(format!("node-group-strategy-{}", strategy.key()))
                     .role(Role::Button)
-                    .aria_label(strategy.label())
+                    .aria_label(Self::node_group_strategy_label(strategy, language))
                     .aria_toggled(if active {
                         gpui::Toggled::True
                     } else {
@@ -1230,7 +1522,7 @@ impl RelayApp {
                     })
                     .flex()
                     .items_center()
-                    .child(strategy.label())
+                    .child(Self::node_group_strategy_label(strategy, language))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if let Some(draft) = this.node_group_draft.as_mut() {
                             draft.strategy = strategy;
@@ -1242,12 +1534,17 @@ impl RelayApp {
         row
     }
 
-    fn node_group_interval_selector(selected: u32, theme: Theme, cx: &mut Context<Self>) -> Div {
+    fn node_group_interval_selector(
+        selected: u32,
+        language: Language,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let choices = [
-            (60, "1 分钟"),
-            (300, "5 分钟"),
-            (600, "10 分钟"),
-            (1_800, "30 分钟"),
+            (60, language.text("1 min", "1 分钟")),
+            (300, language.text("5 min", "5 分钟")),
+            (600, language.text("10 min", "10 分钟")),
+            (1_800, language.text("30 min", "30 分钟")),
         ];
         let mut row = div().flex().flex_wrap().gap_2();
         for (seconds, label) in choices {
@@ -1256,7 +1553,10 @@ impl RelayApp {
                 div()
                     .id(format!("node-group-interval-{seconds}"))
                     .role(Role::Button)
-                    .aria_label(format!("每{label}自动检查"))
+                    .aria_label(format!(
+                        "{} {label}",
+                        language.text("Automatically check every", "自动检查间隔")
+                    ))
                     .aria_toggled(if active {
                         gpui::Toggled::True
                     } else {
@@ -1300,13 +1600,23 @@ impl RelayApp {
 
     fn node_group_matcher_selector(
         selected: NodeGroupMatcherKind,
+        language: Language,
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Div {
         let choices = [
-            ("全部节点", NodeGroupMatcherKind::All),
-            ("名称包含", NodeGroupMatcherKind::NameContains),
-            ("明确选择", NodeGroupMatcherKind::Explicit),
+            (
+                language.text("All Nodes", "全部节点"),
+                NodeGroupMatcherKind::All,
+            ),
+            (
+                language.text("Name Contains", "名称包含"),
+                NodeGroupMatcherKind::NameContains,
+            ),
+            (
+                language.text("Explicit Selection", "明确选择"),
+                NodeGroupMatcherKind::Explicit,
+            ),
         ];
         let mut row = div().flex().flex_wrap().gap_2();
         for (label, matcher) in choices {
@@ -1360,6 +1670,7 @@ impl RelayApp {
     fn node_group_member_picker(
         &self,
         draft: &NodeGroupDraft,
+        language: Language,
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
@@ -1378,7 +1689,10 @@ impl RelayApp {
                     .p_3()
                     .text_size(px(11.0))
                     .text_color(theme.text_secondary)
-                    .child("先在上方导入节点，再进行明确选择。"),
+                    .child(language.text(
+                        "Import nodes above before making an explicit selection.",
+                        "先在上方导入节点，再进行明确选择。",
+                    )),
             );
         }
         for member in inventory {
@@ -1391,7 +1705,11 @@ impl RelayApp {
                         member.source_id, member.node_name
                     ))
                     .role(Role::CheckBox)
-                    .aria_label(format!("选择节点{}", member.node_name))
+                    .aria_label(format!(
+                        "{} {}",
+                        language.text("Select node", "选择节点"),
+                        member.node_name
+                    ))
                     .tab_stop(true)
                     .focusable()
                     .cursor_pointer()
@@ -1442,7 +1760,7 @@ impl RelayApp {
         let has_local_sources =
             !self.imported_subscriptions.is_empty() || !self.saved_vless_nodes.is_empty();
         let mut inventory = BTreeSet::new();
-        for group in self.node_source_groups(has_local_sources) {
+        for group in self.node_source_groups(has_local_sources, self.language()) {
             for provider in group.providers {
                 for node in &provider.nodes {
                     if let Ok(identity) = NodeIdentity::new(&group.id, &node.name) {
@@ -1463,7 +1781,7 @@ impl RelayApp {
         let has_local_sources =
             !self.imported_subscriptions.is_empty() || !self.saved_vless_nodes.is_empty();
         let mut members = Vec::new();
-        for source_group in self.node_source_groups(has_local_sources) {
+        for source_group in self.node_source_groups(has_local_sources, self.language()) {
             for provider in source_group.providers {
                 for node in &provider.nodes {
                     let Ok(identity) = NodeIdentity::new(&source_group.id, &node.name) else {
@@ -1532,7 +1850,12 @@ impl RelayApp {
         } else {
             self.node_group_runtime_states
                 .insert(id.to_owned(), NodeGroupRuntimeState::LocalOnly);
-            "已打开分组详情；当前外部控制器保持只读".clone_into(&mut self.status);
+            self.language()
+                .text(
+                    "Group details opened; external controller remains read-only",
+                    "已打开分组详情；当前外部控制器保持只读",
+                )
+                .clone_into(&mut self.status);
             cx.notify();
         }
     }
@@ -1556,7 +1879,12 @@ impl RelayApp {
         let generation = self.node_group_runtime_generation;
         self.node_group_runtime_states
             .insert(id.to_owned(), NodeGroupRuntimeState::Loading { generation });
-        self.status = format!("正在读取分组“{}”的当前出口", group.name);
+        let language = self.language();
+        self.status = format!(
+            "{} “{}”",
+            language.text("Loading current exit for group", "正在读取分组当前出口"),
+            group.name
+        );
         let runtime = self.runtime.clone();
         let group_id = group.id.clone();
         let group_name = group.name.clone();
@@ -1566,6 +1894,7 @@ impl RelayApp {
                 .spawn(async move { runtime.load_node_group_runtime(&group_name) })
                 .await;
             this.update(cx, |this, cx| {
+                let language = this.language();
                 if !this
                     .node_policy_groups
                     .iter()
@@ -1588,10 +1917,22 @@ impl RelayApp {
                 };
                 if accepted {
                     this.status = match state {
-                        NodeGroupRuntimeState::Ready { .. } => "已同步策略组当前出口".to_owned(),
-                        NodeGroupRuntimeState::LocalOnly => "当前控制器保持只读".to_owned(),
+                        NodeGroupRuntimeState::Ready { .. } => language
+                            .text(
+                                "Policy group current exit synced",
+                                "已同步策略组当前出口",
+                            )
+                            .to_owned(),
+                        NodeGroupRuntimeState::LocalOnly => language
+                            .text("Current controller remains read-only", "当前控制器保持只读")
+                            .to_owned(),
                         NodeGroupRuntimeState::Failed { .. } => {
-                            "无法读取分组运行状态，请启动 Relay 托管 Mihomo 后重试".to_owned()
+                            language
+                                .text(
+                                    "Could not load group runtime state. Start Relay-managed Mihomo and retry.",
+                                    "无法读取分组运行状态，请启动 Relay 托管 Mihomo 后重试",
+                                )
+                                .to_owned()
                         }
                         _ => return,
                     };
@@ -1620,7 +1961,12 @@ impl RelayApp {
         };
         if group.strategy != NodeGroupStrategy::Manual || !self.runtime.manages_node_policy_groups()
         {
-            "当前分组不支持手动切换".clone_into(&mut self.status);
+            self.language()
+                .text(
+                    "This group does not support manual switching",
+                    "当前分组不支持手动切换",
+                )
+                .clone_into(&mut self.status);
             cx.notify();
             return;
         }
@@ -1630,11 +1976,22 @@ impl RelayApp {
             return;
         };
         if !state.begin_selection(generation, node_name) {
-            "节点不在 Mihomo 当前候选列表中，请刷新后重试".clone_into(&mut self.status);
+            self.language()
+                .text(
+                    "Node is not in Mihomo's current candidate list. Refresh and retry.",
+                    "节点不在 Mihomo 当前候选列表中，请刷新后重试",
+                )
+                .clone_into(&mut self.status);
             cx.notify();
             return;
         }
-        self.status = format!("正在将“{}”切换到“{}”", group.name, node_name);
+        let language = self.language();
+        self.status = format!(
+            "{} “{}” -> “{}”",
+            language.text("Switching", "正在切换"),
+            group.name,
+            node_name
+        );
         let runtime = self.runtime.clone();
         let selected = node_name.to_owned();
         let selected_for_request = selected.clone();
@@ -1649,6 +2006,7 @@ impl RelayApp {
                     })
                     .await;
             this.update(cx, |this, cx| {
+                let language = this.language();
                 let Some(state) = this.node_group_runtime_states.get_mut(&group_id) else {
                     return;
                 };
@@ -1661,11 +2019,21 @@ impl RelayApp {
                 if accepted {
                     this.status = match state {
                         NodeGroupRuntimeState::Ready { .. } => {
-                            format!("已切换到“{selected}”；Mihomo 将保存本次选择")
+                            format!(
+                                "{} “{selected}”; {}",
+                                language.text("Switched to", "已切换到"),
+                                language.text(
+                                    "Mihomo will save this selection",
+                                    "Mihomo 将保存本次选择"
+                                )
+                            )
                         }
-                        NodeGroupRuntimeState::Failed { .. } => {
-                            "切换失败，请刷新分组状态后重试".to_owned()
-                        }
+                        NodeGroupRuntimeState::Failed { .. } => language
+                            .text(
+                                "Switch failed. Refresh group state and retry.",
+                                "切换失败，请刷新分组状态后重试",
+                            )
+                            .to_owned(),
                         _ => return,
                     };
                     cx.notify();
@@ -1677,6 +2045,7 @@ impl RelayApp {
         cx.notify();
     }
 
+    #[allow(clippy::too_many_lines)]
     fn start_source_group_benchmark(
         &mut self,
         id: &str,
@@ -1692,28 +2061,41 @@ impl RelayApp {
             return;
         }
         if candidate_names.is_empty() {
-            "当前导入分组没有可测速节点".clone_into(&mut self.status);
+            self.language()
+                .text(
+                    "This imported group has no nodes to test",
+                    "当前导入分组没有可测速节点",
+                )
+                .clone_into(&mut self.status);
             cx.notify();
             return;
         }
         if candidate_names.len() > MAX_GROUP_BENCHMARK_NODES {
+            let language = self.language();
             format!(
-                "分组包含 {} 个节点，单次最多测试 {} 个",
-                candidate_names.len(),
-                MAX_GROUP_BENCHMARK_NODES
+                "{}; {}",
+                Self::group_limit_label(candidate_names.len(), language),
+                Self::single_test_limit_label(MAX_GROUP_BENCHMARK_NODES, language)
             )
             .clone_into(&mut self.status);
             cx.notify();
             return;
         }
         let Some(generation) = self.begin_group_benchmark(key.clone()) else {
-            "已有分组正在测速，请等待完成后再试".clone_into(&mut self.status);
+            self.language()
+                .text(
+                    "A group test is already running. Wait for it to finish.",
+                    "已有分组正在测速，请等待完成后再试",
+                )
+                .clone_into(&mut self.status);
             cx.notify();
             return;
         };
+        let language = self.language();
         self.status = format!(
-            "正在测试导入分组“{name}”的 {} 个节点",
-            candidate_names.len()
+            "{} “{name}” · {}",
+            language.text("Testing imported group", "正在测试导入分组"),
+            Self::node_count_label(candidate_names.len(), language)
         );
         trace_ui(UiEvent::GroupBenchmarkStarted);
 
@@ -1737,6 +2119,7 @@ impl RelayApp {
                 })
                 .await;
             this.update(cx, |this, cx| {
+                let language = this.language();
                 if this.group_benchmark_active_generation != Some(generation) {
                     return;
                 }
@@ -1756,13 +2139,21 @@ impl RelayApp {
                     GroupBenchmarkState::Complete { summary, .. } => {
                         trace_ui(UiEvent::GroupBenchmarkSucceeded);
                         this.status = format!(
-                            "导入分组测速完成：{}/{} 个节点成功",
-                            summary.succeeded, summary.total
+                            "{}: {}",
+                            language.text(
+                                "Imported group test completed",
+                                "导入分组测速完成"
+                            ),
+                            Self::success_fraction_label(summary.succeeded, summary.total, language)
                         );
                     }
                     GroupBenchmarkState::Failed { .. } => {
                         trace_ui(UiEvent::GroupBenchmarkFailed);
-                        "导入分组测速失败，请检查 Mihomo 连接与网络后重试"
+                        language
+                            .text(
+                                "Imported group test failed. Check Mihomo connection and network, then retry.",
+                                "导入分组测速失败，请检查 Mihomo 连接与网络后重试",
+                            )
                             .clone_into(&mut this.status);
                     }
                     _ => return,
@@ -1793,21 +2184,32 @@ impl RelayApp {
             return;
         }
         if self.group_benchmark_active_generation.is_some() {
-            "已有分组正在测速，请等待完成后再试".clone_into(&mut self.status);
+            self.language()
+                .text(
+                    "A group test is already running. Wait for it to finish.",
+                    "已有分组正在测速，请等待完成后再试",
+                )
+                .clone_into(&mut self.status);
             cx.notify();
             return;
         }
         let candidate_names = self.node_group_candidate_names(&group);
         if candidate_names.is_empty() {
-            "当前分组没有可测速节点，请先调整匹配规则".clone_into(&mut self.status);
+            self.language()
+                .text(
+                    "This group has no nodes to test. Adjust the match rule first.",
+                    "当前分组没有可测速节点，请先调整匹配规则",
+                )
+                .clone_into(&mut self.status);
             cx.notify();
             return;
         }
         if candidate_names.len() > MAX_GROUP_BENCHMARK_NODES {
+            let language = self.language();
             format!(
-                "分组包含 {} 个节点，请先用名称或明确选择收窄到 {} 个以内",
-                candidate_names.len(),
-                MAX_GROUP_BENCHMARK_NODES
+                "{}; {}",
+                Self::group_limit_label(candidate_names.len(), language),
+                Self::narrow_group_limit_label(MAX_GROUP_BENCHMARK_NODES, language)
             )
             .clone_into(&mut self.status);
             cx.notify();
@@ -1816,14 +2218,21 @@ impl RelayApp {
 
         let benchmark_key = Self::user_group_benchmark_key(&group.id);
         let Some(generation) = self.begin_group_benchmark(benchmark_key.clone()) else {
-            "已有分组正在测速，请等待完成后再试".clone_into(&mut self.status);
+            self.language()
+                .text(
+                    "A group test is already running. Wait for it to finish.",
+                    "已有分组正在测速，请等待完成后再试",
+                )
+                .clone_into(&mut self.status);
             cx.notify();
             return;
         };
+        let language = self.language();
         self.status = format!(
-            "正在测试分组“{}”的 {} 个节点",
+            "{} “{}” · {}",
+            language.text("Testing group", "正在测试分组"),
             group.name,
-            candidate_names.len()
+            Self::node_count_label(candidate_names.len(), language)
         );
         trace_ui(UiEvent::GroupBenchmarkStarted);
 
@@ -1864,6 +2273,7 @@ impl RelayApp {
                 })
                 .await;
             this.update(cx, |this, cx| {
+                let language = this.language();
                 if this.group_benchmark_active_generation != Some(generation) {
                     return;
                 }
@@ -1891,13 +2301,23 @@ impl RelayApp {
                             GroupBenchmarkState::Complete { summary, .. } => {
                                 trace_ui(UiEvent::GroupBenchmarkSucceeded);
                                 format!(
-                                    "分组测速完成：{}/{} 个节点成功",
-                                    summary.succeeded, summary.total
+                                    "{}: {}",
+                                    language.text("Group test completed", "分组测速完成"),
+                                    Self::success_fraction_label(
+                                        summary.succeeded,
+                                        summary.total,
+                                        language,
+                                    )
                                 )
                             }
                             GroupBenchmarkState::Failed { .. } => {
                                 trace_ui(UiEvent::GroupBenchmarkFailed);
-                                "分组测速失败，请检查 Mihomo 连接与网络后重试".to_owned()
+                                language
+                                    .text(
+                                        "Group test failed. Check Mihomo connection and network, then retry.",
+                                        "分组测速失败，请检查 Mihomo 连接与网络后重试",
+                                    )
+                                    .to_owned()
                             }
                             _ => return,
                         };
@@ -1937,7 +2357,9 @@ impl RelayApp {
                 crate::subscription_input::SubscriptionTextInput::clear_without_event,
             );
         }
-        "正在创建节点分组".clone_into(&mut self.status);
+        self.language()
+            .text("Creating node group", "正在创建节点分组")
+            .clone_into(&mut self.status);
         cx.notify();
     }
 
@@ -1979,10 +2401,16 @@ impl RelayApp {
                 input.set_value_without_event(filter.to_owned(), cx);
             });
         }
-        self.status = format!("正在编辑分组“{}”", group.name);
+        let language = self.language();
+        self.status = format!(
+            "{} “{}”",
+            language.text("Editing group", "正在编辑分组"),
+            group.name
+        );
         cx.notify();
     }
 
+    #[allow(clippy::too_many_lines)]
     fn save_node_policy_group(&mut self, cx: &mut Context<Self>) {
         let Some(draft) = self.node_group_draft.clone() else {
             return;
@@ -2001,8 +2429,14 @@ impl RelayApp {
             .editing_id
             .clone()
             .unwrap_or_else(mihomo::new_node_policy_group_id);
+        let language = self.language();
         let Ok(mut group) = NodePolicyGroup::new(&id, &name) else {
-            "分组名称不能为空，也不能包含换行或控制字符".clone_into(&mut self.status);
+            language
+                .text(
+                    "Group name cannot be empty or contain newlines/control characters",
+                    "分组名称不能为空，也不能包含换行或控制字符",
+                )
+                .clone_into(&mut self.status);
             cx.notify();
             return;
         };
@@ -2011,12 +2445,22 @@ impl RelayApp {
             .iter()
             .any(|existing| existing.id != id && existing.name == name)
         {
-            "已有同名节点分组，请换一个名称".clone_into(&mut self.status);
+            language
+                .text(
+                    "A node group with this name already exists. Choose another name.",
+                    "已有同名节点分组，请换一个名称",
+                )
+                .clone_into(&mut self.status);
             cx.notify();
             return;
         }
         if matches!(name.as_str(), "Auto" | "Proxy") {
-            "“Auto”和“Proxy”是 Relay 保留的策略组名称".clone_into(&mut self.status);
+            language
+                .text(
+                    "\"Auto\" and \"Proxy\" are Relay-reserved policy group names",
+                    "“Auto”和“Proxy”是 Relay 保留的策略组名称",
+                )
+                .clone_into(&mut self.status);
             cx.notify();
             return;
         }
@@ -2026,7 +2470,9 @@ impl RelayApp {
             .set_test_interval_secs(draft.test_interval_secs)
             .is_err()
         {
-            "自动检查间隔无效".clone_into(&mut self.status);
+            language
+                .text("Automatic check interval is invalid", "自动检查间隔无效")
+                .clone_into(&mut self.status);
             cx.notify();
             return;
         }
@@ -2034,7 +2480,9 @@ impl RelayApp {
             NodeGroupMatcherKind::All => NodeGroupMatcher::All,
             NodeGroupMatcherKind::NameContains => {
                 let Ok(matcher) = NodeGroupMatcher::name_contains(&filter) else {
-                    "请填写要匹配的节点名称".clone_into(&mut self.status);
+                    language
+                        .text("Enter the node name to match", "请填写要匹配的节点名称")
+                        .clone_into(&mut self.status);
                     cx.notify();
                     return;
                 };
@@ -2042,7 +2490,9 @@ impl RelayApp {
             }
             NodeGroupMatcherKind::Explicit => {
                 if draft.explicit_members.is_empty() {
-                    "请至少选择一个节点".clone_into(&mut self.status);
+                    language
+                        .text("Select at least one node", "请至少选择一个节点")
+                        .clone_into(&mut self.status);
                     cx.notify();
                     return;
                 }
@@ -2050,17 +2500,30 @@ impl RelayApp {
             }
         };
         if group.set_matcher(matcher).is_err() || self.node_group_match_count(&group) == 0 {
-            "当前规则没有匹配到任何已导入节点".clone_into(&mut self.status);
+            language
+                .text(
+                    "The current rule does not match any imported nodes",
+                    "当前规则没有匹配到任何已导入节点",
+                )
+                .clone_into(&mut self.status);
             cx.notify();
             return;
         }
         let Some(store_dir) = self.subscription_store_dir.clone() else {
-            "无法确定节点分组保存位置".clone_into(&mut self.status);
+            language
+                .text(
+                    "Could not determine where to save node groups",
+                    "无法确定节点分组保存位置",
+                )
+                .clone_into(&mut self.status);
             cx.notify();
             return;
         };
         if let Err(error) = mihomo::save_node_policy_group_in(&store_dir, &group) {
-            self.status = format!("节点分组保存失败：{error}");
+            self.status = format!(
+                "{}: {error}",
+                language.text("Failed to save node group", "节点分组保存失败")
+            );
             cx.notify();
             return;
         }
@@ -2079,8 +2542,21 @@ impl RelayApp {
             .remove(&Self::user_group_benchmark_key(&group.id));
         self.node_group_runtime_states.remove(&group.id);
         self.node_group_draft = None;
-        self.status = format!("分组“{}”已保存，正在应用托管配置", group.name);
-        self.apply_node_policy_groups(store_dir, format!("分组“{}”已保存", group.name), cx);
+        self.status = format!(
+            "{} “{}”; {}",
+            language.text("Group saved", "分组已保存"),
+            group.name,
+            language.text("applying managed config", "正在应用托管配置")
+        );
+        self.apply_node_policy_groups(
+            store_dir,
+            format!(
+                "{} “{}”",
+                language.text("Group saved", "分组已保存"),
+                group.name
+            ),
+            cx,
+        );
     }
 
     fn remove_node_policy_group(&mut self, id: &str, cx: &mut Context<Self>) {
@@ -2094,8 +2570,12 @@ impl RelayApp {
         else {
             return;
         };
+        let language = self.language();
         if let Err(error) = mihomo::remove_node_policy_group_in(&store_dir, id) {
-            self.status = format!("节点分组删除失败：{error}");
+            self.status = format!(
+                "{}: {error}",
+                language.text("Failed to delete node group", "节点分组删除失败")
+            );
             cx.notify();
             return;
         }
@@ -2114,8 +2594,21 @@ impl RelayApp {
         {
             self.node_group_draft = None;
         }
-        self.status = format!("分组“{}”已删除，正在应用托管配置", group.name);
-        self.apply_node_policy_groups(store_dir, format!("分组“{}”已删除", group.name), cx);
+        self.status = format!(
+            "{} “{}”; {}",
+            language.text("Group deleted", "分组已删除"),
+            group.name,
+            language.text("applying managed config", "正在应用托管配置")
+        );
+        self.apply_node_policy_groups(
+            store_dir,
+            format!(
+                "{} “{}”",
+                language.text("Group deleted", "分组已删除"),
+                group.name
+            ),
+            cx,
+        );
     }
 
     fn apply_node_policy_groups(
@@ -2133,7 +2626,10 @@ impl RelayApp {
                 })
                 .await;
             this.update(cx, |this, cx| {
-                this.status = format!("{prefix}{}", apply.status_suffix());
+                this.status = format!(
+                    "{prefix}{}",
+                    Self::source_runtime_apply_suffix(&apply, this.language())
+                );
                 if let Some(selected) = this.selected_node_group_id.clone() {
                     this.refresh_node_group_runtime(&selected, cx);
                 } else {
@@ -2146,11 +2642,15 @@ impl RelayApp {
         cx.notify();
     }
 
-    fn node_configuration_link(theme: Theme, cx: &mut Context<Self>) -> Stateful<Div> {
+    fn node_configuration_link(
+        language: Language,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
         div()
             .id("nodes-open-configuration")
             .role(Role::Button)
-            .aria_label("管理订阅来源")
+            .aria_label(language.text("Manage subscription sources", "管理订阅来源"))
             .tab_stop(true)
             .focusable()
             .cursor_pointer()
@@ -2163,23 +2663,29 @@ impl RelayApp {
             .text_color(theme.text_primary)
             .flex()
             .items_center()
-            .child("管理来源")
+            .child(language.text("Manage Sources", "管理来源"))
             .on_click(cx.listener(|this, _, _, cx| {
                 this.primary_workspace = PrimaryWorkspace::Configuration;
-                "已打开订阅来源配置".clone_into(&mut this.status);
+                this.language()
+                    .text(
+                        "Subscription source configuration opened",
+                        "已打开订阅来源配置",
+                    )
+                    .clone_into(&mut this.status);
                 cx.notify();
             }))
     }
 
     fn node_refresh_button(
         refreshing: bool,
+        language: Language,
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         div()
             .id("nodes-refresh")
             .role(Role::Button)
-            .aria_label("刷新节点健康状态")
+            .aria_label(language.text("Refresh node health", "刷新节点健康状态"))
             .tab_stop(!refreshing)
             .focusable()
             .cursor_pointer()
@@ -2205,9 +2711,9 @@ impl RelayApp {
             .flex()
             .items_center()
             .child(if refreshing {
-                "读取中…"
+                language.text("Loading...", "读取中…")
             } else {
-                "刷新节点"
+                language.text("Refresh Nodes", "刷新节点")
             })
             .on_click(cx.listener(move |this, _, _, cx| {
                 if refreshing {
@@ -2220,7 +2726,12 @@ impl RelayApp {
                     }
                     this.restore_imported_subscriptions(cx);
                 } else if !this.saved_vless_nodes.is_empty() {
-                    "已保存节点不需要重新下载".clone_into(&mut this.status);
+                    this.language()
+                        .text(
+                            "Saved nodes do not need to be downloaded again",
+                            "已保存节点不需要重新下载",
+                        )
+                        .clone_into(&mut this.status);
                     cx.notify();
                 } else {
                     this.connect_mihomo(cx);
@@ -2228,7 +2739,12 @@ impl RelayApp {
             }))
     }
 
-    fn node_health_summary(counts: NodeCounts, compact: bool, theme: Theme) -> Div {
+    fn node_health_summary(
+        counts: NodeCounts,
+        compact: bool,
+        language: Language,
+        theme: Theme,
+    ) -> Div {
         div()
             .mt_4()
             .py_3()
@@ -2239,19 +2755,19 @@ impl RelayApp {
             .items_center()
             .gap(if compact { px(12.0) } else { px(24.0) })
             .child(Self::node_health_value(
-                "可用",
+                language.text("Available", "可用"),
                 counts.available,
                 theme.status_success,
                 theme,
             ))
             .child(Self::node_health_value(
-                "不可用",
+                language.text("Unavailable", "不可用"),
                 counts.unavailable,
                 theme.text_secondary,
                 theme,
             ))
             .child(Self::node_health_value(
-                "未测速",
+                language.text("Untested", "未测速"),
                 counts.untested,
                 theme.text_tertiary,
                 theme,
@@ -2287,14 +2803,15 @@ impl RelayApp {
         counts: NodeCounts,
         selected: NodeAvailabilityFilter,
         compact: bool,
+        language: Language,
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let filters = [
-            ("全部", NodeAvailabilityFilter::All),
-            ("可用", NodeAvailabilityFilter::Available),
-            ("不可用", NodeAvailabilityFilter::Unavailable),
-            ("未测速", NodeAvailabilityFilter::Untested),
+            NodeAvailabilityFilter::All,
+            NodeAvailabilityFilter::Available,
+            NodeAvailabilityFilter::Unavailable,
+            NodeAvailabilityFilter::Untested,
         ];
         div()
             .id("node-filter-bar")
@@ -2303,12 +2820,16 @@ impl RelayApp {
             .items_center()
             .gap_2()
             .when(compact, gpui::StatefulInteractiveElement::overflow_x_scroll)
-            .children(filters.into_iter().map(|(label, filter)| {
+            .children(filters.into_iter().map(|filter| {
+                let label = Self::availability_filter_label(filter, language);
                 let active = selected == filter;
                 div()
                     .id(format!("node-filter-{label}"))
                     .role(Role::Button)
-                    .aria_label(format!("筛选{label}节点"))
+                    .aria_label(format!(
+                        "{} {label}",
+                        language.text("Filter nodes by", "筛选节点")
+                    ))
                     .tab_stop(true)
                     .focusable()
                     .cursor_pointer()
@@ -2341,7 +2862,12 @@ impl RelayApp {
                     .child(format!("{label} {}", counts.count_for(filter)))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.node_workspace.select_filter(filter);
-                        this.status = format!("节点筛选：{label}");
+                        let language = this.language();
+                        this.status = format!(
+                            "{}: {}",
+                            language.text("Node filter", "节点筛选"),
+                            Self::availability_filter_label(filter, language)
+                        );
                         cx.notify();
                     }))
             }))
@@ -2352,12 +2878,13 @@ impl RelayApp {
         groups: &[NodeSourceGroup<'_>],
         filter: NodeAvailabilityFilter,
         compact: bool,
+        language: Language,
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Div {
         let mut list = div().flex().flex_col().gap_3();
         for group in groups {
-            list = list.child(self.node_group(group, filter, compact, theme, cx));
+            list = list.child(self.node_group(group, filter, compact, language, theme, cx));
         }
         list
     }
@@ -2368,6 +2895,7 @@ impl RelayApp {
         group: &NodeSourceGroup<'_>,
         filter: NodeAvailabilityFilter,
         compact: bool,
+        language: Language,
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Div {
@@ -2396,18 +2924,37 @@ impl RelayApp {
             .collect::<Vec<_>>();
         let detail = match &benchmark {
             GroupBenchmarkState::Idle => group.detail.clone(),
-            GroupBenchmarkState::Running { .. } => format!("{} · 正在测速…", group.detail),
-            GroupBenchmarkState::Complete { summary, .. } => format!(
-                "{} · 测速 {}/{} 成功",
-                group.detail, summary.succeeded, summary.total
+            GroupBenchmarkState::Running { .. } => format!(
+                "{} · {}",
+                group.detail,
+                language.text("testing...", "正在测速…")
             ),
-            GroupBenchmarkState::Failed { .. } => format!("{} · 测速失败", group.detail),
+            GroupBenchmarkState::Complete { summary, .. } => format!(
+                "{} · {} {}",
+                group.detail,
+                language.text("test", "测速"),
+                Self::success_fraction_label(summary.succeeded, summary.total, language)
+            ),
+            GroupBenchmarkState::Failed { .. } => format!(
+                "{} · {}",
+                group.detail,
+                language.text("test failed", "测速失败")
+            ),
         };
-        let action = if collapsed { "展开" } else { "收起" };
+        let action = if collapsed {
+            language.text("Expand", "展开")
+        } else {
+            language.text("Collapse", "收起")
+        };
         let header = div()
             .id(format!("node-group-header-{}", group.id))
             .role(Role::Button)
-            .aria_label(format!("{action}节点分组{}", group.name))
+            .aria_label(format!(
+                "{} {} {}",
+                action,
+                language.text("node group", "节点分组"),
+                group.name
+            ))
             .tab_stop(true)
             .focusable()
             .cursor_pointer()
@@ -2474,7 +3021,7 @@ impl RelayApp {
                         div()
                             .text_size(px(10.0))
                             .text_color(theme.text_secondary)
-                            .child(format!("{} 个节点", counts.total)),
+                            .child(Self::node_count_label(counts.total, language)),
                     )
                     .child(
                         div()
@@ -2487,7 +3034,12 @@ impl RelayApp {
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.node_workspace.toggle_group(&group_id);
                 this.persist_node_workspace();
-                "已更新节点分组展开状态".clone_into(&mut this.status);
+                this.language()
+                    .text(
+                        "Node group expanded state updated",
+                        "已更新节点分组展开状态",
+                    )
+                    .clone_into(&mut this.status);
                 cx.notify();
             }));
 
@@ -2507,27 +3059,33 @@ impl RelayApp {
                         .border_color(theme.outline_subtle)
                         .text_size(px(11.0))
                         .text_color(theme.text_secondary)
-                        .child("这个分组中没有符合当前筛选的节点。"),
+                        .child(language.text(
+                            "No nodes in this group match the current filter.",
+                            "这个分组中没有符合当前筛选的节点。",
+                        )),
                 )
             })
             .when(!collapsed && visible_count > 0, |container| {
-                container
-                    .child(self.node_group_table(group, filter, &benchmark, compact, theme, cx))
+                container.child(
+                    self.node_group_table(group, filter, &benchmark, compact, language, theme, cx),
+                )
             })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn node_group_table(
         &self,
         group: &NodeSourceGroup<'_>,
         filter: NodeAvailabilityFilter,
         benchmark: &GroupBenchmarkState,
         compact: bool,
+        language: Language,
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Div {
         let mut table = div();
         if !compact {
-            table = table.child(Self::node_table_header(theme));
+            table = table.child(Self::node_table_header(language, theme));
         }
 
         for (provider_index, provider) in group.providers.iter().enumerate() {
@@ -2541,6 +3099,7 @@ impl RelayApp {
                     &group.name,
                     benchmark,
                     compact,
+                    language,
                     theme,
                     cx,
                 ));
@@ -2566,6 +3125,7 @@ impl RelayApp {
                 &group.name,
                 benchmark,
                 compact,
+                language,
                 theme,
                 cx,
             ));
@@ -2573,7 +3133,7 @@ impl RelayApp {
         table
     }
 
-    fn node_table_header(theme: Theme) -> Div {
+    fn node_table_header(language: Language, theme: Theme) -> Div {
         div()
             .h(px(36.0))
             .px_4()
@@ -2584,20 +3144,20 @@ impl RelayApp {
             .text_size(px(10.0))
             .font_weight(FontWeight::SEMIBOLD)
             .text_color(theme.text_tertiary)
-            .child(div().flex_1().child("节点"))
-            .child(div().w(px(180.0)).child("来源"))
-            .child(div().w(px(100.0)).child("协议"))
+            .child(div().flex_1().child(language.text("Node", "节点")))
+            .child(div().w(px(180.0)).child(language.text("Source", "来源")))
+            .child(div().w(px(100.0)).child(language.text("Protocol", "协议")))
             .child(
                 div()
                     .w(px(72.0))
                     .text_align(gpui::TextAlign::Right)
-                    .child("延迟"),
+                    .child(language.text("Latency", "延迟")),
             )
             .child(
                 div()
                     .w(px(76.0))
                     .text_align(gpui::TextAlign::Right)
-                    .child("全局出口"),
+                    .child(language.text("Global", "全局出口")),
             )
     }
 
@@ -2609,6 +3169,7 @@ impl RelayApp {
         source_name: &str,
         benchmark: &GroupBenchmarkState,
         compact: bool,
+        language: Language,
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
@@ -2631,6 +3192,7 @@ impl RelayApp {
                 latency,
                 idle_latency,
                 &spinner_id,
+                language,
                 theme,
             )
         } else {
@@ -2640,6 +3202,7 @@ impl RelayApp {
                 latency,
                 idle_latency,
                 &spinner_id,
+                language,
                 theme,
             )
         };
@@ -2660,7 +3223,11 @@ impl RelayApp {
                         div()
                             .id(format!("global-node-{selected_name}"))
                             .role(Role::Button)
-                            .aria_label(format!("选择{selected_name}作为全局出口"))
+                            .aria_label(format!(
+                                "{} {selected_name} {}",
+                                language.text("Select", "选择"),
+                                language.text("as global exit", "作为全局出口")
+                            ))
                             .aria_toggled(if global_selected {
                                 Toggled::True
                             } else {
@@ -2712,15 +3279,15 @@ impl RelayApp {
                             .items_center()
                             .justify_center()
                             .child(if global_busy {
-                                "切换中…"
+                                language.text("Switching...", "切换中…")
                             } else if global_selected
                                 && self.routing_mode == relay_core::RoutingMode::Global
                             {
-                                "使用中"
+                                language.text("Active", "使用中")
                             } else if global_selected {
-                                "已保存"
+                                language.text("Saved", "已保存")
                             } else {
-                                "设为全局"
+                                language.text("Set Global", "设为全局")
                             })
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 if !selection_locked {
@@ -2746,9 +3313,9 @@ impl RelayApp {
                                 theme.text_tertiary
                             })
                             .child(if global_selected {
-                                "● 当前"
+                                language.text("* Current", "● 当前")
                             } else {
-                                "外部只读"
+                                language.text("Read-only", "外部只读")
                             }),
                     )
                 }
@@ -2771,6 +3338,7 @@ impl RelayApp {
         latency: GroupBenchmarkNodeState,
         idle_latency: String,
         spinner_id: &str,
+        _language: Language,
         theme: Theme,
     ) -> Div {
         div()
@@ -2824,6 +3392,7 @@ impl RelayApp {
         latency: GroupBenchmarkNodeState,
         idle_latency: String,
         spinner_id: &str,
+        _language: Language,
         theme: Theme,
     ) -> Div {
         div()
@@ -2868,7 +3437,12 @@ impl RelayApp {
             )
     }
 
-    fn node_empty_state(compact: bool, theme: Theme, cx: &mut Context<Self>) -> Div {
+    fn node_empty_state(
+        compact: bool,
+        language: Language,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Div {
         div()
             .min_h(px(if compact { 260.0 } else { 320.0 }))
             .flex()
@@ -2880,20 +3454,26 @@ impl RelayApp {
                 div()
                     .text_size(px(18.0))
                     .font_weight(FontWeight::SEMIBOLD)
-                    .child("还没有可管理的节点"),
+                    .child(language.text("No manageable nodes yet", "还没有可管理的节点")),
             )
             .child(
                 div()
                     .mt_2()
                     .max_w(px(420.0))
                     .text_color(theme.text_secondary)
-                    .child("先导入一个 HTTP/HTTPS 订阅，节点会自动出现在这个工作区。"),
+                    .child(language.text(
+                        "Import an HTTP/HTTPS subscription first, and nodes will appear here automatically.",
+                        "先导入一个 HTTP/HTTPS 订阅，节点会自动出现在这个工作区。",
+                    )),
             )
             .child(
                 div()
                     .id("nodes-empty-import")
                     .role(Role::Button)
-                    .aria_label("前往配置导入订阅")
+                    .aria_label(language.text(
+                        "Go to Configuration to import a subscription",
+                        "前往配置导入订阅",
+                    ))
                     .tab_stop(true)
                     .focusable()
                     .cursor_pointer()
@@ -2906,10 +3486,15 @@ impl RelayApp {
                     .font_weight(FontWeight::SEMIBOLD)
                     .flex()
                     .items_center()
-                    .child("前往配置导入")
+                    .child(language.text("Import in Configuration", "前往配置导入"))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.primary_workspace = PrimaryWorkspace::Configuration;
-                        "已打开订阅来源配置".clone_into(&mut this.status);
+                        this.language()
+                            .text(
+                                "Subscription source configuration opened",
+                                "已打开订阅来源配置",
+                            )
+                            .clone_into(&mut this.status);
                         cx.notify();
                     })),
             )

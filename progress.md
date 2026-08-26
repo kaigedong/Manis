@@ -270,3 +270,15 @@
 - 独立代码审查首轮发现受管 secret 的进程级回退风险和保留 tag 冲突；已改为 runtime/endpoint 作用域显式传递，并拒绝 `GLOBAL/direct/block`，复跑官方内核测试通过。
 - GPUI 原生完整截图链路已成功运行；宽屏、1060px 中屏与 720px 紧凑配置页无重叠/截断，Visual Verdict 94/100 `pass`。同步修正了新卡片导致的旧快照点击/滚动坐标漂移。
 - 最终验证通过：workspace 164 passed、8 ignored；两个真实 sing-box ignored tests 各 1 passed；fmt、all-targets check、严格 Clippy、diff check 和私人订阅 token/domain 扫描全部通过。仅保留上游 `block 0.1.6` 的未来兼容提示。
+
+# 2026-08-26 中英文界面与系统语言跟随
+
+- 用户要求新增多语言设置：默认跟随系统语言，无法识别时回退英文，并允许显式选择中文；本轮只支持 English 与简体中文。
+- 启用 planning-with-files-zh、rust-testing、rust-patterns 与 Impeccable harden；不会只翻译设置卡，而会建立共享本地化边界并覆盖主要用户可见界面。
+- 初步扫描发现 `relay-ui` 约 698 行含中文，分布于主应用、节点、活动、日志、配置、内核运行状态与错误路径；节点名、规则 payload、协议类型和 controller 原始数据保持原样。
+- 已建立无新增依赖/无 unsafe 的系统语言解析与私有偏好文件边界，并加入中文 locale、未知语言英文回退、显式覆盖及 0600 持久化测试。
+- 配置页已加入 Follow system / English / 中文三项语言卡；点击会即时刷新主界面和输入提示，并原子保存为 `language.preference`，节点名、规则正文、协议和内核原始 payload 保持不翻译。
+- 主导航、配置、节点、策略组、分流规则、网络活动、日志、状态栏、代理/路由控制、托盘与跨平台系统代理错误均接入共享 `Language` 边界；macOS 读取 AppleLanguages，Windows 读取 UI Culture，Linux 使用 locale 环境。
+- 原生截图夹具现在从另一语言真实点击目标选项，并断言私有偏好文件分别写入 `en` / `zh-CN`；完整快照链路覆盖订阅导入、节点折叠和分组详情并成功跑完。
+- Visual Verdict 96/100 `pass`：英文宽屏和中文 720px 紧凑布局均无截断、重叠或选中态歧义；判定保存于忽略 Git 的 `.omx/state/localization/ralph-progress.json`。
+- 全仓测试已通过：169 passed、8 ignored；严格 Clippy、fmt、all-targets check 和 diff check 通过，仅有上游 `block 0.1.6` 的未来兼容提示。敏感订阅域名/token 扫描无命中。

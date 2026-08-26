@@ -186,6 +186,15 @@
 - [completed] 5. 在配置页加入真实可用的内核选择、检测、切换与失败回滚
 - [completed] 6. 完成宽屏/紧凑视觉验收、全仓验证、Git 提交并仅重启 Relay UI
 
+## 中英文界面与系统语言跟随
+
+- [completed] 1. 盘点用户可见文案、系统语言来源与现有私有设置存储边界
+- [completed] 2. 以 TDD 建立 Follow system / English / 中文语言偏好、系统解析和英文回退
+- [completed] 3. 建立无第三方依赖的类型安全文案目录并覆盖所有主要工作区与运行状态
+- [completed] 4. 在配置页加入即时生效的语言选择，并私有持久化用户偏好
+- [completed] 5. 生成中英文宽屏/紧凑原生截图并完成 Visual Verdict
+- [completed] 6. 完成全仓验证、敏感信息扫描、Git 提交并仅重启 Relay UI
+
 ## 固定约束
 - 实现框架：Rust + GPUI
 - 目标平台：Windows、macOS、Linux
@@ -230,3 +239,4 @@
 | 多内核耦合 explorer 命中 GPT-5.3-Codex-Spark 用量上限 | 1 | 不重试同一 fast-lane；由主代理使用本地结构搜索完成映射，并保留独立 architect 评审 |
 | 新内核卡片改变配置页纵向坐标，旧截图交互没有命中输入框 | 2 | 更新原生快照坐标并提取滚动 helper；完整截图链路复跑成功，订阅/VLESS fixture 恢复正常 |
 | 首轮代码审查发现 sing-box 控制器密钥使用进程级回退 | 1 | 删除全局密钥，改为由受管 runtime 持有并随 endpoint 显式传递；外部 controller 只接受用户显式环境密钥 |
+| 语言卡改变配置页与节点详情快照的旧坐标 | 2 | 以截图实际布局校准滚动、折叠与详情按钮坐标，并让语言快照真实点击后校验私有偏好文件 |

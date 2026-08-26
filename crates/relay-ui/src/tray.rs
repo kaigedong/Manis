@@ -6,7 +6,11 @@ use tray_icon::{
     menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem},
 };
 
-use crate::RelayApp;
+use crate::{
+    RelayApp,
+    localization::{Language, Localizer},
+    mihomo,
+};
 
 const SHOW_MENU_ID: &str = "relay.tray.show";
 const QUIT_MENU_ID: &str = "relay.tray.quit";
@@ -65,25 +69,64 @@ pub fn open_window(cx: &mut App) -> gpui::Result<()> {
 /// # Errors
 /// Returns a redacted message when the platform tray cannot be initialized.
 pub fn install(cx: &mut App) -> Result<(), &'static str> {
-    #[cfg(target_os = "linux")]
-    gtk::init().map_err(|_error| "无法初始化 Linux GTK 托盘事件循环")?;
+    let store = mihomo::imported_subscription_store_dir().ok();
+    install_with_language(cx, Localizer::load(store.as_deref()).language())
+}
 
-    let show = MenuItem::with_id(SHOW_MENU_ID, "打开 Relay", true, None);
-    let status = MenuItem::new("规则路由 · 状态请在主窗口查看", false, None);
+/// Installs the native status icon and its menu with labels for the selected language.
+///
+/// # Errors
+/// Returns a redacted message when the platform tray cannot be initialized.
+pub(crate) fn install_with_language(cx: &mut App, language: Language) -> Result<(), &'static str> {
+    #[cfg(target_os = "linux")]
+    gtk::init().map_err(|_error| {
+        language.text(
+            "Could not initialize the Linux GTK tray event loop",
+            "无法初始化 Linux GTK 托盘事件循环",
+        )
+    })?;
+
+    let show = MenuItem::with_id(
+        SHOW_MENU_ID,
+        language.text("Open Relay", "打开 Relay"),
+        true,
+        None,
+    );
+    let status = MenuItem::new(
+        language.text(
+            "Rule routing · status is available in the main window",
+            "规则路由 · 状态请在主窗口查看",
+        ),
+        false,
+        None,
+    );
     let separator = PredefinedMenuItem::separator();
-    let quit = MenuItem::with_id(QUIT_MENU_ID, "退出 Relay", true, None);
-    let menu = Menu::with_items(&[&show, &status, &separator, &quit])
-        .map_err(|_error| "无法创建系统托盘菜单")?;
-    let icon =
-        Icon::from_rgba(relay_icon_rgba(), 32, 32).map_err(|_error| "无法创建系统托盘图标")?;
+    let quit = MenuItem::with_id(
+        QUIT_MENU_ID,
+        language.text("Quit Relay", "退出 Relay"),
+        true,
+        None,
+    );
+    let menu = Menu::with_items(&[&show, &status, &separator, &quit]).map_err(|_error| {
+        language.text(
+            "Could not create the system tray menu",
+            "无法创建系统托盘菜单",
+        )
+    })?;
+    let icon = Icon::from_rgba(relay_icon_rgba(), 32, 32).map_err(|_error| {
+        language.text(
+            "Could not create the system tray icon",
+            "无法创建系统托盘图标",
+        )
+    })?;
     let tray = TrayIconBuilder::new()
         .with_id("relay.status")
-        .with_tooltip("Relay · 规则路由")
+        .with_tooltip(language.text("Relay · rule routing", "Relay · 规则路由"))
         .with_icon(icon)
         .with_icon_as_template(cfg!(target_os = "macos"))
         .with_menu(Box::new(menu))
         .build()
-        .map_err(|_error| "系统托盘不可用")?;
+        .map_err(|_error| language.text("System tray is unavailable", "系统托盘不可用"))?;
 
     cx.set_global(RelayTray {
         _icon: tray,

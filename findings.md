@@ -338,3 +338,10 @@
 - 全局模式不能复用普通 `Proxy` 组：Relay 节点页的全局出口契约要求存在 `GLOBAL` selector。sing-box 渲染器现在为所有手动节点生成独立 `GLOBAL`，Global 模式路由到它，并拒绝用户占用 `GLOBAL/direct/block` 保留 tag。
 - 控制器密钥必须属于具体受管 runtime/endpoint。进程级回退会在切回外部 Mihomo 后产生跨 controller 发送风险；最终实现只在线程/请求边界显式携带当前 sing-box secret，外部 controller 仍仅使用 `RELAY_MIHOMO_SECRET`。
 - 当前 sing-box 切片只接受已保存的手动 VLESS TCP/TLS/Reality 节点。Mihomo provider 订阅、fallback、load-balance 与 TUN 会被能力矩阵和配置页明确拒绝，不做静默近似。
+# 2026-08-26 多语言支持调研
+
+- GPUI 当前没有向应用层公开系统语言 API；仓库同时 `forbid(unsafe_code)` 且工作约定不允许随意新增依赖，因此语言检测采用平台现成入口：macOS `AppleLanguages`、Windows `Get-UICulture`、Linux/POSIX locale 环境变量。
+- macOS 必须优先读取系统偏好语言，不能先信任进程的 `LANG`；当前开发终端为 `LANG=C.UTF-8`，它不是用户真实的 macOS 界面语言。
+- 语言偏好使用独立私有文件 `language.preference` 保存，稳定值为 `system`、`en`、`zh-CN`；缺文件默认为 `system`，无法识别系统语言时统一解析为 English。
+- 中文识别按 BCP 47/POSIX 的首个 language subtag 判断；`zh-CN`、`zh-Hans`、`zh_TW.UTF-8` 都进入当前唯一的中文文案集，其他语言都回退英文。
+- 节点名、订阅/规则 payload、协议名称和内核返回的原始诊断属于用户或运行时数据，不应翻译；导航、按钮、空状态、表单说明、可预期错误和应用生成状态属于界面文案，应随语言切换。

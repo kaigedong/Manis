@@ -9,6 +9,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     capture_configuration(&mut cx, 1420.0, 900.0, "configuration-wide.png")?;
     capture_configuration(&mut cx, 1060.0, 800.0, "configuration-medium.png")?;
     capture_configuration(&mut cx, 720.0, 720.0, "configuration-compact.png")?;
+    capture_localization(
+        &mut cx,
+        1420.0,
+        900.0,
+        "en",
+        "localization-english-wide.png",
+    )?;
+    capture_localization(
+        &mut cx,
+        720.0,
+        720.0,
+        "zh-CN",
+        "localization-chinese-compact.png",
+    )?;
     capture_routing_rules(&mut cx)?;
     capture_remote_subscription_preview(&mut cx)?;
     capture_compact_flow(&mut cx)?;
@@ -37,6 +51,7 @@ fn capture_automatic_policy(
 }
 
 #[cfg(target_os = "macos")]
+#[allow(clippy::too_many_lines)]
 fn capture_remote_subscription_preview(
     cx: &mut gpui::VisualTestAppContext,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -109,11 +124,12 @@ fn capture_remote_subscription_preview(
     refresh(cx, window)?;
     cx.simulate_click(window, point(px(110.0), px(284.0)), Modifiers::none());
     refresh(cx, window)?;
-    cx.simulate_click(window, point(px(700.0), px(540.0)), Modifiers::none());
+    scroll_window(cx, window, 1_300.0, 760.0, -600.0)?;
+    cx.simulate_click(window, point(px(700.0), px(510.0)), Modifiers::none());
     refresh(cx, window)?;
     cx.simulate_input(window, &subscription_url);
     refresh(cx, window)?;
-    cx.simulate_click(window, point(px(700.0), px(585.0)), Modifiers::none());
+    cx.simulate_click(window, point(px(700.0), px(560.0)), Modifiers::none());
     for _ in 0..40 {
         std::thread::sleep(Duration::from_millis(25));
         refresh(cx, window)?;
@@ -126,14 +142,14 @@ fn capture_remote_subscription_preview(
     )?;
 
     scroll_window(cx, window, 1_300.0, 300.0, 360.0)?;
-    cx.simulate_click(window, point(px(700.0), px(540.0)), Modifiers::none());
+    cx.simulate_click(window, point(px(700.0), px(510.0)), Modifiers::none());
     refresh(cx, window)?;
     cx.simulate_input(
         window,
         "vless://00000000-0000-4000-8000-000000000000@edge.example.invalid:443?security=tls&type=ws#Saved%20Edge",
     );
     refresh(cx, window)?;
-    cx.simulate_click(window, point(px(700.0), px(585.0)), Modifiers::none());
+    cx.simulate_click(window, point(px(700.0), px(560.0)), Modifiers::none());
     refresh(cx, window)?;
 
     close_window(cx, window)?;
@@ -188,7 +204,7 @@ fn capture_restored_subscription_views(
             "configuration-wide-import-restored.png",
             "nodes-wide-imported.png",
             "nodes-wide-imported-collapsed.png",
-            310.0,
+            365.0,
         ),
         (
             720.0,
@@ -197,7 +213,7 @@ fn capture_restored_subscription_views(
             "configuration-compact-import-restored.png",
             "nodes-compact-imported.png",
             "nodes-compact-imported-collapsed.png",
-            290.0,
+            310.0,
         ),
     ] {
         let window_store = store.to_owned();
@@ -247,7 +263,7 @@ fn capture_restored_subscription_views(
         cx.simulate_click(
             window,
             point(
-                px(if width >= 1_280.0 { 500.0 } else { 300.0 }),
+                px(if width >= 1_280.0 { 1_360.0 } else { 660.0 }),
                 px(group_y),
             ),
             Modifiers::none(),
@@ -286,8 +302,8 @@ fn capture_restored_subscription_views(
         cx.simulate_click(
             detail_window,
             point(
-                px(if width >= 1_280.0 { 360.0 } else { 183.0 }),
-                px(if width >= 1_280.0 { 824.0 } else { 645.0 }),
+                px(if width >= 1_280.0 { 300.0 } else { 120.0 }),
+                px(if width >= 1_280.0 { 635.0 } else { 625.0 }),
             ),
             Modifiers::none(),
         );
@@ -342,7 +358,8 @@ fn capture_configuration(
     save_screenshot(cx, window, file_name)?;
 
     if width >= 1_280.0 {
-        cx.simulate_click(window, point(px(700.0), px(540.0)), Modifiers::none());
+        scroll_window(cx, window, 1_300.0, 760.0, -600.0)?;
+        cx.simulate_click(window, point(px(700.0), px(510.0)), Modifiers::none());
         refresh(cx, window)?;
         save_screenshot(cx, window, "configuration-wide-subscription-focused.png")?;
         cx.simulate_input(
@@ -350,24 +367,80 @@ fn capture_configuration(
             "vless://00000000-0000-4000-8000-000000000000@edge.example.invalid:443?security=tls&type=ws#Tokyo%20Edge",
         );
         refresh(cx, window)?;
-        cx.simulate_click(window, point(px(700.0), px(585.0)), Modifiers::none());
+        cx.simulate_click(window, point(px(700.0), px(560.0)), Modifiers::none());
         refresh(cx, window)?;
         save_screenshot(cx, window, "configuration-wide-subscription-preview.png")?;
     }
 
     if (width - 720.0).abs() < f32::EPSILON {
-        cx.simulate_click(window, point(px(300.0), px(500.0)), Modifiers::none());
+        scroll_window(cx, window, 650.0, 620.0, -1_200.0)?;
+        cx.simulate_click(window, point(px(420.0), px(420.0)), Modifiers::none());
         refresh(cx, window)?;
         cx.simulate_input(
             window,
             "vless://00000000-0000-4000-8000-000000000000@edge.example.invalid:443?security=tls&type=ws#Tokyo%20Edge",
         );
         refresh(cx, window)?;
-        cx.simulate_click(window, point(px(500.0), px(545.0)), Modifiers::none());
+        cx.simulate_click(window, point(px(500.0), px(485.0)), Modifiers::none());
         refresh(cx, window)?;
         save_screenshot(cx, window, "configuration-compact-subscription-preview.png")?;
     }
     close_window(cx, window)
+}
+
+#[cfg(target_os = "macos")]
+fn capture_localization(
+    cx: &mut gpui::VisualTestAppContext,
+    width: f32,
+    height: f32,
+    preference: &str,
+    file_name: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use gpui::{AnyWindowHandle, AppContext, Modifiers, point, px, size};
+    use relay_ui::RelayApp;
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let fixture_root = std::env::temp_dir().join(format!(
+        "relay-ui-language-snapshot-{}-{preference}",
+        std::process::id()
+    ));
+    if fixture_root.exists() {
+        std::fs::remove_dir_all(&fixture_root)?;
+    }
+    std::fs::create_dir_all(&fixture_root)?;
+    let preference_file = fixture_root.join("language.preference");
+    let initial_preference = if preference == "en" { "system" } else { "en" };
+    std::fs::write(&preference_file, format!("{initial_preference}\n"))?;
+    std::fs::set_permissions(&preference_file, std::fs::Permissions::from_mode(0o600))?;
+
+    let store = fixture_root.clone();
+    let window = cx.open_offscreen_window(size(px(width), px(height)), |_, cx| {
+        cx.new(|_| RelayApp::with_controller_and_subscription_store("http://127.0.0.1:9090", store))
+    })?;
+    let window: AnyWindowHandle = window.into();
+    refresh(cx, window)?;
+    let navigation_x = if width >= 1_280.0 { 110.0 } else { 30.0 };
+    cx.simulate_click(
+        window,
+        point(px(navigation_x), px(284.0)),
+        Modifiers::none(),
+    );
+    refresh(cx, window)?;
+    let language_option = if width >= 1_280.0 {
+        point(px(820.0), px(270.0))
+    } else {
+        point(px(400.0), px(380.0))
+    };
+    cx.simulate_click(window, language_option, Modifiers::none());
+    refresh(cx, window)?;
+    let saved_preference = std::fs::read_to_string(&preference_file)?;
+    if saved_preference.trim() != preference {
+        return Err("language selector did not persist the requested preference".into());
+    }
+    save_screenshot(cx, window, file_name)?;
+    close_window(cx, window)?;
+    std::fs::remove_dir_all(fixture_root)?;
+    Ok(())
 }
 
 #[cfg(target_os = "macos")]

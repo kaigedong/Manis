@@ -19,6 +19,7 @@ use crate::{
     demo,
     diagnostics::{UiEvent, trace_ui},
     kernel::{self, KernelRuntime},
+    localization::{Language, LanguagePreference, Localizer},
     mihomo::{
         self, ControllerRuntime, ControllerState, GeneratedProfileApply, KernelLogEntry,
         LiveRuntimeSession, LiveStreamStatus, LoadedProvider, LoadedSnapshot,
@@ -61,16 +62,33 @@ impl SourceRuntimeApply {
         }
     }
 
-    fn status_suffix(&self) -> String {
+    fn status_suffix(&self, language: Language) -> String {
         match self {
-            Self::Applied(GeneratedProfileApply::NotManaged) => {
-                " · 当前为外部/已有配置，未改写其配置".to_owned()
-            }
-            Self::Applied(GeneratedProfileApply::Updated) => " · 已写入 Relay 托管配置".to_owned(),
-            Self::Applied(GeneratedProfileApply::Restarted) => {
-                " · Relay 托管内核已安全重载".to_owned()
-            }
-            Self::Failed(message) => format!(" · 持久化已完成，但托管配置应用失败：{message}"),
+            Self::Applied(GeneratedProfileApply::NotManaged) => language
+                .text(
+                    " · external/existing configuration left unchanged",
+                    " · 当前为外部/已有配置，未改写其配置",
+                )
+                .to_owned(),
+            Self::Applied(GeneratedProfileApply::Updated) => language
+                .text(
+                    " · written to the Relay-managed configuration",
+                    " · 已写入 Relay 托管配置",
+                )
+                .to_owned(),
+            Self::Applied(GeneratedProfileApply::Restarted) => language
+                .text(
+                    " · Relay-managed kernel safely reloaded",
+                    " · Relay 托管内核已安全重载",
+                )
+                .to_owned(),
+            Self::Failed(message) => format!(
+                "{}{message}",
+                language.text(
+                    " · saved, but the managed configuration could not be applied: ",
+                    " · 持久化已完成，但托管配置应用失败："
+                )
+            ),
         }
     }
 }
@@ -463,6 +481,7 @@ impl NodeGroupRuntimeState {
 }
 
 pub struct RelayApp {
+    localizer: Localizer,
     primary_workspace: PrimaryWorkspace,
     node_workspace: NodeWorkspaceState,
     workspace: PolicyWorkspaceState,
@@ -579,7 +598,8 @@ impl RelayApp {
     pub fn new() -> Self {
         let store = mihomo::imported_subscription_store_dir();
         let store = store.ok();
-        let runtime = KernelRuntime::configured(store.as_deref());
+        let language = Localizer::load(store.as_deref()).language();
+        let runtime = KernelRuntime::configured(store.as_deref(), language);
         Self::with_runtime_and_store(runtime, store)
     }
 
@@ -614,7 +634,9 @@ impl RelayApp {
         runtime: KernelRuntime,
         subscription_store_dir: Option<PathBuf>,
     ) -> Self {
-        let mut status = runtime.initial_status();
+        let localizer = Localizer::load(subscription_store_dir.as_deref());
+        let language = localizer.language();
+        let mut status = runtime.initial_status_in(language);
         let StoredWorkspace {
             imported_subscriptions,
             saved_vless_nodes,
@@ -632,17 +654,32 @@ impl RelayApp {
                 || routing_mode != RoutingMode::Rule)
         {
             status = match runtime.apply_saved_sources(directory) {
-                Ok(GeneratedProfileApply::Updated) => "已将保存来源写入 Relay 托管配置".to_owned(),
-                Ok(GeneratedProfileApply::Restarted) => {
-                    "已将保存来源应用到 Relay 托管内核".to_owned()
-                }
+                Ok(GeneratedProfileApply::Updated) => language
+                    .text(
+                        "Saved sources written to the Relay-managed configuration",
+                        "已将保存来源写入 Relay 托管配置",
+                    )
+                    .to_owned(),
+                Ok(GeneratedProfileApply::Restarted) => language
+                    .text(
+                        "Saved sources applied to the Relay-managed kernel",
+                        "已将保存来源应用到 Relay 托管内核",
+                    )
+                    .to_owned(),
                 Ok(GeneratedProfileApply::NotManaged) => status,
-                Err(error) => format!("保存来源已载入，但托管配置未应用：{error}"),
+                Err(error) => format!(
+                    "{}{error}",
+                    language.text(
+                        "Saved sources loaded, but the managed configuration was not applied: ",
+                        "保存来源已载入，但托管配置未应用："
+                    )
+                ),
             };
         }
         let mut node_workspace = NodeWorkspaceState::default();
         node_workspace.replace_collapsed_groups(collapsed_groups.iter().map(String::as_str));
         Self {
+            localizer,
             primary_workspace: PrimaryWorkspace::default(),
             node_workspace,
             workspace: PolicyWorkspaceState::demo(),
@@ -699,13 +736,28 @@ impl RelayApp {
         }
     }
 
+    #[must_use]
+    pub(super) fn language(&self) -> Language {
+        self.localizer.language()
+    }
+
+    #[must_use]
+    fn language_preference(&self) -> LanguagePreference {
+        self.localizer.preference()
+    }
+
     fn ensure_subscription_input(&mut self, theme: Theme, cx: &mut Context<Self>) {
+        let language = self.language();
         if let Some(input) = self.subscription_input.as_ref() {
-            input.update(cx, |input, cx| input.set_theme(theme, self.dark, cx));
+            input.update(cx, |input, cx| {
+                input.set_theme(theme, self.dark, cx);
+                input.set_language(language, cx);
+            });
             return;
         }
 
-        let input = cx.new(|cx| SubscriptionTextInput::new(theme, self.dark, cx));
+        let input =
+            cx.new(|cx| SubscriptionTextInput::new_with_language(language, theme, self.dark, cx));
         let events = cx.subscribe(&input, |this, _input, _: &SubscriptionInputChanged, cx| {
             if this.subscription_feedback != SubscriptionFeedback::Idle {
                 this.subscription_feedback = SubscriptionFeedback::Idle;
@@ -743,6 +795,7 @@ impl RelayApp {
     }
 
     fn ensure_node_group_inputs(&mut self, theme: Theme, cx: &mut Context<Self>) {
+        let language = self.language();
         for input in [
             self.node_group_name_input.as_ref(),
             self.node_group_filter_input.as_ref(),
@@ -756,7 +809,7 @@ impl RelayApp {
             self.node_group_name_input = Some(cx.new(|cx| {
                 SubscriptionTextInput::new_field(
                     "node-group-name-input",
-                    "例如：香港自动优选",
+                    language.text("For example: Hong Kong Auto", "例如：香港自动优选"),
                     96,
                     theme,
                     self.dark,
@@ -768,7 +821,7 @@ impl RelayApp {
             self.node_group_filter_input = Some(cx.new(|cx| {
                 SubscriptionTextInput::new_field(
                     "node-group-filter-input",
-                    "例如：Hong Kong",
+                    language.text("For example: Hong Kong", "例如：Hong Kong"),
                     256,
                     theme,
                     self.dark,
@@ -778,16 +831,23 @@ impl RelayApp {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     fn import_remote_subscription(
         &mut self,
         input: String,
         kind: SourceKind,
         cx: &mut Context<Self>,
     ) {
+        let language = self.language();
         let Some(store_dir) = self.subscription_store_dir.clone() else {
             self.subscription_feedback =
                 SubscriptionFeedback::StoreFailed(SubscriptionStoreError::DataDirectoryUnavailable);
-            "无法确定订阅保存位置".clone_into(&mut self.status);
+            language
+                .text(
+                    "The subscription storage location is unavailable",
+                    "无法确定订阅保存位置",
+                )
+                .clone_into(&mut self.status);
             trace_ui(UiEvent::SourceImportFailed);
             cx.notify();
             return;
@@ -795,7 +855,12 @@ impl RelayApp {
         self.subscription_preview_generation = self.subscription_preview_generation.wrapping_add(1);
         let generation = self.subscription_preview_generation;
         self.subscription_feedback = SubscriptionFeedback::Importing(kind);
-        "正在验证节点并导入订阅".clone_into(&mut self.status);
+        language
+            .text(
+                "Validating nodes and importing subscription",
+                "正在验证节点并导入订阅",
+            )
+            .clone_into(&mut self.status);
         trace_ui(UiEvent::SourceImportStarted);
         if let Some(input) = self.subscription_input.as_ref() {
             input.update(cx, |input, cx| input.set_enabled(false, cx));
@@ -817,6 +882,7 @@ impl RelayApp {
                 })
                 .await;
             this.update(cx, |this, cx| {
+                let language = this.language();
                 if this.subscription_preview_generation != generation {
                     return;
                 }
@@ -857,21 +923,38 @@ impl RelayApp {
                         if let Some(input) = this.subscription_input.as_ref() {
                             input.update(cx, SubscriptionTextInput::clear_without_event);
                         }
-                        this.status = format!(
-                            "订阅已导入 · 共 {} 个订阅组 · {provider_count} 个来源 · {node_count} 个节点{}",
-                            this.imported_subscriptions.len(),
-                            apply.status_suffix()
-                        );
+                        this.status = if language == Language::English {
+                            format!(
+                                "Subscription imported · {} groups · {provider_count} sources · {node_count} nodes{}",
+                                this.imported_subscriptions.len(),
+                                apply.status_suffix(language)
+                            )
+                        } else {
+                            format!(
+                                "订阅已导入 · 共 {} 个订阅组 · {provider_count} 个来源 · {node_count} 个节点{}",
+                                this.imported_subscriptions.len(),
+                                apply.status_suffix(language)
+                            )
+                        };
                         trace_ui(UiEvent::SourceImportSucceeded);
                     }
                     Err(ImportSubscriptionError::Preview(error)) => {
                         this.subscription_feedback = SubscriptionFeedback::PreviewFailed(error);
-                        this.status = format!("订阅导入失败：{error}");
+                        this.status = format!(
+                            "{}{error}",
+                            language.text(
+                                "Subscription import failed: ",
+                                "订阅导入失败："
+                            )
+                        );
                         trace_ui(UiEvent::SourceImportFailed);
                     }
                     Err(ImportSubscriptionError::Store(error)) => {
                         this.subscription_feedback = SubscriptionFeedback::StoreFailed(error);
-                        this.status = format!("订阅保存失败：{error}");
+                        this.status = format!(
+                            "{}{error}",
+                            language.text("Could not save subscription: ", "订阅保存失败：")
+                        );
                         trace_ui(UiEvent::SourceImportFailed);
                     }
                 }
@@ -897,7 +980,9 @@ impl RelayApp {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     fn refresh_imported_subscription(&mut self, id: String, cx: &mut Context<Self>) {
+        let language = self.language();
         let Some(store_dir) = self.subscription_store_dir.clone() else {
             return;
         };
@@ -922,7 +1007,9 @@ impl RelayApp {
         let generation = self.subscription_preview_generation;
         subscription.generation = generation;
         subscription.state = ImportedSubscriptionState::Refreshing(kind);
-        "正在更新订阅节点".clone_into(&mut self.status);
+        language
+            .text("Updating subscription nodes", "正在更新订阅节点")
+            .clone_into(&mut self.status);
         trace_ui(UiEvent::SourceRestoreStarted);
 
         let executor = cx.background_executor().clone();
@@ -945,6 +1032,7 @@ impl RelayApp {
                 })
                 .await;
             this.update(cx, |this, cx| {
+                let language = this.language();
                 let Some(subscription) = this
                     .imported_subscriptions
                     .iter_mut()
@@ -966,20 +1054,36 @@ impl RelayApp {
                             stored.last_successful_update_unix_secs;
                         this.source_refresh_retry_not_before
                             .remove(&DueRemoteSource::Subscription(id.clone()).scheduler_key());
-                        this.status = format!(
-                            "订阅更新完成 · {node_count} 个节点{}",
-                            apply.status_suffix()
-                        );
+                        this.status = if language == Language::English {
+                            format!(
+                                "Subscription updated · {node_count} nodes{}",
+                                apply.status_suffix(language)
+                            )
+                        } else {
+                            format!(
+                                "订阅更新完成 · {node_count} 个节点{}",
+                                apply.status_suffix(language)
+                            )
+                        };
                         trace_ui(UiEvent::SourceRestoreSucceeded);
                     }
                     Err(ImportSubscriptionError::Preview(error)) => {
                         subscription.state = ImportedSubscriptionState::Unavailable(kind, error);
-                        this.status = format!("订阅更新失败：{error}");
+                        this.status = format!(
+                            "{}{error}",
+                            language.text("Subscription update failed: ", "订阅更新失败：")
+                        );
                         trace_ui(UiEvent::SourceRestoreFailed);
                     }
                     Err(ImportSubscriptionError::Store(error)) => {
                         subscription.state = ImportedSubscriptionState::StoreError(error);
-                        this.status = format!("订阅已读取，但更新时间保存失败：{error}");
+                        this.status = format!(
+                            "{}{error}",
+                            language.text(
+                                "Subscription loaded, but its update time could not be saved: ",
+                                "订阅已读取，但更新时间保存失败："
+                            )
+                        );
                         trace_ui(UiEvent::SourceRestoreFailed);
                     }
                 }
@@ -1049,6 +1153,7 @@ impl RelayApp {
     }
 
     fn remove_imported_subscription(&mut self, id: String, cx: &mut Context<Self>) {
+        let language = self.language();
         let Some(store_dir) = self.subscription_store_dir.clone() else {
             return;
         };
@@ -1065,7 +1170,9 @@ impl RelayApp {
         subscription.generation = generation;
         self.subscription_feedback = SubscriptionFeedback::Idle;
         subscription.state = ImportedSubscriptionState::Removing(kind);
-        "正在移除已导入订阅".clone_into(&mut self.status);
+        language
+            .text("Removing imported subscription", "正在移除已导入订阅")
+            .clone_into(&mut self.status);
         trace_ui(UiEvent::SourceRemoveStarted);
 
         let executor = cx.background_executor().clone();
@@ -1081,6 +1188,7 @@ impl RelayApp {
                 })
                 .await;
             this.update(cx, |this, cx| {
+                let language = this.language();
                 let Some(index) = this
                     .imported_subscriptions
                     .iter()
@@ -1096,13 +1204,20 @@ impl RelayApp {
                         this.imported_subscriptions.remove(index);
                         this.source_refresh_retry_not_before
                             .remove(&DueRemoteSource::Subscription(id.clone()).scheduler_key());
-                        this.status = format!("已移除导入订阅{}", apply.status_suffix());
+                        this.status = format!(
+                            "{}{}",
+                            language.text("Imported subscription removed", "已移除导入订阅"),
+                            apply.status_suffix(language)
+                        );
                         trace_ui(UiEvent::SourceRemoveSucceeded);
                     }
                     Err(error) => {
                         this.imported_subscriptions[index].state =
                             ImportedSubscriptionState::StoreError(error);
-                        this.status = format!("移除订阅失败：{error}");
+                        this.status = format!(
+                            "{}{error}",
+                            language.text("Could not remove subscription: ", "移除订阅失败：")
+                        );
                         trace_ui(UiEvent::SourceRemoveFailed);
                     }
                 }
@@ -1332,20 +1447,33 @@ impl RelayApp {
     }
 
     fn policy_benchmark_status(
+        language: Language,
         kind: relay_core::PolicyGroupKind,
         current: Option<&str>,
         summary: GroupBenchmarkSummary,
     ) -> String {
-        match (kind.is_automatic(), current) {
-            (true, Some(current)) => format!(
-                "策略组测速完成：{}/{} 成功 · Mihomo 当前优选 {current}",
+        match (language, kind.is_automatic(), current) {
+            (Language::English, true, Some(current)) => format!(
+                "Policy benchmark complete: {}/{} succeeded · current optimum {current}",
                 summary.succeeded, summary.total
             ),
-            (true, None) => format!(
+            (Language::English, true, None) => format!(
+                "Policy benchmark complete: {}/{} succeeded · no single fixed exit",
+                summary.succeeded, summary.total
+            ),
+            (Language::English, false, _) => format!(
+                "Policy benchmark complete: {}/{} candidates succeeded",
+                summary.succeeded, summary.total
+            ),
+            (Language::SimplifiedChinese, true, Some(current)) => format!(
+                "策略组测速完成：{}/{} 成功 · 当前优选 {current}",
+                summary.succeeded, summary.total
+            ),
+            (Language::SimplifiedChinese, true, None) => format!(
                 "策略组测速完成：{}/{} 成功 · 该策略没有单一固定出口",
                 summary.succeeded, summary.total
             ),
-            (false, _) => format!(
+            (Language::SimplifiedChinese, false, _) => format!(
                 "策略组测速完成：{}/{} 个候选项成功",
                 summary.succeeded, summary.total
             ),
@@ -1408,33 +1536,54 @@ impl RelayApp {
             .cloned()
             .unwrap_or_else(|| PolicyNode {
                 id: ProxyId::new("unavailable"),
-                name: "暂无可用节点".to_owned(),
+                name: self
+                    .language()
+                    .text("No available nodes", "暂无可用节点")
+                    .to_owned(),
                 kind: relay_core::PolicyCandidateKind::Node,
                 provider: None,
-                detail: "Mihomo 未返回组内节点".to_owned(),
+                detail: self
+                    .language()
+                    .text("The kernel returned no group members", "内核未返回组内节点")
+                    .to_owned(),
                 latency_ms: None,
                 alive: None,
             })
     }
 
     fn switch_kernel(&mut self, requested: KernelKind, cx: &mut Context<Self>) {
+        let language = self.language();
         if self.kernel_switch_state.is_busy() || self.runtime.kind() == requested {
             return;
         }
         let Some(store_dir) = self.subscription_store_dir.clone() else {
-            "无法确定本机配置目录，不能切换内核".clone_into(&mut self.status);
+            language
+                .text(
+                    "The local configuration directory is unavailable; the kernel cannot be changed",
+                    "无法确定本机配置目录，不能切换内核",
+                )
+                .clone_into(&mut self.status);
             cx.notify();
             return;
         };
         self.kernel_switch_state = KernelSwitchState::Preparing;
-        self.status = format!("正在校验并准备 {} 配置", requested.display_name());
+        self.status = format!(
+            "{} {} {}",
+            language.text("Validating", "正在校验并准备"),
+            requested.display_name(),
+            language.text("configuration", "配置")
+        );
         let previous = self.runtime.clone();
         let previous_kind = previous.kind();
         let executor = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
             let result = executor
                 .spawn(async move {
-                    let prepared = KernelRuntime::prepare(requested, Some(&store_dir))?;
+                    let prepared = KernelRuntime::prepare_with_language(
+                        requested,
+                        Some(&store_dir),
+                        language,
+                    )?;
                     kernel::save_kernel_kind_in(&store_dir, requested)
                         .map_err(|error| error.to_string())?;
                     if let Err(message) = previous.stop_managed() {
@@ -1445,6 +1594,7 @@ impl RelayApp {
                 })
                 .await;
             this.update(cx, |this, cx| {
+                let language = this.language();
                 this.kernel_switch_state = KernelSwitchState::Idle;
                 match result {
                     Ok(runtime) => {
@@ -1453,13 +1603,27 @@ impl RelayApp {
                         this.live_generation = this.live_generation.wrapping_add(1);
                         this.live_runtime = None;
                         this.proxy_mode = ProxyMode::Off;
-                        this.status = format!(
-                            "已切换到 {} · 配置校验通过，点击连接启动",
-                            requested.display_name()
-                        );
+                        this.status = if language == Language::English {
+                            format!(
+                                "Switched to {} · configuration valid; connect to start",
+                                requested.display_name()
+                            )
+                        } else {
+                            format!(
+                                "已切换到 {} · 配置校验通过，点击连接启动",
+                                requested.display_name()
+                            )
+                        };
                     }
                     Err(message) => {
-                        this.status = format!("无法切换到 {}：{message}", requested.display_name());
+                        this.status = if language == Language::English {
+                            format!(
+                                "Could not switch to {}: {message}",
+                                requested.display_name()
+                            )
+                        } else {
+                            format!("无法切换到 {}：{message}", requested.display_name())
+                        };
                     }
                 }
                 cx.notify();
@@ -1475,11 +1639,12 @@ impl RelayApp {
             return;
         }
 
+        let language = self.language();
         self.live_generation = self.live_generation.wrapping_add(1);
         self.live_runtime = None;
         self.live_status = LiveStreamStatus {
-            activity: "正在重新连接".to_owned(),
-            logs: "正在重新连接".to_owned(),
+            activity: language.text("Reconnecting", "正在重新连接").to_owned(),
+            logs: language.text("Reconnecting", "正在重新连接").to_owned(),
         };
 
         let endpoint = self.runtime.endpoint_label();
@@ -1488,13 +1653,18 @@ impl RelayApp {
         self.controller = ControllerState::Connecting {
             endpoint: endpoint.clone(),
         };
-        self.status = format!("正在从 {endpoint} 读取 {kernel_name} 数据");
+        self.status = if language == Language::English {
+            format!("Loading {kernel_name} data from {endpoint}")
+        } else {
+            format!("正在从 {endpoint} 读取 {kernel_name} 数据")
+        };
         trace_ui(UiEvent::MihomoConnectStarted);
 
         let executor = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
             let result = executor.spawn(async move { runtime.connect() }).await;
             this.update(cx, |this, cx| {
+                let language = this.language();
                 match result {
                     Ok(result) => {
                         let controller_endpoint = result.controller_endpoint;
@@ -1511,14 +1681,18 @@ impl RelayApp {
                         let endpoint = this
                             .controller
                             .endpoint()
-                            .unwrap_or("本地控制器")
+                            .unwrap_or(language.text("Local controller", "本地控制器"))
                             .to_owned();
                         let message = error.to_string();
                         this.controller = ControllerState::Failed {
                             endpoint,
                             message: message.clone(),
                         };
-                        this.status = format!("{kernel_name} 连接失败：{message}");
+                        this.status = if language == Language::English {
+                            format!("{kernel_name} connection failed: {message}")
+                        } else {
+                            format!("{kernel_name} 连接失败：{message}")
+                        };
                     }
                 }
                 cx.notify();
@@ -1552,11 +1726,19 @@ impl RelayApp {
         };
         self.routing_mode = snapshot.runtime.mode;
         self.proxy_runtime = snapshot.runtime;
-        self.status = format!(
-            "已读取 {} 个策略组 · {} 条活动连接",
-            self.catalog.iter().count(),
-            snapshot.active_connections
-        );
+        self.status = if self.language() == Language::English {
+            format!(
+                "Loaded {} policy groups · {} active connections",
+                self.catalog.iter().count(),
+                snapshot.active_connections
+            )
+        } else {
+            format!(
+                "已读取 {} 个策略组 · {} 条活动连接",
+                self.catalog.iter().count(),
+                snapshot.active_connections
+            )
+        };
         self.controller = ControllerState::Connected {
             endpoint,
             version: snapshot.version,
@@ -1566,13 +1748,20 @@ impl RelayApp {
         };
     }
 
+    #[allow(clippy::too_many_lines)]
     fn start_policy_group_benchmark(
         &mut self,
         id: &relay_core::PolicyGroupId,
         cx: &mut Context<Self>,
     ) {
+        let language = self.language();
         if !matches!(self.controller, ControllerState::Connected { .. }) {
-            "请先连接 Mihomo，再测试真实策略组".clone_into(&mut self.status);
+            language
+                .text(
+                    "Connect to the kernel before testing a live policy group",
+                    "请先连接内核，再测试真实策略组",
+                )
+                .clone_into(&mut self.status);
             cx.notify();
             return;
         }
@@ -1592,20 +1781,38 @@ impl RelayApp {
             .map(|node| node.name.clone())
             .collect::<Vec<_>>();
         if candidate_names.is_empty() {
-            "当前策略组没有可测速候选项".clone_into(&mut self.status);
+            language
+                .text(
+                    "This policy group has no testable candidates",
+                    "当前策略组没有可测速候选项",
+                )
+                .clone_into(&mut self.status);
             cx.notify();
             return;
         }
         let Some(generation) = self.begin_group_benchmark(key.clone()) else {
-            "已有分组正在测速，请等待完成后再试".clone_into(&mut self.status);
+            language
+                .text(
+                    "Another group is being tested; wait for it to finish",
+                    "已有分组正在测速，请等待完成后再试",
+                )
+                .clone_into(&mut self.status);
             cx.notify();
             return;
         };
-        self.status = format!(
-            "正在测试策略组“{}”的 {} 个候选项",
-            group.name,
-            candidate_names.len()
-        );
+        self.status = if language == Language::English {
+            format!(
+                "Testing {} candidates in policy group “{}”",
+                candidate_names.len(),
+                group.name
+            )
+        } else {
+            format!(
+                "正在测试策略组“{}”的 {} 个候选项",
+                group.name,
+                candidate_names.len()
+            )
+        };
         trace_ui(UiEvent::GroupBenchmarkStarted);
 
         let runtime = self.runtime.clone();
@@ -1630,6 +1837,7 @@ impl RelayApp {
                 })
                 .await;
             this.update(cx, |this, cx| {
+                let language = this.language();
                 if this.group_benchmark_active_generation != Some(generation) {
                     return;
                 }
@@ -1657,11 +1865,14 @@ impl RelayApp {
                     GroupBenchmarkState::Complete { summary, .. } => {
                         trace_ui(UiEvent::GroupBenchmarkSucceeded);
                         this.status =
-                            Self::policy_benchmark_status(group_kind, current.as_deref(), *summary);
+                            Self::policy_benchmark_status(language, group_kind, current.as_deref(), *summary);
                     }
                     GroupBenchmarkState::Failed { .. } => {
                         trace_ui(UiEvent::GroupBenchmarkFailed);
-                        "策略组测速失败，请检查 Mihomo 连接与网络后重试"
+                        language.text(
+                            "Policy benchmark failed; check the kernel connection and network, then retry",
+                            "策略组测速失败，请检查内核连接与网络后重试",
+                        )
                             .clone_into(&mut this.status);
                     }
                     _ => return,
@@ -1680,14 +1891,21 @@ impl RelayApp {
         controller_secret: Option<&str>,
         cx: &mut Context<Self>,
     ) {
+        let language = self.language();
         self.live_generation = self.live_generation.wrapping_add(1);
         let generation = self.live_generation;
         self.live_runtime = match LiveRuntimeSession::start(endpoint, controller_secret) {
             Ok(session) => Some(session),
             Err(error) => {
                 self.live_status = LiveStreamStatus {
-                    activity: format!("无法启动：{error}"),
-                    logs: format!("无法启动：{error}"),
+                    activity: format!(
+                        "{}{error}",
+                        language.text("Could not start: ", "无法启动：")
+                    ),
+                    logs: format!(
+                        "{}{error}",
+                        language.text("Could not start: ", "无法启动：")
+                    ),
                 };
                 None
             }
@@ -1742,21 +1960,29 @@ impl RelayApp {
 
     #[allow(clippy::too_many_lines)]
     fn apply_proxy_mode(&mut self, requested: ProxyMode, cx: &mut Context<Self>) {
+        let language = self.language();
         if self.proxy_mode_busy || requested == self.proxy_mode {
             return;
         }
         if !matches!(self.controller, ControllerState::Connected { .. }) {
             trace_ui(UiEvent::ProxyModeFailed);
             self.status = format!(
-                "请先连接 {}，再切换代理模式",
-                self.runtime.kind().display_name()
+                "{} {}",
+                language.text(
+                    "Connect before changing proxy mode:",
+                    "请先连接后再切换代理模式："
+                ),
+                self.runtime.kind().display_name(),
             );
             cx.notify();
             return;
         }
         if requested == ProxyMode::Tun && !self.runtime.capabilities().tun {
             trace_ui(UiEvent::ProxyModeFailed);
-            "当前 sing-box 适配器尚未开放 TUN；可使用系统 HTTP/SOCKS 代理"
+            language.text(
+                "TUN is not yet available for the sing-box adapter; use the system HTTP/SOCKS proxy",
+                "当前 sing-box 适配器尚未开放 TUN；可使用系统 HTTP/SOCKS 代理",
+            )
                 .clone_into(&mut self.status);
             cx.notify();
             return;
@@ -1765,7 +1991,12 @@ impl RelayApp {
             && matches!(&*self.runtime, ControllerRuntime::External { .. })
         {
             trace_ui(UiEvent::ProxyModeFailed);
-            "外部控制器保持只读；请使用 Relay 托管内核启用 TUN 模式".clone_into(&mut self.status);
+            language
+                .text(
+                    "External controllers are read-only; use a Relay-managed kernel to enable TUN",
+                    "外部控制器保持只读；请使用 Relay 托管内核启用 TUN 模式",
+                )
+                .clone_into(&mut self.status);
             cx.notify();
             return;
         }
@@ -1787,7 +2018,11 @@ impl RelayApp {
                 .or(mixed_port),
         };
         self.proxy_mode_busy = true;
-        self.status = format!("正在切换到{}…", requested.label());
+        self.status = format!(
+            "{}{}…",
+            language.text("Switching to ", "正在切换到"),
+            proxy_mode_label(language, requested)
+        );
 
         let executor = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
@@ -1798,7 +2033,9 @@ impl RelayApp {
                         .map_err(|_| "系统代理状态锁已损坏".to_owned())?;
                     match (previous, requested) {
                         (ProxyMode::System, ProxyMode::Off) => {
-                            system.disable().map_err(|error| error.to_string())?;
+                            system
+                                .disable_with_language(language)
+                                .map_err(|error| error.to_string())?;
                         }
                         (ProxyMode::Tun, ProxyMode::Off) => {
                             runtime
@@ -1806,13 +2043,15 @@ impl RelayApp {
                                 .map_err(|error| error.to_string())?;
                         }
                         (ProxyMode::Off, ProxyMode::System) => {
-                            system.enable(ports).map_err(|error| error.to_string())?;
+                            system
+                                .enable_with_language(ports, language)
+                                .map_err(|error| error.to_string())?;
                         }
                         (ProxyMode::Tun, ProxyMode::System) => {
                             runtime
                                 .set_tun_enabled(false)
                                 .map_err(|error| error.to_string())?;
-                            if let Err(error) = system.enable(ports) {
+                            if let Err(error) = system.enable_with_language(ports, language) {
                                 let rollback = runtime.set_tun_enabled(true);
                                 return Err(match rollback {
                                     Ok(()) => error.to_string(),
@@ -1828,9 +2067,11 @@ impl RelayApp {
                                 .map_err(|error| error.to_string())?;
                         }
                         (ProxyMode::System, ProxyMode::Tun) => {
-                            system.disable().map_err(|error| error.to_string())?;
+                            system
+                                .disable_with_language(language)
+                                .map_err(|error| error.to_string())?;
                             if let Err(error) = runtime.set_tun_enabled(true) {
-                                let rollback = system.enable(ports);
+                                let rollback = system.enable_with_language(ports, language);
                                 return Err(match rollback {
                                     Ok(()) => error.to_string(),
                                     Err(rollback) => {
@@ -1845,6 +2086,7 @@ impl RelayApp {
                 })
                 .await;
             this.update(cx, |this, cx| {
+                let language = this.language();
                 this.proxy_mode_busy = false;
                 match result {
                     Ok(()) => {
@@ -1854,11 +2096,18 @@ impl RelayApp {
                             ProxyMode::System => trace_ui(UiEvent::SystemProxyEnabled),
                             ProxyMode::Tun => trace_ui(UiEvent::TunProxyEnabled),
                         }
-                        this.status = format!("{}已生效", requested.label());
+                        this.status = format!(
+                            "{}{}",
+                            proxy_mode_label(language, requested),
+                            language.text(" enabled", "已生效")
+                        );
                     }
                     Err(message) => {
                         trace_ui(UiEvent::ProxyModeFailed);
-                        this.status = format!("代理模式切换失败：{message}");
+                        this.status = format!(
+                            "{}{message}",
+                            language.text("Failed to change proxy mode: ", "代理模式切换失败：")
+                        );
                     }
                 }
                 cx.notify();
@@ -1870,24 +2119,37 @@ impl RelayApp {
     }
 
     fn apply_routing_mode(&mut self, requested: RoutingMode, cx: &mut Context<Self>) {
+        let language = self.language();
         if self.routing_mode_busy.is_some() || requested == self.routing_mode {
             return;
         }
         if !matches!(self.controller, ControllerState::Connected { .. }) {
             trace_ui(UiEvent::RoutingModeFailed);
-            "请先连接 Mihomo，再切换路由模式".clone_into(&mut self.status);
+            language
+                .text(
+                    "Connect to the kernel before changing routing mode",
+                    "请先连接内核，再切换路由模式",
+                )
+                .clone_into(&mut self.status);
             cx.notify();
             return;
         }
         if matches!(&*self.runtime, ControllerRuntime::External { .. }) {
             trace_ui(UiEvent::RoutingModeFailed);
-            "外部控制器保持只读；请使用 Relay 托管内核切换路由模式".clone_into(&mut self.status);
+            language.text(
+                "External controllers are read-only; use a Relay-managed kernel to change routing mode",
+                "外部控制器保持只读；请使用 Relay 托管内核切换路由模式",
+            ).clone_into(&mut self.status);
             cx.notify();
             return;
         }
 
         self.routing_mode_busy = Some(requested);
-        self.status = format!("正在切换到{}…", requested.label());
+        self.status = format!(
+            "{}{}…",
+            language.text("Switching to ", "正在切换到"),
+            routing_mode_label(language, requested)
+        );
         let runtime = self.runtime.clone();
         let store_dir = self.subscription_store_dir.clone();
         let executor = cx.background_executor().clone();
@@ -1903,6 +2165,7 @@ impl RelayApp {
                 })
                 .await;
             this.update(cx, |this, cx| {
+                let language = this.language();
                 this.routing_mode_busy = None;
                 match result {
                     Ok(persistence) => {
@@ -1911,18 +2174,39 @@ impl RelayApp {
                         trace_ui(UiEvent::RoutingModeChanged);
                         this.status = match requested {
                             RoutingMode::Global => this.global_target().map_or_else(
-                                || "全局模式已生效；请在节点页选择全局出口".to_owned(),
-                                |target| format!("全局模式已生效 · 当前出口 {target}"),
+                                || {
+                                    language.text(
+                                    "Global mode enabled; choose the global exit on the Nodes page",
+                                    "全局模式已生效；请在节点页选择全局出口",
+                                ).to_owned()
+                                },
+                                |target| {
+                                    if language == Language::English {
+                                        format!("Global mode enabled · current exit {target}")
+                                    } else {
+                                        format!("全局模式已生效 · 当前出口 {target}")
+                                    }
+                                },
                             ),
-                            _ => format!("{}已生效", requested.label()),
+                            _ => format!(
+                                "{}{}",
+                                routing_mode_label(language, requested),
+                                language.text(" enabled", "已生效")
+                            ),
                         };
                         if persistence.is_err() {
-                            this.status.push_str(" · 但未能保存重启偏好");
+                            this.status.push_str(language.text(
+                                " · restart preference could not be saved",
+                                " · 但未能保存重启偏好",
+                            ));
                         }
                     }
                     Err(error) => {
                         trace_ui(UiEvent::RoutingModeFailed);
-                        this.status = format!("路由模式切换失败：{error}");
+                        this.status = format!(
+                            "{}{error}",
+                            language.text("Failed to change routing mode: ", "路由模式切换失败：")
+                        );
                     }
                 }
                 cx.notify();
@@ -1934,18 +2218,27 @@ impl RelayApp {
     }
 
     fn select_global_node(&mut self, selected_name: String, cx: &mut Context<Self>) {
+        let language = self.language();
         if self.global_selection_busy.is_some() {
             return;
         }
         if !matches!(self.controller, ControllerState::Connected { .. }) {
             trace_ui(UiEvent::GlobalNodeSelectionFailed);
-            "请先连接 Mihomo，再选择全局节点".clone_into(&mut self.status);
+            language
+                .text(
+                    "Connect to the kernel before choosing a global node",
+                    "请先连接内核，再选择全局节点",
+                )
+                .clone_into(&mut self.status);
             cx.notify();
             return;
         }
         if matches!(&*self.runtime, ControllerRuntime::External { .. }) {
             trace_ui(UiEvent::GlobalNodeSelectionFailed);
-            "外部控制器保持只读；请使用 Relay 托管内核选择全局节点".clone_into(&mut self.status);
+            language.text(
+                "External controllers are read-only; use a Relay-managed kernel to choose a global node",
+                "外部控制器保持只读；请使用 Relay 托管内核选择全局节点",
+            ).clone_into(&mut self.status);
             cx.notify();
             return;
         }
@@ -1956,13 +2249,22 @@ impl RelayApp {
             .is_some_and(|group| group.nodes.iter().any(|node| node.name == selected_name));
         if !is_candidate {
             trace_ui(UiEvent::GlobalNodeSelectionFailed);
-            "这个节点不在 Mihomo 的 GLOBAL 候选项中".clone_into(&mut self.status);
+            language
+                .text(
+                    "This node is not a GLOBAL candidate",
+                    "这个节点不在 GLOBAL 候选项中",
+                )
+                .clone_into(&mut self.status);
             cx.notify();
             return;
         }
 
         self.global_selection_busy = Some(selected_name.clone());
-        self.status = format!("正在选择全局节点“{selected_name}”…");
+        self.status = if language == Language::English {
+            format!("Selecting global node “{selected_name}”…")
+        } else {
+            format!("正在选择全局节点“{selected_name}”…")
+        };
         let runtime = self.runtime.clone();
         let executor = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
@@ -1973,13 +2275,20 @@ impl RelayApp {
                 })
                 .await;
             this.update(cx, |this, cx| {
+                let language = this.language();
                 this.global_selection_busy = None;
                 match result {
                     Ok(snapshot) => {
                         let current = snapshot.current.as_deref().unwrap_or(&selected_name);
                         let _ = this.catalog.apply_selector_target("GLOBAL", current);
                         trace_ui(UiEvent::GlobalNodeSelected);
-                        this.status = if this.routing_mode == RoutingMode::Global {
+                        this.status = if language == Language::English {
+                            if this.routing_mode == RoutingMode::Global {
+                                format!("Global exit switched to “{current}”")
+                            } else {
+                                format!("Saved global exit “{current}”; it applies in Global mode")
+                            }
+                        } else if this.routing_mode == RoutingMode::Global {
                             format!("全局出口已切换到“{current}”")
                         } else {
                             format!("已保存全局出口“{current}”；切换到全局模式后生效")
@@ -1987,7 +2296,10 @@ impl RelayApp {
                     }
                     Err(error) => {
                         trace_ui(UiEvent::GlobalNodeSelectionFailed);
-                        this.status = format!("全局节点切换失败：{error}");
+                        this.status = format!(
+                            "{}{error}",
+                            language.text("Failed to change global node: ", "全局节点切换失败：")
+                        );
                     }
                 }
                 cx.notify();
@@ -2015,7 +2327,12 @@ impl RelayApp {
     #[allow(clippy::too_many_lines)]
     fn chrome(&self, theme: Theme, size_class: WindowSizeClass, cx: &mut Context<Self>) -> Div {
         let compact = size_class == WindowSizeClass::Compact;
-        let theme_label = if self.dark { "浅色" } else { "深色" };
+        let language = self.language();
+        let theme_label = if self.dark {
+            language.text("Light", "浅色")
+        } else {
+            language.text("Dark", "深色")
+        };
 
         div()
             .h(px(48.0))
@@ -2069,7 +2386,10 @@ impl RelayApp {
                         .border_color(theme.outline_subtle)
                         .bg(theme.surface_high)
                         .text_color(theme.text_tertiary)
-                        .child("搜索策略、规则、连接     ⌘K"),
+                        .child(language.text(
+                            "Search policies, rules, connections     ⌘K",
+                            "搜索策略、规则、连接     ⌘K",
+                        )),
                 )
             })
             .child(div().flex_1())
@@ -2091,12 +2411,13 @@ impl RelayApp {
                     .child(theme_label)
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.dark = !this.dark;
+                        let language = this.language();
                         if this.dark {
                             trace_ui(UiEvent::ThemeDarkSelected);
-                            "已切换到深色主题"
+                            language.text("Dark theme enabled", "已切换到深色主题")
                         } else {
                             trace_ui(UiEvent::ThemeLightSelected);
-                            "已切换到浅色主题"
+                            language.text("Light theme enabled", "已切换到浅色主题")
                         }
                         .clone_into(&mut this.status);
                         cx.notify();
@@ -2108,12 +2429,13 @@ impl RelayApp {
 
     #[allow(clippy::too_many_lines)]
     fn proxy_control(&self, theme: Theme, compact: bool, cx: &mut Context<Self>) -> Stateful<Div> {
+        let language = self.language();
         if compact {
             let next = self.proxy_mode.next();
             return div()
                 .id("proxy-mode-cycle")
                 .role(Role::Button)
-                .aria_label("切换代理模式")
+                .aria_label(language.text("Change proxy mode", "切换代理模式"))
                 .tab_stop(true)
                 .focusable()
                 .cursor_pointer()
@@ -2128,12 +2450,12 @@ impl RelayApp {
                 .items_center()
                 .gap_2()
                 .child(if self.proxy_mode_busy {
-                    "接入 · 切换中…"
+                    language.text("Proxy · Switching…", "接入 · 切换中…")
                 } else {
                     match self.proxy_mode {
-                        ProxyMode::Off => "接入 · 关闭",
-                        ProxyMode::System => "接入 · 系统",
-                        ProxyMode::Tun => "接入 · TUN",
+                        ProxyMode::Off => language.text("Proxy · Off", "接入 · 关闭"),
+                        ProxyMode::System => language.text("Proxy · System", "接入 · 系统"),
+                        ProxyMode::Tun => language.text("Proxy · TUN", "接入 · TUN"),
                     }
                 })
                 .when(!self.proxy_mode_busy, |control| {
@@ -2164,7 +2486,7 @@ impl RelayApp {
                     .px_2()
                     .text_size(px(10.0))
                     .text_color(theme.text_tertiary)
-                    .child("接入"),
+                    .child(language.text("Proxy", "接入")),
             );
         for mode in [ProxyMode::Off, ProxyMode::System, ProxyMode::Tun] {
             let selected = mode == self.proxy_mode;
@@ -2172,7 +2494,7 @@ impl RelayApp {
                 div()
                     .id(format!("proxy-mode-{mode:?}"))
                     .role(Role::Button)
-                    .aria_label(mode.label())
+                    .aria_label(proxy_mode_label(language, mode))
                     .aria_toggled(if selected {
                         Toggled::True
                     } else {
@@ -2203,9 +2525,9 @@ impl RelayApp {
                         theme.text_secondary
                     })
                     .child(if self.proxy_mode_busy && selected {
-                        "切换中…"
+                        language.text("Switching…", "切换中…")
                     } else {
-                        mode.label()
+                        proxy_mode_label(language, mode)
                     })
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.apply_proxy_mode(mode, cx);
@@ -2222,6 +2544,7 @@ impl RelayApp {
         compact: bool,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
+        let language = self.language();
         if compact {
             let next = match self.routing_mode {
                 RoutingMode::Direct => RoutingMode::Global,
@@ -2231,7 +2554,7 @@ impl RelayApp {
             return div()
                 .id("routing-mode-cycle")
                 .role(Role::Button)
-                .aria_label("切换路由模式")
+                .aria_label(language.text("Change routing mode", "切换路由模式"))
                 .tab_stop(true)
                 .focusable()
                 .cursor_pointer()
@@ -2246,12 +2569,12 @@ impl RelayApp {
                 .items_center()
                 .gap_2()
                 .child(if self.routing_mode_busy.is_some() {
-                    "路由 · 切换中…"
+                    language.text("Routing · Switching…", "路由 · 切换中…")
                 } else {
                     match self.routing_mode {
-                        RoutingMode::Direct => "路由 · 直连",
-                        RoutingMode::Global => "路由 · 全局",
-                        RoutingMode::Rule => "路由 · 规则",
+                        RoutingMode::Direct => language.text("Routing · Direct", "路由 · 直连"),
+                        RoutingMode::Global => language.text("Routing · Global", "路由 · 全局"),
+                        RoutingMode::Rule => language.text("Routing · Rules", "路由 · 规则"),
                     }
                 })
                 .when(self.routing_mode_busy.is_none(), |control| {
@@ -2282,7 +2605,7 @@ impl RelayApp {
                     .px_2()
                     .text_size(px(10.0))
                     .text_color(theme.text_tertiary)
-                    .child("路由"),
+                    .child(language.text("Routing", "路由")),
             );
         for mode in [RoutingMode::Direct, RoutingMode::Global, RoutingMode::Rule] {
             let selected = mode == self.routing_mode;
@@ -2290,7 +2613,7 @@ impl RelayApp {
                 div()
                     .id(format!("routing-mode-{mode:?}"))
                     .role(Role::Button)
-                    .aria_label(mode.label())
+                    .aria_label(routing_mode_label(language, mode))
                     .aria_toggled(if selected {
                         Toggled::True
                     } else {
@@ -2321,9 +2644,9 @@ impl RelayApp {
                         theme.text_secondary
                     })
                     .child(if self.routing_mode_busy == Some(mode) {
-                        "切换中…"
+                        language.text("Switching…", "切换中…")
                     } else {
-                        mode.label()
+                        routing_mode_label(language, mode)
                     })
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.apply_routing_mode(mode, cx);
@@ -2333,24 +2656,79 @@ impl RelayApp {
         control
     }
 
+    #[allow(clippy::too_many_lines)]
     fn navigation(&self, theme: Theme, size_class: WindowSizeClass, cx: &mut Context<Self>) -> Div {
+        let language = self.language();
         let entries = [
-            ("节点", "节点", PrimaryWorkspace::Nodes),
-            ("策略组", "策略", PrimaryWorkspace::Policies),
-            ("分流规则", "规则", PrimaryWorkspace::RoutingRules),
-            ("网络活动", "活动", PrimaryWorkspace::Activity),
-            ("日志", "日志", PrimaryWorkspace::Logs),
-            ("配置", "配置", PrimaryWorkspace::Configuration),
+            (
+                language.text("Nodes", "节点"),
+                language.text("Nodes", "节点"),
+                PrimaryWorkspace::Nodes,
+            ),
+            (
+                language.text("Policy groups", "策略组"),
+                language.text("Policies", "策略"),
+                PrimaryWorkspace::Policies,
+            ),
+            (
+                language.text("Routing rules", "分流规则"),
+                language.text("Rules", "规则"),
+                PrimaryWorkspace::RoutingRules,
+            ),
+            (
+                language.text("Network activity", "网络活动"),
+                language.text("Activity", "活动"),
+                PrimaryWorkspace::Activity,
+            ),
+            (
+                "Logs",
+                language.text("Logs", "日志"),
+                PrimaryWorkspace::Logs,
+            ),
+            (
+                language.text("Settings", "配置"),
+                language.text("Settings", "配置"),
+                PrimaryWorkspace::Configuration,
+            ),
         ];
         let show_labels = size_class == WindowSizeClass::Wide;
         let source_label = if show_labels {
-            self.controller.compact_label()
+            match &self.controller {
+                ControllerState::Demo => language
+                    .text("Mihomo disconnected · Demo", "Mihomo 未连接 · 演示")
+                    .to_owned(),
+                ControllerState::Connecting { endpoint } => {
+                    language
+                        .text("Connecting to controller", "正在连接控制器")
+                        .to_owned()
+                        + " · "
+                        + endpoint
+                }
+                ControllerState::Connected {
+                    version,
+                    active_connections,
+                    ..
+                } => {
+                    if language == Language::English {
+                        format!("Mihomo {version} · {active_connections} connections")
+                    } else {
+                        format!("Mihomo {version} · {active_connections} 条连接")
+                    }
+                }
+                ControllerState::Failed { message, .. } => {
+                    language.text("Connection failed", "连接失败").to_owned() + " · " + message
+                }
+            }
         } else {
             match &self.controller {
-                ControllerState::Demo => "演示".to_owned(),
-                ControllerState::Connecting { .. } => "连接中".to_owned(),
-                ControllerState::Connected { .. } => "已连接".to_owned(),
-                ControllerState::Failed { .. } => "失败".to_owned(),
+                ControllerState::Demo => language.text("Demo", "演示").to_owned(),
+                ControllerState::Connecting { .. } => {
+                    language.text("Connecting", "连接中").to_owned()
+                }
+                ControllerState::Connected { .. } => {
+                    language.text("Connected", "已连接").to_owned()
+                }
+                ControllerState::Failed { .. } => language.text("Failed", "失败").to_owned(),
             }
         };
         let width = match size_class {
@@ -2372,7 +2750,7 @@ impl RelayApp {
             .children(entries.into_iter().map(|(label, short_label, workspace)| {
                 let selected = workspace == self.primary_workspace;
                 div()
-                    .id(format!("navigation-{label}"))
+                    .id(format!("navigation-{workspace:?}"))
                     .role(Role::Button)
                     .aria_label(label)
                     .tab_stop(true)
@@ -2396,30 +2774,37 @@ impl RelayApp {
                     .child(if show_labels { label } else { short_label })
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.primary_workspace = workspace;
+                        let language = this.language();
                         this.status = match workspace {
                             PrimaryWorkspace::Policies => {
                                 trace_ui(UiEvent::WorkspacePoliciesOpened);
-                                "已打开策略组工作区".to_owned()
+                                language
+                                    .text("Policy groups opened", "已打开策略组工作区")
+                                    .to_owned()
                             }
                             PrimaryWorkspace::Nodes => {
                                 trace_ui(UiEvent::WorkspaceNodesOpened);
-                                "已打开节点工作区".to_owned()
+                                language.text("Nodes opened", "已打开节点工作区").to_owned()
                             }
                             PrimaryWorkspace::RoutingRules => {
                                 trace_ui(UiEvent::WorkspaceRoutingRulesOpened);
-                                "已打开分流规则".to_owned()
+                                language
+                                    .text("Routing rules opened", "已打开分流规则")
+                                    .to_owned()
                             }
                             PrimaryWorkspace::Activity => {
                                 trace_ui(UiEvent::WorkspaceActivityOpened);
-                                "已打开网络活动".to_owned()
+                                language
+                                    .text("Network activity opened", "已打开网络活动")
+                                    .to_owned()
                             }
                             PrimaryWorkspace::Logs => {
                                 trace_ui(UiEvent::WorkspaceLogsOpened);
-                                "已打开日志".to_owned()
+                                language.text("Logs opened", "已打开日志").to_owned()
                             }
                             PrimaryWorkspace::Configuration => {
                                 trace_ui(UiEvent::WorkspaceConfigurationOpened);
-                                "已打开代理来源".to_owned()
+                                language.text("Settings opened", "已打开配置").to_owned()
                             }
                         };
                         cx.notify();
@@ -2437,6 +2822,7 @@ impl RelayApp {
 
     #[allow(clippy::too_many_lines)]
     fn policy_list(&self, theme: Theme, width: Option<f32>, cx: &mut Context<Self>) -> Div {
+        let language = self.language();
         let mut rows = div()
             .id("policy-scroll")
             .flex_1()
@@ -2504,14 +2890,18 @@ impl RelayApp {
                                     .mt_1()
                                     .text_size(px(11.0))
                                     .text_color(theme.text_secondary)
-                                    .child(item.kind.label()),
+                                    .child(policy_kind_label(language, item.kind)),
                             ),
                     )
                     .child(div().text_color(theme.text_primary).child(item.target))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.workspace.select_group(item_id.clone());
                         trace_ui(UiEvent::PolicyPreviewOpened);
-                        this.status = format!("已打开策略组“{item_name}”");
+                        this.status = if this.language() == Language::English {
+                            format!("Policy group “{item_name}” opened")
+                        } else {
+                            format!("已打开策略组“{item_name}”")
+                        };
                         cx.notify();
                     })),
             );
@@ -2539,7 +2929,7 @@ impl RelayApp {
                                 div()
                                     .text_size(px(18.0))
                                     .font_weight(FontWeight::BOLD)
-                                    .child("策略组"),
+                                    .child(language.text("Policy groups", "策略组")),
                             )
                             .child(self.connection_button(theme, cx)),
                     )
@@ -2547,7 +2937,10 @@ impl RelayApp {
                         div()
                             .mt_1()
                             .text_color(theme.text_secondary)
-                            .child("节点选择与故障转移，不需要编辑 YAML"),
+                            .child(language.text(
+                                "Node selection and failover without editing YAML",
+                                "节点选择与故障转移，不需要编辑 YAML",
+                            )),
                     )
                     .child(
                         div()
@@ -2561,7 +2954,7 @@ impl RelayApp {
                             .flex()
                             .items_center()
                             .text_color(theme.text_tertiary)
-                            .child("筛选策略组"),
+                            .child(language.text("Filter policy groups", "筛选策略组")),
                     ),
             )
             .child(rows)
@@ -2588,10 +2981,14 @@ impl RelayApp {
 
     fn connection_button(&self, theme: Theme, cx: &mut Context<Self>) -> Stateful<Div> {
         let connecting = matches!(self.controller, ControllerState::Connecting { .. });
+        let language = self.language();
         div()
             .id("connect-mihomo")
             .role(Role::Button)
-            .aria_label("连接或刷新 Mihomo 只读数据")
+            .aria_label(language.text(
+                "Connect or refresh read-only kernel data",
+                "连接或刷新内核只读数据",
+            ))
             .tab_stop(!connecting)
             .focusable()
             .cursor_pointer()
@@ -2616,7 +3013,10 @@ impl RelayApp {
             })
             .flex()
             .items_center()
-            .child(self.runtime.button_label(&self.controller))
+            .child(
+                self.runtime
+                    .button_label_in(&self.controller, self.language()),
+            )
             .on_click(cx.listener(|this, _, _, cx| this.connect_mihomo(cx)))
     }
 
@@ -2626,17 +3026,18 @@ impl RelayApp {
         current: bool,
         manually_selectable: bool,
         benchmark_state: GroupBenchmarkNodeState,
+        language: Language,
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let node_id = item.id.clone();
         let node_name = item.name.clone();
         let provider = if item.kind == relay_core::PolicyCandidateKind::NodeGroup {
-            "节点分组".to_owned()
+            language.text("Node group", "节点分组").to_owned()
         } else {
             item.provider
                 .clone()
-                .unwrap_or_else(|| "内置节点".to_owned())
+                .unwrap_or_else(|| language.text("Built-in", "内置节点").to_owned())
         };
         let idle_latency = item
             .latency_ms
@@ -2665,9 +3066,9 @@ impl RelayApp {
                 .items_center()
                 .justify_center()
                 .child(if item.kind == relay_core::PolicyCandidateKind::NodeGroup {
-                    "组"
+                    language.text("G", "组")
                 } else {
-                    "点"
+                    language.text("N", "点")
                 })
         };
         div()
@@ -2716,7 +3117,7 @@ impl RelayApp {
                                         .text_size(px(9.0))
                                         .font_weight(FontWeight::MEDIUM)
                                         .text_color(theme.text_secondary)
-                                        .child("当前出口"),
+                                        .child(language.text("Current", "当前出口")),
                                 )
                             }),
                     )
@@ -2764,7 +3165,11 @@ impl RelayApp {
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.workspace.select_node(node_id.clone());
                         trace_ui(UiEvent::PolicyPreviewOpened);
-                        this.status = format!("已选择 {node_name} · 只读模式未写入 Mihomo");
+                        this.status = if this.language() == Language::English {
+                            format!("Selected {node_name} · read-only, not written to Mihomo")
+                        } else {
+                            format!("已选择 {node_name} · 只读模式未写入 Mihomo")
+                        };
                         cx.notify();
                     }))
             })
@@ -2772,6 +3177,7 @@ impl RelayApp {
 
     #[allow(clippy::too_many_lines)]
     fn detail(&self, theme: Theme, compact: bool, cx: &mut Context<Self>) -> Div {
+        let language = self.language();
         let selected_policy = self.selected_policy().clone();
         let selected_node = self.selected_node();
         let manually_selectable = selected_policy.kind.allows_manual_selection();
@@ -2782,17 +3188,26 @@ impl RelayApp {
             .get(&benchmark_key)
             .is_some_and(GroupBenchmarkState::is_running);
         let guidance = match selected_policy.kind {
-            relay_core::PolicyGroupKind::Selector => "选择此策略当前使用的出口",
-            relay_core::PolicyGroupKind::UrlTest => {
-                "Mihomo 按策略配置的 URL 和间隔自动测量，候选项不可手动切换"
-            }
-            relay_core::PolicyGroupKind::Fallback => {
-                "Mihomo 按策略配置的间隔自动检查并故障转移，候选项不可手动切换"
-            }
-            relay_core::PolicyGroupKind::LoadBalance => {
-                "Mihomo 自动在候选分组之间分配连接，候选项不可手动切换"
-            }
-            relay_core::PolicyGroupKind::Direct => "直连策略没有可切换的出口",
+            relay_core::PolicyGroupKind::Selector => language.text(
+                "Choose the active exit for this policy",
+                "选择此策略当前使用的出口",
+            ),
+            relay_core::PolicyGroupKind::UrlTest => language.text(
+                "Mihomo measures the configured URL on schedule; candidates are automatic",
+                "Mihomo 按策略配置的 URL 和间隔自动测量，候选项不可手动切换",
+            ),
+            relay_core::PolicyGroupKind::Fallback => language.text(
+                "Mihomo checks candidates on schedule and fails over automatically",
+                "Mihomo 按策略配置的间隔自动检查并故障转移，候选项不可手动切换",
+            ),
+            relay_core::PolicyGroupKind::LoadBalance => language.text(
+                "Mihomo distributes connections across candidates automatically",
+                "Mihomo 自动在候选分组之间分配连接，候选项不可手动切换",
+            ),
+            relay_core::PolicyGroupKind::Direct => language.text(
+                "Direct policies have no selectable exit",
+                "直连策略没有可切换的出口",
+            ),
         };
         let mut body = div()
             .id("detail-scroll")
@@ -2810,7 +3225,11 @@ impl RelayApp {
                 .justify_between()
                 .child(div().text_color(theme.text_secondary).child(guidance))
                 .when(manually_selectable, |header| {
-                    header.child(Self::small_button("add-node", "＋ 添加候选项", theme))
+                    header.child(Self::small_button(
+                        "add-node",
+                        language.text("＋ Add candidate", "＋ 添加候选项"),
+                        theme,
+                    ))
                 }),
         );
         if selected_policy.kind.is_automatic() {
@@ -2827,14 +3246,20 @@ impl RelayApp {
                             .text_size(px(11.0))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(theme.text_secondary)
-                            .child("自动策略 · 只读候选项"),
+                            .child(language.text(
+                                "Automatic policy · read-only candidates",
+                                "自动策略 · 只读候选项",
+                            )),
                     )
                     .child(
                         div()
                             .mt_1()
                             .text_size(px(10.0))
                             .text_color(theme.text_tertiary)
-                            .child("名称和候选节点分组由用户配置；重新检查间隔属于策略设置。"),
+                            .child(language.text(
+                                "Names and candidate groups are user-defined; the interval belongs to the policy.",
+                                "名称和候选节点分组由用户配置；重新检查间隔属于策略设置。",
+                            )),
                     ),
             );
         }
@@ -2850,9 +3275,13 @@ impl RelayApp {
                 .flex()
                 .text_size(px(11.0))
                 .text_color(theme.text_tertiary)
-                .child(div().flex_1().child("候选节点 / 分组"))
-                .child(div().w(px(100.0)).child("来源"))
-                .child(div().w(px(64.0)).child("延迟")),
+                .child(
+                    div()
+                        .flex_1()
+                        .child(language.text("Candidate / group", "候选节点 / 分组")),
+                )
+                .child(div().w(px(100.0)).child(language.text("Source", "来源")))
+                .child(div().w(px(64.0)).child(language.text("Latency", "延迟"))),
         );
         for item in selected_policy.nodes.iter().cloned() {
             let current = item.id == selected_node.id;
@@ -2867,6 +3296,7 @@ impl RelayApp {
                 current,
                 manually_selectable,
                 benchmark_state,
+                language,
                 theme,
                 cx,
             ));
@@ -2881,13 +3311,17 @@ impl RelayApp {
                 .child(
                     div()
                         .font_weight(FontWeight::SEMIBOLD)
-                        .child("命中此策略的规则"),
+                        .child(language.text("Rules using this policy", "命中此策略的规则")),
                 )
                 .child(
                     div()
                         .text_size(px(11.0))
                         .text_color(theme.text_tertiary)
-                        .child(format!("{} 条，按顺序匹配", selected_policy.rules_count())),
+                        .child(if language == Language::English {
+                            format!("{} rules, matched in order", selected_policy.rules_count())
+                        } else {
+                            format!("{} 条，按顺序匹配", selected_policy.rules_count())
+                        }),
                 ),
         );
         for rule in &selected_policy.rules {
@@ -2910,7 +3344,11 @@ impl RelayApp {
                             .flex_1()
                             .child(format!("{}, {}", rule.kind, rule.payload)),
                     )
-                    .child(div().text_color(theme.status_success).child("命中")),
+                    .child(
+                        div()
+                            .text_color(theme.status_success)
+                            .child(language.text("Match", "命中")),
+                    ),
             );
         }
 
@@ -2939,7 +3377,7 @@ impl RelayApp {
                                         .tab_stop(true)
                                         .focusable()
                                         .cursor_pointer()
-                                        .child("← 返回")
+                                        .child(language.text("← Back", "← 返回"))
                                         .on_click(cx.listener(|this, _, _, cx| {
                                             this.workspace.navigate_back();
                                             cx.notify();
@@ -2963,12 +3401,21 @@ impl RelayApp {
                                             .child(selected_policy.name.clone()),
                                     )
                                     .child(div().mt_1().text_color(theme.text_secondary).child(
-                                        format!(
-                                            "{} · {} 个节点 · {} 条规则",
-                                            selected_policy.kind.label(),
-                                            selected_policy.nodes.len(),
-                                            selected_policy.rules_count()
-                                        ),
+                                        if language == Language::English {
+                                            format!(
+                                                "{} · {} nodes · {} rules",
+                                                policy_kind_label(language, selected_policy.kind),
+                                                selected_policy.nodes.len(),
+                                                selected_policy.rules_count()
+                                            )
+                                        } else {
+                                            format!(
+                                                "{} · {} 个节点 · {} 条规则",
+                                                policy_kind_label(language, selected_policy.kind),
+                                                selected_policy.nodes.len(),
+                                                selected_policy.rules_count()
+                                            )
+                                        },
                                     )),
                             )
                             .when(compact, |header| {
@@ -2997,11 +3444,15 @@ impl RelayApp {
                                     .border_color(theme.outline_subtle)
                                     .flex()
                                     .items_center()
-                                    .child("解释路由")
+                                    .child(language.text("Explain route", "解释路由"))
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.inspector_open = true;
                                         trace_ui(UiEvent::RouteInspectorOpened);
-                                        "已打开本地路由预测 · 演示数据"
+                                        this.language()
+                                            .text(
+                                                "Local route prediction opened · demo data",
+                                                "已打开本地路由预测 · 演示数据",
+                                            )
                                             .clone_into(&mut this.status);
                                         cx.notify();
                                     })),
@@ -3018,10 +3469,18 @@ impl RelayApp {
                                     .pb_2()
                                     .border_b_2()
                                     .border_color(theme.action_primary)
-                                    .child("节点"),
+                                    .child(language.text("Nodes", "节点")),
                             )
-                            .child(div().text_color(theme.text_secondary).child("规则"))
-                            .child(div().text_color(theme.text_secondary).child("设置")),
+                            .child(
+                                div()
+                                    .text_color(theme.text_secondary)
+                                    .child(language.text("Rules", "规则")),
+                            )
+                            .child(
+                                div()
+                                    .text_color(theme.text_secondary)
+                                    .child(language.text("Settings", "设置")),
+                            ),
                     ),
             )
             .child(body)
@@ -3076,12 +3535,21 @@ impl RelayApp {
 
     #[allow(clippy::too_many_lines)]
     fn inspector(&self, theme: Theme, overlay: bool, cx: &mut Context<Self>) -> Div {
+        let language = self.language();
         let selected_policy = self.selected_policy().clone();
         let selected_node = self.selected_node();
         let decision_copy = if selected_policy.kind.allows_manual_selection() {
-            format!("{} · 当前人工选择", selected_policy.kind.label())
+            format!(
+                "{} · {}",
+                policy_kind_label(language, selected_policy.kind),
+                language.text("manually selected", "当前人工选择")
+            )
         } else {
-            format!("{} · 由 Mihomo 自动决策", selected_policy.kind.label())
+            format!(
+                "{} · {}",
+                policy_kind_label(language, selected_policy.kind),
+                language.text("automatically decided by Mihomo", "由 Mihomo 自动决策")
+            )
         };
         let domain = if selected_policy.id.as_str() == "search" {
             "openai.com"
@@ -3111,8 +3579,8 @@ impl RelayApp {
                             .flex()
                             .items_center()
                             .gap_2()
-                            .child(div().text_size(px(18.0)).font_weight(FontWeight::BOLD).child("路由解释"))
-                            .child(div().px_2().py_1().rounded_sm().bg(theme.route_soft).text_size(px(10.0)).font_weight(FontWeight::SEMIBOLD).text_color(theme.route_trace).child("预测路径 · 演示数据"))
+                            .child(div().text_size(px(18.0)).font_weight(FontWeight::BOLD).child(language.text("Route explanation", "路由解释")))
+                            .child(div().px_2().py_1().rounded_sm().bg(theme.route_soft).text_size(px(10.0)).font_weight(FontWeight::SEMIBOLD).text_color(theme.route_trace).child(language.text("Predicted path · demo data", "预测路径 · 演示数据")))
                             .child(div().flex_1())
                             .when(overlay, |header| {
                                 header.child(
@@ -3122,7 +3590,7 @@ impl RelayApp {
                                         .tab_stop(true)
                                         .focusable()
                                         .cursor_pointer()
-                                        .child("关闭")
+                                        .child(language.text("Close", "关闭"))
                                         .on_click(cx.listener(|this, _, _, cx| {
                                             this.inspector_open = false;
                                             trace_ui(UiEvent::RouteInspectorClosed);
@@ -3131,7 +3599,7 @@ impl RelayApp {
                                 )
                             }),
                     )
-                    .child(div().mt_2().text_color(theme.text_secondary).child("按本地规则模型预览可能选择的路径"))
+                    .child(div().mt_2().text_color(theme.text_secondary).child(language.text("Preview the path selected by the local rule model", "按本地规则模型预览可能选择的路径")))
                     .child(
                         div()
                             .mt_4()
@@ -3152,10 +3620,14 @@ impl RelayApp {
                                     .text_color(theme.action_on_primary)
                                     .flex()
                                     .items_center()
-                                    .child("预测路由")
+                                    .child(language.text("Predict route", "预测路由"))
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         trace_ui(UiEvent::RoutePredictionRequested);
-                                        this.status = format!("已预测 {domain}：{} → {}", this.selected_policy().name, this.selected_node().name);
+                                        this.status = if this.language() == Language::English {
+                                            format!("Predicted {domain}: {} → {}", this.selected_policy().name, this.selected_node().name)
+                                        } else {
+                                            format!("已预测 {domain}：{} → {}", this.selected_policy().name, this.selected_node().name)
+                                        };
                                         cx.notify();
                                     })),
                             ),
@@ -3179,16 +3651,16 @@ impl RelayApp {
                                     .w(px(2.0))
                                     .bg(theme.route_trace),
                             )
-                            .child(Self::signal_stage("01", "预测首条命中规则", "DOMAIN-SUFFIX".to_owned(), format!("{domain} · 规则 #{rule_index}"), true, theme))
-                            .child(Self::signal_stage("02", "交给策略组", selected_policy.name.clone(), decision_copy, false, theme))
-                            .child(Self::signal_stage("03", "最终出口", selected_node.name.clone(), format!("{} · {}", selected_node.latency_ms.map_or_else(|| "延迟未知".to_owned(), |latency| format!("{latency} ms")), selected_node.provider.as_deref().unwrap_or("内置节点")), false, theme)),
+                            .child(Self::signal_stage("01", language.text("First matching rule", "预测首条命中规则"), "DOMAIN-SUFFIX".to_owned(), format!("{domain} · {} #{rule_index}", language.text("rule", "规则")), true, theme))
+                            .child(Self::signal_stage("02", language.text("Policy group", "交给策略组"), selected_policy.name.clone(), decision_copy, false, theme))
+                            .child(Self::signal_stage("03", language.text("Final exit", "最终出口"), selected_node.name.clone(), format!("{} · {}", selected_node.latency_ms.map_or_else(|| language.text("Unknown latency", "延迟未知").to_owned(), |latency| format!("{latency} ms")), selected_node.provider.as_deref().unwrap_or(language.text("Built-in", "内置节点"))), false, theme)),
                     )
                     .when_some(observed_route, |panel, observed| {
-                        let host = observed.host.unwrap_or_else(|| "目标未知".to_owned());
-                        let rule = observed.rule.unwrap_or_else(|| "规则未知".to_owned());
+                        let host = observed.host.unwrap_or_else(|| language.text("Unknown target", "目标未知").to_owned());
+                        let rule = observed.rule.unwrap_or_else(|| language.text("Unknown rule", "规则未知").to_owned());
                         let payload = observed.rule_payload.unwrap_or_default();
                         let chain = if observed.chains.is_empty() {
-                            "链路未返回".to_owned()
+                            language.text("No route returned", "链路未返回").to_owned()
                         } else {
                             observed.chains.join(" → ")
                         };
@@ -3205,7 +3677,7 @@ impl RelayApp {
                                         .text_size(px(11.0))
                                         .font_weight(FontWeight::SEMIBOLD)
                                         .text_color(theme.action_primary)
-                                        .child("最近已观察 · /connections"),
+                                        .child(language.text("Recently observed · /connections", "最近已观察 · /connections")),
                                 )
                                 .child(div().mt_2().font_weight(FontWeight::BOLD).child(host))
                                 .child(
@@ -3229,9 +3701,9 @@ impl RelayApp {
                             .border_t_1()
                             .border_color(theme.outline_subtle)
                             .text_color(theme.text_secondary)
-                            .child("匹配方式                         规则模式")
-                            .child(div().mt_2().child("DNS                     未查询（域名规则）"))
-                            .child(div().mt_2().child("结果类型                   本地规则预测")),
+                            .child(language.text("Match method                         Rule mode", "匹配方式                         规则模式"))
+                            .child(div().mt_2().child(language.text("DNS                     Not queried (domain rule)", "DNS                     未查询（域名规则）")))
+                            .child(div().mt_2().child(language.text("Result type                   Local prediction", "结果类型                   本地规则预测"))),
                     )
                     .child(
                         div()
@@ -3241,23 +3713,26 @@ impl RelayApp {
                             .border_color(theme.outline_subtle)
                             .text_size(px(11.0))
                             .text_color(theme.text_tertiary)
-                            .child("这不是 Mihomo 已建立的连接。只有来自 /connections 的链路才能标为“已观察”。"),
+                            .child(language.text("This is not an established Mihomo connection. Only routes from /connections are marked as observed.", "这不是 Mihomo 已建立的连接。只有来自 /connections 的链路才能标为“已观察”。")),
                     ),
             )
     }
 
     fn status_bar(&self, theme: Theme) -> Div {
+        let language = self.language();
         let kernel_name = self.runtime.kind().display_name();
         let (source, endpoint, download, upload, dot) = match &self.controller {
             ControllerState::Demo => (
-                format!("{kernel_name} 未连接"),
-                "配置：演示数据".to_owned(),
+                format!("{kernel_name} {}", language.text("disconnected", "未连接")),
+                language
+                    .text("Source: demo data", "配置：演示数据")
+                    .to_owned(),
                 "↓ —".to_owned(),
                 "↑ —".to_owned(),
                 theme.route_trace,
             ),
             ControllerState::Connecting { endpoint } => (
-                format!("{kernel_name} 连接中"),
+                format!("{kernel_name} {}", language.text("connecting", "连接中")),
                 endpoint.clone(),
                 "↓ —".to_owned(),
                 "↑ —".to_owned(),
@@ -3270,14 +3745,29 @@ impl RelayApp {
                 download_total,
                 upload_total,
             } => (
-                format!("{kernel_name} {version} · {active_connections} 条连接"),
+                if language == Language::English {
+                    format!("{kernel_name} {version} · {active_connections} connections")
+                } else {
+                    format!("{kernel_name} {version} · {active_connections} 条连接")
+                },
                 endpoint.clone(),
-                format!("累计↓ {}", format_bytes(*download_total)),
-                format!("累计↑ {}", format_bytes(*upload_total)),
+                format!(
+                    "{}↓ {}",
+                    language.text("Total ", "累计"),
+                    format_bytes(*download_total)
+                ),
+                format!(
+                    "{}↑ {}",
+                    language.text("Total ", "累计"),
+                    format_bytes(*upload_total)
+                ),
                 theme.status_success,
             ),
             ControllerState::Failed { endpoint, .. } => (
-                format!("{kernel_name} 连接失败"),
+                format!(
+                    "{kernel_name} {}",
+                    language.text("connection failed", "连接失败")
+                ),
                 endpoint.clone(),
                 "↓ —".to_owned(),
                 "↑ —".to_owned(),
@@ -3333,6 +3823,32 @@ fn format_bytes_in_unit(bytes: u64, unit: u64, suffix: &str) -> String {
     let whole = bytes / unit;
     let tenth = (bytes % unit) * 10 / unit;
     format!("{whole}.{tenth} {suffix}")
+}
+
+fn proxy_mode_label(language: Language, mode: ProxyMode) -> &'static str {
+    match mode {
+        ProxyMode::Off => language.text("Off", "关闭代理"),
+        ProxyMode::System => language.text("System proxy", "系统代理"),
+        ProxyMode::Tun => language.text("TUN proxy", "TUN 代理"),
+    }
+}
+
+fn routing_mode_label(language: Language, mode: RoutingMode) -> &'static str {
+    match mode {
+        RoutingMode::Direct => language.text("Direct", "直连"),
+        RoutingMode::Global => language.text("Global", "全局"),
+        RoutingMode::Rule => language.text("Rules", "规则"),
+    }
+}
+
+fn policy_kind_label(language: Language, kind: relay_core::PolicyGroupKind) -> &'static str {
+    match kind {
+        relay_core::PolicyGroupKind::Selector => language.text("Manual", "手动选择"),
+        relay_core::PolicyGroupKind::UrlTest => language.text("Auto select", "自动选择"),
+        relay_core::PolicyGroupKind::Fallback => language.text("Fallback", "故障转移"),
+        relay_core::PolicyGroupKind::LoadBalance => language.text("Load balance", "负载均衡"),
+        relay_core::PolicyGroupKind::Direct => language.text("Direct", "直连"),
+    }
 }
 
 impl Default for RelayApp {
