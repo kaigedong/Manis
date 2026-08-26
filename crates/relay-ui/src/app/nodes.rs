@@ -3220,85 +3220,76 @@ impl RelayApp {
             .gap_3()
             .border_t_1()
             .border_color(theme.outline_subtle)
+            .bg(if global_selected {
+                theme.action_soft
+            } else {
+                theme.surface_high
+            })
             .child(content)
             .when(global_candidate, |row| {
                 if global_writable {
-                    row.child(
-                        div()
-                            .id(format!("global-node-{selected_name}"))
-                            .role(Role::Button)
-                            .aria_label(format!(
-                                "{} {selected_name} {}",
-                                language.text("Select", "选择"),
-                                language.text("as global exit", "作为全局出口")
-                            ))
-                            .aria_toggled(if global_selected {
-                                Toggled::True
-                            } else {
-                                Toggled::False
-                            })
-                            .tab_stop(true)
-                            .focusable()
-                            .cursor_pointer()
-                            .flex_shrink_0()
-                            .h(px(28.0))
-                            .min_w(if compact { px(54.0) } else { px(76.0) })
-                            .px_2()
-                            .rounded_md()
-                            .border_1()
-                            .border_color(if global_selected {
-                                theme.action_primary
-                            } else {
-                                theme.outline_subtle
-                            })
-                            .bg(
-                                if global_selected
-                                    && self.routing_mode == relay_core::RoutingMode::Global
-                                {
-                                    theme.action_primary
-                                } else if global_selected {
-                                    theme.action_soft
+                    row.role(Role::RadioButton)
+                        .aria_label(format!(
+                            "{} {selected_name} {}",
+                            language.text("Select", "选择"),
+                            language.text("as global exit", "作为全局出口")
+                        ))
+                        .aria_toggled(if global_selected {
+                            Toggled::True
+                        } else {
+                            Toggled::False
+                        })
+                        .tab_stop(!selection_locked)
+                        .focusable()
+                        .cursor_pointer()
+                        .child(
+                            div()
+                                .w(if compact { px(66.0) } else { px(76.0) })
+                                .flex_shrink_0()
+                                .flex()
+                                .items_center()
+                                .justify_end()
+                                .gap_2()
+                                .text_size(px(10.0))
+                                .font_weight(if global_selected {
+                                    FontWeight::SEMIBOLD
                                 } else {
-                                    theme.surface_high
-                                },
-                            )
-                            .text_color(
-                                if global_selected
-                                    && self.routing_mode == relay_core::RoutingMode::Global
-                                {
-                                    theme.action_on_primary
-                                } else if global_selected {
+                                    FontWeight::NORMAL
+                                })
+                                .text_color(if global_selected {
                                     theme.action_primary
                                 } else {
-                                    theme.text_secondary
-                                },
-                            )
-                            .text_size(px(10.0))
-                            .font_weight(if global_selected {
-                                FontWeight::SEMIBOLD
-                            } else {
-                                FontWeight::NORMAL
-                            })
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(if global_busy {
-                                language.text("Switching...", "切换中…")
-                            } else if global_selected
-                                && self.routing_mode == relay_core::RoutingMode::Global
-                            {
-                                language.text("Active", "使用中")
-                            } else if global_selected {
-                                language.text("Saved", "已保存")
-                            } else {
-                                language.text("Set Global", "设为全局")
-                            })
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                if !selection_locked {
-                                    this.select_global_node(selected_name.clone(), cx);
-                                }
-                            })),
-                    )
+                                    theme.text_tertiary
+                                })
+                                .child(
+                                    div()
+                                        .size(px(14.0))
+                                        .rounded_full()
+                                        .border_2()
+                                        .border_color(if global_selected {
+                                            theme.action_primary
+                                        } else {
+                                            theme.outline_strong
+                                        })
+                                        .when(global_selected, |dot| dot.bg(theme.action_primary)),
+                                )
+                                .child(if global_busy {
+                                    language.text("Switching", "切换中")
+                                } else if global_selected
+                                    && self.routing_mode == relay_core::RoutingMode::Global
+                                {
+                                    language.text("Active", "使用中")
+                                } else if global_selected {
+                                    language.text("Selected", "已选")
+                                } else {
+                                    language.text("Select", "选择")
+                                }),
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            if !selection_locked {
+                                this.select_global_node(selected_name.clone(), cx);
+                            }
+                        }))
                 } else {
                     row.child(
                         div()

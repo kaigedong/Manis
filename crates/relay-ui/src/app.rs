@@ -9,8 +9,8 @@ use gpui::{
 };
 use relay_core::{
     CompactNavigation, KernelKind, NodeGroupIcon, NodeGroupStrategy, NodeIdentity, NodePolicyGroup,
-    NodeWorkspaceState, PolicyCatalog, PolicyGroup, PolicyNode, PolicyWorkspaceState,
-    PrimaryWorkspace, ProxyId, ProxyMode, RoutingMode, WindowSizeClass,
+    NodeWorkspaceState, PolicyCatalog, PolicyGroup, PolicyGroupId, PolicyNode,
+    PolicyWorkspaceState, PrimaryWorkspace, ProxyId, ProxyMode, RoutingMode, WindowSizeClass,
 };
 use relay_mihomo::{Connection, ObservedRouteEvidence, RuntimeConfig};
 use relay_profile::{QxRuleList, SecretUrl};
@@ -513,10 +513,11 @@ pub struct RelayApp {
     node_group_runtime_generation: u64,
     source_store_error: Option<SubscriptionStoreError>,
     proxy_mode: ProxyMode,
-    proxy_mode_busy: bool,
+    proxy_mode_busy: Option<ProxyMode>,
     routing_mode: RoutingMode,
     routing_mode_busy: Option<RoutingMode>,
     global_selection_busy: Option<String>,
+    policy_selection_busy: Option<String>,
     proxy_runtime: RuntimeConfig,
     system_proxy: Arc<Mutex<SystemProxySession>>,
     active_connections: Vec<Connection>,
@@ -536,6 +537,10 @@ pub struct RelayApp {
     qx_rule_input_events: Option<Subscription>,
     node_group_name_input: Option<Entity<SubscriptionTextInput>>,
     node_group_filter_input: Option<Entity<SubscriptionTextInput>>,
+    activity_search_input: Option<Entity<SubscriptionTextInput>>,
+    activity_search_events: Option<Subscription>,
+    logs_search_input: Option<Entity<SubscriptionTextInput>>,
+    logs_search_events: Option<Subscription>,
     #[allow(dead_code)]
     app_lifecycle_events: Option<Subscription>,
 }
@@ -746,10 +751,11 @@ impl RelayApp {
             node_group_runtime_generation: 0,
             source_store_error,
             proxy_mode: ProxyMode::Off,
-            proxy_mode_busy: false,
+            proxy_mode_busy: None,
             routing_mode,
             routing_mode_busy: None,
             global_selection_busy: None,
+            policy_selection_busy: None,
             proxy_runtime: RuntimeConfig::default(),
             system_proxy: Arc::new(Mutex::new(SystemProxySession::default())),
             active_connections: Vec::new(),
@@ -769,6 +775,10 @@ impl RelayApp {
             qx_rule_input_events: None,
             node_group_name_input: None,
             node_group_filter_input: None,
+            activity_search_input: None,
+            activity_search_events: None,
+            logs_search_input: None,
+            logs_search_events: None,
             app_lifecycle_events: None,
         }
     }
@@ -937,6 +947,73 @@ impl RelayApp {
                     cx,
                 )
             }));
+        }
+    }
+
+    fn ensure_runtime_search_inputs(&mut self, theme: Theme, cx: &mut Context<Self>) {
+        let language = self.language();
+        if let Some(input) = self.activity_search_input.as_ref() {
+            input.update(cx, |input, cx| {
+                input.set_theme(theme, self.dark, cx);
+                input.set_placeholder(
+                    language.text(
+                        "Filter by target, process, rule, or route",
+                        "筛选目标、进程、规则或路径",
+                    ),
+                    cx,
+                );
+            });
+        } else {
+            let input = cx.new(|cx| {
+                SubscriptionTextInput::new_field(
+                    "activity-search-input",
+                    language.text(
+                        "Filter by target, process, rule, or route",
+                        "筛选目标、进程、规则或路径",
+                    ),
+                    256,
+                    theme,
+                    self.dark,
+                    cx,
+                )
+            });
+            let events = cx.subscribe(&input, |_this, _input, _: &SubscriptionInputChanged, cx| {
+                cx.notify();
+            });
+            self.activity_search_input = Some(input);
+            self.activity_search_events = Some(events);
+        }
+
+        if let Some(input) = self.logs_search_input.as_ref() {
+            input.update(cx, |input, cx| {
+                input.set_theme(theme, self.dark, cx);
+                input.set_placeholder(
+                    language.text(
+                        "Filter events, errors, or OP number",
+                        "筛选事件、错误或 OP 编号",
+                    ),
+                    cx,
+                );
+            });
+        } else {
+            let input = cx.new(|cx| {
+                SubscriptionTextInput::new_field(
+                    "logs-search-input",
+                    language.text(
+                        "Filter events, errors, or OP number",
+                        "筛选事件、错误或 OP 编号",
+                    ),
+                    256,
+                    theme,
+                    self.dark,
+                    cx,
+                )
+            });
+            let events = cx.subscribe(&input, |_this, _input, _: &SubscriptionInputChanged, cx| {
+                cx.notify();
+            });
+            self.logs_search_input = Some(input);
+            self.logs_search_events = Some(events);
         }
     }
 
@@ -2202,14 +2279,14 @@ impl RelayApp {
                 self.runtime.profile_source().label()
             ),
         );
-        if self.proxy_mode_busy || requested == self.proxy_mode {
+        if self.proxy_mode_busy.is_some() || requested == self.proxy_mode {
             record_operation(
                 operation,
                 LogLevel::Warn,
                 "proxy.mode.ignored",
                 format!(
                     "busy={} already_selected={}",
-                    self.proxy_mode_busy,
+                    self.proxy_mode_busy.is_some(),
                     requested == self.proxy_mode
                 ),
             );
@@ -2286,12 +2363,20 @@ impl RelayApp {
                 .filter(|port| *port > 0)
                 .or(mixed_port),
         };
-        self.proxy_mode_busy = true;
-        self.status = format!(
-            "{}{}…",
-            language.text("Switching to ", "正在切换到"),
-            proxy_mode_label(language, requested)
-        );
+        self.proxy_mode_busy = Some(requested);
+        self.status = match requested {
+            ProxyMode::Tun => language
+                .text(
+                    "Preparing the macOS TUN helper and traffic route…",
+                    "正在准备 macOS TUN 辅助服务与流量接管…",
+                )
+                .to_owned(),
+            _ => format!(
+                "{}{}…",
+                language.text("Switching to ", "正在切换到"),
+                proxy_mode_label(language, requested)
+            ),
+        };
 
         let executor = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
@@ -2356,7 +2441,7 @@ impl RelayApp {
                 .await;
             this.update(cx, |this, cx| {
                 let language = this.language();
-                this.proxy_mode_busy = false;
+                this.proxy_mode_busy = None;
                 match result {
                     Ok(()) => {
                         record_operation(
@@ -2680,6 +2765,123 @@ impl RelayApp {
         cx.notify();
     }
 
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+    fn select_policy_node(
+        &mut self,
+        group_id: PolicyGroupId,
+        group_name: String,
+        node_id: ProxyId,
+        node_name: String,
+        cx: &mut Context<Self>,
+    ) {
+        let language = self.language();
+        let operation = begin_operation(
+            "policy.node.requested",
+            format!("group={group_name} candidate_selected=true"),
+        );
+        if self.policy_selection_busy.is_some() {
+            record_operation(
+                operation,
+                LogLevel::Warn,
+                "policy.node.ignored",
+                "reason=selection_busy",
+            );
+            return;
+        }
+        if !matches!(self.controller, ControllerState::Connected { .. }) {
+            record_operation(
+                operation,
+                LogLevel::Error,
+                "policy.node.rejected",
+                "reason=controller_not_connected",
+            );
+            language
+                .text(
+                    "Connect to the kernel before changing a policy node",
+                    "请先连接内核，再切换策略组节点",
+                )
+                .clone_into(&mut self.status);
+            cx.notify();
+            return;
+        }
+        if matches!(&*self.runtime, ControllerRuntime::External { .. }) {
+            record_operation(
+                operation,
+                LogLevel::Error,
+                "policy.node.rejected",
+                "reason=external_controller_read_only",
+            );
+            language
+                .text(
+                    "External controllers are read-only; use a Relay-managed kernel",
+                    "外部控制器保持只读；请使用 Relay 托管内核",
+                )
+                .clone_into(&mut self.status);
+            cx.notify();
+            return;
+        }
+
+        self.policy_selection_busy = Some(node_name.clone());
+        self.status = if language == Language::English {
+            format!("Setting “{group_name}” to “{node_name}”…")
+        } else {
+            format!("正在将“{group_name}”设为“{node_name}”…")
+        };
+        let runtime = self.runtime.clone();
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let result = executor
+                .spawn({
+                    let group_name = group_name.clone();
+                    let node_name = node_name.clone();
+                    async move { runtime.select_node_group_node(&group_name, &node_name) }
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                this.policy_selection_busy = None;
+                match result {
+                    Ok(snapshot) => {
+                        let current = snapshot.current.as_deref().unwrap_or(&node_name);
+                        let _ = this.catalog.apply_selector_target(group_id.as_str(), current);
+                        this.workspace.select_node(node_id);
+                        record_operation(
+                            operation,
+                            LogLevel::Info,
+                            "policy.node.succeeded",
+                            format!("group={group_name}"),
+                        );
+                        this.status = if this.language() == Language::English {
+                            format!(
+                                "“{group_name}” now uses “{current}” when a rule selects this policy"
+                            )
+                        } else {
+                            format!("规则命中“{group_name}”时将使用“{current}”")
+                        };
+                    }
+                    Err(error) => {
+                        record_operation(
+                            operation,
+                            LogLevel::Error,
+                            "policy.node.failed",
+                            error.to_string(),
+                        );
+                        this.status = format!(
+                            "{}{error}",
+                            this.language().text(
+                                "Failed to change policy node: ",
+                                "策略组节点切换失败："
+                            )
+                        );
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
     fn global_target(&self) -> Option<&str> {
         self.catalog
             .iter()
@@ -2742,26 +2944,6 @@ impl RelayApp {
                         )
                     }),
             )
-            .when(!compact, |chrome| {
-                chrome.child(
-                    div()
-                        .h(px(34.0))
-                        .max_w(px(520.0))
-                        .flex_1()
-                        .flex()
-                        .items_center()
-                        .px_3()
-                        .rounded_md()
-                        .border_1()
-                        .border_color(theme.outline_subtle)
-                        .bg(theme.surface_high)
-                        .text_color(theme.text_tertiary)
-                        .child(language.text(
-                            "Search policies, rules, connections     ⌘K",
-                            "搜索策略、规则、连接     ⌘K",
-                        )),
-                )
-            })
             .child(div().flex_1())
             .child(
                 div()
@@ -2819,8 +3001,16 @@ impl RelayApp {
                 .flex()
                 .items_center()
                 .gap_2()
-                .child(if self.proxy_mode_busy {
-                    language.text("Proxy · Switching…", "接入 · 切换中…")
+                .child(if let Some(requested) = self.proxy_mode_busy {
+                    match requested {
+                        ProxyMode::Tun => {
+                            language.text("Proxy · Preparing TUN…", "接入 · 正在准备 TUN…")
+                        }
+                        ProxyMode::System => {
+                            language.text("Proxy · Enabling system…", "接入 · 正在启用系统代理…")
+                        }
+                        ProxyMode::Off => language.text("Proxy · Turning off…", "接入 · 正在关闭…"),
+                    }
                 } else {
                     match self.proxy_mode {
                         ProxyMode::Off => language.text("Proxy · Off", "接入 · 关闭"),
@@ -2828,7 +3018,7 @@ impl RelayApp {
                         ProxyMode::Tun => language.text("Proxy · TUN", "接入 · TUN"),
                     }
                 })
-                .when(!self.proxy_mode_busy, |control| {
+                .when(self.proxy_mode_busy.is_none(), |control| {
                     control.child(
                         div()
                             .text_size(px(10.0))
@@ -2860,6 +3050,8 @@ impl RelayApp {
             );
         for mode in [ProxyMode::Off, ProxyMode::System, ProxyMode::Tun] {
             let selected = mode == self.proxy_mode;
+            let pending = self.proxy_mode_busy == Some(mode);
+            let interactive = self.proxy_mode_busy.is_none();
             control = control.child(
                 div()
                     .id(format!("proxy-mode-{mode:?}"))
@@ -2870,38 +3062,43 @@ impl RelayApp {
                     } else {
                         Toggled::False
                     })
-                    .tab_stop(true)
+                    .tab_stop(interactive)
                     .focusable()
-                    .cursor_pointer()
                     .h_full()
                     .px_3()
                     .rounded_sm()
                     .flex()
                     .items_center()
                     .text_size(px(11.0))
-                    .font_weight(if selected {
+                    .font_weight(if pending || selected {
                         FontWeight::SEMIBOLD
                     } else {
                         FontWeight::NORMAL
                     })
-                    .bg(if selected {
+                    .bg(if pending || selected {
                         theme.action_primary
                     } else {
                         theme.surface_high
                     })
-                    .text_color(if selected {
+                    .text_color(if pending || selected {
                         theme.action_on_primary
                     } else {
                         theme.text_secondary
                     })
-                    .child(if self.proxy_mode_busy && selected {
-                        language.text("Switching…", "切换中…")
+                    .child(if pending {
+                        match mode {
+                            ProxyMode::Tun => language.text("Preparing TUN…", "准备 TUN…"),
+                            ProxyMode::System => language.text("Enabling…", "启用中…"),
+                            ProxyMode::Off => language.text("Turning off…", "关闭中…"),
+                        }
                     } else {
                         proxy_mode_label(language, mode)
                     })
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.apply_proxy_mode(mode, cx);
-                    })),
+                    .when(interactive, |button| {
+                        button.cursor_pointer().on_click(
+                            cx.listener(move |this, _, _, cx| this.apply_proxy_mode(mode, cx)),
+                        )
+                    }),
             );
         }
         control
@@ -3226,12 +3423,12 @@ impl RelayApp {
                     .rounded_md()
                     .border_1()
                     .border_color(if selected {
-                        theme.action_primary
+                        theme.outline_subtle
                     } else {
                         theme.surface_low
                     })
                     .bg(if selected {
-                        theme.action_soft
+                        theme.surface_high
                     } else {
                         theme.surface_low
                     })
@@ -3308,23 +3505,9 @@ impl RelayApp {
                             .mt_1()
                             .text_color(theme.text_secondary)
                             .child(language.text(
-                                "Node selection and failover without editing YAML",
-                                "节点选择与故障转移，不需要编辑 YAML",
+                                "Rules target a policy; open one to configure its exit",
+                                "分流规则指定策略组；打开后配置它的出口",
                             )),
-                    )
-                    .child(
-                        div()
-                            .mt_4()
-                            .h(px(36.0))
-                            .px_3()
-                            .rounded_md()
-                            .border_1()
-                            .border_color(theme.outline_subtle)
-                            .bg(theme.surface_high)
-                            .flex()
-                            .items_center()
-                            .text_color(theme.text_tertiary)
-                            .child(language.text("Filter policy groups", "筛选策略组")),
                     ),
             )
             .child(rows)
@@ -3390,11 +3573,14 @@ impl RelayApp {
             .on_click(cx.listener(|this, _, _, cx| this.connect_mihomo(cx)))
     }
 
-    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
     fn node_row(
         item: PolicyNode,
+        policy_id: PolicyGroupId,
+        policy_name: String,
         current: bool,
         manually_selectable: bool,
+        selection_busy: bool,
         benchmark_state: GroupBenchmarkNodeState,
         language: Language,
         theme: Theme,
@@ -3443,7 +3629,7 @@ impl RelayApp {
         };
         div()
             .id(format!("node-{}", item.id.as_str()))
-            .tab_stop(manually_selectable)
+            .tab_stop(manually_selectable && !selection_busy)
             .min_h(px(64.0))
             .px_3()
             .flex()
@@ -3533,14 +3719,15 @@ impl RelayApp {
                     .focusable()
                     .cursor_pointer()
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        this.workspace.select_node(node_id.clone());
-                        trace_ui(UiEvent::PolicyPreviewOpened);
-                        this.status = if this.language() == Language::English {
-                            format!("Selected {node_name} · read-only, not written to Mihomo")
-                        } else {
-                            format!("已选择 {node_name} · 只读模式未写入 Mihomo")
-                        };
-                        cx.notify();
+                        if !selection_busy {
+                            this.select_policy_node(
+                                policy_id.clone(),
+                                policy_name.clone(),
+                                node_id.clone(),
+                                node_name.clone(),
+                                cx,
+                            );
+                        }
                     }))
             })
     }
@@ -3559,8 +3746,8 @@ impl RelayApp {
             .is_some_and(GroupBenchmarkState::is_running);
         let guidance = match selected_policy.kind {
             relay_core::PolicyGroupKind::Selector => language.text(
-                "Choose the active exit for this policy",
-                "选择此策略当前使用的出口",
+                "Choose the exit used when a routing rule targets this policy",
+                "分流规则命中此策略组时，使用下方所选出口",
             ),
             relay_core::PolicyGroupKind::UrlTest => language.text(
                 "Mihomo measures the configured URL on schedule; candidates are automatic",
@@ -3663,8 +3850,11 @@ impl RelayApp {
                 });
             body = body.child(Self::node_row(
                 item,
+                selected_policy.id.clone(),
+                selected_policy.name.clone(),
                 current,
                 manually_selectable,
+                self.policy_selection_busy.is_some(),
                 benchmark_state,
                 language,
                 theme,
@@ -4245,6 +4435,7 @@ impl Render for RelayApp {
         self.ensure_subscription_input(theme, cx);
         self.ensure_qx_rule_input(theme, cx);
         self.ensure_node_group_inputs(theme, cx);
+        self.ensure_runtime_search_inputs(theme, cx);
         self.ensure_source_refresh_scheduler(cx);
         let compact = size_class == WindowSizeClass::Compact;
         let show_groups =

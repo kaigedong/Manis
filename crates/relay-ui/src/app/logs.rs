@@ -2,18 +2,37 @@ use gpui::{Div, FontWeight, ParentElement, Role, Styled, div, prelude::*, px};
 use relay_core::WindowSizeClass;
 
 use super::RelayApp;
-use crate::{diagnostics::recent_ui_logs, localization::Language, theme::Theme};
+use crate::{
+    diagnostics::{UiLogEntry, recent_ui_logs},
+    localization::Language,
+    mihomo::KernelLogEntry,
+    theme::Theme,
+};
 
 impl RelayApp {
     #[allow(clippy::too_many_lines)]
     pub(super) fn logs_workspace(
         &self,
         theme: Theme,
-        _size_class: WindowSizeClass,
+        size_class: WindowSizeClass,
         cx: &mut gpui::Context<Self>,
     ) -> Div {
-        let logs = recent_ui_logs();
-        let count = logs.len() + self.kernel_logs.len();
+        let compact = size_class == WindowSizeClass::Compact;
+        let query = self
+            .logs_search_input
+            .as_ref()
+            .map(|input| input.read(cx).value().trim().to_owned())
+            .unwrap_or_default();
+        let logs = recent_ui_logs()
+            .into_iter()
+            .filter(|entry| ui_log_matches_query(entry, &query))
+            .collect::<Vec<_>>();
+        let kernel_logs = self
+            .kernel_logs
+            .iter()
+            .filter(|entry| kernel_log_matches_query(entry, &query))
+            .collect::<Vec<_>>();
+        let count = logs.len() + kernel_logs.len();
         let language = self.language();
         let mut rows = div()
             .id("logs-scroll")
@@ -21,7 +40,7 @@ impl RelayApp {
             .overflow_y_scroll()
             .flex()
             .flex_col();
-        if logs.is_empty() && self.kernel_logs.is_empty() {
+        if logs.is_empty() && kernel_logs.is_empty() {
             rows = rows.child(
                 div()
                     .flex_1()
@@ -29,13 +48,17 @@ impl RelayApp {
                     .items_center()
                     .justify_center()
                     .text_color(theme.text_tertiary)
-                    .child(language.text(
-                        "No kernel logs or Relay UI events yet",
-                        "还没有内核日志或 Relay UI 事件",
-                    )),
+                    .child(if query.is_empty() {
+                        language.text(
+                            "No kernel logs or Relay UI events yet",
+                            "还没有内核日志或 Relay UI 事件",
+                        )
+                    } else {
+                        language.text("No log entry matches this filter", "没有符合当前筛选的日志")
+                    }),
             );
         } else {
-            for entry in self.kernel_logs.iter().rev() {
+            for entry in kernel_logs.into_iter().rev() {
                 rows = rows.child(
                     div()
                         .min_h(px(48.0))
@@ -182,6 +205,13 @@ impl RelayApp {
                             ),
                     )
                     .child(div().flex_1())
+                    .when_some(self.logs_search_input.clone(), |header, input| {
+                        header.child(
+                            div()
+                                .w(if compact { px(210.0) } else { px(320.0) })
+                                .child(input),
+                        )
+                    })
                     .child(
                         div()
                             .id("refresh-logs")
@@ -203,6 +233,36 @@ impl RelayApp {
             )
             .child(rows)
     }
+}
+
+fn ui_log_matches_query(entry: &UiLogEntry, query: &str) -> bool {
+    if query.is_empty() {
+        return true;
+    }
+    let query = query.to_lowercase();
+    let operation = entry
+        .operation_id
+        .map(|operation| format!("op-{operation:04}"));
+    [
+        Some(entry.event.as_str()),
+        Some(entry.level.as_str()),
+        entry.detail.as_deref(),
+        operation.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .any(|value| value.to_lowercase().contains(&query))
+        || entry.sequence.to_string().contains(&query)
+}
+
+fn kernel_log_matches_query(entry: &KernelLogEntry, query: &str) -> bool {
+    if query.is_empty() {
+        return true;
+    }
+    let query = query.to_lowercase();
+    entry.level.to_lowercase().contains(&query)
+        || entry.payload.to_lowercase().contains(&query)
+        || format!("k#{:04}", entry.sequence).contains(&query)
 }
 
 fn logs_summary(language: Language, count: usize, live_status: &str, dropped: u64) -> String {
@@ -228,6 +288,8 @@ fn format_log_time(timestamp_ms: u128) -> String {
 
 #[cfg(test)]
 mod tests {
+    use crate::diagnostics::UiLogEntry;
+
     #[test]
     fn log_time_is_bounded_and_readable() {
         assert_eq!(super::format_log_time(3_723_000), "01:02:03 UTC");
@@ -248,5 +310,22 @@ mod tests {
             ),
             "2 条 · 操作链与 OP 编号已持久化 · Mihomo 已连接 · 已丢弃 1 条过载日志 · URL/令牌已脱敏"
         );
+    }
+
+    #[test]
+    fn log_filter_matches_event_detail_level_and_operation_number() {
+        let entry = UiLogEntry {
+            sequence: 12,
+            timestamp_ms: 0,
+            level: "ERROR".to_owned(),
+            operation_id: Some(5),
+            event: "proxy.mode.failed".to_owned(),
+            detail: Some("helper timed out".to_owned()),
+        };
+
+        for query in ["proxy", "ERROR", "timed out", "op-0005", "12", ""] {
+            assert!(super::ui_log_matches_query(&entry, query));
+        }
+        assert!(!super::ui_log_matches_query(&entry, "routing"));
     }
 }

@@ -1,5 +1,5 @@
 {
-  "score": 95,
+  "score": 94,
   "verdict": "pass",
   "category_match": true,
   "threshold": 90,
@@ -8,33 +8,31 @@
     "score": 94,
     "verdict": "pass",
     "category_match": true,
-    "reasoning": "Connected state clearly separates the runtime/observed path from the predicted route without collapsing the two. Hierarchy, spacing, and density stay consistent with the reference, with no blocking visual or accessibility issues."
+    "reasoning": "The revised desktop shell keeps the established Fluent/Material-inspired visual language while making the interaction model legible: nodes are selectable exits, a policy row is only the open editor context, and search is scoped to the two data-heavy workspaces where it is useful."
   },
   "references": [
-    "/Users/bobo/.planning/qx_policy_client_ui/relay-direction-board.png",
     "/Users/bobo/.planning/qx_policy_client_ui/reference-fluent2.png",
-    "/Users/bobo/.planning/qx_policy_client_ui/reference-m3-expressive.png"
+    "/Users/bobo/.planning/qx_policy_client_ui/reference-m3-expressive.png",
+    "/Users/bobo/.planning/qx_policy_client_ui/DESIGN.md"
   ],
   "generated_screenshots": [
-    "/Users/bobo/.planning/qx_policy_client_ui/.impeccable/review/native-wide.png",
-    "/Users/bobo/.planning/qx_policy_client_ui/.impeccable/review/native-medium.png",
-    "/Users/bobo/.planning/qx_policy_client_ui/.impeccable/review/native-compact.png",
-    "/Users/bobo/.planning/qx_policy_client_ui/.impeccable/review/native-compact-detail.png",
-    "/Users/bobo/.planning/qx_policy_client_ui/.impeccable/review/native-compact-dark-detail.png",
-    "/Users/bobo/.planning/qx_policy_client_ui/.impeccable/review/native-compact-dark-inspector.png",
-    "/Users/bobo/.planning/qx_policy_client_ui/.impeccable/review/native-wide-connected.png"
+    "/Users/bobo/.planning/qx_policy_client_ui/.omx/state/relay-ui/screenshots/nodes.jpeg",
+    "/Users/bobo/.planning/qx_policy_client_ui/.omx/state/relay-ui/screenshots/policies.jpeg",
+    "/Users/bobo/.planning/qx_policy_client_ui/.omx/state/relay-ui/screenshots/activity.jpeg",
+    "/Users/bobo/.planning/qx_policy_client_ui/.omx/state/relay-ui/screenshots/logs.jpeg"
   ],
   "differences": [
-    "The live catalog is substantially denser than the fixture and relies on the existing scroll container for dozens of candidate nodes.",
-    "Nested policy groups appear as selectable members inside the primary selector, matching Mihomo's actual composition model."
+    "The live node catalog is intentionally denser than the visual references because it exposes operational proxy data rather than a marketing or settings fixture.",
+    "The policy workspace preserves a neutral open-row cue for navigation context without using the accent treatment reserved for a selected node exit.",
+    "A pending proxy-mode transition retains a clear accent cue while removing pointer and keyboard activation until the operation completes."
   ],
   "suggestions": [
-    "Keep the synthetic GLOBAL group available but sorted after ordinary user policy groups.",
-    "Consider a future metadata-node classifier only if it can be based on provider semantics rather than fragile name heuristics."
+    "When a live controller is connected, verify the global-exit radio state against a real GLOBAL selector candidate list.",
+    "Keep future search controls local to workspaces with large, changing datasets."
   ],
   "next_actions": [
-    "Commit the verified Unix socket and real-controller compatibility milestone.",
-    "Keep future live subscription artifacts outside the repository using the documented ignored smoke workflow."
+    "Run the final Rust verification suite and macOS packaging checks.",
+    "Commit the one-click TUN preparation and corrected routing-selection semantics."
   ],
-  "reasoning": "The second live capture opens on the user's actionable custom policy, scales cleanly to hundreds of rules and dozens of nodes, and renders missing host/latency values honestly. The built-in GLOBAL group remains accessible without dominating the first-use hierarchy."
+  "reasoning": "All four reviewed pages have clear hierarchy, consistent spacing, restrained accent usage, and no overflow or clipped controls at the captured desktop size. The removed global search reduces chrome, while the activity and log filters sit beside their relevant reconnect action; both filters now share the same 320 px desktop and 210 px compact widths. The policy editor communicates rule-to-group-to-node flow without implying that opening a group changes the global route. During the bounded one-click TUN preparation, the pending target remains visually explicit but proxy controls are no longer actionable."
 }

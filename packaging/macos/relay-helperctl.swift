@@ -156,7 +156,10 @@ private func validateParentProcess() throws {
     }
 }
 
-private func callHelper(_ invoke: @escaping (RelayPrivilegedHelperProtocol, @escaping (String, Int32) -> Void) -> Void) throws {
+private func callHelper(
+    timeout: DispatchTimeInterval = .seconds(10),
+    _ invoke: @escaping (RelayPrivilegedHelperProtocol, @escaping (String, Int32) -> Void) -> Void
+) throws {
     let connection = NSXPCConnection(machServiceName: serviceName, options: .privileged)
     connection.remoteObjectInterface = NSXPCInterface(with: RelayPrivilegedHelperProtocol.self)
     connection.resume()
@@ -176,7 +179,7 @@ private func callHelper(_ invoke: @escaping (RelayPrivilegedHelperProtocol, @esc
         result = (message, code)
         semaphore.signal()
     }
-    if semaphore.wait(timeout: .now() + 10) == .timedOut {
+    if semaphore.wait(timeout: .now() + timeout) == .timedOut {
         throw CliError.timeout
     }
     if let error = proxyError {
@@ -202,7 +205,7 @@ do {
     case .reinstall:
         try reinstallService()
     case .status:
-        try callHelper { helper, reply in helper.status(withReply: reply) }
+        try callHelper(timeout: .seconds(2)) { helper, reply in helper.status(withReply: reply) }
     case .stop:
         try callHelper { helper, reply in helper.stop(withReply: reply) }
     case .start(let dataDir, let config, let controller):

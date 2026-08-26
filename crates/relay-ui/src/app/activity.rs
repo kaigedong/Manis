@@ -7,6 +7,7 @@ use crate::localization::Language;
 use crate::theme::Theme;
 
 impl RelayApp {
+    #[allow(clippy::too_many_lines)]
     pub(super) fn activity_workspace(
         &self,
         theme: Theme,
@@ -14,12 +15,18 @@ impl RelayApp {
         cx: &mut gpui::Context<Self>,
     ) -> Div {
         let compact = size_class == WindowSizeClass::Compact;
-        let total_upload: u64 = self.active_connections.iter().map(|item| item.upload).sum();
-        let total_download: u64 = self
+        let query = self
+            .activity_search_input
+            .as_ref()
+            .map(|input| input.read(cx).value().trim().to_owned())
+            .unwrap_or_default();
+        let visible_connections = self
             .active_connections
             .iter()
-            .map(|item| item.download)
-            .sum();
+            .filter(|connection| connection_matches_query(connection, &query))
+            .collect::<Vec<_>>();
+        let total_upload: u64 = visible_connections.iter().map(|item| item.upload).sum();
+        let total_download: u64 = visible_connections.iter().map(|item| item.download).sum();
         let language = self.language();
         let mut rows = div()
             .id("activity-scroll")
@@ -27,7 +34,7 @@ impl RelayApp {
             .overflow_y_scroll()
             .flex()
             .flex_col();
-        if self.active_connections.is_empty() {
+        if visible_connections.is_empty() {
             rows = rows.child(
                 div()
                     .flex_1()
@@ -35,13 +42,20 @@ impl RelayApp {
                     .items_center()
                     .justify_center()
                     .text_color(theme.text_tertiary)
-                    .child(language.text(
-                        "No active connections. Live traffic appears after a new connection starts.",
-                        "当前没有活动连接；实时流会在新连接建立后自动显示",
-                    )),
+                    .child(if query.is_empty() {
+                        language.text(
+                            "No active connections. Live traffic appears after a new connection starts.",
+                            "当前没有活动连接；实时流会在新连接建立后自动显示",
+                        )
+                    } else {
+                        language.text(
+                            "No active connection matches this filter.",
+                            "没有符合当前筛选的活动连接",
+                        )
+                    }),
             );
         } else {
-            for connection in &self.active_connections {
+            for connection in visible_connections.iter().copied() {
                 rows = rows.child(activity_row(connection, theme, compact, language));
             }
         }
@@ -80,7 +94,15 @@ impl RelayApp {
                                     .text_color(theme.text_tertiary)
                                     .child(format!(
                                         "{} {} · ↓ {} · ↑ {} · {}",
-                                        self.active_connections.len(),
+                                        if query.is_empty() {
+                                            self.active_connections.len().to_string()
+                                        } else {
+                                            format!(
+                                                "{}/{}",
+                                                visible_connections.len(),
+                                                self.active_connections.len()
+                                            )
+                                        },
                                         language.text("active connections", "条活动连接"),
                                         format_bytes(total_download),
                                         format_bytes(total_upload),
@@ -89,6 +111,13 @@ impl RelayApp {
                             ),
                     )
                     .child(div().flex_1())
+                    .when_some(self.activity_search_input.clone(), |header, input| {
+                        header.child(
+                            div()
+                                .w(if compact { px(210.0) } else { px(320.0) })
+                                .child(input),
+                        )
+                    })
                     .child(
                         div()
                             .id("refresh-activity")
@@ -110,6 +139,25 @@ impl RelayApp {
             )
             .child(rows)
     }
+}
+
+fn connection_matches_query(connection: &Connection, query: &str) -> bool {
+    if query.is_empty() {
+        return true;
+    }
+    let query = query.to_lowercase();
+    [
+        connection.metadata.host.as_deref(),
+        connection.metadata.destination_ip.as_deref(),
+        connection.metadata.process.as_deref(),
+        connection.metadata.process_path.as_deref(),
+        connection.rule.as_deref(),
+        connection.rule_payload.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .chain(connection.chains.iter().map(String::as_str))
+    .any(|value| value.to_lowercase().contains(&query))
 }
 
 fn activity_row(connection: &Connection, theme: Theme, compact: bool, language: Language) -> Div {
@@ -202,4 +250,34 @@ fn activity_row(connection: &Connection, theme: Theme, compact: bool, language: 
                     format_bytes(connection.upload)
                 )),
         )
+}
+
+#[cfg(test)]
+mod tests {
+    use relay_mihomo::{Connection, ConnectionMetadata};
+
+    #[test]
+    fn activity_filter_matches_target_process_rule_and_route() {
+        let connection = Connection {
+            id: Some("fixture".to_owned()),
+            metadata: ConnectionMetadata {
+                host: Some("www.example.com".to_owned()),
+                process: Some("Browser".to_owned()),
+                destination_port: Some("443".to_owned()),
+                ..ConnectionMetadata::default()
+            },
+            upload: 12,
+            download: 34,
+            start: None,
+            chains: vec!["Hong Kong".to_owned(), "Proxy".to_owned()],
+            provider_chains: Vec::new(),
+            rule: Some("DomainSuffix".to_owned()),
+            rule_payload: Some("example.com".to_owned()),
+        };
+
+        for query in ["EXAMPLE", "browser", "domainsuffix", "hong kong", ""] {
+            assert!(super::connection_matches_query(&connection, query));
+        }
+        assert!(!super::connection_matches_query(&connection, "telegram"));
+    }
 }

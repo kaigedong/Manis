@@ -12,6 +12,9 @@ use crate::diagnostics::{LogLevel, record_event};
 
 const HELPER_CONTROL_NAME: &str = "relay-helperctl";
 const HELPER_PROTOCOL_VERSION: &str = "v3";
+const HELPER_REGISTRATION_ATTEMPTS: usize = 2;
+const HELPER_READY_ATTEMPTS: usize = 6;
+const HELPER_READY_DELAY: Duration = Duration::from_millis(450);
 
 /// Process adapter backed by Relay's signed, root launch daemon.
 ///
@@ -41,23 +44,43 @@ impl MacosPrivilegedProcessSpawner {
             control_error("query privileged helper", &status).to_string(),
         );
 
-        // A registered helper can be outdated or wedged and therefore fail to answer `status`.
-        // `reinstall` handles both registered and not-yet-registered services, waiting for an old
-        // daemon to be fully reaped before registering the bundled version.
-        let registration = run_control(&control, [OsStr::new("reinstall")])?;
-        if !registration.status.success() {
-            return Err(control_error("register privileged helper", &registration));
+        // macOS can return from SMAppService registration before the daemon is reachable, and can
+        // briefly reject a new registration while approval state is settling. Keep the whole
+        // transition inside one user action instead of requiring repeated TUN clicks.
+        let mut last_error = control_error("query privileged helper", &status);
+        for registration_attempt in 1..=HELPER_REGISTRATION_ATTEMPTS {
+            let registration = run_control(&control, [OsStr::new("reinstall")])?;
+            if registration.status.success() {
+                record_event(
+                    LogLevel::Info,
+                    "helper.prepare.registration_accepted",
+                    format!("attempt={registration_attempt}"),
+                );
+            } else {
+                last_error = control_error("register privileged helper", &registration);
+                record_event(
+                    LogLevel::Warn,
+                    "helper.prepare.registration_deferred",
+                    format!("attempt={registration_attempt} error={last_error}"),
+                );
+            }
+
+            match wait_for_current_helper(&control) {
+                Ok(status) => {
+                    record_event(
+                        LogLevel::Info,
+                        "helper.prepare.reinstall_succeeded",
+                        format!(
+                            "registration_attempt={registration_attempt} {}",
+                            helper_status_detail(&status.stdout)
+                        ),
+                    );
+                    return Ok(Self { control });
+                }
+                Err(error) => last_error = error,
+            }
         }
-        let status = run_control(&control, [OsStr::new("status")])?;
-        if !status.status.success() || !is_current_status(&status.stdout) {
-            return Err(control_error("connect to privileged helper", &status));
-        }
-        record_event(
-            LogLevel::Info,
-            "helper.prepare.reinstall_succeeded",
-            helper_status_detail(&status.stdout),
-        );
-        Ok(Self { control })
+        Err(last_error)
     }
 
     fn parse_launch(spec: &CommandSpec) -> io::Result<LaunchRequest<'_>> {
@@ -86,6 +109,29 @@ impl MacosPrivilegedProcessSpawner {
             controller,
         })
     }
+}
+
+fn wait_for_current_helper(control: &Path) -> io::Result<Output> {
+    let mut last_status = None;
+    for attempt in 1..=HELPER_READY_ATTEMPTS {
+        if attempt > 1 {
+            std::thread::sleep(HELPER_READY_DELAY);
+        }
+        let status = run_control(control, [OsStr::new("status")])?;
+        if status.status.success() && is_current_status(&status.stdout) {
+            return Ok(status);
+        }
+        record_event(
+            LogLevel::Debug,
+            "helper.prepare.waiting",
+            format!("attempt={attempt}"),
+        );
+        last_status = Some(status);
+    }
+    Err(last_status.map_or_else(
+        || io::Error::other("connect to privileged helper failed"),
+        |status| control_error("connect to privileged helper", &status),
+    ))
 }
 
 impl ProcessSpawner for MacosPrivilegedProcessSpawner {

@@ -536,48 +536,7 @@ impl ControllerRuntime {
         &self,
         selected_name: &str,
     ) -> Result<NodeGroupRuntimeSnapshot, LoadError> {
-        let controller_secret = self.controller_secret();
-        let endpoint = match self {
-            Self::Managed { manager, .. } => {
-                let mut manager = manager
-                    .lock()
-                    .map_err(|_poisoned| LoadError::Runtime("托管内核状态锁已损坏".to_owned()))?;
-                manager
-                    .running_endpoint()?
-                    .ok_or_else(|| LoadError::Runtime("Mihomo 尚未运行，请先连接内核".to_owned()))?
-                    .uri()
-            }
-            Self::External { .. } => {
-                return Err(LoadError::Runtime(
-                    "外部控制器保持只读；全局节点仅支持 Relay 托管内核".to_owned(),
-                ));
-            }
-            Self::Invalid { message } => return Err(LoadError::Runtime(message.clone())),
-        };
-        let group = fetch_policy_group(&endpoint, "GLOBAL", controller_secret.as_deref())?;
-        if !group
-            .proxy_type
-            .as_deref()
-            .is_some_and(is_selector_proxy_type)
-        {
-            return Err(LoadError::Runtime(
-                "Mihomo 的 GLOBAL 不是可手动选择的策略组".to_owned(),
-            ));
-        }
-        if !group.all.iter().any(|candidate| candidate == selected_name) {
-            return Err(LoadError::Runtime(
-                "所选节点不在 Mihomo 的 GLOBAL 候选项中".to_owned(),
-            ));
-        }
-        put_policy_group_selection(
-            &endpoint,
-            "GLOBAL",
-            selected_name,
-            controller_secret.as_deref(),
-        )?;
-        fetch_policy_group(&endpoint, "GLOBAL", controller_secret.as_deref())
-            .map(policy_group_runtime_snapshot)
-            .map_err(LoadError::from)
+        self.select_node_group_node("GLOBAL", selected_name)
     }
 
     pub(crate) fn test_node_group_delay(
