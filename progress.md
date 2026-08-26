@@ -296,3 +296,18 @@
 - 全仓验证通过：216 passed、8 ignored、0 failed；`cargo fmt`、`--all-targets` 严格 Clippy（`-D warnings`）通过，仅剩上游 `block 0.1.6` 的未来兼容提示。
 - 实机启动 PID 90886 稳定运行 16 秒以上，托盘安装无 `tray.unavailable`，约 160 次同步回合无 panic 或借用冲突。托盘菜单的实际勾选交互需由用户在菜单栏确认。
 - 并发提醒：另一个 Claude 会话在本轮期间向同一工作树写入并把 `4e918cd fix(macos): harden TUN startup diagnostics` 提交到了本 feat 分支；未对其做任何修改或回退。
+
+# 2026-08-26 直连规则绕过代理
+
+- 用户需求：TUN 模式下 SSH 走代理出口连不通，`git push` 到 `git@github.com` 失败，只能手动关代理再开回来。
+- 经 brainstorming 定案：分流规则页顶部一个可编辑的直连规则列表，支持端口与域名后缀，只在「规则」路由模式生效。设计已存档到 `docs/superpowers/specs/2026-08-26-direct-rules-design.md`。
+- 「全局模式不生效」这条零成本：Mihomo 与 sing-box 的 `mode: global` 本来就跳过 rules，无需额外代码。
+- 域名后缀完全复用现有 `Rule::DomainSuffix`（两内核早有渲染分支），只新增 `Rule::DstPort`：Mihomo 渲染为 `DST-PORT,22,DIRECT`，sing-box 渲染为 `{"port":[22],"action":"route","outbound":"direct"}`；`validate()` 拒绝端口 0。
+- 新建自包含的 `direct_rule` 模块承载解析、校验与持久化，刻意避开正被另一会话重写的 `mihomo.rs`，那边只留一行调用。
+- 输入按形状判别：纯数字为端口（1–65535），其余为域名后缀，并拒绝协议前缀、路径、空白与空标签；读取时二次校验，手工编辑过的文件无法借此放宽送进内核的内容。
+- 首次运行预置 `22`；文件存在但为空表示用户主动清空，重启后不会自动恢复。
+- 修正一处真实缺陷：初版持久化直接读全局 `imported_subscription_store_dir()`，会让测试与截图链路读写用户真实数据；改用 `ManisApp::subscription_store_dir`，与其余工作区一致。
+- 两个真实内核实测通过：Clash Verge 的 `verge-mihomo -t` 与 `sing-box 1.13.19 check` 都接受了含 `DST-PORT` 与 `DOMAIN-SUFFIX` 的生成配置。
+- 视觉验收：宽屏 1420px 与紧凑 720px 均无截断重叠，直连规则卡片位于生效规则之上，预置的「端口 22」正确显示。
+- 我的部分全绿：manis-core 26、manis-ui 117（含 direct_rule 9 个）、manis-profile 我的 2 个测试通过；`cargo fmt` 与 `--all-targets` 严格 Clippy 通过。
+- 并发提醒：另一会话在同一工作树同时改动 `nodes.rs`、`mihomo.rs`、`client_behavior.rs` 与 `profile_behavior.rs`，其中 3 个测试因其半成品而红（`__MANIS_GLOBAL__` 断言无对应实现）。已用 `hash-object`/`update-index` 从 HEAD 基线重建纯净版本入库，工作区中其改动一字未动。

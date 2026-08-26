@@ -965,6 +965,10 @@ fn compile_saved_profile(
     let qx_rule_sources = load_qx_rule_sources_in(store_dir)
         .map_err(|_error| LoadError::Runtime("无法读取 QX 规则来源".to_owned()))?;
     apply_qx_rule_sources(&mut profile, &qx_rule_sources)?;
+    // Prepended last so the user's exemptions outrank both the inherited and the imported rules.
+    let direct_rules = crate::direct_rule::load_direct_rules_in(store_dir)
+        .map_err(|error| LoadError::Runtime(error.to_string()))?;
+    crate::direct_rule::prepend_direct_rules(&mut profile, &direct_rules);
     Ok(profile)
 }
 

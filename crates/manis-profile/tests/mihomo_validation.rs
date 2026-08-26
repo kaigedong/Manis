@@ -117,3 +117,49 @@ fn generated_user_policy_groups_pass_mihomo_validation() -> Result<(), Box<dyn s
     );
     Ok(())
 }
+
+#[test]
+#[ignore = "requires MANIS_MIHOMO_TEST_BINARY pointing to a local Mihomo executable"]
+fn generated_direct_rules_pass_mihomo_validation() -> Result<(), Box<dyn std::error::Error>> {
+    use manis_profile::{PolicyRef, Rule};
+
+    let binary = std::env::var_os("MANIS_MIHOMO_TEST_BINARY")
+        .ok_or("MANIS_MIHOMO_TEST_BINARY is required")?;
+    let root = std::env::temp_dir().join(format!(
+        "manis-profile-direct-rules-validation-{}",
+        std::process::id()
+    ));
+    if root.exists() {
+        fs::remove_dir_all(&root)?;
+    }
+    let mut profile = Profile::qx_default(SecretUrl::parse_https(
+        "https://subscription.example.invalid/client?token=fixture-secret",
+    )?)?;
+    profile.rules.insert(
+        0,
+        Rule::DomainSuffix {
+            value: "github.com".to_owned(),
+            policy: PolicyRef::Direct,
+        },
+    );
+    profile.rules.insert(
+        0,
+        Rule::DstPort {
+            port: 22,
+            policy: PolicyRef::Direct,
+        },
+    );
+    let yaml = render_mihomo_yaml(&profile)?;
+    let config = write_private_atomic(&root, "manis-generated.yaml", yaml.as_bytes())?;
+
+    let status = Command::new(binary)
+        .args(["-t", "-d"])
+        .arg(&root)
+        .arg("-f")
+        .arg(&config)
+        .status()?;
+
+    fs::remove_dir_all(root)?;
+    assert!(status.success(), "Mihomo rejected generated direct rules");
+    Ok(())
+}

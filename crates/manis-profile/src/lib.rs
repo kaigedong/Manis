@@ -433,6 +433,12 @@ impl Profile {
                     }
                     validate_policy_ref(policy, &group_names, &proxy_names)?;
                 }
+                Rule::DstPort { port, policy } => {
+                    if *port == 0 {
+                        return Err(ProfileError::InvalidValue("destination port rule"));
+                    }
+                    validate_policy_ref(policy, &group_names, &proxy_names)?;
+                }
                 Rule::Match { policy } => {
                     validate_policy_ref(policy, &group_names, &proxy_names)?;
                 }
@@ -750,6 +756,11 @@ pub enum Rule {
         country: String,
         policy: PolicyRef,
         no_resolve: bool,
+    },
+    /// Matches by destination port, which is how traffic bypasses the proxy per protocol.
+    DstPort {
+        port: u16,
+        policy: PolicyRef,
     },
     Match {
         policy: PolicyRef,
@@ -1876,6 +1887,12 @@ fn render_sing_box_rule(json: &mut String, rule: &Rule) {
             json.push_str(", \"action\": \"route\", \"outbound\": ");
             json.push_str(&json_quoted(sing_box_policy_name(policy)));
         }
+        Rule::DstPort { port, policy } => {
+            json.push_str(" \"port\": [");
+            json.push_str(&port.to_string());
+            json.push_str("], \"action\": \"route\", \"outbound\": ");
+            json.push_str(&json_quoted(sing_box_policy_name(policy)));
+        }
         Rule::Match { policy } => {
             json.push_str(" \"action\": \"route\", \"outbound\": ");
             json.push_str(&json_quoted(sing_box_policy_name(policy)));
@@ -2180,6 +2197,7 @@ fn render_rule(rule: &Rule) -> String {
             let suffix = if *no_resolve { ",no-resolve" } else { "" };
             format!("GEOIP,{country},{}{suffix}", policy_name(policy))
         }
+        Rule::DstPort { port, policy } => format!("DST-PORT,{port},{}", policy_name(policy)),
         Rule::Match { policy } => format!("MATCH,{}", policy_name(policy)),
     }
 }

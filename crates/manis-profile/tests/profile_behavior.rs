@@ -498,6 +498,48 @@ fn domain_keyword_rules_validate_and_render_to_mihomo_yaml() {
 }
 
 #[test]
+fn destination_port_rules_render_to_mihomo_yaml_ahead_of_the_terminal_match() {
+    let mut profile = Profile::qx_default(fixture_secret()).expect("default profile is valid");
+    profile.rules.insert(
+        0,
+        Rule::DstPort {
+            port: 22,
+            policy: PolicyRef::Direct,
+        },
+    );
+
+    let yaml = render_mihomo_yaml(&profile).expect("profile should render");
+
+    assert!(yaml.contains("- \"DST-PORT,22,DIRECT\""));
+    assert!(yaml.find("- \"DST-PORT,22,DIRECT\"") < yaml.find("- \"MATCH,Proxy\""));
+}
+
+#[test]
+fn destination_port_rules_render_to_sing_box_json() {
+    let vless = VlessProxy::parse_share_link(
+        "vless://00000000-0000-4000-8000-000000000000@198.51.100.7:443?security=reality&encryption=none&pbk=fixture_reality-public-key&headerType=&fp=chrome&type=tcp&flow=xtls-rprx-vision&sni=cdn.example.invalid#Reality%20TCP",
+    )
+    .expect("Reality TCP fixture should parse");
+    let mut profile = Profile::qx_sources(Vec::new(), vec![vless], 17_890)
+        .expect("manual VLESS fixture should build a profile");
+    profile.rules.insert(
+        0,
+        Rule::DstPort {
+            port: 22,
+            policy: PolicyRef::Direct,
+        },
+    );
+
+    let json = render_sing_box_json(
+        &profile,
+        &SingBoxOptions::new("127.0.0.1:19090", "fixture-controller-secret"),
+    )
+    .expect("supported profile should render");
+
+    assert!(json.contains("\"port\": [22], \"action\": \"route\", \"outbound\": \"direct\""));
+}
+
+#[test]
 fn quantumult_x_rule_list_parses_rules_and_reports_actionable_diagnostics() {
     let parsed = QxRuleList::parse(
         r"

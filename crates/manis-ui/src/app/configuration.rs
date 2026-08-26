@@ -18,6 +18,32 @@ use crate::{
     theme::Theme,
 };
 
+/// A port is at most 5 digits and a domain at most 253 bytes; this only bounds pasted input.
+const MAX_DIRECT_RULE_INPUT_BYTES: usize = 256;
+
+fn direct_rule_placeholder(language: Language) -> &'static str {
+    language.text("Port or domain, e.g. 22", "端口或域名，例如 22")
+}
+
+fn direct_rule_error_label(
+    error: crate::direct_rule::DirectRuleError,
+    language: Language,
+) -> &'static str {
+    match error {
+        crate::direct_rule::DirectRuleError::Empty => {
+            language.text("Enter a port or a domain", "请输入端口或域名")
+        }
+        crate::direct_rule::DirectRuleError::PortOutOfRange => language.text(
+            "Ports must be between 1 and 65535",
+            "端口需在 1 到 65535 之间",
+        ),
+        crate::direct_rule::DirectRuleError::InvalidDomain => language.text(
+            "Enter a plain domain such as github.com, without a scheme or path",
+            "请输入纯域名（如 github.com），不要带协议或路径",
+        ),
+    }
+}
+
 fn source_kind_label(kind: SourceKind, language: Language) -> &'static str {
     match kind {
         SourceKind::HttpSubscription => language.text("HTTP subscription", "HTTP 订阅"),
@@ -577,13 +603,14 @@ impl ManisApp {
     }
 
     pub(super) fn routing_rules_workspace(
-        &self,
+        &mut self,
         theme: Theme,
         size_class: WindowSizeClass,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) -> Div {
         let compact = size_class == WindowSizeClass::Compact;
         let language = self.language();
+        self.ensure_direct_rule_input(theme, cx);
         div()
             .flex_1()
             .min_w(px(0.0))
@@ -610,9 +637,11 @@ impl ManisApp {
                     .p(if compact { px(12.0) } else { px(20.0) })
                     .pb(px(56.0))
                     .child(
-                        self.active_rules_panel(theme, language)
+                        div()
                             .max_w(px(1040.0))
-                            .mx_auto(),
+                            .mx_auto()
+                            .child(self.direct_rules_panel(theme, language, cx))
+                            .child(self.active_rules_panel(theme, language)),
                     ),
             )
     }
@@ -2029,6 +2058,267 @@ impl ManisApp {
                             })),
                     ),
             )
+    }
+
+    /// Creates the direct-rule field and loads the stored entries the first time it is shown.
+    pub(super) fn ensure_direct_rule_input(&mut self, theme: Theme, cx: &mut Context<Self>) {
+        let language = self.language();
+        if let Some(input) = self.direct_rule_input.as_ref() {
+            input.update(cx, |input, cx| {
+                input.set_theme(theme, self.dark, cx);
+                input.set_placeholder(direct_rule_placeholder(language), cx);
+            });
+            return;
+        }
+
+        let input = cx.new(|cx| {
+            SubscriptionTextInput::new_field(
+                "direct-rule-input",
+                direct_rule_placeholder(language),
+                MAX_DIRECT_RULE_INPUT_BYTES,
+                theme,
+                self.dark,
+                cx,
+            )
+        });
+        self.direct_rule_input = Some(input);
+        self.restore_direct_rules(cx);
+    }
+
+    fn restore_direct_rules(&mut self, cx: &mut Context<Self>) {
+        let Some(store_dir) = self.subscription_store_dir.clone() else {
+            return;
+        };
+        match crate::direct_rule::load_direct_rules_in(&store_dir) {
+            Ok(rules) => self.direct_rules = rules,
+            Err(error) => {
+                // A rejected file must not be silently replaced with defaults; the user is told
+                // so the stored entries can be recovered instead of quietly widening the proxy.
+                self.status = format!(
+                    "{}{error}",
+                    self.language()
+                        .text("Could not read direct rules: ", "无法读取直连规则：")
+                );
+            }
+        }
+        cx.notify();
+    }
+
+    fn add_direct_rule(&mut self, cx: &mut Context<Self>) {
+        let Some(input) = self.direct_rule_input.as_ref() else {
+            return;
+        };
+        let value = input.read(cx).value().to_owned();
+        match crate::direct_rule::DirectRule::parse(&value) {
+            Ok(rule) => {
+                self.direct_rule_error = None;
+                if self.direct_rules.contains(&rule) {
+                    if let Some(input) = self.direct_rule_input.as_ref() {
+                        input.update(cx, SubscriptionTextInput::clear_without_event);
+                    }
+                    cx.notify();
+                    return;
+                }
+                self.direct_rules.push(rule);
+                if let Some(input) = self.direct_rule_input.as_ref() {
+                    input.update(cx, SubscriptionTextInput::clear_without_event);
+                }
+                self.persist_direct_rules(cx);
+            }
+            Err(error) => {
+                self.direct_rule_error = Some(error);
+                cx.notify();
+            }
+        }
+    }
+
+    fn remove_direct_rule(&mut self, index: usize, cx: &mut Context<Self>) {
+        if index >= self.direct_rules.len() {
+            return;
+        }
+        self.direct_rules.remove(index);
+        self.direct_rule_error = None;
+        self.persist_direct_rules(cx);
+    }
+
+    /// Saves the list and rebuilds the running config so the change takes effect immediately.
+    fn persist_direct_rules(&mut self, cx: &mut Context<Self>) {
+        let language = self.language();
+        let Some(store_dir) = self.subscription_store_dir.clone() else {
+            language
+                .text(
+                    "Could not determine where to save direct rules",
+                    "无法确定直连规则的保存位置",
+                )
+                .clone_into(&mut self.status);
+            cx.notify();
+            return;
+        };
+        if let Err(error) = crate::direct_rule::save_direct_rules_in(&store_dir, &self.direct_rules)
+        {
+            self.status = format!(
+                "{}{error}",
+                language.text("Could not save direct rules: ", "无法保存直连规则：")
+            );
+            cx.notify();
+            return;
+        }
+        let apply = SourceRuntimeApply::from_result(self.runtime.apply_saved_sources(&store_dir));
+        self.status = format!(
+            "{}{}",
+            language.text("Direct rules updated", "直连规则已更新"),
+            apply.status_suffix(language)
+        );
+        cx.notify();
+    }
+
+    fn direct_rule_row(
+        index: usize,
+        rule: &crate::direct_rule::DirectRule,
+        theme: Theme,
+        language: Language,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let kind = match rule {
+            crate::direct_rule::DirectRule::Port(_) => language.text("Port", "端口"),
+            crate::direct_rule::DirectRule::DomainSuffix(_) => {
+                language.text("Domain suffix", "域名后缀")
+            }
+        };
+        div()
+            .mt_2()
+            .px_3()
+            .py_2()
+            .rounded_md()
+            .border_1()
+            .border_color(theme.outline_subtle)
+            .bg(theme.surface_base)
+            .flex()
+            .items_center()
+            .gap_3()
+            .child(
+                div()
+                    .px_2()
+                    .py_1()
+                    .rounded_sm()
+                    .bg(theme.action_soft)
+                    .text_size(px(10.0))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(theme.action_primary)
+                    .child(kind),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .text_size(px(12.0))
+                    .child(rule.label()),
+            )
+            .child(
+                div()
+                    .id(format!("remove-direct-rule-{index}"))
+                    .role(Role::Button)
+                    .aria_label(language.text("Remove this direct rule", "移除这条直连规则"))
+                    .tab_stop(true)
+                    .focusable()
+                    .cursor_pointer()
+                    .px_2()
+                    .py_1()
+                    .rounded_md()
+                    .text_size(px(10.0))
+                    .text_color(theme.route_trace)
+                    .child(language.text("Remove", "移除"))
+                    .on_click(
+                        cx.listener(move |this, _, _, cx| this.remove_direct_rule(index, cx)),
+                    ),
+            )
+    }
+
+    fn direct_rules_panel(&self, theme: Theme, language: Language, cx: &mut Context<Self>) -> Div {
+        let mut panel = div()
+            .w_full()
+            .min_w(px(0.0))
+            .p_4()
+            .mb_3()
+            .rounded_md()
+            .border_1()
+            .border_color(theme.outline_subtle)
+            .bg(theme.surface_high)
+            .child(
+                div()
+                    .text_size(px(13.0))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(language.text("Direct rules", "直连规则")),
+            )
+            .child(
+                div()
+                    .mt_1()
+                    .text_size(px(11.0))
+                    .text_color(theme.text_secondary)
+                    .child(language.text(
+                        "Matched before every rule below. Add a port (22) or a domain (github.com) to keep it off the proxy.",
+                        "先于下方所有规则匹配。填端口（22）或域名（github.com），让它不走代理。",
+                    )),
+            );
+
+        if self.direct_rules.is_empty() {
+            panel = panel.child(
+                div()
+                    .mt_2()
+                    .text_size(px(11.0))
+                    .text_color(theme.text_secondary)
+                    .child(language.text(
+                        "No direct rules — all traffic follows the rules below.",
+                        "暂无直连规则 —— 所有流量都按下方规则匹配。",
+                    )),
+            );
+        }
+
+        for (index, rule) in self.direct_rules.iter().enumerate() {
+            panel = panel.child(Self::direct_rule_row(index, rule, theme, language, cx));
+        }
+
+        if let Some(input) = self.direct_rule_input.as_ref() {
+            panel = panel.child(
+                div()
+                    .mt_3()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(div().flex_1().min_w(px(0.0)).child(input.clone()))
+                    .child(
+                        div()
+                            .id("add-direct-rule")
+                            .role(Role::Button)
+                            .aria_label(language.text("Add direct rule", "添加直连规则"))
+                            .tab_stop(true)
+                            .focusable()
+                            .cursor_pointer()
+                            .px_3()
+                            .py_2()
+                            .rounded_md()
+                            .border_1()
+                            .border_color(theme.action_primary)
+                            .text_size(px(11.0))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(theme.action_primary)
+                            .child(language.text("Add", "添加"))
+                            .on_click(cx.listener(|this, _, _, cx| this.add_direct_rule(cx))),
+                    ),
+            );
+        }
+
+        if let Some(error) = self.direct_rule_error {
+            panel = panel.child(
+                div()
+                    .mt_2()
+                    .text_size(px(11.0))
+                    .text_color(theme.route_trace)
+                    .child(direct_rule_error_label(error, language)),
+            );
+        }
+
+        panel
     }
 
     #[allow(clippy::too_many_lines)]
