@@ -38,16 +38,23 @@ fn capture_automatic_policy(
     use gpui::{AnyWindowHandle, AppContext, Modifiers, point, px, size};
     use manis_ui::ManisApp;
 
+    let (endpoint, server) = spawn_mihomo_fixture()?;
     let window = cx.open_offscreen_window(size(px(1420.0), px(900.0)), |_, cx| {
-        cx.new(|_| ManisApp::with_controller("http://127.0.0.1:9090"))
+        cx.new(|_| ManisApp::with_controller(endpoint))
     })?;
     let window: AnyWindowHandle = window.into();
 
     refresh(cx, window)?;
-    cx.simulate_click(window, point(px(380.0), px(312.0)), Modifiers::none());
+    cx.simulate_click(window, point(px(620.0), px(510.0)), Modifiers::none());
+    for _ in 0..24 {
+        std::thread::sleep(std::time::Duration::from_millis(25));
+        refresh(cx, window)?;
+    }
+    cx.simulate_click(window, point(px(380.0), px(250.0)), Modifiers::none());
     refresh(cx, window)?;
     save_screenshot(cx, window, "native-wide-automatic-policy.png")?;
-    close_window(cx, window)
+    close_window(cx, window)?;
+    server.stop()
 }
 
 #[cfg(target_os = "macos")]
@@ -565,12 +572,18 @@ fn capture_compact_flow(
     use gpui::{AnyWindowHandle, AppContext, Modifiers, point, px, size};
     use manis_ui::ManisApp;
 
+    let (endpoint, server) = spawn_mihomo_fixture()?;
     let window = cx.open_offscreen_window(size(px(720.0), px(720.0)), |_, cx| {
-        cx.new(|_| ManisApp::with_controller("http://127.0.0.1:9090"))
+        cx.new(|_| ManisApp::with_controller(endpoint))
     })?;
     let window: AnyWindowHandle = window.into();
 
     refresh(cx, window)?;
+    cx.simulate_click(window, point(px(185.0), px(412.0)), Modifiers::none());
+    for _ in 0..24 {
+        std::thread::sleep(std::time::Duration::from_millis(25));
+        refresh(cx, window)?;
+    }
     cx.simulate_click(window, point(px(300.0), px(312.0)), Modifiers::none());
     refresh(cx, window)?;
     save_screenshot(cx, window, "native-compact-detail.png")?;
@@ -582,7 +595,8 @@ fn capture_compact_flow(
     cx.simulate_click(window, point(px(664.0), px(80.0)), Modifiers::none());
     refresh(cx, window)?;
     save_screenshot(cx, window, "native-compact-dark-inspector.png")?;
-    close_window(cx, window)
+    close_window(cx, window)?;
+    server.stop()
 }
 
 #[cfg(target_os = "macos")]
@@ -599,7 +613,7 @@ fn capture_connected(
     let window: AnyWindowHandle = window.into();
 
     refresh(cx, window)?;
-    cx.simulate_click(window, point(px(480.0), px(80.0)), Modifiers::none());
+    cx.simulate_click(window, point(px(620.0), px(510.0)), Modifiers::none());
     for _ in 0..24 {
         std::thread::sleep(std::time::Duration::from_millis(25));
         refresh(cx, window)?;

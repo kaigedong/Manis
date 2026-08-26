@@ -16,7 +16,7 @@ use manis_mihomo::{Connection, ObservedRouteEvidence, RuntimeConfig};
 use manis_profile::{QxRuleList, SecretUrl};
 
 use crate::{
-    brand, demo,
+    brand,
     diagnostics::{
         self, LogLevel, UiEvent, begin_operation, record_event, record_operation, trace_ui,
     },
@@ -487,7 +487,7 @@ pub struct ManisApp {
     primary_workspace: PrimaryWorkspace,
     node_workspace: NodeWorkspaceState,
     workspace: PolicyWorkspaceState,
-    catalog: PolicyCatalog,
+    catalog: Option<PolicyCatalog>,
     runtime: KernelRuntime,
     kernel_switch_state: KernelSwitchState,
     controller: ControllerState,
@@ -731,11 +731,11 @@ impl ManisApp {
             localizer,
             primary_workspace: PrimaryWorkspace::default(),
             node_workspace,
-            workspace: PolicyWorkspaceState::demo(),
-            catalog: demo::catalog(),
+            workspace: PolicyWorkspaceState::default(),
+            catalog: None,
             runtime,
             kernel_switch_state: KernelSwitchState::Idle,
-            controller: ControllerState::Demo,
+            controller: ControllerState::Disconnected,
             observed_routes: Vec::new(),
             source_providers: Vec::new(),
             subscription_preview_providers: Vec::new(),
@@ -1444,8 +1444,14 @@ impl ManisApp {
         }
     }
 
-    fn selected_policy(&self) -> &PolicyGroup {
-        self.catalog.select(self.workspace.selected_group.as_ref())
+    fn policy_groups(&self) -> impl Iterator<Item = &PolicyGroup> {
+        self.catalog.iter().flat_map(PolicyCatalog::iter)
+    }
+
+    fn selected_policy(&self) -> Option<&PolicyGroup> {
+        self.catalog
+            .as_ref()
+            .map(|catalog| catalog.select(self.workspace.selected_group.as_ref()))
     }
 
     fn source_group_benchmark_key(id: &str) -> String {
@@ -1717,8 +1723,8 @@ impl ManisApp {
         )
     }
 
-    fn selected_node(&self) -> PolicyNode {
-        let policy = self.selected_policy();
+    fn selected_node(&self) -> Option<PolicyNode> {
+        let policy = self.selected_policy()?;
         let selected = if policy.kind.allows_manual_selection() {
             self.workspace
                 .selected_node
@@ -1728,24 +1734,26 @@ impl ManisApp {
         } else {
             policy.nodes.iter().find(|node| node.name == policy.target)
         };
-        selected
-            .or_else(|| policy.nodes.first())
-            .cloned()
-            .unwrap_or_else(|| PolicyNode {
-                id: ProxyId::new("unavailable"),
-                name: self
-                    .language()
-                    .text("No available nodes", "暂无可用节点")
-                    .to_owned(),
-                kind: manis_core::PolicyCandidateKind::Node,
-                provider: None,
-                detail: self
-                    .language()
-                    .text("The kernel returned no group members", "内核未返回组内节点")
-                    .to_owned(),
-                latency_ms: None,
-                alive: None,
-            })
+        Some(
+            selected
+                .or_else(|| policy.nodes.first())
+                .cloned()
+                .unwrap_or_else(|| PolicyNode {
+                    id: ProxyId::new("unavailable"),
+                    name: self
+                        .language()
+                        .text("No available nodes", "暂无可用节点")
+                        .to_owned(),
+                    kind: manis_core::PolicyCandidateKind::Node,
+                    provider: None,
+                    detail: self
+                        .language()
+                        .text("The kernel returned no group members", "内核未返回组内节点")
+                        .to_owned(),
+                    latency_ms: None,
+                    alive: None,
+                }),
+        )
     }
 
     fn switch_kernel(&mut self, requested: KernelKind, cx: &mut Context<Self>) {
@@ -1796,7 +1804,7 @@ impl ManisApp {
                 match result {
                     Ok(runtime) => {
                         this.runtime = runtime;
-                        this.controller = ControllerState::Demo;
+                        this.controller = ControllerState::Disconnected;
                         this.live_generation = this.live_generation.wrapping_add(1);
                         this.live_runtime = None;
                         this.proxy_mode = ProxyMode::Off;
@@ -1924,16 +1932,14 @@ impl ManisApp {
 
     fn apply_mihomo_snapshot(&mut self, endpoint: String, snapshot: LoadedSnapshot) {
         trace_ui(UiEvent::MihomoConnectSucceeded);
-        self.catalog = snapshot.catalog;
+        let mut catalog = snapshot.catalog;
         if let Some(global) = self.node_selection_preferences.global() {
-            let _ = self
-                .catalog
-                .apply_selector_target("GLOBAL", &global.node_name);
+            let _ = catalog.apply_selector_target("GLOBAL", &global.node_name);
         }
         for (group, target) in self.node_selection_preferences.iter_policy_targets() {
-            let _ = self.catalog.apply_selector_target(group, target);
+            let _ = catalog.apply_selector_target(group, target);
         }
-        let primary = self.catalog.select(None);
+        let primary = catalog.select(None);
         let group = primary.id.clone();
         let selected_node = primary
             .nodes
@@ -1941,6 +1947,8 @@ impl ManisApp {
             .find(|node| node.name == primary.target)
             .or_else(|| primary.nodes.first())
             .map(|node| node.id.clone());
+        let policy_group_count = catalog.iter().count();
+        self.catalog = Some(catalog);
         self.workspace
             .replace_source_selection(group, selected_node);
         self.source_providers = snapshot.providers;
@@ -1962,14 +1970,12 @@ impl ManisApp {
         self.status = if self.language() == Language::English {
             format!(
                 "Loaded {} policy groups · {} active connections",
-                self.catalog.iter().count(),
-                snapshot.active_connections
+                policy_group_count, snapshot.active_connections
             )
         } else {
             format!(
                 "已读取 {} 个策略组 · {} 条活动连接",
-                self.catalog.iter().count(),
-                snapshot.active_connections
+                policy_group_count, snapshot.active_connections
             )
         };
         self.controller = ControllerState::Connected {
@@ -1991,7 +1997,7 @@ impl ManisApp {
         if let Some(global) = self.node_selection_preferences.global() {
             targets.push(("GLOBAL".to_owned(), global.node_name.clone()));
         }
-        targets.extend(self.catalog.iter().filter_map(|group| {
+        targets.extend(self.policy_groups().filter_map(|group| {
             if !group.kind.allows_manual_selection() || group.name.eq_ignore_ascii_case("GLOBAL") {
                 return None;
             }
@@ -2024,7 +2030,9 @@ impl ManisApp {
                     match result {
                         Ok(snapshot) => {
                             let current = snapshot.current.as_deref().unwrap_or(&requested);
-                            let _ = this.catalog.apply_selector_target(&group, current);
+                            if let Some(catalog) = this.catalog.as_mut() {
+                                let _ = catalog.apply_selector_target(&group, current);
+                            }
                             if let Some(stored_group) = this
                                 .node_policy_groups
                                 .iter()
@@ -2091,7 +2099,7 @@ impl ManisApp {
             cx.notify();
             return;
         }
-        let Some(group) = self.catalog.iter().find(|group| group.id == *id).cloned() else {
+        let Some(group) = self.policy_groups().find(|group| group.id == *id).cloned() else {
             return;
         };
         let key = Self::policy_group_benchmark_key(&group.id);
@@ -2172,9 +2180,10 @@ impl ManisApp {
                     Ok(snapshot) => (Some(snapshot.delays), snapshot.current, None),
                     Err(error) => (None, None, Some(error.to_string())),
                 };
-                if let Some(delays) = delays.as_ref() {
-                    this.catalog
-                        .apply_group_benchmark(&group_id, current.as_deref(), delays);
+                if let Some(delays) = delays.as_ref()
+                    && let Some(catalog) = this.catalog.as_mut()
+                {
+                    let _ = catalog.apply_group_benchmark(&group_id, current.as_deref(), delays);
                 }
                 let Some(state) = this.group_benchmarks.get_mut(&key) else {
                     cx.notify();
@@ -2784,7 +2793,9 @@ impl ManisApp {
             cx.notify();
             return;
         }
-        let _ = self.catalog.apply_selector_target("GLOBAL", &selected_name);
+        if let Some(catalog) = self.catalog.as_mut() {
+            let _ = catalog.apply_selector_target("GLOBAL", &selected_name);
+        }
         record_operation(
             operation,
             LogLevel::Info,
@@ -2838,7 +2849,9 @@ impl ManisApp {
                             "global selector confirmed target",
                         );
                         let current = snapshot.current.as_deref().unwrap_or(&selected_name);
-                        let _ = this.catalog.apply_selector_target("GLOBAL", current);
+                        if let Some(catalog) = this.catalog.as_mut() {
+                            let _ = catalog.apply_selector_target("GLOBAL", current);
+                        }
                         trace_ui(UiEvent::GlobalNodeSelected);
                         this.status = if language == Language::English {
                             if this.routing_mode == RoutingMode::Global {
@@ -2910,20 +2923,19 @@ impl ManisApp {
                 operation,
                 LogLevel::Warn,
                 "policy.node.rejected",
-                "reason=demo_policy_not_persistable",
+                "reason=runtime_policy_unavailable",
             );
             language
                 .text(
-                    "This is demo data. Connect Mihomo to select a real policy node.",
-                    "这里是演示数据；连接 Mihomo 后才能选择真实策略组节点。",
+                    "Connect the kernel before selecting a runtime policy node.",
+                    "请先连接内核，再选择真实策略组节点。",
                 )
                 .clone_into(&mut self.status);
             cx.notify();
             return;
         }
         let catalog_allows = self
-            .catalog
-            .iter()
+            .policy_groups()
             .find(|group| group.id == group_id || group.name == group_name)
             .map(|group| {
                 group.kind.allows_manual_selection()
@@ -3000,14 +3012,25 @@ impl ManisApp {
             cx.notify();
             return;
         }
-        let _ = self.catalog.apply_selector_target(&group_name, &node_name);
+        let catalog_selection = self
+            .policy_groups()
+            .find(|group| group.name == group_name)
+            .and_then(|group| {
+                group
+                    .nodes
+                    .iter()
+                    .find(|node| node.name == node_name)
+                    .map(|node| (group.id.clone(), node.id.clone()))
+            });
+        if let Some(catalog) = self.catalog.as_mut() {
+            let _ = catalog.apply_selector_target(&group_name, &node_name);
+        }
         if self.workspace.selected_group.as_ref() == Some(&group_id) {
             self.workspace.select_node(node_id.clone());
-        } else if let Some(group) = self.catalog.iter().find(|group| group.name == group_name)
-            && self.workspace.selected_group.as_ref() == Some(&group.id)
-            && let Some(node) = group.nodes.iter().find(|node| node.name == node_name)
+        } else if let Some((catalog_group_id, catalog_node_id)) = catalog_selection
+            && self.workspace.selected_group.as_ref() == Some(&catalog_group_id)
         {
-            self.workspace.select_node(node.id.clone());
+            self.workspace.select_node(catalog_node_id);
         }
         record_operation(
             operation,
@@ -3082,7 +3105,9 @@ impl ManisApp {
                             .current
                             .clone()
                             .unwrap_or_else(|| node_name.clone());
-                        let _ = this.catalog.apply_selector_target(&group_name, &current);
+                        if let Some(catalog) = this.catalog.as_mut() {
+                            let _ = catalog.apply_selector_target(&group_name, &current);
+                        }
                         if this.workspace.selected_group.as_ref() == Some(&group_id) {
                             this.workspace.select_node(node_id);
                         }
@@ -3153,8 +3178,7 @@ impl ManisApp {
     }
 
     fn runtime_global_target(&self) -> Option<&str> {
-        self.catalog
-            .iter()
+        self.policy_groups()
             .find(|group| group.name.eq_ignore_ascii_case("GLOBAL"))
             .map(|group| group.target.as_str())
     }
@@ -3516,8 +3540,8 @@ impl ManisApp {
         let show_labels = size_class == WindowSizeClass::Wide;
         let source_label = if show_labels {
             match &self.controller {
-                ControllerState::Demo => language
-                    .text("Mihomo disconnected · Demo", "Mihomo 未连接 · 演示")
+                ControllerState::Disconnected => language
+                    .text("Mihomo disconnected", "Mihomo 未连接")
                     .to_owned(),
                 ControllerState::Connecting { endpoint } => {
                     language
@@ -3543,7 +3567,7 @@ impl ManisApp {
             }
         } else {
             match &self.controller {
-                ControllerState::Demo => language.text("Demo", "演示").to_owned(),
+                ControllerState::Disconnected => language.text("Disconnected", "未连接").to_owned(),
                 ControllerState::Connecting { .. } => {
                     language.text("Connecting", "连接中").to_owned()
                 }
@@ -3642,6 +3666,72 @@ impl ManisApp {
             )
     }
 
+    fn empty_policy_workspace(&self, theme: Theme, cx: &mut Context<Self>) -> Div {
+        let language = self.language();
+        let (title, description) = match &self.controller {
+            ControllerState::Disconnected => (
+                language.text("No policy groups yet", "暂无策略组"),
+                language.text(
+                    "Start or connect the kernel to load its real policy groups. Manis does not fill this page with sample data.",
+                    "启动或连接内核后，这里会显示它返回的真实策略组。Manis 不再用示例数据填充此页面。",
+                ),
+            ),
+            ControllerState::Connecting { .. } => (
+                language.text("Loading policy groups…", "正在读取策略组…"),
+                language.text(
+                    "Waiting for the kernel to return its current groups and selected exits.",
+                    "正在等待内核返回当前策略组及其已选出口。",
+                ),
+            ),
+            ControllerState::Failed { .. } => (
+                language.text("Policy groups unavailable", "暂时无法读取策略组"),
+                language.text(
+                    "The kernel connection failed. Check Logs for the exact error, then try again.",
+                    "内核连接失败。请在“日志”中查看具体错误，然后重试。",
+                ),
+            ),
+            ControllerState::Connected { .. } => (
+                language.text("No policy groups returned", "内核未返回策略组"),
+                language.text(
+                    "The connected kernel did not expose any policy groups.",
+                    "当前连接的内核没有提供任何策略组。",
+                ),
+            ),
+        };
+
+        div()
+            .h_full()
+            .flex_1()
+            .min_w(px(0.0))
+            .p_8()
+            .bg(theme.surface_high)
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(
+                div()
+                    .max_w(px(520.0))
+                    .flex()
+                    .flex_col()
+                    .items_start()
+                    .child(
+                        div()
+                            .text_size(px(22.0))
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(theme.text_primary)
+                            .child(title),
+                    )
+                    .child(
+                        div()
+                            .mt_2()
+                            .text_color(theme.text_secondary)
+                            .line_height(px(20.0))
+                            .child(description),
+                    )
+                    .child(div().mt_5().child(self.connection_button(theme, cx))),
+            )
+    }
+
     #[allow(clippy::too_many_lines)]
     fn policy_list(&self, theme: Theme, width: Option<f32>, cx: &mut Context<Self>) -> Div {
         let language = self.language();
@@ -3653,7 +3743,7 @@ impl ManisApp {
             .flex()
             .flex_col()
             .gap_1();
-        for item in self.catalog.iter().cloned() {
+        for item in self.policy_groups().cloned() {
             let selected = self.workspace.selected_group.as_ref() == Some(&item.id);
             let item_id = item.id.clone();
             let item_name = item.name.clone();
@@ -3998,8 +4088,11 @@ impl ManisApp {
     #[allow(clippy::too_many_lines)]
     fn detail(&self, theme: Theme, compact: bool, cx: &mut Context<Self>) -> Div {
         let language = self.language();
-        let selected_policy = self.selected_policy().clone();
-        let selected_node = self.selected_node();
+        let (Some(selected_policy), Some(selected_node)) =
+            (self.selected_policy().cloned(), self.selected_node())
+        else {
+            return div().h_full().flex_1().bg(theme.surface_high);
+        };
         let manually_selectable = selected_policy.kind.allows_manual_selection();
         let benchmark_id = selected_policy.id.clone();
         let benchmark_key = Self::policy_group_benchmark_key(&selected_policy.id);
@@ -4273,8 +4366,8 @@ impl ManisApp {
                                         trace_ui(UiEvent::RouteInspectorOpened);
                                         this.language()
                                             .text(
-                                                "Local route prediction opened · demo data",
-                                                "已打开本地路由预测 · 演示数据",
+                                                "Local route prediction opened",
+                                                "已打开本地路由预测",
                                             )
                                             .clone_into(&mut this.status);
                                         cx.notify();
@@ -4359,8 +4452,11 @@ impl ManisApp {
     #[allow(clippy::too_many_lines)]
     fn inspector(&self, theme: Theme, overlay: bool, cx: &mut Context<Self>) -> Div {
         let language = self.language();
-        let selected_policy = self.selected_policy().clone();
-        let selected_node = self.selected_node();
+        let (Some(selected_policy), Some(selected_node)) =
+            (self.selected_policy().cloned(), self.selected_node())
+        else {
+            return div().h_full().w(px(340.0)).bg(theme.surface_low);
+        };
         let decision_copy = if selected_policy.kind.allows_manual_selection() {
             format!(
                 "{} · {}",
@@ -4374,12 +4470,31 @@ impl ManisApp {
                 language.text("automatically decided by Mihomo", "由 Mihomo 自动决策")
             )
         };
-        let domain = if selected_policy.id.as_str() == "search" {
-            "openai.com"
-        } else {
-            "youtube.com"
-        };
-        let rule_index = selected_policy.rules.first().map_or(18, |rule| rule.index);
+        let first_rule = selected_policy.rules.first();
+        let route_target = first_rule.map_or_else(
+            || language.text("No rule target", "暂无规则目标").to_owned(),
+            |rule| rule.payload.clone(),
+        );
+        let rule_kind = first_rule.map_or_else(
+            || language.text("No matching rule", "暂无匹配规则").to_owned(),
+            |rule| rule.kind.clone(),
+        );
+        let rule_detail = first_rule.map_or_else(
+            || {
+                language
+                    .text("The kernel returned no rule", "内核未返回规则")
+                    .to_owned()
+            },
+            |rule| {
+                format!(
+                    "{} · {} #{}",
+                    route_target,
+                    language.text("rule", "规则"),
+                    rule.index
+                )
+            },
+        );
+        let route_target_for_status = route_target.clone();
         let observed_route = self.observed_routes.first().cloned();
 
         div()
@@ -4403,7 +4518,7 @@ impl ManisApp {
                             .items_center()
                             .gap_2()
                             .child(div().text_size(px(18.0)).font_weight(FontWeight::BOLD).child(language.text("Route explanation", "路由解释")))
-                            .child(div().px_2().py_1().rounded_sm().bg(theme.route_soft).text_size(px(10.0)).font_weight(FontWeight::SEMIBOLD).text_color(theme.route_trace).child(language.text("Predicted path · demo data", "预测路径 · 演示数据")))
+                            .child(div().px_2().py_1().rounded_sm().bg(theme.route_soft).text_size(px(10.0)).font_weight(FontWeight::SEMIBOLD).text_color(theme.route_trace).child(language.text("Predicted path", "预测路径")))
                             .child(div().flex_1())
                             .when(overlay, |header| {
                                 header.child(
@@ -4428,7 +4543,7 @@ impl ManisApp {
                             .mt_4()
                             .flex()
                             .gap_2()
-                            .child(div().h(px(38.0)).flex_1().px_3().rounded_md().border_1().border_color(theme.outline_subtle).bg(theme.surface_high).flex().items_center().child(domain))
+                            .child(div().h(px(38.0)).flex_1().px_3().rounded_md().border_1().border_color(theme.outline_subtle).bg(theme.surface_high).flex().items_center().child(route_target.clone()))
                             .child(
                                 div()
                                     .id("predict-route")
@@ -4446,11 +4561,23 @@ impl ManisApp {
                                     .child(language.text("Predict route", "预测路由"))
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         trace_ui(UiEvent::RoutePredictionRequested);
-                                        this.status = if this.language() == Language::English {
-                                            format!("Predicted {domain}: {} → {}", this.selected_policy().name, this.selected_node().name)
-                                        } else {
-                                            format!("已预测 {domain}：{} → {}", this.selected_policy().name, this.selected_node().name)
-                                        };
+                                        if let (Some(policy), Some(node)) =
+                                            (this.selected_policy(), this.selected_node())
+                                        {
+                                            this.status = if this.language() == Language::English {
+                                                format!(
+                                                    "Predicted {}: {} → {}",
+                                                    route_target_for_status,
+                                                    policy.name, node.name
+                                                )
+                                            } else {
+                                                format!(
+                                                    "已预测 {}：{} → {}",
+                                                    route_target_for_status,
+                                                    policy.name, node.name
+                                                )
+                                            };
+                                        }
                                         cx.notify();
                                     })),
                             ),
@@ -4474,7 +4601,7 @@ impl ManisApp {
                                     .w(px(2.0))
                                     .bg(theme.route_trace),
                             )
-                            .child(Self::signal_stage("01", language.text("First matching rule", "预测首条命中规则"), "DOMAIN-SUFFIX".to_owned(), format!("{domain} · {} #{rule_index}", language.text("rule", "规则")), true, theme))
+                            .child(Self::signal_stage("01", language.text("First matching rule", "预测首条命中规则"), rule_kind, rule_detail, true, theme))
                             .child(Self::signal_stage("02", language.text("Policy group", "交给策略组"), selected_policy.name.clone(), decision_copy, false, theme))
                             .child(Self::signal_stage("03", language.text("Final exit", "最终出口"), selected_node.name.clone(), format!("{} · {}", selected_node.latency_ms.map_or_else(|| language.text("Unknown latency", "延迟未知").to_owned(), |latency| format!("{latency} ms")), selected_node.provider.as_deref().unwrap_or(language.text("Built-in", "内置节点"))), false, theme)),
                     )
@@ -4545,11 +4672,9 @@ impl ManisApp {
         let language = self.language();
         let kernel_name = self.runtime.kind().display_name();
         let (source, endpoint, download, upload, dot) = match &self.controller {
-            ControllerState::Demo => (
+            ControllerState::Disconnected => (
                 format!("{kernel_name} {}", language.text("disconnected", "未连接")),
-                language
-                    .text("Source: demo data", "配置：演示数据")
-                    .to_owned(),
+                language.text("No runtime data", "无运行数据").to_owned(),
                 "↓ —".to_owned(),
                 "↑ —".to_owned(),
                 theme.route_trace,
@@ -4666,7 +4791,7 @@ fn routing_mode_label(language: Language, mode: RoutingMode) -> &'static str {
 
 fn controller_state_label(state: &ControllerState) -> &'static str {
     match state {
-        ControllerState::Demo => "demo",
+        ControllerState::Disconnected => "disconnected",
         ControllerState::Connecting { .. } => "connecting",
         ControllerState::Connected { .. } => "connected",
         ControllerState::Failed { .. } => "failed",
@@ -4720,6 +4845,7 @@ impl Render for ManisApp {
         let overlay_inspector = size_class != WindowSizeClass::Wide;
         let show_inspector = size_class == WindowSizeClass::Wide || self.inspector_open;
         let policies_active = self.primary_workspace == PrimaryWorkspace::Policies;
+        let has_policy_catalog = self.catalog.is_some();
         let nodes_active = self.primary_workspace == PrimaryWorkspace::Nodes;
         let routing_rules_active = self.primary_workspace == PrimaryWorkspace::RoutingRules;
         let activity_active = self.primary_workspace == PrimaryWorkspace::Activity;
@@ -4756,28 +4882,36 @@ impl Render for ManisApp {
                         self.primary_workspace == PrimaryWorkspace::Configuration,
                         |main| main.child(self.configuration_workspace(theme, size_class, cx)),
                     )
-                    .when(policies_active && show_groups, |main| {
-                        main.child(
-                            self.policy_list(
-                                theme,
-                                if compact {
-                                    None
-                                } else if size_class == WindowSizeClass::Medium {
-                                    Some(292.0)
-                                } else {
-                                    Some(326.0)
-                                },
-                                cx,
+                    .when(policies_active && !has_policy_catalog, |main| {
+                        main.child(self.empty_policy_workspace(theme, cx))
+                    })
+                    .when(
+                        policies_active && has_policy_catalog && show_groups,
+                        |main| {
+                            main.child(
+                                self.policy_list(
+                                    theme,
+                                    if compact {
+                                        None
+                                    } else if size_class == WindowSizeClass::Medium {
+                                        Some(292.0)
+                                    } else {
+                                        Some(326.0)
+                                    },
+                                    cx,
+                                )
+                                .when(compact, Styled::flex_1),
                             )
-                            .when(compact, Styled::flex_1),
-                        )
-                    })
-                    .when(policies_active && show_detail, |main| {
-                        main.child(self.detail(theme, compact, cx))
-                    })
-                    .when(policies_active && show_inspector, |main| {
-                        main.child(self.inspector(theme, overlay_inspector, cx))
-                    }),
+                        },
+                    )
+                    .when(
+                        policies_active && has_policy_catalog && show_detail,
+                        |main| main.child(self.detail(theme, compact, cx)),
+                    )
+                    .when(
+                        policies_active && has_policy_catalog && show_inspector,
+                        |main| main.child(self.inspector(theme, overlay_inspector, cx)),
+                    ),
             )
             .child(self.status_bar(theme))
     }
@@ -4888,29 +5022,84 @@ mod tests {
     }
 
     #[test]
-    fn saved_global_node_overrides_runtime_target_without_losing_runtime_state() {
+    fn disconnected_app_starts_without_mock_policy_groups() {
+        let app = ManisApp::with_controller("http://127.0.0.1:9090");
+
+        assert!(app.catalog.is_none());
+        assert_eq!(app.workspace.selected_group, None);
+        assert_eq!(app.workspace.selected_node, None);
+    }
+
+    #[test]
+    fn runtime_snapshot_populates_real_policy_groups() {
         let mut app = ManisApp::with_controller("http://127.0.0.1:9090");
-        app.catalog = PolicyCatalog::try_new(vec![PolicyGroup {
-            id: PolicyGroupId::new("GLOBAL"),
-            name: "GLOBAL".to_owned(),
+        let policy_id = PolicyGroupId::new("runtime-policy");
+        let node_id = ProxyId::new("runtime-node");
+        let catalog = PolicyCatalog::try_new(vec![PolicyGroup {
+            id: policy_id.clone(),
+            name: "Runtime policy".to_owned(),
             kind: PolicyGroupKind::Selector,
-            target: "Tokyo".to_owned(),
-            nodes: ["Tokyo", "Singapore"]
-                .into_iter()
-                .map(|name| PolicyNode {
-                    id: ProxyId::new(name),
-                    name: name.to_owned(),
-                    kind: PolicyCandidateKind::Node,
-                    provider: None,
-                    detail: "VLESS".to_owned(),
-                    latency_ms: None,
-                    alive: None,
-                })
-                .collect(),
-            rules_total: 0,
+            target: "Runtime node".to_owned(),
+            nodes: vec![PolicyNode {
+                id: node_id.clone(),
+                name: "Runtime node".to_owned(),
+                kind: PolicyCandidateKind::Node,
+                provider: Some("Runtime provider".to_owned()),
+                detail: "VLESS".to_owned(),
+                latency_ms: Some(42),
+                alive: Some(true),
+            }],
+            rules_total: 1,
             rules: Vec::new(),
         }])
-        .expect("fixture global group");
+        .expect("runtime policy catalog");
+
+        app.apply_mihomo_snapshot(
+            "http://127.0.0.1:9090".to_owned(),
+            mihomo::LoadedSnapshot {
+                catalog,
+                providers: Vec::new(),
+                version: "fixture".to_owned(),
+                active_connections: 0,
+                download_total: 0,
+                upload_total: 0,
+                observed_routes: Vec::new(),
+                connections: Vec::new(),
+                runtime: manis_mihomo::RuntimeConfig::default(),
+            },
+        );
+
+        assert_eq!(app.policy_groups().count(), 1);
+        assert_eq!(app.workspace.selected_group, Some(policy_id));
+        assert_eq!(app.workspace.selected_node, Some(node_id));
+    }
+
+    #[test]
+    fn saved_global_node_overrides_runtime_target_without_losing_runtime_state() {
+        let mut app = ManisApp::with_controller("http://127.0.0.1:9090");
+        app.catalog = Some(
+            PolicyCatalog::try_new(vec![PolicyGroup {
+                id: PolicyGroupId::new("GLOBAL"),
+                name: "GLOBAL".to_owned(),
+                kind: PolicyGroupKind::Selector,
+                target: "Tokyo".to_owned(),
+                nodes: ["Tokyo", "Singapore"]
+                    .into_iter()
+                    .map(|name| PolicyNode {
+                        id: ProxyId::new(name),
+                        name: name.to_owned(),
+                        kind: PolicyCandidateKind::Node,
+                        provider: None,
+                        detail: "VLESS".to_owned(),
+                        latency_ms: None,
+                        alive: None,
+                    })
+                    .collect(),
+                rules_total: 0,
+                rules: Vec::new(),
+            }])
+            .expect("fixture global group"),
+        );
 
         assert_eq!(app.global_target(), Some("Tokyo"));
         assert_eq!(app.runtime_global_target(), Some("Tokyo"));
@@ -4958,34 +5147,39 @@ mod tests {
     fn manual_policy_detail_falls_back_to_the_catalog_target() {
         let mut app = ManisApp::with_controller("http://127.0.0.1:9090");
         let policy_id = PolicyGroupId::new("manual-video");
-        app.catalog = PolicyCatalog::try_new(vec![PolicyGroup {
-            id: policy_id.clone(),
-            name: "Manual Video".to_owned(),
-            kind: PolicyGroupKind::Selector,
-            target: "Singapore".to_owned(),
-            nodes: ["Tokyo", "Singapore"]
-                .into_iter()
-                .map(|name| PolicyNode {
-                    id: ProxyId::new(name),
-                    name: name.to_owned(),
-                    kind: PolicyCandidateKind::Node,
-                    provider: None,
-                    detail: "fixture".to_owned(),
-                    latency_ms: None,
-                    alive: None,
-                })
-                .collect(),
-            rules_total: 0,
-            rules: Vec::new(),
-        }])
-        .expect("manual policy catalog");
+        app.catalog = Some(
+            PolicyCatalog::try_new(vec![PolicyGroup {
+                id: policy_id.clone(),
+                name: "Manual Video".to_owned(),
+                kind: PolicyGroupKind::Selector,
+                target: "Singapore".to_owned(),
+                nodes: ["Tokyo", "Singapore"]
+                    .into_iter()
+                    .map(|name| PolicyNode {
+                        id: ProxyId::new(name),
+                        name: name.to_owned(),
+                        kind: PolicyCandidateKind::Node,
+                        provider: None,
+                        detail: "fixture".to_owned(),
+                        latency_ms: None,
+                        alive: None,
+                    })
+                    .collect(),
+                rules_total: 0,
+                rules: Vec::new(),
+            }])
+            .expect("manual policy catalog"),
+        );
         app.workspace.select_group(policy_id);
 
-        assert_eq!(app.selected_node().name, "Singapore");
+        assert_eq!(
+            app.selected_node().map(|node| node.name),
+            Some("Singapore".to_owned())
+        );
     }
 
     #[test]
-    fn offline_manual_policy_selection_ignores_colliding_demo_catalog() {
+    fn offline_manual_policy_selection_uses_only_saved_group_candidates() {
         assert!(super::policy_target_is_selectable(
             false,
             Some(false),

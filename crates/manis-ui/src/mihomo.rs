@@ -98,7 +98,7 @@ static NEXT_STORED_SOURCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug)]
 pub(crate) enum ControllerState {
-    Demo,
+    Disconnected,
     Connecting {
         endpoint: String,
     },
@@ -118,7 +118,7 @@ pub(crate) enum ControllerState {
 impl ControllerState {
     pub(crate) fn endpoint(&self) -> Option<&str> {
         match self {
-            Self::Demo => None,
+            Self::Disconnected => None,
             Self::Connecting { endpoint }
             | Self::Connected { endpoint, .. }
             | Self::Failed { endpoint, .. } => Some(endpoint),

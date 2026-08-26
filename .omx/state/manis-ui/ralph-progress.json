@@ -1,14 +1,14 @@
 {
-  "score": 97,
+  "score": 96,
   "verdict": "pass",
   "category_match": true,
   "threshold": 90,
   "threshold_met": true,
   "fixture_independent_review": {
-    "score": 97,
+    "score": 96,
     "verdict": "pass",
     "category_match": true,
-    "reasoning": "Manis reads as the confirmed product identity in both wide and compact native layouts. Removing the temporary PROTOTYPE label leaves a cleaner brand lockup without changing the established operational hierarchy."
+    "reasoning": "The wide and compact policy empty states are clear, restrained, and explicitly distinguish absent runtime data from real kernel state. Populated screenshots now come exclusively from the local Mihomo fixture and retain the established operational hierarchy."
   },
   "references": [
     "/Users/bobo/.planning/manis/reference-fluent2.png",
@@ -17,19 +17,22 @@
   ],
   "generated_screenshots": [
     "/Users/bobo/.planning/manis/.impeccable/review/native-wide.png",
-    "/Users/bobo/.planning/manis/.impeccable/review/native-compact.png"
+    "/Users/bobo/.planning/manis/.impeccable/review/native-compact.png",
+    "/Users/bobo/.planning/manis/.impeccable/review/native-wide-connected.png",
+    "/Users/bobo/.planning/manis/.impeccable/review/native-wide-automatic-policy.png",
+    "/Users/bobo/.planning/manis/.impeccable/review/native-compact-detail.png"
   ],
   "differences": [
-    "Manis intentionally keeps denser desktop data surfaces than the editorial reference pages because it is an operational routing client.",
-    "The compact layout preserves the product wordmark while collapsing navigation labels and controls according to the established adaptive model."
+    "The disconnected state intentionally replaces the former dense three-column mock workspace with one focused explanation and recovery action.",
+    "Populated policy screenshots remain dense because they represent real operational data returned by the local controller fixture."
   ],
   "suggestions": [
-    "Keep the current Manis wordmark treatment until a dedicated pangolin-derived logo system is commissioned.",
-    "Preserve the copper route mark as routing semantics rather than expanding it into decorative branding."
+    "Keep production initialization empty and continue using only local controller fixtures for populated visual coverage.",
+    "Preserve the current single-action empty state unless future onboarding requires a second recovery path."
   ],
   "next_actions": [
-    "Run the final workspace verification suite and macOS package checks.",
-    "Commit the complete Manis brand and compatibility migration."
+    "Run final workspace, macOS package, and Git verification.",
+    "Commit and push the mock policy removal."
   ],
-  "reasoning": "The generated GPUI screenshots match the intended modern adaptive desktop category and retain the Fluent/Material-inspired clarity. The confirmed Manis name is legible, balanced, and no longer contradicted by prototype copy."
+  "reasoning": "The empty state and real populated states now both pass the adaptive desktop quality bar. No production screenshot depends on the deleted mock catalog, and the automatic-policy view is validated against fixture-backed runtime data."
 }

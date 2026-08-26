@@ -92,7 +92,7 @@ impl KernelRuntime {
         match &self.controller {
             ControllerRuntime::External { .. } => format!(
                 "{} {}",
-                language.text("Demo data · not connected to", "演示数据 · 尚未连接"),
+                language.text("Not connected to", "尚未连接"),
                 self.kind.display_name()
             ),
             ControllerRuntime::Managed { .. } => format!(

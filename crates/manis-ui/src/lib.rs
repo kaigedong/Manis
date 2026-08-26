@@ -1,6 +1,5 @@
 mod app;
 mod brand;
-mod demo;
 mod diagnostics;
 mod kernel;
 mod localization;
