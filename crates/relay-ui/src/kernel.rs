@@ -119,13 +119,13 @@ impl KernelRuntime {
     ) -> &'static str {
         match (self.kind, &self.controller, state) {
             (_, _, ControllerState::Connecting { .. }) => language.text("Connecting…", "正在连接…"),
+            (_, _, ControllerState::Connected { .. }) => language.text("Refresh", "刷新数据"),
             (KernelKind::Mihomo, ControllerRuntime::Managed { .. }, _) => {
                 language.text("Start Mihomo", "启动 Mihomo")
             }
             (KernelKind::SingBox, ControllerRuntime::Managed { .. }, _) => {
                 language.text("Start sing-box", "启动 sing-box")
             }
-            (_, _, ControllerState::Connected { .. }) => language.text("Refresh", "刷新数据"),
             (KernelKind::Mihomo, _, _) => language.text("Connect Mihomo", "连接 Mihomo"),
             (KernelKind::SingBox, _, _) => language.text("Connect sing-box", "连接 sing-box"),
         }
