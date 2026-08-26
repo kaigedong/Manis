@@ -433,16 +433,24 @@ fn parses_flexible_proxy_json_and_extracts_policy_groups() -> Result<(), Box<dyn
 
     let groups = snapshot.policy_groups();
 
-    assert_eq!(groups.len(), 3);
-    assert_eq!(groups[0].name, "Proxy");
-    assert_eq!(groups[0].kind, GroupKind::Selector);
-    assert_eq!(groups[0].current.as_deref(), Some("Japan 01"));
-    assert_eq!(groups[0].nodes, ["Japan 01", "US 01"]);
-    assert_eq!(groups[0].latest_latency_ms, Some(38.0));
-    assert_eq!(groups[0].provider_name.as_deref(), Some("airport"));
-    assert_eq!(groups[1].kind, GroupKind::UrlTest);
-    assert_eq!(groups[1].latest_latency_ms, None);
-    assert_eq!(groups[2].name, "GLOBAL");
+    assert_eq!(groups.len(), 4);
+    let proxy = groups
+        .iter()
+        .find(|group| group.name == "Proxy")
+        .expect("Proxy group");
+    assert_eq!(proxy.kind, GroupKind::Selector);
+    assert_eq!(proxy.current.as_deref(), Some("Japan 01"));
+    assert_eq!(proxy.nodes, ["Japan 01", "US 01"]);
+    assert_eq!(proxy.latest_latency_ms, Some(38.0));
+    assert_eq!(proxy.provider_name.as_deref(), Some("airport"));
+    let auto = groups
+        .iter()
+        .find(|group| group.name == "Auto")
+        .expect("Auto group");
+    assert_eq!(auto.kind, GroupKind::UrlTest);
+    assert_eq!(auto.latest_latency_ms, None);
+    assert!(groups.iter().any(|group| group.name == "GLOBAL"));
+    assert!(groups.iter().any(|group| group.name == "__MANIS_GLOBAL__"));
 
     Ok(())
 }
@@ -991,6 +999,12 @@ fn proxy_fixture() -> String {
           "type": "Selector",
           "now": "DIRECT",
           "all": ["DIRECT", "Proxy"]
+        },
+        "__MANIS_GLOBAL__": {
+          "name": "__MANIS_GLOBAL__",
+          "type": "Selector",
+          "now": "Japan 01",
+          "all": ["Japan 01", "US 01"]
         },
         "Japan 01": {
           "name": "Japan 01",

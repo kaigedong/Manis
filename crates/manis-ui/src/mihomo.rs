@@ -25,9 +25,9 @@ use manis_mihomo::{
     VersionInfo, to_policy_catalog,
 };
 use manis_profile::{
-    Name, PolicyRef, Profile, ProfileMode, QxRuleList, Rule, SecretUrl, SingBoxOptions,
-    UserPolicyGroup, UserPolicyGroupKind, VlessProxy, render_mihomo_yaml, render_sing_box_json,
-    write_private_atomic,
+    MANIS_GLOBAL_GROUP_NAME, Name, PolicyRef, Profile, ProfileMode, QxRuleList, Rule, SecretUrl,
+    SingBoxOptions, UserPolicyGroup, UserPolicyGroupKind, VlessProxy, render_mihomo_yaml,
+    render_sing_box_json, write_private_atomic,
 };
 
 use crate::brand;
@@ -603,7 +603,27 @@ impl ControllerRuntime {
         &self,
         selected_name: &str,
     ) -> Result<NodeGroupRuntimeSnapshot, LoadError> {
-        self.select_node_group_node("GLOBAL", selected_name)
+        let controller_secret = self.controller_secret();
+        let Self::Managed {
+            manager,
+            generated_profile: Some(_),
+            ..
+        } = self
+        else {
+            return Err(LoadError::Runtime(
+                "当前控制器不由 Manis 管理，不能修改全局出口".to_owned(),
+            ));
+        };
+        let endpoint = {
+            let mut manager = manager
+                .lock()
+                .map_err(|_poisoned| LoadError::Runtime("托管内核状态锁已损坏".to_owned()))?;
+            manager
+                .running_endpoint()?
+                .ok_or_else(|| LoadError::Runtime("Mihomo 尚未运行，请先启动托管内核".to_owned()))?
+                .uri()
+        };
+        select_global_node_at_endpoint(&endpoint, selected_name, controller_secret.as_deref())
     }
 
     pub(crate) fn test_node_group_delay(
@@ -788,30 +808,12 @@ impl ControllerRuntime {
                 .ok_or_else(|| LoadError::Runtime("Mihomo 尚未运行，请先启动托管内核".to_owned()))?
                 .uri()
         };
-        let group = fetch_policy_group(&endpoint, group_name, controller_secret.as_deref())?;
-        if !group
-            .proxy_type
-            .as_deref()
-            .is_some_and(is_selector_proxy_type)
-        {
-            return Err(LoadError::Runtime(
-                "只有手动选择策略组可以切换节点".to_owned(),
-            ));
-        }
-        if !group.all.iter().any(|candidate| candidate == selected_name) {
-            return Err(LoadError::Runtime(
-                "所选节点不在当前 Mihomo 策略组中".to_owned(),
-            ));
-        }
-        put_policy_group_selection(
+        select_policy_group_candidate(
             &endpoint,
             group_name,
             selected_name,
             controller_secret.as_deref(),
-        )?;
-        fetch_policy_group(&endpoint, group_name, controller_secret.as_deref())
-            .map(policy_group_runtime_snapshot)
-            .map_err(LoadError::from)
+        )
     }
 
     #[allow(clippy::too_many_lines)]
@@ -4270,6 +4272,133 @@ fn policy_group_runtime_snapshot(
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum GlobalSelectionRoute {
+    Direct,
+    ViaGlobalExit,
+}
+
+fn global_selection_route(
+    global: &manis_mihomo::MihomoPolicyGroup,
+    global_exit: &manis_mihomo::MihomoPolicyGroup,
+    selected_name: &str,
+) -> Option<GlobalSelectionRoute> {
+    if !global
+        .proxy_type
+        .as_deref()
+        .is_some_and(is_selector_proxy_type)
+    {
+        return None;
+    }
+    if global
+        .all
+        .iter()
+        .any(|candidate| candidate == MANIS_GLOBAL_GROUP_NAME)
+        && global_exit
+            .proxy_type
+            .as_deref()
+            .is_some_and(is_selector_proxy_type)
+        && global_exit
+            .all
+            .iter()
+            .any(|candidate| candidate == selected_name)
+    {
+        Some(GlobalSelectionRoute::ViaGlobalExit)
+    } else if global
+        .all
+        .iter()
+        .any(|candidate| candidate == selected_name)
+    {
+        Some(GlobalSelectionRoute::Direct)
+    } else {
+        None
+    }
+}
+
+fn select_global_node_at_endpoint(
+    endpoint: &str,
+    selected_name: &str,
+    controller_secret: Option<&str>,
+) -> Result<NodeGroupRuntimeSnapshot, LoadError> {
+    let global = fetch_policy_group(endpoint, "GLOBAL", controller_secret)?;
+    let global_exit = fetch_policy_group(endpoint, MANIS_GLOBAL_GROUP_NAME, controller_secret)?;
+    match global_selection_route(&global, &global_exit, selected_name) {
+        Some(GlobalSelectionRoute::Direct) => {
+            select_policy_group_candidate(endpoint, "GLOBAL", selected_name, controller_secret)
+        }
+        Some(GlobalSelectionRoute::ViaGlobalExit) => {
+            let previous = global_exit.current.clone();
+            select_policy_group_candidate(
+                endpoint,
+                MANIS_GLOBAL_GROUP_NAME,
+                selected_name,
+                controller_secret,
+            )?;
+            if let Err(error) = select_policy_group_candidate(
+                endpoint,
+                "GLOBAL",
+                MANIS_GLOBAL_GROUP_NAME,
+                controller_secret,
+            ) {
+                if let Some(previous) = previous
+                    && previous != selected_name
+                    && let Err(rollback_error) = select_policy_group_candidate(
+                        endpoint,
+                        MANIS_GLOBAL_GROUP_NAME,
+                        &previous,
+                        controller_secret,
+                    )
+                {
+                    record_event(
+                        LogLevel::Warn,
+                        "global.node.rollback_failed",
+                        format!("group={MANIS_GLOBAL_GROUP_NAME} error={rollback_error}"),
+                    );
+                }
+                return Err(error);
+            }
+            Ok(NodeGroupRuntimeSnapshot {
+                current: Some(selected_name.to_owned()),
+                candidates: global_exit.all.into_iter().collect(),
+            })
+        }
+        None => Err(LoadError::Runtime(
+            "所选节点不在当前 Mihomo 全局出口链路中".to_owned(),
+        )),
+    }
+}
+
+fn select_policy_group_candidate(
+    endpoint: &str,
+    group_name: &str,
+    selected_name: &str,
+    controller_secret: Option<&str>,
+) -> Result<NodeGroupRuntimeSnapshot, LoadError> {
+    let group = fetch_policy_group(endpoint, group_name, controller_secret)?;
+    if !group
+        .proxy_type
+        .as_deref()
+        .is_some_and(is_selector_proxy_type)
+    {
+        return Err(LoadError::Runtime(
+            "只有手动选择策略组可以切换节点".to_owned(),
+        ));
+    }
+    if !group.all.iter().any(|candidate| candidate == selected_name) {
+        return Err(LoadError::Runtime(
+            "所选节点不在当前 Mihomo 策略组中".to_owned(),
+        ));
+    }
+    put_policy_group_selection(endpoint, group_name, selected_name, controller_secret)?;
+    let selected = fetch_policy_group(endpoint, group_name, controller_secret)?;
+    if selected.current.as_deref() != Some(selected_name) {
+        return Err(LoadError::Runtime(format!(
+            "Mihomo 未确认策略组“{group_name}”的节点切换"
+        )));
+    }
+    Ok(policy_group_runtime_snapshot(selected))
+}
+
 fn is_selector_proxy_type(proxy_type: &str) -> bool {
     proxy_type.eq_ignore_ascii_case("Selector")
 }
@@ -5939,6 +6068,97 @@ IP-CIDR,192.0.2.0/24,DIRECT
         assert!(super::is_selector_proxy_type("SELECTOR"));
         assert!(!super::is_selector_proxy_type("select-or"));
         assert!(!super::is_selector_proxy_type("URLTest"));
+    }
+
+    #[test]
+    fn provider_node_global_selection_uses_the_internal_global_exit_group() {
+        let global = manis_mihomo::MihomoPolicyGroup {
+            name: Some("GLOBAL".to_owned()),
+            proxy_type: Some("Selector".to_owned()),
+            current: Some("DIRECT".to_owned()),
+            all: vec!["DIRECT".to_owned(), "__MANIS_GLOBAL__".to_owned()],
+        };
+        let global_exit = manis_mihomo::MihomoPolicyGroup {
+            name: Some("__MANIS_GLOBAL__".to_owned()),
+            proxy_type: Some("Selector".to_owned()),
+            current: Some("HK 01".to_owned()),
+            all: vec!["HK 01".to_owned(), "HK 03".to_owned()],
+        };
+
+        assert_eq!(
+            super::global_selection_route(&global, &global_exit, "HK 03"),
+            Some(super::GlobalSelectionRoute::ViaGlobalExit)
+        );
+        assert_eq!(
+            super::global_selection_route(&global, &global_exit, "DIRECT"),
+            Some(super::GlobalSelectionRoute::Direct)
+        );
+        assert_eq!(
+            super::global_selection_route(&global, &global_exit, "Missing"),
+            None
+        );
+    }
+
+    #[test]
+    fn global_node_selection_applies_leaf_then_internal_group()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let endpoint = format!("http://{}", listener.local_addr()?);
+        let server = std::thread::spawn(move || -> std::io::Result<Vec<String>> {
+            let mut requests = Vec::new();
+            for index in 0..8 {
+                let (mut stream, _) = listener.accept()?;
+                let mut request_line = String::new();
+                BufReader::new(stream.try_clone()?).read_line(&mut request_line)?;
+                requests.push(request_line.trim().to_owned());
+                let body = match index {
+                    0 | 5 => {
+                        r#"{"name":"GLOBAL","type":"Selector","now":"DIRECT","all":["DIRECT","__MANIS_GLOBAL__"]}"#
+                    }
+                    1 | 2 => {
+                        r#"{"name":"__MANIS_GLOBAL__","type":"Selector","now":"HK 01","all":["HK 01","HK 03"]}"#
+                    }
+                    4 => {
+                        r#"{"name":"__MANIS_GLOBAL__","type":"Selector","now":"HK 03","all":["HK 01","HK 03"]}"#
+                    }
+                    7 => {
+                        r#"{"name":"GLOBAL","type":"Selector","now":"__MANIS_GLOBAL__","all":["DIRECT","__MANIS_GLOBAL__"]}"#
+                    }
+                    3 | 6 => "",
+                    _ => unreachable!(),
+                };
+                let response = if body.is_empty() {
+                    "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                        .to_owned()
+                } else {
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    )
+                };
+                stream.write_all(response.as_bytes())?;
+            }
+            Ok(requests)
+        });
+
+        let snapshot = super::select_global_node_at_endpoint(&endpoint, "HK 03", None)?;
+        let requests = server.join().map_err(|_| "fixture server panicked")??;
+
+        assert_eq!(snapshot.current.as_deref(), Some("HK 03"));
+        assert_eq!(
+            requests,
+            [
+                "GET /proxies/GLOBAL HTTP/1.1",
+                "GET /proxies/__MANIS_GLOBAL__ HTTP/1.1",
+                "GET /proxies/__MANIS_GLOBAL__ HTTP/1.1",
+                "PUT /proxies/__MANIS_GLOBAL__ HTTP/1.1",
+                "GET /proxies/__MANIS_GLOBAL__ HTTP/1.1",
+                "GET /proxies/GLOBAL HTTP/1.1",
+                "PUT /proxies/GLOBAL HTTP/1.1",
+                "GET /proxies/GLOBAL HTTP/1.1",
+            ]
+        );
+        Ok(())
     }
 
     #[test]

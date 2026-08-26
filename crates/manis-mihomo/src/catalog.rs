@@ -7,6 +7,10 @@ use manis_core::{
 
 use crate::{GroupKind, MihomoSnapshot, Proxy};
 
+// Keep this wire name aligned with `manis_profile::MANIS_GLOBAL_GROUP_NAME` without creating a
+// reverse dependency from the Mihomo adapter to the profile renderer.
+const MANIS_GLOBAL_GROUP_NAME: &str = "__MANIS_GLOBAL__";
+
 /// Converts one read-only Mihomo snapshot into the UI's owned policy catalog.
 ///
 /// Hidden groups are omitted. Rules retain Mihomo's source order and are grouped by their target
@@ -30,7 +34,7 @@ pub fn to_policy_catalog(snapshot: &MihomoSnapshot) -> Result<PolicyCatalog, Emp
 
     let groups = runtime_groups
         .into_iter()
-        .filter(|group| group.hidden != Some(true))
+        .filter(|group| group.hidden != Some(true) && group.name != MANIS_GLOBAL_GROUP_NAME)
         .map(|group| {
             let nodes = group
                 .nodes

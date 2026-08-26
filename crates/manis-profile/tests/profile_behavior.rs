@@ -370,8 +370,9 @@ fn qx_sources_routes_subscriptions_and_saved_nodes_through_auto_and_proxy() {
 
     assert!(yaml.contains("mixed-port: 17890"));
     assert!(yaml.contains("name: \"Saved\""));
-    assert_eq!(yaml.matches("- \"Saved\"").count(), 2);
+    assert_eq!(yaml.matches("- \"Saved\"").count(), 3);
     assert!(yaml.contains("- \"Subscription 1\""));
+    assert!(yaml.contains("name: \"__MANIS_GLOBAL__\""));
     assert!(yaml.contains("- \"MATCH,Proxy\""));
 }
 

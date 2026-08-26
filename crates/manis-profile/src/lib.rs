@@ -10,6 +10,8 @@ const MAX_SECRET_URL_BYTES: usize = 16 * 1024;
 const MAX_SUBSCRIPTION_NAME_BYTES: usize = 96;
 const MAX_VLESS_FIELD_BYTES: usize = 1024;
 const GROUP_TEST_URL: &str = "https://www.gstatic.com/generate_204";
+/// Internal selector that keeps the node-page global exit independent from rule policy groups.
+pub const MANIS_GLOBAL_GROUP_NAME: &str = "__MANIS_GLOBAL__";
 const SUBSCRIPTION_METADATA_EXCLUDE_FILTER: &str =
     "^(剩余流量|流量剩余|套餐到期|到期时间|过期时间|距离下次重置|下次重置|防失联|官网)";
 
@@ -216,6 +218,7 @@ impl Profile {
         }
         let automatic_name = Name::parse("Auto")?;
         let proxy_name = Name::parse("Proxy")?;
+        let global_exit_name = Name::parse(MANIS_GLOBAL_GROUP_NAME)?;
         let providers = subscriptions
             .into_iter()
             .enumerate()
@@ -255,9 +258,18 @@ impl Profile {
         select_refs.push(PolicyRef::Group(automatic_name.clone()));
         select_refs.push(PolicyRef::Direct);
         select_refs.extend(direct_refs.iter().cloned());
-        let mut groups = Vec::with_capacity(compiled_user_groups.len() + 2);
+        let mut groups = Vec::with_capacity(compiled_user_groups.len() + 3);
         groups.append(&mut compiled_user_groups);
         groups.extend([
+            PolicyGroup {
+                name: global_exit_name,
+                icon: None,
+                kind: PolicyGroupKind::Select {
+                    proxies: direct_refs.clone(),
+                    use_providers: provider_names.clone(),
+                    filter: None,
+                },
+            },
             PolicyGroup {
                 name: automatic_name.clone(),
                 icon: None,

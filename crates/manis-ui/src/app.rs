@@ -2017,7 +2017,11 @@ impl ManisApp {
                     targets
                         .into_iter()
                         .map(|(group, target)| {
-                            let result = runtime.select_node_group_node(&group, &target);
+                            let result = if group.eq_ignore_ascii_case("GLOBAL") {
+                                runtime.select_global_node(&target)
+                            } else {
+                                runtime.select_node_group_node(&group, &target)
+                            };
                             (group, target, result)
                         })
                         .collect::<Vec<_>>()

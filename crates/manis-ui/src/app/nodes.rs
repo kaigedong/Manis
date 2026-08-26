@@ -25,7 +25,33 @@ struct NodeSourceGroup<'a> {
     name: String,
     detail: String,
     providers: Vec<&'a LoadedProvider>,
+    runtime_provider_names: Vec<String>,
     saved_nodes: Vec<&'a SourceNodePreview>,
+}
+
+impl NodeSourceGroup<'_> {
+    fn delay_targets(&self) -> Vec<ProxyDelayTarget> {
+        self.providers
+            .iter()
+            .enumerate()
+            .flat_map(|(index, provider)| {
+                let runtime_name = self
+                    .runtime_provider_names
+                    .get(index)
+                    .unwrap_or(&provider.name);
+                provider.nodes.iter().map(move |node| {
+                    ProxyDelayTarget::provider(runtime_name.clone(), node.name.clone())
+                })
+            })
+            .chain(
+                self.saved_nodes
+                    .iter()
+                    .map(|node| ProxyDelayTarget::direct(node.name.clone())),
+            )
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect()
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -338,6 +364,11 @@ impl ManisApp {
                         name,
                         detail: format!("{transport} · {state}"),
                         providers: subscription.providers.iter().collect(),
+                        runtime_provider_names: subscription
+                            .providers
+                            .iter()
+                            .map(|_provider| format!("Subscription {}", index + 1))
+                            .collect(),
                         saved_nodes: Vec::new(),
                     }
                 })
@@ -353,6 +384,7 @@ impl ManisApp {
                         )
                         .to_owned(),
                     providers: Vec::new(),
+                    runtime_provider_names: Vec::new(),
                     saved_nodes: self
                         .saved_vless_nodes
                         .iter()
@@ -379,6 +411,7 @@ impl ManisApp {
                     },
                 ),
                 providers: vec![provider],
+                runtime_provider_names: vec![provider.name.clone()],
                 saved_nodes: Vec::new(),
             })
             .collect()
@@ -1861,11 +1894,15 @@ impl ManisApp {
             !self.imported_subscriptions.is_empty() || !self.saved_vless_nodes.is_empty();
         let mut targets = BTreeSet::new();
         for source_group in self.node_source_groups(has_local_sources, self.language()) {
-            for provider in source_group.providers {
+            for (provider_index, provider) in source_group.providers.iter().enumerate() {
+                let runtime_provider_name = source_group
+                    .runtime_provider_names
+                    .get(provider_index)
+                    .unwrap_or(&provider.name);
                 for node in &provider.nodes {
                     if group.matches(&source_group.id, &node.name) {
                         targets.insert(ProxyDelayTarget::provider(
-                            provider.name.clone(),
+                            runtime_provider_name.clone(),
                             node.name.clone(),
                         ));
                     }
@@ -2916,23 +2953,7 @@ impl ManisApp {
         let benchmarking = benchmark.is_running();
         let benchmark_id = group.id.clone();
         let benchmark_name = group.name.clone();
-        let delay_targets = group
-            .providers
-            .iter()
-            .flat_map(|provider| {
-                provider.nodes.iter().map(|node| {
-                    ProxyDelayTarget::provider(provider.name.clone(), node.name.clone())
-                })
-            })
-            .chain(
-                group
-                    .saved_nodes
-                    .iter()
-                    .map(|node| ProxyDelayTarget::direct(node.name.clone())),
-            )
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect::<Vec<_>>();
+        let delay_targets = group.delay_targets();
         let detail = match &benchmark {
             GroupBenchmarkState::Idle => group.detail.clone(),
             GroupBenchmarkState::Running { .. } => format!(
@@ -3436,11 +3457,11 @@ impl ManisApp {
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
-    use super::{ManisApp, NodeCounts};
+    use super::{ManisApp, NodeCounts, NodeSourceGroup};
     use crate::app::{
         GroupBenchmarkNodeState, GroupBenchmarkState, GroupBenchmarkSummary, NodeGroupRuntimeState,
     };
-    use crate::mihomo::{LoadedProvider, LoadedProviderNode};
+    use crate::mihomo::{LoadedProvider, LoadedProviderNode, ProxyDelayTarget};
 
     #[test]
     fn counts_node_availability_across_providers() {
@@ -3463,6 +3484,33 @@ mod tests {
                 unavailable: 1,
                 untested: 1,
             }
+        );
+    }
+
+    #[test]
+    fn imported_group_delay_targets_use_the_runtime_provider_id() {
+        let provider = LoadedProvider {
+            name: "订阅预览".to_owned(),
+            vehicle_type: Some("HTTP".to_owned()),
+            nodes: vec![LoadedProviderNode {
+                name: "HK 03".to_owned(),
+                protocol: "Trojan".to_owned(),
+                latency_label: None,
+                alive: None,
+            }],
+        };
+        let group = NodeSourceGroup {
+            id: "subscription:fixture".to_owned(),
+            name: "Fixture".to_owned(),
+            detail: String::new(),
+            providers: vec![&provider],
+            runtime_provider_names: vec!["Subscription 1".to_owned()],
+            saved_nodes: Vec::new(),
+        };
+
+        assert_eq!(
+            group.delay_targets(),
+            vec![ProxyDelayTarget::provider("Subscription 1", "HK 03")]
         );
     }
 
