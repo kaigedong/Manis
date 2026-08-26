@@ -4,6 +4,7 @@ use std::error::Error;
 use std::ffi::OsString;
 use std::fmt;
 use std::fs;
+use std::fs::OpenOptions;
 use std::io;
 use std::net::SocketAddr;
 use std::path::{Component, Path, PathBuf};
@@ -14,6 +15,7 @@ use std::time::{Duration, Instant};
 use relay_core::KernelKind;
 
 const DEFAULT_VALIDATION_TIMEOUT: Duration = Duration::from_secs(10);
+const MANAGED_CORE_LOG_FILE: &str = "relay-core.log";
 #[cfg(unix)]
 const CHILD_ENV_ALLOWLIST: [&str; 6] = [
     "HOME",
@@ -344,6 +346,12 @@ impl CommandSpec {
     pub fn args(&self) -> &[OsString] {
         &self.args
     }
+
+    /// Returns the private working directory used for this command.
+    #[must_use]
+    pub fn current_dir(&self) -> &Path {
+        &self.current_dir
+    }
 }
 
 /// Portable child exit information.
@@ -369,6 +377,15 @@ impl ProcessExit {
         Self {
             success: false,
             code: Some(1),
+        }
+    }
+
+    /// Creates synthetic exit information returned by an out-of-process supervisor.
+    #[must_use]
+    pub const fn from_code(code: i32) -> Self {
+        Self {
+            success: code == 0,
+            code: Some(code),
         }
     }
 
@@ -469,10 +486,26 @@ impl ProcessSpawner for StdProcessSpawner {
     }
 
     fn spawn(&mut self, spec: &CommandSpec) -> io::Result<Box<dyn ManagedChild>> {
-        resolved_command(spec)
+        resolved_launch_command(spec)?
             .spawn()
             .map(|child| Box::new(StdManagedChild(child)) as Box<dyn ManagedChild>)
     }
+}
+
+fn resolved_launch_command(spec: &CommandSpec) -> io::Result<Command> {
+    let log_path = spec.current_dir.join(MANAGED_CORE_LOG_FILE);
+    let mut options = OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let log = options.open(log_path)?;
+    let stdout = log.try_clone()?;
+    let mut command = resolved_command(spec);
+    command.stdout(Stdio::from(stdout)).stderr(Stdio::from(log));
+    Ok(command)
 }
 
 fn resolved_command(spec: &CommandSpec) -> Command {

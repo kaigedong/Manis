@@ -3,6 +3,8 @@ mod demo;
 mod diagnostics;
 mod kernel;
 mod localization;
+#[cfg(target_os = "macos")]
+mod macos_privileged;
 mod mihomo;
 mod rule_source;
 mod subscription;

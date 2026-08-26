@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>dev.relay.prototype.helper</string>
+    <key>MachServices</key>
+    <dict>
+        <key>dev.relay.prototype.helper</key>
+        <true/>
+    </dict>
+    <key>BundleProgram</key>
+    <string>Contents/Library/PrivilegedHelperTools/dev.relay.prototype.helper</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>RELAY_REQUIRED_CLIENT_REQUIREMENT</key>
+        <string>identifier "dev.relay.prototype.helperctl"</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>

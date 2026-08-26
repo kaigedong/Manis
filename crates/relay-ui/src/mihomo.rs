@@ -117,6 +117,7 @@ pub(crate) enum ControllerRuntime {
         manager: Arc<Mutex<EngineManager>>,
         profile_source: RuntimeProfileSource,
         generated_profile: Option<ManagedGeneratedProfile>,
+        privileged: Arc<AtomicBool>,
     },
     Invalid {
         message: String,
@@ -331,6 +332,10 @@ impl ControllerRuntime {
     }
 
     pub(crate) fn set_tun_enabled(&self, enabled: bool) -> Result<(), LoadError> {
+        #[cfg(target_os = "macos")]
+        if enabled {
+            self.ensure_privileged_mihomo()?;
+        }
         let controller_secret = self.controller_secret();
         let endpoint = match self {
             Self::Managed { manager, .. } => {
@@ -350,6 +355,81 @@ impl ControllerRuntime {
             Self::Invalid { message } => return Err(LoadError::Runtime(message.clone())),
         };
         set_tun_enabled(&endpoint, enabled, controller_secret.as_deref()).map_err(LoadError::from)
+    }
+
+    #[cfg(target_os = "macos")]
+    fn ensure_privileged_mihomo(&self) -> Result<(), LoadError> {
+        use crate::macos_privileged::MacosPrivilegedProcessSpawner;
+
+        let Self::Managed {
+            manager,
+            generated_profile: Some(spec),
+            privileged,
+            ..
+        } = self
+        else {
+            return Err(LoadError::Runtime(
+                "macOS TUN 仅支持由 Relay 已保存来源生成的 Mihomo 配置".to_owned(),
+            ));
+        };
+        if spec.kernel != KernelKind::Mihomo {
+            return Err(LoadError::Runtime(
+                "macOS 特权辅助服务当前仅支持 Mihomo".to_owned(),
+            ));
+        }
+        if privileged.load(Ordering::Acquire) {
+            return Ok(());
+        }
+
+        // Registration and approval are checked before touching the healthy unprivileged core.
+        let spawner = MacosPrivilegedProcessSpawner::prepare().map_err(|error| {
+            LoadError::Runtime(format!(
+                "无法准备 macOS TUN 辅助服务：{error}。请使用已签名的 Relay.app，并在系统设置中批准后台项目"
+            ))
+        })?;
+        let final_path = spec.data_dir.join(GENERATED_PROFILE_FILE);
+        let config = managed_engine_config(spec, final_path.clone());
+        validate_managed_config(&config)?;
+
+        let mut manager = manager
+            .lock()
+            .map_err(|_poisoned| LoadError::Runtime("托管内核状态锁已损坏".to_owned()))?;
+        let was_running = manager.running_endpoint()?.is_some();
+        if was_running {
+            manager.stop()?;
+        }
+        *manager = EngineManager::with_adapters(
+            config,
+            ReadinessPolicy::default(),
+            Box::new(spawner),
+            readiness_probe(spec),
+        );
+        match manager.start() {
+            Ok(_endpoint) => {
+                privileged.store(true, Ordering::Release);
+                Ok(())
+            }
+            Err(privileged_error) => {
+                let fallback_config = managed_engine_config(spec, final_path);
+                *manager = EngineManager::new(
+                    fallback_config,
+                    ReadinessPolicy::default(),
+                    readiness_probe(spec),
+                );
+                let fallback = if was_running {
+                    manager.start().err()
+                } else {
+                    None
+                };
+                let message = match fallback {
+                    Some(fallback) => format!(
+                        "特权 Mihomo 启动失败：{privileged_error}；恢复普通 Mihomo 也失败：{fallback}"
+                    ),
+                    None => format!("特权 Mihomo 启动失败：{privileged_error}"),
+                };
+                Err(LoadError::Runtime(message))
+            }
+        }
     }
 
     pub(crate) fn set_routing_mode(&self, mode: RoutingMode) -> Result<(), LoadError> {
@@ -638,6 +718,7 @@ impl ControllerRuntime {
         let Self::Managed {
             manager,
             generated_profile: Some(spec),
+            privileged,
             ..
         } = self
         else {
@@ -669,23 +750,16 @@ impl ControllerRuntime {
             .lock()
             .map_err(|_poisoned| LoadError::Runtime("托管内核状态锁已损坏".to_owned()))?;
         let was_running = manager.running_endpoint()?.is_some();
+        let was_privileged = privileged.load(Ordering::Acquire);
         if was_running {
             manager.stop()?;
         }
-        *manager = EngineManager::new(
-            final_config,
-            ReadinessPolicy::default(),
-            readiness_probe(spec),
-        );
+        *manager = generated_engine_manager(spec, final_config, was_privileged)?;
         if was_running && let Err(error) = manager.start() {
             if let Some(previous_config) = previous_config {
                 let _ = write_private_atomic(&spec.data_dir, final_name, &previous_config);
                 let rollback_config = managed_engine_config(spec, spec.data_dir.join(final_name));
-                *manager = EngineManager::new(
-                    rollback_config,
-                    ReadinessPolicy::default(),
-                    readiness_probe(spec),
-                );
+                *manager = generated_engine_manager(spec, rollback_config, was_privileged)?;
                 let _ = manager.start();
             }
             return Err(LoadError::Engine(error));
@@ -696,6 +770,32 @@ impl ControllerRuntime {
             GeneratedProfileApply::Updated
         })
     }
+}
+
+fn generated_engine_manager(
+    spec: &ManagedGeneratedProfile,
+    config: ManagedEngineConfig,
+    privileged: bool,
+) -> Result<EngineManager, LoadError> {
+    #[cfg(target_os = "macos")]
+    if privileged {
+        let spawner = crate::macos_privileged::MacosPrivilegedProcessSpawner::prepare()
+            .map_err(|error| LoadError::Runtime(format!("无法连接 macOS TUN 辅助服务：{error}")))?;
+        return Ok(EngineManager::with_adapters(
+            config,
+            ReadinessPolicy::default(),
+            Box::new(spawner),
+            readiness_probe(spec),
+        ));
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    let _ = privileged;
+    Ok(EngineManager::new(
+        config,
+        ReadinessPolicy::default(),
+        readiness_probe(spec),
+    ))
 }
 
 fn generated_profile_names(kernel: KernelKind) -> (&'static str, &'static str) {
@@ -3002,6 +3102,7 @@ fn build_saved_sources_mihomo_runtime_in(
         manager: Arc::new(Mutex::new(manager)),
         profile_source: RuntimeProfileSource::SavedSources,
         generated_profile: Some(spec),
+        privileged: Arc::new(AtomicBool::new(false)),
     })
 }
 
@@ -3047,6 +3148,7 @@ fn build_sing_box_runtime(store_dir: &Path) -> Result<ControllerRuntime, String>
         manager: Arc::new(Mutex::new(manager)),
         profile_source: RuntimeProfileSource::SavedSources,
         generated_profile: Some(spec),
+        privileged: Arc::new(AtomicBool::new(false)),
     })
 }
 
@@ -3351,6 +3453,7 @@ fn build_managed_runtime_with_controller(
         manager: Arc::new(Mutex::new(manager)),
         profile_source,
         generated_profile,
+        privileged: Arc::new(AtomicBool::new(false)),
     }
 }
 
