@@ -195,6 +195,13 @@
 - [completed] 5. 生成中英文宽屏/紧凑原生截图并完成 Visual Verdict
 - [completed] 6. 完成全仓验证、敏感信息扫描、Git 提交并仅重启 Manis UI
 
+## 托盘代理模式勾选切换
+
+- [completed] 1. 映射托盘菜单、`ProxyMode` 三态与现有切换守卫边界
+- [completed] 2. 以 TDD 锁定点选切换、再点取消和 TUN 不可用原因
+- [completed] 3. 实现托盘可勾选的系统代理 / TUN 代理，并与主窗口双向同步
+- [completed] 4. 完成全仓验证、Git 提交并 push feat 分支
+
 ## 固定约束
 - 实现框架：Rust + GPUI
 - 目标平台：Windows、macOS、Linux
@@ -240,3 +247,4 @@
 | 新内核卡片改变配置页纵向坐标，旧截图交互没有命中输入框 | 2 | 更新原生快照坐标并提取滚动 helper；完整截图链路复跑成功，订阅/VLESS fixture 恢复正常 |
 | 首轮代码审查发现 sing-box 控制器密钥使用进程级回退 | 1 | 删除全局密钥，改为由受管 runtime 持有并随 endpoint 显式传递；外部 controller 只接受用户显式环境密钥 |
 | 语言卡改变配置页与节点详情快照的旧坐标 | 2 | 以截图实际布局校准滚动、折叠与详情按钮坐标，并让语言快照真实点击后校验私有偏好文件 |
+| 在 `apply_proxy_mode` 前插入新方法时拆散了它原有的 `#[allow(clippy::too_many_lines)]` | 1 | 先误判为可见性触发 lint；用 `git show HEAD` 对照后确认属性被顶走，把它移回原函数而非重构或新增豁免 |

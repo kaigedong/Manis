@@ -337,6 +337,26 @@ fn proxy_mode_cycles_through_off_system_and_tun() {
 }
 
 #[test]
+fn selecting_the_active_proxy_mode_turns_it_off() {
+    assert_eq!(ProxyMode::System.toggled(ProxyMode::System), ProxyMode::Off);
+    assert_eq!(ProxyMode::Tun.toggled(ProxyMode::Tun), ProxyMode::Off);
+}
+
+#[test]
+fn selecting_an_inactive_proxy_mode_activates_it() {
+    assert_eq!(ProxyMode::Off.toggled(ProxyMode::System), ProxyMode::System);
+    assert_eq!(ProxyMode::Off.toggled(ProxyMode::Tun), ProxyMode::Tun);
+    assert_eq!(ProxyMode::System.toggled(ProxyMode::Tun), ProxyMode::Tun);
+    assert_eq!(ProxyMode::Tun.toggled(ProxyMode::System), ProxyMode::System);
+}
+
+#[test]
+fn toggling_off_from_off_stays_off() {
+    assert_eq!(ProxyMode::Off.toggled(ProxyMode::Off), ProxyMode::Off);
+    assert_eq!(ProxyMode::System.toggled(ProxyMode::Off), ProxyMode::Off);
+}
+
+#[test]
 fn routing_mode_has_stable_labels_and_wire_values() {
     assert_eq!(RoutingMode::Direct.label(), "直连");
     assert_eq!(RoutingMode::Global.label(), "全局");

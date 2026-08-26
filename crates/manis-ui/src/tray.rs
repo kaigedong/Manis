@@ -3,25 +3,42 @@ use std::time::Duration;
 use gpui::{
     App, AppContext, Bounds, Entity, Global, QuitMode, WindowBounds, WindowOptions, px, size,
 };
+use manis_core::ProxyMode;
 use tray_icon::{
     Icon, TrayIcon, TrayIconBuilder,
-    menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem},
+    menu::{CheckMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem},
 };
 
 use crate::{
     ManisApp,
+    app::ProxyModeBlock,
     localization::{Language, Localizer},
     mihomo,
 };
 
 const SHOW_MENU_ID: &str = "manis.tray.show";
 const QUIT_MENU_ID: &str = "manis.tray.quit";
+const SYSTEM_PROXY_MENU_ID: &str = "manis.tray.proxy.system";
+const TUN_PROXY_MENU_ID: &str = "manis.tray.proxy.tun";
 const TRAY_EVENT_INTERVAL: Duration = Duration::from_millis(100);
 
 struct ManisTray {
     _icon: TrayIcon,
     show_id: MenuId,
     quit_id: MenuId,
+    system_proxy: CheckMenuItem,
+    tun_proxy: CheckMenuItem,
+    synced: Option<TrayProxySnapshot>,
+}
+
+/// Everything the tray check items render, so an unchanged tick costs one comparison instead of
+/// four platform menu calls.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct TrayProxySnapshot {
+    language: Language,
+    active: ProxyMode,
+    system_block: Option<ProxyModeBlock>,
+    tun_block: Option<ProxyModeBlock>,
 }
 
 impl Global for ManisTray {}
@@ -120,14 +137,40 @@ pub(crate) fn install_with_language(cx: &mut App, language: Language) -> Result<
         false,
         None,
     );
+    // Both entries start disabled and unchecked; the event loop enables them once a controller is
+    // connected, so the tray never offers a switch that would be rejected.
+    let system_proxy = CheckMenuItem::with_id(
+        SYSTEM_PROXY_MENU_ID,
+        proxy_mode_menu_label(language, ProxyMode::System),
+        false,
+        false,
+        None,
+    );
+    let tun_proxy = CheckMenuItem::with_id(
+        TUN_PROXY_MENU_ID,
+        proxy_mode_menu_label(language, ProxyMode::Tun),
+        false,
+        false,
+        None,
+    );
     let separator = PredefinedMenuItem::separator();
+    let proxy_separator = PredefinedMenuItem::separator();
     let quit = MenuItem::with_id(
         QUIT_MENU_ID,
         language.text("Quit Manis", "退出 Manis"),
         true,
         None,
     );
-    let menu = Menu::with_items(&[&show, &status, &separator, &quit]).map_err(|_error| {
+    let menu = Menu::with_items(&[
+        &show,
+        &status,
+        &proxy_separator,
+        &system_proxy,
+        &tun_proxy,
+        &separator,
+        &quit,
+    ])
+    .map_err(|_error| {
         language.text(
             "Could not create the system tray menu",
             "无法创建系统托盘菜单",
@@ -152,6 +195,9 @@ pub(crate) fn install_with_language(cx: &mut App, language: Language) -> Result<
         _icon: tray,
         show_id: show.id().clone(),
         quit_id: quit.id().clone(),
+        system_proxy,
+        tun_proxy,
+        synced: None,
     });
     cx.set_quit_mode(QuitMode::Explicit);
 
@@ -178,9 +224,14 @@ fn drain_menu_events(cx: &mut App) -> bool {
         }
     }
 
-    let (show_id, quit_id) = {
+    let (show_id, quit_id, system_id, tun_id) = {
         let tray = cx.global::<ManisTray>();
-        (tray.show_id.clone(), tray.quit_id.clone())
+        (
+            tray.show_id.clone(),
+            tray.quit_id.clone(),
+            tray.system_proxy.id().clone(),
+            tray.tun_proxy.id().clone(),
+        )
     };
     let mut should_quit = false;
     while let Ok(event) = MenuEvent::receiver().try_recv() {
@@ -188,12 +239,77 @@ fn drain_menu_events(cx: &mut App) -> bool {
             show_or_open_window(cx);
         } else if event.id == quit_id {
             should_quit = true;
+        } else if event.id == system_id {
+            request_proxy_mode(cx, ProxyMode::System);
+        } else if event.id == tun_id {
+            request_proxy_mode(cx, ProxyMode::Tun);
         }
     }
     if should_quit {
         cx.quit();
+        return true;
     }
-    should_quit
+    sync_proxy_menu(cx);
+    false
+}
+
+/// Applies the mode a tray check item stands for, clearing it when it is already active.
+///
+/// `muda` flips the check mark as soon as the item is clicked. The following sync pass restores
+/// the mark to the mode that is actually in effect, so a switch that fails or is still running
+/// never reads as applied.
+fn request_proxy_mode(cx: &mut App, selected: ProxyMode) {
+    let app = manis_app(cx);
+    app.update(cx, |app, cx| app.toggle_proxy_mode(selected, cx));
+}
+
+/// Mirrors the live proxy mode onto the tray check items.
+fn sync_proxy_menu(cx: &mut App) {
+    let Some(app) = cx.try_global::<GlobalManisApp>().map(|app| app.0.clone()) else {
+        return;
+    };
+    let snapshot = {
+        let app = app.read(cx);
+        let active = app.active_proxy_mode();
+        TrayProxySnapshot {
+            language: app.language(),
+            active,
+            // Each reason is read for the switch that click would actually request, so turning a
+            // mode off stays available even when turning it on would not be.
+            system_block: app.proxy_mode_block(active.toggled(ProxyMode::System)),
+            tun_block: app.proxy_mode_block(active.toggled(ProxyMode::Tun)),
+        }
+    };
+
+    let tray = cx.global_mut::<ManisTray>();
+    if tray.synced == Some(snapshot) {
+        return;
+    }
+    tray.synced = Some(snapshot);
+    for (item, mode, block) in [
+        (&tray.system_proxy, ProxyMode::System, snapshot.system_block),
+        (&tray.tun_proxy, ProxyMode::Tun, snapshot.tun_block),
+    ] {
+        item.set_checked(snapshot.active == mode);
+        item.set_enabled(block.is_none());
+        item.set_text(tray_menu_label(snapshot.language, mode, block));
+    }
+}
+
+fn proxy_mode_menu_label(language: Language, mode: ProxyMode) -> &'static str {
+    match mode {
+        ProxyMode::Off => language.text("Off", "关闭代理"),
+        ProxyMode::System => language.text("System proxy", "系统代理"),
+        ProxyMode::Tun => language.text("TUN proxy", "TUN 代理"),
+    }
+}
+
+fn tray_menu_label(language: Language, mode: ProxyMode, block: Option<ProxyModeBlock>) -> String {
+    let label = proxy_mode_menu_label(language, mode);
+    match block {
+        None => label.to_owned(),
+        Some(block) => format!("{label} — {}", block.tray_reason(language)),
+    }
 }
 
 fn manis_icon_rgba() -> Vec<u8> {

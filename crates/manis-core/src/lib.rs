@@ -400,6 +400,22 @@ impl ProxyMode {
             Self::Tun => Self::Off,
         }
     }
+
+    /// Returns the mode that a checkable control should apply when `selected` is clicked.
+    ///
+    /// Selecting the already active mode clears it, which keeps a checkbox-style tray menu
+    /// honest: the check mark is removed and routing falls back to no proxy.
+    #[must_use]
+    pub const fn toggled(self, selected: Self) -> Self {
+        if matches!(
+            (self, selected),
+            (Self::Off, Self::Off) | (Self::System, Self::System) | (Self::Tun, Self::Tun)
+        ) {
+            Self::Off
+        } else {
+            selected
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
