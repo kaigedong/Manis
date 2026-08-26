@@ -146,6 +146,29 @@ where
         Ok(self.fetch_json::<ProxyDelayResponse>(&endpoint)?.delay)
     }
 
+    /// Tests one proxy-provider node and returns its fresh latency in milliseconds.
+    ///
+    /// Provider-owned nodes are not guaranteed to be exposed through `/proxies`; Mihomo exposes
+    /// their health check through the provider-specific endpoint instead.
+    ///
+    /// # Errors
+    /// Returns an error if the controller request fails or the delay payload cannot be decoded.
+    pub fn fetch_provider_proxy_delay(
+        &self,
+        provider_name: &str,
+        proxy_name: &str,
+        test_url: &str,
+        timeout_ms: u16,
+    ) -> Result<u16, MihomoError> {
+        let endpoint = format!(
+            "/providers/proxies/{}/{}/healthcheck?url={}&timeout={timeout_ms}",
+            percent_encode_component(provider_name),
+            percent_encode_component(proxy_name),
+            percent_encode_component(test_url)
+        );
+        Ok(self.fetch_json::<ProxyDelayResponse>(&endpoint)?.delay)
+    }
+
     /// Fetches minimal state for a Mihomo policy group or proxy entry.
     ///
     /// # Errors

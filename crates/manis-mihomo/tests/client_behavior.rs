@@ -63,6 +63,9 @@ impl ControllerTransport for FakeTransport {
             "/proxies/Japan%2001%20%5B%E5%80%8D%E7%8E%87%C3%971%5D/delay?url=http%3A%2F%2Fcp.cloudflare.com%2Fgenerate_204&timeout=1500" => {
                 Ok(r#"{"delay":47}"#.to_owned())
             }
+            "/providers/proxies/Subscription%201/HK%2001/healthcheck?url=http%3A%2F%2Fcp.cloudflare.com%2Fgenerate_204&timeout=1500" => {
+                Ok(r#"{"delay":63}"#.to_owned())
+            }
             "/proxies/Proxy%2F%F0%9F%8C%90%20Select" => Ok(
                 r#"{"name":"Proxy/🌐 Select","type":"Selector","now":"Japan 01","all":["Japan 01","US 01"],"unexpected":true}"#
                     .to_owned(),
@@ -287,6 +290,29 @@ fn fetch_proxy_delay_encodes_name_and_query_and_parses_delay()
         )]
     );
     assert_eq!(delay, 47);
+    Ok(())
+}
+
+#[test]
+fn fetch_provider_proxy_delay_uses_provider_healthcheck_endpoint()
+-> Result<(), Box<dyn std::error::Error>> {
+    let transport = FakeTransport::default();
+    let client = MihomoClient::new(ControllerConfig::default(), &transport);
+
+    let delay = client.fetch_provider_proxy_delay(
+        "Subscription 1",
+        "HK 01",
+        "http://cp.cloudflare.com/generate_204",
+        1500,
+    )?;
+
+    assert_eq!(
+        transport.requests.borrow().as_slice(),
+        [RecordedRequest::get(
+            "/providers/proxies/Subscription%201/HK%2001/healthcheck?url=http%3A%2F%2Fcp.cloudflare.com%2Fgenerate_204&timeout=1500"
+        )]
+    );
+    assert_eq!(delay, 63);
     Ok(())
 }
 

@@ -651,12 +651,12 @@ impl ControllerRuntime {
         fetch_proxy_delays_bounded(&endpoint, candidate_names, controller_secret.as_deref())
     }
 
-    pub(crate) fn test_proxy_delays_with_progress(
+    pub(crate) fn test_proxy_delay_targets_with_progress(
         &self,
-        candidate_names: &[String],
+        targets: &[ProxyDelayTarget],
         on_result: impl FnMut(&str, Option<u16>),
     ) -> Result<BTreeMap<String, u16>, LoadError> {
-        if candidate_names.is_empty() {
+        if targets.is_empty() {
             return Err(LoadError::Runtime("当前分组没有可测速节点".to_owned()));
         }
         let controller_secret = self.controller_secret();
@@ -677,9 +677,9 @@ impl ControllerRuntime {
             Self::Invalid { message } => return Err(LoadError::Runtime(message.clone())),
         };
 
-        fetch_proxy_delays_bounded_with_progress(
+        fetch_proxy_delay_targets_bounded_with_progress(
             &endpoint,
-            candidate_names,
+            targets,
             controller_secret.as_deref(),
             on_result,
         )
@@ -1135,6 +1135,36 @@ pub(crate) struct LoadedProviderNode {
     pub protocol: String,
     pub latency_label: Option<String>,
     pub alive: Option<bool>,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) struct ProxyDelayTarget {
+    name: String,
+    provider: Option<String>,
+}
+
+impl ProxyDelayTarget {
+    pub(crate) fn direct(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            provider: None,
+        }
+    }
+
+    pub(crate) fn provider(provider: impl Into<String>, name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            provider: Some(provider.into()),
+        }
+    }
+
+    pub(crate) fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn source_label(&self) -> &str {
+        self.provider.as_deref().unwrap_or("direct")
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -4244,18 +4274,28 @@ fn is_selector_proxy_type(proxy_type: &str) -> bool {
     proxy_type.eq_ignore_ascii_case("Selector")
 }
 
-fn fetch_proxy_delay(
+fn fetch_proxy_delay_target(
     endpoint: &str,
-    proxy_name: &str,
+    target: &ProxyDelayTarget,
     controller_secret: Option<&str>,
 ) -> Result<u16, MihomoError> {
     #[cfg(unix)]
     if let Some(socket_path) = unix_socket_path(endpoint)? {
-        return MihomoClient::new(
+        let client = MihomoClient::new(
             delay_controller_config(ControllerConfig::default()),
             UnixSocketTransport::new(socket_path),
-        )
-        .fetch_proxy_delay(proxy_name, GROUP_DELAY_TEST_URL, GROUP_DELAY_TIMEOUT_MS);
+        );
+        return match target.provider.as_deref() {
+            Some(provider) => client.fetch_provider_proxy_delay(
+                provider,
+                &target.name,
+                GROUP_DELAY_TEST_URL,
+                GROUP_DELAY_TIMEOUT_MS,
+            ),
+            None => {
+                client.fetch_proxy_delay(&target.name, GROUP_DELAY_TEST_URL, GROUP_DELAY_TIMEOUT_MS)
+            }
+        };
     }
 
     #[cfg(not(unix))]
@@ -4269,11 +4309,18 @@ fn fetch_proxy_delay(
         ControllerConfig::new(endpoint)?,
         controller_secret,
     ));
-    MihomoClient::new(config, StdHttpTransport::default()).fetch_proxy_delay(
-        proxy_name,
-        GROUP_DELAY_TEST_URL,
-        GROUP_DELAY_TIMEOUT_MS,
-    )
+    let client = MihomoClient::new(config, StdHttpTransport::default());
+    match target.provider.as_deref() {
+        Some(provider) => client.fetch_provider_proxy_delay(
+            provider,
+            &target.name,
+            GROUP_DELAY_TEST_URL,
+            GROUP_DELAY_TIMEOUT_MS,
+        ),
+        None => {
+            client.fetch_proxy_delay(&target.name, GROUP_DELAY_TEST_URL, GROUP_DELAY_TIMEOUT_MS)
+        }
+    }
 }
 
 fn delay_controller_config(config: ControllerConfig) -> ControllerConfig {
@@ -4298,20 +4345,42 @@ fn fetch_proxy_delays_bounded_with_progress(
     endpoint: &str,
     candidate_names: &[String],
     controller_secret: Option<&str>,
+    on_result: impl FnMut(&str, Option<u16>),
+) -> Result<BTreeMap<String, u16>, LoadError> {
+    let targets = candidate_names
+        .iter()
+        .cloned()
+        .map(ProxyDelayTarget::direct)
+        .collect::<Vec<_>>();
+    fetch_proxy_delay_targets_bounded_with_progress(
+        endpoint,
+        &targets,
+        controller_secret,
+        on_result,
+    )
+}
+
+fn fetch_proxy_delay_targets_bounded_with_progress(
+    endpoint: &str,
+    targets: &[ProxyDelayTarget],
+    controller_secret: Option<&str>,
     mut on_result: impl FnMut(&str, Option<u16>),
 ) -> Result<BTreeMap<String, u16>, LoadError> {
-    let worker_count = candidate_names.len().min(GROUP_DELAY_WORKERS);
-    let chunk_size = candidate_names.len().div_ceil(worker_count);
+    if targets.is_empty() {
+        return Err(LoadError::Runtime("当前分组没有可测速节点".to_owned()));
+    }
+    let worker_count = targets.len().min(GROUP_DELAY_WORKERS);
+    let chunk_size = targets.len().div_ceil(worker_count);
     let delays = thread::scope(|scope| {
         let (sender, receiver) = mpsc::channel();
-        let handles = candidate_names
+        let handles = targets
             .chunks(chunk_size)
             .map(|chunk| {
                 let sender = sender.clone();
                 scope.spawn(move || {
-                    for name in chunk {
-                        let delay = fetch_proxy_delay(endpoint, name, controller_secret).ok();
-                        if sender.send((name.clone(), delay)).is_err() {
+                    for target in chunk {
+                        let result = fetch_proxy_delay_target(endpoint, target, controller_secret);
+                        if sender.send((target.clone(), result)).is_err() {
                             break;
                         }
                     }
@@ -4320,10 +4389,24 @@ fn fetch_proxy_delays_bounded_with_progress(
             .collect::<Vec<_>>();
         drop(sender);
         let mut delays = BTreeMap::new();
-        for (name, delay) in receiver {
-            on_result(&name, delay);
-            if let Some(delay) = delay {
-                delays.insert(name, delay);
+        for (target, result) in receiver {
+            match result {
+                Ok(delay) => {
+                    on_result(target.name(), Some(delay));
+                    delays.insert(target.name, delay);
+                }
+                Err(error) => {
+                    on_result(target.name(), None);
+                    record_event(
+                        LogLevel::Warn,
+                        "node.delay.failed",
+                        format!(
+                            "source={} node={} error={error}",
+                            target.source_label(),
+                            target.name()
+                        ),
+                    );
+                }
             }
         }
         for handle in handles {
@@ -5674,8 +5757,11 @@ IP-CIDR,192.0.2.0/24,DIRECT
         let runtime = super::ControllerRuntime::External { endpoint };
         let mut updates = Vec::new();
         let callback_gate = slow_gate.clone();
-        let delays = runtime.test_proxy_delays_with_progress(
-            &["Slow Node".to_owned(), "Fast Node".to_owned()],
+        let delays = runtime.test_proxy_delay_targets_with_progress(
+            &[
+                super::ProxyDelayTarget::direct("Slow Node"),
+                super::ProxyDelayTarget::direct("Fast Node"),
+            ],
             |name, delay| {
                 updates.push((name.to_owned(), delay));
                 if name == "Fast Node" {
@@ -5697,6 +5783,39 @@ IP-CIDR,192.0.2.0/24,DIRECT
         );
         assert_eq!(delays.get("Fast Node"), Some(&30));
         assert_eq!(delays.get("Slow Node"), Some(&70));
+        Ok(())
+    }
+
+    #[test]
+    fn provider_proxy_benchmark_uses_provider_healthcheck_endpoint()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let endpoint = format!("http://{}", listener.local_addr()?);
+        let server = std::thread::spawn(move || -> std::io::Result<String> {
+            let (mut stream, _) = listener.accept()?;
+            let mut request_line = String::new();
+            BufReader::new(stream.try_clone()?).read_line(&mut request_line)?;
+            let body = r#"{"delay":42}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream.write_all(response.as_bytes())?;
+            Ok(request_line)
+        });
+
+        let runtime = super::ControllerRuntime::External { endpoint };
+        let delays = runtime.test_proxy_delay_targets_with_progress(
+            &[super::ProxyDelayTarget::provider("Subscription 1", "HK 01")],
+            |_name, _delay| {},
+        )?;
+        let request_line = server.join().map_err(|_| "fixture server panicked")??;
+
+        assert!(
+            request_line
+                .starts_with("GET /providers/proxies/Subscription%201/HK%2001/healthcheck?url=")
+        );
+        assert_eq!(delays.get("HK 01"), Some(&42));
         Ok(())
     }
 

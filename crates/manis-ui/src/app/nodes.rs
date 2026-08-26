@@ -15,7 +15,7 @@ use super::{
 use crate::{
     diagnostics::{UiEvent, trace_ui},
     localization::Language,
-    mihomo::{self, LoadedProvider, LoadedProviderNode},
+    mihomo::{self, LoadedProvider, LoadedProviderNode, ProxyDelayTarget},
     subscription::SourceNodePreview,
     theme::Theme,
 };
@@ -1856,6 +1856,30 @@ impl ManisApp {
             .collect()
     }
 
+    fn node_group_delay_targets(&self, group: &NodePolicyGroup) -> Vec<ProxyDelayTarget> {
+        let has_local_sources =
+            !self.imported_subscriptions.is_empty() || !self.saved_vless_nodes.is_empty();
+        let mut targets = BTreeSet::new();
+        for source_group in self.node_source_groups(has_local_sources, self.language()) {
+            for provider in source_group.providers {
+                for node in &provider.nodes {
+                    if group.matches(&source_group.id, &node.name) {
+                        targets.insert(ProxyDelayTarget::provider(
+                            provider.name.clone(),
+                            node.name.clone(),
+                        ));
+                    }
+                }
+            }
+            for node in source_group.saved_nodes {
+                if group.matches(&source_group.id, &node.name) {
+                    targets.insert(ProxyDelayTarget::direct(node.name.clone()));
+                }
+            }
+        }
+        targets.into_iter().collect()
+    }
+
     fn toggle_node_group_detail(&mut self, id: &str, cx: &mut Context<Self>) {
         if self.selected_node_group_id.as_deref() == Some(id) {
             self.selected_node_group_id = None;
@@ -2018,7 +2042,7 @@ impl ManisApp {
         &mut self,
         id: &str,
         name: &str,
-        candidate_names: Vec<String>,
+        targets: Vec<ProxyDelayTarget>,
         cx: &mut Context<Self>,
     ) {
         let key = Self::source_group_benchmark_key(id);
@@ -2028,7 +2052,7 @@ impl ManisApp {
         ) {
             return;
         }
-        if candidate_names.is_empty() {
+        if targets.is_empty() {
             self.language()
                 .text(
                     "This imported group has no nodes to test",
@@ -2038,11 +2062,11 @@ impl ManisApp {
             cx.notify();
             return;
         }
-        if candidate_names.len() > MAX_GROUP_BENCHMARK_NODES {
+        if targets.len() > MAX_GROUP_BENCHMARK_NODES {
             let language = self.language();
             format!(
                 "{}; {}",
-                Self::group_limit_label(candidate_names.len(), language),
+                Self::group_limit_label(targets.len(), language),
                 Self::single_test_limit_label(MAX_GROUP_BENCHMARK_NODES, language)
             )
             .clone_into(&mut self.status);
@@ -2063,7 +2087,7 @@ impl ManisApp {
         self.status = format!(
             "{} “{name}” · {}",
             language.text("Testing imported group", "正在测试导入分组"),
-            Self::node_count_label(candidate_names.len(), language)
+            Self::node_count_label(targets.len(), language)
         );
         trace_ui(UiEvent::GroupBenchmarkStarted);
 
@@ -2071,13 +2095,13 @@ impl ManisApp {
         let progress =
             std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new()));
         self.poll_group_benchmark_progress(generation, key.clone(), progress.clone(), cx);
-        let total = candidate_names.len();
+        let total = targets.len();
         let executor = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
             let result = executor
                 .spawn(async move {
-                    runtime.test_proxy_delays_with_progress(
-                        &candidate_names,
+                    runtime.test_proxy_delay_targets_with_progress(
+                        &targets,
                         move |node_name, delay| {
                             if let Ok(mut updates) = progress.lock() {
                                 updates.push_back((node_name.to_owned(), delay));
@@ -2164,8 +2188,8 @@ impl ManisApp {
             cx.notify();
             return;
         }
-        let candidate_names = self.node_group_candidate_names(&group);
-        if candidate_names.is_empty() {
+        let delay_targets = self.node_group_delay_targets(&group);
+        if delay_targets.is_empty() {
             self.language()
                 .text(
                     "This group has no nodes to test. Adjust the match rule first.",
@@ -2175,11 +2199,11 @@ impl ManisApp {
             cx.notify();
             return;
         }
-        if candidate_names.len() > MAX_GROUP_BENCHMARK_NODES {
+        if delay_targets.len() > MAX_GROUP_BENCHMARK_NODES {
             let language = self.language();
             format!(
                 "{}; {}",
-                Self::group_limit_label(candidate_names.len(), language),
+                Self::group_limit_label(delay_targets.len(), language),
                 Self::narrow_group_limit_label(MAX_GROUP_BENCHMARK_NODES, language)
             )
             .clone_into(&mut self.status);
@@ -2203,7 +2227,7 @@ impl ManisApp {
             "{} “{}” · {}",
             language.text("Testing group", "正在测试分组"),
             group.name,
-            Self::node_count_label(candidate_names.len(), language)
+            Self::node_count_label(delay_targets.len(), language)
         );
         trace_ui(UiEvent::GroupBenchmarkStarted);
 
@@ -2224,7 +2248,13 @@ impl ManisApp {
                 cx,
             );
         }
-        let total = candidate_names.len();
+        let candidate_names = delay_targets
+            .iter()
+            .map(|target| target.name().to_owned())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let total = delay_targets.len();
         let executor = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
             let result = executor
@@ -2232,8 +2262,8 @@ impl ManisApp {
                     if use_group_api {
                         runtime.test_node_group_delay(&group_name, &candidate_names)
                     } else {
-                        runtime.test_proxy_delays_with_progress(
-                            &candidate_names,
+                        runtime.test_proxy_delay_targets_with_progress(
+                            &delay_targets,
                             move |node_name, delay| {
                                 if let Ok(mut updates) = progress.lock() {
                                     updates.push_back((node_name.to_owned(), delay));
@@ -2886,11 +2916,20 @@ impl ManisApp {
         let benchmarking = benchmark.is_running();
         let benchmark_id = group.id.clone();
         let benchmark_name = group.name.clone();
-        let candidate_names = group
+        let delay_targets = group
             .providers
             .iter()
-            .flat_map(|provider| provider.nodes.iter().map(|node| node.name.clone()))
-            .chain(group.saved_nodes.iter().map(|node| node.name.clone()))
+            .flat_map(|provider| {
+                provider.nodes.iter().map(|node| {
+                    ProxyDelayTarget::provider(provider.name.clone(), node.name.clone())
+                })
+            })
+            .chain(
+                group
+                    .saved_nodes
+                    .iter()
+                    .map(|node| ProxyDelayTarget::direct(node.name.clone())),
+            )
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect::<Vec<_>>();
@@ -2956,7 +2995,7 @@ impl ManisApp {
                                 this.start_source_group_benchmark(
                                     &benchmark_id,
                                     &benchmark_name,
-                                    candidate_names.clone(),
+                                    delay_targets.clone(),
                                     cx,
                                 );
                             }
