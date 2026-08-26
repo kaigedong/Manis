@@ -1,0 +1,5 @@
+# `Theme` is a `Copy` set of design tokens threaded by value through the declarative UI, which
+# keeps render code free of lifetimes. Sixteen `Rgba` fields land exactly on Clippy's 256-byte
+# default, so adding a single colour would otherwise force ~87 signatures to take a reference.
+# The copy is irrelevant next to the work each render already does.
+pass-by-value-size-limit = 512

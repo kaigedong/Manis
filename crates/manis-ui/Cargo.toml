@@ -11,6 +11,8 @@ manis-core = { path = "../manis-core" }
 manis-engine = { path = "../manis-engine" }
 manis-mihomo = { path = "../manis-mihomo" }
 manis-profile = { path = "../manis-profile" }
+# Already in the dependency graph via gpui; declaring it here adds no build cost.
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 tray-icon = "=0.24.2"
 ureq = { version = "=3.4.0", default-features = false, features = ["rustls"] }
 

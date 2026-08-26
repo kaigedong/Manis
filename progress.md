@@ -311,3 +311,18 @@
 - 视觉验收：宽屏 1420px 与紧凑 720px 均无截断重叠，直连规则卡片位于生效规则之上，预置的「端口 22」正确显示。
 - 我的部分全绿：manis-core 26、manis-ui 117（含 direct_rule 9 个）、manis-profile 我的 2 个测试通过；`cargo fmt` 与 `--all-targets` 严格 Clippy 通过。
 - 并发提醒：另一会话在同一工作树同时改动 `nodes.rs`、`mihomo.rs`、`client_behavior.rs` 与 `profile_behavior.rs`，其中 3 个测试因其半成品而红（`__MANIS_GLOBAL__` 断言无对应实现）。已用 `hash-object`/`update-index` 从 HEAD 基线重建纯净版本入库，工作区中其改动一字未动。
+
+# 2026-08-26 日志本地时间与级别配色
+
+- 用户要求日志时间用本地时间而非 UTC，并让级别列按严重度着色（ERROR 红、WARN 黄），不要所有级别一个颜色。
+- 盘点后范围比预想小：持久化日志存的是原始 UNIX 毫秒（本就正确），来源更新时间是「N 分钟前」相对格式（不受时区影响），唯一面向用户的时间展示是 `logs.rs` 的 `format_log_time`。
+- 时区实现选了 chrono：它已是 gpui 的直接依赖并已编译，显式声明后 `Cargo.lock` 仅多一行引用，不新增任何编译产物或供应链面，同时正确处理夏令时且无 unsafe，优于调 `date +%z` 子进程再缓存。
+- 拆成纯函数 `format_local_time(timestamp_ms, offset_seconds)` 加薄壳，测试因此不依赖运行环境时区，覆盖正偏移、负偏移跨到前一日、零偏移与印度 +5:30 半小时制。
+- 设计阶段说的「取不到时区就回退 UTC 并标注」实测无法成立：chrono 的 `Local` 在系统时区不可读时静默回退到 UTC(0)，调用方无从区分真在 UTC 与查询失败。已删掉该分支，不保留假装能检测失败的死代码。
+- 级别配色：ERROR 用既有 `status_error`，WARN 新增 `status_warning`（浅 `#9a6700`、深 `#e0a83a`，取自 GitHub Primer 的无障碍验证值），INFO 保持品牌绿，DEBUG/TRACE 降为灰以弱化噪音，未知级别用中性色而非借用严重度色。
+- 着色同时接入内核与 UI 两个日志列表，并按大小写不敏感匹配，因为 Mihomo 写的是小写 `warning` 而 UI 写 `WARN`。
+- 对比度校验：浅色 WARN 4.51:1、深色 8.53:1、浅色 ERROR 4.66:1、深色 7.60:1，均达 WCAG AA；浅色 WARN 贴线但与既有 ERROR 色同级，属一致的设计语言。
+- `Theme` 加第 17 个 `Rgba` 后正好越过 Clippy 的 256 字节按值传参上限，导致 87 处报错。未做无关重构，改为在 `clippy.toml` 写明理由把上限提到 512——`Theme` 是刻意按值传递的 Copy 令牌集，一次拷贝相对每帧渲染可忽略。
+- 全仓验证通过：236 passed、4 ignored、0 failed；`cargo fmt` 与 `--all-targets` 严格 Clippy 通过。
+- 视觉验收：宽屏日志页时间显示为本地 `16:09:40`（无 UTC 后缀），WARNING 琥珀与 INFO 绿区分清晰。截图数据中没有 ERROR 行，红色仅由单元测试覆盖，未经视觉确认。
+- 本轮在独立 worktree `~/.planning/manis-localtime` 基于远端 main 进行，未触碰仍被另一会话占用的主工作树。
