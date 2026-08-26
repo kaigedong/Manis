@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use gpui::{
     Animation, AnimationExt as _, Context, Div, Entity, FontWeight, IntoElement, ParentElement,
-    Render, Role, Stateful, Styled, Subscription, Toggled, Window, div, prelude::*, px,
+    Render, Role, Stateful, Styled, Subscription, Task, Toggled, Window, div, prelude::*, px,
 };
 use relay_core::{
     CompactNavigation, KernelKind, NodeGroupIcon, NodeGroupStrategy, NodeIdentity, NodePolicyGroup,
@@ -22,7 +22,7 @@ use crate::{
     localization::{Language, LanguagePreference, Localizer},
     mihomo::{
         self, ControllerRuntime, ControllerState, GeneratedProfileApply, KernelLogEntry,
-        LiveRuntimeSession, LiveStreamStatus, LoadedProvider, LoadedSnapshot,
+        LiveRuntimeSession, LiveStreamStatus, LoadedProvider, LoadedSnapshot, ManagedRuntimeHealth,
         RemoteSourceRefreshInterval, StoredQxRuleSource, StoredSubscription, StoredVlessNode,
         SubscriptionPreviewError, SubscriptionStoreError,
     },
@@ -522,6 +522,7 @@ pub struct RelayApp {
     active_connections: Vec<Connection>,
     live_runtime: Option<LiveRuntimeSession>,
     live_generation: u64,
+    managed_health_tick: u8,
     live_status: LiveStreamStatus,
     kernel_logs: VecDeque<KernelLogEntry>,
     dropped_kernel_logs: u64,
@@ -535,6 +536,8 @@ pub struct RelayApp {
     qx_rule_input_events: Option<Subscription>,
     node_group_name_input: Option<Entity<SubscriptionTextInput>>,
     node_group_filter_input: Option<Entity<SubscriptionTextInput>>,
+    #[allow(dead_code)]
+    app_lifecycle_events: Option<Subscription>,
 }
 
 struct StoredWorkspace {
@@ -600,7 +603,21 @@ impl RelayApp {
         let store = store.ok();
         let language = Localizer::load(store.as_deref()).language();
         let runtime = KernelRuntime::configured(store.as_deref(), language);
-        Self::with_runtime_and_store(runtime, store)
+        let app = Self::with_runtime_and_store(runtime, store);
+        #[cfg(not(test))]
+        let app = {
+            let mut app = app;
+            app.recover_stale_system_proxy();
+            app
+        };
+        app
+    }
+
+    #[must_use]
+    pub fn new_with_lifecycle(cx: &mut Context<Self>) -> Self {
+        let mut app = Self::new();
+        app.app_lifecycle_events = Some(cx.on_app_quit(Self::shutdown_for_quit));
+        app
     }
 
     #[must_use]
@@ -630,6 +647,7 @@ impl RelayApp {
         )
     }
 
+    #[allow(clippy::too_many_lines)]
     fn with_runtime_and_store(
         runtime: KernelRuntime,
         subscription_store_dir: Option<PathBuf>,
@@ -720,6 +738,7 @@ impl RelayApp {
             active_connections: Vec::new(),
             live_runtime: None,
             live_generation: 0,
+            managed_health_tick: 0,
             live_status: LiveStreamStatus::default(),
             kernel_logs: VecDeque::with_capacity(500),
             dropped_kernel_logs: 0,
@@ -733,6 +752,49 @@ impl RelayApp {
             qx_rule_input_events: None,
             node_group_name_input: None,
             node_group_filter_input: None,
+            app_lifecycle_events: None,
+        }
+    }
+
+    fn shutdown_for_quit(&mut self, _cx: &mut Context<Self>) -> Task<()> {
+        let language = self.language();
+        if self.proxy_mode == ProxyMode::Tun && self.runtime.set_tun_enabled(false).is_err() {
+            eprintln!("relay_ui level=WARN event=tun.shutdown_failed");
+        }
+        if let Ok(mut system) = self.system_proxy.lock()
+            && let Err(error) = system.shutdown_with_language(language)
+        {
+            eprintln!("relay_ui level=WARN event=system_proxy.shutdown_failed message={error}");
+        }
+        if self.runtime.stop_managed().is_err() {
+            eprintln!("relay_ui level=WARN event=kernel.shutdown_failed");
+        }
+        Task::ready(())
+    }
+
+    #[cfg(not(test))]
+    fn recover_stale_system_proxy(&mut self) {
+        let language = self.language();
+        match self.system_proxy.lock() {
+            Ok(mut system) => {
+                if let Err(error) = system.recover_stale_with_language(language) {
+                    self.status = format!(
+                        "{}{error}",
+                        language.text(
+                            "System proxy recovery needs attention: ",
+                            "系统代理恢复需要处理："
+                        )
+                    );
+                }
+            }
+            Err(_poisoned) => {
+                language
+                    .text(
+                        "System proxy recovery state is unavailable",
+                        "系统代理恢复状态不可用",
+                    )
+                    .clone_into(&mut self.status);
+            }
         }
     }
 
@@ -1719,8 +1781,14 @@ impl RelayApp {
         self.source_providers = snapshot.providers;
         self.observed_routes = snapshot.observed_routes;
         self.active_connections = snapshot.connections;
+        let system_proxy_applied = self
+            .system_proxy
+            .lock()
+            .is_ok_and(|system| system.is_applied());
         self.proxy_mode = if snapshot.runtime.tun.enable {
             ProxyMode::Tun
+        } else if system_proxy_applied {
+            ProxyMode::System
         } else {
             ProxyMode::Off
         };
@@ -1894,6 +1962,7 @@ impl RelayApp {
         let language = self.language();
         self.live_generation = self.live_generation.wrapping_add(1);
         let generation = self.live_generation;
+        self.managed_health_tick = 0;
         self.live_runtime = match LiveRuntimeSession::start(endpoint, controller_secret) {
             Ok(session) => Some(session),
             Err(error) => {
@@ -1918,6 +1987,13 @@ impl RelayApp {
     fn poll_live_runtime(&mut self, generation: u64, cx: &mut Context<Self>) {
         if generation != self.live_generation {
             return;
+        }
+        self.managed_health_tick = self.managed_health_tick.wrapping_add(1);
+        if self.managed_health_tick >= 10 {
+            self.managed_health_tick = 0;
+            if self.fail_safe_stopped_managed_kernel(cx) {
+                return;
+            }
         }
         let Some(session) = self.live_runtime.as_ref() else {
             return;
@@ -1956,6 +2032,88 @@ impl RelayApp {
             }
         })
         .detach();
+    }
+
+    fn fail_safe_stopped_managed_kernel(&mut self, cx: &mut Context<Self>) -> bool {
+        let failure = match self.runtime.managed_health() {
+            Ok(ManagedRuntimeHealth::NotManaged | ManagedRuntimeHealth::Running) => return false,
+            Ok(ManagedRuntimeHealth::Stopped) => self
+                .language()
+                .text(
+                    "The Relay-managed kernel stopped unexpectedly",
+                    "Relay 托管内核已意外停止",
+                )
+                .to_owned(),
+            Err(error) => error.to_string(),
+        };
+
+        let language = self.language();
+        let mut recovery_error = None;
+        let was_system_proxy = self.proxy_mode == ProxyMode::System;
+        if was_system_proxy {
+            match self.system_proxy.lock() {
+                Ok(mut system) => {
+                    if let Err(error) = system.disable_with_language(language) {
+                        recovery_error = Some(error.to_string());
+                    } else {
+                        self.proxy_mode = ProxyMode::Off;
+                    }
+                }
+                Err(_poisoned) => {
+                    recovery_error = Some(
+                        language
+                            .text(
+                                "system proxy state lock was damaged",
+                                "系统代理状态锁已损坏",
+                            )
+                            .to_owned(),
+                    );
+                }
+            }
+        } else if self.proxy_mode == ProxyMode::Tun {
+            self.proxy_mode = ProxyMode::Off;
+        }
+
+        self.live_generation = self.live_generation.wrapping_add(1);
+        self.live_runtime = None;
+        let endpoint = self.runtime.endpoint_label();
+        self.controller = ControllerState::Failed {
+            endpoint,
+            message: failure.clone(),
+        };
+        self.status = match recovery_error {
+            None if was_system_proxy => {
+                format!(
+                    "{}{}",
+                    failure,
+                    language.text(
+                        " · system proxy was restored; reconnect to restart the kernel",
+                        " · 系统代理已恢复；重新连接即可重启内核",
+                    )
+                )
+            }
+            None => format!(
+                "{}{}",
+                failure,
+                language.text(
+                    " · reconnect to restart the kernel",
+                    " · 重新连接即可重启内核",
+                )
+            ),
+            Some(recovery_error) => {
+                format!(
+                    "{}{}{}",
+                    failure,
+                    language.text(
+                        " · automatic system proxy recovery failed: ",
+                        " · 系统代理自动恢复失败：",
+                    ),
+                    recovery_error
+                )
+            }
+        };
+        cx.notify();
+        true
     }
 
     #[allow(clippy::too_many_lines)]

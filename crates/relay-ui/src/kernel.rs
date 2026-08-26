@@ -48,7 +48,7 @@ impl KernelRuntime {
         language: Language,
     ) -> Result<Self, String> {
         let controller = match kind {
-            KernelKind::Mihomo => mihomo::configured_runtime(),
+            KernelKind::Mihomo => mihomo::configured_runtime(store_dir),
             KernelKind::SingBox => {
                 let store_dir = store_dir.ok_or_else(|| {
                     language

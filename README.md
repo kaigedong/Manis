@@ -12,7 +12,7 @@ Relay 是一个使用 Rust 与 GPUI 构建的跨平台代理策略工作台。�
 - 独立“节点”工作区按来源分组汇总节点、协议、健康状态与延迟，支持分组折叠、状态筛选和刷新
 - 可选择连接外部 Mihomo，或由 Relay 校验并托管一个独立 Mihomo / sing-box 子进程
 - 可解释的本地路由预测链，并明确区别于 Mihomo 已观察连接
-- 浅色/深色主题、系统代理演示开关与键盘可聚焦控件
+- 浅色/深色主题、可恢复的系统代理开关与键盘可聚焦控件
 - macOS 原生运行和 Metal 离屏截图已验证
 - Windows、Linux 已配置对应的 GPUI 平台依赖，仍需各自原生 CI/设备验证
 
@@ -34,7 +34,7 @@ Relay 会从 `RELAY_SING_BOX_BINARY`、`PATH` 以及 macOS Homebrew 常见位置
 cargo run -p relay-ui
 ```
 
-默认连接 `http://127.0.0.1:9090`。如果 Mihomo 配置了 `secret`，或控制器使用了其他本机回环端口，可通过环境变量启动：
+没有保存来源时，Relay 默认连接 `http://127.0.0.1:9090`。存在已保存的订阅或 VLESS 节点、且没有显式设置外部 controller 时，Relay 会自动寻找 Mihomo、生成私有配置并进入托管模式。如果 Mihomo 配置了 `secret`，或控制器使用了其他本机回环端口，可通过环境变量强制连接外部内核：
 
 ```bash
 RELAY_MIHOMO_CONTROLLER=http://127.0.0.1:9090 \
@@ -61,9 +61,11 @@ cargo run -p relay-ui
 
 Unix socket 依赖操作系统文件权限，Relay 会确认目标确实是 socket 且不是符号链接，并且不会向它转发 `RELAY_MIHOMO_SECRET`。远程控制器、HTTPS 和 Windows named pipe 尚未支持。Mihomo 需要先启用 [`external-controller`](https://wiki.metacubex.one/en/config/general/) 或 `external-controller-unix`；接口形状参考其[官方 API 文档](https://wiki.metacubex.one/en/api/)。
 
-### Relay 托管 Mihomo（当前为显式开发模式）
+### Relay 托管 Mihomo
 
-同时提供 Mihomo 可执行文件和现有配置文件后，按钮会变为“启动 Mihomo”。Relay 会先运行 `mihomo -t` 校验配置，再以独立数据目录和 controller 启动子进程；应用退出时只清理自己持有的子进程，不扫描 PID、端口，也不会触碰 Clash Verge：
+导入至少一个订阅或 VLESS 节点后，正常启动 Relay 即可准备托管 Mihomo。Relay 依次查找应用同目录的 `mihomo`、`PATH`、macOS Homebrew 常见位置；macOS 开发环境还会回退到 Clash Verge 自带的 `verge-mihomo`。可以只设置 `RELAY_MIHOMO_BINARY` 来覆盖自动发现，同时继续使用 Relay 已保存的来源。
+
+需要使用现有 YAML 时，同时提供 Mihomo 可执行文件和配置文件。Relay 会先运行 `mihomo -t` 校验配置，再以独立数据目录和 controller 启动子进程；应用退出时只清理自己持有的子进程，不扫描 PID、端口，也不会触碰 Clash Verge：
 
 ```bash
 RELAY_MIHOMO_BINARY=/absolute/path/to/mihomo \
@@ -110,7 +112,7 @@ RELAY_MIHOMO_PREVIEW_BINARY=/absolute/path/to/mihomo cargo run -p relay-ui
 
 节点工作区把同一订阅解析出的节点放在同一个可折叠分组中。分组名只读取订阅 URL 中显式、长度受限且不含控制字符的 `name` 参数；没有安全名称时显示固定的“订阅 1”，不会用域名、路径或 token 兜底。单个 `vless://` 当前仍只支持安全预览，后续持久保存时会进入独立的“已保存”分组，不会混入订阅组。
 
-当前完成的是 macOS/Linux 订阅来源的持久导入与节点恢复；把它编译成运行中的 QX 风格策略并正式启用仍是下一阶段。Windows 会明确拒绝持久导入，直到 owner-only DACL、可靠原子替换和 named-pipe 控制器传输全部完成，不会把继承 ACL 的普通文件误称为私有存储。
+macOS/Linux 会把持久订阅、VLESS、节点分组和受支持的 QX 规则编译进 Relay 托管配置。开启系统代理前，Relay 会先以私有文件保存原系统设置；正常退出会恢复，异常退出则在下次启动时恢复。真实 `networksetup`、流量命中以及 TUN 路由/DNS 仍应在目标机器上人工验收。Windows 会明确拒绝持久导入，直到 owner-only DACL、可靠原子替换和 named-pipe 控制器传输全部完成，不会把继承 ACL 的普通文件误称为私有存储。
 
 ## 验证
 

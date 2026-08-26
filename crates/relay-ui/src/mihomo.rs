@@ -152,6 +152,13 @@ pub(crate) enum GeneratedProfileApply {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ManagedRuntimeHealth {
+    NotManaged,
+    Running,
+    Stopped,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RuntimeProfileSource {
     ExternalController,
     ExistingConfig,
@@ -201,6 +208,25 @@ impl ControllerRuntime {
                 .stop()?;
         }
         Ok(())
+    }
+
+    pub(crate) fn managed_health(&self) -> Result<ManagedRuntimeHealth, LoadError> {
+        match self {
+            Self::External { .. } => Ok(ManagedRuntimeHealth::NotManaged),
+            Self::Invalid { message } => Err(LoadError::Runtime(message.clone())),
+            Self::Managed { manager, .. } => manager
+                .lock()
+                .map_err(|_poisoned| LoadError::Runtime("托管内核状态锁已损坏".to_owned()))?
+                .running_endpoint()
+                .map(|endpoint| {
+                    if endpoint.is_some() {
+                        ManagedRuntimeHealth::Running
+                    } else {
+                        ManagedRuntimeHealth::Stopped
+                    }
+                })
+                .map_err(LoadError::from),
+        }
     }
 
     pub(crate) fn manages_node_policy_groups(&self) -> bool {
@@ -2848,14 +2874,32 @@ impl ReadinessProbe for SingBoxReadinessProbe {
     }
 }
 
-pub(crate) fn configured_runtime() -> ControllerRuntime {
+pub(crate) fn configured_runtime(store_dir: Option<&Path>) -> ControllerRuntime {
     let binary = env::var_os(BINARY_ENV);
     let config_file = env::var_os(CONFIG_ENV);
     let subscription_file = env::var_os(SUBSCRIPTION_FILE_ENV);
+    if config_file.is_none() && subscription_file.is_none() {
+        if env::var_os(CONTROLLER_ENV).is_some() {
+            return ControllerRuntime::External {
+                endpoint: configured_endpoint(),
+            };
+        }
+        if let Some(binary) = binary.as_ref() {
+            return match store_dir.filter(|directory| saved_profile_inputs_exist(directory)) {
+                Some(store_dir) => canonical_binary(Path::new(binary))
+                    .map_err(|_error| format!("{BINARY_ENV} 不是可执行文件"))
+                    .and_then(|binary| {
+                        build_saved_sources_mihomo_runtime_with_binary(store_dir, &binary)
+                    })
+                    .unwrap_or_else(|message| ControllerRuntime::Invalid { message }),
+                None => ControllerRuntime::Invalid {
+                    message: format!("{BINARY_ENV} 单独使用时需要至少一个已保存的订阅或节点来源"),
+                },
+            };
+        }
+    }
     match select_runtime_input(binary, config_file, subscription_file) {
-        Ok(RuntimeInput::External) => ControllerRuntime::External {
-            endpoint: configured_endpoint(),
-        },
+        Ok(RuntimeInput::External) => configured_default_mihomo_runtime(store_dir),
         Ok(RuntimeInput::ExistingConfig {
             binary,
             config_file,
@@ -2870,8 +2914,75 @@ pub(crate) fn configured_runtime() -> ControllerRuntime {
     }
 }
 
+fn configured_default_mihomo_runtime(store_dir: Option<&Path>) -> ControllerRuntime {
+    if env::var_os(CONTROLLER_ENV).is_some() {
+        return ControllerRuntime::External {
+            endpoint: configured_endpoint(),
+        };
+    }
+    if let Some(store_dir) = store_dir
+        && saved_profile_inputs_exist(store_dir)
+    {
+        return build_saved_sources_mihomo_runtime(store_dir)
+            .unwrap_or_else(|message| ControllerRuntime::Invalid { message });
+    }
+    ControllerRuntime::External {
+        endpoint: configured_endpoint(),
+    }
+}
+
 pub(crate) fn configured_sing_box_runtime(store_dir: &Path) -> Result<ControllerRuntime, String> {
     build_sing_box_runtime(store_dir)
+}
+
+fn build_saved_sources_mihomo_runtime(store_dir: &Path) -> Result<ControllerRuntime, String> {
+    let binary = discover_mihomo_binary()?;
+    build_saved_sources_mihomo_runtime_with_binary(store_dir, &binary)
+}
+
+fn build_saved_sources_mihomo_runtime_with_binary(
+    store_dir: &Path,
+    binary: &Path,
+) -> Result<ControllerRuntime, String> {
+    let data_dir = configured_data_dir()?;
+    let controller = configured_managed_controller(&data_dir)?;
+    build_saved_sources_mihomo_runtime_in(store_dir, binary, &data_dir, &controller)
+}
+
+fn build_saved_sources_mihomo_runtime_in(
+    store_dir: &Path,
+    binary: &Path,
+    data_dir: &Path,
+    controller: &ControllerEndpoint,
+) -> Result<ControllerRuntime, String> {
+    let profile = compile_saved_profile(store_dir, None, KernelKind::Mihomo)
+        .map_err(|error| error.to_string())?;
+    let spec = ManagedGeneratedProfile {
+        kernel: KernelKind::Mihomo,
+        binary: binary.to_path_buf(),
+        data_dir: data_dir.to_path_buf(),
+        controller: controller.clone(),
+        subscription_file: None,
+        controller_secret: None,
+    };
+    let rendered = render_generated_profile(&spec, &profile).map_err(|error| error.to_string())?;
+    let config_file = write_private_atomic(data_dir, GENERATED_PROFILE_FILE, rendered.as_bytes())
+        .map_err(|_error| "无法写入 Mihomo 私有配置".to_owned())?;
+    let config = managed_engine_config(&spec, config_file);
+    validate_managed_config(&config).map_err(|error| error.to_string())?;
+    let endpoint = controller.uri();
+    let manager = EngineManager::new(config, ReadinessPolicy::default(), readiness_probe(&spec));
+    Ok(ControllerRuntime::Managed {
+        endpoint,
+        manager: Arc::new(Mutex::new(manager)),
+        profile_source: RuntimeProfileSource::SavedSources,
+        generated_profile: Some(spec),
+    })
+}
+
+fn saved_profile_inputs_exist(store_dir: &Path) -> bool {
+    load_subscription_sources_in(store_dir).is_ok_and(|sources| !sources.is_empty())
+        || load_vless_sources_in(store_dir).is_ok_and(|sources| !sources.is_empty())
 }
 
 fn build_sing_box_runtime(store_dir: &Path) -> Result<ControllerRuntime, String> {
@@ -2946,6 +3057,41 @@ fn discover_sing_box_binary() -> Result<PathBuf, String> {
 
 pub(crate) fn sing_box_binary_available() -> bool {
     discover_sing_box_binary().is_ok()
+}
+
+fn discover_mihomo_binary() -> Result<PathBuf, String> {
+    let executable_name = if cfg!(windows) {
+        "mihomo.exe"
+    } else {
+        "mihomo"
+    };
+    first_existing_binary(mihomo_binary_candidates(executable_name))
+        .ok_or_else(|| format!("未找到 Mihomo；请先安装内核或设置 {BINARY_ENV} 与配置文件"))
+}
+
+fn mihomo_binary_candidates(executable_name: &str) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Ok(current_exe) = env::current_exe()
+        && let Some(directory) = current_exe.parent()
+    {
+        candidates.push(directory.join(executable_name));
+    }
+    if let Some(path) = env::var_os("PATH") {
+        candidates.extend(env::split_paths(&path).map(|directory| directory.join(executable_name)));
+    }
+    #[cfg(target_os = "macos")]
+    candidates.extend([
+        PathBuf::from("/opt/homebrew/bin/mihomo"),
+        PathBuf::from("/usr/local/bin/mihomo"),
+        PathBuf::from("/Applications/Clash Verge.app/Contents/MacOS/verge-mihomo"),
+    ]);
+    candidates
+}
+
+fn first_existing_binary(candidates: Vec<PathBuf>) -> Option<PathBuf> {
+    candidates
+        .into_iter()
+        .find_map(|candidate| canonical_binary(&candidate).ok())
 }
 
 #[cfg(unix)]
@@ -4642,6 +4788,77 @@ IP-CIDR,192.0.2.0/24,DIRECT
             )
             .is_err()
         );
+        Ok(())
+    }
+
+    #[test]
+    fn first_existing_binary_prefers_canonical_candidate() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let root = test_temp_dir("relay-mihomo-discovery");
+        let missing = root.join("missing-mihomo");
+        let binary = root.join("mihomo");
+        fs::write(&binary, "#!/bin/sh\nexit 0\n")?;
+        fs::set_permissions(&binary, fs::Permissions::from_mode(0o700))?;
+
+        assert_eq!(
+            super::first_existing_binary(vec![missing, binary.clone()]),
+            Some(binary.canonicalize()?)
+        );
+
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn saved_sources_build_a_managed_mihomo_runtime_without_starting_kernel()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = test_temp_dir("relay-managed-mihomo-saved-sources");
+        let store = root.join("subscriptions");
+        let data_dir = root.join("runtime");
+        let binary = root.join("mihomo");
+        fs::write(&binary, "#!/bin/sh\nexit 0\n")?;
+        fs::set_permissions(&binary, fs::Permissions::from_mode(0o700))?;
+        super::save_vless_source_in(
+            &store,
+            "vless://00000000-0000-4000-8000-000000000000@edge.example.invalid:443?security=tls#Private%20Edge",
+        )?;
+
+        let runtime = super::build_saved_sources_mihomo_runtime_in(
+            &store,
+            &binary.canonicalize()?,
+            &data_dir,
+            &ControllerEndpoint::UnixSocket(data_dir.join("controller.sock")),
+        )?;
+
+        assert_eq!(
+            runtime.managed_health()?,
+            super::ManagedRuntimeHealth::Stopped
+        );
+
+        match runtime {
+            super::ControllerRuntime::Managed {
+                profile_source,
+                generated_profile,
+                endpoint,
+                ..
+            } => {
+                assert_eq!(profile_source, super::RuntimeProfileSource::SavedSources);
+                assert_eq!(
+                    endpoint,
+                    format!("unix://{}", data_dir.join("controller.sock").display())
+                );
+                assert_eq!(
+                    generated_profile.expect("generated profile").kernel,
+                    relay_core::KernelKind::Mihomo
+                );
+            }
+            _ => panic!("saved sources should build a managed runtime"),
+        }
+        let generated = fs::read_to_string(data_dir.join(super::GENERATED_PROFILE_FILE))?;
+        assert!(generated.contains("Private Edge"));
+        assert!(generated.contains("mixed-port: 17890"));
+
+        fs::remove_dir_all(root)?;
         Ok(())
     }
 

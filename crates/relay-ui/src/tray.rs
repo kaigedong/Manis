@@ -1,6 +1,8 @@
 use std::time::Duration;
 
-use gpui::{App, AppContext, Bounds, Global, QuitMode, WindowBounds, WindowOptions, px, size};
+use gpui::{
+    App, AppContext, Bounds, Entity, Global, QuitMode, WindowBounds, WindowOptions, px, size,
+};
 use tray_icon::{
     Icon, TrayIcon, TrayIconBuilder,
     menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem},
@@ -23,6 +25,23 @@ struct RelayTray {
 }
 
 impl Global for RelayTray {}
+
+/// Keeps the product state alive while the native window is closed to the status item.
+///
+/// A window owns only a presentation of this entity. The application-global handle continues to
+/// own the managed kernel and proxy lifecycle until the user explicitly quits Relay.
+struct GlobalRelayApp(Entity<RelayApp>);
+
+impl Global for GlobalRelayApp {}
+
+fn relay_app(cx: &mut App) -> Entity<RelayApp> {
+    if let Some(app) = cx.try_global::<GlobalRelayApp>() {
+        return app.0.clone();
+    }
+    let app = cx.new(RelayApp::new_with_lifecycle);
+    cx.set_global(GlobalRelayApp(app.clone()));
+    app
+}
 
 /// Opens the main Relay window, or activates it if it is already open.
 pub fn show_or_open_window(cx: &mut App) {
@@ -48,6 +67,7 @@ pub fn show_or_open_window(cx: &mut App) {
 pub fn open_window(cx: &mut App) -> gpui::Result<()> {
     let window_size = size(px(1420.0), px(900.0));
     let bounds = Bounds::centered(None, window_size, cx);
+    let app = relay_app(cx);
     cx.open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -56,7 +76,7 @@ pub fn open_window(cx: &mut App) -> gpui::Result<()> {
             focus: true,
             ..Default::default()
         },
-        |_, cx| cx.new(|_| RelayApp::new()),
+        move |_, _| app,
     )?;
     Ok(())
 }
