@@ -596,13 +596,16 @@ fn set_tun_enabled_rejects_an_async_kernel_rollback() {
         .set_tun_enabled(true)
         .expect_err("a rejected TUN startup must not be reported as enabled");
 
-    assert!(matches!(error, MihomoError::InvalidResponse(_)));
+    assert!(matches!(&error, MihomoError::InvalidResponse(_)));
+    assert!(error.to_string().contains("kernel remains available"));
     assert_eq!(
         transport.requests.borrow().as_slice(),
         [
             RecordedRequest::get("/configs"),
             RecordedRequest::patch("/configs", serde_json::json!({"tun":{"enable":true}})),
             RecordedRequest::get("/configs"),
+            RecordedRequest::get("/configs"),
+            RecordedRequest::patch("/configs", serde_json::json!({"tun":{"enable":false}})),
         ]
     );
 }

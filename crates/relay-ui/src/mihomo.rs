@@ -349,27 +349,7 @@ impl ControllerRuntime {
             }
             Self::Invalid { message } => return Err(LoadError::Runtime(message.clone())),
         };
-        let result = set_tun_enabled(&endpoint, enabled, controller_secret.as_deref());
-        if let Err(error) = result {
-            if enabled && let Self::Managed { manager, .. } = self {
-                let cleanup = manager
-                    .lock()
-                    .map_err(|_poisoned| {
-                        LoadError::Runtime("托管内核状态锁已损坏，无法清理 TUN".to_owned())
-                    })?
-                    .stop();
-                return Err(match cleanup {
-                    Ok(()) => LoadError::Runtime(format!(
-                        "TUN 启动失败，已停止 Mihomo 以清理残留路由；请重新连接后使用系统代理。{error}"
-                    )),
-                    Err(cleanup) => LoadError::Runtime(format!(
-                        "TUN 启动失败，且残留路由清理失败：{cleanup}；原始错误：{error}"
-                    )),
-                });
-            }
-            return Err(error.into());
-        }
-        Ok(())
+        set_tun_enabled(&endpoint, enabled, controller_secret.as_deref()).map_err(LoadError::from)
     }
 
     pub(crate) fn set_routing_mode(&self, mode: RoutingMode) -> Result<(), LoadError> {

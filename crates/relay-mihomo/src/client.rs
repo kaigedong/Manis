@@ -221,10 +221,14 @@ where
             for _ in 0..TUN_CONFIRM_READS {
                 thread::sleep(TUN_CONFIRM_INTERVAL);
                 if !self.fetch_runtime_config()?.tun.enable {
-                    return Err(MihomoError::InvalidResponse(
-                        "Mihomo rejected TUN during startup; administrator privileges are required"
+                    let rollback = self.set_tun_enabled(false);
+                    return Err(MihomoError::InvalidResponse(match rollback {
+                        Ok(()) => "Mihomo rejected TUN during startup; TUN was disabled and the kernel remains available"
                             .to_owned(),
-                    ));
+                        Err(rollback) => format!(
+                            "Mihomo rejected TUN during startup and disabling TUN also failed: {rollback}"
+                        ),
+                    }));
                 }
             }
         }
