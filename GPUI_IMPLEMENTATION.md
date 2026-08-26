@@ -1,6 +1,6 @@
-# Relay UI → GPUI 实现规范
+# Manis UI → GPUI 实现规范
 
-状态：设计基线 v0.1；产品名 `Relay` 仍是临时名。
+状态：设计基线 v0.1；产品与仓库名已确认为 `Manis`。
 
 ## 1. 体验原则
 
@@ -95,7 +95,7 @@ exit: cubic-bezier(.3, 0, .8, .15), 160 ms
 ## 4. 组件边界
 
 ```text
-RelayWindow
+ManisWindow
 ├── AppChrome
 │   ├── GlobalSearch
 │   ├── SystemProxyToggle
@@ -251,7 +251,7 @@ Mihomo 官方 API 的能力边界：
 ## 11. 建议目录
 
 ```text
-crates/relay-ui/src/
+crates/manis-ui/src/
 ├── app_shell/
 │   ├── mod.rs
 │   ├── chrome.rs
@@ -278,7 +278,7 @@ crates/relay-ui/src/
     └── linux.rs
 ```
 
-领域模型、Mihomo client 和配置编译器不放进 `relay-ui`；UI 通过窄 trait/command 接口使用它们。
+领域模型、Mihomo client 和配置编译器不放进 `manis-ui`；UI 通过窄 trait/command 接口使用它们。
 
 ## 12. 第一阶段验收
 
@@ -289,4 +289,3 @@ crates/relay-ui/src/
 - 预测路径和已观察连接的标签、数据来源和置信度不可混淆。
 - Reduced Motion 下不播放信号脉冲和 side-sheet 滑动。
 - 规则/连接长列表在目标三平台上保持 60 fps 滚动。
-

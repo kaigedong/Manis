@@ -5,15 +5,15 @@
     <key>CFBundleDevelopmentRegion</key>
     <string>zh_CN</string>
     <key>CFBundleDisplayName</key>
-    <string>Relay</string>
+    <string>Manis</string>
     <key>CFBundleExecutable</key>
-    <string>Relay</string>
+    <string>Manis</string>
     <key>CFBundleIdentifier</key>
-    <string>dev.relay.prototype</string>
+    <string>dev.manis.app</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
-    <string>Relay</string>
+    <string>Manis</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>

@@ -1,0 +1,36 @@
+[package]
+name = "manis-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+gpui = { git = "https://github.com/zed-industries/zed", rev = "5631830c564afa89b3aba679f45d9c3345f9460f", package = "gpui", default-features = false }
+manis-core = { path = "../manis-core" }
+manis-engine = { path = "../manis-engine" }
+manis-mihomo = { path = "../manis-mihomo" }
+manis-profile = { path = "../manis-profile" }
+tray-icon = "=0.24.2"
+ureq = { version = "=3.4.0", default-features = false, features = ["rustls"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "5631830c564afa89b3aba679f45d9c3345f9460f", package = "gpui_platform", features = ["font-kit"] }
+
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
+gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "5631830c564afa89b3aba679f45d9c3345f9460f", package = "gpui_platform", features = ["wayland", "x11"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "=0.18.2"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "5631830c564afa89b3aba679f45d9c3345f9460f", package = "gpui_platform" }
+
+[dev-dependencies]
+gpui = { git = "https://github.com/zed-industries/zed", rev = "5631830c564afa89b3aba679f45d9c3345f9460f", package = "gpui", default-features = false, features = ["test-support"] }
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "5631830c564afa89b3aba679f45d9c3345f9460f", package = "gpui_platform", features = ["font-kit", "test-support"] }
+
+[lints]
+workspace = true

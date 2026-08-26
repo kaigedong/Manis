@@ -37,7 +37,7 @@
 - [complete] 5. 将 live screenshot 限制到系统临时目录并完成视觉复核
 - [complete] 6. 完成全量验证、安全复核和 Git 提交
 
-## Relay 托管 Mihomo 进程阶段
+## Manis 托管 Mihomo 进程阶段
 
 - [complete] 1. 核验官方发行、许可证、启动参数和跨平台进程边界
 - [complete] 2. 以测试驱动建立独立 engine 配置、数据目录和生命周期状态
@@ -49,7 +49,7 @@
 ## 订阅与 QX 风格配置编译阶段
 
 - [completed] 1. 核验 Mihomo `proxy-providers`、策略组、规则与最小运行配置契约
-- [completed] 2. 以 TDD 建立不泄露订阅密钥的 Relay profile 领域模型
+- [completed] 2. 以 TDD 建立不泄露订阅密钥的 Manis profile 领域模型
 - [completed] 3. 实现确定性、安全转义的 Mihomo YAML 编译器
 - [completed] 4. 实现 `0700` runtime 与 `0600` 原子配置写入
 - [completed] 5. 将显式订阅开发模式接入托管 engine，保留现有配置与外部模式
@@ -93,7 +93,7 @@
 
 - [completed] 1. 映射现有 profile/engine/controller 边界与 Mihomo 实时流契约
 - [completed] 2. 以 TDD 扩展 VLESS 领域模型和确定性 Mihomo 配置编译
-- [completed] 3. 将已保存 VLESS 安全合并进 Relay 托管运行配置并支持重载
+- [completed] 3. 将已保存 VLESS 安全合并进 Manis 托管运行配置并支持重载
 - [completed] 4. 实现有界、可停止的实时网络活动与内核日志流
 - [completed] 5. 完成 GPUI 实时状态、错误/空状态和响应式视觉验证
 - [completed] 6. 完成安全复核、全量验证、Git 提交和应用重启
@@ -102,7 +102,7 @@
 
 - [completed] 1. 映射现有节点来源、持久化、策略编译与响应式界面边界
 - [completed] 2. 以 TDD 建立可重命名、换图标和规则化选点的分组领域模型
-- [completed] 3. 持久化用户分组并编译为 Relay 托管 Mihomo 策略组
+- [completed] 3. 持久化用户分组并编译为 Manis 托管 Mihomo 策略组
 - [completed] 4. 在节点页分离“导入的节点”与“节点分组”，实现完整编辑交互
 - [completed] 5. 生成宽屏/紧凑原生截图并通过 Visual Verdict
 - [completed] 6. 完成安全复核、全仓验证、Git 提交和应用重启
@@ -114,16 +114,16 @@
 - [completed] 3. 实现有界并发的分组节点测速服务，兼容 HTTP/Unix controller
 - [completed] 4. 在分组卡片加入测速操作、进行中/结果/错误状态和响应式反馈
 - [completed] 5. 完成真实 controller 验证、原生截图与 Visual Verdict
-- [completed] 6. 完成安全复核、全仓验证、Git 提交和 Relay 重启
+- [completed] 6. 完成安全复核、全仓验证、Git 提交和 Manis 重启
 
 ## 策略组详情与实际选路
 
-- [completed] 1. 映射 Mihomo 当前选择/切换 API、Relay 托管边界和现有节点状态
+- [completed] 1. 映射 Mihomo 当前选择/切换 API、Manis 托管边界和现有节点状态
 - [completed] 2. 以 TDD 建立策略组详情、节点级延迟与当前选择状态
 - [completed] 3. 实现 HTTP/Unix controller 的组详情读取与手动节点切换
 - [completed] 4. 在节点页实现宽屏/紧凑策略组详情、逐节点反馈和自动组当前优选
 - [completed] 5. 完成真实 controller/托管 fixture 验证、原生截图与 Visual Verdict
-- [completed] 6. 完成安全复核、全仓验证、Git 提交和 Relay 重启
+- [completed] 6. 完成安全复核、全仓验证、Git 提交和 Manis 重启
 
 ## 全分组统一测速交互
 
@@ -132,7 +132,7 @@
 - [completed] 3. 复用 HTTP/Unix 延迟服务，让三类分组共享同一发起、运行、成功和失败行为
 - [completed] 4. 在所有分组标题前接入同一测速图标，自动策略测速后刷新 Mihomo 当前出口
 - [completed] 5. 生成宽屏/紧凑原生截图并通过 Visual Verdict
-- [completed] 6. 完成全仓验证、Git 提交和仅 Relay UI 重启
+- [completed] 6. 完成全仓验证、Git 提交和仅 Manis UI 重启
 
 ## 导入节点测速反馈
 
@@ -140,7 +140,7 @@
 - [completed] 2. 以 TDD 锁定中性测速控件、无伪健康状态和逐行运行态
 - [completed] 3. 实现 GPUI 延迟栏旋转反馈；已保存 VLESS 测速保持延期，不在本轮改动
 - [completed] 4. 生成宽屏/紧凑截图、验证运行态并通过 Visual Verdict
-- [completed] 5. 完成全仓验证、Git 提交和仅 Relay UI 重启
+- [completed] 5. 完成全仓验证、Git 提交和仅 Manis UI 重启
 
 ## 增量测速与真实策略组反馈
 
@@ -148,7 +148,7 @@
 - [completed] 2. 为有限并发节点测速增加有界进度回传，并逐行停止动画
 - [completed] 3. 删除策略卡片竖线，为策略组按钮与候选延迟增加运行/成功/失败反馈
 - [completed] 4. 用真实 Mihomo 策略组及宽屏/紧凑 GPUI 截图完成验证和 Visual Verdict
-- [completed] 5. 完成全仓检查、Git 提交并仅重启 Relay UI
+- [completed] 5. 完成全仓检查、Git 提交并仅重启 Manis UI
 
 ## 运行状态、路由模式与 QX 规则导入
 
@@ -157,7 +157,7 @@
 - [completed] 3. 设计并实现“关闭/系统/TUN”与“直连/全局/规则”两层互不混淆的控制模型
 - [completed] 4. 实现托管 Mihomo 的全局出口节点选择、路由模式持久化与 QX 规则解析/策略映射
 - [completed] 5. 接入跨平台系统托盘，以及 QX HTTPS 规则下载、策略映射、私有持久化与托管配置生成
-- [completed] 6. 完成原生视觉、全仓验证、Git 提交和仅 Relay UI 重启
+- [completed] 6. 完成原生视觉、全仓验证、Git 提交和仅 Manis UI 重启
 
 ## 配置瘦身与分流规则工作区
 
@@ -166,7 +166,7 @@
 - [completed] 3. 将配置页收敛为代理来源与规则订阅源的添加、删除和必要状态
 - [completed] 4. 新增只读分流规则页，展示来源分组、匹配顺序、目标策略与系统兜底
 - [completed] 5. 完成宽屏/紧凑原生截图、Visual Verdict 和必要视觉修正
-- [completed] 6. 完成全仓验证、敏感信息扫描、Git 提交并仅重启 Relay UI
+- [completed] 6. 完成全仓验证、敏感信息扫描、Git 提交并仅重启 Manis UI
 
 ## 来源更新与自动刷新
 
@@ -175,7 +175,7 @@
 - [completed] 3. 实现代理订阅与 QX 规则订阅的真实手动刷新和自动调度
 - [completed] 4. 在配置页加入紧凑的更新间隔、立即更新、运行与错误反馈
 - [completed] 5. 完成宽屏/紧凑截图、Visual Verdict 和必要视觉修正
-- [completed] 6. 完成全仓验证、敏感信息扫描、Git 提交并仅重启 Relay UI
+- [completed] 6. 完成全仓验证、敏感信息扫描、Git 提交并仅重启 Manis UI
 
 ## 多内核基础与 sing-box 首个可运行切片
 
@@ -184,7 +184,7 @@
 - [completed] 3. 建立内核无关适配器边界，并把现有 Mihomo 包装为默认实现
 - [completed] 4. 实现 sing-box 配置渲染、配置检查和受管进程首个可运行路径
 - [completed] 5. 在配置页加入真实可用的内核选择、检测、切换与失败回滚
-- [completed] 6. 完成宽屏/紧凑视觉验收、全仓验证、Git 提交并仅重启 Relay UI
+- [completed] 6. 完成宽屏/紧凑视觉验收、全仓验证、Git 提交并仅重启 Manis UI
 
 ## 中英文界面与系统语言跟随
 
@@ -193,7 +193,7 @@
 - [completed] 3. 建立无第三方依赖的类型安全文案目录并覆盖所有主要工作区与运行状态
 - [completed] 4. 在配置页加入即时生效的语言选择，并私有持久化用户偏好
 - [completed] 5. 生成中英文宽屏/紧凑原生截图并完成 Visual Verdict
-- [completed] 6. 完成全仓验证、敏感信息扫描、Git 提交并仅重启 Relay UI
+- [completed] 6. 完成全仓验证、敏感信息扫描、Git 提交并仅重启 Manis UI
 
 ## 固定约束
 - 实现框架：Rust + GPUI
@@ -216,14 +216,14 @@
 | 真实 Mihomo 将 `fixed` 返回为节点名而非布尔值 | 1 | 删除 UI 未使用的脆弱字段绑定，让 Serde 按未知字段忽略并保留兼容性回归样本 |
 | 首次 live screenshot 误选内置 GLOBAL 且把空 host/0 ms 当有效值 | 1 | GLOBAL 排在普通策略之后，空 host 回退目标 IP，0 ms 视为未知；第二轮视觉判定通过 |
 | live screenshot 命令使用 zsh 只读变量名 `status` | 1 | 不重试该变量名；改用任务专用 `task_exit_code` 后成功 |
-| 一次 `cargo test` 误传多个位置过滤参数 | 1 | Cargo 只接受一个 TESTNAME；改为运行整个 `relay-engine` 测试集并读取三项预期失败 |
+| 一次 `cargo test` 误传多个位置过滤参数 | 1 | Cargo 只接受一个 TESTNAME；改为运行整个 `manis-engine` 测试集并读取三项预期失败 |
 | GPUI 代码映射 explorer 命中 GPT-5.3-Codex-Spark 用量上限 | 1 | 不重试同一模型；由主代理使用本地结构搜索完成映射，保留独立 designer 评审 |
 | `omx explore` 已被当前 OMX 硬弃用 | 1 | 按命令自身迁移提示停止重试，改用正常 `rg`/定向读取；验证类噪声命令仍可用 sparkshell |
 | GPUI 输入范式 explorer 命中 GPT-5.3-Codex-Spark 用量上限 | 1 | 不重试同一模型；直接采用项目锁定 GPUI revision 的官方 `examples/input.rs` 范式 |
 | 节点分组测试首个补丁的 import 上下文与当前文件不一致 | 1 | 读取实际 import 与测试位置后，用精确上下文重新应用；首个失败未修改代码 |
 | 只读 UX 子任务遗留了与领域模型冲突的半成品改动 | 1 | 中断该子任务，移除伪延迟阈值/协议规则模型，保留可复用输入改造后统一实现 |
 | 首轮严格 Clippy 报告缺少 Errors 文档与声明式 UI 行数限制 | 1 | 补齐公开 Result 文档、派生 Default，并仅对声明式渲染/事务函数做局部 allow |
-| `relay-ui` RED 测试撞上 profile 执行代理的中间编辑窗口 | 1 | 不重试并发编译；等待其完成独占文件后再运行，避免误判共享工作树中的暂态错误 |
+| `manis-ui` RED 测试撞上 profile 执行代理的中间编辑窗口 | 1 | 不重试并发编译；等待其完成独占文件后再运行，避免误判共享工作树中的暂态错误 |
 | 策略组详情首轮 TDD 缺少 runtime 状态和逐节点测速映射 | 1 | 预期红灯；确认失败点正好覆盖新状态类型、完成签名和 delays 字段，进入最小实现 |
 | 逐节点测速返回类型改为 map 后托管过滤仍丢弃节点名 | 1 | 编译器指出 iterator item 仍是 `u16`；改为保留 `(name, delay)` 对后 collect |
 | 两个测速代码映射 explorer 同时命中 Spark 用量上限 | 1 | 不重试该模型；改用主代理本地 `rg`/定向读取，必要时使用非 Spark 专项角色 |

@@ -1,6 +1,6 @@
-# Relay · Signal Patch Bay 设计系统
+# Manis · Signal Patch Bay 设计系统
 
-> 说明：本文只记录已落地的最终视觉方向与 GPUI 交互约束。`Relay` 仍是临时名，但这套设计语言已作为当前 shipping 基线。
+> 说明：`Manis` 是已确认的产品名，取名自穿山甲属；本文记录已落地的视觉方向与 GPUI 交互约束。
 
 ## 设计意图
 

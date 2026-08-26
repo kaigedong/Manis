@@ -3480,6 +3480,45 @@ dependencies = [
 ]
 
 [[package]]
+name = "manis-core"
+version = "0.1.0"
+
+[[package]]
+name = "manis-engine"
+version = "0.1.0"
+dependencies = [
+ "manis-core",
+]
+
+[[package]]
+name = "manis-mihomo"
+version = "0.1.0"
+dependencies = [
+ "manis-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "manis-profile"
+version = "0.1.0"
+
+[[package]]
+name = "manis-ui"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "gpui_platform",
+ "gtk",
+ "manis-core",
+ "manis-engine",
+ "manis-mihomo",
+ "manis-profile",
+ "tray-icon",
+ "ureq",
+]
+
+[[package]]
 name = "maybe-rayon"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4976,45 +5015,6 @@ name = "regex-syntax"
 version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
-
-[[package]]
-name = "relay-core"
-version = "0.1.0"
-
-[[package]]
-name = "relay-engine"
-version = "0.1.0"
-dependencies = [
- "relay-core",
-]
-
-[[package]]
-name = "relay-mihomo"
-version = "0.1.0"
-dependencies = [
- "relay-core",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "relay-profile"
-version = "0.1.0"
-
-[[package]]
-name = "relay-ui"
-version = "0.1.0"
-dependencies = [
- "gpui",
- "gpui_platform",
- "gtk",
- "relay-core",
- "relay-engine",
- "relay-mihomo",
- "relay-profile",
- "tray-icon",
- "ureq",
-]
 
 [[package]]
 name = "renderdoc-sys"

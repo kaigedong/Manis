@@ -1,0 +1,880 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Manis · Signal Patch Bay</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --preview-bg: #dfe6e2;
+      --preview-ink: #152321;
+      --preview-muted: #60706b;
+      --preview-line: #b9c7c2;
+      --preview-control: #f4f7f5;
+      --surface: #f4f7f5;
+      --surface-low: #edf2ef;
+      --surface-high: #ffffff;
+      --surface-top: #e7eeea;
+      --ink: #152321;
+      --ink-muted: #5f6e69;
+      --ink-faint: #84918d;
+      --line: #cbd6d2;
+      --line-strong: #9fafa9;
+      --primary: #176c62;
+      --primary-soft: #d8ebe6;
+      --on-primary: #ffffff;
+      --route: #d46642;
+      --route-soft: #f4dfd7;
+      --success: #24795f;
+      --warning: #a96620;
+      --danger: #b54f49;
+      --focus: #0b6fbb;
+      --shadow: 0 24px 72px rgba(18, 39, 34, .18), 0 2px 8px rgba(18, 39, 34, .12);
+      --radius-window: 18px;
+      --radius-pane: 12px;
+      --radius-control: 8px;
+      --space-1: 4px;
+      --space-2: 8px;
+      --space-3: 12px;
+      --space-4: 16px;
+      --space-5: 24px;
+      --space-6: 32px;
+      --motion-fast: 140ms;
+      --motion-standard: 220ms;
+      --ease: cubic-bezier(.2, 0, 0, 1);
+      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif;
+    }
+
+    :root[data-theme="dark"] {
+      --preview-bg: #07100e;
+      --preview-ink: #dce9e4;
+      --preview-muted: #94a59f;
+      --preview-line: #2b3b36;
+      --preview-control: #12201d;
+      --surface: #0e1715;
+      --surface-low: #111d1a;
+      --surface-high: #172521;
+      --surface-top: #13211e;
+      --ink: #e3eeea;
+      --ink-muted: #a4b4ae;
+      --ink-faint: #7d8e88;
+      --line: #2b3d37;
+      --line-strong: #435851;
+      --primary: #79d7c6;
+      --primary-soft: #193c35;
+      --on-primary: #082a24;
+      --route: #f39b75;
+      --route-soft: #482a21;
+      --success: #79d7b0;
+      --warning: #efb96e;
+      --danger: #ef8c84;
+      --focus: #82c8ff;
+      --shadow: 0 28px 84px rgba(0, 0, 0, .52), 0 2px 12px rgba(0, 0, 0, .32);
+    }
+
+    * { box-sizing: border-box; }
+    html { background: var(--preview-bg); }
+    body { margin: 0; min-width: 320px; color: var(--preview-ink); background: var(--preview-bg); }
+    button, input, select { font: inherit; }
+    button { color: inherit; }
+    svg { display: block; }
+    ::selection { color: var(--on-primary); background: var(--primary); }
+
+    button:focus-visible,
+    input:focus-visible,
+    select:focus-visible {
+      outline: 2px solid var(--focus);
+      outline-offset: 2px;
+    }
+
+    .prototype-bar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--space-4);
+      min-height: 56px;
+      padding: 8px max(16px, calc((100vw - 1440px) / 2));
+      border-bottom: 1px solid var(--preview-line);
+      background: color-mix(in srgb, var(--preview-bg) 90%, transparent);
+      backdrop-filter: blur(18px);
+    }
+
+    .prototype-title { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+    .prototype-title strong { font-size: 14px; font-weight: 650; letter-spacing: -.01em; }
+    .prototype-title span { color: var(--preview-muted); font-size: 12px; white-space: nowrap; }
+    .prototype-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+
+    .preview-segment {
+      display: inline-flex;
+      gap: 2px;
+      padding: 3px;
+      border: 1px solid var(--preview-line);
+      border-radius: 9px;
+      background: var(--preview-control);
+    }
+
+    .preview-segment button,
+    .theme-button {
+      min-height: 32px;
+      border: 0;
+      border-radius: 6px;
+      background: transparent;
+      cursor: pointer;
+      padding: 6px 10px;
+      color: var(--preview-muted);
+      font-size: 12px;
+      font-weight: 600;
+      transition: color var(--motion-fast), background var(--motion-fast);
+    }
+
+    .preview-segment button[aria-pressed="true"] {
+      color: var(--preview-ink);
+      background: color-mix(in srgb, var(--preview-ink) 10%, var(--preview-control));
+    }
+
+    .theme-button { border: 1px solid var(--preview-line); background: var(--preview-control); }
+    .theme-button:hover, .preview-segment button:hover { color: var(--preview-ink); }
+
+    .preview-stage {
+      display: grid;
+      place-items: start center;
+      min-height: calc(100vh - 56px);
+      padding: 28px 18px 48px;
+      overflow-x: auto;
+    }
+
+    .manis-window {
+      width: min(1420px, calc(100vw - 36px));
+      height: min(900px, calc(100vh - 116px));
+      min-height: 680px;
+      overflow: hidden;
+      border: 1px solid color-mix(in srgb, var(--line-strong) 84%, transparent);
+      border-radius: var(--radius-window);
+      background: var(--surface);
+      color: var(--ink);
+      box-shadow: var(--shadow);
+      transition: background var(--motion-standard), color var(--motion-standard);
+    }
+
+    .manis-window[data-size="medium"] { width: min(1060px, calc(100vw - 36px)); }
+    .manis-window[data-size="compact"] { width: min(720px, calc(100vw - 36px)); }
+
+    .manis-app { display: grid; grid-template-rows: 48px minmax(0, 1fr) 28px; height: 100%; }
+
+    .app-bar {
+      display: flex;
+      align-items: center;
+      gap: var(--space-3);
+      padding: 0 12px 0 16px;
+      border-bottom: 1px solid var(--line);
+      background: var(--surface-top);
+      user-select: none;
+    }
+
+    .brand { display: flex; align-items: center; gap: 9px; width: 205px; flex: none; }
+    .brand-mark { position: relative; width: 22px; height: 22px; color: var(--primary); }
+    .brand-mark::before,
+    .brand-mark::after {
+      content: "";
+      position: absolute;
+      left: 3px;
+      right: 3px;
+      height: 2px;
+      border-radius: 2px;
+      background: currentColor;
+    }
+    .brand-mark::before { top: 6px; box-shadow: 0 8px 0 currentColor; }
+    .brand-mark::after { top: 10px; left: 7px; right: 7px; background: var(--route); transform: rotate(90deg); }
+    .brand-name { font-size: 14px; font-weight: 720; letter-spacing: -.02em; }
+    .brand-lab { color: var(--ink-faint); font-size: 10px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; }
+
+    .global-search {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: min(420px, 38vw);
+      height: 32px;
+      margin-right: auto;
+      padding: 0 10px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-control);
+      background: var(--surface-high);
+      color: var(--ink-muted);
+    }
+    .global-search input { width: 100%; border: 0; outline: 0; color: var(--ink); background: transparent; font-size: 12px; }
+    .global-search input::placeholder { color: var(--ink-faint); opacity: 1; }
+    .keycap { padding: 2px 5px; border: 1px solid var(--line); border-radius: 4px; color: var(--ink-faint); font-size: 10px; line-height: 1; }
+
+    .app-bar-actions { display: flex; align-items: center; gap: 6px; }
+    .icon-button {
+      display: inline-grid;
+      place-items: center;
+      width: 34px;
+      height: 34px;
+      padding: 0;
+      border: 0;
+      border-radius: 7px;
+      background: transparent;
+      cursor: pointer;
+      color: var(--ink-muted);
+      transition: background var(--motion-fast), color var(--motion-fast);
+    }
+    .icon-button:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 7%, transparent); }
+    .icon { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+
+    .system-toggle {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 32px;
+      padding: 4px 9px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-control);
+      background: var(--surface-high);
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 650;
+    }
+    .toggle-track { position: relative; width: 30px; height: 18px; border-radius: 999px; background: var(--line-strong); transition: background var(--motion-standard); }
+    .toggle-track::after { content: ""; position: absolute; top: 3px; left: 3px; width: 12px; height: 12px; border-radius: 50%; background: var(--surface-high); transition: transform var(--motion-standard) var(--ease); }
+    .system-toggle[aria-pressed="true"] .toggle-track { background: var(--primary); }
+    .system-toggle[aria-pressed="true"] .toggle-track::after { transform: translateX(12px); }
+
+    .workspace { display: grid; grid-template-columns: 220px minmax(0, 1fr); min-height: 0; }
+
+    .nav-pane {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      padding: 12px 10px;
+      border-right: 1px solid var(--line);
+      background: var(--surface-low);
+    }
+
+    .nav-label { margin: 4px 10px 7px; color: var(--ink-faint); font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      min-height: 38px;
+      margin-bottom: 2px;
+      padding: 0 10px;
+      border: 0;
+      border-radius: 8px;
+      background: transparent;
+      cursor: pointer;
+      color: var(--ink-muted);
+      font-size: 12px;
+      text-align: left;
+      transition: background var(--motion-fast), color var(--motion-fast);
+    }
+    .nav-item:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 6%, transparent); }
+    .nav-item[aria-current="page"] { color: var(--primary); background: var(--primary-soft); font-weight: 680; }
+    .nav-spacer { flex: 1; }
+
+    .engine-card {
+      margin-top: 12px;
+      padding: 12px;
+      border-top: 1px solid var(--line);
+      color: var(--ink-muted);
+      font-size: 10px;
+      line-height: 1.45;
+    }
+    .engine-line { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 5px; }
+    .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--success); box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 16%, transparent); }
+    .engine-version { color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+
+    .policy-workspace { display: grid; grid-template-columns: 326px minmax(0, 1fr) 340px; min-width: 0; min-height: 0; }
+    .policy-list, .policy-detail, .route-inspector { min-width: 0; min-height: 0; overflow: auto; }
+    .policy-list { border-right: 1px solid var(--line); background: var(--surface); }
+    .policy-detail { background: var(--surface-high); }
+    .route-inspector { border-left: 1px solid var(--line); background: var(--surface-low); }
+
+    .pane-header { position: sticky; top: 0; z-index: 3; padding: 18px 18px 12px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--surface) 94%, transparent); backdrop-filter: blur(12px); }
+    .policy-detail .pane-header { background: color-mix(in srgb, var(--surface-high) 94%, transparent); }
+    .route-inspector .pane-header { background: color-mix(in srgb, var(--surface-low) 94%, transparent); }
+    .pane-title-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .pane-title-row h1, .pane-title-row h2 { margin: 0; font-size: 16px; font-weight: 720; letter-spacing: -.018em; }
+    .pane-subtitle { margin: 5px 0 0; color: var(--ink-muted); font-size: 11px; line-height: 1.45; }
+    .evidence-badge { display: inline-flex; align-items: center; min-height: 20px; padding: 2px 6px; border: 1px solid color-mix(in srgb, var(--route) 36%, var(--line)); border-radius: 6px; color: var(--route); background: var(--route-soft); font-size: 9px; font-weight: 720; }
+
+    .small-button, .primary-button, .quiet-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      min-height: 34px;
+      padding: 7px 11px;
+      border-radius: var(--radius-control);
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 680;
+      transition: background var(--motion-fast), color var(--motion-fast), border-color var(--motion-fast);
+    }
+    .small-button, .quiet-button { border: 1px solid var(--line); color: var(--ink-muted); background: var(--surface-high); }
+    .small-button:hover, .quiet-button:hover { color: var(--ink); border-color: var(--line-strong); }
+    .primary-button { border: 1px solid var(--primary); color: var(--on-primary); background: var(--primary); }
+    .primary-button:hover { background: color-mix(in srgb, var(--primary) 88%, var(--ink)); }
+    button:disabled { cursor: not-allowed; opacity: .48; }
+
+    .list-search { display: flex; align-items: center; gap: 7px; height: 34px; margin-top: 12px; padding: 0 9px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface-high); color: var(--ink-muted); }
+    .list-search input { width: 100%; border: 0; outline: 0; background: transparent; color: var(--ink); font-size: 11px; }
+
+    .policy-items { padding: 8px; }
+    .policy-item {
+      display: grid;
+      grid-template-columns: 3px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 11px;
+      width: 100%;
+      min-height: 64px;
+      margin-bottom: 3px;
+      padding: 8px 10px 8px 6px;
+      border: 1px solid transparent;
+      border-radius: 9px;
+      background: transparent;
+      cursor: pointer;
+      text-align: left;
+      transition: background var(--motion-fast), border-color var(--motion-fast);
+    }
+    .policy-item:hover { background: color-mix(in srgb, var(--ink) 5%, transparent); }
+    .policy-item[aria-selected="true"] { border-color: color-mix(in srgb, var(--primary) 24%, var(--line)); background: var(--primary-soft); }
+    .channel-strip { width: 3px; height: 42px; border-radius: 2px; background: var(--channel, var(--primary)); opacity: .78; }
+    .policy-name-row { display: flex; align-items: center; gap: 7px; min-width: 0; }
+    .policy-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 680; }
+    .policy-kind { margin-top: 4px; color: var(--ink-muted); font-size: 10px; }
+    .policy-target { text-align: right; }
+    .target-name { display: block; max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; font-weight: 650; }
+    .latency { display: block; margin-top: 4px; color: var(--success); font-size: 9px; font-variant-numeric: tabular-nums; }
+    .count-badge { display: inline-grid; place-items: center; min-width: 19px; height: 18px; padding: 0 5px; border-radius: 999px; background: color-mix(in srgb, var(--ink) 8%, transparent); color: var(--ink-muted); font-size: 9px; font-variant-numeric: tabular-nums; }
+
+    .detail-head { display: flex; align-items: start; justify-content: space-between; gap: 20px; }
+    .detail-title { display: flex; align-items: center; gap: 10px; }
+    .socket-glyph { position: relative; width: 24px; height: 24px; border: 1px solid var(--line-strong); border-radius: 50%; background: var(--surface); box-shadow: inset 0 0 0 5px var(--surface-high); }
+    .socket-glyph::after { content: ""; position: absolute; inset: 8px; border-radius: 50%; background: var(--route); }
+    .detail-actions { display: flex; gap: 7px; flex-wrap: wrap; justify-content: flex-end; }
+
+    .tabs { display: flex; gap: 18px; margin-top: 16px; }
+    .tab { position: relative; min-height: 30px; padding: 0; border: 0; background: transparent; cursor: pointer; color: var(--ink-muted); font-size: 11px; font-weight: 650; }
+    .tab[aria-selected="true"] { color: var(--ink); }
+    .tab[aria-selected="true"]::after { content: ""; position: absolute; left: 0; right: 0; bottom: -13px; height: 2px; background: var(--primary); }
+
+    .detail-body { padding: 18px; }
+    .detail-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 13px; }
+    .detail-summary p { margin: 0; color: var(--ink-muted); font-size: 11px; }
+    .table-labels, .node-row { display: grid; grid-template-columns: minmax(120px, 1.5fr) minmax(92px, 1fr) 76px 32px; gap: 10px; align-items: center; }
+    .table-labels { min-height: 30px; padding: 0 11px; border-bottom: 1px solid var(--line); color: var(--ink-faint); font-size: 9px; font-weight: 700; letter-spacing: .055em; text-transform: uppercase; }
+    .node-rows { padding-top: 4px; }
+    .node-row { width: 100%; min-height: 54px; margin: 2px 0; padding: 6px 10px; border: 1px solid transparent; border-radius: 8px; background: transparent; cursor: pointer; text-align: left; transition: background var(--motion-fast), border-color var(--motion-fast); }
+    .node-row:hover { background: color-mix(in srgb, var(--ink) 5%, transparent); }
+    .node-row[aria-selected="true"] { border-color: color-mix(in srgb, var(--primary) 30%, var(--line)); background: var(--primary-soft); }
+    .node-identity { display: flex; align-items: center; gap: 9px; min-width: 0; }
+    .node-radio { display: grid; place-items: center; width: 16px; height: 16px; border: 1px solid var(--line-strong); border-radius: 50%; flex: none; }
+    .node-row[aria-selected="true"] .node-radio::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--primary); }
+    .node-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; font-weight: 680; }
+    .node-meta { display: block; margin-top: 3px; color: var(--ink-faint); font-size: 9px; }
+    .node-provider { color: var(--ink-muted); font-size: 10px; }
+    .node-latency { color: var(--success); font-size: 10px; font-variant-numeric: tabular-nums; }
+    .node-menu { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 6px; color: var(--ink-faint); }
+
+    .section-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 24px 0 8px; }
+    .section-title h3 { margin: 0; font-size: 11px; font-weight: 720; }
+    .section-title span { color: var(--ink-faint); font-size: 9px; }
+    .rule-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 9px; min-height: 44px; padding: 6px 10px; border-top: 1px solid var(--line); font-size: 10px; }
+    .rule-index { color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+    .rule-value { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; }
+    .rule-hit { color: var(--success); }
+
+    .explain-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; margin-top: 12px; }
+    .explain-form input { min-width: 0; height: 34px; padding: 0 9px; border: 1px solid var(--line); border-radius: var(--radius-control); outline: 0; color: var(--ink); background: var(--surface-high); font-size: 11px; }
+
+    .signal-path { position: relative; margin: 16px 18px 0; padding: 4px 0 10px; }
+    .signal-path::before { content: ""; position: absolute; top: 28px; bottom: 38px; left: 20px; width: 2px; border-radius: 2px; background: var(--line-strong); }
+    .signal-path.is-pulsing::before { background: var(--route); animation: signal-pulse 900ms var(--ease); }
+    .signal-stage { position: relative; display: grid; grid-template-columns: 42px minmax(0, 1fr); gap: 11px; min-height: 86px; }
+    .signal-socket { position: relative; z-index: 1; display: grid; place-items: center; width: 40px; height: 40px; border: 1px solid var(--line-strong); border-radius: 50%; background: var(--surface-low); box-shadow: inset 0 0 0 6px var(--surface-high); }
+    .signal-socket::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--stage-color, var(--primary)); }
+    .signal-copy { padding-top: 2px; }
+    .signal-label { color: var(--ink-faint); font-size: 9px; font-weight: 720; letter-spacing: .07em; text-transform: uppercase; }
+    .signal-value { margin-top: 5px; font-size: 12px; font-weight: 720; }
+    .signal-detail { margin-top: 4px; color: var(--ink-muted); font-size: 10px; line-height: 1.45; }
+    .signal-stage[data-stage="rule"] { --stage-color: var(--route); }
+    .signal-stage[data-stage="policy"] { --stage-color: var(--primary); }
+    .signal-stage[data-stage="node"] { --stage-color: var(--success); }
+
+    .route-proof { margin: 0 18px; padding: 13px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+    .proof-line { display: flex; justify-content: space-between; gap: 14px; min-height: 24px; color: var(--ink-muted); font-size: 10px; }
+    .proof-line strong { color: var(--ink); font-weight: 650; text-align: right; font-variant-numeric: tabular-nums; }
+    .route-note { margin: 13px 18px; color: var(--ink-muted); font-size: 10px; line-height: 1.55; }
+
+    .status-bar { display: flex; align-items: center; gap: 14px; padding: 0 12px; border-top: 1px solid var(--line); background: var(--surface-top); color: var(--ink-muted); font-size: 9px; }
+    .status-item { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+    .status-spacer { flex: 1; }
+    .status-feedback { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); }
+
+    .compact-back, .compact-explain { display: none; }
+
+    .manis-window[data-size="medium"] .workspace { grid-template-columns: 66px minmax(0, 1fr); }
+    .manis-window[data-size="medium"] .nav-pane { align-items: center; padding-inline: 7px; }
+    .manis-window[data-size="medium"] .nav-label,
+    .manis-window[data-size="medium"] .nav-text,
+    .manis-window[data-size="medium"] .engine-card { display: none; }
+    .manis-window[data-size="medium"] .nav-item { justify-content: center; width: 44px; height: 44px; padding: 0; }
+    .manis-window[data-size="medium"] .policy-workspace { grid-template-columns: 292px minmax(0, 1fr); }
+    .manis-window[data-size="medium"] .route-inspector { position: absolute; z-index: 8; top: 48px; right: 0; bottom: 28px; width: 340px; box-shadow: -18px 0 50px rgba(16, 36, 31, .18); transform: translateX(105%); transition: transform var(--motion-standard) var(--ease); }
+    .manis-window[data-size="medium"].inspector-open .route-inspector { transform: translateX(0); }
+    .manis-window[data-size="medium"] .compact-explain { display: inline-flex; }
+
+    .manis-window[data-size="compact"] .brand { width: auto; }
+    .manis-window[data-size="compact"] .brand-lab,
+    .manis-window[data-size="compact"] .global-search,
+    .manis-window[data-size="compact"] .system-toggle span:first-child { display: none; }
+    .manis-window[data-size="compact"] .workspace { grid-template-columns: 56px minmax(0, 1fr); }
+    .manis-window[data-size="compact"] .nav-pane { align-items: center; padding-inline: 5px; }
+    .manis-window[data-size="compact"] .nav-label,
+    .manis-window[data-size="compact"] .nav-text,
+    .manis-window[data-size="compact"] .engine-card { display: none; }
+    .manis-window[data-size="compact"] .nav-item { justify-content: center; width: 44px; height: 44px; padding: 0; }
+    .manis-window[data-size="compact"] .policy-workspace { display: block; position: relative; }
+    .manis-window[data-size="compact"] .policy-list,
+    .manis-window[data-size="compact"] .policy-detail { position: absolute; inset: 0; }
+    .manis-window[data-size="compact"] .policy-detail { transform: translateX(105%); transition: transform var(--motion-standard) var(--ease); }
+    .manis-window[data-size="compact"].detail-open .policy-detail { transform: translateX(0); }
+    .manis-window[data-size="compact"] .route-inspector { position: absolute; z-index: 9; top: 48px; right: 0; bottom: 28px; width: min(340px, calc(100% - 56px)); box-shadow: -18px 0 50px rgba(16, 36, 31, .2); transform: translateX(105%); transition: transform var(--motion-standard) var(--ease); }
+    .manis-window[data-size="compact"].inspector-open .route-inspector { transform: translateX(0); }
+    .manis-window[data-size="compact"] .compact-back,
+    .manis-window[data-size="compact"] .compact-explain { display: inline-flex; }
+    .manis-window[data-size="compact"] .table-labels,
+    .manis-window[data-size="compact"] .node-row { grid-template-columns: minmax(120px, 1.5fr) 72px 32px; }
+    .manis-window[data-size="compact"] .node-provider { display: none; }
+    .manis-window[data-size="compact"] .detail-actions .quiet-button:not(.compact-explain) { display: none; }
+
+    @keyframes signal-pulse {
+      0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--route) 55%, transparent); }
+      45% { box-shadow: 0 0 0 7px transparent; }
+      100% { box-shadow: none; }
+    }
+
+    @media (max-width: 780px) {
+      .prototype-bar { align-items: flex-start; }
+      .prototype-title span { display: none; }
+      .preview-stage { padding-inline: 8px; }
+      .manis-window { width: 704px !important; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 1ms !important; animation-iteration-count: 1 !important; transition-duration: 1ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <!--
+  THESIS: Route decisions are a visible signal chain, not a VPN dashboard or YAML editor.
+  OWN-WORLD: Quiet technical surfaces, engraved labels, teal controls, and one copper route line.
+  STORY: Choose a policy, select its node, then verify which rule produced the actual route.
+  FIRST VIEWPORT: Navigation, policy list, node table, and a persistent three-stage route inspector.
+  FORM: Signal Patch Bay, chosen primary direction, seed signal-patch-bay-20260825.
+  FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance
+  -->
+
+  <svg width="0" height="0" aria-hidden="true" style="position:absolute">
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></symbol>
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="m4 10 8-6 8 6v9a1 1 0 0 1-1 1h-5v-6h-4v6H5a1 1 0 0 1-1-1z"/></symbol>
+    <symbol id="i-policy" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2"/><circle cx="18" cy="12" r="2"/><circle cx="6" cy="18" r="2"/><path d="M8 6h3a3 3 0 0 1 3 3v0a3 3 0 0 0 3 3M8 18h3a3 3 0 0 0 3-3v0a3 3 0 0 1 3-3"/></symbol>
+    <symbol id="i-rules" viewBox="0 0 24 24"><path d="M5 6h14M5 12h14M5 18h9"/><circle cx="3" cy="6" r=".7" fill="currentColor" stroke="none"/><circle cx="3" cy="12" r=".7" fill="currentColor" stroke="none"/><circle cx="3" cy="18" r=".7" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="i-activity" viewBox="0 0 24 24"><path d="M3 12h4l2-6 4 12 2-6h6"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v5h5M9 12h6M9 16h6"/></symbol>
+    <symbol id="i-log" viewBox="0 0 24 24"><path d="M4 5h16v14H4zM8 9l3 3-3 3M13 15h3"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.5 1a8 8 0 0 0-1.7-1L14.4 3h-4.8l-.4 3.1a8 8 0 0 0-1.7 1l-2.5-1-2 3.4L5.1 11a7 7 0 0 0 0 2L3 14.5l2 3.4 2.5-1a8 8 0 0 0 1.7 1l.4 3.1h4.8l.4-3.1a8 8 0 0 0 1.7-1l2.5 1 2-3.4-2.1-1.5c.1-.3.1-.7.1-1z"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-bolt" viewBox="0 0 24 24"><path d="m13 2-8 12h7l-1 8 8-12h-7z"/></symbol>
+    <symbol id="i-route" viewBox="0 0 24 24"><circle cx="6" cy="5" r="2"/><circle cx="18" cy="19" r="2"/><path d="M6 7v4c0 2 1 3 3 3h6c2 0 3 1 3 3"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+    <symbol id="i-back" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 15.5A8 8 0 0 1 8.5 4 8 8 0 1 0 20 15.5z"/></symbol>
+  </svg>
+
+  <header class="prototype-bar">
+    <div class="prototype-title">
+      <strong>Manis · Signal Patch Bay</strong>
+      <span>策略组核心页面 · 可交互设计原型</span>
+    </div>
+    <div class="prototype-controls">
+      <div class="preview-segment" aria-label="窗口尺寸">
+        <button type="button" data-preview-size="wide" aria-pressed="true">宽 1420</button>
+        <button type="button" data-preview-size="medium" aria-pressed="false">中 1060</button>
+        <button type="button" data-preview-size="compact" aria-pressed="false">窄 720</button>
+      </div>
+      <button type="button" class="theme-button" id="theme-toggle">切换深色</button>
+    </div>
+  </header>
+
+  <main class="preview-stage">
+    <section class="manis-window" id="manis-window" data-size="wide" aria-label="Manis 桌面应用原型">
+      <div class="manis-app">
+        <header class="app-bar">
+          <div class="brand">
+            <span class="brand-mark" aria-hidden="true"></span>
+            <span class="brand-name">Manis</span>
+            <span class="brand-lab">Prototype</span>
+          </div>
+          <label class="global-search">
+            <svg class="icon" aria-hidden="true"><use href="#i-search"/></svg>
+            <input type="search" placeholder="搜索策略、规则、连接">
+            <span class="keycap">⌘K</span>
+          </label>
+          <div class="app-bar-actions">
+            <button type="button" class="system-toggle" id="proxy-toggle" aria-label="系统代理" aria-pressed="true">
+              <span>系统代理</span>
+              <span class="toggle-track" aria-hidden="true"></span>
+            </button>
+            <button type="button" class="icon-button" aria-label="通知">
+              <svg class="icon" aria-hidden="true"><use href="#i-activity"/></svg>
+            </button>
+          </div>
+        </header>
+
+        <div class="workspace">
+          <nav class="nav-pane" aria-label="主导航">
+            <div class="nav-label">工作区</div>
+            <button type="button" class="nav-item"><svg class="icon" aria-hidden="true"><use href="#i-home"/></svg><span class="nav-text">概览</span></button>
+            <button type="button" class="nav-item" aria-current="page"><svg class="icon" aria-hidden="true"><use href="#i-policy"/></svg><span class="nav-text">策略组</span></button>
+            <button type="button" class="nav-item"><svg class="icon" aria-hidden="true"><use href="#i-rules"/></svg><span class="nav-text">规则</span></button>
+            <button type="button" class="nav-item"><svg class="icon" aria-hidden="true"><use href="#i-activity"/></svg><span class="nav-text">连接</span></button>
+            <button type="button" class="nav-item"><svg class="icon" aria-hidden="true"><use href="#i-file"/></svg><span class="nav-text">配置</span></button>
+            <button type="button" class="nav-item"><svg class="icon" aria-hidden="true"><use href="#i-log"/></svg><span class="nav-text">日志</span></button>
+            <div class="nav-spacer"></div>
+            <button type="button" class="nav-item"><svg class="icon" aria-hidden="true"><use href="#i-settings"/></svg><span class="nav-text">设置</span></button>
+            <div class="engine-card">
+              <div class="engine-line"><span>路由核心</span><span class="status-dot" aria-label="运行中"></span></div>
+              <div class="engine-line"><span class="engine-version">Mihomo 1.19.3</span><span>运行中</span></div>
+            </div>
+          </nav>
+
+          <div class="policy-workspace">
+            <section class="policy-list" aria-labelledby="policy-list-title">
+              <header class="pane-header">
+                <div class="pane-title-row">
+                  <h1 id="policy-list-title">策略组</h1>
+                  <button type="button" class="small-button"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg>新建</button>
+                </div>
+                <p class="pane-subtitle">节点选择与故障转移，不需要编辑 YAML</p>
+                <label class="list-search">
+                  <svg class="icon" aria-hidden="true"><use href="#i-search"/></svg>
+                  <input type="search" id="policy-filter" placeholder="筛选策略组">
+                </label>
+              </header>
+              <div class="policy-items" id="policy-items"></div>
+            </section>
+
+            <section class="policy-detail" aria-labelledby="detail-title">
+              <header class="pane-header">
+                <div class="detail-head">
+                  <div class="detail-title">
+                    <button type="button" class="icon-button compact-back" id="detail-back" aria-label="返回策略组列表"><svg class="icon" aria-hidden="true"><use href="#i-back"/></svg></button>
+                    <span class="socket-glyph" aria-hidden="true"></span>
+                    <div>
+                      <div class="pane-title-row"><h2 id="detail-title">视频服务</h2></div>
+                      <p class="pane-subtitle" id="detail-subtitle">手动选择 · 6 个节点 · 12 条规则</p>
+                    </div>
+                  </div>
+                  <div class="detail-actions">
+                    <button type="button" class="quiet-button" id="latency-test"><svg class="icon" aria-hidden="true"><use href="#i-bolt"/></svg>测速</button>
+                    <button type="button" class="quiet-button compact-explain" id="open-inspector"><svg class="icon" aria-hidden="true"><use href="#i-route"/></svg>解释路由</button>
+                  </div>
+                </div>
+                <div class="tabs" role="tablist" aria-label="策略详情">
+                  <button type="button" class="tab" role="tab" aria-selected="true">节点</button>
+                  <button type="button" class="tab" role="tab" aria-selected="false">规则</button>
+                  <button type="button" class="tab" role="tab" aria-selected="false">设置</button>
+                </div>
+              </header>
+
+              <div class="detail-body">
+                <div class="detail-summary">
+                  <p>选择此策略当前使用的出口节点</p>
+                  <button type="button" class="small-button"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg>添加节点</button>
+                </div>
+                <div class="table-labels" aria-hidden="true"><span>节点</span><span>来源</span><span>延迟</span><span></span></div>
+                <div class="node-rows" id="node-rows"></div>
+
+                <div class="section-title">
+                  <h3>命中此策略的规则</h3>
+                  <span id="rule-count">12 条，按顺序匹配</span>
+                </div>
+                <div id="rule-rows"></div>
+              </div>
+            </section>
+
+            <aside class="route-inspector" aria-labelledby="route-title">
+              <header class="pane-header">
+                <div class="pane-title-row">
+                  <h2 id="route-title">路由解释</h2><span class="evidence-badge">预测路径 · 演示数据</span>
+                  <button type="button" class="icon-button" id="close-inspector" aria-label="关闭路由解释"><svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></button>
+                </div>
+                <p class="pane-subtitle">输入域名，预览当前规则模型可能选择的路径</p>
+                <form class="explain-form" id="explain-form">
+                  <input type="text" id="domain-input" value="youtube.com" aria-label="测试域名">
+                  <button type="submit" class="primary-button">预测路由</button>
+                </form>
+              </header>
+
+              <div class="signal-path" id="signal-path" aria-live="polite">
+                <div class="signal-stage" data-stage="rule">
+                  <span class="signal-socket" aria-hidden="true"></span>
+                  <div class="signal-copy">
+                    <div class="signal-label">01 · 预测首条命中规则</div>
+                    <div class="signal-value" id="route-rule">DOMAIN-SUFFIX</div>
+                    <div class="signal-detail" id="route-domain">youtube.com · 规则 #18</div>
+                  </div>
+                </div>
+                <div class="signal-stage" data-stage="policy">
+                  <span class="signal-socket" aria-hidden="true"></span>
+                  <div class="signal-copy">
+                    <div class="signal-label">02 · 交给策略组</div>
+                    <div class="signal-value" id="route-policy">视频服务</div>
+                    <div class="signal-detail" id="route-mode">手动选择 · 当前选择固定节点</div>
+                  </div>
+                </div>
+                <div class="signal-stage" data-stage="node">
+                  <span class="signal-socket" aria-hidden="true"></span>
+                  <div class="signal-copy">
+                    <div class="signal-label">03 · 最终出口</div>
+                    <div class="signal-value" id="route-node">香港 HK-01</div>
+                    <div class="signal-detail" id="route-latency">38 ms · Proxy Provider A</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="route-proof">
+                <div class="proof-line"><span>匹配方式</span><strong>规则模式</strong></div>
+                <div class="proof-line"><span>DNS</span><strong id="proof-dns">未查询（域名规则）</strong></div>
+                <div class="proof-line"><span>网络接口</span><strong>System Proxy</strong></div>
+                <div class="proof-line"><span>结果类型</span><strong>本地规则预测</strong></div>
+              </div>
+              <p class="route-note">当前原型展示本地规则预测，不代表 Mihomo 已实际建立连接。连接页中标为“已观察”的链路才来自 Mihomo /connections；涉及进程、源地址、端口或解析后 IP 的规则可能需要实际连接才能确认。</p>
+            </aside>
+          </div>
+        </div>
+
+        <footer class="status-bar" aria-live="polite">
+          <span class="status-item"><span class="status-dot" aria-hidden="true"></span>Mihomo 正常</span>
+          <span class="status-item">配置：家庭网络</span>
+          <span class="status-feedback" id="status-feedback">所有更改已应用</span>
+          <span class="status-spacer"></span>
+          <span class="status-item">↓ 3.4 MB/s</span>
+          <span class="status-item">↑ 812 KB/s</span>
+        </footer>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const groups = [
+      {
+        id: 'streaming', name: '视频服务', kind: '手动选择', color: '#d46642', target: '香港 HK-01', latency: 38,
+        rules: 12, ruleType: 'DOMAIN-SUFFIX', domain: 'youtube.com', ruleIndex: 18,
+        nodes: [
+          ['香港 HK-01', 'Provider A', 38, 'HK · Hysteria2'],
+          ['新加坡 SG-02', 'Provider A', 54, 'SG · VLESS'],
+          ['日本 JP-03', 'Provider B', 67, 'JP · Trojan'],
+          ['美国 US-01', 'Provider A', 142, 'US · VLESS'],
+          ['自动选择', '内置策略', 42, '最低延迟'],
+          ['故障转移', '内置策略', 46, '可用性优先']
+        ],
+        samples: [['18', 'DOMAIN-SUFFIX', 'youtube.com'], ['19', 'DOMAIN-SUFFIX', 'netflix.com'], ['20', 'GEOSITE', 'category-streaming']]
+      },
+      {
+        id: 'search', name: '搜索与 AI', kind: '自动选择', color: '#176c62', target: '新加坡 SG-02', latency: 54,
+        rules: 8, ruleType: 'DOMAIN-SUFFIX', domain: 'openai.com', ruleIndex: 27,
+        nodes: [
+          ['新加坡 SG-02', 'Provider A', 54, 'SG · VLESS'],
+          ['日本 JP-03', 'Provider B', 67, 'JP · Trojan'],
+          ['香港 HK-01', 'Provider A', 38, 'HK · Hysteria2'],
+          ['美国 US-01', 'Provider A', 142, 'US · VLESS']
+        ],
+        samples: [['27', 'DOMAIN-SUFFIX', 'openai.com'], ['28', 'DOMAIN-SUFFIX', 'google.com'], ['29', 'GEOSITE', 'category-ai-!cn']]
+      },
+      {
+        id: 'dev', name: '开发服务', kind: '故障转移', color: '#708a83', target: '日本 JP-03', latency: 67,
+        rules: 17, ruleType: 'DOMAIN-SUFFIX', domain: 'github.com', ruleIndex: 42,
+        nodes: [
+          ['日本 JP-03', 'Provider B', 67, 'JP · Trojan'],
+          ['新加坡 SG-02', 'Provider A', 54, 'SG · VLESS'],
+          ['香港 HK-01', 'Provider A', 38, 'HK · Hysteria2']
+        ],
+        samples: [['42', 'DOMAIN-SUFFIX', 'github.com'], ['43', 'DOMAIN-SUFFIX', 'npmjs.org'], ['44', 'GEOSITE', 'category-dev']]
+      },
+      {
+        id: 'social', name: '社交网络', kind: '负载均衡', color: '#a96620', target: '新加坡 SG-02', latency: 54,
+        rules: 9, ruleType: 'DOMAIN-SUFFIX', domain: 'x.com', ruleIndex: 61,
+        nodes: [
+          ['新加坡 SG-02', 'Provider A', 54, 'SG · VLESS'],
+          ['香港 HK-01', 'Provider A', 38, 'HK · Hysteria2'],
+          ['日本 JP-03', 'Provider B', 67, 'JP · Trojan']
+        ],
+        samples: [['61', 'DOMAIN-SUFFIX', 'x.com'], ['62', 'DOMAIN-SUFFIX', 'instagram.com'], ['63', 'GEOSITE', 'category-social-media-!cn']]
+      },
+      {
+        id: 'direct', name: '国内直连', kind: '直连', color: '#7b8884', target: 'DIRECT', latency: 4,
+        rules: 31, ruleType: 'GEOSITE', domain: 'bilibili.com', ruleIndex: 76,
+        nodes: [['DIRECT', '系统内置', 4, '本地网络']],
+        samples: [['76', 'GEOSITE', 'cn'], ['77', 'GEOIP', 'CN'], ['78', 'DOMAIN-SUFFIX', 'bilibili.com']]
+      }
+    ];
+
+    const root = document.documentElement;
+    const manisWindow = document.getElementById('manis-window');
+    const policyItems = document.getElementById('policy-items');
+    const nodeRows = document.getElementById('node-rows');
+    const ruleRows = document.getElementById('rule-rows');
+    const statusFeedback = document.getElementById('status-feedback');
+    let selectedGroup = groups[0];
+    let selectedNode = selectedGroup.nodes[0];
+
+    const icon = id => `<svg class="icon" aria-hidden="true"><use href="#${id}"/></svg>`;
+
+    function renderGroups(filter = '') {
+      const query = filter.trim().toLowerCase();
+      policyItems.innerHTML = groups
+        .filter(group => group.name.toLowerCase().includes(query) || group.kind.toLowerCase().includes(query))
+        .map(group => `
+          <button type="button" class="policy-item" data-group="${group.id}" aria-selected="${group.id === selectedGroup.id}" style="--channel:${group.color}">
+            <span class="channel-strip" aria-hidden="true"></span>
+            <span>
+              <span class="policy-name-row"><span class="policy-name">${group.name}</span><span class="count-badge">${group.rules}</span></span>
+              <span class="policy-kind">${group.kind}</span>
+            </span>
+            <span class="policy-target"><span class="target-name">${group.target}</span><span class="latency">${group.latency} ms</span></span>
+          </button>`).join('');
+    }
+
+    function renderNodes() {
+      nodeRows.innerHTML = selectedGroup.nodes.map(node => `
+        <button type="button" class="node-row" data-node="${node[0]}" aria-selected="${node[0] === selectedNode[0]}">
+          <span class="node-identity">
+            <span class="node-radio" aria-hidden="true"></span>
+            <span><span class="node-name">${node[0]}</span><span class="node-meta">${node[3]}</span></span>
+          </span>
+          <span class="node-provider">${node[1]}</span>
+          <span class="node-latency">${node[2]} ms</span>
+          <span class="node-menu">${icon('i-more')}</span>
+        </button>`).join('');
+
+      ruleRows.innerHTML = selectedGroup.samples.map(rule => `
+        <div class="rule-row">
+          <span class="rule-index">#${rule[0]}</span>
+          <span class="rule-value">${rule[1]}, ${rule[2]}</span>
+          <span class="rule-hit">命中</span>
+        </div>`).join('');
+    }
+
+    function syncDetail() {
+      document.getElementById('detail-title').textContent = selectedGroup.name;
+      document.getElementById('detail-subtitle').textContent = `${selectedGroup.kind} · ${selectedGroup.nodes.length} 个节点 · ${selectedGroup.rules} 条规则`;
+      document.getElementById('rule-count').textContent = `${selectedGroup.rules} 条，按顺序匹配`;
+      document.getElementById('domain-input').value = selectedGroup.domain;
+      syncRoute();
+      renderGroups(document.getElementById('policy-filter').value);
+      renderNodes();
+    }
+
+    function syncRoute(customDomain) {
+      const domain = customDomain || selectedGroup.domain;
+      document.getElementById('route-rule').textContent = selectedGroup.ruleType;
+      document.getElementById('route-domain').textContent = `${domain} · 规则 #${selectedGroup.ruleIndex}`;
+      document.getElementById('route-policy').textContent = selectedGroup.name;
+      document.getElementById('route-mode').textContent = `${selectedGroup.kind} · 当前选择固定节点`;
+      document.getElementById('route-node').textContent = selectedNode[0];
+      document.getElementById('route-latency').textContent = `${selectedNode[2]} ms · ${selectedNode[1]}`;
+      document.getElementById('proof-dns').textContent = '未查询（域名规则）';
+    }
+
+    function announce(message) {
+      statusFeedback.textContent = message;
+    }
+
+    renderGroups();
+    renderNodes();
+
+    policyItems.addEventListener('click', event => {
+      const item = event.target.closest('[data-group]');
+      if (!item) return;
+      selectedGroup = groups.find(group => group.id === item.dataset.group);
+      selectedNode = selectedGroup.nodes[0];
+      syncDetail();
+      manisWindow.classList.add('detail-open');
+      announce(`已打开策略组“${selectedGroup.name}”`);
+    });
+
+    nodeRows.addEventListener('click', event => {
+      const row = event.target.closest('[data-node]');
+      if (!row) return;
+      selectedNode = selectedGroup.nodes.find(node => node[0] === row.dataset.node);
+      selectedGroup.target = selectedNode[0];
+      selectedGroup.latency = selectedNode[2];
+      renderGroups(document.getElementById('policy-filter').value);
+      renderNodes();
+      syncRoute();
+      announce(`“${selectedGroup.name}”已切换到 ${selectedNode[0]}`);
+    });
+
+    document.getElementById('policy-filter').addEventListener('input', event => renderGroups(event.target.value));
+
+    document.querySelectorAll('[data-preview-size]').forEach(button => button.addEventListener('click', () => {
+      const size = button.dataset.previewSize;
+      manisWindow.dataset.size = size;
+      manisWindow.classList.remove('detail-open', 'inspector-open');
+      document.querySelectorAll('[data-preview-size]').forEach(peer => peer.setAttribute('aria-pressed', String(peer === button)));
+      announce(`预览已切换为${button.textContent.trim()}窗口`);
+    }));
+
+    document.getElementById('theme-toggle').addEventListener('click', event => {
+      const dark = root.dataset.theme !== 'dark';
+      root.dataset.theme = dark ? 'dark' : 'light';
+      event.currentTarget.textContent = dark ? '切换浅色' : '切换深色';
+    });
+
+    document.getElementById('proxy-toggle').addEventListener('click', event => {
+      const enabled = event.currentTarget.getAttribute('aria-pressed') !== 'true';
+      event.currentTarget.setAttribute('aria-pressed', String(enabled));
+      announce(enabled ? '系统代理已开启' : '系统代理已关闭，连接将不再经过 Manis');
+    });
+
+    document.getElementById('explain-form').addEventListener('submit', event => {
+      event.preventDefault();
+      const domain = document.getElementById('domain-input').value.trim() || selectedGroup.domain;
+      syncRoute(domain);
+      const signalPath = document.getElementById('signal-path');
+      signalPath.classList.remove('is-pulsing');
+      requestAnimationFrame(() => signalPath.classList.add('is-pulsing'));
+      announce(`已预测 ${domain}：${selectedGroup.name} → ${selectedNode[0]}`);
+    });
+
+    document.getElementById('latency-test').addEventListener('click', event => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      announce(`正在测试“${selectedGroup.name}”中的 ${selectedGroup.nodes.length} 个节点…`);
+      window.setTimeout(() => {
+        button.disabled = false;
+        renderNodes();
+        announce(`测速完成，最快节点 ${selectedGroup.nodes.reduce((a, b) => a[2] < b[2] ? a : b)[0]}`);
+      }, 850);
+    });
+
+    document.getElementById('open-inspector').addEventListener('click', () => manisWindow.classList.add('inspector-open'));
+    document.getElementById('close-inspector').addEventListener('click', () => manisWindow.classList.remove('inspector-open'));
+    document.getElementById('detail-back').addEventListener('click', () => manisWindow.classList.remove('detail-open'));
+
+    document.querySelectorAll('.tab').forEach(tab => tab.addEventListener('click', () => {
+      document.querySelectorAll('.tab').forEach(peer => peer.setAttribute('aria-selected', String(peer === tab)));
+      announce(`${selectedGroup.name} · 已切换到“${tab.textContent.trim()}”标签`);
+    }));
+  </script>
+</body>
+</html>

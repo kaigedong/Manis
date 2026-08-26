@@ -1,10 +1,10 @@
 [workspace]
 members = [
-    "crates/relay-core",
-    "crates/relay-engine",
-    "crates/relay-mihomo",
-    "crates/relay-profile",
-    "crates/relay-ui",
+    "crates/manis-core",
+    "crates/manis-engine",
+    "crates/manis-mihomo",
+    "crates/manis-profile",
+    "crates/manis-ui",
 ]
 resolver = "2"
 

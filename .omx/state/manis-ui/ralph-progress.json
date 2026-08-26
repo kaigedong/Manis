@@ -1,0 +1,35 @@
+{
+  "score": 97,
+  "verdict": "pass",
+  "category_match": true,
+  "threshold": 90,
+  "threshold_met": true,
+  "fixture_independent_review": {
+    "score": 97,
+    "verdict": "pass",
+    "category_match": true,
+    "reasoning": "Manis reads as the confirmed product identity in both wide and compact native layouts. Removing the temporary PROTOTYPE label leaves a cleaner brand lockup without changing the established operational hierarchy."
+  },
+  "references": [
+    "/Users/bobo/.planning/manis/reference-fluent2.png",
+    "/Users/bobo/.planning/manis/reference-m3-expressive.png",
+    "/Users/bobo/.planning/manis/DESIGN.md"
+  ],
+  "generated_screenshots": [
+    "/Users/bobo/.planning/manis/.impeccable/review/native-wide.png",
+    "/Users/bobo/.planning/manis/.impeccable/review/native-compact.png"
+  ],
+  "differences": [
+    "Manis intentionally keeps denser desktop data surfaces than the editorial reference pages because it is an operational routing client.",
+    "The compact layout preserves the product wordmark while collapsing navigation labels and controls according to the established adaptive model."
+  ],
+  "suggestions": [
+    "Keep the current Manis wordmark treatment until a dedicated pangolin-derived logo system is commissioned.",
+    "Preserve the copper route mark as routing semantics rather than expanding it into decorative branding."
+  ],
+  "next_actions": [
+    "Run the final workspace verification suite and macOS package checks.",
+    "Commit the complete Manis brand and compatibility migration."
+  ],
+  "reasoning": "The generated GPUI screenshots match the intended modern adaptive desktop category and retain the Fluent/Material-inspired clarity. The confirmed Manis name is legible, balanced, and no longer contradicted by prototype copy."
+}

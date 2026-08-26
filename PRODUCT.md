@@ -8,7 +8,7 @@ adaptive
 
 ## Stack
 
-Rust + GPUI desktop application, targeting Windows, macOS, and Linux. Mihomo is the default routing core; sing-box is available through a capability-gated adapter for the subset Relay can translate exactly. The GPUI application owns the kernel-neutral product model, orchestration, and presentation.
+Manis is a Rust + GPUI desktop application targeting Windows, macOS, and Linux. Mihomo is the default routing core; sing-box is available through a capability-gated adapter for the subset Manis can translate exactly. The GPUI application owns the kernel-neutral product model, orchestration, and presentation.
 
 ## Users
 
@@ -38,11 +38,11 @@ The app is a long-running desktop utility used from a normal window and system t
 
 ## Brand Commitments
 
-No product name, logo, or fixed palette has been confirmed. The user explicitly wants a highly modern, attractive, unified cross-platform interface and cited Microsoft and Google’s adaptive design systems as quality references. Working prototype copy may use “Relay” as a clearly temporary name.
+`Manis` is the confirmed product and repository name, taken from the Latin genus name for Asian pangolins. The existing teal-and-copper Signal Patch Bay palette remains the confirmed visual baseline. A final logo has not yet been selected.
 
 ## Evidence on Hand
 
-No logo, existing UI, production screenshots, user research, or brand assets exist yet. Example nodes, domains, latency values, and traffic data in design prototypes must be labeled or understood as illustrative, not product claims.
+The GPUI interface, adaptive layout, tray presence, macOS package, and native review screenshots are implemented. A final logo, production user research, and release assets do not yet exist. Example nodes, domains, latency values, and traffic data in design prototypes remain illustrative rather than product claims.
 
 ## Product Principles
 
