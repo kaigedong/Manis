@@ -10,8 +10,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{env, error::Error, fmt};
 
 use relay_core::{
-    EmptyPolicyCatalog, NodeGroupIcon, NodeGroupMatcher, NodeGroupStrategy, NodeIdentity,
-    NodePolicyGroup, PolicyCatalog, RoutingMode,
+    EmptyPolicyCatalog, KernelKind, NodeGroupIcon, NodeGroupMatcher, NodeGroupStrategy,
+    NodeIdentity, NodePolicyGroup, PolicyCatalog, RoutingMode,
 };
 use relay_engine::{
     ControllerEndpoint, EngineError, EngineManager, ManagedEngineConfig, ProbeStatus,
@@ -25,8 +25,9 @@ use relay_mihomo::{
     VersionInfo, to_policy_catalog,
 };
 use relay_profile::{
-    Name, PolicyRef, Profile, ProfileMode, QxRuleList, Rule, SecretUrl, UserPolicyGroup,
-    UserPolicyGroupKind, VlessProxy, render_mihomo_yaml, write_private_atomic,
+    Name, PolicyRef, Profile, ProfileMode, QxRuleList, Rule, SecretUrl, SingBoxOptions,
+    UserPolicyGroup, UserPolicyGroupKind, VlessProxy, render_mihomo_yaml, render_sing_box_json,
+    write_private_atomic,
 };
 
 use crate::subscription::VlessSource;
@@ -39,6 +40,7 @@ const DATA_DIR_ENV: &str = "RELAY_MIHOMO_DATA_DIR";
 const SUBSCRIPTION_FILE_ENV: &str = "RELAY_MIHOMO_SUBSCRIPTION_FILE";
 const MIXED_PORT_ENV: &str = "RELAY_MIHOMO_MIXED_PORT";
 const PREVIEW_BINARY_ENV: &str = "RELAY_MIHOMO_PREVIEW_BINARY";
+const SING_BOX_BINARY_ENV: &str = "RELAY_SING_BOX_BINARY";
 const DEFAULT_MANAGED_MIXED_PORT: u16 = 17_890;
 const MAX_SUBSCRIPTION_FILE_BYTES: u64 = 16 * 1024;
 const MAX_STORED_SUBSCRIPTION_FILE_BYTES: u64 = 2 * 16 * 1024 + 1024;
@@ -61,6 +63,8 @@ const NODE_POLICY_GROUP_VERSION: &str = "relay-node-group-v1";
 const MAX_NODE_POLICY_GROUPS: usize = 32;
 const GENERATED_PROFILE_FILE: &str = "relay-generated.yaml";
 const CANDIDATE_PROFILE_FILE: &str = "relay-generated.candidate.yaml";
+const SING_BOX_PROFILE_FILE: &str = "relay-generated.json";
+const SING_BOX_CANDIDATE_FILE: &str = "relay-generated.candidate.json";
 const PREVIEW_PROVIDER_ATTEMPTS: usize = 80;
 const PREVIEW_PROVIDER_DELAY: Duration = Duration::from_millis(250);
 const LIVE_CONNECTION_INTERVAL: Duration = Duration::from_millis(750);
@@ -133,10 +137,12 @@ pub(crate) enum ControllerRuntime {
 
 #[derive(Clone, Debug)]
 pub(crate) struct ManagedGeneratedProfile {
+    kernel: KernelKind,
     binary: PathBuf,
     data_dir: PathBuf,
     controller: ControllerEndpoint,
-    subscription_file: PathBuf,
+    subscription_file: Option<PathBuf>,
+    controller_secret: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -163,6 +169,7 @@ pub(crate) enum RuntimeProfileSource {
     ExternalController,
     ExistingConfig,
     PrivateSubscription,
+    SavedSources,
     Invalid,
 }
 
@@ -172,6 +179,7 @@ impl RuntimeProfileSource {
             Self::ExternalController => "外部控制器",
             Self::ExistingConfig => "已有 Mihomo 配置",
             Self::PrivateSubscription => "私有 HTTPS 订阅",
+            Self::SavedSources => "Relay 已保存来源",
             Self::Invalid => "配置不可用",
         }
     }
@@ -181,12 +189,33 @@ impl RuntimeProfileSource {
             Self::ExternalController => "外部控制器保持只读",
             Self::ExistingConfig => "使用已有 Mihomo 配置",
             Self::PrivateSubscription => "链接已隐藏 · 已写入 Relay 托管配置",
+            Self::SavedSources => "从本机私有来源编译",
             Self::Invalid => "请检查本机启动参数",
         }
     }
 }
 
 impl ControllerRuntime {
+    fn controller_secret(&self) -> Option<String> {
+        match self {
+            Self::Managed {
+                generated_profile: Some(spec),
+                ..
+            } => spec.controller_secret.clone(),
+            Self::External { .. } | Self::Managed { .. } | Self::Invalid { .. } => None,
+        }
+    }
+
+    pub(crate) fn stop_managed(&self) -> Result<(), LoadError> {
+        if let Self::Managed { manager, .. } = self {
+            manager
+                .lock()
+                .map_err(|_poisoned| LoadError::Runtime("托管内核状态锁已损坏".to_owned()))?
+                .stop()?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn manages_node_policy_groups(&self) -> bool {
         matches!(
             self,
@@ -213,33 +242,22 @@ impl ControllerRuntime {
         }
     }
 
-    pub(crate) fn initial_status(&self) -> String {
-        match self {
-            Self::External { .. } => "演示数据 · 尚未连接 Mihomo".to_owned(),
-            Self::Managed { .. } => "托管内核已配置 · 点击启动 Mihomo".to_owned(),
-            Self::Invalid { message } => format!("托管内核配置无效：{message}"),
-        }
-    }
-
-    pub(crate) fn button_label(&self, state: &ControllerState) -> &'static str {
-        match (self, state) {
-            (_, ControllerState::Connecting { .. }) => "正在连接…",
-            (Self::Managed { .. }, ControllerState::Demo | ControllerState::Failed { .. }) => {
-                "启动 Mihomo"
-            }
-            (_, ControllerState::Connected { .. }) => "刷新数据",
-            _ => "连接 Mihomo",
-        }
-    }
-
     pub(crate) fn connect(&self) -> Result<RuntimeSnapshot, LoadError> {
         match self {
             Self::External { endpoint } => Ok(RuntimeSnapshot {
                 endpoint: endpoint.clone(),
                 controller_endpoint: endpoint.clone(),
-                snapshot: load(endpoint)?,
+                controller_secret: None,
+                snapshot: load(endpoint, None)?,
             }),
-            Self::Managed { manager, .. } => {
+            Self::Managed {
+                manager,
+                generated_profile,
+                ..
+            } => {
+                let secret = generated_profile
+                    .as_ref()
+                    .and_then(|spec| spec.controller_secret.clone());
                 let endpoint = {
                     let mut manager = manager.lock().map_err(|_poisoned| {
                         LoadError::Runtime("托管内核状态锁已损坏".to_owned())
@@ -253,7 +271,45 @@ impl ControllerRuntime {
                 Ok(RuntimeSnapshot {
                     endpoint: format!("Relay 托管 · {endpoint}"),
                     controller_endpoint: endpoint.clone(),
-                    snapshot: load(&endpoint)?,
+                    controller_secret: secret.clone(),
+                    snapshot: load(&endpoint, secret.as_deref())?,
+                })
+            }
+            Self::Invalid { message } => Err(LoadError::Runtime(message.clone())),
+        }
+    }
+
+    pub(crate) fn connect_sing_box(&self) -> Result<RuntimeSnapshot, LoadError> {
+        match self {
+            Self::External { endpoint } => Ok(RuntimeSnapshot {
+                endpoint: endpoint.clone(),
+                controller_endpoint: endpoint.clone(),
+                controller_secret: None,
+                snapshot: load_sing_box(endpoint, None)?,
+            }),
+            Self::Managed {
+                manager,
+                generated_profile,
+                ..
+            } => {
+                let secret = generated_profile
+                    .as_ref()
+                    .and_then(|spec| spec.controller_secret.clone());
+                let endpoint = {
+                    let mut manager = manager.lock().map_err(|_poisoned| {
+                        LoadError::Runtime("托管内核状态锁已损坏".to_owned())
+                    })?;
+                    match manager.running_endpoint()? {
+                        Some(endpoint) => endpoint,
+                        None => manager.start()?,
+                    }
+                };
+                let endpoint = endpoint.uri();
+                Ok(RuntimeSnapshot {
+                    endpoint: format!("Relay 托管 · {endpoint}"),
+                    controller_endpoint: endpoint.clone(),
+                    controller_secret: secret.clone(),
+                    snapshot: load_sing_box(&endpoint, secret.as_deref())?,
                 })
             }
             Self::Invalid { message } => Err(LoadError::Runtime(message.clone())),
@@ -261,6 +317,7 @@ impl ControllerRuntime {
     }
 
     pub(crate) fn set_tun_enabled(&self, enabled: bool) -> Result<(), LoadError> {
+        let controller_secret = self.controller_secret();
         let endpoint = match self {
             Self::Managed { manager, .. } => {
                 let mut manager = manager
@@ -278,10 +335,11 @@ impl ControllerRuntime {
             }
             Self::Invalid { message } => return Err(LoadError::Runtime(message.clone())),
         };
-        set_tun_enabled(&endpoint, enabled).map_err(LoadError::from)
+        set_tun_enabled(&endpoint, enabled, controller_secret.as_deref()).map_err(LoadError::from)
     }
 
     pub(crate) fn set_routing_mode(&self, mode: RoutingMode) -> Result<(), LoadError> {
+        let controller_secret = self.controller_secret();
         let endpoint = match self {
             Self::Managed { manager, .. } => {
                 let mut manager = manager
@@ -299,13 +357,14 @@ impl ControllerRuntime {
             }
             Self::Invalid { message } => return Err(LoadError::Runtime(message.clone())),
         };
-        set_routing_mode(&endpoint, mode).map_err(LoadError::from)
+        set_routing_mode(&endpoint, mode, controller_secret.as_deref()).map_err(LoadError::from)
     }
 
     pub(crate) fn select_global_node(
         &self,
         selected_name: &str,
     ) -> Result<NodeGroupRuntimeSnapshot, LoadError> {
+        let controller_secret = self.controller_secret();
         let endpoint = match self {
             Self::Managed { manager, .. } => {
                 let mut manager = manager
@@ -323,7 +382,7 @@ impl ControllerRuntime {
             }
             Self::Invalid { message } => return Err(LoadError::Runtime(message.clone())),
         };
-        let group = fetch_policy_group(&endpoint, "GLOBAL")?;
+        let group = fetch_policy_group(&endpoint, "GLOBAL", controller_secret.as_deref())?;
         if !group
             .proxy_type
             .as_deref()
@@ -338,8 +397,13 @@ impl ControllerRuntime {
                 "所选节点不在 Mihomo 的 GLOBAL 候选项中".to_owned(),
             ));
         }
-        put_policy_group_selection(&endpoint, "GLOBAL", selected_name)?;
-        fetch_policy_group(&endpoint, "GLOBAL")
+        put_policy_group_selection(
+            &endpoint,
+            "GLOBAL",
+            selected_name,
+            controller_secret.as_deref(),
+        )?;
+        fetch_policy_group(&endpoint, "GLOBAL", controller_secret.as_deref())
             .map(policy_group_runtime_snapshot)
             .map_err(LoadError::from)
     }
@@ -352,6 +416,7 @@ impl ControllerRuntime {
         if candidate_names.is_empty() {
             return Err(LoadError::Runtime("当前分组没有可测速节点".to_owned()));
         }
+        let controller_secret = self.controller_secret();
         let (endpoint, managed) = match self {
             Self::External { endpoint } => (endpoint.clone(), false),
             Self::Managed { manager, .. } => {
@@ -370,7 +435,7 @@ impl ControllerRuntime {
         };
 
         if managed {
-            match fetch_group_delay(&endpoint, group_name) {
+            match fetch_group_delay(&endpoint, group_name, controller_secret.as_deref()) {
                 Ok(delays) => {
                     let candidates = candidate_names.iter().collect::<BTreeSet<_>>();
                     return Ok(delays
@@ -385,7 +450,7 @@ impl ControllerRuntime {
             }
         }
 
-        fetch_proxy_delays_bounded(&endpoint, candidate_names)
+        fetch_proxy_delays_bounded(&endpoint, candidate_names, controller_secret.as_deref())
     }
 
     pub(crate) fn test_proxy_delays_with_progress(
@@ -396,6 +461,7 @@ impl ControllerRuntime {
         if candidate_names.is_empty() {
             return Err(LoadError::Runtime("当前分组没有可测速节点".to_owned()));
         }
+        let controller_secret = self.controller_secret();
         let endpoint = match self {
             Self::External { endpoint } => endpoint.clone(),
             Self::Managed { manager, .. } => {
@@ -413,13 +479,19 @@ impl ControllerRuntime {
             Self::Invalid { message } => return Err(LoadError::Runtime(message.clone())),
         };
 
-        fetch_proxy_delays_bounded_with_progress(&endpoint, candidate_names, on_result)
+        fetch_proxy_delays_bounded_with_progress(
+            &endpoint,
+            candidate_names,
+            controller_secret.as_deref(),
+            on_result,
+        )
     }
 
     pub(crate) fn test_policy_group_delay(
         &self,
         group_name: &str,
     ) -> Result<PolicyGroupBenchmarkSnapshot, LoadError> {
+        let controller_secret = self.controller_secret();
         let endpoint = match self {
             Self::External { endpoint } => endpoint.clone(),
             Self::Managed { manager, .. } => {
@@ -436,8 +508,9 @@ impl ControllerRuntime {
             }
             Self::Invalid { message } => return Err(LoadError::Runtime(message.clone())),
         };
-        let delays = fetch_group_delay(&endpoint, group_name)?;
-        let current = fetch_policy_group(&endpoint, group_name)?.current;
+        let delays = fetch_group_delay(&endpoint, group_name, controller_secret.as_deref())?;
+        let current =
+            fetch_policy_group(&endpoint, group_name, controller_secret.as_deref())?.current;
         Ok(PolicyGroupBenchmarkSnapshot { delays, current })
     }
 
@@ -462,7 +535,7 @@ impl ControllerRuntime {
                 .ok_or_else(|| LoadError::Runtime("Mihomo 尚未运行，请先启动托管内核".to_owned()))?
                 .uri()
         };
-        fetch_policy_group(&endpoint, group_name)
+        fetch_policy_group(&endpoint, group_name, self.controller_secret().as_deref())
             .map(policy_group_runtime_snapshot)
             .map(Some)
             .map_err(LoadError::from)
@@ -473,6 +546,7 @@ impl ControllerRuntime {
         group_name: &str,
         selected_name: &str,
     ) -> Result<NodeGroupRuntimeSnapshot, LoadError> {
+        let controller_secret = self.controller_secret();
         let Self::Managed {
             manager,
             generated_profile: Some(_),
@@ -492,7 +566,7 @@ impl ControllerRuntime {
                 .ok_or_else(|| LoadError::Runtime("Mihomo 尚未运行，请先启动托管内核".to_owned()))?
                 .uri()
         };
-        let group = fetch_policy_group(&endpoint, group_name)?;
+        let group = fetch_policy_group(&endpoint, group_name, controller_secret.as_deref())?;
         if !group
             .proxy_type
             .as_deref()
@@ -507,8 +581,13 @@ impl ControllerRuntime {
                 "所选节点不在当前 Mihomo 策略组中".to_owned(),
             ));
         }
-        put_policy_group_selection(&endpoint, group_name, selected_name)?;
-        fetch_policy_group(&endpoint, group_name)
+        put_policy_group_selection(
+            &endpoint,
+            group_name,
+            selected_name,
+            controller_secret.as_deref(),
+        )?;
+        fetch_policy_group(&endpoint, group_name, controller_secret.as_deref())
             .map(policy_group_runtime_snapshot)
             .map_err(LoadError::from)
     }
@@ -526,77 +605,28 @@ impl ControllerRuntime {
         else {
             return Ok(GeneratedProfileApply::NotManaged);
         };
-        let base_subscription =
-            read_private_subscription(&spec.subscription_file).map_err(LoadError::Runtime)?;
-        let mut subscriptions = vec![base_subscription];
-        let stored_subscriptions = load_subscription_sources_in(store_dir)
-            .map_err(|_error| LoadError::Runtime("无法读取已保存的订阅来源".to_owned()))?;
-        let mut stored_provider_indexes = HashMap::new();
-        for stored in &stored_subscriptions {
-            let provider_index = if let Some(index) = subscriptions
-                .iter()
-                .position(|subscription| subscription == &stored.source)
-            {
-                index
-            } else {
-                subscriptions.push(stored.source.clone());
-                subscriptions.len() - 1
-            };
-            stored_provider_indexes.insert(stored.id.as_str(), provider_index);
-        }
-        let mut vless_nodes = Vec::new();
-        for stored in load_vless_sources_in(store_dir)
-            .map_err(|_error| LoadError::Runtime("无法读取已保存的 VLESS 节点".to_owned()))?
-        {
-            let proxy = stored
-                .source
-                .expose_to(VlessProxy::parse_share_link)
-                .map_err(|error| LoadError::Runtime(error.to_string()))?;
-            vless_nodes.push(proxy);
-        }
-        let mixed_port = configured_mixed_port().map_err(LoadError::Runtime)?;
-        let policy_groups = load_node_policy_groups_in(store_dir)
-            .map_err(|_error| LoadError::Runtime("无法读取节点分组".to_owned()))?;
-        let user_groups = compile_node_policy_groups(
-            &policy_groups,
-            &stored_provider_indexes,
-            &vless_nodes,
-            subscriptions.len(),
-        )?;
-        let mut profile =
-            Profile::qx_sources_with_groups(subscriptions, vless_nodes, user_groups, mixed_port)
-                .map_err(|error| LoadError::Runtime(error.to_string()))?;
-        let routing_mode = load_routing_mode_in(store_dir)
-            .map_err(|_error| LoadError::Runtime("无法读取已保存的路由模式".to_owned()))?;
-        profile.set_mode(profile_mode(routing_mode));
-        let qx_rule_sources = load_qx_rule_sources_in(store_dir)
-            .map_err(|_error| LoadError::Runtime("无法读取 QX 规则来源".to_owned()))?;
-        apply_qx_rule_sources(&mut profile, &qx_rule_sources)?;
-        let yaml =
-            render_mihomo_yaml(&profile).map_err(|error| LoadError::Runtime(error.to_string()))?;
+        let base_subscription = spec
+            .subscription_file
+            .as_deref()
+            .map(read_private_subscription)
+            .transpose()
+            .map_err(LoadError::Runtime)?;
+        let profile = compile_saved_profile(store_dir, base_subscription, spec.kernel)?;
+        let rendered = render_generated_profile(spec, &profile)?;
+        let (candidate_name, final_name) = generated_profile_names(spec.kernel);
         let candidate_path =
-            write_private_atomic(&spec.data_dir, CANDIDATE_PROFILE_FILE, yaml.as_bytes())
+            write_private_atomic(&spec.data_dir, candidate_name, rendered.as_bytes())
                 .map_err(|_error| LoadError::Runtime("无法写入候选托管配置".to_owned()))?;
-        let candidate_config = ManagedEngineConfig::new(
-            spec.binary.clone(),
-            candidate_path.clone(),
-            spec.data_dir.clone(),
-            spec.controller.clone(),
-        );
+        let candidate_config = managed_engine_config(spec, candidate_path.clone());
         let validation = validate_managed_config(&candidate_config);
         let _ = fs::remove_file(&candidate_path);
         validation?;
 
-        let final_path = spec.data_dir.join(GENERATED_PROFILE_FILE);
-        let previous_yaml = fs::read(&final_path).ok();
-        write_private_atomic(&spec.data_dir, GENERATED_PROFILE_FILE, yaml.as_bytes())
+        let final_path = spec.data_dir.join(final_name);
+        let previous_config = fs::read(&final_path).ok();
+        write_private_atomic(&spec.data_dir, final_name, rendered.as_bytes())
             .map_err(|_error| LoadError::Runtime("无法替换托管配置".to_owned()))?;
-        let final_config = ManagedEngineConfig::new(
-            spec.binary.clone(),
-            final_path,
-            spec.data_dir.clone(),
-            spec.controller.clone(),
-        );
+        let final_config = managed_engine_config(spec, final_path);
         let mut manager = manager
             .lock()
             .map_err(|_poisoned| LoadError::Runtime("托管内核状态锁已损坏".to_owned()))?;
@@ -607,22 +637,16 @@ impl ControllerRuntime {
         *manager = EngineManager::new(
             final_config,
             ReadinessPolicy::default(),
-            Box::new(MihomoReadinessProbe),
+            readiness_probe(spec),
         );
         if was_running && let Err(error) = manager.start() {
-            if let Some(previous_yaml) = previous_yaml {
-                let _ =
-                    write_private_atomic(&spec.data_dir, GENERATED_PROFILE_FILE, &previous_yaml);
-                let rollback_config = ManagedEngineConfig::new(
-                    spec.binary.clone(),
-                    spec.data_dir.join(GENERATED_PROFILE_FILE),
-                    spec.data_dir.clone(),
-                    spec.controller.clone(),
-                );
+            if let Some(previous_config) = previous_config {
+                let _ = write_private_atomic(&spec.data_dir, final_name, &previous_config);
+                let rollback_config = managed_engine_config(spec, spec.data_dir.join(final_name));
                 *manager = EngineManager::new(
                     rollback_config,
                     ReadinessPolicy::default(),
-                    Box::new(MihomoReadinessProbe),
+                    readiness_probe(spec),
                 );
                 let _ = manager.start();
             }
@@ -636,9 +660,128 @@ impl ControllerRuntime {
     }
 }
 
+fn generated_profile_names(kernel: KernelKind) -> (&'static str, &'static str) {
+    match kernel {
+        KernelKind::Mihomo => (CANDIDATE_PROFILE_FILE, GENERATED_PROFILE_FILE),
+        KernelKind::SingBox => (SING_BOX_CANDIDATE_FILE, SING_BOX_PROFILE_FILE),
+    }
+}
+
+fn compile_saved_profile(
+    store_dir: &Path,
+    base_subscription: Option<SecretUrl>,
+    kernel: KernelKind,
+) -> Result<Profile, LoadError> {
+    let mut subscriptions = base_subscription.into_iter().collect::<Vec<_>>();
+    let stored_subscriptions = load_subscription_sources_in(store_dir)
+        .map_err(|_error| LoadError::Runtime("无法读取已保存的订阅来源".to_owned()))?;
+    if kernel == KernelKind::SingBox && !stored_subscriptions.is_empty() {
+        return Err(LoadError::Runtime(
+            "sing-box 暂不能直接读取 Clash 订阅；请先使用手动 VLESS 节点".to_owned(),
+        ));
+    }
+    let mut stored_provider_indexes = HashMap::new();
+    for stored in &stored_subscriptions {
+        let provider_index = if let Some(index) = subscriptions
+            .iter()
+            .position(|subscription| subscription == &stored.source)
+        {
+            index
+        } else {
+            subscriptions.push(stored.source.clone());
+            subscriptions.len() - 1
+        };
+        stored_provider_indexes.insert(stored.id.as_str(), provider_index);
+    }
+    let vless_nodes = load_vless_sources_in(store_dir)
+        .map_err(|_error| LoadError::Runtime("无法读取已保存的 VLESS 节点".to_owned()))?
+        .into_iter()
+        .map(|stored| {
+            stored
+                .source
+                .expose_to(VlessProxy::parse_share_link)
+                .map_err(|error| LoadError::Runtime(error.to_string()))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mixed_port = configured_mixed_port().map_err(LoadError::Runtime)?;
+    let policy_groups = load_node_policy_groups_in(store_dir)
+        .map_err(|_error| LoadError::Runtime("无法读取节点分组".to_owned()))?;
+    let user_groups = compile_node_policy_groups(
+        &policy_groups,
+        &stored_provider_indexes,
+        &vless_nodes,
+        subscriptions.len(),
+    )?;
+    let mut profile =
+        Profile::qx_sources_with_groups(subscriptions, vless_nodes, user_groups, mixed_port)
+            .map_err(|error| LoadError::Runtime(error.to_string()))?;
+    let routing_mode = load_routing_mode_in(store_dir)
+        .map_err(|_error| LoadError::Runtime("无法读取已保存的路由模式".to_owned()))?;
+    profile.set_mode(profile_mode(routing_mode));
+    let qx_rule_sources = load_qx_rule_sources_in(store_dir)
+        .map_err(|_error| LoadError::Runtime("无法读取 QX 规则来源".to_owned()))?;
+    apply_qx_rule_sources(&mut profile, &qx_rule_sources)?;
+    Ok(profile)
+}
+
+fn render_generated_profile(
+    spec: &ManagedGeneratedProfile,
+    profile: &Profile,
+) -> Result<String, LoadError> {
+    match spec.kernel {
+        KernelKind::Mihomo => {
+            render_mihomo_yaml(profile).map_err(|error| LoadError::Runtime(error.to_string()))
+        }
+        KernelKind::SingBox => {
+            let ControllerEndpoint::Tcp(address) = spec.controller else {
+                return Err(LoadError::Runtime(
+                    "sing-box 需要私有 loopback Clash API".to_owned(),
+                ));
+            };
+            let secret = spec
+                .controller_secret
+                .as_deref()
+                .ok_or_else(|| LoadError::Runtime("sing-box controller 缺少认证密钥".to_owned()))?;
+            render_sing_box_json(profile, &SingBoxOptions::new(address.to_string(), secret))
+                .map_err(|error| LoadError::Runtime(error.to_string()))
+        }
+    }
+}
+
+fn managed_engine_config(
+    spec: &ManagedGeneratedProfile,
+    config_file: PathBuf,
+) -> ManagedEngineConfig {
+    match spec.kernel {
+        KernelKind::Mihomo => ManagedEngineConfig::new(
+            spec.binary.clone(),
+            config_file,
+            spec.data_dir.clone(),
+            spec.controller.clone(),
+        ),
+        KernelKind::SingBox => ManagedEngineConfig::new_sing_box(
+            spec.binary.clone(),
+            config_file,
+            spec.data_dir.clone(),
+            spec.controller.clone(),
+            spec.controller_secret.is_some(),
+        ),
+    }
+}
+
+fn readiness_probe(spec: &ManagedGeneratedProfile) -> Box<dyn ReadinessProbe> {
+    match spec.kernel {
+        KernelKind::Mihomo => Box::new(MihomoReadinessProbe),
+        KernelKind::SingBox => Box::new(SingBoxReadinessProbe {
+            secret: spec.controller_secret.clone().unwrap_or_default(),
+        }),
+    }
+}
+
 pub(crate) struct RuntimeSnapshot {
     pub endpoint: String,
     pub controller_endpoint: String,
+    pub controller_secret: Option<String>,
     pub snapshot: LoadedSnapshot,
 }
 
@@ -686,8 +829,11 @@ pub(crate) struct LiveRuntimeSession {
 }
 
 impl LiveRuntimeSession {
-    pub(crate) fn start(endpoint: &str) -> Result<Self, LoadError> {
-        let controller = live_controller(endpoint)?;
+    pub(crate) fn start(
+        endpoint: &str,
+        controller_secret: Option<&str>,
+    ) -> Result<Self, LoadError> {
+        let controller = live_controller(endpoint, controller_secret)?;
         let cancelled = Arc::new(AtomicBool::new(false));
         let mailbox = Arc::new(Mutex::new(LiveMailbox::default()));
         spawn_connection_stream(controller.clone(), cancelled.clone(), mailbox.clone());
@@ -2714,6 +2860,17 @@ impl ReadinessProbe for MihomoReadinessProbe {
     }
 }
 
+struct SingBoxReadinessProbe {
+    secret: String,
+}
+
+impl ReadinessProbe for SingBoxReadinessProbe {
+    fn check(&mut self, endpoint: &ControllerEndpoint) -> ProbeStatus {
+        fetch_version_with_secret(&endpoint.uri(), Some(&self.secret))
+            .map_or(ProbeStatus::Pending, |_version| ProbeStatus::Ready)
+    }
+}
+
 pub(crate) fn configured_runtime() -> ControllerRuntime {
     let binary = env::var_os(BINARY_ENV);
     let config_file = env::var_os(CONFIG_ENV);
@@ -2734,6 +2891,122 @@ pub(crate) fn configured_runtime() -> ControllerRuntime {
             .unwrap_or_else(|message| ControllerRuntime::Invalid { message }),
         Err(message) => ControllerRuntime::Invalid { message },
     }
+}
+
+pub(crate) fn configured_sing_box_runtime(store_dir: &Path) -> Result<ControllerRuntime, String> {
+    build_sing_box_runtime(store_dir)
+}
+
+fn build_sing_box_runtime(store_dir: &Path) -> Result<ControllerRuntime, String> {
+    let binary = discover_sing_box_binary()?;
+    let data_dir = default_relay_data_dir()
+        .map(|directory| directory.join("sing-box"))
+        .ok_or_else(|| "无法确定 sing-box 数据目录".to_owned())?;
+    let port = TcpListener::bind("127.0.0.1:0")
+        .and_then(|listener| listener.local_addr())
+        .map(|address| address.port())
+        .map_err(|_error| "无法为 sing-box 分配本机 controller 端口".to_owned())?;
+    let controller = ControllerEndpoint::Tcp(
+        format!("127.0.0.1:{port}")
+            .parse()
+            .map_err(|_error| "无法生成 sing-box controller 地址".to_owned())?,
+    );
+    let controller_secret = generate_controller_secret()?;
+    let profile = compile_saved_profile(store_dir, None, KernelKind::SingBox)
+        .map_err(|error| error.to_string())?;
+    let spec = ManagedGeneratedProfile {
+        kernel: KernelKind::SingBox,
+        binary: binary.clone(),
+        data_dir: data_dir.clone(),
+        controller: controller.clone(),
+        subscription_file: None,
+        controller_secret: Some(controller_secret.clone()),
+    };
+    let rendered = render_generated_profile(&spec, &profile).map_err(|error| error.to_string())?;
+    let config_file = write_private_atomic(&data_dir, SING_BOX_PROFILE_FILE, rendered.as_bytes())
+        .map_err(|_error| "无法写入 sing-box 私有配置".to_owned())?;
+    let config = managed_engine_config(&spec, config_file);
+    validate_managed_config(&config).map_err(|error| error.to_string())?;
+    let endpoint = controller.uri();
+    let manager = EngineManager::new(config, ReadinessPolicy::default(), readiness_probe(&spec));
+    Ok(ControllerRuntime::Managed {
+        endpoint,
+        manager: Arc::new(Mutex::new(manager)),
+        profile_source: RuntimeProfileSource::SavedSources,
+        generated_profile: Some(spec),
+    })
+}
+
+fn discover_sing_box_binary() -> Result<PathBuf, String> {
+    if let Some(explicit) = env::var_os(SING_BOX_BINARY_ENV) {
+        return canonical_binary(Path::new(&explicit))
+            .map_err(|_error| format!("{SING_BOX_BINARY_ENV} 不是可执行文件"));
+    }
+    let executable_name = if cfg!(windows) {
+        "sing-box.exe"
+    } else {
+        "sing-box"
+    };
+    let mut candidates = Vec::new();
+    if let Ok(current_exe) = env::current_exe()
+        && let Some(directory) = current_exe.parent()
+    {
+        candidates.push(directory.join(executable_name));
+    }
+    if let Some(path) = env::var_os("PATH") {
+        candidates.extend(env::split_paths(&path).map(|directory| directory.join(executable_name)));
+    }
+    #[cfg(target_os = "macos")]
+    candidates.extend([
+        PathBuf::from("/opt/homebrew/bin/sing-box"),
+        PathBuf::from("/usr/local/bin/sing-box"),
+    ]);
+    candidates
+        .into_iter()
+        .find_map(|candidate| canonical_binary(&candidate).ok())
+        .ok_or_else(|| format!("未找到 sing-box；请先安装内核或设置 {SING_BOX_BINARY_ENV}"))
+}
+
+pub(crate) fn sing_box_binary_available() -> bool {
+    discover_sing_box_binary().is_ok()
+}
+
+#[cfg(unix)]
+fn generate_controller_secret() -> Result<String, String> {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut random = [0_u8; 32];
+    fs::File::open("/dev/urandom")
+        .and_then(|mut file| file.read_exact(&mut random))
+        .map_err(|_error| "无法生成 sing-box controller 密钥".to_owned())?;
+    let mut secret = String::with_capacity(random.len() * 2);
+    for byte in random {
+        secret.push(char::from(HEX[usize::from(byte >> 4)]));
+        secret.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    Ok(secret)
+}
+
+#[cfg(windows)]
+fn generate_controller_secret() -> Result<String, String> {
+    let output = std::process::Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "[guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N')",
+        ])
+        .output()
+        .map_err(|_error| "无法生成 sing-box controller 密钥".to_owned())?;
+    let secret = String::from_utf8(output.stdout)
+        .map_err(|_error| "无法生成 sing-box controller 密钥".to_owned())?;
+    let secret = secret.trim();
+    if !output.status.success()
+        || secret.len() != 64
+        || !secret.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err("无法生成 sing-box controller 密钥".to_owned());
+    }
+    Ok(secret.to_owned())
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -2786,10 +3059,12 @@ fn build_subscription_runtime(
     let config_file = write_private_atomic(&data_dir, GENERATED_PROFILE_FILE, yaml.as_bytes())
         .map_err(|error| error.to_string())?;
     let generated_profile = ManagedGeneratedProfile {
+        kernel: KernelKind::Mihomo,
         binary: binary.clone(),
         data_dir: data_dir.clone(),
         controller: controller.clone(),
-        subscription_file: subscription_file.to_owned(),
+        subscription_file: Some(subscription_file.to_owned()),
+        controller_secret: None,
     };
     Ok(build_managed_runtime_with_controller(
         binary,
@@ -2999,9 +3274,22 @@ pub(crate) fn configured_endpoint() -> String {
     env::var(CONTROLLER_ENV).unwrap_or_else(|_| ControllerConfig::default().base_url().to_owned())
 }
 
-pub(crate) fn load(endpoint: &str) -> Result<LoadedSnapshot, LoadError> {
-    let snapshot = fetch_snapshot(endpoint)?;
-    let catalog = to_policy_catalog(&snapshot)?;
+pub(crate) fn load(
+    endpoint: &str,
+    controller_secret: Option<&str>,
+) -> Result<LoadedSnapshot, LoadError> {
+    loaded_snapshot(&fetch_snapshot(endpoint, controller_secret)?)
+}
+
+pub(crate) fn load_sing_box(
+    endpoint: &str,
+    controller_secret: Option<&str>,
+) -> Result<LoadedSnapshot, LoadError> {
+    loaded_snapshot(&fetch_sing_box_snapshot(endpoint, controller_secret)?)
+}
+
+fn loaded_snapshot(snapshot: &MihomoSnapshot) -> Result<LoadedSnapshot, LoadError> {
+    let catalog = to_policy_catalog(snapshot)?;
     let providers = load_providers(&snapshot.providers);
     let version = snapshot
         .version
@@ -3028,7 +3316,10 @@ pub(crate) fn load(endpoint: &str) -> Result<LoadedSnapshot, LoadError> {
     })
 }
 
-fn live_controller(endpoint: &str) -> Result<LiveController, MihomoError> {
+fn live_controller(
+    endpoint: &str,
+    controller_secret: Option<&str>,
+) -> Result<LiveController, MihomoError> {
     #[cfg(unix)]
     if let Some(socket_path) = unix_socket_path(endpoint)? {
         return Ok(LiveController::unix_socket(
@@ -3044,8 +3335,9 @@ fn live_controller(endpoint: &str) -> Result<LiveController, MihomoError> {
         ));
     }
 
-    Ok(LiveController::loopback(with_configured_secret(
+    Ok(LiveController::loopback(with_controller_secret(
         ControllerConfig::new(endpoint)?,
+        controller_secret,
     )))
 }
 
@@ -3236,7 +3528,10 @@ fn load_provider(provider: &relay_mihomo::ProxyProvider) -> LoadedProvider {
     }
 }
 
-fn fetch_snapshot(endpoint: &str) -> Result<MihomoSnapshot, MihomoError> {
+fn fetch_snapshot(
+    endpoint: &str,
+    controller_secret: Option<&str>,
+) -> Result<MihomoSnapshot, MihomoError> {
     #[cfg(unix)]
     if let Some(socket_path) = unix_socket_path(endpoint)? {
         let config = ControllerConfig::default();
@@ -3250,18 +3545,32 @@ fn fetch_snapshot(endpoint: &str) -> Result<MihomoSnapshot, MihomoError> {
         ));
     }
 
-    let config = with_configured_secret(ControllerConfig::new(endpoint)?);
+    let config = with_controller_secret(ControllerConfig::new(endpoint)?, controller_secret);
     MihomoClient::new(config, StdHttpTransport::default()).fetch_snapshot()
+}
+
+fn fetch_sing_box_snapshot(
+    endpoint: &str,
+    controller_secret: Option<&str>,
+) -> Result<MihomoSnapshot, MihomoError> {
+    if endpoint.starts_with("unix://") || endpoint.starts_with("pipe://") {
+        return Err(MihomoError::InvalidConfig(
+            "sing-box Clash API requires loopback HTTP".to_owned(),
+        ));
+    }
+    let config = with_controller_secret(ControllerConfig::new(endpoint)?, controller_secret);
+    MihomoClient::new(config, StdHttpTransport::default()).fetch_sing_box_snapshot()
 }
 
 fn fetch_group_delay(
     endpoint: &str,
     group_name: &str,
+    controller_secret: Option<&str>,
 ) -> Result<std::collections::BTreeMap<String, u16>, MihomoError> {
     #[cfg(unix)]
     if let Some(socket_path) = unix_socket_path(endpoint)? {
         return MihomoClient::new(
-            with_configured_secret(ControllerConfig::default()),
+            ControllerConfig::default(),
             UnixSocketTransport::new(socket_path),
         )
         .fetch_group_delay(group_name, GROUP_DELAY_TEST_URL, GROUP_DELAY_TIMEOUT_MS);
@@ -3274,7 +3583,7 @@ fn fetch_group_delay(
         ));
     }
 
-    let config = with_configured_secret(ControllerConfig::new(endpoint)?);
+    let config = with_controller_secret(ControllerConfig::new(endpoint)?, controller_secret);
     MihomoClient::new(config, StdHttpTransport::default()).fetch_group_delay(
         group_name,
         GROUP_DELAY_TEST_URL,
@@ -3285,11 +3594,12 @@ fn fetch_group_delay(
 fn fetch_policy_group(
     endpoint: &str,
     group_name: &str,
+    controller_secret: Option<&str>,
 ) -> Result<relay_mihomo::MihomoPolicyGroup, MihomoError> {
     #[cfg(unix)]
     if let Some(socket_path) = unix_socket_path(endpoint)? {
         return MihomoClient::new(
-            with_configured_secret(ControllerConfig::default()),
+            ControllerConfig::default(),
             UnixSocketTransport::new(socket_path),
         )
         .fetch_policy_group(group_name);
@@ -3302,7 +3612,7 @@ fn fetch_policy_group(
         ));
     }
 
-    let config = with_configured_secret(ControllerConfig::new(endpoint)?);
+    let config = with_controller_secret(ControllerConfig::new(endpoint)?, controller_secret);
     MihomoClient::new(config, StdHttpTransport::default()).fetch_policy_group(group_name)
 }
 
@@ -3310,11 +3620,12 @@ fn put_policy_group_selection(
     endpoint: &str,
     group_name: &str,
     selected_name: &str,
+    controller_secret: Option<&str>,
 ) -> Result<(), MihomoError> {
     #[cfg(unix)]
     if let Some(socket_path) = unix_socket_path(endpoint)? {
         return MihomoClient::new(
-            with_configured_secret(ControllerConfig::default()),
+            ControllerConfig::default(),
             UnixSocketTransport::new(socket_path),
         )
         .select_policy_group_node(group_name, selected_name);
@@ -3327,7 +3638,7 @@ fn put_policy_group_selection(
         ));
     }
 
-    let config = with_configured_secret(ControllerConfig::new(endpoint)?);
+    let config = with_controller_secret(ControllerConfig::new(endpoint)?, controller_secret);
     MihomoClient::new(config, StdHttpTransport::default())
         .select_policy_group_node(group_name, selected_name)
 }
@@ -3345,11 +3656,15 @@ fn is_selector_proxy_type(proxy_type: &str) -> bool {
     proxy_type.eq_ignore_ascii_case("Selector")
 }
 
-fn fetch_proxy_delay(endpoint: &str, proxy_name: &str) -> Result<u16, MihomoError> {
+fn fetch_proxy_delay(
+    endpoint: &str,
+    proxy_name: &str,
+    controller_secret: Option<&str>,
+) -> Result<u16, MihomoError> {
     #[cfg(unix)]
     if let Some(socket_path) = unix_socket_path(endpoint)? {
         return MihomoClient::new(
-            with_configured_secret(ControllerConfig::default()),
+            ControllerConfig::default(),
             UnixSocketTransport::new(socket_path),
         )
         .fetch_proxy_delay(proxy_name, GROUP_DELAY_TEST_URL, GROUP_DELAY_TIMEOUT_MS);
@@ -3362,7 +3677,7 @@ fn fetch_proxy_delay(endpoint: &str, proxy_name: &str) -> Result<u16, MihomoErro
         ));
     }
 
-    let config = with_configured_secret(ControllerConfig::new(endpoint)?);
+    let config = with_controller_secret(ControllerConfig::new(endpoint)?, controller_secret);
     MihomoClient::new(config, StdHttpTransport::default()).fetch_proxy_delay(
         proxy_name,
         GROUP_DELAY_TEST_URL,
@@ -3373,13 +3688,20 @@ fn fetch_proxy_delay(endpoint: &str, proxy_name: &str) -> Result<u16, MihomoErro
 fn fetch_proxy_delays_bounded(
     endpoint: &str,
     candidate_names: &[String],
+    controller_secret: Option<&str>,
 ) -> Result<BTreeMap<String, u16>, LoadError> {
-    fetch_proxy_delays_bounded_with_progress(endpoint, candidate_names, |_name, _delay| {})
+    fetch_proxy_delays_bounded_with_progress(
+        endpoint,
+        candidate_names,
+        controller_secret,
+        |_name, _delay| {},
+    )
 }
 
 fn fetch_proxy_delays_bounded_with_progress(
     endpoint: &str,
     candidate_names: &[String],
+    controller_secret: Option<&str>,
     mut on_result: impl FnMut(&str, Option<u16>),
 ) -> Result<BTreeMap<String, u16>, LoadError> {
     let worker_count = candidate_names.len().min(GROUP_DELAY_WORKERS);
@@ -3392,7 +3714,7 @@ fn fetch_proxy_delays_bounded_with_progress(
                 let sender = sender.clone();
                 scope.spawn(move || {
                     for name in chunk {
-                        let delay = fetch_proxy_delay(endpoint, name).ok();
+                        let delay = fetch_proxy_delay(endpoint, name, controller_secret).ok();
                         if sender.send((name.clone(), delay)).is_err() {
                             break;
                         }
@@ -3421,7 +3743,11 @@ fn fetch_proxy_delays_bounded_with_progress(
     Ok(delays)
 }
 
-fn set_tun_enabled(endpoint: &str, enabled: bool) -> Result<(), MihomoError> {
+fn set_tun_enabled(
+    endpoint: &str,
+    enabled: bool,
+    controller_secret: Option<&str>,
+) -> Result<(), MihomoError> {
     #[cfg(unix)]
     if let Some(socket_path) = unix_socket_path(endpoint)? {
         return MihomoClient::new(
@@ -3438,15 +3764,19 @@ fn set_tun_enabled(endpoint: &str, enabled: bool) -> Result<(), MihomoError> {
         ));
     }
 
-    let config = with_configured_secret(ControllerConfig::new(endpoint)?);
+    let config = with_controller_secret(ControllerConfig::new(endpoint)?, controller_secret);
     MihomoClient::new(config, StdHttpTransport::default()).set_tun_enabled(enabled)
 }
 
-fn set_routing_mode(endpoint: &str, mode: RoutingMode) -> Result<(), MihomoError> {
+fn set_routing_mode(
+    endpoint: &str,
+    mode: RoutingMode,
+    controller_secret: Option<&str>,
+) -> Result<(), MihomoError> {
     #[cfg(unix)]
     if let Some(socket_path) = unix_socket_path(endpoint)? {
         return MihomoClient::new(
-            with_configured_secret(ControllerConfig::default()),
+            ControllerConfig::default(),
             UnixSocketTransport::new(socket_path),
         )
         .set_routing_mode(mode);
@@ -3459,11 +3789,18 @@ fn set_routing_mode(endpoint: &str, mode: RoutingMode) -> Result<(), MihomoError
         ));
     }
 
-    let config = with_configured_secret(ControllerConfig::new(endpoint)?);
+    let config = with_controller_secret(ControllerConfig::new(endpoint)?, controller_secret);
     MihomoClient::new(config, StdHttpTransport::default()).set_routing_mode(mode)
 }
 
 fn fetch_version(endpoint: &str) -> Result<VersionInfo, MihomoError> {
+    fetch_version_with_secret(endpoint, None)
+}
+
+fn fetch_version_with_secret(
+    endpoint: &str,
+    secret: Option<&str>,
+) -> Result<VersionInfo, MihomoError> {
     #[cfg(unix)]
     if let Some(socket_path) = unix_socket_path(endpoint)? {
         return MihomoClient::new(
@@ -3486,12 +3823,20 @@ fn fetch_version(endpoint: &str) -> Result<VersionInfo, MihomoError> {
         ));
     }
 
-    let config = ControllerConfig::new(endpoint)?;
+    let mut config = ControllerConfig::new(endpoint)?;
+    if let Some(secret) = secret {
+        config = config.with_secret(secret);
+    }
     MihomoClient::new(config, StdHttpTransport::default()).fetch_version()
 }
 
-fn with_configured_secret(mut config: ControllerConfig) -> ControllerConfig {
-    if let Ok(secret) = env::var(SECRET_ENV) {
+fn with_controller_secret(
+    mut config: ControllerConfig,
+    controller_secret: Option<&str>,
+) -> ControllerConfig {
+    if let Some(secret) = controller_secret {
+        config = config.with_secret(secret.to_owned());
+    } else if let Ok(secret) = env::var(SECRET_ENV) {
         config = config.with_secret(secret);
     }
     config
@@ -3526,6 +3871,61 @@ mod tests {
     use std::time::Duration;
 
     use relay_engine::ControllerEndpoint;
+
+    #[test]
+    #[ignore = "requires a locally installed sing-box executable"]
+    fn managed_sing_box_clash_api_loads_a_relay_snapshot() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let binary = super::discover_sing_box_binary()?;
+        let root = test_temp_dir("relay-sing-box-runtime");
+        let data_dir = root.join("runtime");
+        let vless = relay_profile::VlessProxy::parse_share_link(
+            "vless://00000000-0000-4000-8000-000000000000@198.51.100.7:443?security=reality&encryption=none&pbk=Qs24XU-ibEZ3LWDjGBITKdQvualLy0pi_PI0qoF79A8&fp=chrome&type=tcp&flow=xtls-rprx-vision&sni=cdn.example.invalid#Reality%20TCP",
+        )?;
+        let mut profile = relay_profile::Profile::qx_sources(Vec::new(), vec![vless], 17_890)?;
+        profile.rules = vec![relay_profile::Rule::Match {
+            policy: relay_profile::PolicyRef::Group(relay_profile::Name::parse("Proxy")?),
+        }];
+        let address = TcpListener::bind("127.0.0.1:0")?.local_addr()?;
+        let controller = ControllerEndpoint::Tcp(address);
+        let secret = "fixture-controller-secret".to_owned();
+        let spec = super::ManagedGeneratedProfile {
+            kernel: relay_core::KernelKind::SingBox,
+            binary,
+            data_dir: data_dir.clone(),
+            controller: controller.clone(),
+            subscription_file: None,
+            controller_secret: Some(secret.clone()),
+        };
+        let rendered = super::render_generated_profile(&spec, &profile)?;
+        let config_file = relay_profile::write_private_atomic(
+            &data_dir,
+            super::SING_BOX_PROFILE_FILE,
+            rendered.as_bytes(),
+        )?;
+        let config = super::managed_engine_config(&spec, config_file);
+        let mut manager = relay_engine::EngineManager::new(
+            config,
+            relay_engine::ReadinessPolicy::default(),
+            super::readiness_probe(&spec),
+        );
+        let endpoint = manager.start()?.uri();
+
+        super::set_routing_mode(&endpoint, relay_core::RoutingMode::Direct, Some(&secret))?;
+        let runtime = super::fetch_sing_box_snapshot(&endpoint, Some(&secret))?;
+        assert_eq!(runtime.runtime.mode, relay_core::RoutingMode::Direct);
+        super::put_policy_group_selection(&endpoint, "GLOBAL", "Reality TCP", Some(&secret))?;
+        let global = super::fetch_policy_group(&endpoint, "GLOBAL", Some(&secret))?;
+        assert_eq!(global.current.as_deref(), Some("Reality TCP"));
+        super::put_policy_group_selection(&endpoint, "Proxy", "Auto", Some(&secret))?;
+        let selected = super::fetch_policy_group(&endpoint, "Proxy", Some(&secret))?;
+        assert_eq!(selected.current.as_deref(), Some("Auto"));
+        let snapshot = super::load_sing_box(&endpoint, Some(&secret));
+        manager.stop()?;
+        fs::remove_dir_all(root)?;
+        snapshot?;
+        Ok(())
+    }
 
     #[test]
     fn remote_source_refresh_intervals_cycle_and_respect_last_success() {
@@ -4544,7 +4944,7 @@ IP-CIDR,192.0.2.0/24,DIRECT
     #[ignore = "requires RELAY_MIHOMO_CONTROLLER and a running controller"]
     fn reads_a_live_controller_snapshot() -> Result<(), Box<dyn std::error::Error>> {
         let endpoint = std::env::var(super::CONTROLLER_ENV)?;
-        let snapshot = super::load(&endpoint)?;
+        let snapshot = super::load(&endpoint, None)?;
         assert!(snapshot.catalog.iter().count() > 0);
         assert!(
             snapshot

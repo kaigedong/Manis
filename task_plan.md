@@ -177,6 +177,15 @@
 - [completed] 5. 完成宽屏/紧凑截图、Visual Verdict 和必要视觉修正
 - [completed] 6. 完成全仓验证、敏感信息扫描、Git 提交并仅重启 Relay UI
 
+## 多内核基础与 sing-box 首个可运行切片
+
+- [completed] 1. 盘点 Mihomo 耦合、现有配置模型、进程生命周期与 sing-box 官方能力
+- [completed] 2. 以回归测试锁定内核标识、能力矩阵和 Mihomo 现有行为
+- [completed] 3. 建立内核无关适配器边界，并把现有 Mihomo 包装为默认实现
+- [completed] 4. 实现 sing-box 配置渲染、配置检查和受管进程首个可运行路径
+- [completed] 5. 在配置页加入真实可用的内核选择、检测、切换与失败回滚
+- [completed] 6. 完成宽屏/紧凑视觉验收、全仓验证、Git 提交并仅重启 Relay UI
+
 ## 固定约束
 - 实现框架：Rust + GPUI
 - 目标平台：Windows、macOS、Linux
@@ -218,3 +227,6 @@
 | 规则下载 RED 测试撞上持久化子任务的中间编辑窗口 | 1 | 只确认自身预期缺少 helper，不处理共享文件暂态错误；等待子任务收口后再统一测试 |
 | 来源刷新首轮严格 Clippy 报告测试模块位置、冗余闭包和布尔字段阈值 | 1 | 移动测试模块、采用方法引用，并用显式调度器状态枚举替代新增布尔字段；复跑严格 Clippy 通过 |
 | 原生截图会重写与本功能无关的真实 controller 截图并留下一个空文件 | 1 | 精确核对 Git 状态，只恢复本轮生成的无关截图；保留配置页相关视觉基线 |
+| 多内核耦合 explorer 命中 GPT-5.3-Codex-Spark 用量上限 | 1 | 不重试同一 fast-lane；由主代理使用本地结构搜索完成映射，并保留独立 architect 评审 |
+| 新内核卡片改变配置页纵向坐标，旧截图交互没有命中输入框 | 2 | 更新原生快照坐标并提取滚动 helper；完整截图链路复跑成功，订阅/VLESS fixture 恢复正常 |
+| 首轮代码审查发现 sing-box 控制器密钥使用进程级回退 | 1 | 删除全局密钥，改为由受管 runtime 持有并随 endpoint 显式传递；外部 controller 只接受用户显式环境密钥 |

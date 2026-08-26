@@ -2619,7 +2619,7 @@ impl RelayApp {
         let global_selected = self.global_target() == Some(node.name.as_str());
         let global_busy = self.global_selection_busy.as_deref() == Some(node.name.as_str());
         let global_writable = matches!(
-            self.runtime,
+            &*self.runtime,
             crate::mihomo::ControllerRuntime::Managed { .. }
         );
         let selection_locked = self.global_selection_busy.is_some();

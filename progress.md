@@ -254,3 +254,19 @@
 - 独立代码复审首轮发现代理订阅刷新只更新预览、未重载托管配置；已补齐 `apply_saved_sources` 并显示部分应用失败后缀，复审最终 0 issue、`APPROVE`。
 - 最终验证通过：workspace 154 passed、6 ignored；fmt、all-targets check、严格 Clippy、build、diff check 和私有订阅域名/token 扫描全部通过，仅保留上游 `block 0.1.6` 的未来兼容提示。
 - 仅停止旧 Relay UI PID 52813，并以同一 Clash Verge Unix controller 启动新 PID 10932；Clash Verge PID 14173 与 verge-mihomo PID 14201 保持运行且未被停止或修改。
+
+# 2026-08-26 多内核基础与 sing-box
+
+- 用户明确要求开始支持内核切换和 sing-box；本轮目标不是增加一个无行为的下拉框，而是先交付不破坏 Mihomo 的真实适配边界与 sing-box 可验证运行切片。
+- 启用 planning-with-files-zh、rust-testing 和 rust-patterns；先锁定现有行为，再以最小公开 trait、枚举状态和独立渲染器推进。
+- 已启动只读架构评审与全仓耦合映射；主线程同步核对 workspace、进程管理和配置生成，避免把 UI 文案替换误当成内核支持。
+- RED/GREEN：新增内核身份与能力矩阵测试，Mihomo 保持默认，sing-box 不宣称 provider/fallback/load-balance 等未实现能力。
+- RED/GREEN：新增 sing-box JSON 编译器测试，已覆盖手动 Reality TCP、selector、url-test、GeoIP remote rule-set、mixed inbound、私有 Clash API，以及 provider 明确拒绝。
+- RED/GREEN：`relay-engine` 已能生成 sing-box `check/run` 命令，并只允许有认证密钥的 loopback TCP 控制器。
+- `KernelRuntime` 已封装内核身份、能力、准备、连接与停止；`kernel.kind` 以私有原子文件持久化。切换先生成并校验目标配置，再停止 Relay 自己持有的旧进程，失败时回滚选择且不触碰 Clash Verge。
+- 配置页新增自适应“运行内核”卡：Mihomo 保持完整默认能力；sing-box 只有在二进制存在、无 provider 订阅且至少有一个已保存 VLESS 时可切换，禁用原因直接显示。
+- sing-box JSON 已支持 mixed inbound、VLESS TCP/TLS/Reality、selector、urltest、QX 域名规则、GeoIP remote rule-set、Direct/Global/Rule 和独立 `GLOBAL` selector；不等价能力明确报错。
+- 官方 `/opt/homebrew/bin/sing-box 1.13.19` 真实验证通过：`check`、`run`、Bearer 鉴权 Clash API、快照加载、路由模式切换、普通 selector 与 GLOBAL 节点切换均成功。
+- 独立代码审查首轮发现受管 secret 的进程级回退风险和保留 tag 冲突；已改为 runtime/endpoint 作用域显式传递，并拒绝 `GLOBAL/direct/block`，复跑官方内核测试通过。
+- GPUI 原生完整截图链路已成功运行；宽屏、1060px 中屏与 720px 紧凑配置页无重叠/截断，Visual Verdict 94/100 `pass`。同步修正了新卡片导致的旧快照点击/滚动坐标漂移。
+- 最终验证通过：workspace 164 passed、8 ignored；两个真实 sing-box ignored tests 各 1 passed；fmt、all-targets check、严格 Clippy、diff check 和私人订阅 token/domain 扫描全部通过。仅保留上游 `block 0.1.6` 的未来兼容提示。

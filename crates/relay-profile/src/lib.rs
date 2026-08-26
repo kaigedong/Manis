@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt::{self, Write as _};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write as _};
@@ -923,6 +923,7 @@ pub enum ProfileError {
     DuplicateName,
     DanglingReference,
     MissingTerminalMatch,
+    UnsupportedKernelFeature(&'static str),
 }
 
 impl fmt::Display for ProfileError {
@@ -937,6 +938,9 @@ impl fmt::Display for ProfileError {
             Self::DanglingReference => formatter.write_str("profile contains a dangling reference"),
             Self::MissingTerminalMatch => {
                 formatter.write_str("profile rules must end with exactly one MATCH")
+            }
+            Self::UnsupportedKernelFeature(feature) => {
+                write!(formatter, "selected kernel does not support {feature}")
             }
         }
     }
@@ -1048,6 +1052,157 @@ pub fn render_mihomo_yaml(profile: &Profile) -> Result<String, ProfileError> {
         writeln!(yaml, "  - {}", quoted(&render_rule(rule))).expect("String write cannot fail");
     }
     Ok(yaml)
+}
+
+/// Private loopback Clash API settings embedded in a generated sing-box configuration.
+#[derive(Clone, Eq, PartialEq)]
+pub struct SingBoxOptions {
+    controller: String,
+    secret: String,
+}
+
+impl SingBoxOptions {
+    #[must_use]
+    pub fn new(controller: impl Into<String>, secret: impl Into<String>) -> Self {
+        Self {
+            controller: controller.into(),
+            secret: secret.into(),
+        }
+    }
+
+    fn validate(&self) -> Result<(), ProfileError> {
+        let address = self
+            .controller
+            .parse::<std::net::SocketAddr>()
+            .map_err(|_error| ProfileError::InvalidValue("sing-box controller"))?;
+        if !address.ip().is_loopback() {
+            return Err(ProfileError::InvalidValue("sing-box controller"));
+        }
+        if self.secret.is_empty()
+            || self.secret.len() > 1024
+            || self.secret.chars().any(char::is_control)
+        {
+            return Err(ProfileError::InvalidValue("sing-box controller secret"));
+        }
+        Ok(())
+    }
+}
+
+impl fmt::Debug for SingBoxOptions {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SingBoxOptions")
+            .field("controller", &self.controller)
+            .field("secret", &"<redacted>")
+            .finish()
+    }
+}
+
+/// Renders the kernel-neutral Relay profile subset supported by sing-box 1.13+.
+///
+/// Subscription providers are rejected because sing-box cannot consume Mihomo provider files.
+/// The caller must keep the returned JSON private because it contains node credentials and the
+/// local controller secret.
+///
+/// # Errors
+/// Returns a redacted error when the profile needs a feature that cannot be translated exactly.
+pub fn render_sing_box_json(
+    profile: &Profile,
+    options: &SingBoxOptions,
+) -> Result<String, ProfileError> {
+    profile.validate()?;
+    options.validate()?;
+    if !profile.providers.is_empty() {
+        return Err(ProfileError::UnsupportedKernelFeature(
+            "subscription providers",
+        ));
+    }
+    if profile
+        .proxies
+        .iter()
+        .any(|proxy| matches!(proxy.name().as_str(), "GLOBAL" | "direct" | "block"))
+        || profile
+            .groups
+            .iter()
+            .any(|group| matches!(group.name.as_str(), "GLOBAL" | "direct" | "block"))
+    {
+        return Err(ProfileError::UnsupportedKernelFeature(
+            "a reserved sing-box outbound tag",
+        ));
+    }
+    for group in &profile.groups {
+        let (providers, filter) = match &group.kind {
+            PolicyGroupKind::Select {
+                use_providers,
+                filter,
+                ..
+            }
+            | PolicyGroupKind::UrlTest {
+                use_providers,
+                filter,
+                ..
+            } => (use_providers, filter),
+        };
+        if !providers.is_empty() || filter.is_some() {
+            return Err(ProfileError::UnsupportedKernelFeature(
+                "provider-backed policy groups",
+            ));
+        }
+    }
+
+    let mut json = String::new();
+    json.push_str("{\n  \"log\": { \"level\": ");
+    json.push_str(match profile.log_level {
+        LogLevel::Silent => "\"error\"",
+        LogLevel::Warning => "\"warn\"",
+    });
+    json.push_str(", \"timestamp\": true },\n  \"inbounds\": [\n    { \"type\": \"mixed\", \"tag\": \"mixed-in\", \"listen\": \"127.0.0.1\", \"listen_port\": ");
+    write!(json, "{}", profile.mixed_port).expect("String write cannot fail");
+    json.push_str(" }\n  ],\n  \"outbounds\": [\n    { \"type\": \"direct\", \"tag\": \"direct\" },\n    { \"type\": \"block\", \"tag\": \"block\" }");
+    for proxy in &profile.proxies {
+        json.push_str(",\n");
+        render_sing_box_proxy(&mut json, proxy)?;
+    }
+    render_sing_box_global_selector(&mut json, profile)?;
+    for group in &profile.groups {
+        json.push_str(",\n");
+        render_sing_box_group(&mut json, group);
+    }
+    json.push_str("\n  ],\n  \"route\": {\n    \"rules\": [");
+
+    json.push_str(
+        "\n      { \"clash_mode\": \"Direct\", \"action\": \"route\", \"outbound\": \"direct\" },",
+    );
+    json.push_str(
+        "\n      { \"clash_mode\": \"Global\", \"action\": \"route\", \"outbound\": \"GLOBAL\" }",
+    );
+    if profile.mode == ProfileMode::Rule {
+        for rule in &profile.rules {
+            if matches!(rule, Rule::Match { .. }) {
+                continue;
+            }
+            json.push(',');
+            json.push_str("\n      ");
+            render_sing_box_rule(&mut json, rule);
+        }
+    }
+    json.push('\n');
+    json.push_str("    ],\n");
+    render_sing_box_rule_sets(&mut json, profile);
+    json.push_str("    \"final\": ");
+    json.push_str(&json_quoted(sing_box_terminal_policy(profile)));
+    json.push_str(",\n    \"auto_detect_interface\": true\n  },\n  \"experimental\": {\n    \"cache_file\": { \"enabled\": true },\n    \"clash_api\": {\n      \"external_controller\": ");
+    json.push_str(&json_quoted(&options.controller));
+    json.push_str(",\n      \"secret\": ");
+    json.push_str(&json_quoted(&options.secret));
+    json.push_str(",\n      \"default_mode\": ");
+    json.push_str(&json_quoted(match profile.mode {
+        ProfileMode::Direct => "Direct",
+        ProfileMode::Global => "Global",
+        ProfileMode::Rule => "Rule",
+    }));
+    json.push_str("\n    }\n  }\n}\n");
+    Ok(json)
 }
 
 /// Writes secret bytes with private permissions using a same-directory temporary file.
@@ -1542,6 +1697,237 @@ fn is_safe_relative_path(value: &str) -> bool {
         && Path::new(value)
             .components()
             .all(|component| matches!(component, Component::CurDir | Component::Normal(_)))
+}
+
+fn render_sing_box_proxy(json: &mut String, proxy: &OutboundProxy) -> Result<(), ProfileError> {
+    match proxy {
+        OutboundProxy::Vless(proxy) => render_sing_box_vless(json, proxy),
+    }
+}
+
+fn render_sing_box_vless(json: &mut String, proxy: &VlessProxy) -> Result<(), ProfileError> {
+    if !matches!(proxy.transport, VlessTransport::Tcp) {
+        return Err(ProfileError::UnsupportedKernelFeature(
+            "non-TCP VLESS transport",
+        ));
+    }
+    json.push_str("    { \"type\": \"vless\", \"tag\": ");
+    json.push_str(&json_quoted(proxy.name.as_str()));
+    json.push_str(", \"server\": ");
+    json.push_str(&json_quoted(&proxy.server));
+    write!(json, ", \"server_port\": {}, \"uuid\": ", proxy.port)
+        .expect("String write cannot fail");
+    json.push_str(&json_quoted(&proxy.uuid));
+    if let Some(flow) = &proxy.flow {
+        json.push_str(", \"flow\": ");
+        json.push_str(&json_quoted(flow));
+    }
+    if let Some(packet_encoding) = &proxy.packet_encoding {
+        json.push_str(", \"packet_encoding\": ");
+        json.push_str(&json_quoted(packet_encoding));
+    }
+    if !matches!(proxy.security, VlessSecurity::None) {
+        json.push_str(", \"tls\": { \"enabled\": true");
+        if let Some(servername) = &proxy.servername {
+            json.push_str(", \"server_name\": ");
+            json.push_str(&json_quoted(servername));
+        }
+        if proxy.skip_cert_verify {
+            json.push_str(", \"insecure\": true");
+        }
+        if !proxy.alpn.is_empty() {
+            json.push_str(", \"alpn\": [");
+            render_json_strings(json, proxy.alpn.iter().map(String::as_str));
+            json.push(']');
+        }
+        if let Some(fingerprint) = &proxy.client_fingerprint {
+            json.push_str(", \"utls\": { \"enabled\": true, \"fingerprint\": ");
+            json.push_str(&json_quoted(fingerprint));
+            json.push_str(" }");
+        }
+        if matches!(proxy.security, VlessSecurity::Reality) {
+            let public_key = proxy
+                .reality_public_key
+                .as_deref()
+                .ok_or(ProfileError::InvalidVless)?;
+            json.push_str(", \"reality\": { \"enabled\": true, \"public_key\": ");
+            json.push_str(&json_quoted(public_key));
+            json.push_str(", \"short_id\": ");
+            json.push_str(&json_quoted(
+                proxy.reality_short_id.as_deref().unwrap_or_default(),
+            ));
+            json.push_str(" }");
+        }
+        json.push_str(" }");
+    }
+    json.push_str(" }");
+    Ok(())
+}
+
+fn render_sing_box_group(json: &mut String, group: &PolicyGroup) {
+    json.push_str("    { \"type\": ");
+    json.push_str(match group.kind {
+        PolicyGroupKind::Select { .. } => "\"selector\"",
+        PolicyGroupKind::UrlTest { .. } => "\"urltest\"",
+    });
+    json.push_str(", \"tag\": ");
+    json.push_str(&json_quoted(group.name.as_str()));
+    let (proxies, url_test) = match &group.kind {
+        PolicyGroupKind::Select { proxies, .. } => (proxies, None),
+        PolicyGroupKind::UrlTest {
+            proxies,
+            url,
+            interval_secs,
+            tolerance,
+            ..
+        } => (
+            proxies,
+            Some((url.as_str(), *interval_secs, tolerance.unwrap_or(50))),
+        ),
+    };
+    json.push_str(", \"outbounds\": [");
+    render_json_strings(json, proxies.iter().map(sing_box_policy_name));
+    json.push(']');
+    if let Some(first) = proxies.first()
+        && matches!(group.kind, PolicyGroupKind::Select { .. })
+    {
+        json.push_str(", \"default\": ");
+        json.push_str(&json_quoted(sing_box_policy_name(first)));
+    }
+    if let Some((url, interval_secs, tolerance)) = url_test {
+        json.push_str(", \"url\": ");
+        json.push_str(&json_quoted(url));
+        write!(
+            json,
+            ", \"interval\": \"{interval_secs}s\", \"tolerance\": {tolerance}"
+        )
+        .expect("String write cannot fail");
+    }
+    json.push_str(", \"interrupt_exist_connections\": false }");
+}
+
+fn render_sing_box_global_selector(
+    json: &mut String,
+    profile: &Profile,
+) -> Result<(), ProfileError> {
+    let default = profile
+        .proxies
+        .first()
+        .ok_or(ProfileError::UnsupportedKernelFeature(
+            "GLOBAL selection without manual proxy nodes",
+        ))?;
+    json.push_str(",\n    { \"type\": \"selector\", \"tag\": \"GLOBAL\", \"outbounds\": [");
+    render_json_strings(
+        json,
+        profile.proxies.iter().map(|proxy| proxy.name().as_str()),
+    );
+    json.push_str("], \"default\": ");
+    json.push_str(&json_quoted(default.name().as_str()));
+    json.push_str(", \"interrupt_exist_connections\": false }");
+    Ok(())
+}
+
+fn render_sing_box_rule(json: &mut String, rule: &Rule) {
+    json.push('{');
+    match rule {
+        Rule::Domain { value, policy } => {
+            json.push_str(" \"domain\": [");
+            json.push_str(&json_quoted(value));
+            render_sing_box_rule_policy(json, policy);
+        }
+        Rule::DomainKeyword { value, policy } => {
+            json.push_str(" \"domain_keyword\": [");
+            json.push_str(&json_quoted(value));
+            render_sing_box_rule_policy(json, policy);
+        }
+        Rule::DomainSuffix { value, policy } => {
+            json.push_str(" \"domain_suffix\": [");
+            json.push_str(&json_quoted(value));
+            render_sing_box_rule_policy(json, policy);
+        }
+        Rule::GeoIp {
+            country, policy, ..
+        } => {
+            json.push_str(" \"rule_set\": ");
+            json.push_str(&json_quoted(&format!(
+                "geoip-{}",
+                country.to_ascii_lowercase()
+            )));
+            json.push_str(", \"action\": \"route\", \"outbound\": ");
+            json.push_str(&json_quoted(sing_box_policy_name(policy)));
+        }
+        Rule::Match { policy } => {
+            json.push_str(" \"action\": \"route\", \"outbound\": ");
+            json.push_str(&json_quoted(sing_box_policy_name(policy)));
+        }
+    }
+    json.push_str(" }");
+}
+
+fn render_sing_box_rule_policy(json: &mut String, policy: &PolicyRef) {
+    json.push_str("], \"action\": \"route\", \"outbound\": ");
+    json.push_str(&json_quoted(sing_box_policy_name(policy)));
+}
+
+fn render_sing_box_rule_sets(json: &mut String, profile: &Profile) {
+    let countries = profile
+        .rules
+        .iter()
+        .filter_map(|rule| match rule {
+            Rule::GeoIp { country, .. } => Some(country.to_ascii_lowercase()),
+            _ => None,
+        })
+        .collect::<BTreeSet<_>>();
+    json.push_str("    \"rule_set\": [");
+    for (index, country) in countries.iter().enumerate() {
+        if index > 0 {
+            json.push(',');
+        }
+        json.push_str("\n      { \"type\": \"remote\", \"tag\": ");
+        json.push_str(&json_quoted(&format!("geoip-{country}")));
+        json.push_str(", \"format\": \"binary\", \"url\": ");
+        json.push_str(&json_quoted(&format!(
+            "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-{country}.srs"
+        )));
+        json.push_str(", \"update_interval\": \"1d\" }");
+    }
+    if !countries.is_empty() {
+        json.push('\n');
+    }
+    json.push_str("    ],\n");
+}
+
+fn sing_box_terminal_policy(profile: &Profile) -> &str {
+    profile
+        .rules
+        .iter()
+        .rev()
+        .find_map(|rule| match rule {
+            Rule::Match { policy } => Some(sing_box_policy_name(policy)),
+            _ => None,
+        })
+        .unwrap_or("direct")
+}
+
+fn sing_box_policy_name(policy: &PolicyRef) -> &str {
+    match policy {
+        PolicyRef::Direct => "direct",
+        PolicyRef::Reject => "block",
+        PolicyRef::Group(name) | PolicyRef::Proxy(name) => name.as_str(),
+    }
+}
+
+fn render_json_strings<'a>(json: &mut String, values: impl Iterator<Item = &'a str>) {
+    for (index, value) in values.enumerate() {
+        if index > 0 {
+            json.push_str(", ");
+        }
+        json.push_str(&json_quoted(value));
+    }
+}
+
+fn json_quoted(value: &str) -> String {
+    quoted(value)
 }
 
 fn quoted(value: &str) -> String {

@@ -11,6 +11,8 @@ use std::process::{Child, Command, ExitStatus, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use relay_core::KernelKind;
+
 const DEFAULT_VALIDATION_TIMEOUT: Duration = Duration::from_secs(10);
 #[cfg(unix)]
 const CHILD_ENV_ALLOWLIST: [&str; 6] = [
@@ -33,7 +35,7 @@ const CHILD_ENV_ALLOWLIST: [&str; 6] = [
 #[cfg(not(any(unix, windows)))]
 const CHILD_ENV_ALLOWLIST: [&str; 0] = [];
 
-/// A private controller address reserved for a Relay-managed Mihomo process.
+/// A private controller address reserved for a Relay-managed proxy core.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ControllerEndpoint {
     /// A filesystem socket on macOS or Linux.
@@ -55,9 +57,19 @@ impl ControllerEndpoint {
         }
     }
 
-    fn validate(&self, data_dir: &Path) -> Result<(), EngineError> {
+    fn validate(
+        &self,
+        data_dir: &Path,
+        kernel: KernelKind,
+        controller_secret_configured: bool,
+    ) -> Result<(), EngineError> {
         match self {
             Self::UnixSocket(path) => {
+                if kernel != KernelKind::Mihomo {
+                    return Err(EngineError::InvalidConfig(
+                        "selected kernel does not support a Unix Clash API socket".to_owned(),
+                    ));
+                }
                 if !cfg!(unix) {
                     return Err(EngineError::InvalidConfig(
                         "Unix controller sockets are not supported on this platform".to_owned(),
@@ -77,12 +89,19 @@ impl ControllerEndpoint {
                         "managed TCP controller must use a loopback address".to_owned(),
                     ));
                 }
-                return Err(EngineError::InvalidConfig(
-                    "managed TCP is disabled until Relay can verify controller secret enforcement"
-                        .to_owned(),
-                ));
+                if kernel != KernelKind::SingBox || !controller_secret_configured {
+                    return Err(EngineError::InvalidConfig(
+                        "managed TCP requires sing-box with an authenticated loopback Clash API"
+                            .to_owned(),
+                    ));
+                }
             }
             Self::NamedPipe(name) => {
+                if kernel != KernelKind::Mihomo {
+                    return Err(EngineError::InvalidConfig(
+                        "selected kernel does not support a Windows Clash API pipe".to_owned(),
+                    ));
+                }
                 if !cfg!(windows) {
                     return Err(EngineError::InvalidConfig(
                         "Windows controller pipes are not supported on this platform".to_owned(),
@@ -99,13 +118,15 @@ impl ControllerEndpoint {
     }
 }
 
-/// Paths and controller settings for one isolated Mihomo child process.
+/// Paths and controller settings for one isolated proxy-core child process.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ManagedEngineConfig {
+    kernel: KernelKind,
     binary: PathBuf,
     config_file: PathBuf,
     data_dir: PathBuf,
     controller: ControllerEndpoint,
+    controller_secret_configured: bool,
 }
 
 impl ManagedEngineConfig {
@@ -118,11 +139,38 @@ impl ManagedEngineConfig {
         controller: ControllerEndpoint,
     ) -> Self {
         Self {
+            kernel: KernelKind::Mihomo,
             binary,
             config_file,
             data_dir,
             controller,
+            controller_secret_configured: false,
         }
+    }
+
+    /// Creates a sing-box configuration using an authenticated loopback Clash API.
+    #[must_use]
+    pub fn new_sing_box(
+        binary: PathBuf,
+        config_file: PathBuf,
+        data_dir: PathBuf,
+        controller: ControllerEndpoint,
+        controller_secret_configured: bool,
+    ) -> Self {
+        Self {
+            kernel: KernelKind::SingBox,
+            binary,
+            config_file,
+            data_dir,
+            controller,
+            controller_secret_configured,
+        }
+    }
+
+    /// Returns the kernel whose command line this configuration builds.
+    #[must_use]
+    pub const fn kernel(&self) -> KernelKind {
+        self.kernel
     }
 
     /// Returns the controller endpoint produced after a successful start.
@@ -138,11 +186,11 @@ impl ManagedEngineConfig {
     /// Returns an error when a path is relative, a required file is absent,
     /// or the controller would escape the managed runtime boundary.
     pub fn validate(&self) -> Result<(), EngineError> {
-        require_absolute(&self.binary, "Mihomo binary")?;
-        require_absolute(&self.config_file, "Mihomo config")?;
+        require_absolute(&self.binary, "kernel binary")?;
+        require_absolute(&self.config_file, "kernel config")?;
         require_absolute_clean(&self.data_dir, "managed data directory")?;
-        require_file(&self.binary, "Mihomo binary")?;
-        require_file(&self.config_file, "Mihomo config")?;
+        require_file(&self.binary, "kernel binary")?;
+        require_file(&self.config_file, "kernel config")?;
         if let Ok(metadata) = fs::symlink_metadata(&self.data_dir)
             && (metadata.file_type().is_symlink() || !metadata.is_dir())
         {
@@ -150,28 +198,51 @@ impl ManagedEngineConfig {
                 "managed data directory must be a real directory, not a symlink".to_owned(),
             ));
         }
-        self.controller.validate(&self.data_dir)
+        self.controller.validate(
+            &self.data_dir,
+            self.kernel,
+            self.controller_secret_configured,
+        )
     }
 
-    /// Builds the `mihomo -t` command used before every managed launch.
+    /// Builds the kernel-specific configuration validation command.
     #[must_use]
     pub fn validation_command(&self) -> CommandSpec {
-        CommandSpec::new(
-            self.binary.clone(),
-            vec![
+        let args = match self.kernel {
+            KernelKind::Mihomo => vec![
                 OsString::from("-t"),
                 OsString::from("-d"),
                 self.data_dir.clone().into_os_string(),
                 OsString::from("-f"),
                 self.config_file.clone().into_os_string(),
             ],
-            self.data_dir.clone(),
-        )
+            KernelKind::SingBox => vec![
+                OsString::from("check"),
+                OsString::from("-c"),
+                self.config_file.clone().into_os_string(),
+                OsString::from("-D"),
+                self.data_dir.clone().into_os_string(),
+            ],
+        };
+        CommandSpec::new(self.binary.clone(), args, self.data_dir.clone())
     }
 
-    /// Builds the isolated Mihomo launch command.
+    /// Builds the kernel-specific isolated launch command.
     #[must_use]
     pub fn launch_command(&self) -> CommandSpec {
+        if self.kernel == KernelKind::SingBox {
+            return CommandSpec::new(
+                self.binary.clone(),
+                vec![
+                    OsString::from("run"),
+                    OsString::from("-c"),
+                    self.config_file.clone().into_os_string(),
+                    OsString::from("-D"),
+                    self.data_dir.clone().into_os_string(),
+                ],
+                self.data_dir.clone(),
+            );
+        }
         let mut args = vec![
             OsString::from("-d"),
             self.data_dir.clone().into_os_string(),
@@ -196,13 +267,13 @@ impl ManagedEngineConfig {
     }
 }
 
-/// Validates a candidate Relay-managed Mihomo configuration without starting a child process.
+/// Validates a candidate Relay-managed kernel configuration without starting a child process.
 ///
 /// This is used before replacing a running generated profile, so a rejected candidate cannot
 /// force the currently owned core offline.
 ///
 /// # Errors
-/// Returns a structured, secret-free lifecycle error when path checks or `mihomo -t` fail.
+/// Returns a structured, secret-free lifecycle error when path checks or validation fail.
 pub fn validate_managed_config(config: &ManagedEngineConfig) -> Result<(), EngineError> {
     config.validate()?;
     prepare_data_dir(&config.data_dir)?;
@@ -210,7 +281,7 @@ pub fn validate_managed_config(config: &ManagedEngineConfig) -> Result<(), Engin
     let exit = spawner
         .validate(&config.validation_command(), DEFAULT_VALIDATION_TIMEOUT)
         .map_err(|source| EngineError::Io {
-            operation: "run Mihomo config validation",
+            operation: "run kernel config validation",
             source,
         })?;
     if exit.is_success() {
@@ -389,7 +460,7 @@ impl ProcessSpawner for StdProcessSpawner {
                 child.wait()?;
                 return Err(io::Error::new(
                     io::ErrorKind::TimedOut,
-                    "Mihomo config validation timed out",
+                    "kernel config validation timed out",
                 ));
             }
             let remaining = timeout.saturating_sub(elapsed);
@@ -430,7 +501,7 @@ pub enum ProbeStatus {
     Pending,
 }
 
-/// Readiness adapter, normally backed by a read-only Mihomo `/version` request.
+/// Readiness adapter, normally backed by a read-only controller `/version` request.
 pub trait ReadinessProbe: Send {
     /// Checks the controller without changing its configuration.
     fn check(&mut self, endpoint: &ControllerEndpoint) -> ProbeStatus;
@@ -475,7 +546,7 @@ pub enum EngineState {
     Idle,
     /// Runtime paths are being checked and created.
     Preparing,
-    /// Mihomo is checking the supplied configuration with `-t`.
+    /// The selected kernel is checking the supplied configuration.
     Validating,
     /// The child exists but its controller is not ready yet.
     Starting,
@@ -509,7 +580,7 @@ pub enum EngineError {
         /// Original standard-library error.
         source: io::Error,
     },
-    /// Mihomo rejected the runtime configuration during `-t`.
+    /// The selected kernel rejected the runtime configuration.
     ValidationFailed(ProcessExit),
     /// A second start was requested while an owned child exists.
     AlreadyRunning,
@@ -527,18 +598,18 @@ impl fmt::Display for EngineError {
             Self::InvalidConfig(message) => formatter.write_str(message),
             Self::Io { operation, source } => write!(formatter, "{operation}: {source}"),
             Self::ValidationFailed(exit) => {
-                write!(formatter, "Mihomo config validation failed ({exit})")
+                write!(formatter, "kernel config validation failed ({exit})")
             }
             Self::AlreadyRunning => {
-                formatter.write_str("a managed Mihomo child is already running")
+                formatter.write_str("a managed kernel child is already running")
             }
             Self::ExitedEarly(exit) => {
-                write!(formatter, "managed Mihomo exited before readiness ({exit})")
+                write!(formatter, "managed kernel exited before readiness ({exit})")
             }
-            Self::Exited(exit) => write!(formatter, "managed Mihomo exited ({exit})"),
+            Self::Exited(exit) => write!(formatter, "managed kernel exited ({exit})"),
             Self::ReadinessTimeout { attempts } => write!(
                 formatter,
-                "managed Mihomo controller was not ready after {attempts} attempts"
+                "managed kernel controller was not ready after {attempts} attempts"
             ),
         }
     }
@@ -616,7 +687,7 @@ impl EngineManager {
         &self.state
     }
 
-    /// Overrides the bounded `mihomo -t` validation timeout.
+    /// Overrides the bounded kernel validation timeout.
     ///
     /// # Errors
     ///
@@ -645,7 +716,7 @@ impl EngineManager {
             return Ok(None);
         };
         let exit = child.try_wait().map_err(|source| EngineError::Io {
-            operation: "poll managed Mihomo",
+            operation: "poll managed kernel",
             source,
         })?;
         if let Some(exit) = exit {
@@ -683,7 +754,7 @@ impl EngineManager {
             Ok(exit) => exit,
             Err(source) => {
                 return self.fail(EngineError::Io {
-                    operation: "run Mihomo config validation",
+                    operation: "run kernel config validation",
                     source,
                 });
             }
@@ -697,7 +768,7 @@ impl EngineManager {
             Ok(child) => child,
             Err(source) => {
                 return self.fail(EngineError::Io {
-                    operation: "spawn managed Mihomo",
+                    operation: "spawn managed kernel",
                     source,
                 });
             }
@@ -715,7 +786,7 @@ impl EngineManager {
                 Ok(exit) => exit,
                 Err(source) => {
                     let error = EngineError::Io {
-                        operation: "poll managed Mihomo",
+                        operation: "poll managed kernel",
                         source,
                     };
                     return self.fail_after_cleanup(error);
@@ -764,7 +835,7 @@ impl EngineManager {
             Err(source) => {
                 self.child = Some(child);
                 self.fail(EngineError::Io {
-                    operation: "terminate managed Mihomo",
+                    operation: "terminate managed kernel",
                     source,
                 })
             }
@@ -784,7 +855,7 @@ impl EngineManager {
         {
             self.child = Some(child);
             return self.fail(EngineError::Io {
-                operation: "clean up managed Mihomo after failed start",
+                operation: "clean up managed kernel after failed start",
                 source,
             });
         }
@@ -888,6 +959,7 @@ mod tests {
         ManagedChild, ManagedEngineConfig, ProbeStatus, ProcessExit, ProcessSpawner,
         ReadinessPolicy, ReadinessProbe, resolved_command,
     };
+    use relay_core::KernelKind;
 
     static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -1055,6 +1127,63 @@ mod tests {
                 layout.data_dir.join("controller.sock").into_os_string(),
             ]
         );
+    }
+
+    #[test]
+    fn builds_sing_box_check_and_run_commands_with_a_secured_loopback_api() {
+        let layout = TempLayout::new();
+        let config = ManagedEngineConfig::new_sing_box(
+            layout.binary.clone(),
+            layout.config.clone(),
+            layout.data_dir.clone(),
+            ControllerEndpoint::Tcp("127.0.0.1:19090".parse().expect("loopback address")),
+            true,
+        );
+
+        assert_eq!(config.kernel(), KernelKind::SingBox);
+        assert!(config.validate().is_ok());
+        assert_eq!(
+            config.validation_command().args(),
+            &[
+                OsString::from("check"),
+                OsString::from("-c"),
+                layout.config.clone().into_os_string(),
+                OsString::from("-D"),
+                layout.data_dir.clone().into_os_string(),
+            ]
+        );
+        assert_eq!(
+            config.launch_command().args(),
+            &[
+                OsString::from("run"),
+                OsString::from("-c"),
+                layout.config.clone().into_os_string(),
+                OsString::from("-D"),
+                layout.data_dir.clone().into_os_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn sing_box_rejects_an_unauthenticated_or_non_loopback_controller() {
+        let layout = TempLayout::new();
+        let unauthenticated = ManagedEngineConfig::new_sing_box(
+            layout.binary.clone(),
+            layout.config.clone(),
+            layout.data_dir.clone(),
+            ControllerEndpoint::Tcp("127.0.0.1:19090".parse().expect("loopback address")),
+            false,
+        );
+        let remote = ManagedEngineConfig::new_sing_box(
+            layout.binary.clone(),
+            layout.config.clone(),
+            layout.data_dir.clone(),
+            ControllerEndpoint::Tcp("192.0.2.10:19090".parse().expect("remote address")),
+            true,
+        );
+
+        assert!(unauthenticated.validate().is_err());
+        assert!(remote.validate().is_err());
     }
 
     #[test]

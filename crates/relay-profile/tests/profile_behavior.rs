@@ -3,8 +3,9 @@ use std::path::Path;
 
 use relay_profile::{
     HealthCheck, LogLevel, Name, OutboundProxy, PolicyGroup, PolicyGroupKind, PolicyRef, Profile,
-    ProfileMode, ProxyProvider, QxRuleDiagnosticKind, QxRuleKind, QxRuleList, Rule, SecretUrl,
-    UserPolicyGroup, UserPolicyGroupKind, VlessProxy, render_mihomo_yaml, write_private_atomic,
+    ProfileError, ProfileMode, ProxyProvider, QxRuleDiagnosticKind, QxRuleKind, QxRuleList, Rule,
+    SecretUrl, SingBoxOptions, UserPolicyGroup, UserPolicyGroupKind, VlessProxy,
+    render_mihomo_yaml, render_sing_box_json, write_private_atomic,
 };
 
 fn fixture_secret() -> SecretUrl {
@@ -229,6 +230,96 @@ fn vless_reality_tcp_accepts_an_empty_optional_header_type() {
     assert!(yaml.contains("flow: \"xtls-rprx-vision\""));
     assert!(yaml.contains("servername: \"cdn.example.invalid\""));
     assert!(yaml.contains("public-key: \"fixture_reality-public-key\""));
+}
+
+#[test]
+fn manual_reality_tcp_profile_renders_as_sing_box_json() {
+    let vless = VlessProxy::parse_share_link(
+        "vless://00000000-0000-4000-8000-000000000000@198.51.100.7:443?security=reality&encryption=none&pbk=fixture_reality-public-key&headerType=&fp=chrome&type=tcp&flow=xtls-rprx-vision&sni=cdn.example.invalid#Reality%20TCP",
+    )
+    .expect("Reality TCP fixture should parse");
+    let profile = Profile::qx_sources(Vec::new(), vec![vless], 17_890)
+        .expect("manual VLESS fixture should build a profile");
+    let json = render_sing_box_json(
+        &profile,
+        &SingBoxOptions::new("127.0.0.1:19090", "fixture-controller-secret"),
+    )
+    .expect("supported profile should render");
+
+    assert!(json.contains("\"type\": \"mixed\""));
+    assert!(json.contains("\"listen\": \"127.0.0.1\""));
+    assert!(json.contains("\"listen_port\": 17890"));
+    assert!(json.contains("\"type\": \"vless\""));
+    assert!(json.contains("\"tag\": \"Reality TCP\""));
+    assert!(json.contains("\"server\": \"198.51.100.7\""));
+    assert!(json.contains("\"server_port\": 443"));
+    assert!(json.contains("\"flow\": \"xtls-rprx-vision\""));
+    assert!(json.contains("\"server_name\": \"cdn.example.invalid\""));
+    assert!(json.contains("\"public_key\": \"fixture_reality-public-key\""));
+    assert!(json.contains("\"fingerprint\": \"chrome\""));
+    assert!(json.contains("\"type\": \"selector\""));
+    assert!(json.contains("\"tag\": \"GLOBAL\""));
+    assert!(
+        json.contains(
+            "\"clash_mode\": \"Global\", \"action\": \"route\", \"outbound\": \"GLOBAL\""
+        )
+    );
+    assert!(json.contains("\"type\": \"urltest\""));
+    assert!(json.contains("\"rule_set\": \"geoip-cn\""));
+    assert!(json.contains("\"external_controller\": \"127.0.0.1:19090\""));
+    assert!(json.contains("\"secret\": \"fixture-controller-secret\""));
+}
+
+#[test]
+fn sing_box_renderer_rejects_untranslated_subscription_providers() {
+    let profile = Profile::qx_default(fixture_secret()).expect("default profile is valid");
+
+    let error = render_sing_box_json(
+        &profile,
+        &SingBoxOptions::new("127.0.0.1:19090", "fixture-controller-secret"),
+    )
+    .expect_err("Mihomo proxy providers must not be silently translated");
+
+    assert_eq!(
+        error,
+        ProfileError::UnsupportedKernelFeature("subscription providers")
+    );
+    assert!(!error.to_string().contains("fixture-secret"));
+}
+
+#[test]
+fn sing_box_renderer_rejects_names_reserved_by_generated_outbounds() {
+    let vless = VlessProxy::parse_share_link(
+        "vless://00000000-0000-4000-8000-000000000000@198.51.100.7:443?security=reality&encryption=none&pbk=fixture_reality-public-key&fp=chrome&type=tcp&flow=xtls-rprx-vision&sni=cdn.example.invalid#direct",
+    )
+    .expect("reserved-name fixture should parse before kernel rendering");
+    let profile = Profile::qx_sources(Vec::new(), vec![vless], 17_890)
+        .expect("reserved-name fixture is valid in the kernel-neutral model");
+
+    assert_eq!(
+        render_sing_box_json(
+            &profile,
+            &SingBoxOptions::new("127.0.0.1:19090", "fixture-controller-secret"),
+        ),
+        Err(ProfileError::UnsupportedKernelFeature(
+            "a reserved sing-box outbound tag",
+        ))
+    );
+}
+
+#[test]
+fn sing_box_controller_must_be_loopback_and_authenticated() {
+    let vless = VlessProxy::parse_share_link(
+        "vless://00000000-0000-4000-8000-000000000000@edge.example.invalid:443?encryption=none&security=reality&type=tcp&sni=cdn.example.invalid&pbk=fixture-key#Saved",
+    )
+    .expect("fixture should parse");
+    let profile = Profile::qx_sources(Vec::new(), vec![vless], 17_890)
+        .expect("manual VLESS fixture should build a profile");
+
+    assert!(
+        render_sing_box_json(&profile, &SingBoxOptions::new("0.0.0.0:19090", "secret")).is_err()
+    );
+    assert!(render_sing_box_json(&profile, &SingBoxOptions::new("127.0.0.1:19090", "")).is_err());
 }
 
 #[test]

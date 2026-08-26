@@ -8,7 +8,7 @@ use gpui::{
     Render, Role, Stateful, Styled, Subscription, Toggled, Window, div, prelude::*, px,
 };
 use relay_core::{
-    CompactNavigation, NodeGroupIcon, NodeGroupStrategy, NodeIdentity, NodePolicyGroup,
+    CompactNavigation, KernelKind, NodeGroupIcon, NodeGroupStrategy, NodeIdentity, NodePolicyGroup,
     NodeWorkspaceState, PolicyCatalog, PolicyGroup, PolicyNode, PolicyWorkspaceState,
     PrimaryWorkspace, ProxyId, ProxyMode, RoutingMode, WindowSizeClass,
 };
@@ -18,6 +18,7 @@ use relay_profile::{QxRuleList, SecretUrl};
 use crate::{
     demo,
     diagnostics::{UiEvent, trace_ui},
+    kernel::{self, KernelRuntime},
     mihomo::{
         self, ControllerRuntime, ControllerState, GeneratedProfileApply, KernelLogEntry,
         LiveRuntimeSession, LiveStreamStatus, LoadedProvider, LoadedSnapshot,
@@ -169,6 +170,19 @@ enum SourceRefreshSchedulerState {
     #[default]
     Stopped,
     Started,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum KernelSwitchState {
+    #[default]
+    Idle,
+    Preparing,
+}
+
+impl KernelSwitchState {
+    const fn is_busy(self) -> bool {
+        matches!(self, Self::Preparing)
+    }
 }
 
 fn next_due_remote_source(
@@ -453,7 +467,8 @@ pub struct RelayApp {
     node_workspace: NodeWorkspaceState,
     workspace: PolicyWorkspaceState,
     catalog: PolicyCatalog,
-    runtime: ControllerRuntime,
+    runtime: KernelRuntime,
+    kernel_switch_state: KernelSwitchState,
     controller: ControllerState,
     observed_routes: Vec<ObservedRouteEvidence>,
     source_providers: Vec<LoadedProvider>,
@@ -563,15 +578,17 @@ impl RelayApp {
     #[must_use]
     pub fn new() -> Self {
         let store = mihomo::imported_subscription_store_dir();
-        Self::with_runtime_and_store(mihomo::configured_runtime(), store.ok())
+        let store = store.ok();
+        let runtime = KernelRuntime::configured(store.as_deref());
+        Self::with_runtime_and_store(runtime, store)
     }
 
     #[must_use]
     pub fn with_controller(endpoint: impl Into<String>) -> Self {
         Self::with_runtime_and_store(
-            ControllerRuntime::External {
+            KernelRuntime::mihomo(ControllerRuntime::External {
                 endpoint: endpoint.into(),
-            },
+            }),
             None,
         )
     }
@@ -586,15 +603,15 @@ impl RelayApp {
         subscription_store_dir: PathBuf,
     ) -> Self {
         Self::with_runtime_and_store(
-            ControllerRuntime::External {
+            KernelRuntime::mihomo(ControllerRuntime::External {
                 endpoint: endpoint.into(),
-            },
+            }),
             Some(subscription_store_dir),
         )
     }
 
     fn with_runtime_and_store(
-        runtime: ControllerRuntime,
+        runtime: KernelRuntime,
         subscription_store_dir: Option<PathBuf>,
     ) -> Self {
         let mut status = runtime.initial_status();
@@ -631,6 +648,7 @@ impl RelayApp {
             workspace: PolicyWorkspaceState::demo(),
             catalog: demo::catalog(),
             runtime,
+            kernel_switch_state: KernelSwitchState::Idle,
             controller: ControllerState::Demo,
             observed_routes: Vec::new(),
             source_providers: Vec::new(),
@@ -1399,6 +1417,59 @@ impl RelayApp {
             })
     }
 
+    fn switch_kernel(&mut self, requested: KernelKind, cx: &mut Context<Self>) {
+        if self.kernel_switch_state.is_busy() || self.runtime.kind() == requested {
+            return;
+        }
+        let Some(store_dir) = self.subscription_store_dir.clone() else {
+            "无法确定本机配置目录，不能切换内核".clone_into(&mut self.status);
+            cx.notify();
+            return;
+        };
+        self.kernel_switch_state = KernelSwitchState::Preparing;
+        self.status = format!("正在校验并准备 {} 配置", requested.display_name());
+        let previous = self.runtime.clone();
+        let previous_kind = previous.kind();
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let result = executor
+                .spawn(async move {
+                    let prepared = KernelRuntime::prepare(requested, Some(&store_dir))?;
+                    kernel::save_kernel_kind_in(&store_dir, requested)
+                        .map_err(|error| error.to_string())?;
+                    if let Err(message) = previous.stop_managed() {
+                        let _ = kernel::save_kernel_kind_in(&store_dir, previous_kind);
+                        return Err(message);
+                    }
+                    Ok::<_, String>(prepared)
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                this.kernel_switch_state = KernelSwitchState::Idle;
+                match result {
+                    Ok(runtime) => {
+                        this.runtime = runtime;
+                        this.controller = ControllerState::Demo;
+                        this.live_generation = this.live_generation.wrapping_add(1);
+                        this.live_runtime = None;
+                        this.proxy_mode = ProxyMode::Off;
+                        this.status = format!(
+                            "已切换到 {} · 配置校验通过，点击连接启动",
+                            requested.display_name()
+                        );
+                    }
+                    Err(message) => {
+                        this.status = format!("无法切换到 {}：{message}", requested.display_name());
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
     fn connect_mihomo(&mut self, cx: &mut Context<Self>) {
         if matches!(self.controller, ControllerState::Connecting { .. }) {
             return;
@@ -1412,11 +1483,12 @@ impl RelayApp {
         };
 
         let endpoint = self.runtime.endpoint_label();
+        let kernel_name = self.runtime.kind().display_name();
         let runtime = self.runtime.clone();
         self.controller = ControllerState::Connecting {
             endpoint: endpoint.clone(),
         };
-        self.status = format!("正在从 {endpoint} 读取 Mihomo 数据");
+        self.status = format!("正在从 {endpoint} 读取 {kernel_name} 数据");
         trace_ui(UiEvent::MihomoConnectStarted);
 
         let executor = cx.background_executor().clone();
@@ -1426,8 +1498,13 @@ impl RelayApp {
                 match result {
                     Ok(result) => {
                         let controller_endpoint = result.controller_endpoint;
+                        let controller_secret = result.controller_secret;
                         this.apply_mihomo_snapshot(result.endpoint, result.snapshot);
-                        this.start_live_runtime(&controller_endpoint, cx);
+                        this.start_live_runtime(
+                            &controller_endpoint,
+                            controller_secret.as_deref(),
+                            cx,
+                        );
                     }
                     Err(error) => {
                         trace_ui(UiEvent::MihomoConnectFailed);
@@ -1441,7 +1518,7 @@ impl RelayApp {
                             endpoint,
                             message: message.clone(),
                         };
-                        this.status = format!("Mihomo 连接失败：{message}");
+                        this.status = format!("{kernel_name} 连接失败：{message}");
                     }
                 }
                 cx.notify();
@@ -1597,10 +1674,15 @@ impl RelayApp {
         cx.notify();
     }
 
-    fn start_live_runtime(&mut self, endpoint: &str, cx: &mut Context<Self>) {
+    fn start_live_runtime(
+        &mut self,
+        endpoint: &str,
+        controller_secret: Option<&str>,
+        cx: &mut Context<Self>,
+    ) {
         self.live_generation = self.live_generation.wrapping_add(1);
         let generation = self.live_generation;
-        self.live_runtime = match LiveRuntimeSession::start(endpoint) {
+        self.live_runtime = match LiveRuntimeSession::start(endpoint, controller_secret) {
             Ok(session) => Some(session),
             Err(error) => {
                 self.live_status = LiveStreamStatus {
@@ -1665,11 +1747,22 @@ impl RelayApp {
         }
         if !matches!(self.controller, ControllerState::Connected { .. }) {
             trace_ui(UiEvent::ProxyModeFailed);
-            "请先连接 Mihomo，再切换代理模式".clone_into(&mut self.status);
+            self.status = format!(
+                "请先连接 {}，再切换代理模式",
+                self.runtime.kind().display_name()
+            );
             cx.notify();
             return;
         }
-        if requested == ProxyMode::Tun && matches!(self.runtime, ControllerRuntime::External { .. })
+        if requested == ProxyMode::Tun && !self.runtime.capabilities().tun {
+            trace_ui(UiEvent::ProxyModeFailed);
+            "当前 sing-box 适配器尚未开放 TUN；可使用系统 HTTP/SOCKS 代理"
+                .clone_into(&mut self.status);
+            cx.notify();
+            return;
+        }
+        if requested == ProxyMode::Tun
+            && matches!(&*self.runtime, ControllerRuntime::External { .. })
         {
             trace_ui(UiEvent::ProxyModeFailed);
             "外部控制器保持只读；请使用 Relay 托管内核启用 TUN 模式".clone_into(&mut self.status);
@@ -1786,7 +1879,7 @@ impl RelayApp {
             cx.notify();
             return;
         }
-        if matches!(self.runtime, ControllerRuntime::External { .. }) {
+        if matches!(&*self.runtime, ControllerRuntime::External { .. }) {
             trace_ui(UiEvent::RoutingModeFailed);
             "外部控制器保持只读；请使用 Relay 托管内核切换路由模式".clone_into(&mut self.status);
             cx.notify();
@@ -1850,7 +1943,7 @@ impl RelayApp {
             cx.notify();
             return;
         }
-        if matches!(self.runtime, ControllerRuntime::External { .. }) {
+        if matches!(&*self.runtime, ControllerRuntime::External { .. }) {
             trace_ui(UiEvent::GlobalNodeSelectionFailed);
             "外部控制器保持只读；请使用 Relay 托管内核选择全局节点".clone_into(&mut self.status);
             cx.notify();
@@ -3154,16 +3247,17 @@ impl RelayApp {
     }
 
     fn status_bar(&self, theme: Theme) -> Div {
+        let kernel_name = self.runtime.kind().display_name();
         let (source, endpoint, download, upload, dot) = match &self.controller {
             ControllerState::Demo => (
-                "Mihomo 未连接".to_owned(),
+                format!("{kernel_name} 未连接"),
                 "配置：演示数据".to_owned(),
                 "↓ —".to_owned(),
                 "↑ —".to_owned(),
                 theme.route_trace,
             ),
             ControllerState::Connecting { endpoint } => (
-                "Mihomo 连接中".to_owned(),
+                format!("{kernel_name} 连接中"),
                 endpoint.clone(),
                 "↓ —".to_owned(),
                 "↑ —".to_owned(),
@@ -3176,14 +3270,14 @@ impl RelayApp {
                 download_total,
                 upload_total,
             } => (
-                format!("Mihomo {version} · {active_connections} 条连接"),
+                format!("{kernel_name} {version} · {active_connections} 条连接"),
                 endpoint.clone(),
                 format!("累计↓ {}", format_bytes(*download_total)),
                 format!("累计↑ {}", format_bytes(*upload_total)),
                 theme.status_success,
             ),
             ControllerState::Failed { endpoint, .. } => (
-                "Mihomo 连接失败".to_owned(),
+                format!("{kernel_name} 连接失败"),
                 endpoint.clone(),
                 "↓ —".to_owned(),
                 "↑ —".to_owned(),

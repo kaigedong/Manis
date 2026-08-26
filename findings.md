@@ -323,3 +323,18 @@
 - 配置页的视觉层级确定为：卡片保持中性，间隔是次级设置，立即更新是青绿色描边动作，移除是危险色文本；这比给整张卡上强调色更不容易误读为“已选中”。
 - 代理订阅刷新后必须调用 `apply_saved_sources`：即使来源 URL 未变，托管 Mihomo 也需要重载/重启才能确保运行时采用最新 provider 数据；外部 controller 仍返回 `NotManaged` 并保持只读。
 - Windows 的订阅/VLESS/QX 私有存储在本轮之前就因缺少 owner-only ACL 而 fail-closed；新刷新 API保持同一边界，因此没有新增假控件或数据泄漏，但三平台正式交付前仍需独立实现 Windows 安全存储。
+
+## 多内核与 sing-box 初始边界（2026-08-26）
+
+- 当前 UI、控制器客户端和配置渲染都直接使用 Mihomo 命名与 API；仅替换可执行文件无法工作，必须拆分领域配置、配置渲染、进程监督和运行控制四层。
+- sing-box 稳定线可使用 Clash API控制 selector 并读取部分状态，但配置是 JSON 且策略模型不同；原生 gRPC API 位于 1.14 线，首版不能把尚未稳定的 API作为唯一依赖。
+- sing-box 原生支持 selector 与 urltest；Mihomo fallback/load-balance 没有直接等价物，因此适配器必须公开能力矩阵，不能静默改变策略语义。
+- 当前订阅解析依赖隔离 Mihomo；真正的 sing-box 独立运行最终需要 Relay 自己解析 Clash/YAML/URI订阅。首个切片可以继续保留 Mihomo 解析作为已知限制，但不能宣称已经完全去除 Mihomo 依赖。
+- 官方配置校验命令为 `sing-box check`，运行命令为 `sing-box run -c <config> -D <directory>`；配置页必须以校验成功作为切换前置条件。
+- sing-box Clash API 只公开 TCP listen address；Relay 因此为 sing-box 开放“带 Bearer 密钥的 loopback TCP”，同时继续拒绝 Mihomo 托管 TCP 和任何非 loopback 地址。
+- GeoIP 已在 sing-box 1.12 移除旧字段；当前 `GEOIP,CN` 必须编译为官方 `geoip-cn.srs` remote rule-set，不能继续输出旧 `geoip` 配置。
+- Reality TCP 的 sing-box 映射需要 `tls.reality.public_key/short_id` 与可选 `tls.utls.fingerprint`；无 `sid` 的链接以官方允许的零位十六进制空 short-id 表达。
+- sing-box 的 Clash API 可为 Relay 现有状态、模式和 selector 控制提供兼容面，但返回字段允许 `rules: null`、`tun: null`；适配模型必须把 null 当作缺省值，而不能按 Mihomo 的对象/数组形状强制解析。
+- 全局模式不能复用普通 `Proxy` 组：Relay 节点页的全局出口契约要求存在 `GLOBAL` selector。sing-box 渲染器现在为所有手动节点生成独立 `GLOBAL`，Global 模式路由到它，并拒绝用户占用 `GLOBAL/direct/block` 保留 tag。
+- 控制器密钥必须属于具体受管 runtime/endpoint。进程级回退会在切回外部 Mihomo 后产生跨 controller 发送风险；最终实现只在线程/请求边界显式携带当前 sing-box secret，外部 controller 仍仅使用 `RELAY_MIHOMO_SECRET`。
+- 当前 sing-box 切片只接受已保存的手动 VLESS TCP/TLS/Reality 节点。Mihomo provider 订阅、fallback、load-balance 与 TUN 会被能力矩阵和配置页明确拒绝，不做静默近似。

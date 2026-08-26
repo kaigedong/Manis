@@ -63,6 +63,29 @@ where
         })
     }
 
+    /// Fetches the Clash API subset exposed by sing-box without assuming Mihomo providers or
+    /// rule-array semantics.
+    ///
+    /// # Errors
+    /// Returns an error when a shared controller response is unavailable or malformed.
+    pub fn fetch_sing_box_snapshot(&self) -> Result<MihomoSnapshot, MihomoError> {
+        let version = self.fetch_version()?;
+        let proxies = self
+            .fetch_json::<ProxiesResponse>(PROXIES_ENDPOINT)?
+            .into_proxies();
+        let connections = self.fetch_json::<ConnectionsState>(CONNECTIONS_ENDPOINT)?;
+        let runtime = self.fetch_runtime_config()?;
+
+        Ok(MihomoSnapshot {
+            version,
+            proxies,
+            providers: Vec::new(),
+            rules: Vec::new(),
+            connections,
+            runtime,
+        })
+    }
+
     /// Fetches only `/version` for a lightweight controller readiness check.
     ///
     /// # Errors

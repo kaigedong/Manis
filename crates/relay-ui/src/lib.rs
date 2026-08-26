@@ -1,6 +1,7 @@
 mod app;
 mod demo;
 mod diagnostics;
+mod kernel;
 mod mihomo;
 mod rule_source;
 mod subscription;

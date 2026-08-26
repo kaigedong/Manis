@@ -51,7 +51,7 @@ pub struct RuntimeConfig {
     pub mixed_port: Option<u16>,
     #[serde(default, deserialize_with = "deserialize_routing_mode")]
     pub mode: RoutingMode,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_nullable_tun")]
     pub tun: RuntimeTunConfig,
 }
 
@@ -72,6 +72,15 @@ where
         Value::String(value) => RoutingMode::parse_wire_value(&value).unwrap_or_default(),
         _ => RoutingMode::default(),
     })
+}
+
+fn deserialize_nullable_tun<'de, Deserializer>(
+    deserializer: Deserializer,
+) -> Result<RuntimeTunConfig, Deserializer::Error>
+where
+    Deserializer: serde::Deserializer<'de>,
+{
+    Ok(Option::<RuntimeTunConfig>::deserialize(deserializer)?.unwrap_or_default())
 }
 
 impl MihomoSnapshot {

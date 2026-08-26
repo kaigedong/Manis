@@ -1,7 +1,7 @@
 use gpui::{
     Context, Div, Entity, FontWeight, ParentElement, Role, Stateful, Styled, div, prelude::*, px,
 };
-use relay_core::WindowSizeClass;
+use relay_core::{KernelKind, WindowSizeClass};
 use relay_profile::QxRuleKind;
 
 use super::{
@@ -80,12 +80,188 @@ impl RelayApp {
                             .w_full()
                             .max_w(px(880.0))
                             .mx_auto()
-                            .child(self.source_panel(theme, compact, cx))
+                            .child(self.kernel_panel(theme, compact, cx))
+                            .child(self.source_panel(theme, compact, cx).mt_4())
                             .child(
                                 self.rule_source_manager(rule_input, rule_busy, theme, cx)
                                     .mt_4(),
                             ),
                     ),
+            )
+    }
+
+    fn kernel_panel(&self, theme: Theme, compact: bool, cx: &mut Context<Self>) -> Stateful<Div> {
+        let active = self.runtime.kind();
+        let capabilities = self.runtime.capabilities();
+        let sing_box_installed = mihomo::sing_box_binary_available();
+        let sing_box_has_sources =
+            self.imported_subscriptions.is_empty() && !self.saved_vless_nodes.is_empty();
+        let sing_box_reason = if !sing_box_installed {
+            "本机未检测到 sing-box"
+        } else if !self.imported_subscriptions.is_empty() {
+            "当前包含 Clash 订阅，需等待 Relay 原生订阅解析器"
+        } else if self.saved_vless_nodes.is_empty() {
+            "至少需要一个已保存的 VLESS 节点"
+        } else {
+            "支持手动 VLESS、选择器、自动测速与分流规则"
+        };
+        let sing_box_enabled = sing_box_installed
+            && sing_box_has_sources
+            && !self.kernel_switch_state.is_busy()
+            && active != KernelKind::SingBox;
+
+        div()
+            .id("configuration-kernel")
+            .w_full()
+            .p(if compact { px(12.0) } else { px(16.0) })
+            .rounded_md()
+            .border_1()
+            .border_color(theme.outline_subtle)
+            .bg(theme.surface_high)
+            .child(
+                div()
+                    .flex()
+                    .items_start()
+                    .justify_between()
+                    .gap_3()
+                    .child(
+                        div()
+                            .min_w(px(0.0))
+                            .child(
+                                div()
+                                    .text_size(px(17.0))
+                                    .font_weight(FontWeight::BOLD)
+                                    .child("运行内核"),
+                            )
+                            .child(
+                                div()
+                                    .mt_1()
+                                    .text_size(px(11.0))
+                                    .text_color(theme.text_secondary)
+                                    .child("切换前先编译并校验目标配置；失败不会替换当前内核。"),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .px_2()
+                            .py_1()
+                            .rounded_sm()
+                            .bg(theme.action_soft)
+                            .text_size(px(10.0))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(theme.action_primary)
+                            .child(if self.kernel_switch_state.is_busy() {
+                                "正在校验"
+                            } else {
+                                active.display_name()
+                            }),
+                    ),
+            )
+            .child(Self::kernel_option_row(
+                KernelKind::Mihomo,
+                "完整兼容当前订阅、策略组、测速与 Clash API",
+                !self.kernel_switch_state.is_busy() && active != KernelKind::Mihomo,
+                active == KernelKind::Mihomo,
+                theme,
+                cx,
+            ))
+            .child(Self::kernel_option_row(
+                KernelKind::SingBox,
+                sing_box_reason,
+                sing_box_enabled,
+                active == KernelKind::SingBox,
+                theme,
+                cx,
+            ))
+            .child(
+                div()
+                    .mt_3()
+                    .pt_3()
+                    .border_t_1()
+                    .border_color(theme.outline_subtle)
+                    .text_size(px(10.0))
+                    .text_color(theme.text_tertiary)
+                    .child(format!(
+                        "当前能力 · 订阅{} · 手动 VLESS{} · 自动测速{} · 选择保存在本机 kernel.kind",
+                        if capabilities.subscription_providers { "可用" } else { "暂不可用" },
+                        if capabilities.manual_vless { "可用" } else { "暂不可用" },
+                        if capabilities.url_test { "可用" } else { "暂不可用" },
+                    )),
+            )
+    }
+
+    fn kernel_option_row(
+        kind: KernelKind,
+        detail: &str,
+        enabled: bool,
+        selected: bool,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        div()
+            .mt_3()
+            .pt_3()
+            .border_t_1()
+            .border_color(theme.outline_subtle)
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_3()
+            .child(
+                div()
+                    .min_w(px(0.0))
+                    .child(
+                        div()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(kind.display_name()),
+                    )
+                    .child(
+                        div()
+                            .mt_1()
+                            .text_size(px(11.0))
+                            .text_color(theme.text_secondary)
+                            .child(detail.to_owned()),
+                    ),
+            )
+            .child(
+                div()
+                    .id(format!("kernel-select-{}", kind.persistence_key()))
+                    .role(Role::Button)
+                    .aria_label(format!("切换到 {}", kind.display_name()))
+                    .tab_stop(enabled)
+                    .focusable()
+                    .when(enabled, gpui::Styled::cursor_pointer)
+                    .h(px(34.0))
+                    .px_3()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(if selected {
+                        theme.action_primary
+                    } else {
+                        theme.outline_subtle
+                    })
+                    .bg(if selected {
+                        theme.action_soft
+                    } else {
+                        theme.surface_high
+                    })
+                    .text_size(px(11.0))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(if selected || enabled {
+                        theme.action_primary
+                    } else {
+                        theme.text_tertiary
+                    })
+                    .child(if selected {
+                        "当前使用"
+                    } else {
+                        "切换并校验"
+                    })
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if enabled {
+                            this.switch_kernel(kind, cx);
+                        }
+                    })),
             )
     }
 

@@ -109,29 +109,31 @@ fn capture_remote_subscription_preview(
     refresh(cx, window)?;
     cx.simulate_click(window, point(px(110.0), px(284.0)), Modifiers::none());
     refresh(cx, window)?;
-    cx.simulate_click(window, point(px(400.0), px(270.0)), Modifiers::none());
+    cx.simulate_click(window, point(px(700.0), px(540.0)), Modifiers::none());
     refresh(cx, window)?;
     cx.simulate_input(window, &subscription_url);
     refresh(cx, window)?;
-    cx.simulate_click(window, point(px(700.0), px(320.0)), Modifiers::none());
+    cx.simulate_click(window, point(px(700.0), px(585.0)), Modifiers::none());
     for _ in 0..40 {
         std::thread::sleep(Duration::from_millis(25));
         refresh(cx, window)?;
     }
+    scroll_window(cx, window, 1_300.0, 760.0, -360.0)?;
     save_screenshot(
         cx,
         window,
         "configuration-wide-remote-subscription-nodes.png",
     )?;
 
-    cx.simulate_click(window, point(px(400.0), px(270.0)), Modifiers::none());
+    scroll_window(cx, window, 1_300.0, 300.0, 360.0)?;
+    cx.simulate_click(window, point(px(700.0), px(540.0)), Modifiers::none());
     refresh(cx, window)?;
     cx.simulate_input(
         window,
         "vless://00000000-0000-4000-8000-000000000000@edge.example.invalid:443?security=tls&type=ws#Saved%20Edge",
     );
     refresh(cx, window)?;
-    cx.simulate_click(window, point(px(700.0), px(320.0)), Modifiers::none());
+    cx.simulate_click(window, point(px(700.0), px(585.0)), Modifiers::none());
     refresh(cx, window)?;
 
     close_window(cx, window)?;
@@ -218,6 +220,7 @@ fn capture_restored_subscription_views(
             std::thread::sleep(Duration::from_millis(25));
             refresh(cx, window)?;
         }
+        scroll_window(cx, window, width - 100.0, height - 120.0, -360.0)?;
         save_screenshot(cx, window, configuration_file)?;
         cx.simulate_click(window, point(px(navigation_x), px(76.0)), Modifiers::none());
         refresh(cx, window)?;
@@ -339,7 +342,7 @@ fn capture_configuration(
     save_screenshot(cx, window, file_name)?;
 
     if width >= 1_280.0 {
-        cx.simulate_click(window, point(px(400.0), px(270.0)), Modifiers::none());
+        cx.simulate_click(window, point(px(700.0), px(540.0)), Modifiers::none());
         refresh(cx, window)?;
         save_screenshot(cx, window, "configuration-wide-subscription-focused.png")?;
         cx.simulate_input(
@@ -347,20 +350,20 @@ fn capture_configuration(
             "vless://00000000-0000-4000-8000-000000000000@edge.example.invalid:443?security=tls&type=ws#Tokyo%20Edge",
         );
         refresh(cx, window)?;
-        cx.simulate_click(window, point(px(700.0), px(320.0)), Modifiers::none());
+        cx.simulate_click(window, point(px(700.0), px(585.0)), Modifiers::none());
         refresh(cx, window)?;
         save_screenshot(cx, window, "configuration-wide-subscription-preview.png")?;
     }
 
     if (width - 720.0).abs() < f32::EPSILON {
-        cx.simulate_click(window, point(px(300.0), px(239.0)), Modifiers::none());
+        cx.simulate_click(window, point(px(300.0), px(500.0)), Modifiers::none());
         refresh(cx, window)?;
         cx.simulate_input(
             window,
             "vless://00000000-0000-4000-8000-000000000000@edge.example.invalid:443?security=tls&type=ws#Tokyo%20Edge",
         );
         refresh(cx, window)?;
-        cx.simulate_click(window, point(px(500.0), px(284.0)), Modifiers::none());
+        cx.simulate_click(window, point(px(500.0), px(545.0)), Modifiers::none());
         refresh(cx, window)?;
         save_screenshot(cx, window, "configuration-compact-subscription-preview.png")?;
     }
@@ -434,6 +437,7 @@ fn capture_routing_rules(
                 Modifiers::none(),
             );
             refresh(cx, window)?;
+            scroll_window(cx, window, width - 100.0, height - 120.0, -680.0)?;
             save_screenshot(cx, window, "configuration-wide-rule-source.png")?;
         }
         cx.simulate_click(
@@ -725,6 +729,28 @@ fn refresh(
     cx.update_window(window, |_, window, _| window.refresh())?;
     cx.run_until_parked();
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn scroll_window(
+    cx: &mut gpui::VisualTestAppContext,
+    window: gpui::AnyWindowHandle,
+    x: f32,
+    y: f32,
+    delta_y: f32,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use gpui::{Modifiers, ScrollDelta, ScrollWheelEvent, point, px};
+
+    cx.simulate_event(
+        window,
+        ScrollWheelEvent {
+            position: point(px(x), px(y)),
+            delta: ScrollDelta::Pixels(point(px(0.0), px(delta_y))),
+            modifiers: Modifiers::none(),
+            ..Default::default()
+        },
+    );
+    refresh(cx, window)
 }
 
 #[cfg(target_os = "macos")]

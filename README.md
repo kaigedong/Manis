@@ -10,13 +10,21 @@ Relay 是一个使用 Rust 与 GPUI 构建的跨平台代理策略工作台。�
 - 一键读取 Mihomo 策略组、节点、规则、延迟与活跃连接；未连接时保留演示状态
 - 在配置页验证并导入 HTTP/HTTPS 订阅，重启后自动恢复并列出全部节点
 - 独立“节点”工作区按来源分组汇总节点、协议、健康状态与延迟，支持分组折叠、状态筛选和刷新
-- 可选择连接外部 Mihomo，或由 Relay 校验并托管一个独立 Mihomo 子进程
+- 可选择连接外部 Mihomo，或由 Relay 校验并托管一个独立 Mihomo / sing-box 子进程
 - 可解释的本地路由预测链，并明确区别于 Mihomo 已观察连接
 - 浅色/深色主题、系统代理演示开关与键盘可聚焦控件
 - macOS 原生运行和 Metal 离屏截图已验证
 - Windows、Linux 已配置对应的 GPUI 平台依赖，仍需各自原生 CI/设备验证
 
-连接外部 Mihomo 时，Relay 保持只读，只请求官方的状态和来源接口，不会切换节点或改写其配置。只有 Relay 自己生成并托管的配置才开放 TUN 与手动策略组切换；切换前会再次校验分组类型和候选节点。配置页的订阅预览会另起一个短生命周期、隔离目录的 Mihomo，只用于下载并解析待预览的订阅。
+连接外部 Mihomo 时，Relay 保持只读，只请求官方的状态和来源接口，不会切换节点或改写其配置。只有 Relay 自己生成并托管的配置才开放该内核已声明支持的写操作；切换策略前会再次校验分组类型和候选节点。配置页的订阅预览会另起一个短生命周期、隔离目录的 Mihomo，只用于下载并解析待预览的订阅。
+
+### 运行内核
+
+“配置 → 运行内核”可以在 Mihomo 与 sing-box 之间切换。选择会保存到平台用户数据目录的 `kernel.kind`；切换采用“生成配置 → 官方内核预检 → 停止 Relay 持有的旧进程 → 保存选择”的顺序，失败时保留原内核。Relay 不会停止或改写 Clash Verge 等其他应用持有的进程。
+
+Mihomo 仍是默认且功能完整的内核。当前 sing-box 适配器支持已保存的单个 VLESS TCP/TLS/Reality 节点、手动选择、自动延迟选择、规则/直连/全局模式、全局节点选择、系统 HTTP/SOCKS 代理与受密钥保护的本机 Clash API。Mihomo `proxy-provider` 订阅、故障转移、负载均衡和 TUN 尚未被静默近似；存在这些需求时，界面会明确禁用切换并说明原因。
+
+Relay 会从 `RELAY_SING_BOX_BINARY`、`PATH` 以及 macOS Homebrew 常见位置寻找 sing-box。生成的 `relay-generated.json` 和控制器密钥只写入权限受限的 Relay runtime，密钥不会进入进程参数或日志。
 
 ## 运行
 
@@ -138,9 +146,9 @@ cargo test -p relay-ui real_mihomo_previews_all_nodes_from_a_subscription -- --i
 
 ## 代码结构
 
-- `crates/relay-core`：与渲染框架无关的窗口尺寸、策略选择和路由证据状态
+- `crates/relay-core`：与渲染框架无关的窗口尺寸、内核能力、策略选择和路由证据状态
 - `crates/relay-engine`：隔离路径、命令计划、配置预检、就绪探测与 owned-child 生命周期
-- `crates/relay-profile`：QX 风格 profile 领域模型、Mihomo YAML 编译与私有原子写入
+- `crates/relay-profile`：QX 风格 profile 领域模型、Mihomo YAML / sing-box JSON 编译与私有原子写入
 - `crates/relay-mihomo`：受限控制器配置、有界 HTTP 传输、容错 JSON 模型和领域目录映射
 - `crates/relay-ui`：GPUI 应用、主题、演示/控制器数据与自适应视图
 - `DESIGN.md`：视觉 token、组件和响应式行为

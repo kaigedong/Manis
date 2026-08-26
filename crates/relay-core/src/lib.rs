@@ -5,6 +5,87 @@ use std::{
     sync::Arc,
 };
 
+/// A proxy core supported by Relay's kernel-neutral configuration boundary.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub enum KernelKind {
+    /// `MetaCubeX` Mihomo, kept as the compatibility-first default.
+    #[default]
+    Mihomo,
+    /// `SagerNet` sing-box.
+    SingBox,
+}
+
+impl KernelKind {
+    /// Returns the stable value written to user-owned configuration files.
+    #[must_use]
+    pub const fn persistence_key(self) -> &'static str {
+        match self {
+            Self::Mihomo => "mihomo",
+            Self::SingBox => "sing-box",
+        }
+    }
+
+    /// Parses a stable persisted value without guessing aliases.
+    #[must_use]
+    pub fn parse(input: &str) -> Option<Self> {
+        match input {
+            "mihomo" => Some(Self::Mihomo),
+            "sing-box" => Some(Self::SingBox),
+            _ => None,
+        }
+    }
+
+    /// Returns the product name shown in the UI.
+    #[must_use]
+    pub const fn display_name(self) -> &'static str {
+        match self {
+            Self::Mihomo => "Mihomo",
+            Self::SingBox => "sing-box",
+        }
+    }
+
+    /// Returns only capabilities Relay can preserve without changing semantics.
+    #[must_use]
+    pub const fn capabilities(self) -> KernelCapabilities {
+        match self {
+            Self::Mihomo => KernelCapabilities {
+                subscription_providers: true,
+                manual_vless: true,
+                selector: true,
+                url_test: true,
+                fallback: true,
+                load_balance: true,
+                clash_api: true,
+                tun: true,
+            },
+            Self::SingBox => KernelCapabilities {
+                subscription_providers: false,
+                manual_vless: true,
+                selector: true,
+                url_test: true,
+                fallback: false,
+                load_balance: false,
+                clash_api: true,
+                tun: false,
+            },
+        }
+    }
+}
+
+/// Features that are both native to a kernel and implemented by Relay's adapter.
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct KernelCapabilities {
+    pub subscription_providers: bool,
+    pub manual_vless: bool,
+    pub selector: bool,
+    pub url_test: bool,
+    pub fallback: bool,
+    pub load_balance: bool,
+    pub clash_api: bool,
+    pub tun: bool,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WindowSizeClass {
     Compact,

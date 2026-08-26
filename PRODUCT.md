@@ -8,7 +8,7 @@ adaptive
 
 ## Stack
 
-Rust + GPUI desktop application, targeting Windows, macOS, and Linux. Mihomo runs as the routing core; the GPUI application owns the product model, orchestration, and presentation.
+Rust + GPUI desktop application, targeting Windows, macOS, and Linux. Mihomo is the default routing core; sing-box is available through a capability-gated adapter for the subset Relay can translate exactly. The GPUI application owns the kernel-neutral product model, orchestration, and presentation.
 
 ## Users
 
@@ -29,8 +29,8 @@ The app is a long-running desktop utility used from a normal window and system t
 ## Capabilities and Constraints
 
 - Ordered rule editor with explicit fallback behavior.
-- Policy groups supporting manual selection, latency testing, fallback, and load balancing.
-- Live connection list and authoritative route explanation from Mihomo.
+- Policy groups supporting manual selection and latency testing, with fallback and load balancing when the active kernel advertises those capabilities.
+- Live connection list and authoritative route explanation from the active kernel's supported controller API.
 - Subscription/node import, profile management, system proxy, and later TUN controls.
 - One shared product language across Windows/macOS/Linux, with platform-specific title bar, menu, keyboard shortcut, tray, and permission conventions.
 - The product configuration is structured; raw YAML is an isolated advanced escape hatch rather than the main interface.
@@ -55,4 +55,3 @@ No logo, existing UI, production screenshots, user research, or brand assets exi
 ## Accessibility & Inclusion
 
 All core operations must work with keyboard and mouse; color cannot be the only carrier of routing or health state. Light, dark, high-contrast, reduced-motion, and text scaling behavior are first-class design requirements.
-
