@@ -326,3 +326,14 @@
 - 全仓验证通过：236 passed、4 ignored、0 failed；`cargo fmt` 与 `--all-targets` 严格 Clippy 通过。
 - 视觉验收：宽屏日志页时间显示为本地 `16:09:40`（无 UTC 后缀），WARNING 琥珀与 INFO 绿区分清晰。截图数据中没有 ERROR 行，红色仅由单元测试覆盖，未经视觉确认。
 - 本轮在独立 worktree `~/.planning/manis-localtime` 基于远端 main 进行，未触碰仍被另一会话占用的主工作树。
+
+# 2026-08-26 状态信息重复修复
+
+- 用户指出左下角出现两个「Mihomo v1.19.29 · 0 条连接」，一个在侧边栏底部、一个在状态栏。
+- 定位到 `navigation()` 与 `status_bar()` 各自维护一份控制器摘要；状态栏是无条件渲染的，且信息更全（状态点、endpoint、运行状态、累计流量），侧边栏那份纯属冗余。
+- 顺带发现侧边栏副本把内核名硬编码成 "Mihomo"，而状态栏用 `runtime.kind().display_name()`——切到 sing-box 时侧边栏会显示错误的内核名。删除副本一并修掉了这个潜在错标。
+- 删除后编译器报 `ControllerState::Failed` 的 `message` 字段无人读取，说明侧边栏曾是失败原因的唯一出口。没有让它随删除消失，而是并入状态栏标签，并加测试锁定该行为。
+- 以 TDD 抽出纯函数 `controller_status_label(controller, kernel_name, language)`，由状态栏复用；测试覆盖 sing-box 命名、中英文、以及失败原因必须保留。
+- 全仓验证通过：235 passed、4 ignored、0 failed；`cargo fmt` 与 `--all-targets` 严格 Clippy 通过。
+- 视觉确认：宽屏侧边栏左下角不再有重复行，状态栏保留完整信息。侧边栏在每个页面都渲染，因此 35 张基线截图同步更新，属预期而非噪音。
+- 本轮基于远端 main `50d592a`，在独立 worktree 进行。

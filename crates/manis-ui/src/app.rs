@@ -3581,45 +3581,6 @@ impl ManisApp {
             ),
         ];
         let show_labels = size_class == WindowSizeClass::Wide;
-        let source_label = if show_labels {
-            match &self.controller {
-                ControllerState::Disconnected => language
-                    .text("Mihomo disconnected", "Mihomo 未连接")
-                    .to_owned(),
-                ControllerState::Connecting { endpoint } => {
-                    language
-                        .text("Connecting to controller", "正在连接控制器")
-                        .to_owned()
-                        + " · "
-                        + endpoint
-                }
-                ControllerState::Connected {
-                    version,
-                    active_connections,
-                    ..
-                } => {
-                    if language == Language::English {
-                        format!("Mihomo {version} · {active_connections} connections")
-                    } else {
-                        format!("Mihomo {version} · {active_connections} 条连接")
-                    }
-                }
-                ControllerState::Failed { message, .. } => {
-                    language.text("Connection failed", "连接失败").to_owned() + " · " + message
-                }
-            }
-        } else {
-            match &self.controller {
-                ControllerState::Disconnected => language.text("Disconnected", "未连接").to_owned(),
-                ControllerState::Connecting { .. } => {
-                    language.text("Connecting", "连接中").to_owned()
-                }
-                ControllerState::Connected { .. } => {
-                    language.text("Connected", "已连接").to_owned()
-                }
-                ControllerState::Failed { .. } => language.text("Failed", "失败").to_owned(),
-            }
-        };
         let width = match size_class {
             WindowSizeClass::Wide => 220.0,
             WindowSizeClass::Medium => 66.0,
@@ -3699,14 +3660,6 @@ impl ManisApp {
                         cx.notify();
                     }))
             }))
-            .child(div().flex_1())
-            .child(
-                div()
-                    .p_2()
-                    .text_size(px(11.0))
-                    .text_color(theme.text_tertiary)
-                    .child(source_label),
-            )
     }
 
     fn empty_policy_workspace(&self, theme: Theme, cx: &mut Context<Self>) -> Div {
@@ -4714,33 +4667,28 @@ impl ManisApp {
     fn status_bar(&self, theme: Theme) -> Div {
         let language = self.language();
         let kernel_name = self.runtime.kind().display_name();
-        let (source, endpoint, download, upload, dot) = match &self.controller {
+        let source = controller_status_label(&self.controller, kernel_name, language);
+        let (endpoint, download, upload, dot) = match &self.controller {
             ControllerState::Disconnected => (
-                format!("{kernel_name} {}", language.text("disconnected", "未连接")),
                 language.text("No runtime data", "无运行数据").to_owned(),
                 "↓ —".to_owned(),
                 "↑ —".to_owned(),
                 theme.route_trace,
             ),
-            ControllerState::Connecting { endpoint } => (
-                format!("{kernel_name} {}", language.text("connecting", "连接中")),
-                endpoint.clone(),
-                "↓ —".to_owned(),
-                "↑ —".to_owned(),
-                theme.route_trace,
-            ),
+            ControllerState::Connecting { endpoint } | ControllerState::Failed { endpoint, .. } => {
+                (
+                    endpoint.clone(),
+                    "↓ —".to_owned(),
+                    "↑ —".to_owned(),
+                    theme.route_trace,
+                )
+            }
             ControllerState::Connected {
                 endpoint,
-                version,
-                active_connections,
                 download_total,
                 upload_total,
+                ..
             } => (
-                if language == Language::English {
-                    format!("{kernel_name} {version} · {active_connections} connections")
-                } else {
-                    format!("{kernel_name} {version} · {active_connections} 条连接")
-                },
                 endpoint.clone(),
                 format!(
                     "{}↓ {}",
@@ -4753,16 +4701,6 @@ impl ManisApp {
                     format_bytes(*upload_total)
                 ),
                 theme.status_success,
-            ),
-            ControllerState::Failed { endpoint, .. } => (
-                format!(
-                    "{kernel_name} {}",
-                    language.text("connection failed", "连接失败")
-                ),
-                endpoint.clone(),
-                "↓ —".to_owned(),
-                "↑ —".to_owned(),
-                theme.route_trace,
             ),
         };
 
@@ -4814,6 +4752,41 @@ fn format_bytes_in_unit(bytes: u64, unit: u64, suffix: &str) -> String {
     let whole = bytes / unit;
     let tenth = (bytes % unit) * 10 / unit;
     format!("{whole}.{tenth} {suffix}")
+}
+
+/// Builds the one-line controller summary shown in the status bar.
+///
+/// The kernel name is supplied by the caller so the line always names the kernel that is
+/// actually running rather than assuming Mihomo.
+fn controller_status_label(
+    controller: &ControllerState,
+    kernel_name: &str,
+    language: Language,
+) -> String {
+    match controller {
+        ControllerState::Disconnected => {
+            format!("{kernel_name} {}", language.text("disconnected", "未连接"))
+        }
+        ControllerState::Connecting { .. } => {
+            format!("{kernel_name} {}", language.text("connecting", "连接中"))
+        }
+        ControllerState::Connected {
+            version,
+            active_connections,
+            ..
+        } => {
+            if language == Language::English {
+                format!("{kernel_name} {version} · {active_connections} connections")
+            } else {
+                format!("{kernel_name} {version} · {active_connections} 条连接")
+            }
+        }
+        // The reason travels with the label: the sidebar used to be the only place it appeared.
+        ControllerState::Failed { message, .. } => format!(
+            "{kernel_name} {} · {message}",
+            language.text("connection failed", "连接失败")
+        ),
+    }
 }
 
 fn proxy_mode_label(language: Language, mode: ProxyMode) -> &'static str {
@@ -5433,6 +5406,55 @@ mod tests {
                 TunSupport::Supported
             ),
             Some(ProxyModeBlock::Busy)
+        );
+    }
+
+    #[test]
+    fn the_status_line_names_the_kernel_that_is_actually_running() {
+        let connected = crate::mihomo::ControllerState::Connected {
+            endpoint: "http://127.0.0.1:9090".to_owned(),
+            version: "1.13.19".to_owned(),
+            active_connections: 5,
+            download_total: 0,
+            upload_total: 0,
+        };
+
+        // Hard-coding "Mihomo" here would mislabel every sing-box session.
+        assert_eq!(
+            super::controller_status_label(
+                &connected,
+                "sing-box",
+                crate::localization::Language::SimplifiedChinese
+            ),
+            "sing-box 1.13.19 · 5 条连接"
+        );
+        assert_eq!(
+            super::controller_status_label(
+                &connected,
+                "Mihomo",
+                crate::localization::Language::English
+            ),
+            "Mihomo 1.13.19 · 5 connections"
+        );
+        assert_eq!(
+            super::controller_status_label(
+                &crate::mihomo::ControllerState::Disconnected,
+                "sing-box",
+                crate::localization::Language::SimplifiedChinese
+            ),
+            "sing-box 未连接"
+        );
+        // The failure reason must survive; the status bar is now its only home.
+        assert_eq!(
+            super::controller_status_label(
+                &crate::mihomo::ControllerState::Failed {
+                    endpoint: "http://127.0.0.1:9090".to_owned(),
+                    message: "connection refused".to_owned(),
+                },
+                "Mihomo",
+                crate::localization::Language::SimplifiedChinese
+            ),
+            "Mihomo 连接失败 · connection refused"
         );
     }
 }
