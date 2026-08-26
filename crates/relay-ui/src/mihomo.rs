@@ -30,6 +30,7 @@ use relay_profile::{
     write_private_atomic,
 };
 
+use crate::diagnostics::{LogLevel, record_event};
 use crate::subscription::VlessSource;
 
 const CONTROLLER_ENV: &str = "RELAY_MIHOMO_CONTROLLER";
@@ -332,9 +333,28 @@ impl ControllerRuntime {
     }
 
     pub(crate) fn set_tun_enabled(&self, enabled: bool) -> Result<(), LoadError> {
+        record_event(
+            LogLevel::Info,
+            "controller.tun.requested",
+            format!(
+                "enabled={enabled} ownership={}",
+                if matches!(self, Self::Managed { .. }) {
+                    "managed"
+                } else if matches!(self, Self::External { .. }) {
+                    "external"
+                } else {
+                    "invalid"
+                }
+            ),
+        );
         #[cfg(target_os = "macos")]
-        if enabled {
-            self.ensure_privileged_mihomo()?;
+        if enabled && let Err(error) = self.ensure_privileged_mihomo() {
+            record_event(
+                LogLevel::Error,
+                "controller.tun.failed",
+                format!("enabled=true phase=privilege_promotion error={error}"),
+            );
+            return Err(error);
         }
         let controller_secret = self.controller_secret();
         let endpoint = match self {
@@ -354,7 +374,20 @@ impl ControllerRuntime {
             }
             Self::Invalid { message } => return Err(LoadError::Runtime(message.clone())),
         };
-        set_tun_enabled(&endpoint, enabled, controller_secret.as_deref()).map_err(LoadError::from)
+        let result = set_tun_enabled(&endpoint, enabled, controller_secret.as_deref());
+        match &result {
+            Ok(()) => record_event(
+                LogLevel::Info,
+                "controller.tun.succeeded",
+                format!("enabled={enabled} endpoint={endpoint}"),
+            ),
+            Err(error) => record_event(
+                LogLevel::Error,
+                "controller.tun.failed",
+                format!("enabled={enabled} error={error}"),
+            ),
+        }
+        result.map_err(LoadError::from)
     }
 
     #[cfg(target_os = "macos")]
@@ -378,10 +411,20 @@ impl ControllerRuntime {
             ));
         }
         if privileged.load(Ordering::Acquire) {
+            record_event(
+                LogLevel::Debug,
+                "helper.promotion.skipped",
+                "reason=already_privileged",
+            );
             return Ok(());
         }
 
         // Registration and approval are checked before touching the healthy unprivileged core.
+        record_event(
+            LogLevel::Info,
+            "helper.promotion.requested",
+            "kernel=mihomo",
+        );
         let spawner = MacosPrivilegedProcessSpawner::prepare()
             .map_err(|error| LoadError::Runtime(format!("无法准备 macOS TUN 辅助服务：{error}")))?;
         let final_path = spec.data_dir.join(GENERATED_PROFILE_FILE);
@@ -392,8 +435,18 @@ impl ControllerRuntime {
             .lock()
             .map_err(|_poisoned| LoadError::Runtime("托管内核状态锁已损坏".to_owned()))?;
         let was_running = manager.running_endpoint()?.is_some();
+        record_event(
+            LogLevel::Info,
+            "helper.promotion.prepared",
+            format!("ordinary_core_running={was_running}"),
+        );
         if was_running {
             manager.stop()?;
+            record_event(
+                LogLevel::Info,
+                "helper.promotion.ordinary_core_stopped",
+                "ordinary Mihomo stopped before privileged launch",
+            );
         }
         *manager = EngineManager::with_adapters(
             config,
@@ -404,9 +457,19 @@ impl ControllerRuntime {
         match manager.start() {
             Ok(_endpoint) => {
                 privileged.store(true, Ordering::Release);
+                record_event(
+                    LogLevel::Info,
+                    "helper.promotion.succeeded",
+                    "privileged Mihomo controller became ready",
+                );
                 Ok(())
             }
             Err(privileged_error) => {
+                record_event(
+                    LogLevel::Error,
+                    "helper.promotion.failed",
+                    privileged_error.to_string(),
+                );
                 let fallback_config = managed_engine_config(spec, final_path);
                 *manager = EngineManager::new(
                     fallback_config,
@@ -430,6 +493,11 @@ impl ControllerRuntime {
     }
 
     pub(crate) fn set_routing_mode(&self, mode: RoutingMode) -> Result<(), LoadError> {
+        record_event(
+            LogLevel::Info,
+            "controller.routing.requested",
+            format!("mode={mode:?}"),
+        );
         let controller_secret = self.controller_secret();
         let endpoint = match self {
             Self::Managed { manager, .. } => {
@@ -448,7 +516,20 @@ impl ControllerRuntime {
             }
             Self::Invalid { message } => return Err(LoadError::Runtime(message.clone())),
         };
-        set_routing_mode(&endpoint, mode, controller_secret.as_deref()).map_err(LoadError::from)
+        let result = set_routing_mode(&endpoint, mode, controller_secret.as_deref());
+        match &result {
+            Ok(()) => record_event(
+                LogLevel::Info,
+                "controller.routing.succeeded",
+                format!("mode={mode:?} endpoint={endpoint}"),
+            ),
+            Err(error) => record_event(
+                LogLevel::Error,
+                "controller.routing.failed",
+                format!("mode={mode:?} error={error}"),
+            ),
+        }
+        result.map_err(LoadError::from)
     }
 
     pub(crate) fn select_global_node(
@@ -3002,6 +3083,11 @@ pub(crate) fn configured_runtime(store_dir: Option<&Path>) -> ControllerRuntime 
     let subscription_file = env::var_os(SUBSCRIPTION_FILE_ENV);
     if config_file.is_none() && subscription_file.is_none() {
         if env::var_os(CONTROLLER_ENV).is_some() {
+            record_event(
+                LogLevel::Info,
+                "runtime.classified.external",
+                "reason=controller_environment_override",
+            );
             return ControllerRuntime::External {
                 endpoint: configured_endpoint(),
             };
@@ -3038,6 +3124,11 @@ pub(crate) fn configured_runtime(store_dir: Option<&Path>) -> ControllerRuntime 
 
 fn configured_default_mihomo_runtime(store_dir: Option<&Path>) -> ControllerRuntime {
     if env::var_os(CONTROLLER_ENV).is_some() {
+        record_event(
+            LogLevel::Info,
+            "runtime.classified.external",
+            "reason=controller_environment_override",
+        );
         return ControllerRuntime::External {
             endpoint: configured_endpoint(),
         };
@@ -3045,9 +3136,19 @@ fn configured_default_mihomo_runtime(store_dir: Option<&Path>) -> ControllerRunt
     if let Some(store_dir) = store_dir
         && saved_profile_inputs_exist(store_dir)
     {
+        record_event(
+            LogLevel::Info,
+            "runtime.classified.managed",
+            "reason=saved_proxy_sources_present",
+        );
         return build_saved_sources_mihomo_runtime(store_dir)
             .unwrap_or_else(|message| ControllerRuntime::Invalid { message });
     }
+    record_event(
+        LogLevel::Info,
+        "runtime.classified.external",
+        "reason=no_saved_proxy_sources",
+    );
     ControllerRuntime::External {
         endpoint: configured_endpoint(),
     }

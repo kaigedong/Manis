@@ -3,13 +3,15 @@ import Darwin
 import Security
 
 private let serviceName = "dev.relay.prototype.helper"
-private let helperProtocolVersion = "v2"
+private let helperProtocolVersion = "v3"
 private let requiredClientRequirement =
     ProcessInfo.processInfo.environment["RELAY_REQUIRED_CLIENT_REQUIREMENT"] ?? ""
 private let allowInsecureLocalRequirement =
     ProcessInfo.processInfo.environment["RELAY_ALLOW_INSECURE_LOCAL_HELPER"] == "1"
 private let logPath = "/var/log/relay-mihomo-helper.log"
 private let maximumConfigBytes = 16 * 1024 * 1024
+private let maximumCoreLogBytes: off_t = 4 * 1024 * 1024
+private let coreLogName = "relay-privileged-core.log"
 
 @objc(RelayPrivilegedHelperProtocol)
 protocol RelayPrivilegedHelperProtocol {
@@ -78,20 +80,21 @@ final class HelperCore {
     private var child: Process?
     private var childOwner: uid_t?
     private var stagedConfig: String?
+    private var lastExitReason = "not-started"
 
     func status(owner: uid_t, withReply reply: @escaping (String, Int32) -> Void) {
         lock.withLock {
             reapExitedChild()
             if let process = child, process.isRunning {
                 guard childOwner == owner else {
-                    reply("stopped \(helperProtocolVersion)", 0)
+                    reply("stopped \(helperProtocolVersion) \(lastExitReason)", 0)
                     return
                 }
                 reply("running \(process.processIdentifier) \(helperProtocolVersion)", 0)
             } else {
                 child = nil
                 childOwner = nil
-                reply("stopped \(helperProtocolVersion)", 0)
+                reply("stopped \(helperProtocolVersion) \(lastExitReason)", 0)
             }
         }
     }
@@ -105,6 +108,7 @@ final class HelperCore {
     ) {
         lock.withLock {
             var candidate: StagedRuntime?
+            var coreLog: FileHandle?
             do {
                 reapExitedChild()
                 if let process = child, process.isRunning {
@@ -123,9 +127,15 @@ final class HelperCore {
                 let mihomoBinary = try bundledMihomoPath()
                 try validateExecutable(mihomoBinary)
                 try validateRuntime(request, owner: owner)
+                coreLog = try openCoreLogHandle(dataDir: request.dataDir, owner: owner)
+                writeCoreLogMarker(coreLog, message: "helper start requested")
                 let staged = try stageRuntime(request, owner: owner)
                 candidate = staged
-                try validateStagedRuntime(staged, mihomoBinary: mihomoBinary)
+                try validateStagedRuntime(
+                    staged,
+                    mihomoBinary: mihomoBinary,
+                    output: coreLog ?? FileHandle.nullDevice
+                )
 
                 let process = Process()
                 process.executableURL = URL(fileURLWithPath: mihomoBinary)
@@ -136,20 +146,25 @@ final class HelperCore {
                     "-ext-ctl-unix", request.controller,
                 ]
                 process.environment = [:]
-                process.standardOutput = FileHandle.nullDevice
-                process.standardError = FileHandle.nullDevice
+                process.standardOutput = coreLog ?? FileHandle.nullDevice
+                process.standardError = coreLog ?? FileHandle.nullDevice
                 process.standardInput = FileHandle.nullDevice
                 try process.run()
+                try? coreLog?.close()
+                coreLog = nil
                 child = process
                 childOwner = owner
                 stagedConfig = staged.config
+                lastExitReason = "running"
                 candidate = nil
                 appendLog("started mihomo pid \(process.processIdentifier)")
                 reply("started \(process.processIdentifier)", 0)
             } catch {
+                try? coreLog?.close()
                 if let candidate {
                     try? FileManager.default.removeItem(atPath: candidate.config)
                 }
+                lastExitReason = "start-failed"
                 appendLog("start failed: \(error)")
                 reply("error \(error)", 1)
             }
@@ -168,9 +183,16 @@ final class HelperCore {
                 while process.isRunning && Date() < deadline {
                     Thread.sleep(forTimeInterval: 0.05)
                 }
+                var forced = false
                 if process.isRunning {
+                    forced = true
                     kill(process.processIdentifier, SIGKILL)
+                    process.waitUntilExit()
                 }
+                lastExitReason = describeExit(process, requested: true, forced: forced)
+                appendLog(
+                    "stopping mihomo pid \(process.processIdentifier) reason \(lastExitReason)"
+                )
             }
             child = nil
             childOwner = nil
@@ -182,7 +204,10 @@ final class HelperCore {
 
     private func reapExitedChild() {
         if let process = child, !process.isRunning {
-            appendLog("mihomo exited pid \(process.processIdentifier)")
+            lastExitReason = describeExit(process, requested: false, forced: false)
+            appendLog(
+                "mihomo exited pid \(process.processIdentifier) reason \(lastExitReason)"
+            )
             child = nil
             childOwner = nil
             removeStagedConfig()
@@ -345,15 +370,19 @@ private func stageRuntime(_ request: LaunchRequest, owner: uid_t) throws -> Stag
     return StagedRuntime(dataDir: root, config: config.path)
 }
 
-private func validateStagedRuntime(_ runtime: StagedRuntime, mihomoBinary: String) throws {
+private func validateStagedRuntime(
+    _ runtime: StagedRuntime,
+    mihomoBinary: String,
+    output: FileHandle
+) throws {
     let validation = Process()
     validation.executableURL = URL(fileURLWithPath: mihomoBinary)
     validation.currentDirectoryURL = URL(fileURLWithPath: runtime.dataDir)
     validation.arguments = ["-t", "-d", runtime.dataDir, "-f", runtime.config]
     validation.environment = [:]
     validation.standardInput = FileHandle.nullDevice
-    validation.standardOutput = FileHandle.nullDevice
-    validation.standardError = FileHandle.nullDevice
+    validation.standardOutput = output
+    validation.standardError = output
     try validation.run()
 
     let deadline = Date().addingTimeInterval(10)
@@ -367,6 +396,61 @@ private func validateStagedRuntime(_ runtime: StagedRuntime, mihomoBinary: Strin
     }
     guard validation.terminationStatus == 0 else {
         throw HelperError.invalidRuntime("Mihomo rejected the staged config")
+    }
+}
+
+private func openCoreLogHandle(dataDir: String, owner: uid_t) throws -> FileHandle {
+    let path = URL(fileURLWithPath: dataDir).appendingPathComponent(coreLogName).path
+    let descriptor = open(path, O_WRONLY | O_CREAT | O_APPEND | O_NOFOLLOW, 0o600)
+    guard descriptor >= 0 else {
+        throw HelperError.invalidRuntime("could not open privileged Mihomo log safely")
+    }
+    var metadata = stat()
+    guard fstat(descriptor, &metadata) == 0,
+        (metadata.st_uid == owner || metadata.st_uid == 0),
+        metadata.st_mode & S_IFMT == S_IFREG
+    else {
+        close(descriptor)
+        throw HelperError.invalidRuntime("privileged Mihomo log ownership or type is unsafe")
+    }
+    guard fchown(descriptor, owner, gid_t(bitPattern: Int32(-1))) == 0 else {
+        close(descriptor)
+        throw HelperError.invalidRuntime("could not assign privileged Mihomo log ownership")
+    }
+    guard fchmod(descriptor, 0o600) == 0 else {
+        close(descriptor)
+        throw HelperError.invalidRuntime("could not secure privileged Mihomo log")
+    }
+    if metadata.st_size > maximumCoreLogBytes {
+        guard ftruncate(descriptor, 0) == 0 else {
+            close(descriptor)
+            throw HelperError.invalidRuntime("could not rotate privileged Mihomo log")
+        }
+    }
+    return FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+}
+
+private func writeCoreLogMarker(_ handle: FileHandle?, message: String) {
+    guard let handle,
+        let data = "\n--- \(Date()) \(message) ---\n".data(using: .utf8)
+    else {
+        return
+    }
+    try? handle.write(contentsOf: data)
+}
+
+private func describeExit(_ process: Process, requested: Bool, forced: Bool) -> String {
+    let prefix = requested ? "requested" : "unexpected"
+    if forced {
+        return "\(prefix)-forced-signal-9"
+    }
+    switch process.terminationReason {
+    case .exit:
+        return "\(prefix)-exit-\(process.terminationStatus)"
+    case .uncaughtSignal:
+        return "\(prefix)-signal-\(process.terminationStatus)"
+    @unknown default:
+        return "\(prefix)-unknown-\(process.terminationStatus)"
     }
 }
 

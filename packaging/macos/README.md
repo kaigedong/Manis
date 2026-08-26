@@ -7,7 +7,7 @@ The Rust app invokes `Contents/MacOS/relay-helperctl` with this stable contract:
 
 ```text
 relay-helperctl status
-  stdout: running <pid> v2 | stopped v2
+  stdout: running <pid> v3 | stopped v3 <last-exit-reason>
 
 relay-helperctl start --data-dir PATH --config PATH --controller PATH
   stdout: started <pid>
@@ -31,6 +31,12 @@ for the Relay user data boundary:
 ```text
 /Users/<user>/Library/Application Support/Relay/mihomo
 ```
+
+The app keeps its redacted, correlated operation log at
+`~/Library/Application Support/Relay/logs/relay-events.log`. Privileged Mihomo startup and stderr
+output is capped and written to
+`~/Library/Application Support/Relay/mihomo/relay-privileged-core.log`; subscription URLs and
+tokens are never added by Relay's event logger.
 
 Build a local bundle:
 

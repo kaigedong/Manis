@@ -83,10 +83,15 @@ impl RelayApp {
                 );
             }
             for entry in logs.into_iter().rev() {
+                let reference = entry.operation_id.map_or_else(
+                    || format!("#{:04}", entry.sequence),
+                    |operation| format!("#{:04} · OP-{operation:04}", entry.sequence),
+                );
                 rows = rows.child(
                     div()
-                        .min_h(px(42.0))
+                        .min_h(px(48.0))
                         .px_5()
+                        .py_2()
                         .flex()
                         .items_center()
                         .gap_4()
@@ -99,16 +104,31 @@ impl RelayApp {
                                 .font_family("monospace")
                                 .text_size(px(11.0))
                                 .text_color(theme.text_tertiary)
-                                .child(format!("#{:04}", entry.sequence)),
+                                .child(reference),
+                        )
+                        .child(
+                            div()
+                                .w(px(64.0))
+                                .flex_shrink_0()
+                                .text_size(px(10.0))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(theme.action_primary)
+                                .child(entry.level),
                         )
                         .child(
                             div()
                                 .flex_1()
                                 .min_w_0()
+                                .flex()
+                                .flex_col()
+                                .gap_1()
                                 .font_family("monospace")
                                 .text_size(px(11.0))
                                 .text_color(theme.text_primary)
-                                .child(entry.event),
+                                .child(entry.event)
+                                .when_some(entry.detail, |row, detail| {
+                                    row.child(div().text_color(theme.text_secondary).child(detail))
+                                }),
                         )
                         .child(
                             div()
@@ -188,11 +208,11 @@ impl RelayApp {
 fn logs_summary(language: Language, count: usize, live_status: &str, dropped: u64) -> String {
     match language {
         Language::English => format!(
-            "{count} entries · Mihomo {live_status} · dropped {dropped} overloaded logs · URLs/tokens redacted"
+            "{count} entries · persistent event chain with OP IDs · Mihomo {live_status} · dropped {dropped} overloaded logs · URLs/tokens redacted"
         ),
         Language::SimplifiedChinese => {
             format!(
-                "{count} 条 · Mihomo {live_status} · 已丢弃 {dropped} 条过载日志 · URL/令牌已脱敏"
+                "{count} 条 · 操作链与 OP 编号已持久化 · Mihomo {live_status} · 已丢弃 {dropped} 条过载日志 · URL/令牌已脱敏"
             )
         }
     }
@@ -217,7 +237,7 @@ mod tests {
     fn log_summary_uses_selected_language() {
         assert_eq!(
             super::logs_summary(crate::localization::Language::English, 2, "connected", 1),
-            "2 entries · Mihomo connected · dropped 1 overloaded logs · URLs/tokens redacted"
+            "2 entries · persistent event chain with OP IDs · Mihomo connected · dropped 1 overloaded logs · URLs/tokens redacted"
         );
         assert_eq!(
             super::logs_summary(
@@ -226,7 +246,7 @@ mod tests {
                 "已连接",
                 1
             ),
-            "2 条 · Mihomo 已连接 · 已丢弃 1 条过载日志 · URL/令牌已脱敏"
+            "2 条 · 操作链与 OP 编号已持久化 · Mihomo 已连接 · 已丢弃 1 条过载日志 · URL/令牌已脱敏"
         );
     }
 }

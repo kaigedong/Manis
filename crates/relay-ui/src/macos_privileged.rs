@@ -8,8 +8,10 @@ use std::time::Duration;
 
 use relay_engine::{CommandSpec, ManagedChild, ProcessExit, ProcessSpawner, StdProcessSpawner};
 
+use crate::diagnostics::{LogLevel, record_event};
+
 const HELPER_CONTROL_NAME: &str = "relay-helperctl";
-const HELPER_PROTOCOL_VERSION: &str = "v2";
+const HELPER_PROTOCOL_VERSION: &str = "v3";
 
 /// Process adapter backed by Relay's signed, root launch daemon.
 ///
@@ -25,8 +27,19 @@ impl MacosPrivilegedProcessSpawner {
         let control = helper_control_path()?;
         let status = run_control(&control, [OsStr::new("status")])?;
         if status.status.success() && is_current_status(&status.stdout) {
+            record_event(
+                LogLevel::Info,
+                "helper.prepare.succeeded",
+                helper_status_detail(&status.stdout),
+            );
             return Ok(Self { control });
         }
+
+        record_event(
+            LogLevel::Warn,
+            "helper.prepare.reinstall_requested",
+            control_error("query privileged helper", &status).to_string(),
+        );
 
         // A registered helper can be outdated or wedged and therefore fail to answer `status`.
         // `reinstall` handles both registered and not-yet-registered services, waiting for an old
@@ -39,6 +52,11 @@ impl MacosPrivilegedProcessSpawner {
         if !status.status.success() || !is_current_status(&status.stdout) {
             return Err(control_error("connect to privileged helper", &status));
         }
+        record_event(
+            LogLevel::Info,
+            "helper.prepare.reinstall_succeeded",
+            helper_status_detail(&status.stdout),
+        );
         Ok(Self { control })
     }
 
@@ -90,9 +108,19 @@ impl ProcessSpawner for MacosPrivilegedProcessSpawner {
             ],
         )?;
         if !output.status.success() {
+            record_event(
+                LogLevel::Error,
+                "helper.mihomo.start_failed",
+                control_error("start privileged Mihomo", &output).to_string(),
+            );
             return Err(control_error("start privileged Mihomo", &output));
         }
         let pid = parse_pid(&output.stdout, "started")?;
+        record_event(
+            LogLevel::Info,
+            "helper.mihomo.started",
+            format!("pid={pid}"),
+        );
         Ok(Box::new(PrivilegedManagedChild {
             control: self.control.clone(),
             pid,
@@ -121,26 +149,45 @@ impl ManagedChild for PrivilegedManagedChild {
         if !output.status.success() {
             return Err(control_error("query privileged Mihomo", &output));
         }
-        let status = String::from_utf8_lossy(&output.stdout);
-        let status = status.trim();
-        if status == format!("stopped {HELPER_PROTOCOL_VERSION}") {
-            return Ok(Some(ProcessExit::failure()));
+        match parse_helper_status(&output.stdout)? {
+            HelperStatus::Stopped { reason } => {
+                record_event(
+                    LogLevel::Error,
+                    "helper.mihomo.exited",
+                    format!("expected_pid={} reason={reason}", self.pid),
+                );
+                Ok(Some(ProcessExit::failure()))
+            }
+            HelperStatus::Running { pid } if pid == self.pid => Ok(None),
+            HelperStatus::Running { pid } => {
+                record_event(
+                    LogLevel::Error,
+                    "helper.mihomo.ownership_lost",
+                    format!("expected_pid={} actual_pid={pid}", self.pid),
+                );
+                Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "privileged helper no longer owns the expected Mihomo process",
+                ))
+            }
         }
-        let running_pid = parse_versioned_pid(&output.stdout, "running")?;
-        if running_pid != self.pid {
-            return Err(io::Error::new(
-                io::ErrorKind::NotFound,
-                "privileged helper no longer owns the expected Mihomo process",
-            ));
-        }
-        Ok(None)
     }
 
     fn terminate(&mut self) -> io::Result<ProcessExit> {
         let output = run_control(&self.control, [OsStr::new("stop")])?;
         if !output.status.success() {
+            record_event(
+                LogLevel::Error,
+                "helper.mihomo.stop_failed",
+                control_error("stop privileged Mihomo", &output).to_string(),
+            );
             return Err(control_error("stop privileged Mihomo", &output));
         }
+        record_event(
+            LogLevel::Info,
+            "helper.mihomo.stopped",
+            format!("pid={}", self.pid),
+        );
         Ok(ProcessExit::success())
     }
 }
@@ -197,27 +244,57 @@ fn parse_pid(bytes: &[u8], prefix: &str) -> io::Result<u32> {
         })
 }
 
-fn parse_versioned_pid(bytes: &[u8], prefix: &str) -> io::Result<u32> {
-    let output = String::from_utf8_lossy(bytes);
-    let mut fields = output.split_whitespace();
-    if fields.next() != Some(prefix) {
-        return Err(invalid_helper_response());
-    }
-    let pid = fields
-        .next()
-        .and_then(|value| value.parse::<u32>().ok())
-        .filter(|pid| *pid > 0)
-        .ok_or_else(invalid_helper_response)?;
-    if fields.next() != Some(HELPER_PROTOCOL_VERSION) || fields.next().is_some() {
-        return Err(invalid_helper_response());
-    }
-    Ok(pid)
+fn is_current_status(bytes: &[u8]) -> bool {
+    parse_helper_status(bytes).is_ok()
 }
 
-fn is_current_status(bytes: &[u8]) -> bool {
-    let status = String::from_utf8_lossy(bytes);
-    status.trim() == format!("stopped {HELPER_PROTOCOL_VERSION}")
-        || parse_versioned_pid(bytes, "running").is_ok()
+#[derive(Debug, Eq, PartialEq)]
+enum HelperStatus {
+    Running { pid: u32 },
+    Stopped { reason: String },
+}
+
+fn parse_helper_status(bytes: &[u8]) -> io::Result<HelperStatus> {
+    let output = String::from_utf8_lossy(bytes);
+    let mut fields = output.split_whitespace();
+    match fields.next() {
+        Some("running") => {
+            let pid = fields
+                .next()
+                .and_then(|value| value.parse::<u32>().ok())
+                .filter(|pid| *pid > 0)
+                .ok_or_else(invalid_helper_response)?;
+            if fields.next() != Some(HELPER_PROTOCOL_VERSION) || fields.next().is_some() {
+                return Err(invalid_helper_response());
+            }
+            Ok(HelperStatus::Running { pid })
+        }
+        Some("stopped") => {
+            if fields.next() != Some(HELPER_PROTOCOL_VERSION) {
+                return Err(invalid_helper_response());
+            }
+            let reason = fields.next().ok_or_else(invalid_helper_response)?;
+            if fields.next().is_some()
+                || !reason.chars().all(|character| {
+                    character.is_ascii_alphanumeric() || matches!(character, '-' | '_')
+                })
+            {
+                return Err(invalid_helper_response());
+            }
+            Ok(HelperStatus::Stopped {
+                reason: reason.to_owned(),
+            })
+        }
+        _ => Err(invalid_helper_response()),
+    }
+}
+
+fn helper_status_detail(bytes: &[u8]) -> String {
+    match parse_helper_status(bytes) {
+        Ok(HelperStatus::Running { pid }) => format!("state=running pid={pid}"),
+        Ok(HelperStatus::Stopped { reason }) => format!("state=stopped reason={reason}"),
+        Err(_) => "state=invalid_response".to_owned(),
+    }
 }
 
 fn invalid_helper_response() -> io::Error {
@@ -243,7 +320,10 @@ mod tests {
 
     use relay_engine::{ControllerEndpoint, ManagedEngineConfig};
 
-    use super::{MacosPrivilegedProcessSpawner, is_current_status, parse_pid, parse_versioned_pid};
+    use super::{
+        HelperStatus, MacosPrivilegedProcessSpawner, is_current_status, parse_helper_status,
+        parse_pid,
+    };
 
     #[test]
     fn parses_typed_helper_pid_response() {
@@ -257,12 +337,20 @@ mod tests {
     fn rejects_outdated_helper_status_and_accepts_current_status() {
         assert!(!is_current_status(b"stopped\n"));
         assert!(!is_current_status(b"running 42\n"));
-        assert!(is_current_status(b"stopped v2\n"));
-        assert!(is_current_status(b"running 42 v2\n"));
+        assert!(!is_current_status(b"stopped v2\n"));
+        assert!(is_current_status(b"stopped v3 not-started\n"));
+        assert!(is_current_status(b"running 42 v3\n"));
         assert_eq!(
-            parse_versioned_pid(b"running 42 v2\n", "running").unwrap(),
-            42
+            parse_helper_status(b"running 42 v3\n").unwrap(),
+            HelperStatus::Running { pid: 42 }
         );
+        assert_eq!(
+            parse_helper_status(b"stopped v3 unexpected-signal-9\n").unwrap(),
+            HelperStatus::Stopped {
+                reason: "unexpected-signal-9".to_owned()
+            }
+        );
+        assert!(parse_helper_status(b"stopped v3 bad reason\n").is_err());
     }
 
     #[test]

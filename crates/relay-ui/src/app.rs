@@ -17,7 +17,7 @@ use relay_profile::{QxRuleList, SecretUrl};
 
 use crate::{
     demo,
-    diagnostics::{UiEvent, trace_ui},
+    diagnostics::{self, LogLevel, UiEvent, begin_operation, record_operation, trace_ui},
     kernel::{self, KernelRuntime},
     localization::{Language, LanguagePreference, Localizer},
     mihomo::{
@@ -601,8 +601,25 @@ impl RelayApp {
     pub fn new() -> Self {
         let store = mihomo::imported_subscription_store_dir();
         let store = store.ok();
+        diagnostics::initialize(store.as_deref().and_then(std::path::Path::parent));
         let language = Localizer::load(store.as_deref()).language();
         let runtime = KernelRuntime::configured(store.as_deref(), language);
+        diagnostics::record_event(
+            LogLevel::Info,
+            "app.runtime.prepared",
+            format!(
+                "kernel={} ownership={} profile={}",
+                runtime.kind().display_name(),
+                if matches!(&*runtime, ControllerRuntime::Managed { .. }) {
+                    "managed"
+                } else if matches!(&*runtime, ControllerRuntime::External { .. }) {
+                    "external"
+                } else {
+                    "invalid"
+                },
+                runtime.profile_source().label()
+            ),
+        );
         let app = Self::with_runtime_and_store(runtime, store);
         #[cfg(not(test))]
         let app = {
@@ -758,16 +775,46 @@ impl RelayApp {
 
     fn shutdown_for_quit(&mut self, _cx: &mut Context<Self>) -> Task<()> {
         let language = self.language();
-        if self.proxy_mode == ProxyMode::Tun && self.runtime.set_tun_enabled(false).is_err() {
-            eprintln!("relay_ui level=WARN event=tun.shutdown_failed");
+        let operation = begin_operation(
+            "app.shutdown.requested",
+            format!("proxy_mode={:?}", self.proxy_mode),
+        );
+        if self.proxy_mode == ProxyMode::Tun {
+            match self.runtime.set_tun_enabled(false) {
+                Ok(()) => record_operation(
+                    operation,
+                    LogLevel::Info,
+                    "tun.shutdown.succeeded",
+                    "controller accepted disable request",
+                ),
+                Err(error) => record_operation(
+                    operation,
+                    LogLevel::Error,
+                    "tun.shutdown.failed",
+                    error.to_string(),
+                ),
+            }
         }
         if let Ok(mut system) = self.system_proxy.lock()
             && let Err(error) = system.shutdown_with_language(language)
         {
-            eprintln!("relay_ui level=WARN event=system_proxy.shutdown_failed message={error}");
+            record_operation(
+                operation,
+                LogLevel::Error,
+                "system_proxy.shutdown.failed",
+                error.to_string(),
+            );
         }
-        if self.runtime.stop_managed().is_err() {
-            eprintln!("relay_ui level=WARN event=kernel.shutdown_failed");
+        match self.runtime.stop_managed() {
+            Ok(()) => record_operation(
+                operation,
+                LogLevel::Info,
+                "kernel.shutdown.succeeded",
+                "managed kernel stop completed",
+            ),
+            Err(error) => {
+                record_operation(operation, LogLevel::Error, "kernel.shutdown.failed", error);
+            }
         }
         Task::ready(())
     }
@@ -1702,6 +1749,15 @@ impl RelayApp {
         }
 
         let language = self.language();
+        let operation = begin_operation(
+            "kernel.connect.requested",
+            format!(
+                "kernel={} profile={} endpoint={}",
+                self.runtime.kind().display_name(),
+                self.runtime.profile_source().label(),
+                self.runtime.endpoint_label()
+            ),
+        );
         self.live_generation = self.live_generation.wrapping_add(1);
         self.live_runtime = None;
         self.live_status = LiveStreamStatus {
@@ -1729,6 +1785,12 @@ impl RelayApp {
                 let language = this.language();
                 match result {
                     Ok(result) => {
+                        record_operation(
+                            operation,
+                            LogLevel::Info,
+                            "kernel.connect.succeeded",
+                            format!("endpoint={}", result.controller_endpoint),
+                        );
                         let controller_endpoint = result.controller_endpoint;
                         let controller_secret = result.controller_secret;
                         this.apply_mihomo_snapshot(result.endpoint, result.snapshot);
@@ -1739,6 +1801,12 @@ impl RelayApp {
                         );
                     }
                     Err(error) => {
+                        record_operation(
+                            operation,
+                            LogLevel::Error,
+                            "kernel.connect.failed",
+                            error.to_string(),
+                        );
                         trace_ui(UiEvent::MihomoConnectFailed);
                         let endpoint = this
                             .controller
@@ -2125,10 +2193,35 @@ impl RelayApp {
     #[allow(clippy::too_many_lines)]
     fn apply_proxy_mode(&mut self, requested: ProxyMode, cx: &mut Context<Self>) {
         let language = self.language();
+        let operation = begin_operation(
+            "proxy.mode.requested",
+            format!(
+                "from={:?} to={requested:?} controller_state={} profile={}",
+                self.proxy_mode,
+                controller_state_label(&self.controller),
+                self.runtime.profile_source().label()
+            ),
+        );
         if self.proxy_mode_busy || requested == self.proxy_mode {
+            record_operation(
+                operation,
+                LogLevel::Warn,
+                "proxy.mode.ignored",
+                format!(
+                    "busy={} already_selected={}",
+                    self.proxy_mode_busy,
+                    requested == self.proxy_mode
+                ),
+            );
             return;
         }
         if !matches!(self.controller, ControllerState::Connected { .. }) {
+            record_operation(
+                operation,
+                LogLevel::Error,
+                "proxy.mode.rejected",
+                "reason=controller_not_connected",
+            );
             trace_ui(UiEvent::ProxyModeFailed);
             self.status = format!(
                 "{} {}",
@@ -2142,6 +2235,12 @@ impl RelayApp {
             return;
         }
         if requested == ProxyMode::Tun && !self.runtime.capabilities().tun {
+            record_operation(
+                operation,
+                LogLevel::Error,
+                "proxy.mode.rejected",
+                "reason=kernel_has_no_tun_capability",
+            );
             trace_ui(UiEvent::ProxyModeFailed);
             language.text(
                 "TUN is not yet available for the sing-box adapter; use the system HTTP/SOCKS proxy",
@@ -2154,6 +2253,12 @@ impl RelayApp {
         if requested == ProxyMode::Tun
             && matches!(&*self.runtime, ControllerRuntime::External { .. })
         {
+            record_operation(
+                operation,
+                LogLevel::Error,
+                "proxy.mode.rejected",
+                "reason=external_controller_read_only",
+            );
             trace_ui(UiEvent::ProxyModeFailed);
             language
                 .text(
@@ -2254,6 +2359,12 @@ impl RelayApp {
                 this.proxy_mode_busy = false;
                 match result {
                     Ok(()) => {
+                        record_operation(
+                            operation,
+                            LogLevel::Info,
+                            "proxy.mode.succeeded",
+                            format!("active={requested:?}"),
+                        );
                         this.proxy_mode = requested;
                         match requested {
                             ProxyMode::Off => trace_ui(UiEvent::SystemProxyDisabled),
@@ -2267,6 +2378,12 @@ impl RelayApp {
                         );
                     }
                     Err(message) => {
+                        record_operation(
+                            operation,
+                            LogLevel::Error,
+                            "proxy.mode.failed",
+                            message.clone(),
+                        );
                         trace_ui(UiEvent::ProxyModeFailed);
                         this.status = format!(
                             "{}{message}",
@@ -2282,12 +2399,38 @@ impl RelayApp {
         cx.notify();
     }
 
+    #[allow(clippy::too_many_lines)]
     fn apply_routing_mode(&mut self, requested: RoutingMode, cx: &mut Context<Self>) {
         let language = self.language();
+        let operation = begin_operation(
+            "routing.mode.requested",
+            format!(
+                "from={:?} to={requested:?} controller_state={} profile={}",
+                self.routing_mode,
+                controller_state_label(&self.controller),
+                self.runtime.profile_source().label()
+            ),
+        );
         if self.routing_mode_busy.is_some() || requested == self.routing_mode {
+            record_operation(
+                operation,
+                LogLevel::Warn,
+                "routing.mode.ignored",
+                format!(
+                    "busy={} already_selected={}",
+                    self.routing_mode_busy.is_some(),
+                    requested == self.routing_mode
+                ),
+            );
             return;
         }
         if !matches!(self.controller, ControllerState::Connected { .. }) {
+            record_operation(
+                operation,
+                LogLevel::Error,
+                "routing.mode.rejected",
+                "reason=controller_not_connected",
+            );
             trace_ui(UiEvent::RoutingModeFailed);
             language
                 .text(
@@ -2299,6 +2442,12 @@ impl RelayApp {
             return;
         }
         if matches!(&*self.runtime, ControllerRuntime::External { .. }) {
+            record_operation(
+                operation,
+                LogLevel::Error,
+                "routing.mode.rejected",
+                "reason=external_controller_read_only",
+            );
             trace_ui(UiEvent::RoutingModeFailed);
             language.text(
                 "External controllers are read-only; use a Relay-managed kernel to change routing mode",
@@ -2333,6 +2482,12 @@ impl RelayApp {
                 this.routing_mode_busy = None;
                 match result {
                     Ok(persistence) => {
+                        record_operation(
+                            operation,
+                            LogLevel::Info,
+                            "routing.mode.succeeded",
+                            format!("active={requested:?} persisted={}", persistence.is_ok()),
+                        );
                         this.routing_mode = requested;
                         this.proxy_runtime.mode = requested;
                         trace_ui(UiEvent::RoutingModeChanged);
@@ -2366,6 +2521,12 @@ impl RelayApp {
                         }
                     }
                     Err(error) => {
+                        record_operation(
+                            operation,
+                            LogLevel::Error,
+                            "routing.mode.failed",
+                            error.to_string(),
+                        );
                         trace_ui(UiEvent::RoutingModeFailed);
                         this.status = format!(
                             "{}{error}",
@@ -2381,12 +2542,33 @@ impl RelayApp {
         cx.notify();
     }
 
+    #[allow(clippy::too_many_lines)]
     fn select_global_node(&mut self, selected_name: String, cx: &mut Context<Self>) {
         let language = self.language();
+        let operation = begin_operation(
+            "global.node.requested",
+            format!(
+                "controller_state={} profile={} candidate_selected=true",
+                controller_state_label(&self.controller),
+                self.runtime.profile_source().label()
+            ),
+        );
         if self.global_selection_busy.is_some() {
+            record_operation(
+                operation,
+                LogLevel::Warn,
+                "global.node.ignored",
+                "reason=selection_busy",
+            );
             return;
         }
         if !matches!(self.controller, ControllerState::Connected { .. }) {
+            record_operation(
+                operation,
+                LogLevel::Error,
+                "global.node.rejected",
+                "reason=controller_not_connected",
+            );
             trace_ui(UiEvent::GlobalNodeSelectionFailed);
             language
                 .text(
@@ -2398,6 +2580,12 @@ impl RelayApp {
             return;
         }
         if matches!(&*self.runtime, ControllerRuntime::External { .. }) {
+            record_operation(
+                operation,
+                LogLevel::Error,
+                "global.node.rejected",
+                "reason=external_controller_read_only",
+            );
             trace_ui(UiEvent::GlobalNodeSelectionFailed);
             language.text(
                 "External controllers are read-only; use a Relay-managed kernel to choose a global node",
@@ -2412,6 +2600,12 @@ impl RelayApp {
             .find(|group| group.name.eq_ignore_ascii_case("GLOBAL"))
             .is_some_and(|group| group.nodes.iter().any(|node| node.name == selected_name));
         if !is_candidate {
+            record_operation(
+                operation,
+                LogLevel::Error,
+                "global.node.rejected",
+                "reason=not_global_candidate",
+            );
             trace_ui(UiEvent::GlobalNodeSelectionFailed);
             language
                 .text(
@@ -2443,6 +2637,12 @@ impl RelayApp {
                 this.global_selection_busy = None;
                 match result {
                     Ok(snapshot) => {
+                        record_operation(
+                            operation,
+                            LogLevel::Info,
+                            "global.node.succeeded",
+                            "global selector confirmed target",
+                        );
                         let current = snapshot.current.as_deref().unwrap_or(&selected_name);
                         let _ = this.catalog.apply_selector_target("GLOBAL", current);
                         trace_ui(UiEvent::GlobalNodeSelected);
@@ -2459,6 +2659,12 @@ impl RelayApp {
                         };
                     }
                     Err(error) => {
+                        record_operation(
+                            operation,
+                            LogLevel::Error,
+                            "global.node.failed",
+                            error.to_string(),
+                        );
                         trace_ui(UiEvent::GlobalNodeSelectionFailed);
                         this.status = format!(
                             "{}{error}",
@@ -4002,6 +4208,15 @@ fn routing_mode_label(language: Language, mode: RoutingMode) -> &'static str {
         RoutingMode::Direct => language.text("Direct", "直连"),
         RoutingMode::Global => language.text("Global", "全局"),
         RoutingMode::Rule => language.text("Rules", "规则"),
+    }
+}
+
+fn controller_state_label(state: &ControllerState) -> &'static str {
+    match state {
+        ControllerState::Demo => "demo",
+        ControllerState::Connecting { .. } => "connecting",
+        ControllerState::Connected { .. } => "connected",
+        ControllerState::Failed { .. } => "failed",
     }
 }
 
