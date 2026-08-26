@@ -3127,12 +3127,6 @@ impl ManisApp {
                     .text_align(gpui::TextAlign::Right)
                     .child(language.text("Latency", "延迟")),
             )
-            .child(
-                div()
-                    .w(px(76.0))
-                    .text_align(gpui::TextAlign::Right)
-                    .child(language.text("Global", "全局出口")),
-            )
     }
 
     #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
@@ -3152,13 +3146,11 @@ impl ManisApp {
         let idle_latency = node.latency_label.clone().unwrap_or_else(|| "—".to_owned());
         let spinner_id = format!("{row_id}-latency");
         let global_identity = NodeIdentity::new(source_id, &node.name).ok();
-        let global_selectable = global_identity.is_some();
         let global_runtime_selected = self.runtime_global_target() == Some(node.name.as_str());
         let global_selected = global_identity.as_ref().is_some_and(|identity| {
             self.global_target_identity()
                 .map_or(global_runtime_selected, |selected| selected == identity)
         });
-        let global_busy = self.global_selection_busy.as_deref() == Some(node.name.as_str());
         let selection_locked = self.global_selection_busy.is_some();
         let selected_name = node.name.clone();
         let content = if compact {
@@ -3213,65 +3205,11 @@ impl ManisApp {
                     .tab_stop(!selection_locked)
                     .focusable()
                     .cursor_pointer()
-                    .child(
-                        div()
-                            .w(if compact { px(66.0) } else { px(76.0) })
-                            .flex_shrink_0()
-                            .flex()
-                            .items_center()
-                            .justify_end()
-                            .gap_2()
-                            .text_size(px(10.0))
-                            .font_weight(if global_selected {
-                                FontWeight::SEMIBOLD
-                            } else {
-                                FontWeight::NORMAL
-                            })
-                            .text_color(if global_selected {
-                                theme.action_primary
-                            } else {
-                                theme.text_tertiary
-                            })
-                            .child(
-                                div()
-                                    .size(px(14.0))
-                                    .rounded_full()
-                                    .border_2()
-                                    .border_color(if global_selected {
-                                        theme.action_primary
-                                    } else {
-                                        theme.outline_strong
-                                    })
-                                    .when(global_selected, |dot| dot.bg(theme.action_primary)),
-                            )
-                            .child(if global_busy {
-                                language.text("Switching", "切换中")
-                            } else if global_selected
-                                && global_runtime_selected
-                                && self.routing_mode == manis_core::RoutingMode::Global
-                            {
-                                language.text("Active", "使用中")
-                            } else if global_selected {
-                                language.text("Selected", "已选")
-                            } else {
-                                language.text("Select", "选择")
-                            }),
-                    )
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if !selection_locked {
                             this.select_global_node(selected_identity.clone(), cx);
                         }
                     }))
-            })
-            .when(!compact && !global_selectable, |row| {
-                row.child(
-                    div()
-                        .w(px(76.0))
-                        .flex_shrink_0()
-                        .text_align(gpui::TextAlign::Center)
-                        .text_color(theme.text_tertiary)
-                        .child("—"),
-                )
             })
     }
 

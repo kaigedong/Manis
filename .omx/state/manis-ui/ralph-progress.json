@@ -1,38 +1,27 @@
 {
-  "score": 96,
+  "score": 98,
   "verdict": "pass",
   "category_match": true,
   "threshold": 90,
   "threshold_met": true,
-  "fixture_independent_review": {
-    "score": 96,
-    "verdict": "pass",
-    "category_match": true,
-    "reasoning": "The wide and compact policy empty states are clear, restrained, and explicitly distinguish absent runtime data from real kernel state. Populated screenshots now come exclusively from the local Mihomo fixture and retain the established operational hierarchy."
-  },
   "references": [
-    "/Users/bobo/.planning/manis/reference-fluent2.png",
-    "/Users/bobo/.planning/manis/reference-m3-expressive.png",
+    "/Users/bobo/.planning/manis/.impeccable/review/nodes-wide-connected-global.png",
+    "/Users/bobo/.planning/manis/.impeccable/review/nodes-wide-imported.png",
+    "/Users/bobo/.planning/manis/.impeccable/review/nodes-compact-imported.png",
     "/Users/bobo/.planning/manis/DESIGN.md"
   ],
   "generated_screenshots": [
-    "/Users/bobo/.planning/manis/.impeccable/review/native-wide.png",
-    "/Users/bobo/.planning/manis/.impeccable/review/native-compact.png",
-    "/Users/bobo/.planning/manis/.impeccable/review/native-wide-connected.png",
-    "/Users/bobo/.planning/manis/.impeccable/review/native-wide-automatic-policy.png",
-    "/Users/bobo/.planning/manis/.impeccable/review/native-compact-detail.png"
+    "/Users/bobo/.planning/manis/.impeccable/review/nodes-wide-connected-global.png",
+    "/Users/bobo/.planning/manis/.impeccable/review/nodes-wide-imported.png",
+    "/Users/bobo/.planning/manis/.impeccable/review/nodes-wide-policy-groups.png",
+    "/Users/bobo/.planning/manis/.impeccable/review/nodes-compact-imported.png"
   ],
   "differences": [
-    "The disconnected state intentionally replaces the former dense three-column mock workspace with one focused explanation and recovery action.",
-    "Populated policy screenshots remain dense because they represent real operational data returned by the local controller fixture."
+    "The redundant Global exit header and per-row Select controls are absent from the wide node table.",
+    "The selected global node remains unambiguous through the full-row teal highlight.",
+    "Source, protocol, and latency columns now use the reclaimed width without leaving an empty trailing column."
   ],
-  "suggestions": [
-    "Keep production initialization empty and continue using only local controller fixtures for populated visual coverage.",
-    "Preserve the current single-action empty state unless future onboarding requires a second recovery path."
-  ],
-  "next_actions": [
-    "Run final workspace, macOS package, and Git verification.",
-    "Commit and push the mock policy removal."
-  ],
-  "reasoning": "The empty state and real populated states now both pass the adaptive desktop quality bar. No production screenshot depends on the deleted mock catalog, and the automatic-policy view is validated against fixture-backed runtime data."
+  "suggestions": [],
+  "next_actions": [],
+  "reasoning": "The node table is quieter and easier to scan after removing a control that duplicated the selected-row state. Wide alignment remains balanced, compact composition is unchanged, and the row still communicates its selection clearly without an extra column."
 }
