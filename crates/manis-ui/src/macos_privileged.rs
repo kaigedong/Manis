@@ -11,7 +11,7 @@ use manis_engine::{CommandSpec, ManagedChild, ProcessExit, ProcessSpawner, StdPr
 use crate::diagnostics::{LogLevel, record_event};
 
 const HELPER_CONTROL_NAME: &str = "manis-helperctl";
-const HELPER_PROTOCOL_VERSION: &str = "v3";
+const HELPER_PROTOCOL_VERSION: &str = "v4";
 const HELPER_REGISTRATION_ATTEMPTS: usize = 2;
 const HELPER_READY_ATTEMPTS: usize = 6;
 const HELPER_READY_DELAY: Duration = Duration::from_millis(450);
@@ -26,6 +26,31 @@ pub(crate) struct MacosPrivilegedProcessSpawner {
 }
 
 impl MacosPrivilegedProcessSpawner {
+    pub(crate) fn recover_if_available() -> io::Result<Option<Self>> {
+        let control = helper_control_path()?;
+        let status = run_control(&control, [OsStr::new("status")])?;
+        if !status.status.success() || !is_current_status(&status.stdout) {
+            return Ok(None);
+        }
+        if let HelperStatus::Running { pid } = parse_helper_status(&status.stdout)? {
+            let stopped = run_control(&control, [OsStr::new("stop")])?;
+            if !stopped.status.success() {
+                return Err(control_error("stop recovered privileged Mihomo", &stopped));
+            }
+            record_event(
+                LogLevel::Info,
+                "helper.recovery.stopped_previous_core",
+                format!("pid={pid}"),
+            );
+        }
+        record_event(
+            LogLevel::Info,
+            "helper.recovery.available",
+            "current helper will own the managed Mihomo restart",
+        );
+        Ok(Some(Self { control }))
+    }
+
     pub(crate) fn prepare() -> io::Result<Self> {
         let control = helper_control_path()?;
         let status = run_control(&control, [OsStr::new("status")])?;
@@ -384,14 +409,15 @@ mod tests {
         assert!(!is_current_status(b"stopped\n"));
         assert!(!is_current_status(b"running 42\n"));
         assert!(!is_current_status(b"stopped v2\n"));
-        assert!(is_current_status(b"stopped v3 not-started\n"));
-        assert!(is_current_status(b"running 42 v3\n"));
+        assert!(!is_current_status(b"stopped v3 not-started\n"));
+        assert!(is_current_status(b"stopped v4 not-started\n"));
+        assert!(is_current_status(b"running 42 v4\n"));
         assert_eq!(
-            parse_helper_status(b"running 42 v3\n").unwrap(),
+            parse_helper_status(b"running 42 v4\n").unwrap(),
             HelperStatus::Running { pid: 42 }
         );
         assert_eq!(
-            parse_helper_status(b"stopped v3 unexpected-signal-9\n").unwrap(),
+            parse_helper_status(b"stopped v4 unexpected-signal-9\n").unwrap(),
             HelperStatus::Stopped {
                 reason: "unexpected-signal-9".to_owned()
             }

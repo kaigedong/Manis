@@ -149,6 +149,7 @@ pub(crate) struct ManagedGeneratedProfile {
     binary: PathBuf,
     data_dir: PathBuf,
     controller: ControllerEndpoint,
+    expected_mixed_port: Option<u16>,
     subscription_file: Option<PathBuf>,
     controller_secret: Option<String>,
 }
@@ -287,6 +288,7 @@ impl ControllerRuntime {
             Self::Managed {
                 manager,
                 generated_profile,
+                privileged,
                 ..
             } => {
                 let secret = generated_profile
@@ -296,17 +298,54 @@ impl ControllerRuntime {
                     let mut manager = manager.lock().map_err(|_poisoned| {
                         LoadError::Runtime("托管内核状态锁已损坏".to_owned())
                     })?;
-                    match manager.running_endpoint()? {
+                    let running = manager.running_endpoint()?;
+                    #[cfg(target_os = "macos")]
+                    if running.is_none()
+                        && !privileged.load(Ordering::Acquire)
+                        && let Some(spec) = generated_profile
+                        && spec.kernel == KernelKind::Mihomo
+                        && let Some(spawner) =
+                            crate::macos_privileged::MacosPrivilegedProcessSpawner::recover_if_available()
+                                .map_err(|error| {
+                                    LoadError::Runtime(format!(
+                                        "无法恢复 macOS TUN 辅助服务：{error}"
+                                    ))
+                                })?
+                    {
+                        let config = managed_engine_config(
+                            spec,
+                            spec.data_dir.join(GENERATED_PROFILE_FILE),
+                        );
+                        validate_managed_config(&config)?;
+                        *manager = EngineManager::with_adapters(
+                            config,
+                            ReadinessPolicy::default(),
+                            Box::new(spawner),
+                            readiness_probe(spec),
+                        );
+                        privileged.store(true, Ordering::Release);
+                    }
+                    match running {
                         Some(endpoint) => endpoint,
                         None => manager.start()?,
                     }
                 };
                 let endpoint = endpoint.uri();
+                let snapshot = load(&endpoint, secret.as_deref())?;
+                if let Some(spec) = generated_profile
+                    && let Err(error) = validate_managed_runtime(spec, &snapshot.runtime)
+                {
+                    let _ = manager
+                        .lock()
+                        .map_err(|_poisoned| LoadError::Runtime("托管内核状态锁已损坏".to_owned()))?
+                        .stop();
+                    return Err(error);
+                }
                 Ok(RuntimeSnapshot {
                     endpoint: format!("Manis 托管 · {endpoint}"),
                     controller_endpoint: endpoint.clone(),
                     controller_secret: secret.clone(),
-                    snapshot: load(&endpoint, secret.as_deref())?,
+                    snapshot,
                 })
             }
             Self::Invalid { message } => Err(LoadError::Runtime(message.clone())),
@@ -3383,6 +3422,7 @@ fn build_saved_sources_mihomo_runtime_in(
         binary: binary.to_path_buf(),
         data_dir: data_dir.to_path_buf(),
         controller: controller.clone(),
+        expected_mixed_port: Some(profile.mixed_port),
         subscription_file: None,
         controller_secret: None,
     };
@@ -3429,6 +3469,7 @@ fn build_sing_box_runtime(store_dir: &Path) -> Result<ControllerRuntime, String>
         binary: binary.clone(),
         data_dir: data_dir.clone(),
         controller: controller.clone(),
+        expected_mixed_port: None,
         subscription_file: None,
         controller_secret: Some(controller_secret.clone()),
     };
@@ -3610,6 +3651,7 @@ fn build_subscription_runtime(
         binary: binary.clone(),
         data_dir: data_dir.clone(),
         controller: controller.clone(),
+        expected_mixed_port: Some(profile.mixed_port),
         subscription_file: Some(subscription_file.to_owned()),
         controller_secret: None,
     };
@@ -3832,6 +3874,21 @@ fn loaded_snapshot(snapshot: &MihomoSnapshot) -> Result<LoadedSnapshot, LoadErro
         connections,
         runtime,
     })
+}
+
+fn validate_managed_runtime(
+    spec: &ManagedGeneratedProfile,
+    runtime: &RuntimeConfig,
+) -> Result<(), LoadError> {
+    let Some(expected) = spec.expected_mixed_port else {
+        return Ok(());
+    };
+    if runtime.mixed_port == Some(expected) {
+        return Ok(());
+    }
+    Err(LoadError::Runtime(format!(
+        "Mihomo 未能监听 Manis 代理端口 {expected}；可能存在上次异常退出后残留的内核进程"
+    )))
 }
 
 fn live_controller(
@@ -4402,6 +4459,32 @@ mod tests {
     use manis_engine::ControllerEndpoint;
 
     #[test]
+    fn managed_mihomo_rejects_a_controller_with_a_failed_mixed_listener() {
+        let spec = super::ManagedGeneratedProfile {
+            kernel: manis_core::KernelKind::Mihomo,
+            binary: PathBuf::from("/Applications/Manis.app/Contents/Resources/mihomo/mihomo"),
+            data_dir: PathBuf::from("/tmp/manis-runtime"),
+            controller: ControllerEndpoint::UnixSocket(PathBuf::from(
+                "/tmp/manis-runtime/controller.sock",
+            )),
+            expected_mixed_port: Some(17_890),
+            subscription_file: None,
+            controller_secret: None,
+        };
+        let failed = manis_mihomo::RuntimeConfig {
+            mixed_port: Some(0),
+            ..manis_mihomo::RuntimeConfig::default()
+        };
+        let ready = manis_mihomo::RuntimeConfig {
+            mixed_port: Some(17_890),
+            ..manis_mihomo::RuntimeConfig::default()
+        };
+
+        assert!(super::validate_managed_runtime(&spec, &failed).is_err());
+        assert!(super::validate_managed_runtime(&spec, &ready).is_ok());
+    }
+
+    #[test]
     fn legacy_relay_storage_versions_remain_readable() {
         assert!(super::storage_version_supported(
             Some(super::LEGACY_RELAY_STORED_SUBSCRIPTION_VERSION),
@@ -4447,6 +4530,7 @@ mod tests {
             binary,
             data_dir: data_dir.clone(),
             controller: controller.clone(),
+            expected_mixed_port: None,
             subscription_file: None,
             controller_secret: Some(secret.clone()),
         };

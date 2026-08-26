@@ -60,3 +60,20 @@ Without a real signing identity, the script still compiles the app and helper fo
 `manis-helperctl register` is expected to fail when macOS enforces privileged helper approval.
 The identifier-only development requirements are also rejected at runtime unless an isolated local
 build explicitly sets `MANIS_ALLOW_INSECURE_LOCAL_HELPER=1`; never distribute such a build.
+
+An explicitly insecure local build uses a separate development-only path instead of pretending its
+ad-hoc signature can register through `SMAppService`. On the first TUN request, macOS asks for
+administrator approval and the fixed-purpose `manis-local-helper-install` executable installs a
+root-owned LaunchDaemon, helper, and bundled Mihomo at fixed `/Library` paths. The installer does
+not accept program paths or proxy arguments. Production-signed builds never enter this fallback.
+
+Build the local TUN-test bundle with:
+
+```bash
+MANIS_ALLOW_INSECURE_LOCAL_HELPER=1 \
+MANIS_MIHOMO_BINARY=/absolute/path/to/mihomo \
+packaging/macos/build-app.sh
+```
+
+Because this mode deliberately permits an identifier-only local XPC client requirement, it is only
+for an isolated development machine and must never be published or distributed.

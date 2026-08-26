@@ -3,11 +3,14 @@ import Darwin
 import Security
 
 private let serviceName = "dev.manis.app.helper"
-private let helperProtocolVersion = "v3"
+private let helperProtocolVersion = "v4"
 private let requiredClientRequirement =
     ProcessInfo.processInfo.environment["MANIS_REQUIRED_CLIENT_REQUIREMENT"] ?? ""
 private let allowInsecureLocalRequirement =
     ProcessInfo.processInfo.environment["MANIS_ALLOW_INSECURE_LOCAL_HELPER"] == "1"
+private let allowedLocalUserIdentifier =
+    ProcessInfo.processInfo.environment["MANIS_LOCAL_ALLOWED_UID"].flatMap(uid_t.init)
+private let insecureLocalMihomoPath = "/Library/Application Support/Manis/bin/mihomo"
 private let logPath = "/var/log/manis-mihomo-helper.log"
 private let maximumConfigBytes = 16 * 1024 * 1024
 private let maximumCoreLogBytes: off_t = 4 * 1024 * 1024
@@ -32,6 +35,14 @@ final class HelperDelegate: NSObject, NSXPCListenerDelegate {
         _ listener: NSXPCListener,
         shouldAcceptNewConnection connection: NSXPCConnection
     ) -> Bool {
+        if allowInsecureLocalRequirement {
+            guard let allowedLocalUserIdentifier,
+                connection.effectiveUserIdentifier == allowedLocalUserIdentifier
+            else {
+                appendLog("rejected local helper client uid \(connection.effectiveUserIdentifier)")
+                return false
+            }
+        }
         connection.exportedInterface = NSXPCInterface(with: ManisPrivilegedHelperProtocol.self)
         connection.exportedObject = HelperService(
             core: core,
@@ -223,7 +234,15 @@ final class HelperCore {
 }
 
 private func bundledMihomoPath() throws -> String {
-    try bundleContentsURL()
+    if allowInsecureLocalRequirement {
+        guard ProcessInfo.processInfo.environment["MANIS_INSECURE_LOCAL_MIHOMO"]
+            == insecureLocalMihomoPath
+        else {
+            throw HelperError.invalidExecutable("local Mihomo path is not fixed by Manis")
+        }
+        return insecureLocalMihomoPath
+    }
+    return try bundleContentsURL()
         .appendingPathComponent("Resources")
         .appendingPathComponent("mihomo")
         .appendingPathComponent("mihomo")
@@ -328,6 +347,13 @@ private func validateRuntime(_ request: LaunchRequest, owner: uid_t) throws {
 private func validateExecutable(_ path: String) throws {
     guard path == (try bundledMihomoPath()) else {
         throw HelperError.invalidExecutable("privileged Mihomo binary must stay inside Manis.app")
+    }
+    if allowInsecureLocalRequirement {
+        try requireRegularFile(path, owner: 0)
+        guard FileManager.default.isExecutableFile(atPath: path) else {
+            throw HelperError.invalidExecutable("local privileged Mihomo binary is not executable")
+        }
+        return
     }
     try validateContainingBundleSeal()
     try requireRegularFile(path, owner: nil)
@@ -455,6 +481,19 @@ private func describeExit(_ process: Process, requested: Bool, forced: Bool) -> 
 }
 
 private func createRootOwnedDirectory(_ path: String) throws {
+    let boundary = "/Library/Application Support/Manis"
+    if !FileManager.default.fileExists(atPath: boundary) {
+        try FileManager.default.createDirectory(
+            atPath: boundary,
+            withIntermediateDirectories: false,
+            attributes: [
+                .ownerAccountID: 0,
+                .groupOwnerAccountID: 0,
+                .posixPermissions: 0o755,
+            ]
+        )
+    }
+    try requireDirectory(boundary, owner: 0)
     try FileManager.default.createDirectory(
         atPath: path,
         withIntermediateDirectories: true,
@@ -581,6 +620,12 @@ let listener = NSXPCListener(machServiceName: serviceName)
 let delegate = HelperDelegate()
 if requiredClientRequirement.isEmpty {
     appendLog("MANIS_REQUIRED_CLIENT_REQUIREMENT is not configured")
+    Foundation.exit(1)
+}
+if allowInsecureLocalRequirement
+    && (allowedLocalUserIdentifier == nil || allowedLocalUserIdentifier == 0)
+{
+    appendLog("MANIS_LOCAL_ALLOWED_UID is not configured")
     Foundation.exit(1)
 }
 if !allowInsecureLocalRequirement

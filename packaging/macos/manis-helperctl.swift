@@ -1,3 +1,5 @@
+import CryptoKit
+import Darwin
 import Foundation
 import ServiceManagement
 import Security
@@ -7,6 +9,7 @@ private let serviceName = "dev.manis.app.helper"
 private let plistName = "dev.manis.app.helper.plist"
 private let parentRequirementKey = "ManisParentCodeSigningRequirement"
 private let insecureLocalKey = "ManisAllowInsecureLocalHelper"
+private let localInstallerName = "manis-local-helper-install"
 
 @objc(ManisPrivilegedHelperProtocol)
 protocol ManisPrivilegedHelperProtocol {
@@ -90,6 +93,10 @@ private func parseCommand(_ arguments: [String]) throws -> Command {
 }
 
 private func registerService() throws {
+    if insecureLocalBuild() {
+        try reinstallLocalService()
+        return
+    }
     let service = SMAppService.daemon(plistName: plistName)
     do {
         try service.register()
@@ -100,6 +107,10 @@ private func registerService() throws {
 }
 
 private func reinstallService() throws {
+    if insecureLocalBuild() {
+        try reinstallLocalService()
+        return
+    }
     let service = SMAppService.daemon(plistName: plistName)
     if service.status != .notRegistered {
         let completion = DispatchSemaphore(value: 0)
@@ -123,14 +134,99 @@ private func reinstallService() throws {
     }
 }
 
+private func insecureLocalBuild() -> Bool {
+    (Bundle.main.object(forInfoDictionaryKey: insecureLocalKey) as? Bool) == true
+}
+
+private func sha256(_ url: URL) throws -> String {
+    let handle = try FileHandle(forReadingFrom: url)
+    defer { try? handle.close() }
+    var hasher = SHA256()
+    while let data = try handle.read(upToCount: 1024 * 1024), !data.isEmpty {
+        hasher.update(data: data)
+    }
+    return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+}
+
+private func reinstallLocalService() throws {
+    let app = Bundle.main.bundleURL.resolvingSymlinksInPath().standardizedFileURL
+    let installer = app
+        .appendingPathComponent("Contents")
+        .appendingPathComponent("MacOS")
+        .appendingPathComponent(localInstallerName)
+        .standardizedFileURL
+    let helper = app
+        .appendingPathComponent("Contents")
+        .appendingPathComponent("Library")
+        .appendingPathComponent("PrivilegedHelperTools")
+        .appendingPathComponent(serviceName)
+        .standardizedFileURL
+    let mihomo = app
+        .appendingPathComponent("Contents")
+        .appendingPathComponent("Resources")
+        .appendingPathComponent("mihomo")
+        .appendingPathComponent("mihomo")
+        .standardizedFileURL
+    let expectedParent = app
+        .appendingPathComponent("Contents")
+        .appendingPathComponent("MacOS")
+        .standardizedFileURL
+    guard installer.deletingLastPathComponent() == expectedParent,
+        FileManager.default.isExecutableFile(atPath: installer.path),
+        FileManager.default.isExecutableFile(atPath: helper.path),
+        FileManager.default.isExecutableFile(atPath: mihomo.path)
+    else {
+        throw CliError.helper("local TUN helper payload is incomplete in Manis.app")
+    }
+    let installerHash = try sha256(installer)
+    let helperHash = try sha256(helper)
+    let mihomoHash = try sha256(mihomo)
+    let allowedUser = String(getuid())
+
+    let script = """
+        on run argv
+            set installerPath to item 1 of argv
+            set appPath to item 2 of argv
+            set expectedInstallerHash to item 3 of argv
+            set expectedHelperHash to item 4 of argv
+            set expectedMihomoHash to item 5 of argv
+            set allowedUser to item 6 of argv
+            set commandText to "set -e; temporary=$(/usr/bin/mktemp /var/tmp/manis-local-helper-install.XXXXXX); trap '/bin/rm -f \"$temporary\"' EXIT; /bin/cp " & quoted form of installerPath & " \"$temporary\"; actual=$(/usr/bin/shasum -a 256 \"$temporary\" | /usr/bin/cut -d ' ' -f 1); /usr/bin/test \"$actual\" = " & quoted form of expectedInstallerHash & "; /bin/chmod 0700 \"$temporary\"; \"$temporary\" reinstall " & quoted form of appPath & " " & quoted form of expectedHelperHash & " " & quoted form of expectedMihomoHash & " " & quoted form of allowedUser
+            do shell script commandText with administrator privileges with prompt "Manis needs administrator access to install its local TUN helper."
+        end run
+        """
+    let process = Process()
+    let output = Pipe()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+    process.arguments = [
+        "-e", script, installer.path, app.path, installerHash, helperHash, mihomoHash, allowedUser,
+    ]
+    process.standardOutput = output
+    process.standardError = output
+    process.standardInput = FileHandle.nullDevice
+    try process.run()
+    process.waitUntilExit()
+    let message = String(
+        data: output.fileHandleForReading.readDataToEndOfFile(),
+        encoding: .utf8
+    )?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    guard process.terminationStatus == 0 else {
+        throw CliError.helper(
+            message.isEmpty
+                ? "local helper installation failed with status \(process.terminationStatus)"
+                : "local helper installation failed: \(message)"
+        )
+    }
+    print(message.isEmpty ? "registered local development helper" : message)
+}
+
 private func validateParentProcess() throws {
     guard let requirement = Bundle.main.object(forInfoDictionaryKey: parentRequirementKey) as? String,
         !requirement.isEmpty
     else {
         throw CliError.helper("Manis parent code-signing requirement is missing")
     }
-    let allowInsecure =
-        (Bundle.main.object(forInfoDictionaryKey: insecureLocalKey) as? Bool) == true
+    let allowInsecure = insecureLocalBuild()
     if !allowInsecure
         && (!requirement.contains("anchor apple generic")
             || !requirement.contains("certificate leaf[subject.OU]")
