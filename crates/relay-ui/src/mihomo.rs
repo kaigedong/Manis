@@ -382,11 +382,8 @@ impl ControllerRuntime {
         }
 
         // Registration and approval are checked before touching the healthy unprivileged core.
-        let spawner = MacosPrivilegedProcessSpawner::prepare().map_err(|error| {
-            LoadError::Runtime(format!(
-                "无法准备 macOS TUN 辅助服务：{error}。请使用已签名的 Relay.app，并在系统设置中批准后台项目"
-            ))
-        })?;
+        let spawner = MacosPrivilegedProcessSpawner::prepare()
+            .map_err(|error| LoadError::Runtime(format!("无法准备 macOS TUN 辅助服务：{error}")))?;
         let final_path = spec.data_dir.join(GENERATED_PROFILE_FILE);
         let config = managed_engine_config(spec, final_path.clone());
         validate_managed_config(&config)?;

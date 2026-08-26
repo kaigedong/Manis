@@ -3,7 +3,7 @@ import Darwin
 import Security
 
 private let serviceName = "dev.relay.prototype.helper"
-private let mihomoBinary = bundledMihomoPath()
+private let helperProtocolVersion = "v2"
 private let requiredClientRequirement =
     ProcessInfo.processInfo.environment["RELAY_REQUIRED_CLIENT_REQUIREMENT"] ?? ""
 private let allowInsecureLocalRequirement =
@@ -84,14 +84,14 @@ final class HelperCore {
             reapExitedChild()
             if let process = child, process.isRunning {
                 guard childOwner == owner else {
-                    reply("stopped", 0)
+                    reply("stopped \(helperProtocolVersion)", 0)
                     return
                 }
-                reply("running \(process.processIdentifier)", 0)
+                reply("running \(process.processIdentifier) \(helperProtocolVersion)", 0)
             } else {
                 child = nil
                 childOwner = nil
-                reply("stopped", 0)
+                reply("stopped \(helperProtocolVersion)", 0)
             }
         }
     }
@@ -120,11 +120,12 @@ final class HelperCore {
                     config: config,
                     controller: controller
                 )
+                let mihomoBinary = try bundledMihomoPath()
                 try validateExecutable(mihomoBinary)
                 try validateRuntime(request, owner: owner)
                 let staged = try stageRuntime(request, owner: owner)
                 candidate = staged
-                try validateStagedRuntime(staged)
+                try validateStagedRuntime(staged, mihomoBinary: mihomoBinary)
 
                 let process = Process()
                 process.executableURL = URL(fileURLWithPath: mihomoBinary)
@@ -196,23 +197,35 @@ final class HelperCore {
     }
 }
 
-private func bundledMihomoPath() -> String {
-    bundleContentsURL()
+private func bundledMihomoPath() throws -> String {
+    try bundleContentsURL()
         .appendingPathComponent("Resources")
         .appendingPathComponent("mihomo")
         .appendingPathComponent("mihomo")
         .path
 }
 
-private func bundleContentsURL() -> URL {
-    URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
+private func bundleContentsURL() throws -> URL {
+    var code: SecCode?
+    guard SecCodeCopySelf([], &code) == errSecSuccess, let code else {
+        throw HelperError.invalidExecutable("could not inspect the running helper")
+    }
+    var staticCode: SecStaticCode?
+    guard SecCodeCopyStaticCode(code, [], &staticCode) == errSecSuccess, let staticCode else {
+        throw HelperError.invalidExecutable("could not inspect the helper executable")
+    }
+    var executable: CFURL?
+    guard SecCodeCopyPath(staticCode, [], &executable) == errSecSuccess, let executable else {
+        throw HelperError.invalidExecutable("could not resolve the running helper path")
+    }
+    return (executable as URL).resolvingSymlinksInPath()
         .deletingLastPathComponent()
         .deletingLastPathComponent()
         .deletingLastPathComponent()
 }
 
-private func bundleRootURL() -> URL {
-    bundleContentsURL().deletingLastPathComponent()
+private func bundleRootURL() throws -> URL {
+    try bundleContentsURL().deletingLastPathComponent()
 }
 
 private struct LaunchRequest {
@@ -288,7 +301,7 @@ private func validateRuntime(_ request: LaunchRequest, owner: uid_t) throws {
 }
 
 private func validateExecutable(_ path: String) throws {
-    guard path == bundledMihomoPath() else {
+    guard path == (try bundledMihomoPath()) else {
         throw HelperError.invalidExecutable("privileged Mihomo binary must stay inside Relay.app")
     }
     try validateContainingBundleSeal()
@@ -332,7 +345,7 @@ private func stageRuntime(_ request: LaunchRequest, owner: uid_t) throws -> Stag
     return StagedRuntime(dataDir: root, config: config.path)
 }
 
-private func validateStagedRuntime(_ runtime: StagedRuntime) throws {
+private func validateStagedRuntime(_ runtime: StagedRuntime, mihomoBinary: String) throws {
     let validation = Process()
     validation.executableURL = URL(fileURLWithPath: mihomoBinary)
     validation.currentDirectoryURL = URL(fileURLWithPath: runtime.dataDir)
@@ -380,7 +393,7 @@ private func createRootOwnedDirectory(_ path: String) throws {
 
 private func validateContainingBundleSeal() throws {
     var code: SecStaticCode?
-    let createStatus = SecStaticCodeCreateWithPath(bundleRootURL() as CFURL, [], &code)
+    let createStatus = SecStaticCodeCreateWithPath(try bundleRootURL() as CFURL, [], &code)
     guard createStatus == errSecSuccess, let code else {
         throw HelperError.invalidExecutable("Relay.app code signature is unavailable")
     }

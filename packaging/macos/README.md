@@ -7,7 +7,7 @@ The Rust app invokes `Contents/MacOS/relay-helperctl` with this stable contract:
 
 ```text
 relay-helperctl status
-  stdout: running <pid> | stopped
+  stdout: running <pid> v2 | stopped v2
 
 relay-helperctl start --data-dir PATH --config PATH --controller PATH
   stdout: started <pid>
@@ -17,6 +17,10 @@ relay-helperctl stop
 
 relay-helperctl register
   stdout: registered
+
+relay-helperctl reinstall
+  stdout: registered
+  used automatically when Relay detects an outdated registered helper
 ```
 
 The helper never accepts a Mihomo binary path or arbitrary arguments from the UI. It derives Mihomo

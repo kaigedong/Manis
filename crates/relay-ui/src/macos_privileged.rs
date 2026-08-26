@@ -9,6 +9,7 @@ use std::time::Duration;
 use relay_engine::{CommandSpec, ManagedChild, ProcessExit, ProcessSpawner, StdProcessSpawner};
 
 const HELPER_CONTROL_NAME: &str = "relay-helperctl";
+const HELPER_PROTOCOL_VERSION: &str = "v2";
 
 /// Process adapter backed by Relay's signed, root launch daemon.
 ///
@@ -23,16 +24,19 @@ impl MacosPrivilegedProcessSpawner {
     pub(crate) fn prepare() -> io::Result<Self> {
         let control = helper_control_path()?;
         let status = run_control(&control, [OsStr::new("status")])?;
-        if status.status.success() {
+        if status.status.success() && is_current_status(&status.stdout) {
             return Ok(Self { control });
         }
 
-        let registration = run_control(&control, [OsStr::new("register")])?;
+        // A registered helper can be outdated or wedged and therefore fail to answer `status`.
+        // `reinstall` handles both registered and not-yet-registered services, waiting for an old
+        // daemon to be fully reaped before registering the bundled version.
+        let registration = run_control(&control, [OsStr::new("reinstall")])?;
         if !registration.status.success() {
             return Err(control_error("register privileged helper", &registration));
         }
         let status = run_control(&control, [OsStr::new("status")])?;
-        if !status.status.success() {
+        if !status.status.success() || !is_current_status(&status.stdout) {
             return Err(control_error("connect to privileged helper", &status));
         }
         Ok(Self { control })
@@ -119,10 +123,10 @@ impl ManagedChild for PrivilegedManagedChild {
         }
         let status = String::from_utf8_lossy(&output.stdout);
         let status = status.trim();
-        if status == "stopped" {
+        if status == format!("stopped {HELPER_PROTOCOL_VERSION}") {
             return Ok(Some(ProcessExit::failure()));
         }
-        let running_pid = parse_pid(&output.stdout, "running")?;
+        let running_pid = parse_versioned_pid(&output.stdout, "running")?;
         if running_pid != self.pid {
             return Err(io::Error::new(
                 io::ErrorKind::NotFound,
@@ -193,6 +197,36 @@ fn parse_pid(bytes: &[u8], prefix: &str) -> io::Result<u32> {
         })
 }
 
+fn parse_versioned_pid(bytes: &[u8], prefix: &str) -> io::Result<u32> {
+    let output = String::from_utf8_lossy(bytes);
+    let mut fields = output.split_whitespace();
+    if fields.next() != Some(prefix) {
+        return Err(invalid_helper_response());
+    }
+    let pid = fields
+        .next()
+        .and_then(|value| value.parse::<u32>().ok())
+        .filter(|pid| *pid > 0)
+        .ok_or_else(invalid_helper_response)?;
+    if fields.next() != Some(HELPER_PROTOCOL_VERSION) || fields.next().is_some() {
+        return Err(invalid_helper_response());
+    }
+    Ok(pid)
+}
+
+fn is_current_status(bytes: &[u8]) -> bool {
+    let status = String::from_utf8_lossy(bytes);
+    status.trim() == format!("stopped {HELPER_PROTOCOL_VERSION}")
+        || parse_versioned_pid(bytes, "running").is_ok()
+}
+
+fn invalid_helper_response() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        "privileged helper returned an unexpected response",
+    )
+}
+
 fn control_error(operation: &str, output: &Output) -> io::Error {
     let message = String::from_utf8_lossy(&output.stderr);
     let message = message.trim();
@@ -209,7 +243,7 @@ mod tests {
 
     use relay_engine::{ControllerEndpoint, ManagedEngineConfig};
 
-    use super::{MacosPrivilegedProcessSpawner, parse_pid};
+    use super::{MacosPrivilegedProcessSpawner, is_current_status, parse_pid, parse_versioned_pid};
 
     #[test]
     fn parses_typed_helper_pid_response() {
@@ -217,6 +251,18 @@ mod tests {
         assert!(parse_pid(b"running 0\n", "running").is_err());
         assert!(parse_pid(b"started 42 extra\n", "started").is_err());
         assert!(parse_pid(b"shell 42\n", "started").is_err());
+    }
+
+    #[test]
+    fn rejects_outdated_helper_status_and_accepts_current_status() {
+        assert!(!is_current_status(b"stopped\n"));
+        assert!(!is_current_status(b"running 42\n"));
+        assert!(is_current_status(b"stopped v2\n"));
+        assert!(is_current_status(b"running 42 v2\n"));
+        assert_eq!(
+            parse_versioned_pid(b"running 42 v2\n", "running").unwrap(),
+            42
+        );
     }
 
     #[test]

@@ -31,6 +31,7 @@ private enum CliError: Error, CustomStringConvertible {
             return """
                 usage:
                   relay-helperctl register
+                  relay-helperctl reinstall
                   relay-helperctl status
                   relay-helperctl start --data-dir PATH --config PATH --controller PATH
                   relay-helperctl stop
@@ -45,6 +46,7 @@ private enum CliError: Error, CustomStringConvertible {
 
 private enum Command {
     case register
+    case reinstall
     case status
     case start(dataDir: String, config: String, controller: String)
     case stop
@@ -58,6 +60,9 @@ private func parseCommand(_ arguments: [String]) throws -> Command {
     case "register":
         guard arguments.count == 1 else { throw CliError.usage }
         return .register
+    case "reinstall":
+        guard arguments.count == 1 else { throw CliError.usage }
+        return .reinstall
     case "status":
         guard arguments.count == 1 else { throw CliError.usage }
         return .status
@@ -91,6 +96,30 @@ private func registerService() throws {
         print("registered")
     } catch {
         throw CliError.helper("register failed: \(error)")
+    }
+}
+
+private func reinstallService() throws {
+    let service = SMAppService.daemon(plistName: plistName)
+    if service.status != .notRegistered {
+        let completion = DispatchSemaphore(value: 0)
+        var unregisterError: Error?
+        service.unregister { error in
+            unregisterError = error
+            completion.signal()
+        }
+        if completion.wait(timeout: .now() + 10) == .timedOut {
+            throw CliError.helper("unregister outdated helper timed out")
+        }
+        if let unregisterError {
+            throw CliError.helper("unregister outdated helper failed: \(unregisterError)")
+        }
+    }
+    do {
+        try service.register()
+        print("registered")
+    } catch {
+        throw CliError.helper("register updated helper failed: \(error)")
     }
 }
 
@@ -170,6 +199,8 @@ do {
     switch command {
     case .register:
         try registerService()
+    case .reinstall:
+        try reinstallService()
     case .status:
         try callHelper { helper, reply in helper.status(withReply: reply) }
     case .stop:
