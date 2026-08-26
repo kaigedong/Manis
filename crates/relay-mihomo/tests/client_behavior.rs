@@ -7,8 +7,8 @@ use relay_core::{PolicyCandidateKind, PolicyGroupKind, RoutingMode};
 #[cfg(unix)]
 use relay_mihomo::UnixSocketTransport;
 use relay_mihomo::{
-    ControllerConfig, ControllerTransport, GroupKind, MihomoClient, MihomoError, RuntimeConfig,
-    RuntimeTunConfig, StdHttpTransport, to_policy_catalog,
+    ConnectionsState, ControllerConfig, ControllerTransport, GroupKind, MihomoClient, MihomoError,
+    RuntimeConfig, RuntimeTunConfig, StdHttpTransport, to_policy_catalog,
 };
 use serde_json::Value;
 
@@ -179,6 +179,17 @@ fn fetch_snapshot_requests_exact_readonly_endpoints() -> Result<(), Box<dyn std:
     assert_eq!(snapshot.runtime.mode, RoutingMode::Rule);
     assert!(snapshot.runtime.tun.enable);
 
+    Ok(())
+}
+
+#[test]
+fn connections_accepts_null_as_an_empty_list() -> Result<(), Box<dyn std::error::Error>> {
+    let state: ConnectionsState =
+        serde_json::from_str(r#"{"downloadTotal":2048,"uploadTotal":1024,"connections":null}"#)?;
+
+    assert_eq!(state.download_total, 2048);
+    assert_eq!(state.upload_total, 1024);
+    assert!(state.connections.is_empty());
     Ok(())
 }
 

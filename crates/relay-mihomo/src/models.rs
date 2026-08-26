@@ -236,8 +236,15 @@ pub struct ConnectionsState {
     pub download_total: u64,
     #[serde(rename = "uploadTotal", default)]
     pub upload_total: u64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_connections")]
     pub connections: Vec<Connection>,
+}
+
+fn deserialize_connections<'de, D>(deserializer: D) -> Result<Vec<Connection>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<Vec<Connection>>::deserialize(deserializer)?.unwrap_or_default())
 }
 
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
