@@ -1,4 +1,4 @@
-use gpui::{Div, FontWeight, ParentElement, Role, Styled, div, prelude::*, px};
+use gpui::{Div, FontWeight, ParentElement, Rgba, Role, Styled, div, prelude::*, px};
 use manis_core::WindowSizeClass;
 
 use super::ManisApp;
@@ -84,7 +84,7 @@ impl ManisApp {
                                 .flex_shrink_0()
                                 .text_size(px(10.0))
                                 .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(theme.action_primary)
+                                .text_color(log_level_color(&entry.level, theme))
                                 .child(entry.level.to_uppercase()),
                         )
                         .child(
@@ -135,7 +135,7 @@ impl ManisApp {
                                 .flex_shrink_0()
                                 .text_size(px(10.0))
                                 .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(theme.action_primary)
+                                .text_color(log_level_color(&entry.level, theme))
                                 .child(entry.level),
                         )
                         .child(
@@ -279,11 +279,40 @@ fn logs_summary(language: Language, count: usize, live_status: &str, dropped: u6
 }
 
 fn format_log_time(timestamp_ms: u128) -> String {
-    let seconds = (timestamp_ms / 1_000) % 86_400;
-    let hours = seconds / 3_600;
-    let minutes = seconds % 3_600 / 60;
-    let seconds = seconds % 60;
-    format!("{hours:02}:{minutes:02}:{seconds:02} UTC")
+    // `Local` silently falls back to UTC when the system zone is unreadable, so there is no
+    // failure to report here — only an offset, which is zero in that case.
+    format_local_time(
+        timestamp_ms,
+        chrono::Local::now().offset().local_minus_utc(),
+    )
+}
+
+/// Renders a timestamp on the viewer's own wall clock.
+fn format_local_time(timestamp_ms: u128, offset_seconds: i32) -> String {
+    // Reducing to one day first keeps the value trivially in range for the signed arithmetic.
+    let day_seconds = i64::try_from(timestamp_ms / 1_000 % 86_400).unwrap_or(0);
+    // `rem_euclid` keeps a westward offset from underflowing into a negative clock.
+    let seconds = (day_seconds + i64::from(offset_seconds)).rem_euclid(86_400);
+    format!(
+        "{:02}:{:02}:{:02}",
+        seconds / 3_600,
+        seconds % 3_600 / 60,
+        seconds % 60
+    )
+}
+
+/// Maps a log level to its severity colour.
+///
+/// Accepts both the UI's own spellings and the kernel's lowercase `warning`, so one glance
+/// separates failures from noise in either list.
+fn log_level_color(level: &str, theme: Theme) -> Rgba {
+    match level.to_ascii_lowercase().as_str() {
+        "error" => theme.status_error,
+        "warn" | "warning" => theme.status_warning,
+        "info" => theme.action_primary,
+        "debug" | "trace" => theme.text_tertiary,
+        _ => theme.text_secondary,
+    }
 }
 
 #[cfg(test)]
@@ -291,8 +320,57 @@ mod tests {
     use crate::diagnostics::UiLogEntry;
 
     #[test]
-    fn log_time_is_bounded_and_readable() {
-        assert_eq!(super::format_log_time(3_723_000), "01:02:03 UTC");
+    fn log_time_is_shown_in_the_local_offset() {
+        // 01:02:03 UTC on each viewer's own wall clock.
+        assert_eq!(super::format_local_time(3_723_000, 8 * 3_600), "09:02:03");
+        assert_eq!(super::format_local_time(3_723_000, 0), "01:02:03");
+        // Half-hour zones such as India must not be rounded away.
+        assert_eq!(
+            super::format_local_time(3_723_000, 5 * 3_600 + 1_800),
+            "06:32:03"
+        );
+    }
+
+    #[test]
+    fn a_local_offset_may_move_the_clock_across_midnight() {
+        // 02:00:00 UTC is the previous evening in New York.
+        assert_eq!(super::format_local_time(7_200_000, -5 * 3_600), "21:00:00");
+        // 23:00:00 UTC is the next morning in Shanghai.
+        assert_eq!(super::format_local_time(82_800_000, 8 * 3_600), "07:00:00");
+    }
+
+    #[test]
+    fn severity_drives_the_level_colour() {
+        let theme = crate::theme::Theme::light();
+
+        assert_eq!(super::log_level_color("ERROR", theme), theme.status_error);
+        assert_eq!(super::log_level_color("WARN", theme), theme.status_warning);
+        assert_eq!(super::log_level_color("INFO", theme), theme.action_primary);
+        assert_eq!(super::log_level_color("DEBUG", theme), theme.text_tertiary);
+    }
+
+    #[test]
+    fn kernel_level_spellings_map_to_the_same_colours() {
+        let theme = crate::theme::Theme::dark();
+
+        // Mihomo writes "warning" and lowercases everything.
+        assert_eq!(
+            super::log_level_color("warning", theme),
+            theme.status_warning
+        );
+        assert_eq!(super::log_level_color("warn", theme), theme.status_warning);
+        assert_eq!(super::log_level_color("error", theme), theme.status_error);
+        assert_eq!(super::log_level_color("info", theme), theme.action_primary);
+        // An unknown level must stay legible rather than borrow a severity colour.
+        assert_eq!(super::log_level_color("silly", theme), theme.text_secondary);
+    }
+
+    #[test]
+    fn error_and_warning_are_visually_distinct() {
+        for theme in [crate::theme::Theme::light(), crate::theme::Theme::dark()] {
+            assert_ne!(theme.status_error, theme.status_warning);
+            assert_ne!(theme.status_warning, theme.action_primary);
+        }
     }
 
     #[test]
