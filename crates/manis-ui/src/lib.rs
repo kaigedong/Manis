@@ -1,6 +1,7 @@
 mod app;
 mod brand;
 mod diagnostics;
+mod direct_rule;
 mod kernel;
 mod localization;
 #[cfg(target_os = "macos")]

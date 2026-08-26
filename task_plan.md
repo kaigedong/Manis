@@ -202,6 +202,13 @@
 - [completed] 3. 实现托盘可勾选的系统代理 / TUN 代理，并与主窗口双向同步
 - [completed] 4. 完成全仓验证、Git 提交并 push feat 分支
 
+## 直连规则绕过代理
+
+- [in_progress] 1. 以 TDD 在 profile 层建立 `Rule::DstPort` 与两内核渲染
+- [pending] 2. 建立直连规则条目解析、校验与 `0600` 私有持久化
+- [pending] 3. 将直连规则插入托管配置最前，并在分流规则页实现增删交互
+- [pending] 4. 完成真实 Mihomo 校验、全仓验证、Git 提交并 push
+
 ## 固定约束
 - 实现框架：Rust + GPUI
 - 目标平台：Windows、macOS、Linux
