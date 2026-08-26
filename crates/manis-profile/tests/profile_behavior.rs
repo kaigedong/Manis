@@ -127,6 +127,10 @@ fn qx_default_renders_ordered_minimal_mihomo_yaml() {
     assert!(yaml.contains("mixed-port: 7890"));
     assert!(yaml.contains("log-level: \"warning\""));
     assert!(yaml.contains("store-selected: true"));
+    assert!(yaml.contains("dns:\n  enable: true\n  ipv6: false\n  enhanced-mode: \"redir-host\""));
+    assert!(yaml.contains(
+        "proxy-server-nameserver:\n    - \"https://223.5.5.5/dns-query\"\n    - \"https://1.12.12.12/dns-query\""
+    ));
     assert!(yaml.contains("proxy-providers:"));
     assert!(yaml.contains(
         "exclude-filter: \"^(剩余流量|流量剩余|套餐到期|到期时间|过期时间|距离下次重置|下次重置|防失联|官网)\""

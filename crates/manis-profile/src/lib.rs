@@ -1041,6 +1041,21 @@ pub fn render_mihomo_yaml(profile: &Profile) -> Result<String, ProfileError> {
     yaml.push_str("profile:\n");
     writeln!(yaml, "  store-selected: {}", profile.store_selected)
         .expect("String write cannot fail");
+    yaml.push_str(concat!(
+        "dns:\n",
+        "  enable: true\n",
+        "  ipv6: false\n",
+        "  enhanced-mode: \"redir-host\"\n",
+        "  default-nameserver:\n",
+        "    - \"223.5.5.5\"\n",
+        "    - \"1.12.12.12\"\n",
+        "  nameserver:\n",
+        "    - \"https://223.5.5.5/dns-query\"\n",
+        "    - \"https://1.12.12.12/dns-query\"\n",
+        "  proxy-server-nameserver:\n",
+        "    - \"https://223.5.5.5/dns-query\"\n",
+        "    - \"https://1.12.12.12/dns-query\"\n",
+    ));
     yaml.push_str("proxies:\n");
     for proxy in &profile.proxies {
         match proxy {
