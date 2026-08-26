@@ -11,10 +11,12 @@ use manis_engine::{CommandSpec, ManagedChild, ProcessExit, ProcessSpawner, StdPr
 use crate::diagnostics::{LogLevel, record_event};
 
 const HELPER_CONTROL_NAME: &str = "manis-helperctl";
-const HELPER_PROTOCOL_VERSION: &str = "v4";
+const HELPER_PROTOCOL_VERSION: &str = "v5";
 const HELPER_REGISTRATION_ATTEMPTS: usize = 2;
+const LOCAL_INSTALLER_FAILURE_EXIT: i32 = 2;
 const HELPER_READY_ATTEMPTS: usize = 6;
 const HELPER_READY_DELAY: Duration = Duration::from_millis(450);
+const ROUTE_COMMAND: &str = "/sbin/route";
 
 /// Process adapter backed by Manis's signed, root launch daemon.
 ///
@@ -88,6 +90,9 @@ impl MacosPrivilegedProcessSpawner {
                     "helper.prepare.registration_deferred",
                     format!("attempt={registration_attempt} error={last_error}"),
                 );
+                if is_terminal_registration_failure(registration.status.code()) {
+                    return Err(last_error);
+                }
             }
 
             match wait_for_current_helper(&control) {
@@ -134,6 +139,52 @@ impl MacosPrivilegedProcessSpawner {
             controller,
         })
     }
+}
+
+pub(crate) fn existing_tun_route() -> io::Result<Option<String>> {
+    let output = Command::new(ROUTE_COMMAND)
+        .args(["-n", "get", "1.0.0.1"])
+        .env_clear()
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    Ok(parse_existing_tun_route(&output.stdout))
+}
+
+fn parse_existing_tun_route(output: &[u8]) -> Option<String> {
+    let output = String::from_utf8_lossy(output);
+    let mut interface = None;
+    let mut gateway = None;
+    let mut destination = None;
+    let mut mask = None;
+    for line in output.lines() {
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
+        match key.trim() {
+            "interface" => interface = Some(value.trim()),
+            "gateway" => gateway = Some(value.trim()),
+            "destination" => destination = Some(value.trim()),
+            "mask" => mask = Some(value.trim()),
+            _ => {}
+        }
+    }
+    let interface = interface.filter(|value| value.starts_with("utun"))?;
+    if destination != Some("1.0.0.0") || mask != Some("255.0.0.0") {
+        return None;
+    }
+    Some(format!(
+        "interface={interface} gateway={}",
+        gateway.unwrap_or("unknown")
+    ))
+}
+
+fn is_terminal_registration_failure(exit_code: Option<i32>) -> bool {
+    exit_code == Some(LOCAL_INSTALLER_FAILURE_EXIT)
 }
 
 fn wait_for_current_helper(control: &Path) -> io::Result<Output> {
@@ -392,9 +443,33 @@ mod tests {
     use manis_engine::{ControllerEndpoint, ManagedEngineConfig};
 
     use super::{
-        HelperStatus, MacosPrivilegedProcessSpawner, is_current_status, parse_helper_status,
-        parse_pid,
+        HelperStatus, MacosPrivilegedProcessSpawner, is_current_status,
+        is_terminal_registration_failure, parse_existing_tun_route, parse_helper_status, parse_pid,
     };
+
+    #[test]
+    fn does_not_repeat_a_failed_local_admin_install() {
+        assert!(is_terminal_registration_failure(Some(2)));
+        assert!(!is_terminal_registration_failure(Some(1)));
+        assert!(!is_terminal_registration_failure(None));
+    }
+
+    #[test]
+    fn detects_the_mihomo_route_shape_owned_by_an_existing_tun() {
+        let conflict = parse_existing_tun_route(
+            b"destination: 1.0.0.0\nmask: 255.0.0.0\ngateway: 198.18.0.1\ninterface: utun4\n",
+        );
+        assert_eq!(
+            conflict.as_deref(),
+            Some("interface=utun4 gateway=198.18.0.1")
+        );
+        assert_eq!(
+            parse_existing_tun_route(
+                b"destination: default\ngateway: 192.168.3.1\ninterface: en1\n"
+            ),
+            None
+        );
+    }
 
     #[test]
     fn parses_typed_helper_pid_response() {
@@ -410,14 +485,15 @@ mod tests {
         assert!(!is_current_status(b"running 42\n"));
         assert!(!is_current_status(b"stopped v2\n"));
         assert!(!is_current_status(b"stopped v3 not-started\n"));
-        assert!(is_current_status(b"stopped v4 not-started\n"));
-        assert!(is_current_status(b"running 42 v4\n"));
+        assert!(!is_current_status(b"stopped v4 not-started\n"));
+        assert!(is_current_status(b"stopped v5 not-started\n"));
+        assert!(is_current_status(b"running 42 v5\n"));
         assert_eq!(
-            parse_helper_status(b"running 42 v4\n").unwrap(),
+            parse_helper_status(b"running 42 v5\n").unwrap(),
             HelperStatus::Running { pid: 42 }
         );
         assert_eq!(
-            parse_helper_status(b"stopped v4 unexpected-signal-9\n").unwrap(),
+            parse_helper_status(b"stopped v5 unexpected-signal-9\n").unwrap(),
             HelperStatus::Stopped {
                 reason: "unexpected-signal-9".to_owned()
             }

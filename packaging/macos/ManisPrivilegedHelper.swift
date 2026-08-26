@@ -3,7 +3,7 @@ import Darwin
 import Security
 
 private let serviceName = "dev.manis.app.helper"
-private let helperProtocolVersion = "v4"
+private let helperProtocolVersion = "v5"
 private let requiredClientRequirement =
     ProcessInfo.processInfo.environment["MANIS_REQUIRED_CLIENT_REQUIREMENT"] ?? ""
 private let allowInsecureLocalRequirement =
@@ -13,8 +13,10 @@ private let allowedLocalUserIdentifier =
 private let insecureLocalMihomoPath = "/Library/Application Support/Manis/bin/mihomo"
 private let logPath = "/var/log/manis-mihomo-helper.log"
 private let maximumConfigBytes = 16 * 1024 * 1024
+private let maximumGeodataBytes: off_t = 128 * 1024 * 1024
 private let maximumCoreLogBytes: off_t = 4 * 1024 * 1024
 private let coreLogName = "manis-privileged-core.log"
+private let optionalGeodataNames = ["geoip.metadb", "geoip.dat", "geosite.dat", "GeoLite2-ASN.mmdb"]
 
 @objc(ManisPrivilegedHelperProtocol)
 protocol ManisPrivilegedHelperProtocol {
@@ -393,7 +395,54 @@ private func stageRuntime(_ request: LaunchRequest, owner: uid_t) throws -> Stag
         [.ownerAccountID: 0, .groupOwnerAccountID: 0, .posixPermissions: 0o600],
         ofItemAtPath: config.path
     )
+    for name in optionalGeodataNames {
+        try stageOptionalGeodata(
+            sourceDirectory: request.dataDir,
+            destinationDirectory: root,
+            name: name,
+            owner: owner
+        )
+    }
     return StagedRuntime(dataDir: root, config: config.path)
+}
+
+private func stageOptionalGeodata(
+    sourceDirectory: String,
+    destinationDirectory: String,
+    name: String,
+    owner: uid_t
+) throws {
+    let source = URL(fileURLWithPath: sourceDirectory).appendingPathComponent(name).path
+    let descriptor = open(source, O_RDONLY | O_NOFOLLOW)
+    if descriptor < 0 && errno == ENOENT {
+        return
+    }
+    guard descriptor >= 0 else {
+        throw HelperError.invalidRuntime("could not open optional geodata safely")
+    }
+    defer { close(descriptor) }
+
+    var metadata = stat()
+    guard fstat(descriptor, &metadata) == 0,
+        metadata.st_uid == owner,
+        metadata.st_mode & S_IFMT == S_IFREG,
+        metadata.st_size > 0,
+        metadata.st_size <= maximumGeodataBytes
+    else {
+        throw HelperError.invalidRuntime("optional geodata ownership, type, or size is unsafe")
+    }
+    let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: false)
+    let contents = try handle.readToEnd() ?? Data()
+    guard contents.count == metadata.st_size else {
+        throw HelperError.invalidRuntime("optional geodata changed while it was being staged")
+    }
+
+    let destination = URL(fileURLWithPath: destinationDirectory).appendingPathComponent(name)
+    try contents.write(to: destination, options: .atomic)
+    try FileManager.default.setAttributes(
+        [.ownerAccountID: 0, .groupOwnerAccountID: 0, .posixPermissions: 0o644],
+        ofItemAtPath: destination.path
+    )
 }
 
 private func validateStagedRuntime(

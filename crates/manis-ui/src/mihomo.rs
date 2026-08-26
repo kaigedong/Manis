@@ -405,13 +405,23 @@ impl ControllerRuntime {
             ),
         );
         #[cfg(target_os = "macos")]
-        if enabled && let Err(error) = self.ensure_privileged_mihomo() {
-            record_event(
-                LogLevel::Error,
-                "controller.tun.failed",
-                format!("enabled=true phase=privilege_promotion error={error}"),
-            );
-            return Err(error);
+        if enabled {
+            if let Some(conflict) = crate::macos_privileged::existing_tun_route()
+                .map_err(|error| LoadError::Runtime(format!("无法检查 macOS TUN 路由：{error}")))?
+            {
+                record_event(LogLevel::Error, "controller.tun.conflict", conflict.clone());
+                return Err(LoadError::Runtime(format!(
+                    "检测到其他 TUN 正在占用系统代理路由（{conflict}）；请先关闭其他代理软件的 TUN 模式"
+                )));
+            }
+            if let Err(error) = self.ensure_privileged_mihomo() {
+                record_event(
+                    LogLevel::Error,
+                    "controller.tun.failed",
+                    format!("enabled=true phase=privilege_promotion error={error}"),
+                );
+                return Err(error);
+            }
         }
         let controller_secret = self.controller_secret();
         let endpoint = match self {

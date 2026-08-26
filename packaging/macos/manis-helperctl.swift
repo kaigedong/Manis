@@ -3,7 +3,6 @@ import Darwin
 import Foundation
 import ServiceManagement
 import Security
-import Darwin
 
 private let serviceName = "dev.manis.app.helper"
 private let plistName = "dev.manis.app.helper.plist"
@@ -27,6 +26,7 @@ private enum CliError: Error, CustomStringConvertible {
     case usage
     case timeout
     case helper(String)
+    case localInstaller(String)
 
     var description: String {
         switch self {
@@ -43,6 +43,17 @@ private enum CliError: Error, CustomStringConvertible {
             return "privileged helper did not reply"
         case .helper(let message):
             return message
+        case .localInstaller(let message):
+            return "local helper installation failed: \(message)"
+        }
+    }
+
+    var exitStatus: Int32 {
+        switch self {
+        case .localInstaller:
+            return 2
+        case .usage, .timeout, .helper:
+            return 1
         }
     }
 }
@@ -94,7 +105,7 @@ private func parseCommand(_ arguments: [String]) throws -> Command {
 
 private func registerService() throws {
     if insecureLocalBuild() {
-        try reinstallLocalService()
+        try installLocalService()
         return
     }
     let service = SMAppService.daemon(plistName: plistName)
@@ -108,7 +119,7 @@ private func registerService() throws {
 
 private func reinstallService() throws {
     if insecureLocalBuild() {
-        try reinstallLocalService()
+        try installLocalService()
         return
     }
     let service = SMAppService.daemon(plistName: plistName)
@@ -148,6 +159,21 @@ private func sha256(_ url: URL) throws -> String {
     return hasher.finalize().map { String(format: "%02x", $0) }.joined()
 }
 
+private func installLocalService() throws {
+    do {
+        try reinstallLocalService()
+    } catch let error as CliError {
+        switch error {
+        case .localInstaller:
+            throw error
+        case .usage, .timeout, .helper:
+            throw CliError.localInstaller(error.description)
+        }
+    } catch {
+        throw CliError.localInstaller(String(describing: error))
+    }
+}
+
 private func reinstallLocalService() throws {
     let app = Bundle.main.bundleURL.resolvingSymlinksInPath().standardizedFileURL
     let installer = app
@@ -176,14 +202,14 @@ private func reinstallLocalService() throws {
         FileManager.default.isExecutableFile(atPath: helper.path),
         FileManager.default.isExecutableFile(atPath: mihomo.path)
     else {
-        throw CliError.helper("local TUN helper payload is incomplete in Manis.app")
+        throw CliError.localInstaller("local TUN helper payload is incomplete in Manis.app")
     }
     let installerHash = try sha256(installer)
     let helperHash = try sha256(helper)
     let mihomoHash = try sha256(mihomo)
     let allowedUser = String(getuid())
 
-    let script = """
+    let script = #"""
         on run argv
             set installerPath to item 1 of argv
             set appPath to item 2 of argv
@@ -191,10 +217,10 @@ private func reinstallLocalService() throws {
             set expectedHelperHash to item 4 of argv
             set expectedMihomoHash to item 5 of argv
             set allowedUser to item 6 of argv
-            set commandText to "set -e; temporary=$(/usr/bin/mktemp /var/tmp/manis-local-helper-install.XXXXXX); trap '/bin/rm -f \"$temporary\"' EXIT; /bin/cp " & quoted form of installerPath & " \"$temporary\"; actual=$(/usr/bin/shasum -a 256 \"$temporary\" | /usr/bin/cut -d ' ' -f 1); /usr/bin/test \"$actual\" = " & quoted form of expectedInstallerHash & "; /bin/chmod 0700 \"$temporary\"; \"$temporary\" reinstall " & quoted form of appPath & " " & quoted form of expectedHelperHash & " " & quoted form of expectedMihomoHash & " " & quoted form of allowedUser
+            set commandText to "set -e; temporary=$(/usr/bin/mktemp /var/tmp/manis-local-helper-install.XXXXXX); trap '/bin/rm -f \"$temporary\"' EXIT; /bin/cp " & quoted form of installerPath & " \"$temporary\"; actual=$(/usr/bin/shasum -a 256 \"$temporary\" | /usr/bin/cut -d ' ' -f 1); /bin/test \"$actual\" = " & quoted form of expectedInstallerHash & "; /bin/chmod 0700 \"$temporary\"; \"$temporary\" reinstall " & quoted form of appPath & " " & quoted form of expectedHelperHash & " " & quoted form of expectedMihomoHash & " " & quoted form of allowedUser
             do shell script commandText with administrator privileges with prompt "Manis needs administrator access to install its local TUN helper."
         end run
-        """
+        """#
     let process = Process()
     let output = Pipe()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
@@ -211,10 +237,10 @@ private func reinstallLocalService() throws {
         encoding: .utf8
     )?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     guard process.terminationStatus == 0 else {
-        throw CliError.helper(
+        throw CliError.localInstaller(
             message.isEmpty
-                ? "local helper installation failed with status \(process.terminationStatus)"
-                : "local helper installation failed: \(message)"
+                ? "installer exited with status \(process.terminationStatus)"
+                : message
         )
     }
     print(message.isEmpty ? "registered local development helper" : message)
@@ -311,5 +337,5 @@ do {
     }
 } catch {
     fputs("\(error)\n", stderr)
-    Foundation.exit(1)
+    Foundation.exit((error as? CliError)?.exitStatus ?? 1)
 }
