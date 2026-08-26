@@ -217,25 +217,62 @@ where
         Ok(())
     }
 
-    /// Toggles `tun.enable` while preserving every other currently reported TUN field.
+    /// Toggles `tun.enable`.
     ///
     /// # Errors
-    /// Returns an error if the controller cannot be read, the `tun` field is not an object or
-    /// `null`, the PATCH request fails, or an enable request does not remain active after startup.
+    /// Returns an error if an enable request cannot read the controller configuration, the `tun`
+    /// field is not an object or `null`, the PATCH request fails, or TUN does not remain active.
     pub fn set_tun_enabled(&self, enabled: bool) -> Result<(), MihomoError> {
-        let config = self.fetch_json::<Value>(CONFIGS_ENDPOINT)?;
-        let mut tun = match config.get("tun") {
-            Some(Value::Object(tun)) => tun.clone(),
-            Some(Value::Null) | None => Map::new(),
-            Some(_other) => {
-                return Err(MihomoError::InvalidResponse(
-                    "/configs tun field was not an object".to_owned(),
-                ));
+        self.set_tun_enabled_with_interface(enabled, None)
+    }
+
+    /// Enables TUN while pinning Mihomo's own outbound sockets to a physical interface.
+    ///
+    /// # Errors
+    /// Returns an error if the interface is empty or contains control characters, or when the
+    /// controller rejects the configuration change.
+    pub fn enable_tun_on_interface(&self, interface: &str) -> Result<(), MihomoError> {
+        if interface.is_empty() || interface.len() > 255 || interface.chars().any(char::is_control)
+        {
+            return Err(MihomoError::InvalidConfig(
+                "outbound interface name is invalid".to_owned(),
+            ));
+        }
+        self.set_tun_enabled_with_interface(true, Some(interface))
+    }
+
+    fn set_tun_enabled_with_interface(
+        &self,
+        enabled: bool,
+        interface: Option<&str>,
+    ) -> Result<(), MihomoError> {
+        let tun = if enabled {
+            let config = self.fetch_json::<Value>(CONFIGS_ENDPOINT)?;
+            let mut tun = match config.get("tun") {
+                Some(Value::Object(tun)) => tun.clone(),
+                Some(Value::Null) | None => Map::new(),
+                Some(_other) => {
+                    return Err(MihomoError::InvalidResponse(
+                        "/configs tun field was not an object".to_owned(),
+                    ));
+                }
+            };
+            tun.insert("enable".to_owned(), Value::Bool(true));
+            if interface.is_some() {
+                tun.insert("auto-detect-interface".to_owned(), Value::Bool(false));
             }
+            tun
+        } else {
+            Map::from_iter([("enable".to_owned(), Value::Bool(false))])
         };
-        tun.insert("enable".to_owned(), Value::Bool(enabled));
 
         let mut patch = Map::new();
+        if let Some(interface) = interface {
+            patch.insert(
+                "interface-name".to_owned(),
+                Value::String(interface.to_owned()),
+            );
+        }
         patch.insert("tun".to_owned(), Value::Object(tun));
         self.transport
             .patch_json(&self.config, CONFIGS_ENDPOINT, &Value::Object(patch))?;

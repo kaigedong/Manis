@@ -405,7 +405,7 @@ impl ControllerRuntime {
             ),
         );
         #[cfg(target_os = "macos")]
-        if enabled {
+        let outbound_interface = if enabled {
             if let Some(conflict) = crate::macos_privileged::existing_tun_route()
                 .map_err(|error| LoadError::Runtime(format!("无法检查 macOS TUN 路由：{error}")))?
             {
@@ -422,7 +422,21 @@ impl ControllerRuntime {
                 );
                 return Err(error);
             }
-        }
+            let interface =
+                crate::macos_privileged::default_route_interface().map_err(|error| {
+                    LoadError::Runtime(format!("无法确定 macOS 物理网络出口：{error}"))
+                })?;
+            record_event(
+                LogLevel::Info,
+                "controller.tun.outbound_interface",
+                format!("interface={interface}"),
+            );
+            Some(interface)
+        } else {
+            None
+        };
+        #[cfg(not(target_os = "macos"))]
+        let outbound_interface: Option<String> = None;
         let controller_secret = self.controller_secret();
         let endpoint = match self {
             Self::Managed { manager, .. } => {
@@ -441,7 +455,18 @@ impl ControllerRuntime {
             }
             Self::Invalid { message } => return Err(LoadError::Runtime(message.clone())),
         };
-        let result = set_tun_enabled(&endpoint, enabled, controller_secret.as_deref());
+        let result = set_tun_enabled(
+            &endpoint,
+            enabled,
+            controller_secret.as_deref(),
+            outbound_interface.as_deref(),
+        )
+        .map_err(LoadError::from);
+        #[cfg(target_os = "macos")]
+        let result = match result {
+            Ok(()) if !enabled => self.release_macos_tun_route(),
+            result => result,
+        };
         match &result {
             Ok(()) => record_event(
                 LogLevel::Info,
@@ -454,7 +479,45 @@ impl ControllerRuntime {
                 format!("enabled={enabled} error={error}"),
             ),
         }
-        result.map_err(LoadError::from)
+        result
+    }
+
+    #[cfg(target_os = "macos")]
+    fn release_macos_tun_route(&self) -> Result<(), LoadError> {
+        if crate::macos_privileged::wait_for_tun_route_release().map_err(|error| {
+            LoadError::Runtime(format!("无法确认 macOS TUN 路由已释放：{error}"))
+        })? {
+            return Ok(());
+        }
+
+        record_event(
+            LogLevel::Warn,
+            "controller.tun.route_release_restart",
+            "Mihomo kept the macOS TUN route after disable; restarting managed core",
+        );
+        let Self::Managed { manager, .. } = self else {
+            return Err(LoadError::Runtime(
+                "关闭 TUN 后路由仍然存在，且当前内核不能由 Manis 重启".to_owned(),
+            ));
+        };
+        let mut manager = manager
+            .lock()
+            .map_err(|_poisoned| LoadError::Runtime("托管内核状态锁已损坏".to_owned()))?;
+        manager.stop()?;
+        manager.start()?;
+        if !crate::macos_privileged::wait_for_tun_route_release().map_err(|error| {
+            LoadError::Runtime(format!("重启后无法确认 macOS TUN 路由已释放：{error}"))
+        })? {
+            return Err(LoadError::Runtime(
+                "Mihomo 重启后 macOS TUN 路由仍未释放".to_owned(),
+            ));
+        }
+        record_event(
+            LogLevel::Info,
+            "controller.tun.route_release_succeeded",
+            "managed core restarted and macOS TUN route was released",
+        );
+        Ok(())
     }
 
     #[cfg(target_os = "macos")]
@@ -4559,14 +4622,18 @@ fn set_tun_enabled(
     endpoint: &str,
     enabled: bool,
     controller_secret: Option<&str>,
+    outbound_interface: Option<&str>,
 ) -> Result<(), MihomoError> {
     #[cfg(unix)]
     if let Some(socket_path) = unix_socket_path(endpoint)? {
-        return MihomoClient::new(
+        let client = MihomoClient::new(
             ControllerConfig::default(),
             UnixSocketTransport::new(socket_path),
-        )
-        .set_tun_enabled(enabled);
+        );
+        return outbound_interface.map_or_else(
+            || client.set_tun_enabled(enabled),
+            |interface| client.enable_tun_on_interface(interface),
+        );
     }
 
     #[cfg(not(unix))]
@@ -4577,7 +4644,11 @@ fn set_tun_enabled(
     }
 
     let config = with_controller_secret(ControllerConfig::new(endpoint)?, controller_secret);
-    MihomoClient::new(config, StdHttpTransport::default()).set_tun_enabled(enabled)
+    let client = MihomoClient::new(config, StdHttpTransport::default());
+    outbound_interface.map_or_else(
+        || client.set_tun_enabled(enabled),
+        |interface| client.enable_tun_on_interface(interface),
+    )
 }
 
 fn set_routing_mode(

@@ -17,6 +17,8 @@ const LOCAL_INSTALLER_FAILURE_EXIT: i32 = 2;
 const HELPER_READY_ATTEMPTS: usize = 6;
 const HELPER_READY_DELAY: Duration = Duration::from_millis(450);
 const ROUTE_COMMAND: &str = "/sbin/route";
+const TUN_ROUTE_RELEASE_ATTEMPTS: usize = 10;
+const TUN_ROUTE_RELEASE_DELAY: Duration = Duration::from_millis(50);
 
 /// Process adapter backed by Manis's signed, root launch daemon.
 ///
@@ -153,6 +155,51 @@ pub(crate) fn existing_tun_route() -> io::Result<Option<String>> {
         return Ok(None);
     }
     Ok(parse_existing_tun_route(&output.stdout))
+}
+
+pub(crate) fn default_route_interface() -> io::Result<String> {
+    let output = Command::new(ROUTE_COMMAND)
+        .args(["-n", "get", "default"])
+        .env_clear()
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()?;
+    if !output.status.success() {
+        return Err(control_error("query macOS default route", &output));
+    }
+    parse_default_route_interface(&output.stdout)
+        .ok_or_else(|| io::Error::other("macOS default route has no physical interface"))
+}
+
+pub(crate) fn wait_for_tun_route_release() -> io::Result<bool> {
+    for attempt in 0..TUN_ROUTE_RELEASE_ATTEMPTS {
+        if existing_tun_route()?.is_none() {
+            return Ok(true);
+        }
+        if attempt + 1 < TUN_ROUTE_RELEASE_ATTEMPTS {
+            std::thread::sleep(TUN_ROUTE_RELEASE_DELAY);
+        }
+    }
+    Ok(false)
+}
+
+fn parse_default_route_interface(output: &[u8]) -> Option<String> {
+    let output = String::from_utf8_lossy(output);
+    let interface = output.lines().find_map(|line| {
+        let (key, value) = line.split_once(':')?;
+        (key.trim() == "interface").then(|| value.trim())
+    })?;
+    if interface.starts_with("utun")
+        || interface.is_empty()
+        || interface.len() > 32
+        || !interface.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-')
+        })
+    {
+        return None;
+    }
+    Some(interface.to_owned())
 }
 
 fn parse_existing_tun_route(output: &[u8]) -> Option<String> {
@@ -444,8 +491,23 @@ mod tests {
 
     use super::{
         HelperStatus, MacosPrivilegedProcessSpawner, is_current_status,
-        is_terminal_registration_failure, parse_existing_tun_route, parse_helper_status, parse_pid,
+        is_terminal_registration_failure, parse_default_route_interface, parse_existing_tun_route,
+        parse_helper_status, parse_pid,
     };
+
+    #[test]
+    fn accepts_only_a_physical_default_route_interface() {
+        assert_eq!(
+            parse_default_route_interface(
+                b"route to: default\ngateway: 192.168.3.1\ninterface: en1\n"
+            )
+            .as_deref(),
+            Some("en1")
+        );
+        assert!(parse_default_route_interface(b"interface: utun7\n").is_none());
+        assert!(parse_default_route_interface(b"interface: en1; touch /tmp/nope\n").is_none());
+        assert!(parse_default_route_interface(b"gateway: 192.168.3.1\n").is_none());
+    }
 
     #[test]
     fn does_not_repeat_a_failed_local_admin_install() {

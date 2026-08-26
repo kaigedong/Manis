@@ -560,7 +560,7 @@ fn set_routing_mode_patches_exact_mode_body() -> Result<(), Box<dyn std::error::
 }
 
 #[test]
-fn set_tun_enabled_preserves_existing_tun_fields_in_patch_body()
+fn disabling_tun_sends_a_minimal_patch_so_mihomo_can_release_routes()
 -> Result<(), Box<dyn std::error::Error>> {
     let transport = FakeTransport::default();
     let client = MihomoClient::new(ControllerConfig::default(), &transport);
@@ -569,22 +569,41 @@ fn set_tun_enabled_preserves_existing_tun_fields_in_patch_body()
 
     assert_eq!(
         transport.requests.borrow().as_slice(),
-        [
-            RecordedRequest::get("/configs"),
-            RecordedRequest::patch(
-                "/configs",
-                serde_json::json!({
-                    "tun": {
-                        "enable": false,
-                        "stack": "system",
-                        "auto-route": true,
-                        "dns-hijack": ["any:53"]
-                    }
-                })
-            )
-        ]
+        [RecordedRequest::patch(
+            "/configs",
+            serde_json::json!({"tun": {"enable": false}})
+        )]
     );
 
+    Ok(())
+}
+
+#[test]
+fn enabling_tun_pins_mihomo_outbound_to_the_physical_interface()
+-> Result<(), Box<dyn std::error::Error>> {
+    let transport = FakeTransport::default();
+    let client = MihomoClient::new(ControllerConfig::default(), &transport);
+
+    client.enable_tun_on_interface("en1")?;
+
+    let requests = transport.requests.borrow();
+    assert_eq!(requests[0], RecordedRequest::get("/configs"));
+    assert_eq!(
+        requests[1],
+        RecordedRequest::patch(
+            "/configs",
+            serde_json::json!({
+                "interface-name": "en1",
+                "tun": {
+                    "enable": true,
+                    "stack": "system",
+                    "auto-route": true,
+                    "auto-detect-interface": false,
+                    "dns-hijack": ["any:53"]
+                }
+            })
+        )
+    );
     Ok(())
 }
 
@@ -637,7 +656,6 @@ fn set_tun_enabled_rejects_an_async_kernel_rollback() {
         [
             RecordedRequest::get("/configs"),
             RecordedRequest::patch("/configs", serde_json::json!({"tun":{"enable":true}})),
-            RecordedRequest::get("/configs"),
             RecordedRequest::get("/configs"),
             RecordedRequest::patch("/configs", serde_json::json!({"tun":{"enable":false}})),
         ]
