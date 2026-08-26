@@ -72,6 +72,7 @@ const LIVE_LOG_MAILBOX_CAPACITY: usize = 256;
 const LIVE_RETRY_MAX: Duration = Duration::from_secs(5);
 const GROUP_DELAY_TEST_URL: &str = "https://www.gstatic.com/generate_204";
 const GROUP_DELAY_TIMEOUT_MS: u16 = 5_000;
+const GROUP_DELAY_CONTROLLER_READ_TIMEOUT: Duration = Duration::from_secs(9);
 const GROUP_DELAY_WORKERS: usize = 8;
 static NEXT_PREVIEW_WORKSPACE: AtomicU64 = AtomicU64::new(0);
 static NEXT_STORED_SOURCE: AtomicU64 = AtomicU64::new(0);
@@ -348,7 +349,27 @@ impl ControllerRuntime {
             }
             Self::Invalid { message } => return Err(LoadError::Runtime(message.clone())),
         };
-        set_tun_enabled(&endpoint, enabled, controller_secret.as_deref()).map_err(LoadError::from)
+        let result = set_tun_enabled(&endpoint, enabled, controller_secret.as_deref());
+        if let Err(error) = result {
+            if enabled && let Self::Managed { manager, .. } = self {
+                let cleanup = manager
+                    .lock()
+                    .map_err(|_poisoned| {
+                        LoadError::Runtime("托管内核状态锁已损坏，无法清理 TUN".to_owned())
+                    })?
+                    .stop();
+                return Err(match cleanup {
+                    Ok(()) => LoadError::Runtime(format!(
+                        "TUN 启动失败，已停止 Mihomo 以清理残留路由；请重新连接后使用系统代理。{error}"
+                    )),
+                    Err(cleanup) => LoadError::Runtime(format!(
+                        "TUN 启动失败，且残留路由清理失败：{cleanup}；原始错误：{error}"
+                    )),
+                });
+            }
+            return Err(error.into());
+        }
+        Ok(())
     }
 
     pub(crate) fn set_routing_mode(&self, mode: RoutingMode) -> Result<(), LoadError> {
@@ -503,6 +524,7 @@ impl ControllerRuntime {
     pub(crate) fn test_policy_group_delay(
         &self,
         group_name: &str,
+        candidate_names: &[String],
     ) -> Result<PolicyGroupBenchmarkSnapshot, LoadError> {
         let controller_secret = self.controller_secret();
         let endpoint = match self {
@@ -521,9 +543,32 @@ impl ControllerRuntime {
             }
             Self::Invalid { message } => return Err(LoadError::Runtime(message.clone())),
         };
-        let delays = fetch_group_delay(&endpoint, group_name, controller_secret.as_deref())?;
-        let current =
-            fetch_policy_group(&endpoint, group_name, controller_secret.as_deref())?.current;
+        let candidates = candidate_names.iter().collect::<BTreeSet<_>>();
+        let group_delays = fetch_group_delay(&endpoint, group_name, controller_secret.as_deref());
+        let delays = match group_delays {
+            Ok(delays) => delays
+                .into_iter()
+                .filter(|(name, _delay)| candidates.contains(name))
+                .collect::<BTreeMap<_, _>>(),
+            Err(group_error) => {
+                match fetch_proxy_delays_bounded(
+                    &endpoint,
+                    candidate_names,
+                    controller_secret.as_deref(),
+                ) {
+                    Ok(delays) => delays,
+                    Err(_fallback_error) => return Err(group_error.into()),
+                }
+            }
+        };
+        if delays.is_empty() {
+            return Err(LoadError::Runtime(
+                "Mihomo 未返回任何有效节点延迟".to_owned(),
+            ));
+        }
+        let current = fetch_policy_group(&endpoint, group_name, controller_secret.as_deref())
+            .ok()
+            .and_then(|group| group.current);
         Ok(PolicyGroupBenchmarkSnapshot { delays, current })
     }
 
@@ -3693,7 +3738,7 @@ fn fetch_group_delay(
     #[cfg(unix)]
     if let Some(socket_path) = unix_socket_path(endpoint)? {
         return MihomoClient::new(
-            ControllerConfig::default(),
+            delay_controller_config(ControllerConfig::default()),
             UnixSocketTransport::new(socket_path),
         )
         .fetch_group_delay(group_name, GROUP_DELAY_TEST_URL, GROUP_DELAY_TIMEOUT_MS);
@@ -3706,7 +3751,10 @@ fn fetch_group_delay(
         ));
     }
 
-    let config = with_controller_secret(ControllerConfig::new(endpoint)?, controller_secret);
+    let config = delay_controller_config(with_controller_secret(
+        ControllerConfig::new(endpoint)?,
+        controller_secret,
+    ));
     MihomoClient::new(config, StdHttpTransport::default()).fetch_group_delay(
         group_name,
         GROUP_DELAY_TEST_URL,
@@ -3787,7 +3835,7 @@ fn fetch_proxy_delay(
     #[cfg(unix)]
     if let Some(socket_path) = unix_socket_path(endpoint)? {
         return MihomoClient::new(
-            ControllerConfig::default(),
+            delay_controller_config(ControllerConfig::default()),
             UnixSocketTransport::new(socket_path),
         )
         .fetch_proxy_delay(proxy_name, GROUP_DELAY_TEST_URL, GROUP_DELAY_TIMEOUT_MS);
@@ -3800,12 +3848,20 @@ fn fetch_proxy_delay(
         ));
     }
 
-    let config = with_controller_secret(ControllerConfig::new(endpoint)?, controller_secret);
+    let config = delay_controller_config(with_controller_secret(
+        ControllerConfig::new(endpoint)?,
+        controller_secret,
+    ));
     MihomoClient::new(config, StdHttpTransport::default()).fetch_proxy_delay(
         proxy_name,
         GROUP_DELAY_TEST_URL,
         GROUP_DELAY_TIMEOUT_MS,
     )
+}
+
+fn delay_controller_config(config: ControllerConfig) -> ControllerConfig {
+    let connect_timeout = config.connect_timeout();
+    config.with_timeouts(connect_timeout, GROUP_DELAY_CONTROLLER_READ_TIMEOUT)
 }
 
 fn fetch_proxy_delays_bounded(
@@ -4934,6 +4990,15 @@ IP-CIDR,192.0.2.0/24,DIRECT
     }
 
     #[test]
+    fn delay_controller_timeout_exceeds_the_kernel_test_timeout() {
+        let config = super::delay_controller_config(relay_mihomo::ControllerConfig::default());
+
+        assert!(
+            config.read_timeout() > Duration::from_millis(u64::from(super::GROUP_DELAY_TIMEOUT_MS))
+        );
+    }
+
+    #[test]
     fn external_group_benchmark_keeps_partial_proxy_results()
     -> Result<(), Box<dyn std::error::Error>> {
         let listener = TcpListener::bind("127.0.0.1:0")?;
@@ -5067,13 +5132,56 @@ IP-CIDR,192.0.2.0/24,DIRECT
         });
         let runtime = super::ControllerRuntime::External { endpoint };
 
-        let result = runtime.test_policy_group_delay("Auto HK")?;
+        let result = runtime
+            .test_policy_group_delay("Auto HK", &["HK-01".to_owned(), "HK-02".to_owned()])?;
         let requests = server.join().map_err(|_| "fixture server panicked")??;
 
         assert!(requests[0].contains("GET /group/Auto%20HK/delay?"));
         assert!(requests[1].contains("GET /proxies/Auto%20HK HTTP/1.1"));
         assert_eq!(result.current.as_deref(), Some("HK-02"));
         assert_eq!(result.delays.get("HK-02"), Some(&29));
+        Ok(())
+    }
+
+    #[test]
+    fn runtime_policy_benchmark_falls_back_to_partial_node_results()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let endpoint = format!("http://{}", listener.local_addr()?);
+        let server = std::thread::spawn(move || -> std::io::Result<()> {
+            for _ in 0..4 {
+                let (mut stream, _) = listener.accept()?;
+                let mut request_line = String::new();
+                BufReader::new(stream.try_clone()?).read_line(&mut request_line)?;
+                let response = if request_line.contains("/group/Auto%20HK/delay?") {
+                    "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                        .to_owned()
+                } else if request_line.contains("/proxies/HK-01/delay?") {
+                    "HTTP/1.1 200 OK\r\nContent-Length: 12\r\nConnection: close\r\n\r\n{\"delay\":42}"
+                        .to_owned()
+                } else if request_line.contains("/proxies/HK-02/delay?") {
+                    "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                        .to_owned()
+                } else {
+                    let body = r#"{"name":"Auto HK","type":"URLTest","now":"HK-01","all":["HK-01","HK-02"]}"#;
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    )
+                };
+                stream.write_all(response.as_bytes())?;
+            }
+            Ok(())
+        });
+        let runtime = super::ControllerRuntime::External { endpoint };
+
+        let result = runtime
+            .test_policy_group_delay("Auto HK", &["HK-01".to_owned(), "HK-02".to_owned()])?;
+        server.join().map_err(|_| "fixture server panicked")??;
+
+        assert_eq!(result.current.as_deref(), Some("HK-01"));
+        assert_eq!(result.delays.get("HK-01"), Some(&42));
+        assert!(!result.delays.contains_key("HK-02"));
         Ok(())
     }
 

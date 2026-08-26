@@ -1900,7 +1900,7 @@ impl RelayApp {
                                 current: None,
                             })
                     } else {
-                        runtime.test_policy_group_delay(&group_name)
+                        runtime.test_policy_group_delay(&group_name, &candidate_names)
                     }
                 })
                 .await;
@@ -1910,9 +1910,9 @@ impl RelayApp {
                     return;
                 }
                 this.group_benchmark_active_generation = None;
-                let (delays, current) = match result {
-                    Ok(snapshot) => (Some(snapshot.delays), snapshot.current),
-                    Err(_error) => (None, None),
+                let (delays, current, failure) = match result {
+                    Ok(snapshot) => (Some(snapshot.delays), snapshot.current, None),
+                    Err(error) => (None, None, Some(error.to_string())),
                 };
                 if let Some(delays) = delays.as_ref() {
                     this.catalog
@@ -1932,16 +1932,22 @@ impl RelayApp {
                 match state {
                     GroupBenchmarkState::Complete { summary, .. } => {
                         trace_ui(UiEvent::GroupBenchmarkSucceeded);
-                        this.status =
-                            Self::policy_benchmark_status(language, group_kind, current.as_deref(), *summary);
+                        this.status = Self::policy_benchmark_status(
+                            language,
+                            group_kind,
+                            current.as_deref(),
+                            *summary,
+                        );
                     }
                     GroupBenchmarkState::Failed { .. } => {
                         trace_ui(UiEvent::GroupBenchmarkFailed);
-                        language.text(
-                            "Policy benchmark failed; check the kernel connection and network, then retry",
-                            "策略组测速失败，请检查内核连接与网络后重试",
-                        )
-                            .clone_into(&mut this.status);
+                        this.status = format!(
+                            "{}：{}",
+                            language.text("Policy benchmark failed", "策略组测速失败"),
+                            failure.as_deref().unwrap_or_else(
+                                || language.text("unknown controller error", "未知控制器错误")
+                            )
+                        );
                     }
                     _ => return,
                 }

@@ -195,7 +195,12 @@ impl PolicyGroup {
             name: proxy.name.clone(),
             kind: GroupKind::from_proxy_type(&proxy.proxy_type)?,
             current: proxy.current.clone(),
-            nodes: proxy.all.clone(),
+            nodes: proxy
+                .all
+                .iter()
+                .filter(|name| !is_subscription_metadata_name(name))
+                .cloned()
+                .collect(),
             latest_latency_ms: proxy.latest_latency_ms(),
             alive: proxy.alive,
             provider_name: proxy.provider_name.clone(),
@@ -404,6 +409,12 @@ impl RawProvider {
         let proxies = self
             .proxies
             .into_iter()
+            .filter(|proxy| {
+                proxy
+                    .name
+                    .as_deref()
+                    .is_none_or(|name| !is_subscription_metadata_name(name))
+            })
             .enumerate()
             .map(|(index, proxy)| proxy.into_proxy(format!("节点 {}", index + 1)))
             .collect();
@@ -413,6 +424,23 @@ impl RawProvider {
             proxies,
         }
     }
+}
+
+fn is_subscription_metadata_name(name: &str) -> bool {
+    let name = name.trim();
+    [
+        "剩余流量",
+        "流量剩余",
+        "套餐到期",
+        "到期时间",
+        "过期时间",
+        "距离下次重置",
+        "下次重置",
+        "防失联",
+        "官网",
+    ]
+    .iter()
+    .any(|prefix| name.starts_with(prefix))
 }
 
 #[derive(Debug, Deserialize)]

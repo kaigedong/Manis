@@ -128,6 +128,9 @@ fn qx_default_renders_ordered_minimal_mihomo_yaml() {
     assert!(yaml.contains("log-level: \"warning\""));
     assert!(yaml.contains("store-selected: true"));
     assert!(yaml.contains("proxy-providers:"));
+    assert!(yaml.contains(
+        "exclude-filter: \"^(剩余流量|流量剩余|套餐到期|到期时间|过期时间|距离下次重置|下次重置|防失联|官网)\""
+    ));
     assert!(
         yaml.contains("url: \"https://subscription.example.invalid/client?token=fixture-secret\"")
     );

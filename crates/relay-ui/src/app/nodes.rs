@@ -2128,6 +2128,7 @@ impl RelayApp {
                     cx.notify();
                     return;
                 };
+                let failure = result.as_ref().err().map(ToString::to_string);
                 let accepted = match result {
                     Ok(delays) => state.complete(generation, total, delays),
                     Err(_error) => state.fail(generation),
@@ -2140,21 +2141,23 @@ impl RelayApp {
                         trace_ui(UiEvent::GroupBenchmarkSucceeded);
                         this.status = format!(
                             "{}: {}",
-                            language.text(
-                                "Imported group test completed",
-                                "导入分组测速完成"
-                            ),
-                            Self::success_fraction_label(summary.succeeded, summary.total, language)
+                            language.text("Imported group test completed", "导入分组测速完成"),
+                            Self::success_fraction_label(
+                                summary.succeeded,
+                                summary.total,
+                                language
+                            )
                         );
                     }
                     GroupBenchmarkState::Failed { .. } => {
                         trace_ui(UiEvent::GroupBenchmarkFailed);
-                        language
-                            .text(
-                                "Imported group test failed. Check Mihomo connection and network, then retry.",
-                                "导入分组测速失败，请检查 Mihomo 连接与网络后重试",
+                        this.status = format!(
+                            "{}：{}",
+                            language.text("Imported group test failed", "导入分组测速失败"),
+                            failure.as_deref().unwrap_or_else(
+                                || language.text("unknown controller error", "未知控制器错误")
                             )
-                            .clone_into(&mut this.status);
+                        );
                     }
                     _ => return,
                 }
@@ -2291,6 +2294,7 @@ impl RelayApp {
                         cx.notify();
                         return;
                     };
+                    let failure = result.as_ref().err().map(ToString::to_string);
                     let accepted = match result {
                         Ok(delays) => state.complete(generation, total, delays),
                         Err(_error) => state.fail(generation),
@@ -2312,12 +2316,12 @@ impl RelayApp {
                             }
                             GroupBenchmarkState::Failed { .. } => {
                                 trace_ui(UiEvent::GroupBenchmarkFailed);
-                                language
-                                    .text(
-                                        "Group test failed. Check Mihomo connection and network, then retry.",
-                                        "分组测速失败，请检查 Mihomo 连接与网络后重试",
-                                    )
-                                    .to_owned()
+                                format!(
+                                    "{}：{}",
+                                    language.text("Group test failed", "分组测速失败"),
+                                    failure.as_deref().unwrap_or_else(|| language
+                                        .text("unknown controller error", "未知控制器错误"))
+                                )
                             }
                             _ => return,
                         };

@@ -111,6 +111,41 @@ impl ControllerTransport for FakeTransport {
     }
 }
 
+#[derive(Default)]
+struct TunRejectedTransport {
+    requests: RefCell<Vec<RecordedRequest>>,
+}
+
+impl ControllerTransport for TunRejectedTransport {
+    fn get(&self, _config: &ControllerConfig, path: &str) -> Result<String, MihomoError> {
+        self.requests.borrow_mut().push(RecordedRequest::get(path));
+        Ok(r#"{"tun":{"enable":false}}"#.to_owned())
+    }
+
+    fn patch_json(
+        &self,
+        _config: &ControllerConfig,
+        path: &str,
+        body: &Value,
+    ) -> Result<String, MihomoError> {
+        self.requests
+            .borrow_mut()
+            .push(RecordedRequest::patch(path, body.clone()));
+        Ok(String::new())
+    }
+
+    fn put_json(
+        &self,
+        _config: &ControllerConfig,
+        path: &str,
+        _body: &Value,
+    ) -> Result<String, MihomoError> {
+        Err(MihomoError::InvalidResponse(format!(
+            "unexpected put path {path}"
+        )))
+    }
+}
+
 #[test]
 fn config_defaults_and_redacts_secret() {
     let config = ControllerConfig::default().with_secret("top-secret");
@@ -327,6 +362,28 @@ fn parses_all_proxy_provider_nodes_for_source_browsing() -> Result<(), Box<dyn s
 }
 
 #[test]
+fn subscription_metadata_entries_are_not_exposed_as_nodes() -> Result<(), Box<dyn std::error::Error>>
+{
+    let transport = FakeTransport::default();
+    let snapshot = MihomoClient::new(ControllerConfig::default(), &transport).fetch_snapshot()?;
+
+    assert!(
+        snapshot.providers[0]
+            .proxies
+            .iter()
+            .all(|proxy| !proxy.name.starts_with("剩余流量"))
+    );
+    assert!(
+        snapshot
+            .policy_groups()
+            .iter()
+            .flat_map(|group| &group.nodes)
+            .all(|name| !name.starts_with("剩余流量"))
+    );
+    Ok(())
+}
+
+#[test]
 fn readiness_fetches_only_the_version_endpoint() -> Result<(), Box<dyn std::error::Error>> {
     let transport = FakeTransport::default();
     let client = MihomoClient::new(ControllerConfig::default(), &transport);
@@ -495,6 +552,59 @@ fn set_tun_enabled_preserves_existing_tun_fields_in_patch_body()
     );
 
     Ok(())
+}
+
+#[test]
+fn set_tun_enabled_confirms_that_mihomo_keeps_it_active() -> Result<(), Box<dyn std::error::Error>>
+{
+    let transport = FakeTransport::default();
+    let client = MihomoClient::new(ControllerConfig::default(), &transport);
+
+    client.set_tun_enabled(true)?;
+
+    let requests = transport.requests.borrow();
+    assert_eq!(requests[0], RecordedRequest::get("/configs"));
+    assert_eq!(requests[1].method, "PATCH");
+    assert_eq!(
+        requests[1].body,
+        Some(serde_json::json!({
+            "tun": {
+                "enable": true,
+                "stack": "system",
+                "auto-route": true,
+                "dns-hijack": ["any:53"]
+            }
+        }))
+    );
+    assert_eq!(
+        requests[2..],
+        [
+            RecordedRequest::get("/configs"),
+            RecordedRequest::get("/configs"),
+            RecordedRequest::get("/configs"),
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+fn set_tun_enabled_rejects_an_async_kernel_rollback() {
+    let transport = TunRejectedTransport::default();
+    let client = MihomoClient::new(ControllerConfig::default(), &transport);
+
+    let error = client
+        .set_tun_enabled(true)
+        .expect_err("a rejected TUN startup must not be reported as enabled");
+
+    assert!(matches!(error, MihomoError::InvalidResponse(_)));
+    assert_eq!(
+        transport.requests.borrow().as_slice(),
+        [
+            RecordedRequest::get("/configs"),
+            RecordedRequest::patch("/configs", serde_json::json!({"tun":{"enable":true}})),
+            RecordedRequest::get("/configs"),
+        ]
+    );
 }
 
 #[test]
@@ -833,7 +943,7 @@ fn proxy_fixture() -> String {
           "name": "Proxy",
           "type": "Selector",
           "now": "Japan 01",
-          "all": ["Japan 01", "US 01"],
+          "all": ["Japan 01", "US 01", "剩余流量：96.83 GB"],
           "history": [{"delay": 44}, {"delay": null}, {"delay": 38}],
           "providerName": "airport",
           "alive": true,
@@ -891,6 +1001,12 @@ fn provider_fixture() -> String {
               "type": "Trojan",
               "alive": false,
               "history": []
+            },
+            {
+              "name": "剩余流量：96.83 GB",
+              "type": "Trojan",
+              "alive": false,
+              "history": [{"delay": 65535}]
             }
           ]
         }

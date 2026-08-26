@@ -10,6 +10,8 @@ const MAX_SECRET_URL_BYTES: usize = 16 * 1024;
 const MAX_SUBSCRIPTION_NAME_BYTES: usize = 96;
 const MAX_VLESS_FIELD_BYTES: usize = 1024;
 const GROUP_TEST_URL: &str = "https://www.gstatic.com/generate_204";
+const SUBSCRIPTION_METADATA_EXCLUDE_FILTER: &str =
+    "^(剩余流量|流量剩余|套餐到期|到期时间|过期时间|距离下次重置|下次重置|防失联|官网)";
 
 #[derive(Clone, Eq, PartialEq)]
 pub struct SecretUrl(String);
@@ -1030,6 +1032,12 @@ pub fn render_mihomo_yaml(profile: &Profile) -> Result<String, ProfileError> {
         writeln!(yaml, "    path: {}", quoted(&provider.path)).expect("String write cannot fail");
         writeln!(yaml, "    interval: {}", provider.interval_secs)
             .expect("String write cannot fail");
+        writeln!(
+            yaml,
+            "    exclude-filter: {}",
+            quoted(SUBSCRIPTION_METADATA_EXCLUDE_FILTER)
+        )
+        .expect("String write cannot fail");
         yaml.push_str("    proxy: \"DIRECT\"\n    health-check:\n");
         writeln!(yaml, "      enable: {}", provider.health_check.enabled)
             .expect("String write cannot fail");

@@ -1,4 +1,6 @@
 use std::collections::BTreeMap;
+use std::thread;
+use std::time::Duration;
 
 use relay_core::RoutingMode;
 use serde::Deserialize;
@@ -16,6 +18,8 @@ const PROVIDERS_ENDPOINT: &str = "/providers/proxies";
 const RULES_ENDPOINT: &str = "/rules";
 const CONNECTIONS_ENDPOINT: &str = "/connections";
 const CONFIGS_ENDPOINT: &str = "/configs";
+const TUN_CONFIRM_INTERVAL: Duration = Duration::from_millis(250);
+const TUN_CONFIRM_READS: usize = 3;
 
 #[derive(Debug, Deserialize)]
 struct ProxyDelayResponse {
@@ -194,7 +198,7 @@ where
     ///
     /// # Errors
     /// Returns an error if the controller cannot be read, the `tun` field is not an object or
-    /// `null`, or the PATCH request fails.
+    /// `null`, the PATCH request fails, or an enable request does not remain active after startup.
     pub fn set_tun_enabled(&self, enabled: bool) -> Result<(), MihomoError> {
         let config = self.fetch_json::<Value>(CONFIGS_ENDPOINT)?;
         let mut tun = match config.get("tun") {
@@ -212,6 +216,18 @@ where
         patch.insert("tun".to_owned(), Value::Object(tun));
         self.transport
             .patch_json(&self.config, CONFIGS_ENDPOINT, &Value::Object(patch))?;
+
+        if enabled {
+            for _ in 0..TUN_CONFIRM_READS {
+                thread::sleep(TUN_CONFIRM_INTERVAL);
+                if !self.fetch_runtime_config()?.tun.enable {
+                    return Err(MihomoError::InvalidResponse(
+                        "Mihomo rejected TUN during startup; administrator privileges are required"
+                            .to_owned(),
+                    ));
+                }
+            }
+        }
         Ok(())
     }
 
