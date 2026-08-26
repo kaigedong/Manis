@@ -2393,6 +2393,39 @@ impl ManisApp {
         true
     }
 
+    /// Reports why the requested proxy mode cannot be applied right now.
+    ///
+    /// The tray uses this to disable a menu item and explain itself instead of letting the user
+    /// click an entry that would silently fail.
+    pub(crate) fn proxy_mode_block(&self, requested: ProxyMode) -> Option<ProxyModeBlock> {
+        proxy_mode_block(
+            requested,
+            self.proxy_mode_busy,
+            if matches!(self.controller, ControllerState::Connected { .. }) {
+                ControllerReadiness::Connected
+            } else {
+                ControllerReadiness::Disconnected
+            },
+            if matches!(&*self.runtime, ControllerRuntime::External { .. }) {
+                TunSupport::ExternalControllerReadOnly
+            } else if self.runtime.capabilities().tun {
+                TunSupport::Supported
+            } else {
+                TunSupport::KernelUnsupported
+            },
+        )
+    }
+
+    /// Returns the proxy mode the tray shows as checked.
+    pub(crate) const fn active_proxy_mode(&self) -> ProxyMode {
+        self.proxy_mode
+    }
+
+    /// Applies the mode a checkable control stands for, clearing it when it is already active.
+    pub(crate) fn toggle_proxy_mode(&mut self, selected: ProxyMode, cx: &mut Context<Self>) {
+        self.apply_proxy_mode(self.proxy_mode.toggled(selected), cx);
+    }
+
     #[allow(clippy::too_many_lines)]
     fn apply_proxy_mode(&mut self, requested: ProxyMode, cx: &mut Context<Self>) {
         let language = self.language();
@@ -4785,6 +4818,70 @@ fn proxy_mode_label(language: Language, mode: ProxyMode) -> &'static str {
     }
 }
 
+/// Whether the controller Manis talks to is currently usable.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ControllerReadiness {
+    Connected,
+    Disconnected,
+}
+
+/// Whether the active kernel and controller can hand traffic to a TUN device.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum TunSupport {
+    Supported,
+    KernelUnsupported,
+    ExternalControllerReadOnly,
+}
+
+/// The reason a proxy mode cannot be applied.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ProxyModeBlock {
+    Busy,
+    ControllerNotConnected,
+    KernelHasNoTun,
+    ExternalControllerReadOnly,
+}
+
+impl ProxyModeBlock {
+    /// A short phrase that fits after a tray menu label.
+    pub(crate) const fn tray_reason(self, language: Language) -> &'static str {
+        match self {
+            Self::Busy => language.text("switching", "切换中"),
+            Self::ControllerNotConnected => language.text("connect first", "需先连接"),
+            Self::KernelHasNoTun => language.text("kernel has no TUN", "当前内核无 TUN"),
+            Self::ExternalControllerReadOnly => {
+                language.text("external controller is read-only", "外部控制器只读")
+            }
+        }
+    }
+}
+
+/// Decides whether `requested` can be applied, mirroring the guards in `apply_proxy_mode`.
+///
+/// Keeping this pure lets the tray disable an entry for exactly the reason the switch would
+/// have failed, instead of duplicating the conditions and drifting from them.
+const fn proxy_mode_block(
+    requested: ProxyMode,
+    switching: Option<ProxyMode>,
+    controller: ControllerReadiness,
+    tun: TunSupport,
+) -> Option<ProxyModeBlock> {
+    if switching.is_some() {
+        return Some(ProxyModeBlock::Busy);
+    }
+    if matches!(controller, ControllerReadiness::Disconnected) {
+        return Some(ProxyModeBlock::ControllerNotConnected);
+    }
+    if !matches!(requested, ProxyMode::Tun) {
+        return None;
+    }
+    match tun {
+        TunSupport::Supported => None,
+        TunSupport::KernelUnsupported => Some(ProxyModeBlock::KernelHasNoTun),
+        TunSupport::ExternalControllerReadOnly => Some(ProxyModeBlock::ExternalControllerReadOnly),
+    }
+}
+
 fn routing_mode_label(language: Language, mode: RoutingMode) -> &'static str {
     match mode {
         RoutingMode::Direct => language.text("Direct", "直连"),
@@ -4931,7 +5028,12 @@ mod tests {
         PolicyGroupKind, PolicyNode, ProxyId,
     };
 
-    use super::{DueRemoteSource, ImportedSubscription, ImportedSubscriptionState, ManisApp};
+    use manis_core::ProxyMode;
+
+    use super::{
+        ControllerReadiness, DueRemoteSource, ImportedSubscription, ImportedSubscriptionState,
+        ManisApp, ProxyModeBlock, TunSupport, proxy_mode_block,
+    };
     use crate::mihomo;
     use crate::subscription::SourceKind;
 
@@ -5233,5 +5335,98 @@ mod tests {
         assert_eq!(app.qx_rule_sources[0].rule_count, 1);
         assert_eq!(app.qx_rule_sources[0].target_policy.as_str(), "Proxy");
         fs::remove_dir_all(root).expect("remove fixture");
+    }
+
+    #[test]
+    fn tun_is_blocked_until_a_capable_managed_kernel_is_connected() {
+        assert_eq!(
+            proxy_mode_block(
+                ProxyMode::Tun,
+                None,
+                ControllerReadiness::Disconnected,
+                TunSupport::Supported
+            ),
+            Some(ProxyModeBlock::ControllerNotConnected)
+        );
+        assert_eq!(
+            proxy_mode_block(
+                ProxyMode::Tun,
+                None,
+                ControllerReadiness::Connected,
+                TunSupport::KernelUnsupported
+            ),
+            Some(ProxyModeBlock::KernelHasNoTun)
+        );
+        assert_eq!(
+            proxy_mode_block(
+                ProxyMode::Tun,
+                None,
+                ControllerReadiness::Connected,
+                TunSupport::ExternalControllerReadOnly
+            ),
+            Some(ProxyModeBlock::ExternalControllerReadOnly)
+        );
+        assert_eq!(
+            proxy_mode_block(
+                ProxyMode::Tun,
+                None,
+                ControllerReadiness::Connected,
+                TunSupport::Supported
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn the_system_proxy_only_needs_a_connected_controller() {
+        assert_eq!(
+            proxy_mode_block(
+                ProxyMode::System,
+                None,
+                ControllerReadiness::Disconnected,
+                TunSupport::Supported
+            ),
+            Some(ProxyModeBlock::ControllerNotConnected)
+        );
+        assert_eq!(
+            proxy_mode_block(
+                ProxyMode::System,
+                None,
+                ControllerReadiness::Connected,
+                TunSupport::ExternalControllerReadOnly
+            ),
+            None
+        );
+        assert_eq!(
+            proxy_mode_block(
+                ProxyMode::System,
+                None,
+                ControllerReadiness::Connected,
+                TunSupport::KernelUnsupported
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn a_switch_in_flight_blocks_every_mode() {
+        assert_eq!(
+            proxy_mode_block(
+                ProxyMode::System,
+                Some(ProxyMode::Tun),
+                ControllerReadiness::Connected,
+                TunSupport::Supported
+            ),
+            Some(ProxyModeBlock::Busy)
+        );
+        assert_eq!(
+            proxy_mode_block(
+                ProxyMode::Tun,
+                Some(ProxyMode::System),
+                ControllerReadiness::Connected,
+                TunSupport::Supported
+            ),
+            Some(ProxyModeBlock::Busy)
+        );
     }
 }

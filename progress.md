@@ -282,3 +282,17 @@
 - 原生截图夹具现在从另一语言真实点击目标选项，并断言私有偏好文件分别写入 `en` / `zh-CN`；完整快照链路覆盖订阅导入、节点折叠和分组详情并成功跑完。
 - Visual Verdict 96/100 `pass`：英文宽屏和中文 720px 紧凑布局均无截断、重叠或选中态歧义；判定保存于忽略 Git 的 `.omx/state/localization/ralph-progress.json`。
 - 全仓测试已通过：169 passed、8 ignored；严格 Clippy、fmt、all-targets check 和 diff check 通过，仅有上游 `block 0.1.6` 的未来兼容提示。敏感订阅域名/token 扫描无命中。
+
+# 2026-08-26 托盘代理模式勾选切换
+
+- 从会话 `627808eb` 恢复：上一轮在探查 `tray-icon` 的 `CheckMenuItem` API 时被用户中断，任务是让托盘能勾选系统代理 / TUN 代理，再点取消。
+- 现有托盘是纯静态菜单（打开 / 状态文本 / 退出）；`ProxyMode` 已是 `Off`/`System`/`Tun` 互斥三态，"再点取消"正好映射为 toggle 回 `Off`，无需新增状态模型。
+- RED/GREEN：`ProxyMode::toggled` 锁定点选已激活模式清空、点选未激活模式切换、以及从 `Off` 点 `Off` 保持 `Off`。
+- RED/GREEN：`proxy_mode_block` 把 `apply_proxy_mode` 里分散的三条守卫（控制器未连接、内核无 TUN 能力、外部控制器只读）抽成纯函数，托盘与主窗口共用同一事实来源，不再各判一遍。
+- 托盘每项的禁用原因按"这次点击真正会请求的模式"计算，因此在 TUN 已生效时关闭它始终可用，即使重新开启会被拒绝。
+- `muda` 在点击瞬间就翻转勾选标记；随后的同步回合把标记恢复为真正生效的模式，所以失败或仍在切换的操作不会显示成已应用。
+- 同步加了 `TrayProxySnapshot` 变更缓存：状态不变时每 100 ms 只做一次比较，而不是四次平台菜单调用。
+- 托盘标签在每轮同步按当前语言重建，因此配置页切换语言后托盘文案同步跟随，不必重装状态项。
+- 全仓验证通过：216 passed、8 ignored、0 failed；`cargo fmt`、`--all-targets` 严格 Clippy（`-D warnings`）通过，仅剩上游 `block 0.1.6` 的未来兼容提示。
+- 实机启动 PID 90886 稳定运行 16 秒以上，托盘安装无 `tray.unavailable`，约 160 次同步回合无 panic 或借用冲突。托盘菜单的实际勾选交互需由用户在菜单栏确认。
+- 并发提醒：另一个 Claude 会话在本轮期间向同一工作树写入并把 `4e918cd fix(macos): harden TUN startup diagnostics` 提交到了本 feat 分支；未对其做任何修改或回退。
