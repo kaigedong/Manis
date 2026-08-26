@@ -225,3 +225,32 @@
 - GPUI 原生截图工具现会逐场景关闭离屏窗口，完整截图链路已成功跑完，不再因窗口资源耗尽返回 `WouldBlock`。
 - 最终验证通过：workspace 146 passed、6 ignored；严格 Clippy、fmt、all-targets check、build、diff check 与私密订阅扫描全部通过，仅保留上游 `block 0.1.6` 的未来兼容提示。
 - 仅停止旧 Relay UI PID 48994，并以同一 Clash Verge Unix controller 启动新 PID 52813；Clash Verge PID 14173 与 verge-mihomo PID 14201 均保持运行且未被修改。
+
+# 2026-08-26 来源更新与自动刷新
+
+- 用户要求继续上一阶段；本轮承接明确遗留项：为代理订阅和 QX 规则订阅实现真实的更新间隔、立即更新与自动刷新，不展示无后端行为的假控件。
+- 启用 planning-with-files-zh、Impeccable harden、rust-testing 与 rust-patterns；先锁定私有存储兼容和异步任务生命周期，再修改配置页。
+- 已映射代理订阅恢复与 QX 导入路径：两者都有真实联网和 generation 隔离能力，但持久化尚无更新策略，QX 同 URL 内容变化还会被当成新来源；后续将新增按 ID 更新事务。
+- 自动调度确定为应用级单任务：首次渲染时启动，短 tick 检查持久化的 `last_success + interval`；不为每个来源建立独立永久 timer，避免删除来源后泄漏任务。
+- 已确认 GPUI 原生 background executor timer 可用于 60 秒 tick；调度器每次最多刷新一个到期来源，避免多源同时下载和重复重载托管 Mihomo。
+- 安全边界已收紧：应用/UI 层不获得 `SecretUrl` 明文；规则刷新事务将留在存储/下载边界内，按 source ID 原子替换正文并保持日志脱敏。
+- 已确认 `SecretUrl` 没有明文访问器；将以测试先行补一个闭包式 `expose_to` 最小能力，仅供存储/下载边界使用，不实现 Display/as_str。
+- `SecretUrl` 安全行为已有独立集成测试文件 `relay-profile/tests/profile_behavior.rs`；新闭包暴露契约将追加在那里并先确认 RED。
+- TDD RED 已确认：新安全测试唯一失败为 `SecretUrl` 缺少 `expose_to`，与预期最小能力一致，尚未修改生产实现。
+- TDD GREEN：`SecretUrl::expose_to` 只在调用者闭包生命周期内提供 `&str`，Debug 仍严格脱敏；定向测试 1/1 通过。
+- 规则 SecretUrl 下载包装测试的 RED 中包含预期的缺少 helper，同时撞上 `mihomo.rs` 持久化子任务中间态；不并发修复共享文件，待子任务完成后复跑确认。
+- 配置卡交互已确定：保留来源名称和节点/规则摘要，新增间隔、立即更新、删除三个低噪声动作；窄屏使用可换行第二行，避免控制项压缩名称。
+- 持久化子任务完成：代理与 QX 来源都已拥有 Manual/1h/6h/12h/24h、上次成功时间、旧格式兼容和按 ID 原子更新 API；定向存储测试全部通过。
+- TDD RED：刷新策略行为测试仅因缺少 `label/next/is_due` 三个方法失败，覆盖用户文案、间隔循环和时钟回拨边界。
+- TDD GREEN：刷新策略支持手动→1h→6h→12h→24h 循环、中文短标签和基于最后成功时间的到期判断；`relay-ui --lib` 56 passed、3 ignored。
+- TDD RED：应用恢复测试仅因 `ImportedSubscription` 尚未保留持久化 interval 与 last-success 两字段失败，确认 UI 状态不会继续丢失刷新元数据。
+- TDD GREEN：应用层保留两类来源的 interval/last-success；代理订阅立即更新会实际启动隔离 Mihomo 重新解析节点，QX 规则立即更新按原 ID 原子替换正文并重新应用托管配置。
+- 自动刷新由一个 GPUI 弱实体任务每 60 秒检查一次，每个 tick 最多处理一个到期来源；同一时间禁止订阅解析、规则下载和删除互相覆盖。
+- 自动任务失败不会改写最后成功时间，并在内存中设置 5 分钟重试下限，避免来源不可达时每分钟重复请求；用户的“立即更新”不受自动退避限制。
+- 来源卡已加入持久化更新间隔、立即更新、上次成功时间、旋转反馈和内联错误；VLESS 单节点保持静态来源，不展示无意义的刷新设置。
+- 首轮 Visual Verdict 87/100 指出间隔文案和操作层级偏弱；改为“更新间隔”、描边强调立即更新、危险色移除并压缩窄屏说明后，第二轮 91/100 `pass`。
+- `SecretUrl::expose_to` 仅在调用者闭包内短暂开放明文；QX 刷新包装和错误回归测试确认 token 不进入 Debug、状态或下载错误。
+- 长订阅地址的版本化存储单独放宽到“输入上限的十六进制展开 + 元数据”，同时继续在写入前执行 16 KiB 输入上限，避免编码后合法来源无法重载。
+- 独立代码复审首轮发现代理订阅刷新只更新预览、未重载托管配置；已补齐 `apply_saved_sources` 并显示部分应用失败后缀，复审最终 0 issue、`APPROVE`。
+- 最终验证通过：workspace 154 passed、6 ignored；fmt、all-targets check、严格 Clippy、build、diff check 和私有订阅域名/token 扫描全部通过，仅保留上游 `block 0.1.6` 的未来兼容提示。
+- 仅停止旧 Relay UI PID 52813，并以同一 Clash Verge Unix controller 启动新 PID 10932；Clash Verge PID 14173 与 verge-mihomo PID 14201 保持运行且未被停止或修改。

@@ -44,6 +44,14 @@ impl SecretUrl {
         self.0.starts_with("https://")
     }
 
+    /// Exposes the URL only for the lifetime of a caller-owned closure.
+    ///
+    /// This keeps the secret out of `Display`, `Debug`, and ordinary return values while allowing
+    /// storage and network boundaries to consume it without cloning it into UI state.
+    pub fn expose_to<T>(&self, use_secret: impl FnOnce(&str) -> T) -> T {
+        use_secret(&self.0)
+    }
+
     /// Returns a bounded user-facing subscription label from an explicit `name` query field.
     ///
     /// Other query values, including bearer tokens, are never used as display fallbacks.

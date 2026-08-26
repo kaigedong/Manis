@@ -41,9 +41,11 @@ const MIXED_PORT_ENV: &str = "RELAY_MIHOMO_MIXED_PORT";
 const PREVIEW_BINARY_ENV: &str = "RELAY_MIHOMO_PREVIEW_BINARY";
 const DEFAULT_MANAGED_MIXED_PORT: u16 = 17_890;
 const MAX_SUBSCRIPTION_FILE_BYTES: u64 = 16 * 1024;
+const MAX_STORED_SUBSCRIPTION_FILE_BYTES: u64 = 2 * 16 * 1024 + 1024;
 const IMPORTED_SUBSCRIPTION_FILE: &str = "subscription.url";
 const STORED_SUBSCRIPTION_PREFIX: &str = "source-";
 const STORED_SUBSCRIPTION_SUFFIX: &str = ".url";
+const STORED_SUBSCRIPTION_VERSION: &str = "relay-subscription-source-v1";
 const SAVED_VLESS_PREFIX: &str = "saved-";
 const SAVED_VLESS_SUFFIX: &str = ".vless";
 const QX_RULE_SOURCE_PREFIX: &str = "qx-rule-";
@@ -747,10 +749,98 @@ pub(crate) struct LoadedProviderNode {
     pub alive: Option<bool>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum RemoteSourceRefreshInterval {
+    #[default]
+    Manual,
+    Hourly,
+    SixHours,
+    TwelveHours,
+    Daily,
+}
+
+impl RemoteSourceRefreshInterval {
+    fn key(self) -> &'static str {
+        match self {
+            Self::Manual => "manual",
+            Self::Hourly => "1h",
+            Self::SixHours => "6h",
+            Self::TwelveHours => "12h",
+            Self::Daily => "24h",
+        }
+    }
+
+    fn parse_key(input: &str) -> Option<Self> {
+        match input {
+            "manual" => Some(Self::Manual),
+            "1h" => Some(Self::Hourly),
+            "6h" => Some(Self::SixHours),
+            "12h" => Some(Self::TwelveHours),
+            "24h" => Some(Self::Daily),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn interval_secs(self) -> Option<u64> {
+        match self {
+            Self::Manual => None,
+            Self::Hourly => Some(60 * 60),
+            Self::SixHours => Some(6 * 60 * 60),
+            Self::TwelveHours => Some(12 * 60 * 60),
+            Self::Daily => Some(24 * 60 * 60),
+        }
+    }
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Manual => "手动",
+            Self::Hourly => "每 1 小时",
+            Self::SixHours => "每 6 小时",
+            Self::TwelveHours => "每 12 小时",
+            Self::Daily => "每天",
+        }
+    }
+
+    pub(crate) fn next(self) -> Self {
+        match self {
+            Self::Manual => Self::Hourly,
+            Self::Hourly => Self::SixHours,
+            Self::SixHours => Self::TwelveHours,
+            Self::TwelveHours => Self::Daily,
+            Self::Daily => Self::Manual,
+        }
+    }
+
+    pub(crate) fn is_due(self, last_successful_update_unix_secs: u64, now_unix_secs: u64) -> bool {
+        let Some(interval_secs) = self.interval_secs() else {
+            return false;
+        };
+        last_successful_update_unix_secs == 0
+            || now_unix_secs.saturating_sub(last_successful_update_unix_secs) >= interval_secs
+    }
+}
+
+#[derive(Clone, Eq, PartialEq)]
 pub(crate) struct StoredSubscription {
     pub id: String,
     pub source: SecretUrl,
+    pub refresh_interval: RemoteSourceRefreshInterval,
+    pub last_successful_update_unix_secs: u64,
+}
+
+impl fmt::Debug for StoredSubscription {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("StoredSubscription")
+            .field("id", &self.id)
+            .field("source", &"<redacted>")
+            .field("refresh_interval", &self.refresh_interval)
+            .field(
+                "last_successful_update_unix_secs",
+                &self.last_successful_update_unix_secs,
+            )
+            .finish()
+    }
 }
 
 #[derive(Clone, Eq, PartialEq)]
@@ -777,6 +867,8 @@ pub(crate) struct StoredQxRuleSource {
     pub content: String,
     pub rule_count: usize,
     pub diagnostic_count: usize,
+    pub refresh_interval: RemoteSourceRefreshInterval,
+    pub last_successful_update_unix_secs: u64,
 }
 
 impl fmt::Debug for StoredQxRuleSource {
@@ -789,6 +881,11 @@ impl fmt::Debug for StoredQxRuleSource {
             .field("content", &"<redacted>")
             .field("rule_count", &self.rule_count)
             .field("diagnostic_count", &self.diagnostic_count)
+            .field("refresh_interval", &self.refresh_interval)
+            .field(
+                "last_successful_update_unix_secs",
+                &self.last_successful_update_unix_secs,
+            )
             .finish()
     }
 }
@@ -982,9 +1079,21 @@ pub(crate) fn save_subscription_source_in(
     }
     let id = next_stored_source_id(STORED_SUBSCRIPTION_PREFIX);
     let file_name = format!("{id}{STORED_SUBSCRIPTION_SUFFIX}");
-    write_private_atomic(directory, &file_name, input.as_bytes())
+    let last_successful_update_unix_secs = current_unix_secs();
+    let contents = encode_subscription_source(
+        &id,
+        input,
+        RemoteSourceRefreshInterval::Manual,
+        last_successful_update_unix_secs,
+    )?;
+    write_private_atomic(directory, &file_name, contents.as_bytes())
         .map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
-    Ok(StoredSubscription { id, source })
+    Ok(StoredSubscription {
+        id,
+        source,
+        refresh_interval: RemoteSourceRefreshInterval::Manual,
+        last_successful_update_unix_secs,
+    })
 }
 
 #[cfg(windows)]
@@ -1016,14 +1125,14 @@ pub(crate) fn load_subscription_sources_in(
         } else {
             continue;
         };
-        let contents = read_private_source(&path)?;
-        let source = SecretUrl::parse_subscription(&contents)
-            .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
+        let contents =
+            read_private_source_allow_empty_max(&path, MAX_STORED_SUBSCRIPTION_FILE_BYTES)?;
+        let decoded = decode_subscription_source(&contents, &id)?;
         if !sources
             .iter()
-            .any(|stored: &StoredSubscription| stored.source == source)
+            .any(|stored: &StoredSubscription| stored.source == decoded.stored.source)
         {
-            sources.push(StoredSubscription { id, source });
+            sources.push(decoded.stored);
         }
     }
     sources.sort_by(|left, right| left.id.cmp(&right.id));
@@ -1040,10 +1149,66 @@ pub(crate) fn load_subscription_sources_in(
                 vec![StoredSubscription {
                     id: "subscription:legacy".to_owned(),
                     source,
+                    refresh_interval: RemoteSourceRefreshInterval::Manual,
+                    last_successful_update_unix_secs: 0,
                 }]
             })
             .unwrap_or_default()
     })
+}
+
+#[cfg(not(windows))]
+#[allow(dead_code)]
+pub(crate) fn update_subscription_source_refresh_interval_in(
+    directory: &Path,
+    id: &str,
+    refresh_interval: RemoteSourceRefreshInterval,
+) -> Result<StoredSubscription, SubscriptionStoreError> {
+    let decoded = read_subscription_source_by_id_in(directory, id)?;
+    write_subscription_source_in(
+        directory,
+        id,
+        &decoded.url_input,
+        refresh_interval,
+        decoded.stored.last_successful_update_unix_secs,
+    )
+}
+
+#[cfg(windows)]
+#[allow(dead_code)]
+pub(crate) fn update_subscription_source_refresh_interval_in(
+    _directory: &Path,
+    _id: &str,
+    _refresh_interval: RemoteSourceRefreshInterval,
+) -> Result<StoredSubscription, SubscriptionStoreError> {
+    Err(SubscriptionStoreError::StoreUnavailable)
+}
+
+#[cfg(not(windows))]
+#[allow(dead_code)]
+pub(crate) fn mark_subscription_source_update_success_in(
+    directory: &Path,
+    id: &str,
+    last_successful_update_unix_secs: u64,
+) -> Result<StoredSubscription, SubscriptionStoreError> {
+    let decoded = read_subscription_source_by_id_in(directory, id)?;
+    write_subscription_source_in(
+        directory,
+        id,
+        &decoded.url_input,
+        decoded.stored.refresh_interval,
+        last_successful_update_unix_secs,
+    )
+}
+
+#[cfg(windows)]
+#[allow(dead_code)]
+pub(crate) fn mark_subscription_source_update_success_in(
+    _directory: &Path,
+    _id: &str,
+    _last_successful_update_unix_secs: u64,
+) -> Result<StoredSubscription, SubscriptionStoreError> {
+    Err(SubscriptionStoreError::StoreUnavailable)
 }
 
 #[cfg(not(windows))]
@@ -1182,7 +1347,15 @@ pub(crate) fn save_qx_rule_source_in(
     }
     let id = next_stored_source_id(QX_RULE_SOURCE_PREFIX);
     let file_name = format!("{id}{QX_RULE_SOURCE_SUFFIX}");
-    let contents = encode_qx_rule_source(&id, url_input, &target_policy, content)?;
+    let last_successful_update_unix_secs = current_unix_secs();
+    let contents = encode_qx_rule_source(
+        &id,
+        url_input,
+        &target_policy,
+        content,
+        RemoteSourceRefreshInterval::Manual,
+        last_successful_update_unix_secs,
+    )?;
     write_private_atomic(directory, &file_name, contents.as_bytes())
         .map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
     Ok(StoredQxRuleSource {
@@ -1192,6 +1365,8 @@ pub(crate) fn save_qx_rule_source_in(
         content: content.to_owned(),
         rule_count,
         diagnostic_count,
+        refresh_interval: RemoteSourceRefreshInterval::Manual,
+        last_successful_update_unix_secs,
     })
 }
 
@@ -1255,6 +1430,67 @@ pub(crate) fn remove_qx_rule_source_in(
     _directory: &Path,
     _id: &str,
 ) -> Result<(), SubscriptionStoreError> {
+    Err(SubscriptionStoreError::StoreUnavailable)
+}
+
+#[cfg(not(windows))]
+#[allow(dead_code)]
+pub(crate) fn update_qx_rule_source_refresh_interval_in(
+    directory: &Path,
+    id: &str,
+    refresh_interval: RemoteSourceRefreshInterval,
+) -> Result<StoredQxRuleSource, SubscriptionStoreError> {
+    let decoded = read_qx_rule_source_by_id_in(directory, id)?;
+    write_qx_rule_source_in(
+        directory,
+        id,
+        &decoded.url_input,
+        decoded.stored.target_policy.as_str(),
+        &decoded.stored.content,
+        refresh_interval,
+        decoded.stored.last_successful_update_unix_secs,
+    )
+}
+
+#[cfg(windows)]
+#[allow(dead_code)]
+pub(crate) fn update_qx_rule_source_refresh_interval_in(
+    _directory: &Path,
+    _id: &str,
+    _refresh_interval: RemoteSourceRefreshInterval,
+) -> Result<StoredQxRuleSource, SubscriptionStoreError> {
+    Err(SubscriptionStoreError::StoreUnavailable)
+}
+
+#[cfg(not(windows))]
+#[allow(dead_code)]
+pub(crate) fn replace_qx_rule_source_content_in(
+    directory: &Path,
+    id: &str,
+    content: &str,
+    last_successful_update_unix_secs: u64,
+) -> Result<StoredQxRuleSource, SubscriptionStoreError> {
+    validate_qx_rule_source_content(content)?;
+    let decoded = read_qx_rule_source_by_id_in(directory, id)?;
+    write_qx_rule_source_in(
+        directory,
+        id,
+        &decoded.url_input,
+        decoded.stored.target_policy.as_str(),
+        content,
+        decoded.stored.refresh_interval,
+        last_successful_update_unix_secs,
+    )
+}
+
+#[cfg(windows)]
+#[allow(dead_code)]
+pub(crate) fn replace_qx_rule_source_content_in(
+    _directory: &Path,
+    _id: &str,
+    _content: &str,
+    _last_successful_update_unix_secs: u64,
+) -> Result<StoredQxRuleSource, SubscriptionStoreError> {
     Err(SubscriptionStoreError::StoreUnavailable)
 }
 
@@ -1400,6 +1636,166 @@ fn profile_mode(mode: RoutingMode) -> ProfileMode {
         RoutingMode::Global => ProfileMode::Global,
         RoutingMode::Rule => ProfileMode::Rule,
     }
+}
+
+#[cfg(not(windows))]
+#[allow(dead_code)]
+struct DecodedSubscriptionSource {
+    stored: StoredSubscription,
+    url_input: String,
+}
+
+#[cfg(not(windows))]
+#[allow(dead_code)]
+fn read_subscription_source_by_id_in(
+    directory: &Path,
+    id: &str,
+) -> Result<DecodedSubscriptionSource, SubscriptionStoreError> {
+    require_clean_absolute_store(directory)?;
+    let file_name = subscription_source_file_name(id)?;
+    let contents = read_private_source_allow_empty_max(
+        &directory.join(file_name),
+        MAX_STORED_SUBSCRIPTION_FILE_BYTES,
+    )?;
+    decode_subscription_source(&contents, id)
+}
+
+#[cfg(not(windows))]
+#[allow(dead_code)]
+fn write_subscription_source_in(
+    directory: &Path,
+    id: &str,
+    url_input: &str,
+    refresh_interval: RemoteSourceRefreshInterval,
+    last_successful_update_unix_secs: u64,
+) -> Result<StoredSubscription, SubscriptionStoreError> {
+    let source = SecretUrl::parse_subscription(url_input)
+        .map_err(|_error| SubscriptionStoreError::InvalidSource)?;
+    let contents = encode_subscription_source(
+        id,
+        url_input,
+        refresh_interval,
+        last_successful_update_unix_secs,
+    )?;
+    let file_name = subscription_source_file_name(id)?;
+    write_private_atomic(directory, &file_name, contents.as_bytes())
+        .map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
+    Ok(StoredSubscription {
+        id: id.to_owned(),
+        source,
+        refresh_interval,
+        last_successful_update_unix_secs,
+    })
+}
+
+#[cfg(not(windows))]
+fn encode_subscription_source(
+    id: &str,
+    url_input: &str,
+    refresh_interval: RemoteSourceRefreshInterval,
+    last_successful_update_unix_secs: u64,
+) -> Result<String, SubscriptionStoreError> {
+    if !valid_subscription_source_id(id) {
+        return Err(SubscriptionStoreError::InvalidSource);
+    }
+    if url_input.len() > crate::subscription::MAX_SUBSCRIPTION_BYTES {
+        return Err(SubscriptionStoreError::InvalidSource);
+    }
+    SecretUrl::parse_subscription(url_input)
+        .map_err(|_error| SubscriptionStoreError::InvalidSource)?;
+    Ok([
+        STORED_SUBSCRIPTION_VERSION.to_owned(),
+        format!("id\t{id}"),
+        format!("url\t{}", encode_hex(url_input)),
+        format!("refresh\t{}", refresh_interval.key()),
+        format!("last-success\t{last_successful_update_unix_secs}"),
+    ]
+    .join("\n"))
+}
+
+#[cfg(not(windows))]
+fn decode_subscription_source(
+    contents: &str,
+    expected_id: &str,
+) -> Result<DecodedSubscriptionSource, SubscriptionStoreError> {
+    if !valid_subscription_source_id(expected_id) {
+        return Err(SubscriptionStoreError::StoredSourceUnavailable);
+    }
+    if contents.lines().next() != Some(STORED_SUBSCRIPTION_VERSION) {
+        if contents.is_empty() || contents.lines().count() != 1 || contents.trim() != contents {
+            return Err(SubscriptionStoreError::StoredSourceUnavailable);
+        }
+        let source = SecretUrl::parse_subscription(contents)
+            .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
+        return Ok(DecodedSubscriptionSource {
+            stored: StoredSubscription {
+                id: expected_id.to_owned(),
+                source,
+                refresh_interval: RemoteSourceRefreshInterval::Manual,
+                last_successful_update_unix_secs: 0,
+            },
+            url_input: contents.to_owned(),
+        });
+    }
+
+    let mut id = None;
+    let mut url = None;
+    let mut refresh_interval = None;
+    let mut last_successful_update_unix_secs = None;
+    for line in contents.lines().skip(1) {
+        let fields = line.split('\t').collect::<Vec<_>>();
+        match fields.as_slice() {
+            ["id", value] if id.is_none() => id = Some((*value).to_owned()),
+            ["url", value] if url.is_none() => url = Some(decode_hex(value)?),
+            ["refresh", value] if refresh_interval.is_none() => {
+                refresh_interval = Some(
+                    RemoteSourceRefreshInterval::parse_key(value)
+                        .ok_or(SubscriptionStoreError::StoredSourceUnavailable)?,
+                );
+            }
+            ["last-success", value] if last_successful_update_unix_secs.is_none() => {
+                last_successful_update_unix_secs = Some(
+                    value
+                        .parse::<u64>()
+                        .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?,
+                );
+            }
+            _ => return Err(SubscriptionStoreError::StoredSourceUnavailable),
+        }
+    }
+    let id = id.ok_or(SubscriptionStoreError::StoredSourceUnavailable)?;
+    if id != expected_id || !valid_subscription_source_id(&id) {
+        return Err(SubscriptionStoreError::StoredSourceUnavailable);
+    }
+    let url_input = url.ok_or(SubscriptionStoreError::StoredSourceUnavailable)?;
+    let source = SecretUrl::parse_subscription(&url_input)
+        .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
+    Ok(DecodedSubscriptionSource {
+        stored: StoredSubscription {
+            id,
+            source,
+            refresh_interval: refresh_interval.unwrap_or_default(),
+            last_successful_update_unix_secs: last_successful_update_unix_secs.unwrap_or_default(),
+        },
+        url_input,
+    })
+}
+
+#[cfg(not(windows))]
+#[allow(dead_code)]
+fn subscription_source_file_name(id: &str) -> Result<String, SubscriptionStoreError> {
+    if id == "subscription:legacy" {
+        Ok(IMPORTED_SUBSCRIPTION_FILE.to_owned())
+    } else if valid_stored_id(id, STORED_SUBSCRIPTION_PREFIX) {
+        Ok(format!("{id}{STORED_SUBSCRIPTION_SUFFIX}"))
+    } else {
+        Err(SubscriptionStoreError::StoreUnavailable)
+    }
+}
+
+#[cfg(not(windows))]
+fn valid_subscription_source_id(id: &str) -> bool {
+    id == "subscription:legacy" || valid_stored_id(id, STORED_SUBSCRIPTION_PREFIX)
 }
 
 pub(crate) fn new_node_policy_group_id() -> String {
@@ -1711,15 +2107,87 @@ fn decode_node_policy_group(
 }
 
 #[allow(dead_code)]
+struct DecodedQxRuleSource {
+    stored: StoredQxRuleSource,
+    url_input: String,
+}
+
+#[cfg(not(windows))]
+#[allow(dead_code)]
+fn read_qx_rule_source_by_id_in(
+    directory: &Path,
+    id: &str,
+) -> Result<DecodedQxRuleSource, SubscriptionStoreError> {
+    require_clean_absolute_store(directory)?;
+    let file_name = qx_rule_source_file_name(id)?;
+    let contents = read_private_source_allow_empty_max(
+        &directory.join(file_name),
+        MAX_QX_RULE_SOURCE_FILE_BYTES,
+    )?;
+    decode_qx_rule_source_with_url(&contents, id)
+}
+
+#[cfg(not(windows))]
+#[allow(dead_code)]
+fn write_qx_rule_source_in(
+    directory: &Path,
+    id: &str,
+    url_input: &str,
+    target_policy: &str,
+    content: &str,
+    refresh_interval: RemoteSourceRefreshInterval,
+    last_successful_update_unix_secs: u64,
+) -> Result<StoredQxRuleSource, SubscriptionStoreError> {
+    let source = SecretUrl::parse_https(url_input)
+        .map_err(|_error| SubscriptionStoreError::InvalidSource)?;
+    let target_policy =
+        Name::parse(target_policy).map_err(|_error| SubscriptionStoreError::InvalidSource)?;
+    let (rule_count, diagnostic_count) = validate_qx_rule_source_content(content)?;
+    let contents = encode_qx_rule_source(
+        id,
+        url_input,
+        &target_policy,
+        content,
+        refresh_interval,
+        last_successful_update_unix_secs,
+    )?;
+    let file_name = qx_rule_source_file_name(id)?;
+    write_private_atomic(directory, &file_name, contents.as_bytes())
+        .map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
+    Ok(StoredQxRuleSource {
+        id: id.to_owned(),
+        source,
+        target_policy,
+        content: content.to_owned(),
+        rule_count,
+        diagnostic_count,
+        refresh_interval,
+        last_successful_update_unix_secs,
+    })
+}
+
+#[cfg(not(windows))]
+#[allow(dead_code)]
+fn qx_rule_source_file_name(id: &str) -> Result<String, SubscriptionStoreError> {
+    if valid_stored_id(id, QX_RULE_SOURCE_PREFIX) {
+        Ok(format!("{id}{QX_RULE_SOURCE_SUFFIX}"))
+    } else {
+        Err(SubscriptionStoreError::StoreUnavailable)
+    }
+}
+
 fn encode_qx_rule_source(
     id: &str,
     url_input: &str,
     target_policy: &Name,
     content: &str,
+    refresh_interval: RemoteSourceRefreshInterval,
+    last_successful_update_unix_secs: u64,
 ) -> Result<String, SubscriptionStoreError> {
     if !valid_stored_id(id, QX_RULE_SOURCE_PREFIX) {
         return Err(SubscriptionStoreError::InvalidSource);
     }
+    SecretUrl::parse_https(url_input).map_err(|_error| SubscriptionStoreError::InvalidSource)?;
     validate_qx_rule_source_content(content)?;
     Ok([
         QX_RULE_SOURCE_VERSION.to_owned(),
@@ -1727,6 +2195,8 @@ fn encode_qx_rule_source(
         format!("url\t{}", encode_hex(url_input)),
         format!("target\t{}", encode_hex(target_policy.as_str())),
         format!("content\t{}", encode_hex(content)),
+        format!("refresh\t{}", refresh_interval.key()),
+        format!("last-success\t{last_successful_update_unix_secs}"),
     ]
     .join("\n"))
 }
@@ -1735,6 +2205,13 @@ fn decode_qx_rule_source(
     contents: &str,
     expected_id: &str,
 ) -> Result<StoredQxRuleSource, SubscriptionStoreError> {
+    decode_qx_rule_source_with_url(contents, expected_id).map(|decoded| decoded.stored)
+}
+
+fn decode_qx_rule_source_with_url(
+    contents: &str,
+    expected_id: &str,
+) -> Result<DecodedQxRuleSource, SubscriptionStoreError> {
     let mut lines = contents.lines();
     if lines.next() != Some(QX_RULE_SOURCE_VERSION) {
         return Err(SubscriptionStoreError::StoredSourceUnavailable);
@@ -1743,6 +2220,8 @@ fn decode_qx_rule_source(
     let mut url = None;
     let mut target = None;
     let mut content = None;
+    let mut refresh_interval = None;
+    let mut last_successful_update_unix_secs = None;
     for line in lines {
         let fields = line.split('\t').collect::<Vec<_>>();
         match fields.as_slice() {
@@ -1750,6 +2229,19 @@ fn decode_qx_rule_source(
             ["url", value] if url.is_none() => url = Some(decode_hex(value)?),
             ["target", value] if target.is_none() => target = Some(decode_hex(value)?),
             ["content", value] if content.is_none() => content = Some(decode_hex(value)?),
+            ["refresh", value] if refresh_interval.is_none() => {
+                refresh_interval = Some(
+                    RemoteSourceRefreshInterval::parse_key(value)
+                        .ok_or(SubscriptionStoreError::StoredSourceUnavailable)?,
+                );
+            }
+            ["last-success", value] if last_successful_update_unix_secs.is_none() => {
+                last_successful_update_unix_secs = Some(
+                    value
+                        .parse::<u64>()
+                        .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?,
+                );
+            }
             _ => return Err(SubscriptionStoreError::StoredSourceUnavailable),
         }
     }
@@ -1757,21 +2249,26 @@ fn decode_qx_rule_source(
     if id != expected_id || !valid_stored_id(&id, QX_RULE_SOURCE_PREFIX) {
         return Err(SubscriptionStoreError::StoredSourceUnavailable);
     }
-    let source =
-        SecretUrl::parse_https(&url.ok_or(SubscriptionStoreError::StoredSourceUnavailable)?)
-            .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
+    let url_input = url.ok_or(SubscriptionStoreError::StoredSourceUnavailable)?;
+    let source = SecretUrl::parse_https(&url_input)
+        .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
     let target_policy =
         Name::parse(&target.ok_or(SubscriptionStoreError::StoredSourceUnavailable)?)
             .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
     let content = content.ok_or(SubscriptionStoreError::StoredSourceUnavailable)?;
     let (rule_count, diagnostic_count) = validate_qx_rule_source_content(&content)?;
-    Ok(StoredQxRuleSource {
-        id,
-        source,
-        target_policy,
-        content,
-        rule_count,
-        diagnostic_count,
+    Ok(DecodedQxRuleSource {
+        stored: StoredQxRuleSource {
+            id,
+            source,
+            target_policy,
+            content,
+            rule_count,
+            diagnostic_count,
+            refresh_interval: refresh_interval.unwrap_or_default(),
+            last_successful_update_unix_secs: last_successful_update_unix_secs.unwrap_or_default(),
+        },
+        url_input,
     })
 }
 
@@ -1821,12 +2318,23 @@ fn decode_hex_digit(value: u8) -> Result<u8, SubscriptionStoreError> {
 }
 
 fn next_stored_source_id(prefix: &str) -> String {
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
+    let timestamp = current_unix_nanos();
     let sequence = NEXT_STORED_SOURCE.fetch_add(1, Ordering::Relaxed);
     format!("{prefix}{timestamp:x}-{sequence:x}")
+}
+
+pub(crate) fn current_unix_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+fn current_unix_nanos() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos()
 }
 
 fn valid_stored_id(id: &str, prefix: &str) -> bool {
@@ -1989,16 +2497,11 @@ pub(crate) fn load_imported_subscription_in(
     file.take(MAX_SUBSCRIPTION_FILE_BYTES + 1)
         .read_to_string(&mut contents)
         .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
-    if contents.len() as u64 > MAX_SUBSCRIPTION_FILE_BYTES
-        || contents.is_empty()
-        || contents.lines().count() != 1
-        || contents.trim() != contents
-    {
+    if contents.len() as u64 > MAX_SUBSCRIPTION_FILE_BYTES {
         return Err(SubscriptionStoreError::StoredSourceUnavailable);
     }
-    SecretUrl::parse_subscription(&contents)
-        .map(Some)
-        .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)
+    decode_subscription_source(&contents, "subscription:legacy")
+        .map(|decoded| Some(decoded.stored.source))
 }
 
 #[cfg(windows)]
@@ -3025,6 +3528,24 @@ mod tests {
     use relay_engine::ControllerEndpoint;
 
     #[test]
+    fn remote_source_refresh_intervals_cycle_and_respect_last_success() {
+        use super::RemoteSourceRefreshInterval as Interval;
+
+        assert_eq!(Interval::Manual.label(), "手动");
+        assert_eq!(Interval::Manual.next(), Interval::Hourly);
+        assert_eq!(Interval::Hourly.next(), Interval::SixHours);
+        assert_eq!(Interval::SixHours.next(), Interval::TwelveHours);
+        assert_eq!(Interval::TwelveHours.next(), Interval::Daily);
+        assert_eq!(Interval::Daily.next(), Interval::Manual);
+
+        assert!(!Interval::Manual.is_due(0, u64::MAX));
+        assert!(Interval::Hourly.is_due(0, 1));
+        assert!(!Interval::Hourly.is_due(10_000, 13_599));
+        assert!(Interval::Hourly.is_due(10_000, 13_600));
+        assert!(!Interval::Daily.is_due(100_000, 99_000));
+    }
+
+    #[test]
     fn kernel_log_sanitizer_redacts_urls_and_bounds_dynamic_payloads() {
         let input = format!(
             "provider https://example.invalid/client?token=fixture-secret failed; node vless://uuid@host:443 {}",
@@ -3155,6 +3676,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let root = test_temp_dir("relay-multi-source-store");
         let store = root.join("subscriptions");
+        let imported_before = super::current_unix_secs();
         let first = super::save_subscription_source_in(
             &store,
             "https://first.example.invalid/client?token=fixture-one&name=First",
@@ -3178,8 +3700,14 @@ mod tests {
         assert_eq!(subscriptions.len(), 2);
         assert_ne!(first.id, second.id);
         assert_eq!(duplicate.id, first.id);
+        assert_eq!(
+            subscriptions[0].refresh_interval,
+            super::RemoteSourceRefreshInterval::Manual
+        );
+        assert!(subscriptions[0].last_successful_update_unix_secs >= imported_before);
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].source.preview().name, "Saved");
+        assert!(!format!("{first:?}").contains("fixture-one"));
         assert!(!format!("{saved:?}").contains("00000000"));
         assert_eq!(
             super::load_collapsed_groups_in(&store)?,
@@ -3190,6 +3718,64 @@ mod tests {
         super::remove_vless_source_in(&store, &saved.id)?;
         assert_eq!(super::load_subscription_sources_in(&store)?.len(), 1);
         assert!(super::load_vless_sources_in(&store)?.is_empty());
+
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn subscription_sources_support_refresh_metadata_and_legacy_url_files()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = test_temp_dir("relay-source-refresh-metadata");
+        let store = root.join("subscriptions");
+        fs::create_dir(&store)?;
+        fs::set_permissions(&store, fs::Permissions::from_mode(0o700))?;
+        let legacy_path = store.join("source-feed.url");
+        fs::write(
+            &legacy_path,
+            "https://legacy.example.invalid/client?token=fixture-legacy",
+        )?;
+        fs::set_permissions(&legacy_path, fs::Permissions::from_mode(0o600))?;
+
+        let legacy = super::load_subscription_sources_in(&store)?
+            .into_iter()
+            .next()
+            .ok_or("legacy source")?;
+        assert_eq!(legacy.id, "source-feed");
+        assert_eq!(
+            legacy.refresh_interval,
+            super::RemoteSourceRefreshInterval::Manual
+        );
+        assert_eq!(legacy.last_successful_update_unix_secs, 0);
+
+        let updated = super::update_subscription_source_refresh_interval_in(
+            &store,
+            &legacy.id,
+            super::RemoteSourceRefreshInterval::SixHours,
+        )?;
+        assert_eq!(
+            updated.refresh_interval,
+            super::RemoteSourceRefreshInterval::SixHours
+        );
+        assert_eq!(updated.last_successful_update_unix_secs, 0);
+
+        let refreshed = super::mark_subscription_source_update_success_in(&store, &legacy.id, 42)?;
+        assert_eq!(
+            refreshed.refresh_interval,
+            super::RemoteSourceRefreshInterval::SixHours
+        );
+        assert_eq!(refreshed.last_successful_update_unix_secs, 42);
+        let reloaded = super::load_subscription_sources_in(&store)?;
+        assert_eq!(reloaded, vec![refreshed]);
+
+        let long_url = format!("https://long.example.invalid/{}", "a".repeat(9 * 1024));
+        let long_source = super::save_subscription_source_in(&store, &long_url)?;
+        assert!(
+            super::load_subscription_sources_in(&store)?
+                .iter()
+                .any(|source| source.id == long_source.id)
+        );
 
         fs::remove_dir_all(root)?;
         Ok(())
@@ -3217,6 +3803,11 @@ IP-CIDR,192.0.2.0/24,DIRECT
         assert_eq!(stored.content, content);
         assert_eq!(stored.rule_count, 2);
         assert_eq!(stored.diagnostic_count, 1);
+        assert_eq!(
+            stored.refresh_interval,
+            super::RemoteSourceRefreshInterval::Manual
+        );
+        assert!(stored.last_successful_update_unix_secs > 0);
         assert!(!format!("{stored:?}").contains("fixture-secret"));
 
         #[cfg(unix)]
@@ -3231,6 +3822,92 @@ IP-CIDR,192.0.2.0/24,DIRECT
 
         super::remove_qx_rule_source_in(&store, &stored.id)?;
         assert!(super::load_qx_rule_sources_in(&store)?.is_empty());
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn qx_rule_sources_update_interval_and_success_atomically()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = test_temp_dir("relay-qx-rule-refresh");
+        let store = root.join("subscriptions");
+        let url = "https://rules.example.invalid/airports.list?token=fixture-secret";
+        let initial = "DOMAIN-KEYWORD,google,PROXY\n";
+        let updated_content = "DOMAIN-SUFFIX,github.com,PROXY\nDOMAIN-KEYWORD,youtube,PROXY\n";
+
+        let stored = super::save_qx_rule_source_in(&store, url, "Proxy", initial)?;
+        let interval_updated = super::update_qx_rule_source_refresh_interval_in(
+            &store,
+            &stored.id,
+            super::RemoteSourceRefreshInterval::Hourly,
+        )?;
+        assert_eq!(
+            interval_updated.refresh_interval,
+            super::RemoteSourceRefreshInterval::Hourly
+        );
+        assert_eq!(
+            interval_updated.last_successful_update_unix_secs,
+            stored.last_successful_update_unix_secs
+        );
+
+        let refreshed =
+            super::replace_qx_rule_source_content_in(&store, &stored.id, updated_content, 123)?;
+        assert_eq!(refreshed.content, updated_content);
+        assert_eq!(refreshed.rule_count, 2);
+        assert_eq!(
+            refreshed.refresh_interval,
+            super::RemoteSourceRefreshInterval::Hourly
+        );
+        assert_eq!(refreshed.last_successful_update_unix_secs, 123);
+
+        assert!(
+            super::replace_qx_rule_source_content_in(&store, &stored.id, "# empty\n", 456).is_err()
+        );
+        let after_failed_refresh = super::load_qx_rule_sources_in(&store)?;
+        assert_eq!(after_failed_refresh, vec![refreshed]);
+
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn qx_rule_sources_read_legacy_v1_without_refresh_metadata()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = test_temp_dir("relay-qx-rule-legacy-refresh");
+        let store = root.join("subscriptions");
+        fs::create_dir(&store)?;
+        fs::set_permissions(&store, fs::Permissions::from_mode(0o700))?;
+        let id = "qx-rule-feed";
+        let content = "DOMAIN-KEYWORD,google,PROXY\n";
+        let legacy = [
+            super::QX_RULE_SOURCE_VERSION.to_owned(),
+            format!("id\t{id}"),
+            format!(
+                "url\t{}",
+                super::encode_hex("https://rules.example.invalid/list?token=fixture-secret")
+            ),
+            format!("target\t{}", super::encode_hex("Proxy")),
+            format!("content\t{}", super::encode_hex(content)),
+        ]
+        .join("\n");
+        let path = store.join(format!("{id}{}", super::QX_RULE_SOURCE_SUFFIX));
+        fs::write(&path, legacy)?;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
+
+        let loaded = super::load_qx_rule_sources_in(&store)?
+            .into_iter()
+            .next()
+            .ok_or("legacy qx source")?;
+        assert_eq!(loaded.id, id);
+        assert_eq!(loaded.content, content);
+        assert_eq!(
+            loaded.refresh_interval,
+            super::RemoteSourceRefreshInterval::Manual
+        );
+        assert_eq!(loaded.last_successful_update_unix_secs, 0);
+
         fs::remove_dir_all(root)?;
         Ok(())
     }
@@ -3322,6 +3999,8 @@ IP-CIDR,192.0.2.0/24,DIRECT
                 .to_owned(),
             rule_count: 2,
             diagnostic_count: 0,
+            refresh_interval: super::RemoteSourceRefreshInterval::Manual,
+            last_successful_update_unix_secs: 0,
         };
         let mut profile =
             relay_profile::Profile::qx_default(relay_profile::SecretUrl::parse_https(

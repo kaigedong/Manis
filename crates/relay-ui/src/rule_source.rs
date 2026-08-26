@@ -66,6 +66,12 @@ pub(crate) fn download_qx_rule_document(input: &str) -> Result<String, RuleDownl
         })
 }
 
+pub(crate) fn download_qx_rule_document_secret(
+    source: &SecretUrl,
+) -> Result<String, RuleDownloadError> {
+    source.expose_to(download_qx_rule_document)
+}
+
 fn map_request_error(error: &ureq::Error) -> RuleDownloadError {
     match error {
         ureq::Error::StatusCode(_) => RuleDownloadError::RequestRejected,
@@ -85,9 +91,9 @@ fn map_body_error(error: &ureq::Error) -> RuleDownloadError {
 mod tests {
     use std::fs;
 
-    use relay_profile::QxRuleList;
+    use relay_profile::{QxRuleList, SecretUrl};
 
-    use super::{RuleDownloadError, download_qx_rule_document};
+    use super::{RuleDownloadError, download_qx_rule_document, download_qx_rule_document_secret};
     use crate::mihomo;
 
     #[test]
@@ -102,6 +108,18 @@ mod tests {
     fn downloader_diagnostics_never_expose_the_input_url() {
         let source = "https://?token=top-secret";
         let error = download_qx_rule_document(source).expect_err("missing authority must fail");
+        assert!(!error.to_string().contains("top-secret"));
+        assert!(!format!("{error:?}").contains("top-secret"));
+    }
+
+    #[test]
+    fn stored_secret_downloader_keeps_the_url_inside_the_network_boundary() {
+        let source = SecretUrl::parse_https("https://127.0.0.1:1/rules?token=top-secret")
+            .expect("fixture URL passes the local HTTPS parser");
+
+        let error = download_qx_rule_document_secret(&source)
+            .expect_err("closed loopback port must fail without external network access");
+
         assert!(!error.to_string().contains("top-secret"));
         assert!(!format!("{error:?}").contains("top-secret"));
     }

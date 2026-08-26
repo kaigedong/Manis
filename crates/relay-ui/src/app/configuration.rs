@@ -5,13 +5,13 @@ use relay_core::WindowSizeClass;
 use relay_profile::QxRuleKind;
 
 use super::{
-    ImportQxRuleError, ImportedSubscriptionState, QxRuleImportFeedback, QxRuleList, RelayApp,
-    SourceRuntimeApply, SubscriptionFeedback,
+    ImportQxRuleError, ImportedSubscriptionState, QxRuleImportFeedback, QxRuleList,
+    QxRuleSourceRefreshState, RelayApp, SourceRuntimeApply, SubscriptionFeedback,
 };
 use crate::{
     diagnostics::{UiEvent, trace_ui},
-    mihomo::{self, LoadedProvider, SubscriptionStoreError},
-    rule_source::download_qx_rule_document,
+    mihomo::{self, LoadedProvider, RemoteSourceRefreshInterval, SubscriptionStoreError},
+    rule_source::{download_qx_rule_document, download_qx_rule_document_secret},
     subscription::{SourceKind, SubscriptionPreview, validate_subscription_preview},
     subscription_input::SubscriptionTextInput,
     theme::Theme,
@@ -22,6 +22,19 @@ fn source_kind_label(kind: SourceKind) -> &'static str {
         SourceKind::HttpSubscription => "HTTP 订阅",
         SourceKind::HttpsSubscription => "HTTPS 订阅",
         SourceKind::VlessNode => "VLESS 节点",
+    }
+}
+
+fn source_update_label(last_successful_update_unix_secs: u64, now_unix_secs: u64) -> String {
+    if last_successful_update_unix_secs == 0 {
+        return "从未更新".to_owned();
+    }
+    let elapsed = now_unix_secs.saturating_sub(last_successful_update_unix_secs);
+    match elapsed {
+        0..=59 => "刚刚更新".to_owned(),
+        60..=3_599 => format!("{} 分钟前更新", elapsed / 60),
+        3_600..=86_399 => format!("{} 小时前更新", elapsed / 3_600),
+        _ => format!("{} 天前更新", elapsed / 86_400),
     }
 }
 
@@ -38,7 +51,8 @@ impl RelayApp {
             .as_ref()
             .expect("QX rule input is initialized before rendering")
             .clone();
-        let rule_busy = self.qx_rule_feedback == QxRuleImportFeedback::Importing;
+        let rule_busy =
+            self.qx_rule_feedback == QxRuleImportFeedback::Importing || self.source_refresh_busy();
         div()
             .flex_1()
             .min_w(px(0.0))
@@ -66,7 +80,7 @@ impl RelayApp {
                             .w_full()
                             .max_w(px(880.0))
                             .mx_auto()
-                            .child(self.source_panel(theme, cx))
+                            .child(self.source_panel(theme, compact, cx))
                             .child(
                                 self.rule_source_manager(rule_input, rule_busy, theme, cx)
                                     .mt_4(),
@@ -154,7 +168,7 @@ impl RelayApp {
     }
 
     #[allow(clippy::too_many_lines)]
-    fn source_panel(&self, theme: Theme, cx: &mut Context<Self>) -> Div {
+    fn source_panel(&self, theme: Theme, compact: bool, cx: &mut Context<Self>) -> Div {
         let input = self
             .subscription_input
             .as_ref()
@@ -167,13 +181,14 @@ impl RelayApp {
         let busy = matches!(feedback, SubscriptionFeedback::Importing(_))
             || self.imported_subscriptions.iter().any(|subscription| {
                 matches!(subscription.state, ImportedSubscriptionState::Removing(_))
-            });
+            })
+            || self.source_refresh_busy();
 
         let panel = div()
             .id("configuration-source")
             .w_full()
             .min_h(px(330.0))
-            .p_4()
+            .p(if compact { px(12.0) } else { px(16.0) })
             .rounded_md()
             .border_1()
             .border_color(theme.outline_subtle)
@@ -189,11 +204,15 @@ impl RelayApp {
                     .mt_1()
                     .text_size(px(11.0))
                     .text_color(theme.text_secondary)
-                    .child("支持 HTTP/HTTPS 订阅，也支持单个 vless:// 节点链接。"),
+                    .child(if compact {
+                        "HTTP/HTTPS 订阅或单个 vless:// 节点"
+                    } else {
+                        "支持 HTTP/HTTPS 订阅，也支持单个 vless:// 节点链接。"
+                    }),
             )
             .child(
                 div()
-                    .mt_4()
+                    .mt(if compact { px(10.0) } else { px(16.0) })
                     .mb_1()
                     .text_size(px(11.0))
                     .font_weight(FontWeight::SEMIBOLD)
@@ -223,8 +242,8 @@ impl RelayApp {
             })
             .child(
                 div()
-                    .mt_5()
-                    .pt_4()
+                    .mt(if compact { px(14.0) } else { px(20.0) })
+                    .pt(if compact { px(12.0) } else { px(16.0) })
                     .border_t_1()
                     .border_color(theme.outline_subtle)
                     .flex()
@@ -252,11 +271,11 @@ impl RelayApp {
             })
             .child(self.imported_subscription_cards(theme, cx))
             .child(self.saved_vless_cards(theme, cx))
-            .child(self.source_panel_footer(theme));
+            .child(self.source_panel_footer(theme, compact));
         div().w_full().child(panel)
     }
 
-    fn source_panel_footer(&self, theme: Theme) -> Div {
+    fn source_panel_footer(&self, theme: Theme, compact: bool) -> Div {
         let source = self.runtime.profile_source();
         div()
             .mt_3()
@@ -266,11 +285,13 @@ impl RelayApp {
             .text_size(px(10.0))
             .text_color(theme.text_tertiary)
             .child("链接保存在本机私有目录；界面和日志不会显示完整地址。")
-            .child(div().mt_1().child(format!(
-                "当前应用方式 · {} · {}",
-                source.label(),
-                source.detail()
-            )))
+            .when(!compact, |footer| {
+                footer.child(div().mt_1().child(format!(
+                    "当前应用方式 · {} · {}",
+                    source.label(),
+                    source.detail()
+                )))
+            })
     }
 
     fn subscription_actions(
@@ -571,6 +592,7 @@ impl RelayApp {
     #[allow(clippy::too_many_lines)]
     fn imported_subscription_cards(&self, theme: Theme, cx: &mut Context<Self>) -> Div {
         let mut list = div();
+        let now = mihomo::current_unix_secs();
         for (index, subscription) in self.imported_subscriptions.iter().enumerate() {
             let node_count: usize = subscription
                 .providers
@@ -584,20 +606,30 @@ impl RelayApp {
             let (detail, busy, healthy) = match subscription.state {
                 ImportedSubscriptionState::None => continue,
                 ImportedSubscriptionState::Pending(_)
-                | ImportedSubscriptionState::Refreshing(_) => {
-                    ("已安全保存 · 正在恢复节点".to_owned(), true, true)
-                }
+                | ImportedSubscriptionState::Refreshing(_) => (
+                    format!(
+                        "正在更新节点 · 上次成功：{}",
+                        source_update_label(subscription.last_successful_update_unix_secs, now)
+                    ),
+                    true,
+                    true,
+                ),
                 ImportedSubscriptionState::Ready(kind) => (
                     format!(
-                        "{} · {} 个来源 · {node_count} 个节点 · 重启后自动恢复",
+                        "{} · {} 个来源 · {node_count} 个节点 · {}",
                         source_kind_label(kind),
-                        subscription.providers.len()
+                        subscription.providers.len(),
+                        source_update_label(subscription.last_successful_update_unix_secs, now)
                     ),
                     false,
                     true,
                 ),
                 ImportedSubscriptionState::Unavailable(kind, error) => (
-                    format!("{} · {error} · 可稍后刷新", source_kind_label(kind)),
+                    format!(
+                        "{} · 更新失败：{error} · {}",
+                        source_kind_label(kind),
+                        source_update_label(subscription.last_successful_update_unix_secs, now)
+                    ),
                     false,
                     false,
                 ),
@@ -613,7 +645,11 @@ impl RelayApp {
                     self.subscription_feedback,
                     SubscriptionFeedback::Importing(_)
                 );
+            let controls_enabled = removable && !self.source_refresh_busy();
             let id = subscription.id.clone();
+            let refresh_id = id.clone();
+            let interval_id = id.clone();
+            let next_interval = subscription.refresh_interval.next();
             list = list.child(
                 div()
                     .mt_3()
@@ -621,7 +657,7 @@ impl RelayApp {
                     .rounded_md()
                     .border_1()
                     .border_color(theme.outline_subtle)
-                    .bg(theme.action_soft)
+                    .bg(theme.surface_low)
                     .child(
                         div()
                             .flex()
@@ -642,8 +678,94 @@ impl RelayApp {
                                     })
                                     .child(name),
                             )
-                            .when(removable, |header| {
-                                header.child(
+                            .when(busy, |header| {
+                                header.child(Self::benchmark_latency_spinner(
+                                    format!("source-refresh-{id}"),
+                                    theme,
+                                ))
+                            }),
+                    )
+                    .child(
+                        div()
+                            .mt_1()
+                            .text_size(px(11.0))
+                            .text_color(theme.text_secondary)
+                            .child(detail),
+                    )
+                    .child(
+                        div()
+                            .mt_3()
+                            .flex()
+                            .flex_wrap()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .id(format!("subscription-interval-{interval_id}"))
+                                    .role(Role::Button)
+                                    .aria_label(format!(
+                                        "更改自动更新间隔，当前{}",
+                                        subscription.refresh_interval.label()
+                                    ))
+                                    .tab_stop(controls_enabled)
+                                    .focusable()
+                                    .when(controls_enabled, gpui::Styled::cursor_pointer)
+                                    .px_2()
+                                    .py_1()
+                                    .rounded_md()
+                                    .border_1()
+                                    .border_color(theme.outline_subtle)
+                                    .bg(theme.surface_high)
+                                    .text_size(px(10.0))
+                                    .text_color(theme.text_secondary)
+                                    .child(format!(
+                                        "更新间隔 · {}",
+                                        subscription.refresh_interval.label()
+                                    ))
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        if controls_enabled {
+                                            this.set_subscription_refresh_interval(
+                                                interval_id.clone(),
+                                                next_interval,
+                                                cx,
+                                            );
+                                        }
+                                    })),
+                            )
+                            .child(
+                                div()
+                                    .id(format!("subscription-refresh-{refresh_id}"))
+                                    .role(Role::Button)
+                                    .aria_label("立即更新这个订阅")
+                                    .tab_stop(controls_enabled)
+                                    .focusable()
+                                    .when(controls_enabled, gpui::Styled::cursor_pointer)
+                                    .px_2()
+                                    .py_1()
+                                    .rounded_md()
+                                    .border_1()
+                                    .border_color(theme.action_primary)
+                                    .bg(theme.surface_high)
+                                    .text_size(px(10.0))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(theme.action_primary)
+                                    .child(if busy {
+                                        "更新中…"
+                                    } else {
+                                        "↻ 立即更新"
+                                    })
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        if controls_enabled {
+                                            this.refresh_imported_subscription(
+                                                refresh_id.clone(),
+                                                cx,
+                                            );
+                                        }
+                                    })),
+                            )
+                            .child(div().flex_1())
+                            .when(controls_enabled, |controls| {
+                                controls.child(
                                     div()
                                         .id(format!("remove-{id}"))
                                         .role(Role::Button)
@@ -654,24 +776,14 @@ impl RelayApp {
                                         .px_2()
                                         .py_1()
                                         .rounded_md()
-                                        .border_1()
-                                        .border_color(theme.outline_subtle)
-                                        .bg(theme.surface_high)
                                         .text_size(px(10.0))
-                                        .text_color(theme.text_secondary)
+                                        .text_color(theme.route_trace)
                                         .child("移除")
                                         .on_click(cx.listener(move |this, _, _, cx| {
                                             this.remove_imported_subscription(id.clone(), cx);
                                         })),
                                 )
                             }),
-                    )
-                    .child(
-                        div()
-                            .mt_1()
-                            .text_size(px(11.0))
-                            .text_color(theme.text_secondary)
-                            .child(detail),
                     ),
             );
         }
@@ -967,7 +1079,7 @@ impl RelayApp {
             );
         }
         for (index, source) in self.qx_rule_sources.iter().enumerate() {
-            panel = panel.child(Self::rule_source_card(index, source, busy, theme, cx));
+            panel = panel.child(self.rule_source_card(index, source, busy, theme, cx));
         }
         panel.child(
             div()
@@ -978,7 +1090,9 @@ impl RelayApp {
         )
     }
 
+    #[allow(clippy::too_many_lines)]
     fn rule_source_card(
+        &self,
         index: usize,
         source: &crate::mihomo::StoredQxRuleSource,
         busy: bool,
@@ -986,58 +1100,160 @@ impl RelayApp {
         cx: &mut Context<Self>,
     ) -> Div {
         let id = source.id.clone();
+        let refresh_id = id.clone();
+        let interval_id = id.clone();
+        let refresh_state = self.qx_rule_source_refreshes.get(&source.id);
+        let refreshing = refresh_state.is_some_and(QxRuleSourceRefreshState::is_refreshing);
+        let controls_enabled = !busy && !self.source_refresh_busy();
+        let next_interval = source.refresh_interval.next();
+        let name = source
+            .source
+            .subscription_name()
+            .unwrap_or_else(|| format!("规则源 {}", index + 1));
+        let last_update = source_update_label(
+            source.last_successful_update_unix_secs,
+            mihomo::current_unix_secs(),
+        );
+        let refresh_error = match refresh_state {
+            Some(QxRuleSourceRefreshState::Failed { message, .. }) => Some(message.clone()),
+            _ => None,
+        };
         div()
             .mt_2()
-            .px_3()
-            .py_2()
+            .p_3()
             .rounded_md()
             .border_1()
             .border_color(theme.outline_subtle)
             .bg(theme.surface_low)
-            .flex()
-            .items_center()
-            .gap_3()
             .child(
                 div()
-                    .flex_1()
-                    .min_w(px(0.0))
+                    .flex()
+                    .items_center()
+                    .gap_3()
                     .child(
                         div()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .overflow_x_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
                             .font_weight(FontWeight::SEMIBOLD)
-                            .child(format!("规则源 {}", index + 1)),
+                            .child(name),
                     )
-                    .child(
-                        div()
-                            .mt_1()
-                            .text_size(px(10.0))
-                            .text_color(theme.text_secondary)
-                            .child(format!(
-                                "{} 条 · 跳过 {} 条 · → {}",
-                                source.rule_count,
-                                source.diagnostic_count,
-                                source.target_policy.as_str()
-                            )),
-                    ),
+                    .when(refreshing, |header| {
+                        header.child(Self::benchmark_latency_spinner(
+                            format!("qx-rule-refresh-{id}"),
+                            theme,
+                        ))
+                    }),
             )
             .child(
                 div()
-                    .id(format!("qx-rule-remove-{index}"))
-                    .role(Role::Button)
-                    .aria_label("删除这份远程 QX 规则")
-                    .tab_stop(true)
-                    .focusable()
-                    .when(!busy, gpui::Styled::cursor_pointer)
-                    .px_2()
-                    .py_1()
-                    .rounded_sm()
+                    .mt_1()
                     .text_size(px(10.0))
                     .text_color(theme.text_secondary)
-                    .child("删除")
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if !busy {
-                            this.remove_qx_rule_source(id.clone(), cx);
-                        }
-                    })),
+                    .child(format!(
+                        "{} 条 · 跳过 {} 条 · → {} · {last_update}",
+                        source.rule_count,
+                        source.diagnostic_count,
+                        source.target_policy.as_str()
+                    )),
+            )
+            .when_some(refresh_error, |card, error| {
+                card.child(
+                    div()
+                        .mt_2()
+                        .text_size(px(10.0))
+                        .text_color(theme.route_trace)
+                        .child(format!("上次更新失败：{error}")),
+                )
+            })
+            .child(
+                div()
+                    .mt_3()
+                    .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .id(format!("qx-rule-interval-{interval_id}"))
+                            .role(Role::Button)
+                            .aria_label(format!(
+                                "更改规则自动更新间隔，当前{}",
+                                source.refresh_interval.label()
+                            ))
+                            .tab_stop(controls_enabled)
+                            .focusable()
+                            .when(controls_enabled, gpui::Styled::cursor_pointer)
+                            .px_2()
+                            .py_1()
+                            .rounded_md()
+                            .border_1()
+                            .border_color(theme.outline_subtle)
+                            .bg(theme.surface_high)
+                            .text_size(px(10.0))
+                            .text_color(theme.text_secondary)
+                            .child(format!("更新间隔 · {}", source.refresh_interval.label()))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                if controls_enabled {
+                                    this.set_qx_rule_refresh_interval(
+                                        interval_id.clone(),
+                                        next_interval,
+                                        cx,
+                                    );
+                                }
+                            })),
+                    )
+                    .child(
+                        div()
+                            .id(format!("qx-rule-refresh-{refresh_id}"))
+                            .role(Role::Button)
+                            .aria_label("立即更新这份远程 QX 规则")
+                            .tab_stop(controls_enabled)
+                            .focusable()
+                            .when(controls_enabled, gpui::Styled::cursor_pointer)
+                            .px_2()
+                            .py_1()
+                            .rounded_md()
+                            .border_1()
+                            .border_color(theme.action_primary)
+                            .bg(theme.surface_high)
+                            .text_size(px(10.0))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(theme.action_primary)
+                            .child(if refreshing {
+                                "更新中…"
+                            } else {
+                                "↻ 立即更新"
+                            })
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                if controls_enabled {
+                                    this.refresh_qx_rule_source(refresh_id.clone(), cx);
+                                }
+                            })),
+                    )
+                    .child(div().flex_1())
+                    .child(
+                        div()
+                            .id(format!("qx-rule-remove-{index}"))
+                            .role(Role::Button)
+                            .aria_label("删除这份远程 QX 规则")
+                            .tab_stop(controls_enabled)
+                            .focusable()
+                            .when(controls_enabled, gpui::Styled::cursor_pointer)
+                            .px_2()
+                            .py_1()
+                            .rounded_sm()
+                            .text_size(px(10.0))
+                            .text_color(theme.route_trace)
+                            .child("删除")
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                if controls_enabled {
+                                    this.remove_qx_rule_source(id.clone(), cx);
+                                }
+                            })),
+                    ),
             )
     }
 
@@ -1332,15 +1548,17 @@ impl RelayApp {
                     Ok((stored, apply)) => {
                         let rule_count = stored.rule_count;
                         let diagnostic_count = stored.diagnostic_count;
+                        let stored_id = stored.id.clone();
                         if let Some(existing) = this
                             .qx_rule_sources
                             .iter_mut()
-                            .find(|source| source.id == stored.id)
+                            .find(|source| source.id == stored_id)
                         {
                             *existing = stored;
                         } else {
                             this.qx_rule_sources.push(stored);
                         }
+                        this.qx_rule_source_refreshes.remove(&stored_id);
                         this.qx_rule_feedback = QxRuleImportFeedback::Imported {
                             rule_count,
                             diagnostic_count,
@@ -1400,6 +1618,9 @@ impl RelayApp {
                 match result {
                     Ok((id, apply)) => {
                         this.qx_rule_sources.retain(|source| source.id != id);
+                        this.qx_rule_source_refreshes.remove(&id);
+                        this.source_refresh_retry_not_before
+                            .remove(&super::DueRemoteSource::QxRule(id.clone()).scheduler_key());
                         this.qx_rule_feedback = QxRuleImportFeedback::Idle;
                         this.status = format!("远程 QX 规则已移除{}", apply.status_suffix());
                     }
@@ -1414,5 +1635,251 @@ impl RelayApp {
         })
         .detach();
         cx.notify();
+    }
+
+    fn set_subscription_refresh_interval(
+        &mut self,
+        id: String,
+        refresh_interval: RemoteSourceRefreshInterval,
+        cx: &mut Context<Self>,
+    ) {
+        if self.source_refresh_busy() {
+            return;
+        }
+        let Some(store_dir) = self.subscription_store_dir.clone() else {
+            return;
+        };
+        let Some(source) = self
+            .imported_subscriptions
+            .iter_mut()
+            .find(|source| source.id == id)
+        else {
+            return;
+        };
+        let previous_state = source.state;
+        let kind = super::source_kind(&source.source);
+        self.subscription_preview_generation = self.subscription_preview_generation.wrapping_add(1);
+        let generation = self.subscription_preview_generation;
+        source.generation = generation;
+        source.state = ImportedSubscriptionState::Refreshing(kind);
+        self.status = format!("正在保存订阅更新间隔：{}", refresh_interval.label());
+        let executor = cx.background_executor().clone();
+        let task_id = id.clone();
+        cx.spawn(async move |this, cx| {
+            let result = executor
+                .spawn(async move {
+                    mihomo::update_subscription_source_refresh_interval_in(
+                        &store_dir,
+                        &task_id,
+                        refresh_interval,
+                    )
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                let Some(source) = this
+                    .imported_subscriptions
+                    .iter_mut()
+                    .find(|source| source.id == id)
+                else {
+                    return;
+                };
+                if source.generation != generation {
+                    return;
+                }
+                match result {
+                    Ok(stored) => {
+                        source.refresh_interval = stored.refresh_interval;
+                        source.last_successful_update_unix_secs =
+                            stored.last_successful_update_unix_secs;
+                        source.state = previous_state;
+                        this.status =
+                            format!("订阅更新间隔已设为 {}", stored.refresh_interval.label());
+                    }
+                    Err(error) => {
+                        source.state = ImportedSubscriptionState::StoreError(error);
+                        this.status = format!("订阅更新间隔保存失败：{error}");
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn set_qx_rule_refresh_interval(
+        &mut self,
+        id: String,
+        refresh_interval: RemoteSourceRefreshInterval,
+        cx: &mut Context<Self>,
+    ) {
+        if self.source_refresh_busy() {
+            return;
+        }
+        let Some(store_dir) = self.subscription_store_dir.clone() else {
+            return;
+        };
+        self.qx_rule_import_generation = self.qx_rule_import_generation.wrapping_add(1);
+        let generation = self.qx_rule_import_generation;
+        self.qx_rule_source_refreshes.insert(
+            id.clone(),
+            QxRuleSourceRefreshState::Refreshing { generation },
+        );
+        self.status = format!("正在保存规则更新间隔：{}", refresh_interval.label());
+        let executor = cx.background_executor().clone();
+        let task_id = id.clone();
+        cx.spawn(async move |this, cx| {
+            let result = executor
+                .spawn(async move {
+                    mihomo::update_qx_rule_source_refresh_interval_in(
+                        &store_dir,
+                        &task_id,
+                        refresh_interval,
+                    )
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                if !matches!(
+                    this.qx_rule_source_refreshes.get(&id),
+                    Some(QxRuleSourceRefreshState::Refreshing { generation: active })
+                        if *active == generation
+                ) {
+                    return;
+                }
+                match result {
+                    Ok(stored) => {
+                        if let Some(source) = this
+                            .qx_rule_sources
+                            .iter_mut()
+                            .find(|source| source.id == id)
+                        {
+                            *source = stored;
+                        }
+                        this.qx_rule_source_refreshes.remove(&id);
+                        this.status = format!("规则更新间隔已设为 {}", refresh_interval.label());
+                    }
+                    Err(error) => {
+                        this.qx_rule_source_refreshes.insert(
+                            id.clone(),
+                            QxRuleSourceRefreshState::Failed {
+                                generation,
+                                message: error.to_string(),
+                            },
+                        );
+                        this.status = format!("规则更新间隔保存失败：{error}");
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    pub(super) fn refresh_qx_rule_source(&mut self, id: String, cx: &mut Context<Self>) {
+        if self.source_refresh_busy() {
+            return;
+        }
+        let Some(store_dir) = self.subscription_store_dir.clone() else {
+            return;
+        };
+        let Some(source) = self.qx_rule_sources.iter().find(|source| source.id == id) else {
+            return;
+        };
+        let url = source.source.clone();
+        self.qx_rule_import_generation = self.qx_rule_import_generation.wrapping_add(1);
+        let generation = self.qx_rule_import_generation;
+        self.qx_rule_source_refreshes.insert(
+            id.clone(),
+            QxRuleSourceRefreshState::Refreshing { generation },
+        );
+        "正在更新远程 QX 规则".clone_into(&mut self.status);
+        let runtime = self.runtime.clone();
+        let executor = cx.background_executor().clone();
+        let task_id = id.clone();
+        cx.spawn(async move |this, cx| {
+            let result = executor
+                .spawn(async move {
+                    let content = download_qx_rule_document_secret(&url)
+                        .map_err(ImportQxRuleError::Download)?;
+                    let parsed = QxRuleList::parse(&content);
+                    if parsed.rules.is_empty() {
+                        return Err(ImportQxRuleError::InvalidDocument);
+                    }
+                    let stored = mihomo::replace_qx_rule_source_content_in(
+                        &store_dir,
+                        &task_id,
+                        &content,
+                        mihomo::current_unix_secs(),
+                    )
+                    .map_err(ImportQxRuleError::Store)?;
+                    let apply =
+                        SourceRuntimeApply::from_result(runtime.apply_saved_sources(&store_dir));
+                    Ok::<_, ImportQxRuleError>((stored, apply))
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                if !matches!(
+                    this.qx_rule_source_refreshes.get(&id),
+                    Some(QxRuleSourceRefreshState::Refreshing { generation: active })
+                        if *active == generation
+                ) {
+                    return;
+                }
+                match result {
+                    Ok((stored, apply)) => {
+                        let rule_count = stored.rule_count;
+                        if let Some(source) = this
+                            .qx_rule_sources
+                            .iter_mut()
+                            .find(|source| source.id == id)
+                        {
+                            *source = stored;
+                        }
+                        this.qx_rule_source_refreshes.remove(&id);
+                        this.source_refresh_retry_not_before
+                            .remove(&super::DueRemoteSource::QxRule(id.clone()).scheduler_key());
+                        this.status = format!(
+                            "QX 规则更新完成 · {rule_count} 条生效{}",
+                            apply.status_suffix()
+                        );
+                    }
+                    Err(error) => {
+                        let message = match error {
+                            ImportQxRuleError::Download(error) => error.to_string(),
+                            ImportQxRuleError::InvalidDocument => "没有可识别的域名规则".to_owned(),
+                            ImportQxRuleError::Store(error) => error.to_string(),
+                        };
+                        this.qx_rule_source_refreshes.insert(
+                            id.clone(),
+                            QxRuleSourceRefreshState::Failed {
+                                generation,
+                                message: message.clone(),
+                            },
+                        );
+                        this.status = format!("QX 规则更新失败：{message}");
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::source_update_label;
+
+    #[test]
+    fn source_update_time_is_compact_and_handles_clock_rollback() {
+        assert_eq!(source_update_label(0, 10_000), "从未更新");
+        assert_eq!(source_update_label(9_980, 10_000), "刚刚更新");
+        assert_eq!(source_update_label(6_400, 10_000), "1 小时前更新");
+        assert_eq!(source_update_label(10_100, 10_000), "刚刚更新");
     }
 }

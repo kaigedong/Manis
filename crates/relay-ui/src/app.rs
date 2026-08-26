@@ -20,8 +20,9 @@ use crate::{
     diagnostics::{UiEvent, trace_ui},
     mihomo::{
         self, ControllerRuntime, ControllerState, GeneratedProfileApply, KernelLogEntry,
-        LiveRuntimeSession, LiveStreamStatus, LoadedProvider, LoadedSnapshot, StoredQxRuleSource,
-        StoredSubscription, StoredVlessNode, SubscriptionPreviewError, SubscriptionStoreError,
+        LiveRuntimeSession, LiveStreamStatus, LoadedProvider, LoadedSnapshot,
+        RemoteSourceRefreshInterval, StoredQxRuleSource, StoredSubscription, StoredVlessNode,
+        SubscriptionPreviewError, SubscriptionStoreError,
     },
     rule_source::RuleDownloadError,
     subscription::{SourceKind, SubscriptionInputError, SubscriptionPreview},
@@ -92,6 +93,8 @@ struct ImportedSubscription {
     state: ImportedSubscriptionState,
     providers: Vec<LoadedProvider>,
     generation: u64,
+    refresh_interval: RemoteSourceRefreshInterval,
+    last_successful_update_unix_secs: u64,
 }
 
 impl ImportedSubscription {
@@ -103,6 +106,8 @@ impl ImportedSubscription {
             state: ImportedSubscriptionState::Pending(kind),
             providers: Vec::new(),
             generation: 0,
+            refresh_interval: stored.refresh_interval,
+            last_successful_update_unix_secs: stored.last_successful_update_unix_secs,
         }
     }
 }
@@ -130,6 +135,78 @@ enum ImportQxRuleError {
     Download(RuleDownloadError),
     InvalidDocument,
     Store(SubscriptionStoreError),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum QxRuleSourceRefreshState {
+    Refreshing { generation: u64 },
+    Failed { generation: u64, message: String },
+}
+
+impl QxRuleSourceRefreshState {
+    fn is_refreshing(&self) -> bool {
+        matches!(self, Self::Refreshing { .. })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum DueRemoteSource {
+    Subscription(String),
+    QxRule(String),
+}
+
+impl DueRemoteSource {
+    fn scheduler_key(&self) -> String {
+        match self {
+            Self::Subscription(id) => format!("subscription:{id}"),
+            Self::QxRule(id) => format!("qx-rule:{id}"),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum SourceRefreshSchedulerState {
+    #[default]
+    Stopped,
+    Started,
+}
+
+fn next_due_remote_source(
+    subscriptions: &[ImportedSubscription],
+    qx_rule_sources: &[StoredQxRuleSource],
+    retry_not_before: &BTreeMap<String, u64>,
+    now_unix_secs: u64,
+) -> Option<DueRemoteSource> {
+    subscriptions
+        .iter()
+        .find(|source| {
+            !matches!(
+                source.state,
+                ImportedSubscriptionState::None
+                    | ImportedSubscriptionState::Pending(_)
+                    | ImportedSubscriptionState::Refreshing(_)
+                    | ImportedSubscriptionState::Removing(_)
+            ) && source
+                .refresh_interval
+                .is_due(source.last_successful_update_unix_secs, now_unix_secs)
+                && retry_not_before
+                    .get(&DueRemoteSource::Subscription(source.id.clone()).scheduler_key())
+                    .is_none_or(|retry_at| now_unix_secs >= *retry_at)
+        })
+        .map(|source| DueRemoteSource::Subscription(source.id.clone()))
+        .or_else(|| {
+            qx_rule_sources
+                .iter()
+                .find(|source| {
+                    source
+                        .refresh_interval
+                        .is_due(source.last_successful_update_unix_secs, now_unix_secs)
+                        && retry_not_before
+                            .get(&DueRemoteSource::QxRule(source.id.clone()).scheduler_key())
+                            .is_none_or(|retry_at| now_unix_secs >= *retry_at)
+                })
+                .map(|source| DueRemoteSource::QxRule(source.id.clone()))
+        })
 }
 
 fn source_kind(subscription: &SecretUrl) -> SourceKind {
@@ -389,6 +466,9 @@ pub struct RelayApp {
     qx_rule_feedback: QxRuleImportFeedback,
     qx_rule_target_policy: String,
     qx_rule_import_generation: u64,
+    qx_rule_source_refreshes: BTreeMap<String, QxRuleSourceRefreshState>,
+    source_refresh_retry_not_before: BTreeMap<String, u64>,
+    source_refresh_scheduler: SourceRefreshSchedulerState,
     node_policy_groups: Vec<NodePolicyGroup>,
     node_group_draft: Option<NodeGroupDraft>,
     group_benchmarks: BTreeMap<String, GroupBenchmarkState>,
@@ -563,6 +643,9 @@ impl RelayApp {
             qx_rule_feedback: QxRuleImportFeedback::Idle,
             qx_rule_target_policy: "Proxy".to_owned(),
             qx_rule_import_generation: 0,
+            qx_rule_source_refreshes: BTreeMap::new(),
+            source_refresh_retry_not_before: BTreeMap::new(),
+            source_refresh_scheduler: SourceRefreshSchedulerState::Stopped,
             node_policy_groups,
             node_group_draft: None,
             group_benchmarks: BTreeMap::new(),
@@ -736,6 +819,9 @@ impl RelayApp {
                             existing.source = subscription.source;
                             existing.state = ImportedSubscriptionState::Ready(kind);
                             existing.providers.clone_from(&providers);
+                            existing.refresh_interval = subscription.refresh_interval;
+                            existing.last_successful_update_unix_secs =
+                                subscription.last_successful_update_unix_secs;
                         } else {
                             this.imported_subscriptions.push(ImportedSubscription {
                                 id: stored_id,
@@ -743,6 +829,9 @@ impl RelayApp {
                                 state: ImportedSubscriptionState::Ready(kind),
                                 providers: providers.clone(),
                                 generation,
+                                refresh_interval: subscription.refresh_interval,
+                                last_successful_update_unix_secs: subscription
+                                    .last_successful_update_unix_secs,
                             });
                         }
                         this.subscription_preview_providers = providers;
@@ -786,11 +875,14 @@ impl RelayApp {
             .map(|subscription| subscription.id.clone())
             .collect();
         for id in pending {
-            self.restore_imported_subscription(id, cx);
+            self.refresh_imported_subscription(id, cx);
         }
     }
 
-    fn restore_imported_subscription(&mut self, id: String, cx: &mut Context<Self>) {
+    fn refresh_imported_subscription(&mut self, id: String, cx: &mut Context<Self>) {
+        let Some(store_dir) = self.subscription_store_dir.clone() else {
+            return;
+        };
         let Some(subscription) = self
             .imported_subscriptions
             .iter_mut()
@@ -798,21 +890,41 @@ impl RelayApp {
         else {
             return;
         };
-        let ImportedSubscriptionState::Pending(kind) = subscription.state else {
+        if matches!(
+            subscription.state,
+            ImportedSubscriptionState::None
+                | ImportedSubscriptionState::Refreshing(_)
+                | ImportedSubscriptionState::Removing(_)
+        ) {
             return;
-        };
+        }
+        let kind = source_kind(&subscription.source);
         let source = subscription.source.clone();
         self.subscription_preview_generation = self.subscription_preview_generation.wrapping_add(1);
         let generation = self.subscription_preview_generation;
         subscription.generation = generation;
         subscription.state = ImportedSubscriptionState::Refreshing(kind);
-        "正在恢复已导入订阅的节点组".clone_into(&mut self.status);
+        "正在更新订阅节点".clone_into(&mut self.status);
         trace_ui(UiEvent::SourceRestoreStarted);
 
         let executor = cx.background_executor().clone();
+        let runtime = self.runtime.clone();
+        let task_id = id.clone();
         cx.spawn(async move |this, cx| {
             let result = executor
-                .spawn(async move { mihomo::preview_imported_subscription(source) })
+                .spawn(async move {
+                    let providers = mihomo::preview_imported_subscription(source)
+                        .map_err(ImportSubscriptionError::Preview)?;
+                    let stored = mihomo::mark_subscription_source_update_success_in(
+                        &store_dir,
+                        &task_id,
+                        mihomo::current_unix_secs(),
+                    )
+                    .map_err(ImportSubscriptionError::Store)?;
+                    let apply =
+                        SourceRuntimeApply::from_result(runtime.apply_saved_sources(&store_dir));
+                    Ok::<_, ImportSubscriptionError>((providers, stored, apply))
+                })
                 .await;
             this.update(cx, |this, cx| {
                 let Some(subscription) = this
@@ -826,23 +938,94 @@ impl RelayApp {
                     return;
                 }
                 match result {
-                    Ok(providers) => {
+                    Ok((providers, stored, apply)) => {
                         let node_count: usize =
                             providers.iter().map(|provider| provider.nodes.len()).sum();
                         subscription.providers = providers;
                         subscription.state = ImportedSubscriptionState::Ready(kind);
-                        this.status = format!("已恢复订阅节点组 · {node_count} 个节点");
+                        subscription.refresh_interval = stored.refresh_interval;
+                        subscription.last_successful_update_unix_secs =
+                            stored.last_successful_update_unix_secs;
+                        this.source_refresh_retry_not_before
+                            .remove(&DueRemoteSource::Subscription(id.clone()).scheduler_key());
+                        this.status = format!(
+                            "订阅更新完成 · {node_count} 个节点{}",
+                            apply.status_suffix()
+                        );
                         trace_ui(UiEvent::SourceRestoreSucceeded);
                     }
-                    Err(error) => {
+                    Err(ImportSubscriptionError::Preview(error)) => {
                         subscription.state = ImportedSubscriptionState::Unavailable(kind, error);
-                        this.status = format!("订阅节点组刷新失败：{error}");
+                        this.status = format!("订阅更新失败：{error}");
+                        trace_ui(UiEvent::SourceRestoreFailed);
+                    }
+                    Err(ImportSubscriptionError::Store(error)) => {
+                        subscription.state = ImportedSubscriptionState::StoreError(error);
+                        this.status = format!("订阅已读取，但更新时间保存失败：{error}");
                         trace_ui(UiEvent::SourceRestoreFailed);
                     }
                 }
                 cx.notify();
             })
             .ok();
+        })
+        .detach();
+    }
+
+    fn source_refresh_busy(&self) -> bool {
+        self.imported_subscriptions.iter().any(|source| {
+            matches!(
+                source.state,
+                ImportedSubscriptionState::Refreshing(_) | ImportedSubscriptionState::Removing(_)
+            )
+        }) || self.qx_rule_feedback == QxRuleImportFeedback::Importing
+            || self
+                .qx_rule_source_refreshes
+                .values()
+                .any(QxRuleSourceRefreshState::is_refreshing)
+    }
+
+    fn refresh_next_due_source(&mut self, cx: &mut Context<Self>) {
+        if self.source_refresh_busy() {
+            return;
+        }
+        let now = mihomo::current_unix_secs();
+        let due = next_due_remote_source(
+            &self.imported_subscriptions,
+            &self.qx_rule_sources,
+            &self.source_refresh_retry_not_before,
+            now,
+        );
+        if let Some(source) = due.as_ref() {
+            self.source_refresh_retry_not_before
+                .insert(source.scheduler_key(), now.saturating_add(300));
+        }
+        match due {
+            Some(DueRemoteSource::Subscription(id)) => {
+                self.refresh_imported_subscription(id, cx);
+            }
+            Some(DueRemoteSource::QxRule(id)) => self.refresh_qx_rule_source(id, cx),
+            None => {}
+        }
+    }
+
+    fn ensure_source_refresh_scheduler(&mut self, cx: &mut Context<Self>) {
+        if self.source_refresh_scheduler == SourceRefreshSchedulerState::Started
+            || self.subscription_store_dir.is_none()
+        {
+            return;
+        }
+        self.source_refresh_scheduler = SourceRefreshSchedulerState::Started;
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_secs(60))
+                    .await;
+                let Some(this) = this.upgrade() else {
+                    break;
+                };
+                this.update(cx, RelayApp::refresh_next_due_source);
+            }
         })
         .detach();
     }
@@ -893,6 +1076,8 @@ impl RelayApp {
                 match result {
                     Ok(apply) => {
                         this.imported_subscriptions.remove(index);
+                        this.source_refresh_retry_not_before
+                            .remove(&DueRemoteSource::Subscription(id.clone()).scheduler_key());
                         this.status = format!("已移除导入订阅{}", apply.status_suffix());
                         trace_ui(UiEvent::SourceRemoveSucceeded);
                     }
@@ -3071,6 +3256,7 @@ impl Render for RelayApp {
         self.ensure_subscription_input(theme, cx);
         self.ensure_qx_rule_input(theme, cx);
         self.ensure_node_group_inputs(theme, cx);
+        self.ensure_source_refresh_scheduler(cx);
         let compact = size_class == WindowSizeClass::Compact;
         let show_groups =
             !compact || self.workspace.compact_navigation == CompactNavigation::GroupList;
@@ -3144,6 +3330,7 @@ impl Render for RelayApp {
 
 #[cfg(all(test, not(windows)))]
 mod tests {
+    use std::collections::BTreeMap;
     use std::fs;
 
     use relay_core::{
@@ -3151,7 +3338,7 @@ mod tests {
         PolicyNode, ProxyId,
     };
 
-    use super::{ImportedSubscriptionState, RelayApp};
+    use super::{DueRemoteSource, ImportedSubscription, ImportedSubscriptionState, RelayApp};
     use crate::mihomo;
     use crate::subscription::SourceKind;
 
@@ -3175,7 +3362,74 @@ mod tests {
             app.imported_subscriptions[0].state,
             ImportedSubscriptionState::Pending(SourceKind::HttpsSubscription)
         );
+        assert_eq!(
+            app.imported_subscriptions[0].refresh_interval,
+            mihomo::RemoteSourceRefreshInterval::Manual
+        );
+        assert_eq!(
+            app.imported_subscriptions[0].last_successful_update_unix_secs,
+            0
+        );
         fs::remove_dir_all(root).expect("remove fixture");
+    }
+
+    #[test]
+    fn scheduled_refresh_selects_one_due_source_with_subscriptions_first() {
+        let subscription = ImportedSubscription {
+            id: "subscription:fixture".to_owned(),
+            source: relay_profile::SecretUrl::parse_subscription(
+                "https://subscription.example.invalid/client",
+            )
+            .expect("fixture subscription"),
+            state: ImportedSubscriptionState::Ready(SourceKind::HttpsSubscription),
+            providers: Vec::new(),
+            generation: 0,
+            refresh_interval: mihomo::RemoteSourceRefreshInterval::Hourly,
+            last_successful_update_unix_secs: 100,
+        };
+        let mut rule_source = mihomo::StoredQxRuleSource {
+            id: "qx-rule-source:fixture".to_owned(),
+            source: relay_profile::SecretUrl::parse_https("https://rules.example.invalid/list")
+                .expect("fixture rule URL"),
+            target_policy: relay_profile::Name::parse("Proxy").expect("fixture policy"),
+            content: "DOMAIN-SUFFIX,example.com,Proxy".to_owned(),
+            rule_count: 1,
+            diagnostic_count: 0,
+            refresh_interval: mihomo::RemoteSourceRefreshInterval::Hourly,
+            last_successful_update_unix_secs: 100,
+        };
+
+        assert_eq!(
+            super::next_due_remote_source(
+                std::slice::from_ref(&subscription),
+                std::slice::from_ref(&rule_source),
+                &BTreeMap::new(),
+                3_700,
+            ),
+            Some(DueRemoteSource::Subscription(subscription.id.clone()))
+        );
+
+        let mut second_subscription = subscription.clone();
+        second_subscription.id = "subscription:second".to_owned();
+        let retry_not_before = BTreeMap::from([(
+            DueRemoteSource::Subscription(subscription.id.clone()).scheduler_key(),
+            4_000,
+        )]);
+        assert_eq!(
+            super::next_due_remote_source(
+                &[subscription, second_subscription.clone()],
+                std::slice::from_ref(&rule_source),
+                &retry_not_before,
+                3_700,
+            ),
+            Some(DueRemoteSource::Subscription(second_subscription.id))
+        );
+
+        rule_source.refresh_interval = mihomo::RemoteSourceRefreshInterval::Manual;
+        assert_eq!(
+            super::next_due_remote_source(&[], &[rule_source], &BTreeMap::new(), 3_700),
+            None
+        );
     }
 
     #[test]

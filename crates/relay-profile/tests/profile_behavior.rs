@@ -26,6 +26,19 @@ fn secret_url_is_redacted_in_debug_and_errors() {
 }
 
 #[test]
+fn secret_url_can_be_exposed_only_inside_a_caller_owned_closure() {
+    let secret = fixture_secret();
+
+    let host_is_expected = secret.expose_to(|value| {
+        value.starts_with("https://subscription.example.invalid/")
+            && value.ends_with("fixture-secret")
+    });
+
+    assert!(host_is_expected);
+    assert_eq!(format!("{secret:?}"), "SecretUrl(<redacted>)");
+}
+
+#[test]
 fn subscription_url_accepts_http_and_https_without_exposing_values() {
     let http = SecretUrl::parse_subscription(
         "http://subscription.example.invalid/client?token=fixture-secret",
