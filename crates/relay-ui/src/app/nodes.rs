@@ -5,7 +5,7 @@ use gpui::{
 };
 use relay_core::{
     NodeAvailabilityFilter, NodeGroupIcon, NodeGroupMatcher, NodeGroupStrategy, NodeIdentity,
-    NodePolicyGroup, PrimaryWorkspace, WindowSizeClass,
+    NodePolicyGroup, PolicyGroupId, PrimaryWorkspace, ProxyId, WindowSizeClass,
 };
 
 use super::{
@@ -775,15 +775,17 @@ impl RelayApp {
             .cloned()
             .unwrap_or_default();
         let close_id = group.id.clone();
+        let preferred_target = self.node_selection_preferences.policy_target(&group.name);
         let mut list = div().mt_3().border_t_1().border_color(theme.outline_subtle);
         for member in members {
             list = list.child(Self::node_group_member_row(
                 group,
                 member,
                 &runtime_state,
+                preferred_target,
+                self.policy_selection_busy.is_some(),
                 &benchmark,
                 compact,
-                self.runtime.manages_node_policy_groups(),
                 language,
                 theme,
                 cx,
@@ -872,12 +874,26 @@ impl RelayApp {
         cx: &mut Context<Self>,
     ) -> Div {
         let (title, detail, color) = match state {
-            NodeGroupRuntimeState::LocalOnly => (
-                language.text("Local candidates · read-only", "本地候选 · 当前只读").to_owned(),
+            NodeGroupRuntimeState::LocalOnly if group.strategy == NodeGroupStrategy::Manual => (
+                language
+                    .text("Manual policy · saved locally", "手动策略 · 本地保存")
+                    .to_owned(),
                 language
                     .text(
-                        "Relay will not rewrite external controllers or existing config. Use Relay-managed config to switch this group.",
-                        "Relay 不会改写外部控制器或已有配置；请使用 Relay 托管配置来切换此分组。",
+                        "Choose a node now. Relay applies the saved selection when its managed kernel connects.",
+                        "现在即可选择节点；Relay 托管内核连接后会应用已保存的选择。",
+                    )
+                    .to_owned(),
+                theme.action_primary,
+            ),
+            NodeGroupRuntimeState::LocalOnly => (
+                language
+                    .text("Automatic policy", "自动策略")
+                    .to_owned(),
+                language
+                    .text(
+                        "Mihomo selects the best candidate automatically after the managed kernel starts.",
+                        "托管内核启动后由 Mihomo 自动选择最合适的候选项。",
                     )
                     .to_owned(),
                 theme.text_secondary,
@@ -994,31 +1010,34 @@ impl RelayApp {
         group: &NodePolicyGroup,
         member: NodeGroupMemberView,
         runtime_state: &NodeGroupRuntimeState,
+        preferred_target: Option<&str>,
+        selection_busy: bool,
         benchmark: &GroupBenchmarkState,
         compact: bool,
-        managed: bool,
         language: Language,
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Div {
-        let current = match runtime_state {
+        let runtime_current = match runtime_state {
             NodeGroupRuntimeState::Ready { current, .. }
             | NodeGroupRuntimeState::Selecting { current, .. } => current.as_deref(),
             _ => None,
         };
-        let is_current = current == Some(member.identity.node_name.as_str());
+        let selected_target = if group.strategy == NodeGroupStrategy::Manual {
+            preferred_target.or(runtime_current)
+        } else {
+            runtime_current
+        };
+        let is_current = selected_target == Some(member.identity.node_name.as_str());
+        let runtime_confirmed = runtime_current == Some(member.identity.node_name.as_str());
         let selecting = matches!(
             runtime_state,
             NodeGroupRuntimeState::Selecting { pending, .. }
                 if pending == &member.identity.node_name
         );
-        let selectable = managed
-            && group.strategy == NodeGroupStrategy::Manual
-            && matches!(
-                runtime_state,
-                NodeGroupRuntimeState::Ready { candidates, .. }
-                    if candidates.contains(&member.identity.node_name)
-            )
+        let selectable = group.strategy == NodeGroupStrategy::Manual
+            && !selection_busy
+            && !matches!(runtime_state, NodeGroupRuntimeState::Selecting { .. })
             && !is_current;
         let latency = benchmark.node_state(&member.identity.node_name);
         let spinner_id = format!(
@@ -1032,10 +1051,12 @@ impl RelayApp {
         };
         let group_id = group.id.clone();
         let node_name = member.identity.node_name.clone();
-        let action_label = if is_current {
-            language.text("Current", "当前")
-        } else if selecting {
+        let action_label = if selecting {
             language.text("Switching...", "切换中…")
+        } else if is_current && runtime_confirmed {
+            language.text("Current", "当前")
+        } else if is_current {
+            language.text("Selected", "已选")
         } else if selectable {
             language.text("Select", "选择")
         } else if group.strategy == NodeGroupStrategy::LowestLatency {
@@ -1825,7 +1846,7 @@ impl RelayApp {
             .count()
     }
 
-    fn node_group_candidate_names(&self, group: &NodePolicyGroup) -> Vec<String> {
+    pub(super) fn node_group_candidate_names(&self, group: &NodePolicyGroup) -> Vec<String> {
         self.node_inventory()
             .into_iter()
             .filter(|node| group.matches(&node.source_id, &node.node_name))
@@ -1959,8 +1980,7 @@ impl RelayApp {
         else {
             return;
         };
-        if group.strategy != NodeGroupStrategy::Manual || !self.runtime.manages_node_policy_groups()
-        {
+        if group.strategy != NodeGroupStrategy::Manual {
             self.language()
                 .text(
                     "This group does not support manual switching",
@@ -1970,79 +1990,27 @@ impl RelayApp {
             cx.notify();
             return;
         }
-        self.node_group_runtime_generation = self.node_group_runtime_generation.wrapping_add(1);
-        let generation = self.node_group_runtime_generation;
-        let Some(state) = self.node_group_runtime_states.get_mut(group_id) else {
-            return;
-        };
-        if !state.begin_selection(generation, node_name) {
+        if !self
+            .node_group_candidate_names(&group)
+            .iter()
+            .any(|candidate| candidate == node_name)
+        {
             self.language()
                 .text(
-                    "Node is not in Mihomo's current candidate list. Refresh and retry.",
-                    "节点不在 Mihomo 当前候选列表中，请刷新后重试",
+                    "This node is not a candidate of the policy group",
+                    "该节点不在当前策略组的候选项中",
                 )
                 .clone_into(&mut self.status);
             cx.notify();
             return;
         }
-        let language = self.language();
-        self.status = format!(
-            "{} “{}” -> “{}”",
-            language.text("Switching", "正在切换"),
+        self.select_policy_node(
+            PolicyGroupId::new(group.id),
             group.name,
-            node_name
+            ProxyId::new(node_name),
+            node_name.to_owned(),
+            cx,
         );
-        let runtime = self.runtime.clone();
-        let selected = node_name.to_owned();
-        let selected_for_request = selected.clone();
-        let group_id = group.id.clone();
-        let group_name = group.name.clone();
-        let executor = cx.background_executor().clone();
-        cx.spawn(async move |this, cx| {
-            let result =
-                executor
-                    .spawn(async move {
-                        runtime.select_node_group_node(&group_name, &selected_for_request)
-                    })
-                    .await;
-            this.update(cx, |this, cx| {
-                let language = this.language();
-                let Some(state) = this.node_group_runtime_states.get_mut(&group_id) else {
-                    return;
-                };
-                let accepted = match result {
-                    Ok(snapshot) => {
-                        state.complete_refresh(generation, snapshot.current, snapshot.candidates)
-                    }
-                    Err(_error) => state.fail(generation),
-                };
-                if accepted {
-                    this.status = match state {
-                        NodeGroupRuntimeState::Ready { .. } => {
-                            format!(
-                                "{} “{selected}”; {}",
-                                language.text("Switched to", "已切换到"),
-                                language.text(
-                                    "Mihomo will save this selection",
-                                    "Mihomo 将保存本次选择"
-                                )
-                            )
-                        }
-                        NodeGroupRuntimeState::Failed { .. } => language
-                            .text(
-                                "Switch failed. Refresh group state and retry.",
-                                "切换失败，请刷新分组状态后重试",
-                            )
-                            .to_owned(),
-                        _ => return,
-                    };
-                    cx.notify();
-                }
-            })
-            .ok();
-        })
-        .detach();
-        cx.notify();
     }
 
     #[allow(clippy::too_many_lines)]
@@ -3100,6 +3068,7 @@ impl RelayApp {
                 table = table.child(self.workspace_node_row(
                     format!("node-row-{}-{provider_index}-{node_index}", group.id),
                     node,
+                    &group.id,
                     &group.name,
                     benchmark,
                     compact,
@@ -3126,6 +3095,7 @@ impl RelayApp {
                     group.providers.len()
                 ),
                 &loaded,
+                &group.id,
                 &group.name,
                 benchmark,
                 compact,
@@ -3170,6 +3140,7 @@ impl RelayApp {
         &self,
         row_id: String,
         node: &LoadedProviderNode,
+        source_id: &str,
         source_name: &str,
         benchmark: &GroupBenchmarkState,
         compact: bool,
@@ -3180,13 +3151,14 @@ impl RelayApp {
         let latency = benchmark.node_state(&node.name);
         let idle_latency = node.latency_label.clone().unwrap_or_else(|| "—".to_owned());
         let spinner_id = format!("{row_id}-latency");
-        let global_candidate = self.is_global_candidate(&node.name);
-        let global_selected = self.global_target() == Some(node.name.as_str());
+        let global_identity = NodeIdentity::new(source_id, &node.name).ok();
+        let global_selectable = global_identity.is_some();
+        let global_runtime_selected = self.runtime_global_target() == Some(node.name.as_str());
+        let global_selected = global_identity.as_ref().is_some_and(|identity| {
+            self.global_target_identity()
+                .map_or(global_runtime_selected, |selected| selected == identity)
+        });
         let global_busy = self.global_selection_busy.as_deref() == Some(node.name.as_str());
-        let global_writable = matches!(
-            &*self.runtime,
-            crate::mihomo::ControllerRuntime::Managed { .. }
-        );
         let selection_locked = self.global_selection_busy.is_some();
         let selected_name = node.name.clone();
         let content = if compact {
@@ -3226,76 +3198,29 @@ impl RelayApp {
                 theme.surface_high
             })
             .child(content)
-            .when(global_candidate, |row| {
-                if global_writable {
-                    row.role(Role::RadioButton)
-                        .aria_label(format!(
-                            "{} {selected_name} {}",
-                            language.text("Select", "选择"),
-                            language.text("as global exit", "作为全局出口")
-                        ))
-                        .aria_toggled(if global_selected {
-                            Toggled::True
-                        } else {
-                            Toggled::False
-                        })
-                        .tab_stop(!selection_locked)
-                        .focusable()
-                        .cursor_pointer()
-                        .child(
-                            div()
-                                .w(if compact { px(66.0) } else { px(76.0) })
-                                .flex_shrink_0()
-                                .flex()
-                                .items_center()
-                                .justify_end()
-                                .gap_2()
-                                .text_size(px(10.0))
-                                .font_weight(if global_selected {
-                                    FontWeight::SEMIBOLD
-                                } else {
-                                    FontWeight::NORMAL
-                                })
-                                .text_color(if global_selected {
-                                    theme.action_primary
-                                } else {
-                                    theme.text_tertiary
-                                })
-                                .child(
-                                    div()
-                                        .size(px(14.0))
-                                        .rounded_full()
-                                        .border_2()
-                                        .border_color(if global_selected {
-                                            theme.action_primary
-                                        } else {
-                                            theme.outline_strong
-                                        })
-                                        .when(global_selected, |dot| dot.bg(theme.action_primary)),
-                                )
-                                .child(if global_busy {
-                                    language.text("Switching", "切换中")
-                                } else if global_selected
-                                    && self.routing_mode == relay_core::RoutingMode::Global
-                                {
-                                    language.text("Active", "使用中")
-                                } else if global_selected {
-                                    language.text("Selected", "已选")
-                                } else {
-                                    language.text("Select", "选择")
-                                }),
-                        )
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            if !selection_locked {
-                                this.select_global_node(selected_name.clone(), cx);
-                            }
-                        }))
-                } else {
-                    row.child(
+            .when_some(global_identity, |row, selected_identity| {
+                row.role(Role::RadioButton)
+                    .aria_label(format!(
+                        "{} {selected_name} {}",
+                        language.text("Select", "选择"),
+                        language.text("as global exit", "作为全局出口")
+                    ))
+                    .aria_toggled(if global_selected {
+                        Toggled::True
+                    } else {
+                        Toggled::False
+                    })
+                    .tab_stop(!selection_locked)
+                    .focusable()
+                    .cursor_pointer()
+                    .child(
                         div()
+                            .w(if compact { px(66.0) } else { px(76.0) })
                             .flex_shrink_0()
-                            .w(if compact { px(58.0) } else { px(76.0) })
-                            .text_align(gpui::TextAlign::Center)
+                            .flex()
+                            .items_center()
+                            .justify_end()
+                            .gap_2()
                             .text_size(px(10.0))
                             .font_weight(if global_selected {
                                 FontWeight::SEMIBOLD
@@ -3307,15 +3232,38 @@ impl RelayApp {
                             } else {
                                 theme.text_tertiary
                             })
-                            .child(if global_selected {
-                                language.text("* Current", "● 当前")
+                            .child(
+                                div()
+                                    .size(px(14.0))
+                                    .rounded_full()
+                                    .border_2()
+                                    .border_color(if global_selected {
+                                        theme.action_primary
+                                    } else {
+                                        theme.outline_strong
+                                    })
+                                    .when(global_selected, |dot| dot.bg(theme.action_primary)),
+                            )
+                            .child(if global_busy {
+                                language.text("Switching", "切换中")
+                            } else if global_selected
+                                && global_runtime_selected
+                                && self.routing_mode == relay_core::RoutingMode::Global
+                            {
+                                language.text("Active", "使用中")
+                            } else if global_selected {
+                                language.text("Selected", "已选")
                             } else {
-                                language.text("Read-only", "外部只读")
+                                language.text("Select", "选择")
                             }),
                     )
-                }
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if !selection_locked {
+                            this.select_global_node(selected_identity.clone(), cx);
+                        }
+                    }))
             })
-            .when(!compact && !global_candidate, |row| {
+            .when(!compact && !global_selectable, |row| {
                 row.child(
                     div()
                         .w(px(76.0))

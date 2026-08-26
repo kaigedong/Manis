@@ -58,6 +58,10 @@ const MAX_QX_RULE_SOURCE_CONTENT_BYTES: usize = 1024 * 1024;
 const MAX_QX_RULE_SOURCE_FILE_BYTES: u64 = 2 * 1024 * 1024 + 64 * 1024;
 const WORKSPACE_STATE_FILE: &str = "workspace.state";
 const ROUTING_MODE_FILE: &str = "routing.mode";
+const NODE_SELECTION_PREFERENCES_FILE: &str = "node-selection.state";
+const NODE_SELECTION_PREFERENCES_VERSION: &str = "relay-node-selection-v1";
+const MAX_NODE_SELECTION_POLICY_TARGETS: usize = 256;
+const MAX_NODE_SELECTION_FILE_BYTES: u64 = 64 * 1024;
 const NODE_POLICY_GROUP_PREFIX: &str = "group-";
 const NODE_POLICY_GROUP_SUFFIX: &str = ".group";
 const NODE_POLICY_GROUP_VERSION: &str = "relay-node-group-v1";
@@ -1251,6 +1255,72 @@ impl fmt::Display for SubscriptionStoreError {
 
 impl Error for SubscriptionStoreError {}
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct NodeSelectionPreferences {
+    global: Option<NodeIdentity>,
+    policy_targets: BTreeMap<String, String>,
+}
+
+impl NodeSelectionPreferences {
+    pub(crate) fn global(&self) -> Option<&NodeIdentity> {
+        self.global.as_ref()
+    }
+
+    pub(crate) fn set_global(&mut self, global: NodeIdentity) {
+        self.global = Some(global);
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn clear_global(&mut self) {
+        self.global = None;
+    }
+
+    pub(crate) fn policy_target(&self, policy: &str) -> Option<&str> {
+        self.policy_targets.get(policy).map(String::as_str)
+    }
+
+    pub(crate) fn set_policy_target(
+        &mut self,
+        policy: impl AsRef<str>,
+        target: impl AsRef<str>,
+    ) -> Result<(), SubscriptionStoreError> {
+        let policy = policy.as_ref();
+        let target = target.as_ref();
+        validate_node_selection_policy(policy)?;
+        validate_node_selection_target(target)?;
+        self.policy_targets
+            .insert(policy.to_owned(), target.to_owned());
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn clear_policy_target(
+        &mut self,
+        policy: &str,
+    ) -> Result<(), SubscriptionStoreError> {
+        validate_node_selection_policy(policy)?;
+        self.policy_targets.remove(policy);
+        Ok(())
+    }
+
+    pub(crate) fn iter_policy_targets(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.policy_targets
+            .iter()
+            .map(|(policy, target)| (policy.as_str(), target.as_str()))
+    }
+
+    fn validate(&self) -> Result<(), SubscriptionStoreError> {
+        if self.policy_targets.len() > MAX_NODE_SELECTION_POLICY_TARGETS {
+            return Err(SubscriptionStoreError::InvalidSource);
+        }
+        for (policy, target) in &self.policy_targets {
+            validate_node_selection_policy(policy)?;
+            validate_node_selection_target(target)?;
+        }
+        Ok(())
+    }
+}
+
 struct PreviewWorkspace {
     path: PathBuf,
 }
@@ -1941,6 +2011,53 @@ pub(crate) fn load_routing_mode_in(
     Ok(RoutingMode::Rule)
 }
 
+#[cfg(not(windows))]
+pub(crate) fn save_node_selection_preferences_in(
+    directory: &Path,
+    preferences: &NodeSelectionPreferences,
+) -> Result<(), SubscriptionStoreError> {
+    preferences.validate()?;
+    let contents = encode_node_selection_preferences(preferences)?;
+    write_private_atomic(
+        directory,
+        NODE_SELECTION_PREFERENCES_FILE,
+        contents.as_bytes(),
+    )
+    .map(|_path| ())
+    .map_err(|_error| SubscriptionStoreError::StoreUnavailable)
+}
+
+#[cfg(windows)]
+pub(crate) fn save_node_selection_preferences_in(
+    _directory: &Path,
+    _preferences: &NodeSelectionPreferences,
+) -> Result<(), SubscriptionStoreError> {
+    Err(SubscriptionStoreError::StoreUnavailable)
+}
+
+#[cfg(not(windows))]
+pub(crate) fn load_node_selection_preferences_in(
+    directory: &Path,
+) -> Result<NodeSelectionPreferences, SubscriptionStoreError> {
+    require_clean_absolute_store(directory)?;
+    let path = directory.join(NODE_SELECTION_PREFERENCES_FILE);
+    let contents = match fs::symlink_metadata(&path) {
+        Ok(_) => read_private_source_allow_empty_max(&path, MAX_NODE_SELECTION_FILE_BYTES)?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(NodeSelectionPreferences::default());
+        }
+        Err(_error) => return Err(SubscriptionStoreError::StoredSourceUnavailable),
+    };
+    decode_node_selection_preferences(&contents)
+}
+
+#[cfg(windows)]
+pub(crate) fn load_node_selection_preferences_in(
+    _directory: &Path,
+) -> Result<NodeSelectionPreferences, SubscriptionStoreError> {
+    Ok(NodeSelectionPreferences::default())
+}
+
 fn profile_mode(mode: RoutingMode) -> ProfileMode {
     match mode {
         RoutingMode::Direct => ProfileMode::Direct,
@@ -2415,6 +2532,93 @@ fn decode_node_policy_group(
         .validate()
         .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
     Ok(group)
+}
+
+fn encode_node_selection_preferences(
+    preferences: &NodeSelectionPreferences,
+) -> Result<String, SubscriptionStoreError> {
+    preferences.validate()?;
+    let mut lines = vec![NODE_SELECTION_PREFERENCES_VERSION.to_owned()];
+    if let Some(global) = preferences.global() {
+        let checked = NodeIdentity::new(&global.source_id, &global.node_name)
+            .map_err(|_error| SubscriptionStoreError::InvalidSource)?;
+        lines.push(format!(
+            "global\t{}\t{}",
+            encode_hex(&checked.source_id),
+            encode_hex(&checked.node_name)
+        ));
+    }
+    lines.extend(
+        preferences.iter_policy_targets().map(|(policy, target)| {
+            format!("policy\t{}\t{}", encode_hex(policy), encode_hex(target))
+        }),
+    );
+    let contents = lines.join("\n");
+    if contents.len() as u64 > MAX_NODE_SELECTION_FILE_BYTES {
+        return Err(SubscriptionStoreError::InvalidSource);
+    }
+    Ok(contents)
+}
+
+fn decode_node_selection_preferences(
+    contents: &str,
+) -> Result<NodeSelectionPreferences, SubscriptionStoreError> {
+    let mut lines = contents.lines();
+    if lines.next() != Some(NODE_SELECTION_PREFERENCES_VERSION) {
+        return Err(SubscriptionStoreError::StoredSourceUnavailable);
+    }
+    let mut preferences = NodeSelectionPreferences::default();
+    let mut seen_global = false;
+    for line in lines {
+        let fields = line.split('\t').collect::<Vec<_>>();
+        match fields.as_slice() {
+            ["global", source, node] if !seen_global => {
+                seen_global = true;
+                let source = decode_hex(source)?;
+                let node = decode_hex(node)?;
+                preferences.global = Some(
+                    NodeIdentity::new(&source, &node)
+                        .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?,
+                );
+            }
+            ["policy", policy, target] => {
+                let policy = decode_hex(policy)?;
+                let target = decode_hex(target)?;
+                validate_node_selection_policy(&policy)
+                    .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
+                validate_node_selection_target(&target)
+                    .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
+                if preferences.policy_targets.insert(policy, target).is_some()
+                    || preferences.policy_targets.len() > MAX_NODE_SELECTION_POLICY_TARGETS
+                {
+                    return Err(SubscriptionStoreError::StoredSourceUnavailable);
+                }
+            }
+            _ => return Err(SubscriptionStoreError::StoredSourceUnavailable),
+        }
+    }
+    Ok(preferences)
+}
+
+fn validate_node_selection_policy(policy: &str) -> Result<(), SubscriptionStoreError> {
+    Name::parse(policy)
+        .map(|_name| ())
+        .map_err(|_error| SubscriptionStoreError::InvalidSource)
+}
+
+fn validate_node_selection_target(target: &str) -> Result<(), SubscriptionStoreError> {
+    if valid_node_selection_target(target) {
+        Ok(())
+    } else {
+        Err(SubscriptionStoreError::InvalidSource)
+    }
+}
+
+fn valid_node_selection_target(target: &str) -> bool {
+    !target.is_empty()
+        && target.len() <= 512
+        && target.trim() == target
+        && !target.chars().any(char::is_control)
 }
 
 #[allow(dead_code)]
@@ -4384,6 +4588,133 @@ mod tests {
 
         super::save_routing_mode_in(&store, RoutingMode::Direct)?;
         assert_eq!(super::load_routing_mode_in(&store)?, RoutingMode::Direct);
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn node_selection_preferences_missing_file_defaults() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let root = test_temp_dir("relay-node-selection-missing");
+        let store = root.join("subscriptions");
+
+        assert_eq!(
+            super::load_node_selection_preferences_in(&store)?,
+            super::NodeSelectionPreferences::default()
+        );
+
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn node_selection_preferences_round_trip_privately() -> Result<(), Box<dyn std::error::Error>> {
+        use relay_core::NodeIdentity;
+
+        let root = test_temp_dir("relay-node-selection-store");
+        let store = root.join("subscriptions");
+        let global = NodeIdentity::new("subscription:source-1", "Hong Kong Edge")?;
+        let mut preferences = super::NodeSelectionPreferences::default();
+        preferences.set_global(global.clone());
+        preferences.set_policy_target("Proxy", "Hong Kong Edge")?;
+        preferences.set_policy_target("视频服务", "Tokyo Manual")?;
+        preferences.clear_policy_target("Proxy")?;
+
+        super::save_node_selection_preferences_in(&store, &preferences)?;
+        let loaded = super::load_node_selection_preferences_in(&store)?;
+
+        assert_eq!(loaded.global(), Some(&global));
+        assert_eq!(loaded.policy_target("Proxy"), None);
+        assert_eq!(loaded.policy_target("视频服务"), Some("Tokyo Manual"));
+        assert_eq!(
+            loaded.iter_policy_targets().collect::<Vec<_>>(),
+            vec![("视频服务", "Tokyo Manual")]
+        );
+
+        #[cfg(unix)]
+        {
+            assert_eq!(fs::metadata(&store)?.permissions().mode() & 0o077, 0);
+            let path = store.join(super::NODE_SELECTION_PREFERENCES_FILE);
+            assert_eq!(fs::metadata(&path)?.permissions().mode() & 0o077, 0);
+            let stored_text = fs::read_to_string(path)?;
+            assert!(!stored_text.contains("Hong Kong Edge"));
+            assert!(!stored_text.contains("Tokyo Manual"));
+        }
+
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn node_selection_preferences_reject_malformed_and_duplicate_records()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = test_temp_dir("relay-node-selection-invalid");
+        let store = root.join("subscriptions");
+        fs::create_dir(&store)?;
+        fs::set_permissions(&store, fs::Permissions::from_mode(0o700))?;
+        let path = store.join(super::NODE_SELECTION_PREFERENCES_FILE);
+
+        let duplicate = [
+            super::NODE_SELECTION_PREFERENCES_VERSION.to_owned(),
+            format!(
+                "policy\t{}\t{}",
+                super::encode_hex("Proxy"),
+                super::encode_hex("Hong Kong Edge")
+            ),
+            format!(
+                "policy\t{}\t{}",
+                super::encode_hex("Proxy"),
+                super::encode_hex("Tokyo Edge")
+            ),
+        ]
+        .join("\n");
+        fs::write(&path, duplicate)?;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
+        assert!(super::load_node_selection_preferences_in(&store).is_err());
+
+        let malformed = [
+            super::NODE_SELECTION_PREFERENCES_VERSION.to_owned(),
+            "global\tnot-hex\talso-not-hex".to_owned(),
+        ]
+        .join("\n");
+        fs::write(&path, malformed)?;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
+        assert!(super::load_node_selection_preferences_in(&store).is_err());
+
+        let invalid_target = [
+            super::NODE_SELECTION_PREFERENCES_VERSION.to_owned(),
+            format!(
+                "policy\t{}\t{}",
+                super::encode_hex("Proxy"),
+                super::encode_hex(" bad target ")
+            ),
+        ]
+        .join("\n");
+        fs::write(&path, invalid_target)?;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
+        assert!(super::load_node_selection_preferences_in(&store).is_err());
+
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn node_selection_preferences_reject_group_readable_files()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = test_temp_dir("relay-node-selection-permission");
+        let store = root.join("subscriptions");
+        fs::create_dir(&store)?;
+        fs::set_permissions(&store, fs::Permissions::from_mode(0o700))?;
+        let path = store.join(super::NODE_SELECTION_PREFERENCES_FILE);
+        fs::write(&path, super::NODE_SELECTION_PREFERENCES_VERSION)?;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644))?;
+
+        assert!(super::load_node_selection_preferences_in(&store).is_err());
+
         fs::remove_dir_all(root)?;
         Ok(())
     }

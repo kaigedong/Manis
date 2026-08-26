@@ -17,7 +17,9 @@ use relay_profile::{QxRuleList, SecretUrl};
 
 use crate::{
     demo,
-    diagnostics::{self, LogLevel, UiEvent, begin_operation, record_operation, trace_ui},
+    diagnostics::{
+        self, LogLevel, UiEvent, begin_operation, record_event, record_operation, trace_ui,
+    },
     kernel::{self, KernelRuntime},
     localization::{Language, LanguagePreference, Localizer},
     mihomo::{
@@ -504,6 +506,7 @@ pub struct RelayApp {
     source_refresh_retry_not_before: BTreeMap<String, u64>,
     source_refresh_scheduler: SourceRefreshSchedulerState,
     node_policy_groups: Vec<NodePolicyGroup>,
+    node_selection_preferences: mihomo::NodeSelectionPreferences,
     node_group_draft: Option<NodeGroupDraft>,
     group_benchmarks: BTreeMap<String, GroupBenchmarkState>,
     group_benchmark_generation: u64,
@@ -551,6 +554,7 @@ struct StoredWorkspace {
     qx_rule_sources: Vec<StoredQxRuleSource>,
     collapsed_groups: Vec<String>,
     node_policy_groups: Vec<NodePolicyGroup>,
+    node_selection_preferences: mihomo::NodeSelectionPreferences,
     routing_mode: RoutingMode,
     error: Option<SubscriptionStoreError>,
 }
@@ -564,6 +568,7 @@ impl StoredWorkspace {
                 qx_rule_sources: Vec::new(),
                 collapsed_groups: Vec::new(),
                 node_policy_groups: Vec::new(),
+                node_selection_preferences: mihomo::NodeSelectionPreferences::default(),
                 routing_mode: RoutingMode::Rule,
                 error: None,
             };
@@ -573,6 +578,7 @@ impl StoredWorkspace {
         let qx_rule_sources = mihomo::load_qx_rule_sources_in(directory);
         let collapsed = mihomo::load_collapsed_groups_in(directory);
         let policy_groups = mihomo::load_node_policy_groups_in(directory);
+        let node_selection_preferences = mihomo::load_node_selection_preferences_in(directory);
         let routing_mode = mihomo::load_routing_mode_in(directory);
         let error = [
             subscriptions.is_err(),
@@ -580,6 +586,7 @@ impl StoredWorkspace {
             qx_rule_sources.is_err(),
             collapsed.is_err(),
             policy_groups.is_err(),
+            node_selection_preferences.is_err(),
             routing_mode.is_err(),
         ]
         .into_iter()
@@ -595,6 +602,7 @@ impl StoredWorkspace {
             qx_rule_sources: qx_rule_sources.unwrap_or_default(),
             collapsed_groups: collapsed.unwrap_or_default(),
             node_policy_groups: policy_groups.unwrap_or_default(),
+            node_selection_preferences: node_selection_preferences.unwrap_or_default(),
             routing_mode: routing_mode.unwrap_or_default(),
             error,
         }
@@ -683,6 +691,7 @@ impl RelayApp {
             qx_rule_sources,
             collapsed_groups,
             node_policy_groups,
+            node_selection_preferences,
             routing_mode,
             error: source_store_error,
         } = StoredWorkspace::load(subscription_store_dir.as_ref());
@@ -742,6 +751,7 @@ impl RelayApp {
             source_refresh_retry_not_before: BTreeMap::new(),
             source_refresh_scheduler: SourceRefreshSchedulerState::Stopped,
             node_policy_groups,
+            node_selection_preferences,
             node_group_draft: None,
             group_benchmarks: BTreeMap::new(),
             group_benchmark_generation: 0,
@@ -1714,6 +1724,7 @@ impl RelayApp {
                 .selected_node
                 .as_ref()
                 .and_then(|selected| policy.nodes.iter().find(|node| node.id == *selected))
+                .or_else(|| policy.nodes.iter().find(|node| node.name == policy.target))
         } else {
             policy.nodes.iter().find(|node| node.name == policy.target)
         };
@@ -1876,6 +1887,7 @@ impl RelayApp {
                             controller_secret.as_deref(),
                             cx,
                         );
+                        this.sync_saved_node_selections(cx);
                     }
                     Err(error) => {
                         record_operation(
@@ -1912,7 +1924,16 @@ impl RelayApp {
 
     fn apply_mihomo_snapshot(&mut self, endpoint: String, snapshot: LoadedSnapshot) {
         trace_ui(UiEvent::MihomoConnectSucceeded);
-        let primary = snapshot.catalog.select(None);
+        self.catalog = snapshot.catalog;
+        if let Some(global) = self.node_selection_preferences.global() {
+            let _ = self
+                .catalog
+                .apply_selector_target("GLOBAL", &global.node_name);
+        }
+        for (group, target) in self.node_selection_preferences.iter_policy_targets() {
+            let _ = self.catalog.apply_selector_target(group, target);
+        }
+        let primary = self.catalog.select(None);
         let group = primary.id.clone();
         let selected_node = primary
             .nodes
@@ -1922,7 +1943,6 @@ impl RelayApp {
             .map(|node| node.id.clone());
         self.workspace
             .replace_source_selection(group, selected_node);
-        self.catalog = snapshot.catalog;
         self.source_providers = snapshot.providers;
         self.observed_routes = snapshot.observed_routes;
         self.active_connections = snapshot.connections;
@@ -1959,6 +1979,99 @@ impl RelayApp {
             download_total: snapshot.download_total,
             upload_total: snapshot.upload_total,
         };
+    }
+
+    fn sync_saved_node_selections(&mut self, cx: &mut Context<Self>) {
+        if !matches!(&*self.runtime, ControllerRuntime::Managed { .. })
+            || !matches!(self.controller, ControllerState::Connected { .. })
+        {
+            return;
+        }
+        let mut targets = Vec::new();
+        if let Some(global) = self.node_selection_preferences.global() {
+            targets.push(("GLOBAL".to_owned(), global.node_name.clone()));
+        }
+        targets.extend(self.catalog.iter().filter_map(|group| {
+            if !group.kind.allows_manual_selection() || group.name.eq_ignore_ascii_case("GLOBAL") {
+                return None;
+            }
+            self.node_selection_preferences
+                .policy_target(&group.name)
+                .map(|target| (group.name.clone(), target.to_owned()))
+        }));
+        if targets.is_empty() {
+            return;
+        }
+
+        let runtime = self.runtime.clone();
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let results = executor
+                .spawn(async move {
+                    targets
+                        .into_iter()
+                        .map(|(group, target)| {
+                            let result = runtime.select_node_group_node(&group, &target);
+                            (group, target, result)
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                let mut applied = 0usize;
+                let mut failed = 0usize;
+                for (group, requested, result) in results {
+                    match result {
+                        Ok(snapshot) => {
+                            let current = snapshot.current.as_deref().unwrap_or(&requested);
+                            let _ = this.catalog.apply_selector_target(&group, current);
+                            if let Some(stored_group) = this
+                                .node_policy_groups
+                                .iter()
+                                .find(|candidate| candidate.name == group)
+                            {
+                                this.node_group_runtime_generation =
+                                    this.node_group_runtime_generation.wrapping_add(1);
+                                this.node_group_runtime_states.insert(
+                                    stored_group.id.clone(),
+                                    NodeGroupRuntimeState::Ready {
+                                        generation: this.node_group_runtime_generation,
+                                        current: snapshot.current,
+                                        candidates: snapshot.candidates,
+                                    },
+                                );
+                            }
+                            record_event(
+                                LogLevel::Info,
+                                "node.selection.restored",
+                                format!("group={group}"),
+                            );
+                            applied += 1;
+                        }
+                        Err(error) => {
+                            record_event(
+                                LogLevel::Warn,
+                                "node.selection.restore_failed",
+                                format!("group={group} error={error}"),
+                            );
+                            failed += 1;
+                        }
+                    }
+                }
+                if applied > 0 || failed > 0 {
+                    this.status = if this.language() == Language::English {
+                        format!(
+                            "Restored {applied} saved node selections · {failed} could not be applied"
+                        )
+                    } else {
+                        format!("已恢复 {applied} 个节点选择 · {failed} 个暂时无法应用")
+                    };
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     #[allow(clippy::too_many_lines)]
@@ -2628,8 +2741,9 @@ impl RelayApp {
     }
 
     #[allow(clippy::too_many_lines)]
-    fn select_global_node(&mut self, selected_name: String, cx: &mut Context<Self>) {
+    fn select_global_node(&mut self, selected: NodeIdentity, cx: &mut Context<Self>) {
         let language = self.language();
+        let selected_name = selected.node_name.clone();
         let operation = begin_operation(
             "global.node.requested",
             format!(
@@ -2647,57 +2761,52 @@ impl RelayApp {
             );
             return;
         }
-        if !matches!(self.controller, ControllerState::Connected { .. }) {
+        let previous = self.node_selection_preferences.clone();
+        self.node_selection_preferences.set_global(selected);
+        if let Some(directory) = self.subscription_store_dir.as_deref()
+            && let Err(error) = mihomo::save_node_selection_preferences_in(
+                directory,
+                &self.node_selection_preferences,
+            )
+        {
+            self.node_selection_preferences = previous;
             record_operation(
                 operation,
                 LogLevel::Error,
-                "global.node.rejected",
-                "reason=controller_not_connected",
+                "global.node.persistence_failed",
+                error.to_string(),
             );
             trace_ui(UiEvent::GlobalNodeSelectionFailed);
-            language
-                .text(
-                    "Connect to the kernel before choosing a global node",
-                    "请先连接内核，再选择全局节点",
-                )
-                .clone_into(&mut self.status);
+            self.status = format!(
+                "{}{error}",
+                language.text("Could not save the global node: ", "无法保存全局节点：")
+            );
             cx.notify();
             return;
         }
-        if matches!(&*self.runtime, ControllerRuntime::External { .. }) {
+        let _ = self.catalog.apply_selector_target("GLOBAL", &selected_name);
+        record_operation(
+            operation,
+            LogLevel::Info,
+            "global.node.saved",
+            "saved_to_workspace=true",
+        );
+        trace_ui(UiEvent::GlobalNodeSelected);
+
+        let can_apply_now = matches!(self.controller, ControllerState::Connected { .. })
+            && matches!(&*self.runtime, ControllerRuntime::Managed { .. });
+        if !can_apply_now {
             record_operation(
                 operation,
-                LogLevel::Error,
-                "global.node.rejected",
-                "reason=external_controller_read_only",
+                LogLevel::Info,
+                "global.node.deferred",
+                "reason=managed_controller_not_connected",
             );
-            trace_ui(UiEvent::GlobalNodeSelectionFailed);
-            language.text(
-                "External controllers are read-only; use a Relay-managed kernel to choose a global node",
-                "外部控制器保持只读；请使用 Relay 托管内核选择全局节点",
-            ).clone_into(&mut self.status);
-            cx.notify();
-            return;
-        }
-        let is_candidate = self
-            .catalog
-            .iter()
-            .find(|group| group.name.eq_ignore_ascii_case("GLOBAL"))
-            .is_some_and(|group| group.nodes.iter().any(|node| node.name == selected_name));
-        if !is_candidate {
-            record_operation(
-                operation,
-                LogLevel::Error,
-                "global.node.rejected",
-                "reason=not_global_candidate",
-            );
-            trace_ui(UiEvent::GlobalNodeSelectionFailed);
-            language
-                .text(
-                    "This node is not a GLOBAL candidate",
-                    "这个节点不在 GLOBAL 候选项中",
-                )
-                .clone_into(&mut self.status);
+            self.status = if language == Language::English {
+                format!("Saved global exit “{selected_name}”; it applies in Global mode")
+            } else {
+                format!("已保存全局出口“{selected_name}”；全局模式将使用此节点")
+            };
             cx.notify();
             return;
         }
@@ -2750,11 +2859,15 @@ impl RelayApp {
                             "global.node.failed",
                             error.to_string(),
                         );
-                        trace_ui(UiEvent::GlobalNodeSelectionFailed);
-                        this.status = format!(
-                            "{}{error}",
-                            language.text("Failed to change global node: ", "全局节点切换失败：")
-                        );
+                        this.status = if language == Language::English {
+                            format!(
+                                "Saved global exit “{selected_name}”, but it could not be applied now: {error}"
+                            )
+                        } else {
+                            format!(
+                                "已保存全局出口“{selected_name}”，但暂时无法应用：{error}"
+                            )
+                        };
                     }
                 }
                 cx.notify();
@@ -2788,39 +2901,163 @@ impl RelayApp {
             );
             return;
         }
-        if !matches!(self.controller, ControllerState::Connected { .. }) {
+        let stored_group = self
+            .node_policy_groups
+            .iter()
+            .find(|group| group.id == group_id.as_str() || group.name == group_name);
+        if !matches!(self.controller, ControllerState::Connected { .. }) && stored_group.is_none() {
             record_operation(
                 operation,
-                LogLevel::Error,
+                LogLevel::Warn,
                 "policy.node.rejected",
-                "reason=controller_not_connected",
+                "reason=demo_policy_not_persistable",
             );
             language
                 .text(
-                    "Connect to the kernel before changing a policy node",
-                    "请先连接内核，再切换策略组节点",
+                    "This is demo data. Connect Mihomo to select a real policy node.",
+                    "这里是演示数据；连接 Mihomo 后才能选择真实策略组节点。",
                 )
                 .clone_into(&mut self.status);
             cx.notify();
             return;
         }
-        if matches!(&*self.runtime, ControllerRuntime::External { .. }) {
+        let catalog_allows = self
+            .catalog
+            .iter()
+            .find(|group| group.id == group_id || group.name == group_name)
+            .map(|group| {
+                group.kind.allows_manual_selection()
+                    && group.nodes.iter().any(|node| node.name == node_name)
+            });
+        let stored_group_allows = stored_group.map(|group| {
+            group.strategy == NodeGroupStrategy::Manual
+                && self
+                    .node_group_candidate_names(group)
+                    .iter()
+                    .any(|candidate| candidate == &node_name)
+        });
+        if !policy_target_is_selectable(
+            matches!(self.controller, ControllerState::Connected { .. }),
+            catalog_allows,
+            stored_group_allows,
+        ) {
             record_operation(
                 operation,
                 LogLevel::Error,
                 "policy.node.rejected",
-                "reason=external_controller_read_only",
+                "reason=not_manual_candidate",
             );
             language
                 .text(
-                    "External controllers are read-only; use a Relay-managed kernel",
-                    "外部控制器保持只读；请使用 Relay 托管内核",
+                    "Only a candidate inside a manual policy can be selected",
+                    "只能选择手动策略组中的候选节点",
                 )
                 .clone_into(&mut self.status);
             cx.notify();
             return;
         }
 
+        let previous = self.node_selection_preferences.clone();
+        if let Err(error) = self
+            .node_selection_preferences
+            .set_policy_target(group_name.clone(), node_name.clone())
+        {
+            record_operation(
+                operation,
+                LogLevel::Error,
+                "policy.node.rejected",
+                error.to_string(),
+            );
+            language
+                .text(
+                    "This policy selection cannot be saved",
+                    "无法保存这个策略组选择",
+                )
+                .clone_into(&mut self.status);
+            cx.notify();
+            return;
+        }
+        if let Some(directory) = self.subscription_store_dir.as_deref()
+            && let Err(error) = mihomo::save_node_selection_preferences_in(
+                directory,
+                &self.node_selection_preferences,
+            )
+        {
+            self.node_selection_preferences = previous;
+            record_operation(
+                operation,
+                LogLevel::Error,
+                "policy.node.persistence_failed",
+                error.to_string(),
+            );
+            self.status = format!(
+                "{}{error}",
+                language.text(
+                    "Could not save the policy selection: ",
+                    "无法保存策略组选择："
+                )
+            );
+            cx.notify();
+            return;
+        }
+        let _ = self.catalog.apply_selector_target(&group_name, &node_name);
+        if self.workspace.selected_group.as_ref() == Some(&group_id) {
+            self.workspace.select_node(node_id.clone());
+        } else if let Some(group) = self.catalog.iter().find(|group| group.name == group_name)
+            && self.workspace.selected_group.as_ref() == Some(&group.id)
+            && let Some(node) = group.nodes.iter().find(|node| node.name == node_name)
+        {
+            self.workspace.select_node(node.id.clone());
+        }
+        record_operation(
+            operation,
+            LogLevel::Info,
+            "policy.node.saved",
+            format!("group={group_name}"),
+        );
+
+        let can_apply_now = matches!(self.controller, ControllerState::Connected { .. })
+            && matches!(&*self.runtime, ControllerRuntime::Managed { .. });
+        if !can_apply_now {
+            self.status = if language == Language::English {
+                format!(
+                    "Saved “{node_name}” for manual policy “{group_name}”; it will apply when the managed kernel connects"
+                )
+            } else {
+                format!("已为手动策略组“{group_name}”选择“{node_name}”；托管内核连接后生效")
+            };
+            cx.notify();
+            return;
+        }
+
+        if let Some((stored_group_id, candidates)) = self
+            .node_policy_groups
+            .iter()
+            .find(|group| group.name == group_name)
+            .map(|group| {
+                (
+                    group.id.clone(),
+                    self.node_group_candidate_names(group)
+                        .into_iter()
+                        .collect::<BTreeSet<_>>(),
+                )
+            })
+        {
+            self.node_group_runtime_generation = self.node_group_runtime_generation.wrapping_add(1);
+            let generation = self.node_group_runtime_generation;
+            let state = self
+                .node_group_runtime_states
+                .entry(stored_group_id)
+                .or_default();
+            if !state.begin_selection(generation, &node_name) {
+                *state = NodeGroupRuntimeState::Selecting {
+                    generation,
+                    current: previous.policy_target(&group_name).map(str::to_owned),
+                    candidates,
+                    pending: node_name.clone(),
+                };
+            }
+        }
         self.policy_selection_busy = Some(node_name.clone());
         self.status = if language == Language::English {
             format!("Setting “{group_name}” to “{node_name}”…")
@@ -2841,9 +3078,30 @@ impl RelayApp {
                 this.policy_selection_busy = None;
                 match result {
                     Ok(snapshot) => {
-                        let current = snapshot.current.as_deref().unwrap_or(&node_name);
-                        let _ = this.catalog.apply_selector_target(group_id.as_str(), current);
-                        this.workspace.select_node(node_id);
+                        let current = snapshot
+                            .current
+                            .clone()
+                            .unwrap_or_else(|| node_name.clone());
+                        let _ = this.catalog.apply_selector_target(&group_name, &current);
+                        if this.workspace.selected_group.as_ref() == Some(&group_id) {
+                            this.workspace.select_node(node_id);
+                        }
+                        if let Some(stored_group) = this
+                            .node_policy_groups
+                            .iter()
+                            .find(|group| group.name == group_name)
+                        {
+                            this.node_group_runtime_generation =
+                                this.node_group_runtime_generation.wrapping_add(1);
+                            this.node_group_runtime_states.insert(
+                                stored_group.id.clone(),
+                                NodeGroupRuntimeState::Ready {
+                                    generation: this.node_group_runtime_generation,
+                                    current: snapshot.current,
+                                    candidates: snapshot.candidates,
+                                },
+                            );
+                        }
                         record_operation(
                             operation,
                             LogLevel::Info,
@@ -2865,13 +3123,15 @@ impl RelayApp {
                             "policy.node.failed",
                             error.to_string(),
                         );
-                        this.status = format!(
-                            "{}{error}",
-                            this.language().text(
-                                "Failed to change policy node: ",
-                                "策略组节点切换失败："
+                        this.status = if this.language() == Language::English {
+                            format!(
+                                "Saved “{node_name}” for “{group_name}”, but it could not be applied now: {error}"
                             )
-                        );
+                        } else {
+                            format!(
+                                "已为“{group_name}”保存“{node_name}”，但暂时无法应用：{error}"
+                            )
+                        };
                     }
                 }
                 cx.notify();
@@ -2882,18 +3142,21 @@ impl RelayApp {
         cx.notify();
     }
 
+    fn global_target_identity(&self) -> Option<&NodeIdentity> {
+        self.node_selection_preferences.global()
+    }
+
     fn global_target(&self) -> Option<&str> {
+        self.global_target_identity()
+            .map(|identity| identity.node_name.as_str())
+            .or_else(|| self.runtime_global_target())
+    }
+
+    fn runtime_global_target(&self) -> Option<&str> {
         self.catalog
             .iter()
             .find(|group| group.name.eq_ignore_ascii_case("GLOBAL"))
             .map(|group| group.target.as_str())
-    }
-
-    fn is_global_candidate(&self, name: &str) -> bool {
-        self.catalog
-            .iter()
-            .find(|group| group.name.eq_ignore_ascii_case("GLOBAL"))
-            .is_some_and(|group| group.nodes.iter().any(|node| node.name == name))
     }
 
     #[allow(clippy::too_many_lines)]
@@ -3402,6 +3665,11 @@ impl RelayApp {
             let selected = self.workspace.selected_group.as_ref() == Some(&item.id);
             let item_id = item.id.clone();
             let item_name = item.name.clone();
+            let item_target_node = item
+                .nodes
+                .iter()
+                .find(|node| node.name == item.target)
+                .map(|node| node.id.clone());
             let benchmark_id = item.id.clone();
             let benchmark_key = Self::policy_group_benchmark_key(&item.id);
             let benchmarking = self
@@ -3463,6 +3731,9 @@ impl RelayApp {
                     .child(div().text_color(theme.text_primary).child(item.target))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.workspace.select_group(item_id.clone());
+                        if let Some(target) = item_target_node.clone() {
+                            this.workspace.select_node(target);
+                        }
                         trace_ui(UiEvent::PolicyPreviewOpened);
                         this.status = if this.language() == Language::English {
                             format!("Policy group “{item_name}” opened")
@@ -4410,6 +4681,18 @@ fn controller_state_label(state: &ControllerState) -> &'static str {
     }
 }
 
+fn policy_target_is_selectable(
+    connected: bool,
+    catalog_allows: Option<bool>,
+    stored_group_allows: Option<bool>,
+) -> bool {
+    if connected {
+        catalog_allows == Some(true)
+    } else {
+        stored_group_allows == Some(true)
+    }
+}
+
 fn policy_kind_label(language: Language, kind: relay_core::PolicyGroupKind) -> &'static str {
     match kind {
         relay_core::PolicyGroupKind::Selector => language.text("Manual", "手动选择"),
@@ -4514,8 +4797,8 @@ mod tests {
     use std::fs;
 
     use relay_core::{
-        PolicyCandidateKind, PolicyCatalog, PolicyGroup, PolicyGroupId, PolicyGroupKind,
-        PolicyNode, ProxyId,
+        NodeIdentity, PolicyCandidateKind, PolicyCatalog, PolicyGroup, PolicyGroupId,
+        PolicyGroupKind, PolicyNode, ProxyId,
     };
 
     use super::{DueRemoteSource, ImportedSubscription, ImportedSubscriptionState, RelayApp};
@@ -4613,7 +4896,7 @@ mod tests {
     }
 
     #[test]
-    fn global_node_state_comes_from_the_runtime_global_selector() {
+    fn saved_global_node_overrides_runtime_target_without_losing_runtime_state() {
         let mut app = RelayApp::with_controller("http://127.0.0.1:9090");
         app.catalog = PolicyCatalog::try_new(vec![PolicyGroup {
             id: PolicyGroupId::new("GLOBAL"),
@@ -4638,8 +4921,105 @@ mod tests {
         .expect("fixture global group");
 
         assert_eq!(app.global_target(), Some("Tokyo"));
-        assert!(app.is_global_candidate("Singapore"));
-        assert!(!app.is_global_candidate("Unknown"));
+        assert_eq!(app.runtime_global_target(), Some("Tokyo"));
+
+        app.node_selection_preferences.set_global(
+            NodeIdentity::new("saved", "Singapore").expect("valid saved node identity"),
+        );
+        assert_eq!(app.global_target(), Some("Singapore"));
+        assert_eq!(app.runtime_global_target(), Some("Tokyo"));
+    }
+
+    #[test]
+    fn app_startup_restores_global_and_manual_policy_node_selections() {
+        let root =
+            std::env::temp_dir().join(format!("relay-app-node-selections-{}", std::process::id()));
+        if root.exists() {
+            fs::remove_dir_all(&root).expect("remove stale fixture");
+        }
+        let store = root.join("subscriptions");
+        let mut preferences = mihomo::NodeSelectionPreferences::default();
+        preferences.set_global(
+            NodeIdentity::new("saved", "Singapore").expect("valid saved node identity"),
+        );
+        preferences
+            .set_policy_target("Manual Video", "Tokyo")
+            .expect("valid manual policy target");
+        mihomo::save_node_selection_preferences_in(&store, &preferences)
+            .expect("save node selections");
+
+        let app = RelayApp::with_controller_and_subscription_store("http://127.0.0.1:9090", store);
+
+        assert_eq!(
+            app.global_target_identity()
+                .map(|identity| (identity.source_id.as_str(), identity.node_name.as_str())),
+            Some(("saved", "Singapore"))
+        );
+        assert_eq!(
+            app.node_selection_preferences.policy_target("Manual Video"),
+            Some("Tokyo")
+        );
+        fs::remove_dir_all(root).expect("remove selection fixture");
+    }
+
+    #[test]
+    fn manual_policy_detail_falls_back_to_the_catalog_target() {
+        let mut app = RelayApp::with_controller("http://127.0.0.1:9090");
+        let policy_id = PolicyGroupId::new("manual-video");
+        app.catalog = PolicyCatalog::try_new(vec![PolicyGroup {
+            id: policy_id.clone(),
+            name: "Manual Video".to_owned(),
+            kind: PolicyGroupKind::Selector,
+            target: "Singapore".to_owned(),
+            nodes: ["Tokyo", "Singapore"]
+                .into_iter()
+                .map(|name| PolicyNode {
+                    id: ProxyId::new(name),
+                    name: name.to_owned(),
+                    kind: PolicyCandidateKind::Node,
+                    provider: None,
+                    detail: "fixture".to_owned(),
+                    latency_ms: None,
+                    alive: None,
+                })
+                .collect(),
+            rules_total: 0,
+            rules: Vec::new(),
+        }])
+        .expect("manual policy catalog");
+        app.workspace.select_group(policy_id);
+
+        assert_eq!(app.selected_node().name, "Singapore");
+    }
+
+    #[test]
+    fn offline_manual_policy_selection_ignores_colliding_demo_catalog() {
+        assert!(super::policy_target_is_selectable(
+            false,
+            Some(false),
+            Some(true)
+        ));
+        assert!(!super::policy_target_is_selectable(
+            false,
+            Some(true),
+            Some(false)
+        ));
+        assert!(!super::policy_target_is_selectable(false, Some(true), None));
+    }
+
+    #[test]
+    fn connected_manual_policy_selection_uses_runtime_catalog() {
+        assert!(super::policy_target_is_selectable(
+            true,
+            Some(true),
+            Some(false)
+        ));
+        assert!(!super::policy_target_is_selectable(
+            true,
+            Some(false),
+            Some(true)
+        ));
+        assert!(!super::policy_target_is_selectable(true, None, Some(true)));
     }
 
     #[test]
