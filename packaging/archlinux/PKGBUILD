@@ -29,13 +29,14 @@ sha256sums=()
 build() {
   cd "$startdir/../.."
   local rust_flags="${RUSTFLAGS:+$RUSTFLAGS }-C linker-features=-lld"
+  local target_dir="$startdir/../../target/archlinux"
 
   RUSTFLAGS="$rust_flags" \
-    CARGO_TARGET_DIR="$srcdir/target" \
+    CARGO_TARGET_DIR="$target_dir" \
     cargo build -p manis-ui --lib --release --locked
 
   local ring_archive
-  ring_archive="$(find "$srcdir/target/release/build" \
+  ring_archive="$(find "$target_dir/release/build" \
     -path '*/ring-*/out/libring_core_*.a' ! -name '*_test.a' -print -quit)"
   if [[ -z "$ring_archive" ]]; then
     error "ring native archive was not produced"
@@ -49,7 +50,7 @@ build() {
   # Rust 1.98 does not propagate ring's bundled native archive to this Linux
   # binary, so pass the already-built archive to the final target explicitly.
   RUSTFLAGS="$rust_flags" \
-    CARGO_TARGET_DIR="$srcdir/target" \
+    CARGO_TARGET_DIR="$target_dir" \
     cargo rustc -p manis-ui --bin manis-ui --release --locked -- \
       -L "native=$ring_directory" -l "static:+whole-archive=$ring_library"
 }
@@ -59,7 +60,8 @@ check() {
 }
 
 package() {
-  install -Dm755 "$srcdir/target/release/manis-ui" "$pkgdir/usr/bin/manis"
+  install -Dm755 "$startdir/../../target/archlinux/release/manis-ui" \
+    "$pkgdir/usr/bin/manis"
   install -Dm644 "$startdir/dev.manis.app.desktop" \
     "$pkgdir/usr/share/applications/dev.manis.app.desktop"
   install -Dm644 "$startdir/dev.manis.app.svg" \

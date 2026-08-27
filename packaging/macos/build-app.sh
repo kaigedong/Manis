@@ -60,7 +60,7 @@ if [[ -n "${MANIS_CODESIGN_IDENTITY:-}" ]]; then
   esac
 fi
 
-cargo build -p manis-ui --release
+cargo build -p manis-ui --release --locked
 
 mkdir -p "$MACOS_DIR" "$LAUNCH_DAEMONS_DIR" "$HELPER_TOOLS_DIR" "$RESOURCES_DIR"
 

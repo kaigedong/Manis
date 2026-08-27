@@ -41,11 +41,33 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Install Rust toolchain
         run: rustup show active-toolchain
+      - name: Restore Cargo cache
+        id: cargo-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: cargo-package-macos-${{ matrix.architecture }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            cargo-package-macos-${{ matrix.architecture }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-
       - name: Build unsigned application bundle
         env:
           MANIS_BUNDLE_BUILD: ${{ github.run_number }}
           MANIS_BUNDLE_VERSION: ${{ steps.package.outputs.version }}
         run: packaging/macos/build-app.sh
+      - name: Save Cargo cache
+        if: always() && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
       - name: Verify and archive bundle
         shell: bash
         run: |
@@ -96,6 +118,23 @@ jobs:
         shell: bash
         run: |
           runuser -u builder -- bash -c 'cd "$1" && rustup show active-toolchain' _ "$GITHUB_WORKSPACE"
+      - name: Restore Cargo cache
+        id: cargo-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            /home/builder/.cargo/registry/index/
+            /home/builder/.cargo/registry/cache/
+            /home/builder/.cargo/git/db/
+            target/archlinux/
+          key: cargo-package-archlinux-x86_64-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            cargo-package-archlinux-x86_64-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-
+      - name: Prepare Cargo cache ownership
+        shell: bash
+        run: |
+          mkdir -p /home/builder/.cargo "$GITHUB_WORKSPACE/target/archlinux"
+          chown -R builder:builder /home/builder/.cargo "$GITHUB_WORKSPACE/target"
       - name: Build Arch package
         shell: bash
         run: |
@@ -107,6 +146,16 @@ jobs:
           [[ -n "$package_path" ]]
           cp "$package_path" dist/
           sha256sum "dist/$(basename "$package_path")" > "dist/$(basename "$package_path").sha256"
+      - name: Save Cargo cache
+        if: always() && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            /home/builder/.cargo/registry/index/
+            /home/builder/.cargo/registry/cache/
+            /home/builder/.cargo/git/db/
+            target/archlinux/
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
       - name: Inspect package metadata
         shell: bash
         run: |
