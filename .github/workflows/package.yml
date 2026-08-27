@@ -81,9 +81,9 @@ jobs:
         shell: bash
         run: |
           pacman -Syu --noconfirm --needed \
-            alsa-lib clang cmake desktop-file-utils fontconfig git gtk3 hicolor-icon-theme \
-            libappindicator libx11 libxcb libxkbcommon mesa pkgconf rustup \
-            vulkan-headers vulkan-icd-loader wayland wayland-protocols
+          alsa-lib clang cmake desktop-file-utils fontconfig git gtk3 hicolor-icon-theme \
+          libappindicator libx11 libxcb libxkbcommon libxkbcommon-x11 mesa pkgconf rustup \
+          vulkan-headers vulkan-icd-loader wayland wayland-protocols xdotool
           useradd --create-home --shell /bin/bash builder
           chown -R builder:builder "$GITHUB_WORKSPACE"
       - name: Resolve package version

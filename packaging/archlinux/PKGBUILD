@@ -16,8 +16,10 @@ depends=(
   'libx11'
   'libxcb'
   'libxkbcommon'
+  'libxkbcommon-x11'
   'vulkan-icd-loader'
   'wayland'
+  'xdotool'
 )
 makedepends=('cargo' 'clang' 'cmake' 'desktop-file-utils' 'git' 'pkgconf' 'rust')
 options=('!debug')
