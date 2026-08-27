@@ -5,6 +5,7 @@
 *.profraw
 coverage/
 /dist/
+*.pkg.tar.*
 .env
 .env.*
 !.env.example

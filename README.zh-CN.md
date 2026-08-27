@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/kaigedong/Manis/actions/workflows/ci.yml/badge.svg)](https://github.com/kaigedong/Manis/actions/workflows/ci.yml)
 [![Security](https://github.com/kaigedong/Manis/actions/workflows/security.yml/badge.svg)](https://github.com/kaigedong/Manis/actions/workflows/security.yml)
+[![Package](https://github.com/kaigedong/Manis/actions/workflows/package.yml/badge.svg)](https://github.com/kaigedong/Manis/actions/workflows/package.yml)
 [![License](https://img.shields.io/badge/source-Apache--2.0-blue.svg)](LICENSE)
 
 [English](README.md) · **简体中文**
@@ -58,6 +59,11 @@ Manis 仓库不包含、也不会自动下载代理内核。应用只寻找用�
 | Linux | 持续维护 | 实验性；仍需覆盖更多发行版与桌面环境 |
 
 CI 会检查三个平台，但“能够编译”不代表该平台上的所有网络集成都已经完成真实验证。
+
+Package workflow 会分别构建 Apple Silicon、Intel 的未签名 macOS 应用包，以及支持原生
+Wayland 的实验性 Arch Linux `x86_64` 软件包。这些 Actions 产物不包含代理内核，也不是
+经过公证的正式发行版。安装前请阅读 [macOS](packaging/macos/README.md) 与
+[Arch Linux](packaging/archlinux/README.md) 打包说明。
 
 ## 从源码运行
 
@@ -120,6 +126,7 @@ macOS TUN 使用固定用途的特权 helper；仅供本地调试的不安全 he
 | `crates/manis-mihomo` | 受限的 Mihomo controller 传输和领域映射 |
 | `crates/manis-ui` | GPUI 应用、持久化边界和平台集成 |
 | `packaging/macos` | macOS 打包与固定用途的特权 helper |
+| `packaging/archlinux` | 支持 Wayland 的实验性 Arch Linux 软件包 |
 | `docs` | 架构、设计和维护者文档 |
 
 相关文档：

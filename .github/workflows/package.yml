@@ -1,0 +1,124 @@
+name: Package
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  macos:
+    name: macOS ${{ matrix.architecture }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            architecture: arm64
+          - runner: macos-15-intel
+            architecture: x86_64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "13.0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Resolve package version
+        id: package
+        shell: bash
+        run: |
+          version="$(packaging/package-version.sh)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Install Rust toolchain
+        run: rustup show active-toolchain
+      - name: Build unsigned application bundle
+        env:
+          MANIS_BUNDLE_BUILD: ${{ github.run_number }}
+          MANIS_BUNDLE_VERSION: ${{ steps.package.outputs.version }}
+        run: packaging/macos/build-app.sh
+      - name: Verify and archive bundle
+        shell: bash
+        run: |
+          codesign --verify --deep --strict dist/macos/Manis.app
+          binary_architecture="$(file dist/macos/Manis.app/Contents/MacOS/Manis)"
+          echo "$binary_architecture"
+          case "${{ matrix.architecture }}" in
+            arm64) [[ "$binary_architecture" == *"arm64"* ]] ;;
+            x86_64) [[ "$binary_architecture" == *"x86_64"* ]] ;;
+          esac
+          archive="dist/Manis-${{ steps.package.outputs.version }}-macos-${{ matrix.architecture }}-unsigned.zip"
+          ditto -c -k --sequesterRsrc --keepParent dist/macos/Manis.app "$archive"
+          shasum -a 256 "$archive" > "$archive.sha256"
+      - name: Upload macOS package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: manis-macos-${{ matrix.architecture }}
+          path: |
+            dist/Manis-*-macos-${{ matrix.architecture }}-unsigned.zip
+            dist/Manis-*-macos-${{ matrix.architecture }}-unsigned.zip.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+  archlinux-wayland:
+    name: Arch Linux Wayland x86_64
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    container:
+      image: archlinux:base-devel@sha256:a26046b7363dad8e2614858f4313949ae9b05c9c5f31de343a54864b9e20806f
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          pacman -Syu --noconfirm --needed \
+            alsa-lib clang cmake desktop-file-utils fontconfig git gtk3 hicolor-icon-theme \
+            libappindicator libx11 libxcb libxkbcommon mesa pkgconf rustup \
+            vulkan-headers vulkan-icd-loader wayland wayland-protocols
+          useradd --create-home --shell /bin/bash builder
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+      - name: Resolve package version
+        id: package
+        shell: bash
+        run: |
+          version="$(runuser -u builder -- "$GITHUB_WORKSPACE/packaging/package-version.sh")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Install pinned Rust toolchain
+        shell: bash
+        run: |
+          runuser -u builder -- bash -c 'cd "$1" && rustup show active-toolchain' _ "$GITHUB_WORKSPACE"
+      - name: Build Arch package
+        shell: bash
+        run: |
+          runuser -u builder -- bash -c \
+            'cd "$1/packaging/archlinux" && makepkg --noconfirm --cleanbuild' \
+            _ "$GITHUB_WORKSPACE"
+          mkdir -p dist
+          package_path="$(find packaging/archlinux -maxdepth 1 -type f -name 'manis-*.pkg.tar.zst' -print -quit)"
+          [[ -n "$package_path" ]]
+          cp "$package_path" dist/
+          sha256sum "dist/$(basename "$package_path")" > "dist/$(basename "$package_path").sha256"
+      - name: Inspect package metadata
+        shell: bash
+        run: |
+          package_path="$(find dist -maxdepth 1 -type f -name 'manis-*.pkg.tar.zst' -print -quit)"
+          pacman -Qip "$package_path"
+          pacman -Qlp "$package_path"
+      - name: Upload Arch Linux package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: manis-archlinux-wayland-x86_64
+          path: |
+            dist/manis-*.pkg.tar.zst
+            dist/manis-*.pkg.tar.zst.sha256
+          if-no-files-found: error
+          retention-days: 14

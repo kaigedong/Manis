@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/kaigedong/Manis/actions/workflows/ci.yml/badge.svg)](https://github.com/kaigedong/Manis/actions/workflows/ci.yml)
 [![Security](https://github.com/kaigedong/Manis/actions/workflows/security.yml/badge.svg)](https://github.com/kaigedong/Manis/actions/workflows/security.yml)
+[![Package](https://github.com/kaigedong/Manis/actions/workflows/package.yml/badge.svg)](https://github.com/kaigedong/Manis/actions/workflows/package.yml)
 [![License](https://img.shields.io/badge/source-Apache--2.0-blue.svg)](LICENSE)
 
 **English** · [简体中文](README.zh-CN.md)
@@ -60,6 +61,11 @@ the user and only manages child processes it starts.
 
 The CI configuration checks all three platforms. A green compile check is not a claim that every
 network integration has been validated on that operating system.
+
+The Package workflow builds unsigned macOS bundles for Apple Silicon and Intel, plus an experimental
+Arch Linux `x86_64` package with native Wayland support. These workflow artifacts contain no proxy
+core and are not notarized production releases. See the [macOS](packaging/macos/README.md) and
+[Arch Linux](packaging/archlinux/README.md) packaging notes before installing them.
 
 ## Build from source
 
@@ -127,6 +133,7 @@ report vulnerabilities through GitHub private vulnerability reporting.
 | `crates/manis-mihomo` | Restricted Mihomo controller transport and domain mapping |
 | `crates/manis-ui` | GPUI application, persistence boundaries, and platform integration |
 | `packaging/macos` | macOS bundle and fixed-purpose privileged-helper tooling |
+| `packaging/archlinux` | Experimental Arch Linux package with Wayland support |
 | `docs` | Architecture, design, and maintainer documentation |
 
 Additional reading:

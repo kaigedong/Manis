@@ -1,0 +1,45 @@
+# Maintainer: Manis contributors <https://github.com/kaigedong/Manis>
+
+pkgname=manis
+pkgver="$($startdir/../package-version.sh)"
+pkgrel=1
+pkgdesc="GPUI desktop workbench for policy-based proxy routing"
+arch=('x86_64')
+url="https://github.com/kaigedong/Manis"
+license=('Apache-2.0')
+depends=(
+  'alsa-lib'
+  'fontconfig'
+  'gtk3'
+  'hicolor-icon-theme'
+  'libappindicator'
+  'libx11'
+  'libxcb'
+  'libxkbcommon'
+  'vulkan-icd-loader'
+  'wayland'
+)
+makedepends=('cargo' 'clang' 'cmake' 'desktop-file-utils' 'git' 'pkgconf' 'rust')
+options=('!debug')
+source=()
+sha256sums=()
+
+build() {
+  cd "$startdir/../.."
+  CARGO_TARGET_DIR="$srcdir/target" cargo build -p manis-ui --release --locked
+}
+
+check() {
+  desktop-file-validate "$startdir/dev.manis.app.desktop"
+}
+
+package() {
+  install -Dm755 "$srcdir/target/release/manis-ui" "$pkgdir/usr/bin/manis"
+  install -Dm644 "$startdir/dev.manis.app.desktop" \
+    "$pkgdir/usr/share/applications/dev.manis.app.desktop"
+  install -Dm644 "$startdir/dev.manis.app.svg" \
+    "$pkgdir/usr/share/icons/hicolor/scalable/apps/dev.manis.app.svg"
+  install -Dm644 "$startdir/../../LICENSE" "$pkgdir/usr/share/licenses/manis/LICENSE"
+  install -Dm644 "$startdir/../../THIRD_PARTY_NOTICES.md" \
+    "$pkgdir/usr/share/doc/manis/THIRD_PARTY_NOTICES.md"
+}

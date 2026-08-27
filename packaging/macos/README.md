@@ -45,6 +45,11 @@ MANIS_MIHOMO_BINARY=/absolute/path/to/mihomo \
 packaging/macos/build-app.sh
 ```
 
+`MANIS_BUNDLE_VERSION` may override the three-component app version and `MANIS_BUNDLE_BUILD` may
+set its positive integer build number. The Package workflow uses these inputs to create separate
+Apple Silicon and Intel verification artifacts. Those artifacts are ad-hoc signed, not notarized,
+and do not contain a proxy core.
+
 The script never downloads Mihomo. If `MANIS_MIHOMO_BINARY` is provided, the referenced executable
 is copied into the bundle. A maintainer distributing that bundle must satisfy the exact Mihomo
 build's GPL obligations and include its license, notices, and corresponding-source information; see

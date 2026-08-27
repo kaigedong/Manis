@@ -28,6 +28,10 @@ private core binaries.
 
 If any license item is unresolved, publish source only and do not attach application binaries.
 
+The Package workflow produces short-lived, unsigned verification artifacts. Its successful output
+does not satisfy this license gate and must not be promoted to a public release without completing
+the remaining checklist.
+
 ## macOS package
 
 - [ ] The app, helper controller, privileged helper, and local installer use the intended bundle
@@ -37,6 +41,14 @@ If any license item is unresolved, publish source only and do not attach applica
 - [ ] The bundled Mihomo checksum and provenance are recorded before packaging.
 - [ ] The app is signed, notarized, stapled, and tested on a clean macOS account.
 - [ ] System proxy and TUN are each enabled, disabled, and restored after an abnormal exit.
+
+## Arch Linux package
+
+- [ ] The package is built by `makepkg` in the pinned Arch Linux container.
+- [ ] `pacman -Qip` and `pacman -Qlp` show the intended metadata and file layout.
+- [ ] The application opens in a native Wayland session and its tray appears in a compatible shell.
+- [ ] The external Mihomo and sing-box discovery paths are tested without bundling either core.
+- [ ] System proxy and TUN limitations are stated in the release notes.
 
 ## Runtime verification
 

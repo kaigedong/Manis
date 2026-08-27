@@ -24,6 +24,17 @@ LOCAL_INSTALLER_ID="dev.manis.app.helper.local-installer"
 CLIENT_REQUIREMENT="${MANIS_CLIENT_REQUIREMENT:-identifier \"$HELPERCTL_ID\"}"
 PARENT_REQUIREMENT="${MANIS_PARENT_REQUIREMENT:-identifier \"dev.manis.app\"}"
 MIHOMO_SOURCE="${MANIS_MIHOMO_BINARY:-}"
+BUNDLE_VERSION="${MANIS_BUNDLE_VERSION:-0.1.0}"
+BUNDLE_BUILD="${MANIS_BUNDLE_BUILD:-1}"
+
+if [[ ! "$BUNDLE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "MANIS_BUNDLE_VERSION must contain exactly three numeric components" >&2
+  exit 1
+fi
+if [[ ! "$BUNDLE_BUILD" =~ ^[1-9][0-9]*$ ]]; then
+  echo "MANIS_BUNDLE_BUILD must be a positive integer" >&2
+  exit 1
+fi
 
 if [[ "${MANIS_ALLOW_INSECURE_LOCAL_HELPER:-0}" == "1" && -n "${MANIS_CODESIGN_IDENTITY:-}" ]]; then
   echo "MANIS_ALLOW_INSECURE_LOCAL_HELPER cannot be combined with a signed production build" >&2
@@ -54,6 +65,8 @@ cargo build -p manis-ui --release
 mkdir -p "$MACOS_DIR" "$LAUNCH_DAEMONS_DIR" "$HELPER_TOOLS_DIR" "$RESOURCES_DIR"
 
 cp "$ROOT_DIR/packaging/macos/Info.plist" "$CONTENTS_DIR/Info.plist"
+plutil -replace CFBundleShortVersionString -string "$BUNDLE_VERSION" "$CONTENTS_DIR/Info.plist"
+plutil -replace CFBundleVersion -string "$BUNDLE_BUILD" "$CONTENTS_DIR/Info.plist"
 plutil -insert ManisParentCodeSigningRequirement -string "$PARENT_REQUIREMENT" "$CONTENTS_DIR/Info.plist"
 if [[ "${MANIS_ALLOW_INSECURE_LOCAL_HELPER:-0}" == "1" ]]; then
   plutil -insert ManisAllowInsecureLocalHelper -bool YES "$CONTENTS_DIR/Info.plist"
