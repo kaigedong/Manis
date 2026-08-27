@@ -51,7 +51,7 @@ build() {
   RUSTFLAGS="$rust_flags" \
     CARGO_TARGET_DIR="$srcdir/target" \
     cargo rustc -p manis-ui --bin manis-ui --release --locked -- \
-      -L "native=$ring_directory" -l "static=$ring_library"
+      -L "native=$ring_directory" -l "static:+whole-archive=$ring_library"
 }
 
 check() {
