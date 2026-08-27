@@ -50,9 +50,10 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: cargo-package-macos-${{ matrix.architecture }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-${{ github.sha }}
+          key: cargo-package-macos-${{ matrix.architecture }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', '**/Cargo.toml') }}
           restore-keys: |
-            cargo-package-macos-${{ matrix.architecture }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-
+            cargo-package-macos-${{ matrix.architecture }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', '**/Cargo.toml') }}-
+            cargo-package-macos-${{ matrix.architecture }}-
       - name: Build unsigned application bundle
         env:
           MANIS_BUNDLE_BUILD: ${{ github.run_number }}
@@ -127,9 +128,10 @@ jobs:
             /home/builder/.cargo/registry/cache/
             /home/builder/.cargo/git/db/
             target/archlinux/
-          key: cargo-package-archlinux-x86_64-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-${{ github.sha }}
+          key: cargo-package-archlinux-x86_64-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', '**/Cargo.toml') }}
           restore-keys: |
-            cargo-package-archlinux-x86_64-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-
+            cargo-package-archlinux-x86_64-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', '**/Cargo.toml') }}-
+            cargo-package-archlinux-x86_64-
       - name: Prepare Cargo cache ownership
         shell: bash
         run: |
