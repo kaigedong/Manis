@@ -28,9 +28,30 @@ sha256sums=()
 
 build() {
   cd "$startdir/../.."
-  RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }-C linker-features=-lld" \
+  local rust_flags="${RUSTFLAGS:+$RUSTFLAGS }-C linker-features=-lld"
+
+  RUSTFLAGS="$rust_flags" \
     CARGO_TARGET_DIR="$srcdir/target" \
-    cargo build -p manis-ui --release --locked
+    cargo build -p manis-ui --lib --release --locked
+
+  local ring_archive
+  ring_archive="$(find "$srcdir/target/release/build" \
+    -path '*/ring-*/out/libring_core_*.a' ! -name '*_test.a' -print -quit)"
+  if [[ -z "$ring_archive" ]]; then
+    error "ring native archive was not produced"
+    return 1
+  fi
+
+  local ring_directory="${ring_archive%/*}"
+  local ring_library="${ring_archive##*/lib}"
+  ring_library="${ring_library%.a}"
+
+  # Rust 1.98 does not propagate ring's bundled native archive to this Linux
+  # binary, so pass the already-built archive to the final target explicitly.
+  RUSTFLAGS="$rust_flags" \
+    CARGO_TARGET_DIR="$srcdir/target" \
+    cargo rustc -p manis-ui --bin manis-ui --release --locked -- \
+      -L "native=$ring_directory" -l "static=$ring_library"
 }
 
 check() {
