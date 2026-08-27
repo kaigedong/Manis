@@ -1,0 +1,6589 @@
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use gpui::{
+    Animation, AnimationExt as _, Context, Div, Entity, FontWeight, IntoElement, ParentElement,
+    Render, Role, Stateful, Styled, Subscription, Task, Toggled, Window, div, prelude::*, px,
+};
+use manis_core::{
+    CompactNavigation, KernelKind, ManagedPolicyGroup, ManagedPolicyIcon, ManagedPolicyStrategy,
+    NodeIdentity, NodeWorkspaceState, PolicyCatalog, PolicyGroup, PolicyGroupId, PolicyNode,
+    PolicyWorkspaceState, PrimaryWorkspace, ProxyId, ProxyMode, RoutingMode, WindowSizeClass,
+};
+use manis_mihomo::{Connection, ObservedRouteEvidence, RuntimeConfig};
+use manis_profile::{QxRuleList, SecretUrl};
+
+use crate::{
+    brand,
+    diagnostics::{
+        self, LogLevel, UiEvent, begin_operation, record_event, record_operation, trace_ui,
+    },
+    kernel::{self, KernelRuntime},
+    localization::{Language, LanguagePreference, Localizer},
+    mihomo::{
+        self, ControllerRuntime, ControllerState, GeneratedProfileApply, KernelLogEntry,
+        LiveRuntimeSession, LiveStreamStatus, LoadedProvider, LoadedSnapshot, ManagedRuntimeHealth,
+        RemoteSourceRefreshInterval, StoredQxRuleSource, StoredSubscription, StoredVlessNode,
+        SubscriptionPreviewError, SubscriptionStoreError,
+    },
+    rule_source::RuleDownloadError,
+    subscription::{SourceKind, SubscriptionInputError, SubscriptionPreview},
+    subscription_input::{SubscriptionInputChanged, SubscriptionTextInput},
+    system_proxy::{ProxyPorts, SystemProxySession, TunDnsSession},
+    theme::Theme,
+};
+
+mod activity;
+mod configuration;
+mod logs;
+mod nodes;
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+enum SubscriptionFeedback {
+    #[default]
+    Idle,
+    Importing(SourceKind),
+    Valid(SubscriptionPreview),
+    InvalidInput(SubscriptionInputError),
+    PreviewFailed(SubscriptionPreviewError),
+    StoreFailed(SubscriptionStoreError),
+}
+
+enum SourceRuntimeApply {
+    Applied(GeneratedProfileApply),
+    Failed(String),
+    ProxyModeLost(String),
+}
+
+impl SourceRuntimeApply {
+    fn from_result(result: Result<GeneratedProfileApply, mihomo::LoadError>) -> Self {
+        match result {
+            Ok(outcome) => Self::Applied(outcome),
+            Err(mihomo::LoadError::ProxyModeLost(message)) => Self::ProxyModeLost(message),
+            Err(error) => Self::Failed(error.to_string()),
+        }
+    }
+
+    fn reconcile_proxy_mode(&self, mode: &mut ProxyMode) -> bool {
+        if matches!(self, Self::ProxyModeLost(_)) && *mode == ProxyMode::Tun {
+            *mode = ProxyMode::Off;
+            record_event(
+                LogLevel::Error,
+                "proxy.mode.restore.ui_fallback",
+                "active=off reason=tun_restore_failed",
+            );
+            return true;
+        }
+        false
+    }
+
+    fn status_suffix(&self, language: Language) -> String {
+        match self {
+            Self::Applied(GeneratedProfileApply::NotManaged) => language
+                .text(
+                    " · external/existing configuration left unchanged",
+                    " · 当前为外部/已有配置，未改写其配置",
+                )
+                .to_owned(),
+            Self::Applied(GeneratedProfileApply::Updated) => language
+                .text(
+                    " · written to the Manis-managed configuration",
+                    " · 已写入 Manis 托管配置",
+                )
+                .to_owned(),
+            Self::Applied(GeneratedProfileApply::Restarted) => language
+                .text(
+                    " · Manis-managed kernel safely reloaded",
+                    " · Manis 托管内核已安全重载",
+                )
+                .to_owned(),
+            Self::Failed(message) => format!(
+                "{}{message}",
+                language.text(
+                    " · saved, but the managed configuration could not be applied: ",
+                    " · 持久化已完成，但托管配置应用失败："
+                )
+            ),
+            Self::ProxyModeLost(message) => format!(
+                "{}{message}",
+                language.text(
+                    " · kernel reloaded, but TUN could not be restored and was turned off: ",
+                    " · 内核已重载，但 TUN 恢复失败，已回退为关闭："
+                )
+            ),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum ImportedSubscriptionState {
+    #[default]
+    None,
+    Pending(SourceKind),
+    Refreshing(SourceKind),
+    Ready(SourceKind),
+    Unavailable(SourceKind, SubscriptionPreviewError),
+    StoreError(SubscriptionStoreError),
+    Removing(SourceKind),
+}
+
+#[derive(Clone, Debug)]
+struct ImportedSubscription {
+    id: String,
+    source: SecretUrl,
+    state: ImportedSubscriptionState,
+    providers: Vec<LoadedProvider>,
+    generation: u64,
+    refresh_interval: RemoteSourceRefreshInterval,
+    last_successful_update_unix_secs: u64,
+}
+
+impl ImportedSubscription {
+    fn from_stored(stored: StoredSubscription) -> Self {
+        let kind = source_kind(&stored.source);
+        Self {
+            id: stored.id,
+            source: stored.source,
+            state: ImportedSubscriptionState::Pending(kind),
+            providers: Vec::new(),
+            generation: 0,
+            refresh_interval: stored.refresh_interval,
+            last_successful_update_unix_secs: stored.last_successful_update_unix_secs,
+        }
+    }
+}
+
+enum ImportSubscriptionError {
+    Preview(SubscriptionPreviewError),
+    Store(SubscriptionStoreError),
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+enum QxRuleImportFeedback {
+    #[default]
+    Idle,
+    Importing,
+    Imported {
+        rule_count: usize,
+        diagnostic_count: usize,
+    },
+    AlreadyExists {
+        source_id: String,
+        rule_count: usize,
+        target_policy: String,
+    },
+    InvalidDocument,
+    DownloadFailed(RuleDownloadError),
+    StoreFailed(SubscriptionStoreError),
+}
+
+enum ImportQxRuleError {
+    Download(RuleDownloadError),
+    InvalidDocument,
+    Store(SubscriptionStoreError),
+}
+
+enum ImportQxRuleSuccess {
+    Imported {
+        stored: StoredQxRuleSource,
+        apply: SourceRuntimeApply,
+    },
+    AlreadyExists {
+        stored: StoredQxRuleSource,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum QxRuleSourceRefreshState {
+    Refreshing { generation: u64 },
+    Failed { generation: u64, message: String },
+}
+
+impl QxRuleSourceRefreshState {
+    fn is_refreshing(&self) -> bool {
+        matches!(self, Self::Refreshing { .. })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum DueRemoteSource {
+    Subscription(String),
+    QxRule(String),
+}
+
+impl DueRemoteSource {
+    fn scheduler_key(&self) -> String {
+        match self {
+            Self::Subscription(id) => format!("subscription:{id}"),
+            Self::QxRule(id) => format!("qx-rule:{id}"),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum SourceRefreshSchedulerState {
+    #[default]
+    Stopped,
+    Started,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum KernelSwitchState {
+    #[default]
+    Idle,
+    Preparing,
+}
+
+impl KernelSwitchState {
+    const fn is_busy(self) -> bool {
+        matches!(self, Self::Preparing)
+    }
+}
+
+fn next_due_remote_source(
+    subscriptions: &[ImportedSubscription],
+    qx_rule_sources: &[StoredQxRuleSource],
+    retry_not_before: &BTreeMap<String, u64>,
+    now_unix_secs: u64,
+) -> Option<DueRemoteSource> {
+    subscriptions
+        .iter()
+        .find(|source| {
+            !matches!(
+                source.state,
+                ImportedSubscriptionState::None
+                    | ImportedSubscriptionState::Pending(_)
+                    | ImportedSubscriptionState::Refreshing(_)
+                    | ImportedSubscriptionState::Removing(_)
+            ) && source
+                .refresh_interval
+                .is_due(source.last_successful_update_unix_secs, now_unix_secs)
+                && retry_not_before
+                    .get(&DueRemoteSource::Subscription(source.id.clone()).scheduler_key())
+                    .is_none_or(|retry_at| now_unix_secs >= *retry_at)
+        })
+        .map(|source| DueRemoteSource::Subscription(source.id.clone()))
+        .or_else(|| {
+            qx_rule_sources
+                .iter()
+                .find(|source| {
+                    source
+                        .refresh_interval
+                        .is_due(source.last_successful_update_unix_secs, now_unix_secs)
+                        && retry_not_before
+                            .get(&DueRemoteSource::QxRule(source.id.clone()).scheduler_key())
+                            .is_none_or(|retry_at| now_unix_secs >= *retry_at)
+                })
+                .map(|source| DueRemoteSource::QxRule(source.id.clone()))
+        })
+}
+
+fn source_kind(subscription: &SecretUrl) -> SourceKind {
+    if subscription.is_https() {
+        SourceKind::HttpsSubscription
+    } else {
+        SourceKind::HttpSubscription
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum PolicyCandidateMatcherKind {
+    #[default]
+    All,
+    NameContains,
+    Explicit,
+}
+
+#[derive(Clone, Debug)]
+struct ManagedPolicyDraft {
+    editing_id: Option<String>,
+    icon: ManagedPolicyIcon,
+    strategy: ManagedPolicyStrategy,
+    test_interval_secs: u32,
+    matcher_kind: PolicyCandidateMatcherKind,
+    explicit_members: BTreeSet<NodeIdentity>,
+}
+
+// Policy editor design contract — QX-inspired, adapted to the Manis desktop shell.
+// THESIS: creating a policy is one focused task, never a form wedged beside the policy list.
+// OWN-WORLD: quiet grouped rows, white editing surfaces, teal actions, and restrained dividers.
+// STORY: choose a policy type, name it, define its node scope, then save with confidence.
+// FIRST VIEWPORT: editor chrome above one narrow settings column; menus stay anchored to each row.
+// FORM: one page with contextual popovers; unreviewed and undocumented is unfinished.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PolicyEditorPopover {
+    Strategy,
+    Icon,
+    CandidateMode,
+    CandidateNodes,
+    Interval,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ManualRulePopover {
+    Kind(usize),
+    Target,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum PolicyDetailTab {
+    #[default]
+    Nodes,
+    Rules,
+    Settings,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct GroupBenchmarkSummary {
+    total: usize,
+    succeeded: usize,
+    failed: usize,
+    minimum_ms: Option<u16>,
+    maximum_ms: Option<u16>,
+    average_ms: Option<u16>,
+}
+
+impl GroupBenchmarkSummary {
+    fn from_delays(total: usize, delays: impl IntoIterator<Item = u16>) -> Self {
+        let delays = delays
+            .into_iter()
+            .filter(|delay| *delay > 0)
+            .collect::<Vec<_>>();
+        let succeeded = delays.len().min(total);
+        let sum = delays.iter().map(|delay| u64::from(*delay)).sum::<u64>();
+        let divisor = u64::try_from(delays.len()).unwrap_or(1);
+        Self {
+            total,
+            succeeded,
+            failed: total.saturating_sub(succeeded),
+            minimum_ms: delays.iter().copied().min(),
+            maximum_ms: delays.iter().copied().max(),
+            average_ms: (!delays.is_empty()).then(|| {
+                let rounded = (sum + divisor / 2) / divisor;
+                u16::try_from(rounded).unwrap_or(u16::MAX)
+            }),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+enum GroupBenchmarkState {
+    #[default]
+    Idle,
+    Running {
+        generation: u64,
+        results: BTreeMap<String, Option<u16>>,
+    },
+    Complete {
+        generation: u64,
+        summary: GroupBenchmarkSummary,
+        delays: BTreeMap<String, u16>,
+    },
+    Failed {
+        generation: u64,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum GroupBenchmarkNodeState {
+    Idle,
+    Pending,
+    Measured(u16),
+    Failed,
+}
+
+type GroupBenchmarkProgressQueue = Arc<Mutex<VecDeque<(String, Option<u16>)>>>;
+
+impl GroupBenchmarkState {
+    fn running(generation: u64) -> Self {
+        Self::Running {
+            generation,
+            results: BTreeMap::new(),
+        }
+    }
+
+    fn is_running(&self) -> bool {
+        matches!(self, Self::Running { .. })
+    }
+
+    fn record(&mut self, generation: u64, name: &str, delay: Option<u16>) -> bool {
+        let Self::Running {
+            generation: active,
+            results,
+        } = self
+        else {
+            return false;
+        };
+        if *active != generation {
+            return false;
+        }
+        results.insert(name.to_owned(), delay.filter(|delay| *delay > 0));
+        true
+    }
+
+    fn node_state(&self, name: &str) -> GroupBenchmarkNodeState {
+        match self {
+            Self::Idle => GroupBenchmarkNodeState::Idle,
+            Self::Running { results, .. } => match results.get(name) {
+                Some(Some(delay)) => GroupBenchmarkNodeState::Measured(*delay),
+                Some(None) => GroupBenchmarkNodeState::Failed,
+                None => GroupBenchmarkNodeState::Pending,
+            },
+            Self::Complete { delays, .. } => {
+                delays.get(name).copied().filter(|delay| *delay > 0).map_or(
+                    GroupBenchmarkNodeState::Failed,
+                    GroupBenchmarkNodeState::Measured,
+                )
+            }
+            Self::Failed { .. } => GroupBenchmarkNodeState::Failed,
+        }
+    }
+
+    fn complete(&mut self, generation: u64, total: usize, delays: BTreeMap<String, u16>) -> bool {
+        if !matches!(self, Self::Running { generation: current, .. } if *current == generation) {
+            return false;
+        }
+        let summary = GroupBenchmarkSummary::from_delays(total, delays.values().copied());
+        *self = Self::Complete {
+            generation,
+            summary,
+            delays,
+        };
+        true
+    }
+
+    fn fail(&mut self, generation: u64) -> bool {
+        if !matches!(self, Self::Running { generation: current, .. } if *current == generation) {
+            return false;
+        }
+        *self = Self::Failed { generation };
+        true
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+enum ManagedPolicyRuntimeState {
+    #[default]
+    LocalOnly,
+    Ready {
+        generation: u64,
+        current: Option<String>,
+        candidates: BTreeSet<String>,
+    },
+    Selecting {
+        generation: u64,
+        current: Option<String>,
+        candidates: BTreeSet<String>,
+        pending: String,
+    },
+}
+
+impl ManagedPolicyRuntimeState {
+    fn begin_selection(&mut self, generation: u64, selected: &str) -> bool {
+        let Self::Ready {
+            current,
+            candidates,
+            ..
+        } = self
+        else {
+            return false;
+        };
+        if !candidates.contains(selected) {
+            return false;
+        }
+        *self = Self::Selecting {
+            generation,
+            current: current.clone(),
+            candidates: candidates.clone(),
+            pending: selected.to_owned(),
+        };
+        true
+    }
+}
+
+pub struct ManisApp {
+    localizer: Localizer,
+    primary_workspace: PrimaryWorkspace,
+    node_workspace: NodeWorkspaceState,
+    workspace: PolicyWorkspaceState,
+    expanded_policy_group: Option<PolicyGroupId>,
+    policy_detail_tab: PolicyDetailTab,
+    catalog: Option<PolicyCatalog>,
+    runtime: KernelRuntime,
+    kernel_switch_state: KernelSwitchState,
+    controller: ControllerState,
+    observed_routes: Vec<ObservedRouteEvidence>,
+    source_providers: Vec<LoadedProvider>,
+    subscription_preview_providers: Vec<LoadedProvider>,
+    subscription_preview_generation: u64,
+    subscription_store_dir: Option<PathBuf>,
+    imported_subscriptions: Vec<ImportedSubscription>,
+    saved_vless_nodes: Vec<StoredVlessNode>,
+    qx_rule_sources: Vec<StoredQxRuleSource>,
+    qx_rule_feedback: QxRuleImportFeedback,
+    qx_rule_target_policy: String,
+    qx_rule_import_generation: u64,
+    qx_rule_source_refreshes: BTreeMap<String, QxRuleSourceRefreshState>,
+    source_refresh_retry_not_before: BTreeMap<String, u64>,
+    source_refresh_scheduler: SourceRefreshSchedulerState,
+    managed_policy_groups: Vec<ManagedPolicyGroup>,
+    node_selection_preferences: mihomo::NodeSelectionPreferences,
+    managed_policy_draft: Option<ManagedPolicyDraft>,
+    managed_policy_editor_popover: Option<PolicyEditorPopover>,
+    pending_policy_benchmark_name: Option<String>,
+    group_benchmarks: BTreeMap<String, GroupBenchmarkState>,
+    group_benchmark_generation: u64,
+    group_benchmark_active_generation: Option<u64>,
+    managed_policy_runtime_states: BTreeMap<String, ManagedPolicyRuntimeState>,
+    managed_policy_runtime_generation: u64,
+    source_store_error: Option<SubscriptionStoreError>,
+    proxy_mode: ProxyMode,
+    proxy_mode_busy: Option<ProxyMode>,
+    routing_mode: RoutingMode,
+    routing_mode_busy: Option<RoutingMode>,
+    global_selection_busy: Option<String>,
+    policy_selection_busy: Option<String>,
+    proxy_runtime: RuntimeConfig,
+    system_proxy: Arc<Mutex<SystemProxySession>>,
+    tun_dns: Arc<Mutex<TunDnsSession>>,
+    active_connections: Vec<Connection>,
+    live_runtime: Option<LiveRuntimeSession>,
+    live_generation: u64,
+    managed_health_tick: u8,
+    live_status: LiveStreamStatus,
+    kernel_logs: VecDeque<KernelLogEntry>,
+    dropped_kernel_logs: u64,
+    inspector_open: bool,
+    dark: bool,
+    status: String,
+    subscription_input: Option<Entity<SubscriptionTextInput>>,
+    subscription_feedback: SubscriptionFeedback,
+    subscription_input_events: Option<Subscription>,
+    qx_rule_input: Option<Entity<SubscriptionTextInput>>,
+    qx_rule_input_events: Option<Subscription>,
+    manual_rules: Vec<crate::manual_rule::ManualRule>,
+    manual_rule_input: Option<Entity<SubscriptionTextInput>>,
+    manual_rule_kind: crate::manual_rule::ManualRuleKind,
+    manual_rule_second_input: Option<Entity<SubscriptionTextInput>>,
+    manual_rule_second_kind: crate::manual_rule::ManualRuleKind,
+    manual_rule_second_enabled: bool,
+    manual_rule_target: String,
+    manual_rule_popover: Option<ManualRulePopover>,
+    manual_rule_error: Option<crate::manual_rule::ManualRuleError>,
+    policy_group_name_input: Option<Entity<SubscriptionTextInput>>,
+    policy_group_filter_input: Option<Entity<SubscriptionTextInput>>,
+    activity_search_input: Option<Entity<SubscriptionTextInput>>,
+    activity_search_events: Option<Subscription>,
+    logs_search_input: Option<Entity<SubscriptionTextInput>>,
+    logs_search_events: Option<Subscription>,
+    #[allow(dead_code)]
+    app_lifecycle_events: Option<Subscription>,
+}
+
+struct StoredWorkspace {
+    imported_subscriptions: Vec<ImportedSubscription>,
+    saved_vless_nodes: Vec<StoredVlessNode>,
+    qx_rule_sources: Vec<StoredQxRuleSource>,
+    collapsed_groups: Vec<String>,
+    managed_policy_groups: Vec<ManagedPolicyGroup>,
+    node_selection_preferences: mihomo::NodeSelectionPreferences,
+    routing_mode: RoutingMode,
+    error: Option<SubscriptionStoreError>,
+}
+
+impl StoredWorkspace {
+    fn load(directory: Option<&PathBuf>) -> Self {
+        let Some(directory) = directory else {
+            return Self {
+                imported_subscriptions: Vec::new(),
+                saved_vless_nodes: Vec::new(),
+                qx_rule_sources: Vec::new(),
+                collapsed_groups: Vec::new(),
+                managed_policy_groups: Vec::new(),
+                node_selection_preferences: mihomo::NodeSelectionPreferences::default(),
+                routing_mode: RoutingMode::Rule,
+                error: None,
+            };
+        };
+        let subscriptions = mihomo::load_subscription_sources_in(directory);
+        let nodes = mihomo::load_vless_sources_in(directory);
+        let qx_rule_sources = mihomo::load_qx_rule_sources_in(directory);
+        let collapsed = mihomo::load_collapsed_groups_in(directory);
+        let policy_groups = mihomo::load_managed_policy_groups_in(directory);
+        let node_selection_preferences = mihomo::load_node_selection_preferences_in(directory);
+        let routing_mode = mihomo::load_routing_mode_in(directory);
+        let error = [
+            subscriptions.is_err(),
+            nodes.is_err(),
+            qx_rule_sources.is_err(),
+            collapsed.is_err(),
+            policy_groups.is_err(),
+            node_selection_preferences.is_err(),
+            routing_mode.is_err(),
+        ]
+        .into_iter()
+        .any(std::convert::identity)
+        .then_some(SubscriptionStoreError::StoredSourceUnavailable);
+        Self {
+            imported_subscriptions: subscriptions
+                .unwrap_or_default()
+                .into_iter()
+                .map(ImportedSubscription::from_stored)
+                .collect(),
+            saved_vless_nodes: nodes.unwrap_or_default(),
+            qx_rule_sources: qx_rule_sources.unwrap_or_default(),
+            collapsed_groups: collapsed.unwrap_or_default(),
+            managed_policy_groups: policy_groups.unwrap_or_default(),
+            node_selection_preferences: node_selection_preferences.unwrap_or_default(),
+            routing_mode: routing_mode.unwrap_or_default(),
+            error,
+        }
+    }
+}
+
+impl ManisApp {
+    #[must_use]
+    pub fn new() -> Self {
+        let store = mihomo::imported_subscription_store_dir();
+        let store = store.ok();
+        diagnostics::initialize(store.as_deref().and_then(std::path::Path::parent));
+        let language = Localizer::load(store.as_deref()).language();
+        let runtime = KernelRuntime::configured(store.as_deref(), language);
+        diagnostics::record_event(
+            LogLevel::Info,
+            "app.runtime.prepared",
+            format!(
+                "kernel={} ownership={} profile={}",
+                runtime.kind().display_name(),
+                if matches!(&*runtime, ControllerRuntime::Managed { .. }) {
+                    "managed"
+                } else if matches!(&*runtime, ControllerRuntime::External { .. }) {
+                    "external"
+                } else {
+                    "invalid"
+                },
+                runtime.profile_source().label()
+            ),
+        );
+        let app = Self::with_runtime_and_store(runtime, store);
+        #[cfg(not(test))]
+        let app = {
+            let mut app = app;
+            app.recover_stale_system_proxy();
+            app
+        };
+        app
+    }
+
+    #[must_use]
+    pub fn new_with_lifecycle(cx: &mut Context<Self>) -> Self {
+        let mut app = Self::new();
+        app.app_lifecycle_events = Some(cx.on_app_quit(Self::shutdown_for_quit));
+        app.restore_imported_subscriptions(cx);
+        app
+    }
+
+    #[must_use]
+    pub fn with_controller(endpoint: impl Into<String>) -> Self {
+        Self::with_runtime_and_store(
+            KernelRuntime::mihomo(ControllerRuntime::External {
+                endpoint: endpoint.into(),
+            }),
+            None,
+        )
+    }
+
+    /// Creates a deterministic app instance backed by an explicit subscription store.
+    ///
+    /// This is primarily useful for native visual tests and embedders that manage their own
+    /// application-data root.
+    #[must_use]
+    pub fn with_controller_and_subscription_store(
+        endpoint: impl Into<String>,
+        subscription_store_dir: PathBuf,
+    ) -> Self {
+        Self::with_runtime_and_store(
+            KernelRuntime::mihomo(ControllerRuntime::External {
+                endpoint: endpoint.into(),
+            }),
+            Some(subscription_store_dir),
+        )
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn with_runtime_and_store(
+        runtime: KernelRuntime,
+        subscription_store_dir: Option<PathBuf>,
+    ) -> Self {
+        let localizer = Localizer::load(subscription_store_dir.as_deref());
+        let language = localizer.language();
+        let mut status = runtime.initial_status_in(language);
+        let StoredWorkspace {
+            imported_subscriptions,
+            saved_vless_nodes,
+            qx_rule_sources,
+            collapsed_groups,
+            managed_policy_groups,
+            node_selection_preferences,
+            routing_mode,
+            error: source_store_error,
+        } = StoredWorkspace::load(subscription_store_dir.as_ref());
+        if let Some(directory) = subscription_store_dir.as_ref()
+            && (!imported_subscriptions.is_empty()
+                || !saved_vless_nodes.is_empty()
+                || !qx_rule_sources.is_empty()
+                || !managed_policy_groups.is_empty()
+                || routing_mode != RoutingMode::Rule)
+        {
+            status = match runtime.apply_saved_sources(directory) {
+                Ok(GeneratedProfileApply::Updated) => language
+                    .text(
+                        "Saved sources written to the Manis-managed configuration",
+                        "已将保存来源写入 Manis 托管配置",
+                    )
+                    .to_owned(),
+                Ok(GeneratedProfileApply::Restarted) => language
+                    .text(
+                        "Saved sources applied to the Manis-managed kernel",
+                        "已将保存来源应用到 Manis 托管内核",
+                    )
+                    .to_owned(),
+                Ok(GeneratedProfileApply::NotManaged) => status,
+                Err(error) => format!(
+                    "{}{error}",
+                    language.text(
+                        "Saved sources loaded, but the managed configuration was not applied: ",
+                        "保存来源已载入，但托管配置未应用："
+                    )
+                ),
+            };
+        }
+        let mut node_workspace = NodeWorkspaceState::default();
+        node_workspace.replace_collapsed_groups(collapsed_groups.iter().map(String::as_str));
+        Self {
+            localizer,
+            primary_workspace: PrimaryWorkspace::default(),
+            node_workspace,
+            workspace: PolicyWorkspaceState::default(),
+            expanded_policy_group: None,
+            policy_detail_tab: PolicyDetailTab::default(),
+            catalog: None,
+            runtime,
+            kernel_switch_state: KernelSwitchState::Idle,
+            controller: ControllerState::Disconnected,
+            observed_routes: Vec::new(),
+            source_providers: Vec::new(),
+            subscription_preview_providers: Vec::new(),
+            subscription_preview_generation: 0,
+            subscription_store_dir,
+            imported_subscriptions,
+            saved_vless_nodes,
+            qx_rule_sources,
+            qx_rule_feedback: QxRuleImportFeedback::Idle,
+            qx_rule_target_policy: "Proxy".to_owned(),
+            qx_rule_import_generation: 0,
+            qx_rule_source_refreshes: BTreeMap::new(),
+            source_refresh_retry_not_before: BTreeMap::new(),
+            source_refresh_scheduler: SourceRefreshSchedulerState::Stopped,
+            managed_policy_groups,
+            node_selection_preferences,
+            managed_policy_draft: None,
+            managed_policy_editor_popover: None,
+            pending_policy_benchmark_name: None,
+            group_benchmarks: BTreeMap::new(),
+            group_benchmark_generation: 0,
+            group_benchmark_active_generation: None,
+            managed_policy_runtime_states: BTreeMap::new(),
+            managed_policy_runtime_generation: 0,
+            source_store_error,
+            proxy_mode: ProxyMode::Off,
+            proxy_mode_busy: None,
+            routing_mode,
+            routing_mode_busy: None,
+            global_selection_busy: None,
+            policy_selection_busy: None,
+            proxy_runtime: RuntimeConfig::default(),
+            system_proxy: Arc::new(Mutex::new(SystemProxySession::default())),
+            tun_dns: Arc::new(Mutex::new(TunDnsSession::default())),
+            active_connections: Vec::new(),
+            live_runtime: None,
+            live_generation: 0,
+            managed_health_tick: 0,
+            live_status: LiveStreamStatus::default(),
+            kernel_logs: VecDeque::with_capacity(500),
+            dropped_kernel_logs: 0,
+            inspector_open: false,
+            dark: false,
+            status,
+            subscription_input: None,
+            subscription_feedback: SubscriptionFeedback::Idle,
+            subscription_input_events: None,
+            qx_rule_input: None,
+            qx_rule_input_events: None,
+            manual_rules: Vec::new(),
+            manual_rule_input: None,
+            manual_rule_kind: crate::manual_rule::ManualRuleKind::default(),
+            manual_rule_second_input: None,
+            manual_rule_second_kind: crate::manual_rule::ManualRuleKind::DstPort,
+            manual_rule_second_enabled: false,
+            manual_rule_target: "Proxy".to_owned(),
+            manual_rule_popover: None,
+            manual_rule_error: None,
+            policy_group_name_input: None,
+            policy_group_filter_input: None,
+            activity_search_input: None,
+            activity_search_events: None,
+            logs_search_input: None,
+            logs_search_events: None,
+            app_lifecycle_events: None,
+        }
+    }
+
+    fn shutdown_for_quit(&mut self, _cx: &mut Context<Self>) -> Task<()> {
+        let language = self.language();
+        let operation = begin_operation(
+            "app.shutdown.requested",
+            format!("proxy_mode={:?}", self.proxy_mode),
+        );
+        if self.proxy_mode == ProxyMode::Tun {
+            match self.runtime.set_tun_enabled(false) {
+                Ok(()) => record_operation(
+                    operation,
+                    LogLevel::Info,
+                    "tun.shutdown.succeeded",
+                    "controller accepted disable request",
+                ),
+                Err(error) => record_operation(
+                    operation,
+                    LogLevel::Error,
+                    "tun.shutdown.failed",
+                    error.to_string(),
+                ),
+            }
+        }
+        if let Ok(mut system) = self.system_proxy.lock()
+            && let Err(error) = system.shutdown_with_language(language)
+        {
+            record_operation(
+                operation,
+                LogLevel::Error,
+                "system_proxy.shutdown.failed",
+                error.to_string(),
+            );
+        }
+        if let Ok(mut dns) = self.tun_dns.lock()
+            && let Err(error) = dns.shutdown_with_language(language)
+        {
+            record_operation(
+                operation,
+                LogLevel::Error,
+                "tun_dns.shutdown.failed",
+                error.to_string(),
+            );
+        }
+        match self.runtime.stop_managed() {
+            Ok(()) => record_operation(
+                operation,
+                LogLevel::Info,
+                "kernel.shutdown.succeeded",
+                "managed kernel stop completed",
+            ),
+            Err(error) => {
+                record_operation(operation, LogLevel::Error, "kernel.shutdown.failed", error);
+            }
+        }
+        Task::ready(())
+    }
+
+    #[cfg(not(test))]
+    fn recover_stale_system_proxy(&mut self) {
+        let language = self.language();
+        match self.system_proxy.lock() {
+            Ok(mut system) => {
+                if let Err(error) = system.recover_stale_with_language(language) {
+                    self.status = format!(
+                        "{}{error}",
+                        language.text(
+                            "System proxy recovery needs attention: ",
+                            "系统代理恢复需要处理："
+                        )
+                    );
+                }
+            }
+            Err(_poisoned) => {
+                language
+                    .text(
+                        "System proxy recovery state is unavailable",
+                        "系统代理恢复状态不可用",
+                    )
+                    .clone_into(&mut self.status);
+            }
+        }
+        match self.tun_dns.lock() {
+            Ok(mut dns) => {
+                if let Err(error) = dns.recover_stale_with_language(language) {
+                    self.status = format!(
+                        "{}{error}",
+                        language.text(
+                            "TUN DNS recovery needs attention: ",
+                            "TUN DNS 恢复需要处理："
+                        )
+                    );
+                }
+            }
+            Err(_poisoned) => {
+                language
+                    .text(
+                        "TUN DNS recovery state is unavailable",
+                        "TUN DNS 恢复状态不可用",
+                    )
+                    .clone_into(&mut self.status);
+            }
+        }
+    }
+
+    #[must_use]
+    pub(super) fn language(&self) -> Language {
+        self.localizer.language()
+    }
+
+    #[must_use]
+    fn language_preference(&self) -> LanguagePreference {
+        self.localizer.preference()
+    }
+
+    fn ensure_subscription_input(&mut self, theme: Theme, cx: &mut Context<Self>) {
+        let language = self.language();
+        if let Some(input) = self.subscription_input.as_ref() {
+            input.update(cx, |input, cx| {
+                input.set_theme(theme, self.dark, cx);
+                input.set_language(language, cx);
+            });
+            return;
+        }
+
+        let input =
+            cx.new(|cx| SubscriptionTextInput::new_with_language(language, theme, self.dark, cx));
+        let events = cx.subscribe(&input, |this, _input, _: &SubscriptionInputChanged, cx| {
+            if this.subscription_feedback != SubscriptionFeedback::Idle {
+                this.subscription_feedback = SubscriptionFeedback::Idle;
+                cx.notify();
+            }
+        });
+        self.subscription_input = Some(input);
+        self.subscription_input_events = Some(events);
+        self.restore_imported_subscriptions(cx);
+    }
+
+    fn ensure_qx_rule_input(&mut self, theme: Theme, cx: &mut Context<Self>) {
+        if let Some(input) = self.qx_rule_input.as_ref() {
+            input.update(cx, |input, cx| input.set_theme(theme, self.dark, cx));
+            return;
+        }
+        let input = cx.new(|cx| {
+            SubscriptionTextInput::new_field(
+                "qx-rule-url-input",
+                "https://example.com/rules.list",
+                16 * 1024,
+                theme,
+                self.dark,
+                cx,
+            )
+        });
+        let events = cx.subscribe(&input, |this, _input, _: &SubscriptionInputChanged, cx| {
+            if this.qx_rule_feedback != QxRuleImportFeedback::Idle {
+                this.qx_rule_feedback = QxRuleImportFeedback::Idle;
+                cx.notify();
+            }
+        });
+        self.qx_rule_input = Some(input);
+        self.qx_rule_input_events = Some(events);
+    }
+
+    fn ensure_policy_group_inputs(&mut self, theme: Theme, cx: &mut Context<Self>) {
+        let language = self.language();
+        for input in [
+            self.policy_group_name_input.as_ref(),
+            self.policy_group_filter_input.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            input.update(cx, |input, cx| input.set_theme(theme, self.dark, cx));
+        }
+        if self.policy_group_name_input.is_none() {
+            self.policy_group_name_input = Some(cx.new(|cx| {
+                SubscriptionTextInput::new_field(
+                    "policy-group-name-input",
+                    language.text("For example: Hong Kong Auto", "例如：香港自动优选"),
+                    96,
+                    theme,
+                    self.dark,
+                    cx,
+                )
+            }));
+        }
+        if self.policy_group_filter_input.is_none() {
+            self.policy_group_filter_input = Some(cx.new(|cx| {
+                SubscriptionTextInput::new_field(
+                    "policy-group-filter-input",
+                    language.text("For example: Hong Kong", "例如：Hong Kong"),
+                    256,
+                    theme,
+                    self.dark,
+                    cx,
+                )
+            }));
+        }
+    }
+
+    fn ensure_runtime_search_inputs(&mut self, theme: Theme, cx: &mut Context<Self>) {
+        let language = self.language();
+        if let Some(input) = self.activity_search_input.as_ref() {
+            input.update(cx, |input, cx| {
+                input.set_theme(theme, self.dark, cx);
+                input.set_placeholder(
+                    language.text(
+                        "Filter by target, process, rule, or route",
+                        "筛选目标、进程、规则或路径",
+                    ),
+                    cx,
+                );
+            });
+        } else {
+            let input = cx.new(|cx| {
+                SubscriptionTextInput::new_field(
+                    "activity-search-input",
+                    language.text(
+                        "Filter by target, process, rule, or route",
+                        "筛选目标、进程、规则或路径",
+                    ),
+                    256,
+                    theme,
+                    self.dark,
+                    cx,
+                )
+            });
+            let events = cx.subscribe(&input, |_this, _input, _: &SubscriptionInputChanged, cx| {
+                cx.notify();
+            });
+            self.activity_search_input = Some(input);
+            self.activity_search_events = Some(events);
+        }
+
+        if let Some(input) = self.logs_search_input.as_ref() {
+            input.update(cx, |input, cx| {
+                input.set_theme(theme, self.dark, cx);
+                input.set_placeholder(
+                    language.text(
+                        "Filter events, errors, or OP number",
+                        "筛选事件、错误或 OP 编号",
+                    ),
+                    cx,
+                );
+            });
+        } else {
+            let input = cx.new(|cx| {
+                SubscriptionTextInput::new_field(
+                    "logs-search-input",
+                    language.text(
+                        "Filter events, errors, or OP number",
+                        "筛选事件、错误或 OP 编号",
+                    ),
+                    256,
+                    theme,
+                    self.dark,
+                    cx,
+                )
+            });
+            let events = cx.subscribe(&input, |_this, _input, _: &SubscriptionInputChanged, cx| {
+                cx.notify();
+            });
+            self.logs_search_input = Some(input);
+            self.logs_search_events = Some(events);
+        }
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn import_remote_subscription(
+        &mut self,
+        input: String,
+        kind: SourceKind,
+        cx: &mut Context<Self>,
+    ) {
+        let language = self.language();
+        let Some(store_dir) = self.subscription_store_dir.clone() else {
+            self.subscription_feedback =
+                SubscriptionFeedback::StoreFailed(SubscriptionStoreError::DataDirectoryUnavailable);
+            language
+                .text(
+                    "The subscription storage location is unavailable",
+                    "无法确定订阅保存位置",
+                )
+                .clone_into(&mut self.status);
+            trace_ui(UiEvent::SourceImportFailed);
+            cx.notify();
+            return;
+        };
+        self.subscription_preview_generation = self.subscription_preview_generation.wrapping_add(1);
+        let generation = self.subscription_preview_generation;
+        self.subscription_feedback = SubscriptionFeedback::Importing(kind);
+        language
+            .text(
+                "Validating nodes and importing subscription",
+                "正在验证节点并导入订阅",
+            )
+            .clone_into(&mut self.status);
+        trace_ui(UiEvent::SourceImportStarted);
+        if let Some(input) = self.subscription_input.as_ref() {
+            input.update(cx, |input, cx| input.set_enabled(false, cx));
+        }
+
+        let executor = cx.background_executor().clone();
+        let runtime = self.runtime.clone();
+        cx.spawn(async move |this, cx| {
+            let result = executor
+                .spawn(async move {
+                    let providers = mihomo::preview_subscription(&input)
+                        .map_err(ImportSubscriptionError::Preview)?;
+                    let mut subscription = mihomo::save_subscription_source_in(&store_dir, &input)
+                        .map_err(ImportSubscriptionError::Store)?;
+                    let proxy_nameservers =
+                        mihomo::discover_subscription_proxy_nameservers(&subscription.source);
+                    if !proxy_nameservers.is_empty() {
+                        subscription = mihomo::update_subscription_source_proxy_nameservers_in(
+                            &store_dir,
+                            &subscription.id,
+                            &proxy_nameservers,
+                        )
+                        .map_err(ImportSubscriptionError::Store)?;
+                    }
+                    let apply = SourceRuntimeApply::from_result(
+                        runtime.apply_saved_sources(&store_dir),
+                    );
+                    Ok::<_, ImportSubscriptionError>((subscription, providers, apply))
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                let language = this.language();
+                if this.subscription_preview_generation != generation {
+                    return;
+                }
+                if let Some(input) = this.subscription_input.as_ref() {
+                    input.update(cx, |input, cx| input.set_enabled(true, cx));
+                }
+                match result {
+                    Ok((subscription, providers, apply)) => {
+                        let node_count: usize =
+                            providers.iter().map(|provider| provider.nodes.len()).sum();
+                        let provider_count = providers.len();
+                        let stored_id = subscription.id.clone();
+                        if let Some(existing) = this
+                            .imported_subscriptions
+                            .iter_mut()
+                            .find(|existing| existing.id == stored_id)
+                        {
+                            existing.source = subscription.source;
+                            existing.state = ImportedSubscriptionState::Ready(kind);
+                            existing.providers.clone_from(&providers);
+                            existing.refresh_interval = subscription.refresh_interval;
+                            existing.last_successful_update_unix_secs =
+                                subscription.last_successful_update_unix_secs;
+                        } else {
+                            this.imported_subscriptions.push(ImportedSubscription {
+                                id: stored_id,
+                                source: subscription.source,
+                                state: ImportedSubscriptionState::Ready(kind),
+                                providers: providers.clone(),
+                                generation,
+                                refresh_interval: subscription.refresh_interval,
+                                last_successful_update_unix_secs: subscription
+                                    .last_successful_update_unix_secs,
+                            });
+                        }
+                        this.subscription_preview_providers = providers;
+                        this.subscription_feedback = SubscriptionFeedback::Idle;
+                        if let Some(input) = this.subscription_input.as_ref() {
+                            input.update(cx, SubscriptionTextInput::clear_without_event);
+                        }
+                        apply.reconcile_proxy_mode(&mut this.proxy_mode);
+                        this.status = if language == Language::English {
+                            format!(
+                                "Subscription imported · {} groups · {provider_count} sources · {node_count} nodes{}",
+                                this.imported_subscriptions.len(),
+                                apply.status_suffix(language)
+                            )
+                        } else {
+                            format!(
+                                "订阅已导入 · 共 {} 个订阅组 · {provider_count} 个来源 · {node_count} 个节点{}",
+                                this.imported_subscriptions.len(),
+                                apply.status_suffix(language)
+                            )
+                        };
+                        trace_ui(UiEvent::SourceImportSucceeded);
+                    }
+                    Err(ImportSubscriptionError::Preview(error)) => {
+                        this.subscription_feedback = SubscriptionFeedback::PreviewFailed(error);
+                        this.status = format!(
+                            "{}{error}",
+                            language.text(
+                                "Subscription import failed: ",
+                                "订阅导入失败："
+                            )
+                        );
+                        trace_ui(UiEvent::SourceImportFailed);
+                    }
+                    Err(ImportSubscriptionError::Store(error)) => {
+                        this.subscription_feedback = SubscriptionFeedback::StoreFailed(error);
+                        this.status = format!(
+                            "{}{error}",
+                            language.text("Could not save subscription: ", "订阅保存失败：")
+                        );
+                        trace_ui(UiEvent::SourceImportFailed);
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn restore_imported_subscriptions(&mut self, cx: &mut Context<Self>) {
+        let pending: Vec<_> = self
+            .imported_subscriptions
+            .iter()
+            .filter(|subscription| {
+                matches!(subscription.state, ImportedSubscriptionState::Pending(_))
+            })
+            .map(|subscription| subscription.id.clone())
+            .collect();
+        for id in pending {
+            self.refresh_imported_subscription(id, cx);
+        }
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn refresh_imported_subscription(&mut self, id: String, cx: &mut Context<Self>) {
+        let language = self.language();
+        let Some(store_dir) = self.subscription_store_dir.clone() else {
+            return;
+        };
+        let Some(subscription) = self
+            .imported_subscriptions
+            .iter_mut()
+            .find(|subscription| subscription.id == id)
+        else {
+            return;
+        };
+        if matches!(
+            subscription.state,
+            ImportedSubscriptionState::None
+                | ImportedSubscriptionState::Refreshing(_)
+                | ImportedSubscriptionState::Removing(_)
+        ) {
+            return;
+        }
+        let kind = source_kind(&subscription.source);
+        let source = subscription.source.clone();
+        self.subscription_preview_generation = self.subscription_preview_generation.wrapping_add(1);
+        let generation = self.subscription_preview_generation;
+        subscription.generation = generation;
+        subscription.state = ImportedSubscriptionState::Refreshing(kind);
+        language
+            .text("Updating subscription nodes", "正在更新订阅节点")
+            .clone_into(&mut self.status);
+        trace_ui(UiEvent::SourceRestoreStarted);
+
+        let executor = cx.background_executor().clone();
+        let runtime = self.runtime.clone();
+        let task_id = id.clone();
+        cx.spawn(async move |this, cx| {
+            let result = executor
+                .spawn(async move {
+                    let proxy_nameservers =
+                        mihomo::discover_subscription_proxy_nameservers(&source);
+                    let providers = mihomo::preview_imported_subscription(source)
+                        .map_err(ImportSubscriptionError::Preview)?;
+                    let mut stored = mihomo::mark_subscription_source_update_success_in(
+                        &store_dir,
+                        &task_id,
+                        mihomo::current_unix_secs(),
+                    )
+                    .map_err(ImportSubscriptionError::Store)?;
+                    if !proxy_nameservers.is_empty() {
+                        stored = mihomo::update_subscription_source_proxy_nameservers_in(
+                            &store_dir,
+                            &task_id,
+                            &proxy_nameservers,
+                        )
+                        .map_err(ImportSubscriptionError::Store)?;
+                    }
+                    let apply =
+                        SourceRuntimeApply::from_result(runtime.apply_saved_sources(&store_dir));
+                    Ok::<_, ImportSubscriptionError>((providers, stored, apply))
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                let language = this.language();
+                let Some(subscription) = this
+                    .imported_subscriptions
+                    .iter_mut()
+                    .find(|subscription| subscription.id == id)
+                else {
+                    return;
+                };
+                if subscription.generation != generation {
+                    return;
+                }
+                match result {
+                    Ok((providers, stored, apply)) => {
+                        let node_count: usize =
+                            providers.iter().map(|provider| provider.nodes.len()).sum();
+                        subscription.providers = providers;
+                        subscription.state = ImportedSubscriptionState::Ready(kind);
+                        subscription.refresh_interval = stored.refresh_interval;
+                        subscription.last_successful_update_unix_secs =
+                            stored.last_successful_update_unix_secs;
+                        this.source_refresh_retry_not_before
+                            .remove(&DueRemoteSource::Subscription(id.clone()).scheduler_key());
+                        apply.reconcile_proxy_mode(&mut this.proxy_mode);
+                        this.status = if language == Language::English {
+                            format!(
+                                "Subscription updated · {node_count} nodes{}",
+                                apply.status_suffix(language)
+                            )
+                        } else {
+                            format!(
+                                "订阅更新完成 · {node_count} 个节点{}",
+                                apply.status_suffix(language)
+                            )
+                        };
+                        trace_ui(UiEvent::SourceRestoreSucceeded);
+                    }
+                    Err(ImportSubscriptionError::Preview(error)) => {
+                        subscription.state = ImportedSubscriptionState::Unavailable(kind, error);
+                        this.status = format!(
+                            "{}{error}",
+                            language.text("Subscription update failed: ", "订阅更新失败：")
+                        );
+                        trace_ui(UiEvent::SourceRestoreFailed);
+                    }
+                    Err(ImportSubscriptionError::Store(error)) => {
+                        subscription.state = ImportedSubscriptionState::StoreError(error);
+                        this.status = format!(
+                            "{}{error}",
+                            language.text(
+                                "Subscription loaded, but its update time could not be saved: ",
+                                "订阅已读取，但更新时间保存失败："
+                            )
+                        );
+                        trace_ui(UiEvent::SourceRestoreFailed);
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn source_refresh_busy(&self) -> bool {
+        self.imported_subscriptions.iter().any(|source| {
+            matches!(
+                source.state,
+                ImportedSubscriptionState::Refreshing(_) | ImportedSubscriptionState::Removing(_)
+            )
+        }) || self.qx_rule_feedback == QxRuleImportFeedback::Importing
+            || self
+                .qx_rule_source_refreshes
+                .values()
+                .any(QxRuleSourceRefreshState::is_refreshing)
+    }
+
+    fn refresh_next_due_source(&mut self, cx: &mut Context<Self>) {
+        if self.source_refresh_busy() {
+            return;
+        }
+        let now = mihomo::current_unix_secs();
+        let due = next_due_remote_source(
+            &self.imported_subscriptions,
+            &self.qx_rule_sources,
+            &self.source_refresh_retry_not_before,
+            now,
+        );
+        if let Some(source) = due.as_ref() {
+            self.source_refresh_retry_not_before
+                .insert(source.scheduler_key(), now.saturating_add(300));
+        }
+        match due {
+            Some(DueRemoteSource::Subscription(id)) => {
+                self.refresh_imported_subscription(id, cx);
+            }
+            Some(DueRemoteSource::QxRule(id)) => self.refresh_qx_rule_source(id, cx),
+            None => {}
+        }
+    }
+
+    fn ensure_source_refresh_scheduler(&mut self, cx: &mut Context<Self>) {
+        if self.source_refresh_scheduler == SourceRefreshSchedulerState::Started
+            || self.subscription_store_dir.is_none()
+        {
+            return;
+        }
+        self.source_refresh_scheduler = SourceRefreshSchedulerState::Started;
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_secs(60))
+                    .await;
+                let Some(this) = this.upgrade() else {
+                    break;
+                };
+                this.update(cx, ManisApp::refresh_next_due_source);
+            }
+        })
+        .detach();
+    }
+
+    fn remove_imported_subscription(&mut self, id: String, cx: &mut Context<Self>) {
+        let language = self.language();
+        let Some(store_dir) = self.subscription_store_dir.clone() else {
+            return;
+        };
+        let Some(subscription) = self
+            .imported_subscriptions
+            .iter_mut()
+            .find(|subscription| subscription.id == id)
+        else {
+            return;
+        };
+        let kind = source_kind(&subscription.source);
+        self.subscription_preview_generation = self.subscription_preview_generation.wrapping_add(1);
+        let generation = self.subscription_preview_generation;
+        subscription.generation = generation;
+        self.subscription_feedback = SubscriptionFeedback::Idle;
+        subscription.state = ImportedSubscriptionState::Removing(kind);
+        language
+            .text("Removing imported subscription", "正在移除已导入订阅")
+            .clone_into(&mut self.status);
+        trace_ui(UiEvent::SourceRemoveStarted);
+
+        let executor = cx.background_executor().clone();
+        let remove_id = id.clone();
+        let runtime = self.runtime.clone();
+        cx.spawn(async move |this, cx| {
+            let result = executor
+                .spawn(async move {
+                    mihomo::remove_subscription_source_in(&store_dir, &remove_id)?;
+                    Ok::<_, SubscriptionStoreError>(SourceRuntimeApply::from_result(
+                        runtime.apply_saved_sources(&store_dir),
+                    ))
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                let language = this.language();
+                let Some(index) = this
+                    .imported_subscriptions
+                    .iter()
+                    .position(|subscription| subscription.id == id)
+                else {
+                    return;
+                };
+                if this.imported_subscriptions[index].generation != generation {
+                    return;
+                }
+                match result {
+                    Ok(apply) => {
+                        this.imported_subscriptions.remove(index);
+                        this.source_refresh_retry_not_before
+                            .remove(&DueRemoteSource::Subscription(id.clone()).scheduler_key());
+                        apply.reconcile_proxy_mode(&mut this.proxy_mode);
+                        this.status = format!(
+                            "{}{}",
+                            language.text("Imported subscription removed", "已移除导入订阅"),
+                            apply.status_suffix(language)
+                        );
+                        trace_ui(UiEvent::SourceRemoveSucceeded);
+                    }
+                    Err(error) => {
+                        this.imported_subscriptions[index].state =
+                            ImportedSubscriptionState::StoreError(error);
+                        this.status = format!(
+                            "{}{error}",
+                            language.text("Could not remove subscription: ", "移除订阅失败：")
+                        );
+                        trace_ui(UiEvent::SourceRemoveFailed);
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn persist_node_workspace(&mut self) {
+        let Some(store_dir) = self.subscription_store_dir.as_ref() else {
+            return;
+        };
+        if let Err(error) =
+            mihomo::save_collapsed_groups_in(store_dir, self.node_workspace.collapsed_group_ids())
+        {
+            self.source_store_error = Some(error);
+            "无法保存节点来源展开状态".clone_into(&mut self.status);
+        }
+    }
+
+    fn theme(&self) -> Theme {
+        if self.dark {
+            Theme::dark()
+        } else {
+            Theme::light()
+        }
+    }
+
+    fn policy_groups(&self) -> impl Iterator<Item = &PolicyGroup> {
+        self.catalog.iter().flat_map(PolicyCatalog::iter)
+    }
+
+    fn selected_policy(&self) -> Option<&PolicyGroup> {
+        self.catalog
+            .as_ref()
+            .map(|catalog| catalog.select(self.workspace.selected_group.as_ref()))
+    }
+
+    fn source_group_benchmark_key(id: &str) -> String {
+        format!("source:{id}")
+    }
+
+    fn managed_policy_benchmark_key(id: &str) -> String {
+        format!("user:{id}")
+    }
+
+    fn policy_group_benchmark_key(id: &manis_core::PolicyGroupId) -> String {
+        format!("policy:{}", id.as_str())
+    }
+
+    fn begin_group_benchmark(&mut self, key: String) -> Option<u64> {
+        if self.group_benchmark_active_generation.is_some() {
+            return None;
+        }
+        self.group_benchmark_generation = self.group_benchmark_generation.wrapping_add(1);
+        let generation = self.group_benchmark_generation;
+        self.group_benchmarks
+            .insert(key, GroupBenchmarkState::running(generation));
+        self.group_benchmark_active_generation = Some(generation);
+        Some(generation)
+    }
+
+    fn poll_group_benchmark_progress(
+        &mut self,
+        generation: u64,
+        key: String,
+        updates: GroupBenchmarkProgressQueue,
+        cx: &mut Context<Self>,
+    ) {
+        let drained = updates
+            .lock()
+            .map(|mut updates| updates.drain(..).collect::<Vec<_>>())
+            .unwrap_or_default();
+        let mut changed = false;
+        if let Some(state) = self.group_benchmarks.get_mut(&key) {
+            for (name, delay) in drained {
+                changed |= state.record(generation, &name, delay);
+            }
+        }
+        if changed {
+            cx.notify();
+        }
+        if self.group_benchmark_active_generation != Some(generation) {
+            return;
+        }
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(40))
+                .await;
+            if let Some(this) = this.upgrade() {
+                this.update(cx, |this, cx| {
+                    this.poll_group_benchmark_progress(generation, key, updates, cx);
+                });
+            }
+        })
+        .detach();
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn policy_icon_visual(
+        icon: ManagedPolicyIcon,
+        policy_name: &str,
+        size: f32,
+        theme: Theme,
+    ) -> Div {
+        let glyph_color = theme.action_primary;
+        let glyph = match icon {
+            ManagedPolicyIcon::None => div()
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .font_weight(FontWeight::BOLD)
+                .text_color(glyph_color)
+                .child(
+                    policy_name
+                        .chars()
+                        .next()
+                        .map_or_else(|| "?".to_owned(), |character| character.to_string()),
+                ),
+            ManagedPolicyIcon::Bolt => div()
+                .relative()
+                .size(px(20.0))
+                .child(
+                    div()
+                        .absolute()
+                        .left(px(9.0))
+                        .top(px(1.0))
+                        .w(px(5.0))
+                        .h(px(8.0))
+                        .rounded_sm()
+                        .bg(glyph_color),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .left(px(6.0))
+                        .top(px(7.0))
+                        .w(px(8.0))
+                        .h(px(6.0))
+                        .rounded_sm()
+                        .bg(glyph_color),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .left(px(6.0))
+                        .top(px(12.0))
+                        .w(px(5.0))
+                        .h(px(7.0))
+                        .rounded_sm()
+                        .bg(glyph_color),
+                ),
+            ManagedPolicyIcon::Globe => div()
+                .relative()
+                .size(px(20.0))
+                .rounded_full()
+                .border_2()
+                .border_color(glyph_color)
+                .child(
+                    div()
+                        .absolute()
+                        .left(px(7.0))
+                        .top(px(1.0))
+                        .w(px(2.0))
+                        .h(px(14.0))
+                        .rounded_full()
+                        .bg(glyph_color),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .left(px(1.0))
+                        .top(px(7.0))
+                        .w(px(14.0))
+                        .h(px(2.0))
+                        .rounded_full()
+                        .bg(glyph_color),
+                ),
+            ManagedPolicyIcon::Shield => div()
+                .size(px(19.0))
+                .rounded_md()
+                .border_2()
+                .border_color(glyph_color)
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(div().size(px(7.0)).rounded_full().bg(glyph_color)),
+            ManagedPolicyIcon::Compass => div()
+                .relative()
+                .size(px(20.0))
+                .rounded_full()
+                .border_2()
+                .border_color(glyph_color)
+                .child(
+                    div()
+                        .absolute()
+                        .left(px(7.0))
+                        .top(px(3.0))
+                        .w(px(3.0))
+                        .h(px(10.0))
+                        .rounded_full()
+                        .bg(glyph_color),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .left(px(5.0))
+                        .top(px(7.0))
+                        .size(px(7.0))
+                        .rounded_full()
+                        .border_2()
+                        .border_color(theme.surface_high),
+                ),
+        };
+        div()
+            .size(px(size))
+            .rounded_full()
+            .bg(theme.action_soft)
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(glyph)
+    }
+
+    fn policy_group_icon(
+        id: &str,
+        icon: ManagedPolicyIcon,
+        policy_name: &str,
+        automatic: bool,
+        running: bool,
+        theme: Theme,
+        listener: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
+    ) -> Stateful<Div> {
+        div()
+            .id(format!("policy-icon-{id}"))
+            .size(px(38.0))
+            .flex_shrink_0()
+            .rounded_full()
+            .when(automatic, |avatar| {
+                avatar
+                    .role(Role::Button)
+                    .aria_label(if running {
+                        "策略组测速中"
+                    } else {
+                        "测试自动策略组并选择最优节点"
+                    })
+                    .tab_stop(!running)
+                    .focusable()
+                    .on_click(listener)
+            })
+            .when(automatic && !running, gpui::Styled::cursor_pointer)
+            .when(running, |avatar| {
+                avatar
+                    .bg(theme.action_soft)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(Self::benchmark_latency_spinner(
+                        format!("{id}-policy-icon-spinner"),
+                        theme,
+                    ))
+            })
+            .when(!running, |avatar| {
+                avatar.child(Self::policy_icon_visual(icon, policy_name, 38.0, theme))
+            })
+    }
+
+    fn group_benchmark_icon(
+        id: &str,
+        running: bool,
+        theme: Theme,
+        listener: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
+    ) -> Stateful<Div> {
+        let bar_color = if running {
+            theme.action_primary
+        } else {
+            theme.text_secondary
+        };
+        div()
+            .id(format!("group-benchmark-{id}"))
+            .role(Role::Button)
+            .aria_label(if running {
+                "分组测速中"
+            } else {
+                "测试该分组延迟"
+            })
+            .tab_stop(!running)
+            .focusable()
+            .size(px(30.0))
+            .flex_shrink_0()
+            .rounded_md()
+            .border_1()
+            .border_color(theme.outline_subtle)
+            .bg(theme.surface_high)
+            .flex()
+            .justify_center()
+            .when(running, |button| {
+                button.items_center().child(Self::benchmark_latency_spinner(
+                    format!("{id}-button-spinner"),
+                    theme,
+                ))
+            })
+            .when(!running, |button| {
+                button
+                    .items_end()
+                    .gap(px(2.0))
+                    .pb(px(7.0))
+                    .child(div().w(px(2.0)).h(px(5.0)).rounded_full().bg(bar_color))
+                    .child(div().w(px(2.0)).h(px(9.0)).rounded_full().bg(bar_color))
+                    .child(div().w(px(2.0)).h(px(13.0)).rounded_full().bg(bar_color))
+            })
+            .when(!running, gpui::Styled::cursor_pointer)
+            .on_click(listener)
+    }
+
+    fn benchmark_latency_content(
+        state: GroupBenchmarkNodeState,
+        idle_label: String,
+        spinner_id: &str,
+        theme: Theme,
+    ) -> Div {
+        let cell = div()
+            .min_w(px(42.0))
+            .flex()
+            .items_center()
+            .justify_end()
+            .font_weight(FontWeight::SEMIBOLD)
+            .text_size(px(11.0));
+        match state {
+            GroupBenchmarkNodeState::Idle => cell.text_color(theme.text_tertiary).child(idle_label),
+            GroupBenchmarkNodeState::Pending => cell.child(Self::benchmark_latency_spinner(
+                spinner_id.to_owned(),
+                theme,
+            )),
+            GroupBenchmarkNodeState::Measured(delay) => cell
+                .text_color(theme.status_success)
+                .child(format!("{delay} ms")),
+            GroupBenchmarkNodeState::Failed => cell.text_color(theme.route_trace).child("失败"),
+        }
+    }
+
+    fn benchmark_latency_spinner(id: String, theme: Theme) -> impl IntoElement {
+        div().relative().size(px(14.0)).with_animation(
+            id,
+            Animation::new(Duration::from_millis(720)).repeat(),
+            move |spinner, delta| {
+                let active = Self::benchmark_latency_spinner_frame(delta);
+                (0..8).fold(spinner, |spinner, index| {
+                    spinner.child(Self::benchmark_latency_dot(
+                        index,
+                        active,
+                        theme.action_primary,
+                    ))
+                })
+            },
+        )
+    }
+
+    fn benchmark_latency_spinner_frame(delta: f32) -> usize {
+        if delta < 0.125 {
+            0
+        } else if delta < 0.25 {
+            1
+        } else if delta < 0.375 {
+            2
+        } else if delta < 0.5 {
+            3
+        } else if delta < 0.625 {
+            4
+        } else if delta < 0.75 {
+            5
+        } else if delta < 0.875 {
+            6
+        } else {
+            7
+        }
+    }
+
+    fn benchmark_latency_dot(index: usize, active: usize, color: gpui::Rgba) -> Div {
+        const POSITIONS: [(f32, f32); 8] = [
+            (5.5, 0.0),
+            (9.5, 1.5),
+            (11.0, 5.5),
+            (9.5, 9.5),
+            (5.5, 11.0),
+            (1.5, 9.5),
+            (0.0, 5.5),
+            (1.5, 1.5),
+        ];
+        const OPACITY: [f32; 8] = [1.0, 0.82, 0.68, 0.54, 0.42, 0.32, 0.24, 0.18];
+        let distance = (index + 8 - active) % 8;
+        let (left, top) = POSITIONS[index];
+        div()
+            .absolute()
+            .left(px(left))
+            .top(px(top))
+            .size(px(3.0))
+            .rounded_full()
+            .bg(color.opacity(OPACITY[distance]))
+    }
+
+    fn policy_benchmark_status(
+        language: Language,
+        kind: manis_core::PolicyGroupKind,
+        current: Option<&str>,
+        summary: GroupBenchmarkSummary,
+    ) -> String {
+        match (language, kind.is_automatic(), current) {
+            (Language::English, true, Some(current)) => format!(
+                "Policy benchmark complete: {}/{} succeeded · current optimum {current}",
+                summary.succeeded, summary.total
+            ),
+            (Language::English, true, None) => format!(
+                "Policy benchmark complete: {}/{} succeeded · no single fixed exit",
+                summary.succeeded, summary.total
+            ),
+            (Language::English, false, _) => format!(
+                "Policy benchmark complete: {}/{} candidates succeeded",
+                summary.succeeded, summary.total
+            ),
+            (Language::SimplifiedChinese, true, Some(current)) => format!(
+                "策略组测速完成：{}/{} 成功 · 当前优选 {current}",
+                summary.succeeded, summary.total
+            ),
+            (Language::SimplifiedChinese, true, None) => format!(
+                "策略组测速完成：{}/{} 成功 · 该策略没有单一固定出口",
+                summary.succeeded, summary.total
+            ),
+            (Language::SimplifiedChinese, false, _) => format!(
+                "策略组测速完成：{}/{} 个候选项成功",
+                summary.succeeded, summary.total
+            ),
+        }
+    }
+
+    fn policy_group_benchmark_feedback(
+        state: &GroupBenchmarkState,
+        total: usize,
+        theme: Theme,
+    ) -> Option<Div> {
+        let (label, color) = match state {
+            GroupBenchmarkState::Idle => return None,
+            GroupBenchmarkState::Running { results, .. } => (
+                format!("正在测速 · {}/{} 个候选项已返回", results.len(), total),
+                theme.action_primary,
+            ),
+            GroupBenchmarkState::Complete { summary, .. } => {
+                let latency = match (summary.minimum_ms, summary.average_ms) {
+                    (Some(minimum), Some(average)) => {
+                        format!(" · 最低 {minimum} ms · 平均 {average} ms")
+                    }
+                    _ => String::new(),
+                };
+                (
+                    format!(
+                        "测速完成 · {}/{} 个候选项成功{latency}",
+                        summary.succeeded, summary.total
+                    ),
+                    theme.status_success,
+                )
+            }
+            GroupBenchmarkState::Failed { .. } => (
+                "测速失败 · 当前策略组未返回延迟，请检查 Mihomo 连接后重试".to_owned(),
+                theme.route_trace,
+            ),
+        };
+        Some(
+            div()
+                .mt_2()
+                .text_size(px(11.0))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(color)
+                .child(label),
+        )
+    }
+
+    fn selected_node(&self) -> Option<PolicyNode> {
+        let policy = self.selected_policy()?;
+        let selected = if policy.kind.allows_manual_selection() {
+            self.workspace
+                .selected_node
+                .as_ref()
+                .and_then(|selected| policy.nodes.iter().find(|node| node.id == *selected))
+                .or_else(|| policy.nodes.iter().find(|node| node.name == policy.target))
+        } else {
+            policy.nodes.iter().find(|node| node.name == policy.target)
+        };
+        Some(
+            selected
+                .or_else(|| policy.nodes.first())
+                .cloned()
+                .unwrap_or_else(|| PolicyNode {
+                    id: ProxyId::new("unavailable"),
+                    name: self
+                        .language()
+                        .text("No available nodes", "暂无可用节点")
+                        .to_owned(),
+                    kind: manis_core::PolicyCandidateKind::Node,
+                    provider: None,
+                    detail: self
+                        .language()
+                        .text("The kernel returned no group members", "内核未返回组内节点")
+                        .to_owned(),
+                    latency_ms: None,
+                    alive: None,
+                }),
+        )
+    }
+
+    fn switch_kernel(&mut self, requested: KernelKind, cx: &mut Context<Self>) {
+        let language = self.language();
+        if self.kernel_switch_state.is_busy() || self.runtime.kind() == requested {
+            return;
+        }
+        let Some(store_dir) = self.subscription_store_dir.clone() else {
+            language
+                .text(
+                    "The local configuration directory is unavailable; the kernel cannot be changed",
+                    "无法确定本机配置目录，不能切换内核",
+                )
+                .clone_into(&mut self.status);
+            cx.notify();
+            return;
+        };
+        self.kernel_switch_state = KernelSwitchState::Preparing;
+        self.status = format!(
+            "{} {} {}",
+            language.text("Validating", "正在校验并准备"),
+            requested.display_name(),
+            language.text("configuration", "配置")
+        );
+        let previous = self.runtime.clone();
+        let previous_kind = previous.kind();
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let result = executor
+                .spawn(async move {
+                    let prepared = KernelRuntime::prepare_with_language(
+                        requested,
+                        Some(&store_dir),
+                        language,
+                    )?;
+                    kernel::save_kernel_kind_in(&store_dir, requested)
+                        .map_err(|error| error.to_string())?;
+                    if let Err(message) = previous.stop_managed() {
+                        let _ = kernel::save_kernel_kind_in(&store_dir, previous_kind);
+                        return Err(message);
+                    }
+                    Ok::<_, String>(prepared)
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                let language = this.language();
+                this.kernel_switch_state = KernelSwitchState::Idle;
+                match result {
+                    Ok(runtime) => {
+                        this.runtime = runtime;
+                        this.controller = ControllerState::Disconnected;
+                        this.live_generation = this.live_generation.wrapping_add(1);
+                        this.live_runtime = None;
+                        this.proxy_mode = ProxyMode::Off;
+                        this.status = if language == Language::English {
+                            format!(
+                                "Switched to {} · configuration valid; connect to start",
+                                requested.display_name()
+                            )
+                        } else {
+                            format!(
+                                "已切换到 {} · 配置校验通过，点击连接启动",
+                                requested.display_name()
+                            )
+                        };
+                    }
+                    Err(message) => {
+                        this.status = if language == Language::English {
+                            format!(
+                                "Could not switch to {}: {message}",
+                                requested.display_name()
+                            )
+                        } else {
+                            format!("无法切换到 {}：{message}", requested.display_name())
+                        };
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn connect_mihomo(&mut self, cx: &mut Context<Self>) {
+        if matches!(self.controller, ControllerState::Connecting { .. }) {
+            return;
+        }
+
+        let language = self.language();
+        let operation = begin_operation(
+            "kernel.connect.requested",
+            format!(
+                "kernel={} profile={} endpoint={}",
+                self.runtime.kind().display_name(),
+                self.runtime.profile_source().label(),
+                self.runtime.endpoint_label()
+            ),
+        );
+        self.live_generation = self.live_generation.wrapping_add(1);
+        self.live_runtime = None;
+        self.live_status = LiveStreamStatus {
+            activity: language.text("Reconnecting", "正在重新连接").to_owned(),
+            logs: language.text("Reconnecting", "正在重新连接").to_owned(),
+        };
+
+        let endpoint = self.runtime.endpoint_label();
+        let kernel_name = self.runtime.kind().display_name();
+        let runtime = self.runtime.clone();
+        self.controller = ControllerState::Connecting {
+            endpoint: endpoint.clone(),
+        };
+        self.status = if language == Language::English {
+            format!("Loading {kernel_name} data from {endpoint}")
+        } else {
+            format!("正在从 {endpoint} 读取 {kernel_name} 数据")
+        };
+        trace_ui(UiEvent::MihomoConnectStarted);
+
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let result = executor.spawn(async move { runtime.connect() }).await;
+            this.update(cx, |this, cx| {
+                let language = this.language();
+                match result {
+                    Ok(result) => {
+                        record_operation(
+                            operation,
+                            LogLevel::Info,
+                            "kernel.connect.succeeded",
+                            format!("endpoint={}", result.controller_endpoint),
+                        );
+                        let controller_endpoint = result.controller_endpoint;
+                        let controller_secret = result.controller_secret;
+                        this.apply_mihomo_snapshot(result.endpoint, result.snapshot);
+                        this.start_live_runtime(
+                            &controller_endpoint,
+                            controller_secret.as_deref(),
+                            cx,
+                        );
+                        this.sync_saved_node_selections(cx);
+                        this.start_pending_policy_benchmark(cx);
+                    }
+                    Err(error) => {
+                        this.pending_policy_benchmark_name = None;
+                        record_operation(
+                            operation,
+                            LogLevel::Error,
+                            "kernel.connect.failed",
+                            error.to_string(),
+                        );
+                        trace_ui(UiEvent::MihomoConnectFailed);
+                        let endpoint = this
+                            .controller
+                            .endpoint()
+                            .unwrap_or(language.text("Local controller", "本地控制器"))
+                            .to_owned();
+                        let message = error.to_string();
+                        this.controller = ControllerState::Failed {
+                            endpoint,
+                            message: message.clone(),
+                        };
+                        this.status = if language == Language::English {
+                            format!("{kernel_name} connection failed: {message}")
+                        } else {
+                            format!("{kernel_name} 连接失败：{message}")
+                        };
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn start_pending_policy_benchmark(&mut self, cx: &mut Context<Self>) {
+        let Some(policy_name) = self.pending_policy_benchmark_name.take() else {
+            return;
+        };
+        let Some(policy_id) = self
+            .policy_groups()
+            .find(|group| group.name == policy_name)
+            .map(|group| group.id.clone())
+        else {
+            self.status = if self.language() == Language::English {
+                format!("Policy group “{policy_name}” is not present in the active kernel")
+            } else {
+                format!("当前内核中没有策略组“{policy_name}”")
+            };
+            cx.notify();
+            return;
+        };
+        self.expanded_policy_group = Some(policy_id.clone());
+        self.start_policy_group_benchmark(&policy_id, cx);
+    }
+
+    fn apply_mihomo_snapshot(&mut self, endpoint: String, snapshot: LoadedSnapshot) {
+        trace_ui(UiEvent::MihomoConnectSucceeded);
+        let mut catalog = snapshot.catalog;
+        if let Some(global) = self.node_selection_preferences.global() {
+            let _ = catalog.apply_selector_target("GLOBAL", &global.node_name);
+        }
+        for (group, target) in self.node_selection_preferences.iter_policy_targets() {
+            let _ = catalog.apply_selector_target(group, target);
+        }
+        let primary = catalog.select(None);
+        let group = primary.id.clone();
+        let selected_node = primary
+            .nodes
+            .iter()
+            .find(|node| node.name == primary.target)
+            .or_else(|| primary.nodes.first())
+            .map(|node| node.id.clone());
+        let policy_group_count = catalog.iter().count();
+        self.catalog = Some(catalog);
+        self.workspace
+            .replace_source_selection(group, selected_node);
+        self.source_providers = snapshot.providers;
+        self.observed_routes = snapshot.observed_routes;
+        self.active_connections = snapshot.connections;
+        let system_proxy_applied = self
+            .system_proxy
+            .lock()
+            .is_ok_and(|system| system.is_applied());
+        self.proxy_mode = if snapshot.runtime.tun.enable {
+            ProxyMode::Tun
+        } else if system_proxy_applied {
+            ProxyMode::System
+        } else {
+            ProxyMode::Off
+        };
+        self.routing_mode = snapshot.runtime.mode;
+        self.proxy_runtime = snapshot.runtime;
+        self.status = if self.language() == Language::English {
+            format!(
+                "Loaded {} policy groups · {} active connections",
+                policy_group_count, snapshot.active_connections
+            )
+        } else {
+            format!(
+                "已读取 {} 个策略组 · {} 条活动连接",
+                policy_group_count, snapshot.active_connections
+            )
+        };
+        self.controller = ControllerState::Connected {
+            endpoint,
+            version: snapshot.version,
+            active_connections: snapshot.active_connections,
+            download_total: snapshot.download_total,
+            upload_total: snapshot.upload_total,
+        };
+    }
+
+    fn sync_saved_node_selections(&mut self, cx: &mut Context<Self>) {
+        if !matches!(&*self.runtime, ControllerRuntime::Managed { .. })
+            || !matches!(self.controller, ControllerState::Connected { .. })
+        {
+            return;
+        }
+        let mut targets = Vec::new();
+        if let Some(global) = self.node_selection_preferences.global() {
+            targets.push(("GLOBAL".to_owned(), global.node_name.clone()));
+        }
+        targets.extend(self.policy_groups().filter_map(|group| {
+            if !group.kind.allows_manual_selection() || group.name.eq_ignore_ascii_case("GLOBAL") {
+                return None;
+            }
+            self.node_selection_preferences
+                .policy_target(&group.name)
+                .map(|target| (group.name.clone(), target.to_owned()))
+        }));
+        if targets.is_empty() {
+            return;
+        }
+
+        let runtime = self.runtime.clone();
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let results = executor
+                .spawn(async move {
+                    targets
+                        .into_iter()
+                        .map(|(group, target)| {
+                            let result = if group.eq_ignore_ascii_case("GLOBAL") {
+                                runtime.select_global_node(&target)
+                            } else {
+                                runtime.select_policy_candidate(&group, &target)
+                            };
+                            (group, target, result)
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                let mut applied = 0usize;
+                let mut failed = 0usize;
+                for (group, requested, result) in results {
+                    match result {
+                        Ok(snapshot) => {
+                            let current = snapshot.current.as_deref().unwrap_or(&requested);
+                            if let Some(catalog) = this.catalog.as_mut() {
+                                let _ = catalog.apply_selector_target(&group, current);
+                            }
+                            if let Some(stored_group) = this
+                                .managed_policy_groups
+                                .iter()
+                                .find(|candidate| candidate.name == group)
+                            {
+                                this.managed_policy_runtime_generation =
+                                    this.managed_policy_runtime_generation.wrapping_add(1);
+                                this.managed_policy_runtime_states.insert(
+                                    stored_group.id.clone(),
+                                    ManagedPolicyRuntimeState::Ready {
+                                        generation: this.managed_policy_runtime_generation,
+                                        current: snapshot.current,
+                                        candidates: snapshot.candidates,
+                                    },
+                                );
+                            }
+                            record_event(
+                                LogLevel::Info,
+                                "node.selection.restored",
+                                format!("group={group}"),
+                            );
+                            applied += 1;
+                        }
+                        Err(error) => {
+                            record_event(
+                                LogLevel::Warn,
+                                "node.selection.restore_failed",
+                                format!("group={group} error={error}"),
+                            );
+                            failed += 1;
+                        }
+                    }
+                }
+                if applied > 0 || failed > 0 {
+                    this.status = if this.language() == Language::English {
+                        format!(
+                            "Restored {applied} saved node selections · {failed} could not be applied"
+                        )
+                    } else {
+                        format!("已恢复 {applied} 个节点选择 · {failed} 个暂时无法应用")
+                    };
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn start_policy_group_benchmark(
+        &mut self,
+        id: &manis_core::PolicyGroupId,
+        cx: &mut Context<Self>,
+    ) {
+        let language = self.language();
+        if !matches!(self.controller, ControllerState::Connected { .. }) {
+            language
+                .text(
+                    "Connect to the kernel before testing a live policy group",
+                    "请先连接内核，再测试真实策略组",
+                )
+                .clone_into(&mut self.status);
+            cx.notify();
+            return;
+        }
+        let Some(group) = self.policy_groups().find(|group| group.id == *id).cloned() else {
+            return;
+        };
+        let key = Self::policy_group_benchmark_key(&group.id);
+        if matches!(
+            self.group_benchmarks.get(&key),
+            Some(GroupBenchmarkState::Running { .. })
+        ) {
+            return;
+        }
+        let candidate_names = group
+            .nodes
+            .iter()
+            .map(|node| node.name.clone())
+            .collect::<Vec<_>>();
+        if candidate_names.is_empty() {
+            language
+                .text(
+                    "This policy group has no testable candidates",
+                    "当前策略组没有可测速候选项",
+                )
+                .clone_into(&mut self.status);
+            cx.notify();
+            return;
+        }
+        let Some(generation) = self.begin_group_benchmark(key.clone()) else {
+            language
+                .text(
+                    "Another group is being tested; wait for it to finish",
+                    "已有分组正在测速，请等待完成后再试",
+                )
+                .clone_into(&mut self.status);
+            cx.notify();
+            return;
+        };
+        self.status = if language == Language::English {
+            format!(
+                "Testing {} candidates in policy group “{}”",
+                candidate_names.len(),
+                group.name
+            )
+        } else {
+            format!(
+                "正在测试策略组“{}”的 {} 个候选项",
+                group.name,
+                candidate_names.len()
+            )
+        };
+        trace_ui(UiEvent::GroupBenchmarkStarted);
+
+        let runtime = self.runtime.clone();
+        let group_id = group.id.clone();
+        let group_name = group.name.clone();
+        let group_kind = group.kind;
+        let total = candidate_names.len();
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let result = executor
+                .spawn(async move {
+                    if group_kind == manis_core::PolicyGroupKind::Direct {
+                        runtime
+                            .test_proxy_candidates_delay(&group_name, &candidate_names)
+                            .map(|delays| mihomo::PolicyGroupBenchmarkSnapshot {
+                                delays,
+                                current: None,
+                            })
+                    } else {
+                        runtime.test_policy_group_delay(&group_name, &candidate_names)
+                    }
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                let language = this.language();
+                if this.group_benchmark_active_generation != Some(generation) {
+                    return;
+                }
+                this.group_benchmark_active_generation = None;
+                let (delays, current, failure) = match result {
+                    Ok(snapshot) => (Some(snapshot.delays), snapshot.current, None),
+                    Err(error) => (None, None, Some(error.to_string())),
+                };
+                if let Some(delays) = delays.as_ref()
+                    && let Some(catalog) = this.catalog.as_mut()
+                {
+                    let _ = catalog.apply_group_benchmark(&group_id, current.as_deref(), delays);
+                }
+                let Some(state) = this.group_benchmarks.get_mut(&key) else {
+                    cx.notify();
+                    return;
+                };
+                let accepted = match delays {
+                    Some(delays) => state.complete(generation, total, delays),
+                    None => state.fail(generation),
+                };
+                if !accepted {
+                    return;
+                }
+                match state {
+                    GroupBenchmarkState::Complete { summary, .. } => {
+                        trace_ui(UiEvent::GroupBenchmarkSucceeded);
+                        this.status = Self::policy_benchmark_status(
+                            language,
+                            group_kind,
+                            current.as_deref(),
+                            *summary,
+                        );
+                    }
+                    GroupBenchmarkState::Failed { .. } => {
+                        trace_ui(UiEvent::GroupBenchmarkFailed);
+                        this.status = format!(
+                            "{}：{}",
+                            language.text("Policy benchmark failed", "策略组测速失败"),
+                            failure.as_deref().unwrap_or_else(
+                                || language.text("unknown controller error", "未知控制器错误")
+                            )
+                        );
+                    }
+                    _ => return,
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn start_live_runtime(
+        &mut self,
+        endpoint: &str,
+        controller_secret: Option<&str>,
+        cx: &mut Context<Self>,
+    ) {
+        let language = self.language();
+        self.live_generation = self.live_generation.wrapping_add(1);
+        let generation = self.live_generation;
+        self.managed_health_tick = 0;
+        self.live_runtime = match LiveRuntimeSession::start(endpoint, controller_secret) {
+            Ok(session) => Some(session),
+            Err(error) => {
+                self.live_status = LiveStreamStatus {
+                    activity: format!(
+                        "{}{error}",
+                        language.text("Could not start: ", "无法启动：")
+                    ),
+                    logs: format!(
+                        "{}{error}",
+                        language.text("Could not start: ", "无法启动：")
+                    ),
+                };
+                None
+            }
+        };
+        if self.live_runtime.is_some() {
+            self.poll_live_runtime(generation, cx);
+        }
+    }
+
+    fn poll_live_runtime(&mut self, generation: u64, cx: &mut Context<Self>) {
+        if generation != self.live_generation {
+            return;
+        }
+        self.managed_health_tick = self.managed_health_tick.wrapping_add(1);
+        if self.managed_health_tick >= 10 {
+            self.managed_health_tick = 0;
+            if self.fail_safe_stopped_managed_kernel(cx) {
+                return;
+            }
+        }
+        let Some(session) = self.live_runtime.as_ref() else {
+            return;
+        };
+        let update = session.drain();
+        self.live_status = update.status;
+        self.dropped_kernel_logs = self.dropped_kernel_logs.saturating_add(update.dropped_logs);
+        for entry in update.logs {
+            if self.kernel_logs.len() == 500 {
+                self.kernel_logs.pop_front();
+                self.dropped_kernel_logs = self.dropped_kernel_logs.saturating_add(1);
+            }
+            self.kernel_logs.push_back(entry);
+        }
+        if let Some(connections) = update.connections {
+            self.active_connections = connections.connections;
+            if let ControllerState::Connected {
+                active_connections,
+                download_total,
+                upload_total,
+                ..
+            } = &mut self.controller
+            {
+                *active_connections = self.active_connections.len();
+                *download_total = connections.download_total;
+                *upload_total = connections.upload_total;
+            }
+        }
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(400))
+                .await;
+            if let Some(this) = this.upgrade() {
+                this.update(cx, |this, cx| this.poll_live_runtime(generation, cx));
+            }
+        })
+        .detach();
+    }
+
+    fn fail_safe_stopped_managed_kernel(&mut self, cx: &mut Context<Self>) -> bool {
+        let failure = match self.runtime.managed_health() {
+            Ok(ManagedRuntimeHealth::NotManaged | ManagedRuntimeHealth::Running) => return false,
+            Ok(ManagedRuntimeHealth::Stopped) => self
+                .language()
+                .text(
+                    "The Manis-managed kernel stopped unexpectedly",
+                    "Manis 托管内核已意外停止",
+                )
+                .to_owned(),
+            Err(error) => error.to_string(),
+        };
+
+        let language = self.language();
+        let mut recovery_error = None;
+        let was_system_proxy = self.proxy_mode == ProxyMode::System;
+        if was_system_proxy {
+            match self.system_proxy.lock() {
+                Ok(mut system) => {
+                    if let Err(error) = system.disable_with_language(language) {
+                        recovery_error = Some(error.to_string());
+                    } else {
+                        self.proxy_mode = ProxyMode::Off;
+                    }
+                }
+                Err(_poisoned) => {
+                    recovery_error = Some(
+                        language
+                            .text(
+                                "system proxy state lock was damaged",
+                                "系统代理状态锁已损坏",
+                            )
+                            .to_owned(),
+                    );
+                }
+            }
+        } else if self.proxy_mode == ProxyMode::Tun {
+            match self.tun_dns.lock() {
+                Ok(mut dns) => match dns.disable_with_language(language) {
+                    Ok(()) => self.proxy_mode = ProxyMode::Off,
+                    Err(error) => recovery_error = Some(error.to_string()),
+                },
+                Err(_poisoned) => {
+                    recovery_error = Some(
+                        language
+                            .text("TUN DNS state lock was damaged", "TUN DNS 状态锁已损坏")
+                            .to_owned(),
+                    );
+                }
+            }
+        }
+
+        self.live_generation = self.live_generation.wrapping_add(1);
+        self.live_runtime = None;
+        let endpoint = self.runtime.endpoint_label();
+        self.controller = ControllerState::Failed {
+            endpoint,
+            message: failure.clone(),
+        };
+        self.status = match recovery_error {
+            None if was_system_proxy => {
+                format!(
+                    "{}{}",
+                    failure,
+                    language.text(
+                        " · system proxy was restored; reconnect to restart the kernel",
+                        " · 系统代理已恢复；重新连接即可重启内核",
+                    )
+                )
+            }
+            None => format!(
+                "{}{}",
+                failure,
+                language.text(
+                    " · reconnect to restart the kernel",
+                    " · 重新连接即可重启内核",
+                )
+            ),
+            Some(recovery_error) => {
+                format!(
+                    "{}{}{}",
+                    failure,
+                    language.text(
+                        " · automatic system proxy recovery failed: ",
+                        " · 系统代理自动恢复失败：",
+                    ),
+                    recovery_error
+                )
+            }
+        };
+        cx.notify();
+        true
+    }
+
+    /// Reports why the requested proxy mode cannot be applied right now.
+    ///
+    /// The tray uses this to disable a menu item and explain itself instead of letting the user
+    /// click an entry that would silently fail.
+    pub(crate) fn proxy_mode_block(&self, requested: ProxyMode) -> Option<ProxyModeBlock> {
+        proxy_mode_block(
+            requested,
+            self.proxy_mode_busy,
+            if matches!(self.controller, ControllerState::Connected { .. }) {
+                ControllerReadiness::Connected
+            } else {
+                ControllerReadiness::Disconnected
+            },
+            if matches!(&*self.runtime, ControllerRuntime::External { .. }) {
+                TunSupport::ExternalControllerReadOnly
+            } else if self.runtime.capabilities().tun {
+                TunSupport::Supported
+            } else {
+                TunSupport::KernelUnsupported
+            },
+        )
+    }
+
+    /// Returns the proxy mode the tray shows as checked.
+    pub(crate) const fn active_proxy_mode(&self) -> ProxyMode {
+        self.proxy_mode
+    }
+
+    /// Applies the mode a checkable control stands for, clearing it when it is already active.
+    pub(crate) fn toggle_proxy_mode(&mut self, selected: ProxyMode, cx: &mut Context<Self>) {
+        self.apply_proxy_mode(self.proxy_mode.toggled(selected), cx);
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn apply_proxy_mode(&mut self, requested: ProxyMode, cx: &mut Context<Self>) {
+        let language = self.language();
+        let operation = begin_operation(
+            "proxy.mode.requested",
+            format!(
+                "from={:?} to={requested:?} controller_state={} profile={}",
+                self.proxy_mode,
+                controller_state_label(&self.controller),
+                self.runtime.profile_source().label()
+            ),
+        );
+        if self.proxy_mode_busy.is_some() || requested == self.proxy_mode {
+            record_operation(
+                operation,
+                LogLevel::Warn,
+                "proxy.mode.ignored",
+                format!(
+                    "busy={} already_selected={}",
+                    self.proxy_mode_busy.is_some(),
+                    requested == self.proxy_mode
+                ),
+            );
+            return;
+        }
+        if !matches!(self.controller, ControllerState::Connected { .. }) {
+            record_operation(
+                operation,
+                LogLevel::Error,
+                "proxy.mode.rejected",
+                "reason=controller_not_connected",
+            );
+            trace_ui(UiEvent::ProxyModeFailed);
+            self.status = format!(
+                "{} {}",
+                language.text(
+                    "Connect before changing proxy mode:",
+                    "请先连接后再切换代理模式："
+                ),
+                self.runtime.kind().display_name(),
+            );
+            cx.notify();
+            return;
+        }
+        if requested == ProxyMode::Tun && !self.runtime.capabilities().tun {
+            record_operation(
+                operation,
+                LogLevel::Error,
+                "proxy.mode.rejected",
+                "reason=kernel_has_no_tun_capability",
+            );
+            trace_ui(UiEvent::ProxyModeFailed);
+            language.text(
+                "TUN is not yet available for the sing-box adapter; use the system HTTP/SOCKS proxy",
+                "当前 sing-box 适配器尚未开放 TUN；可使用系统 HTTP/SOCKS 代理",
+            )
+                .clone_into(&mut self.status);
+            cx.notify();
+            return;
+        }
+        if requested == ProxyMode::Tun
+            && matches!(&*self.runtime, ControllerRuntime::External { .. })
+        {
+            record_operation(
+                operation,
+                LogLevel::Error,
+                "proxy.mode.rejected",
+                "reason=external_controller_read_only",
+            );
+            trace_ui(UiEvent::ProxyModeFailed);
+            language
+                .text(
+                    "External controllers are read-only; use a Manis-managed kernel to enable TUN",
+                    "外部控制器保持只读；请使用 Manis 托管内核启用 TUN 模式",
+                )
+                .clone_into(&mut self.status);
+            cx.notify();
+            return;
+        }
+
+        let runtime = self.runtime.clone();
+        let system_proxy = self.system_proxy.clone();
+        let tun_dns = self.tun_dns.clone();
+        let previous = self.proxy_mode;
+        let mixed_port = self.proxy_runtime.mixed_port.filter(|port| *port > 0);
+        let ports = ProxyPorts {
+            http: self
+                .proxy_runtime
+                .port
+                .filter(|port| *port > 0)
+                .or(mixed_port),
+            socks: self
+                .proxy_runtime
+                .socks_port
+                .filter(|port| *port > 0)
+                .or(mixed_port),
+        };
+        self.proxy_mode_busy = Some(requested);
+        self.status = match requested {
+            ProxyMode::Tun => language
+                .text(
+                    "Preparing the macOS TUN helper and traffic route…",
+                    "正在准备 macOS TUN 辅助服务与流量接管…",
+                )
+                .to_owned(),
+            _ => format!(
+                "{}{}…",
+                language.text("Switching to ", "正在切换到"),
+                proxy_mode_label(language, requested)
+            ),
+        };
+
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let result = executor
+                .spawn(async move {
+                    let mut system = system_proxy
+                        .lock()
+                        .map_err(|_| "系统代理状态锁已损坏".to_owned())?;
+                    let mut dns = tun_dns
+                        .lock()
+                        .map_err(|_| "TUN DNS 状态锁已损坏".to_owned())?;
+                    match (previous, requested) {
+                        (ProxyMode::System, ProxyMode::Off) => {
+                            system
+                                .disable_with_language(language)
+                                .map_err(|error| error.to_string())?;
+                        }
+                        (ProxyMode::Tun, ProxyMode::Off) => {
+                            disable_tun_with_dns(&runtime, &mut dns, language)?;
+                        }
+                        (ProxyMode::Off, ProxyMode::System) => {
+                            system
+                                .enable_with_language(ports, language)
+                                .map_err(|error| error.to_string())?;
+                        }
+                        (ProxyMode::Tun, ProxyMode::System) => {
+                            disable_tun_with_dns(&runtime, &mut dns, language)?;
+                            if let Err(error) = system.enable_with_language(ports, language) {
+                                let rollback = enable_tun_with_dns(&runtime, &mut dns, language);
+                                return Err(match rollback {
+                                    Ok(()) => error.to_string(),
+                                    Err(rollback) => {
+                                        format!("{error}；恢复原 TUN 模式也失败：{rollback}")
+                                    }
+                                });
+                            }
+                        }
+                        (ProxyMode::Off, ProxyMode::Tun) => {
+                            enable_tun_with_dns(&runtime, &mut dns, language)?;
+                        }
+                        (ProxyMode::System, ProxyMode::Tun) => {
+                            system
+                                .disable_with_language(language)
+                                .map_err(|error| error.to_string())?;
+                            if let Err(error) = enable_tun_with_dns(&runtime, &mut dns, language) {
+                                let rollback = system.enable_with_language(ports, language);
+                                return Err(match rollback {
+                                    Ok(()) => error.clone(),
+                                    Err(rollback) => {
+                                        format!("{error}；恢复原系统代理也失败：{rollback}")
+                                    }
+                                });
+                            }
+                        }
+                        _ => {}
+                    }
+                    Ok::<(), String>(())
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                let language = this.language();
+                this.proxy_mode_busy = None;
+                match result {
+                    Ok(()) => {
+                        record_operation(
+                            operation,
+                            LogLevel::Info,
+                            "proxy.mode.succeeded",
+                            format!("active={requested:?}"),
+                        );
+                        this.proxy_mode = requested;
+                        match requested {
+                            ProxyMode::Off => trace_ui(UiEvent::SystemProxyDisabled),
+                            ProxyMode::System => trace_ui(UiEvent::SystemProxyEnabled),
+                            ProxyMode::Tun => trace_ui(UiEvent::TunProxyEnabled),
+                        }
+                        this.status = format!(
+                            "{}{}",
+                            proxy_mode_label(language, requested),
+                            language.text(" enabled", "已生效")
+                        );
+                    }
+                    Err(message) => {
+                        record_operation(
+                            operation,
+                            LogLevel::Error,
+                            "proxy.mode.failed",
+                            message.clone(),
+                        );
+                        trace_ui(UiEvent::ProxyModeFailed);
+                        this.status = format!(
+                            "{}{message}",
+                            language.text("Failed to change proxy mode: ", "代理模式切换失败：")
+                        );
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn apply_routing_mode(&mut self, requested: RoutingMode, cx: &mut Context<Self>) {
+        let language = self.language();
+        let operation = begin_operation(
+            "routing.mode.requested",
+            format!(
+                "from={:?} to={requested:?} controller_state={} profile={}",
+                self.routing_mode,
+                controller_state_label(&self.controller),
+                self.runtime.profile_source().label()
+            ),
+        );
+        if self.routing_mode_busy.is_some() || requested == self.routing_mode {
+            record_operation(
+                operation,
+                LogLevel::Warn,
+                "routing.mode.ignored",
+                format!(
+                    "busy={} already_selected={}",
+                    self.routing_mode_busy.is_some(),
+                    requested == self.routing_mode
+                ),
+            );
+            return;
+        }
+        if !matches!(self.controller, ControllerState::Connected { .. }) {
+            record_operation(
+                operation,
+                LogLevel::Error,
+                "routing.mode.rejected",
+                "reason=controller_not_connected",
+            );
+            trace_ui(UiEvent::RoutingModeFailed);
+            language
+                .text(
+                    "Connect to the kernel before changing routing mode",
+                    "请先连接内核，再切换路由模式",
+                )
+                .clone_into(&mut self.status);
+            cx.notify();
+            return;
+        }
+        if matches!(&*self.runtime, ControllerRuntime::External { .. }) {
+            record_operation(
+                operation,
+                LogLevel::Error,
+                "routing.mode.rejected",
+                "reason=external_controller_read_only",
+            );
+            trace_ui(UiEvent::RoutingModeFailed);
+            language.text(
+                "External controllers are read-only; use a Manis-managed kernel to change routing mode",
+                "外部控制器保持只读；请使用 Manis 托管内核切换路由模式",
+            ).clone_into(&mut self.status);
+            cx.notify();
+            return;
+        }
+
+        self.routing_mode_busy = Some(requested);
+        self.status = format!(
+            "{}{}…",
+            language.text("Switching to ", "正在切换到"),
+            routing_mode_label(language, requested)
+        );
+        let runtime = self.runtime.clone();
+        let store_dir = self.subscription_store_dir.clone();
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let result = executor
+                .spawn(async move {
+                    runtime.set_routing_mode(requested)?;
+                    let persistence = store_dir
+                        .as_deref()
+                        .map(|directory| mihomo::save_routing_mode_in(directory, requested))
+                        .transpose();
+                    Ok::<_, mihomo::LoadError>(persistence)
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                let language = this.language();
+                this.routing_mode_busy = None;
+                match result {
+                    Ok(persistence) => {
+                        record_operation(
+                            operation,
+                            LogLevel::Info,
+                            "routing.mode.succeeded",
+                            format!("active={requested:?} persisted={}", persistence.is_ok()),
+                        );
+                        this.routing_mode = requested;
+                        this.proxy_runtime.mode = requested;
+                        trace_ui(UiEvent::RoutingModeChanged);
+                        this.status = match requested {
+                            RoutingMode::Global => this.global_target().map_or_else(
+                                || {
+                                    language.text(
+                                    "Global mode enabled; choose the global exit on the Nodes page",
+                                    "全局模式已生效；请在节点页选择全局出口",
+                                ).to_owned()
+                                },
+                                |target| {
+                                    if language == Language::English {
+                                        format!("Global mode enabled · current exit {target}")
+                                    } else {
+                                        format!("全局模式已生效 · 当前出口 {target}")
+                                    }
+                                },
+                            ),
+                            _ => format!(
+                                "{}{}",
+                                routing_mode_label(language, requested),
+                                language.text(" enabled", "已生效")
+                            ),
+                        };
+                        if persistence.is_err() {
+                            this.status.push_str(language.text(
+                                " · restart preference could not be saved",
+                                " · 但未能保存重启偏好",
+                            ));
+                        }
+                    }
+                    Err(error) => {
+                        record_operation(
+                            operation,
+                            LogLevel::Error,
+                            "routing.mode.failed",
+                            error.to_string(),
+                        );
+                        trace_ui(UiEvent::RoutingModeFailed);
+                        this.status = format!(
+                            "{}{error}",
+                            language.text("Failed to change routing mode: ", "路由模式切换失败：")
+                        );
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn select_global_node(&mut self, selected: NodeIdentity, cx: &mut Context<Self>) {
+        let language = self.language();
+        let selected_name = selected.node_name.clone();
+        let operation = begin_operation(
+            "global.node.requested",
+            format!(
+                "controller_state={} profile={} candidate_selected=true",
+                controller_state_label(&self.controller),
+                self.runtime.profile_source().label()
+            ),
+        );
+        if self.global_selection_busy.is_some() {
+            record_operation(
+                operation,
+                LogLevel::Warn,
+                "global.node.ignored",
+                "reason=selection_busy",
+            );
+            return;
+        }
+        let previous = self.node_selection_preferences.clone();
+        self.node_selection_preferences.set_global(selected);
+        if let Some(directory) = self.subscription_store_dir.as_deref()
+            && let Err(error) = mihomo::save_node_selection_preferences_in(
+                directory,
+                &self.node_selection_preferences,
+            )
+        {
+            self.node_selection_preferences = previous;
+            record_operation(
+                operation,
+                LogLevel::Error,
+                "global.node.persistence_failed",
+                error.to_string(),
+            );
+            trace_ui(UiEvent::GlobalNodeSelectionFailed);
+            self.status = format!(
+                "{}{error}",
+                language.text("Could not save the global node: ", "无法保存全局节点：")
+            );
+            cx.notify();
+            return;
+        }
+        if let Some(catalog) = self.catalog.as_mut() {
+            let _ = catalog.apply_selector_target("GLOBAL", &selected_name);
+        }
+        record_operation(
+            operation,
+            LogLevel::Info,
+            "global.node.saved",
+            "saved_to_workspace=true",
+        );
+        trace_ui(UiEvent::GlobalNodeSelected);
+
+        let can_apply_now = matches!(self.controller, ControllerState::Connected { .. })
+            && matches!(&*self.runtime, ControllerRuntime::Managed { .. });
+        if !can_apply_now {
+            record_operation(
+                operation,
+                LogLevel::Info,
+                "global.node.deferred",
+                "reason=managed_controller_not_connected",
+            );
+            self.status = if language == Language::English {
+                format!("Saved global exit “{selected_name}”; it applies in Global mode")
+            } else {
+                format!("已保存全局出口“{selected_name}”；全局模式将使用此节点")
+            };
+            cx.notify();
+            return;
+        }
+
+        self.global_selection_busy = Some(selected_name.clone());
+        self.status = if language == Language::English {
+            format!("Selecting global node “{selected_name}”…")
+        } else {
+            format!("正在选择全局节点“{selected_name}”…")
+        };
+        let runtime = self.runtime.clone();
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let result = executor
+                .spawn({
+                    let selected_name = selected_name.clone();
+                    async move { runtime.select_global_node(&selected_name) }
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                let language = this.language();
+                this.global_selection_busy = None;
+                match result {
+                    Ok(snapshot) => {
+                        record_operation(
+                            operation,
+                            LogLevel::Info,
+                            "global.node.succeeded",
+                            "global selector confirmed target",
+                        );
+                        let current = snapshot.current.as_deref().unwrap_or(&selected_name);
+                        if let Some(catalog) = this.catalog.as_mut() {
+                            let _ = catalog.apply_selector_target("GLOBAL", current);
+                        }
+                        trace_ui(UiEvent::GlobalNodeSelected);
+                        this.status = if language == Language::English {
+                            if this.routing_mode == RoutingMode::Global {
+                                format!("Global exit switched to “{current}”")
+                            } else {
+                                format!("Saved global exit “{current}”; it applies in Global mode")
+                            }
+                        } else if this.routing_mode == RoutingMode::Global {
+                            format!("全局出口已切换到“{current}”")
+                        } else {
+                            format!("已保存全局出口“{current}”；切换到全局模式后生效")
+                        };
+                    }
+                    Err(error) => {
+                        record_operation(
+                            operation,
+                            LogLevel::Error,
+                            "global.node.failed",
+                            error.to_string(),
+                        );
+                        this.status = if language == Language::English {
+                            format!(
+                                "Saved global exit “{selected_name}”, but it could not be applied now: {error}"
+                            )
+                        } else {
+                            format!(
+                                "已保存全局出口“{selected_name}”，但暂时无法应用：{error}"
+                            )
+                        };
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+    fn select_policy_node(
+        &mut self,
+        group_id: PolicyGroupId,
+        group_name: String,
+        node_id: ProxyId,
+        node_name: String,
+        cx: &mut Context<Self>,
+    ) {
+        let language = self.language();
+        let operation = begin_operation(
+            "policy.node.requested",
+            format!("group={group_name} candidate_selected=true"),
+        );
+        if self.policy_selection_busy.is_some() {
+            record_operation(
+                operation,
+                LogLevel::Warn,
+                "policy.node.ignored",
+                "reason=selection_busy",
+            );
+            return;
+        }
+        let stored_group = self
+            .managed_policy_groups
+            .iter()
+            .find(|group| group.id == group_id.as_str() || group.name == group_name);
+        if !matches!(self.controller, ControllerState::Connected { .. }) && stored_group.is_none() {
+            record_operation(
+                operation,
+                LogLevel::Warn,
+                "policy.node.rejected",
+                "reason=runtime_policy_unavailable",
+            );
+            language
+                .text(
+                    "Connect the kernel before selecting a runtime policy node.",
+                    "请先连接内核，再选择真实策略组节点。",
+                )
+                .clone_into(&mut self.status);
+            cx.notify();
+            return;
+        }
+        let catalog_allows = self
+            .policy_groups()
+            .find(|group| group.id == group_id || group.name == group_name)
+            .map(|group| {
+                group.kind.allows_manual_selection()
+                    && group.nodes.iter().any(|node| node.name == node_name)
+            });
+        let stored_group_allows = stored_group.map(|group| {
+            group.strategy == ManagedPolicyStrategy::Manual
+                && self
+                    .managed_policy_candidate_names(group)
+                    .iter()
+                    .any(|candidate| candidate == &node_name)
+        });
+        if !policy_target_is_selectable(
+            matches!(self.controller, ControllerState::Connected { .. }),
+            catalog_allows,
+            stored_group_allows,
+        ) {
+            record_operation(
+                operation,
+                LogLevel::Error,
+                "policy.node.rejected",
+                "reason=not_manual_candidate",
+            );
+            language
+                .text(
+                    "Only a candidate inside a manual policy can be selected",
+                    "只能选择手动策略组中的候选节点",
+                )
+                .clone_into(&mut self.status);
+            cx.notify();
+            return;
+        }
+
+        let previous = self.node_selection_preferences.clone();
+        if let Err(error) = self
+            .node_selection_preferences
+            .set_policy_target(group_name.clone(), node_name.clone())
+        {
+            record_operation(
+                operation,
+                LogLevel::Error,
+                "policy.node.rejected",
+                error.to_string(),
+            );
+            language
+                .text(
+                    "This policy selection cannot be saved",
+                    "无法保存这个策略组选择",
+                )
+                .clone_into(&mut self.status);
+            cx.notify();
+            return;
+        }
+        if let Some(directory) = self.subscription_store_dir.as_deref()
+            && let Err(error) = mihomo::save_node_selection_preferences_in(
+                directory,
+                &self.node_selection_preferences,
+            )
+        {
+            self.node_selection_preferences = previous;
+            record_operation(
+                operation,
+                LogLevel::Error,
+                "policy.node.persistence_failed",
+                error.to_string(),
+            );
+            self.status = format!(
+                "{}{error}",
+                language.text(
+                    "Could not save the policy selection: ",
+                    "无法保存策略组选择："
+                )
+            );
+            cx.notify();
+            return;
+        }
+        let catalog_selection = self
+            .policy_groups()
+            .find(|group| group.name == group_name)
+            .and_then(|group| {
+                group
+                    .nodes
+                    .iter()
+                    .find(|node| node.name == node_name)
+                    .map(|node| (group.id.clone(), node.id.clone()))
+            });
+        if let Some(catalog) = self.catalog.as_mut() {
+            let _ = catalog.apply_selector_target(&group_name, &node_name);
+        }
+        if self.workspace.selected_group.as_ref() == Some(&group_id) {
+            self.workspace.select_node(node_id.clone());
+        } else if let Some((catalog_group_id, catalog_node_id)) = catalog_selection
+            && self.workspace.selected_group.as_ref() == Some(&catalog_group_id)
+        {
+            self.workspace.select_node(catalog_node_id);
+        }
+        record_operation(
+            operation,
+            LogLevel::Info,
+            "policy.node.saved",
+            format!("group={group_name}"),
+        );
+
+        let can_apply_now = matches!(self.controller, ControllerState::Connected { .. })
+            && matches!(&*self.runtime, ControllerRuntime::Managed { .. });
+        if !can_apply_now {
+            self.status = if language == Language::English {
+                format!(
+                    "Saved “{node_name}” for manual policy “{group_name}”; it will apply when the managed kernel connects"
+                )
+            } else {
+                format!("已为手动策略组“{group_name}”选择“{node_name}”；托管内核连接后生效")
+            };
+            cx.notify();
+            return;
+        }
+
+        if let Some((stored_group_id, candidates)) = self
+            .managed_policy_groups
+            .iter()
+            .find(|group| group.name == group_name)
+            .map(|group| {
+                (
+                    group.id.clone(),
+                    self.managed_policy_candidate_names(group)
+                        .into_iter()
+                        .collect::<BTreeSet<_>>(),
+                )
+            })
+        {
+            self.managed_policy_runtime_generation =
+                self.managed_policy_runtime_generation.wrapping_add(1);
+            let generation = self.managed_policy_runtime_generation;
+            let state = self
+                .managed_policy_runtime_states
+                .entry(stored_group_id)
+                .or_default();
+            if !state.begin_selection(generation, &node_name) {
+                *state = ManagedPolicyRuntimeState::Selecting {
+                    generation,
+                    current: previous.policy_target(&group_name).map(str::to_owned),
+                    candidates,
+                    pending: node_name.clone(),
+                };
+            }
+        }
+        self.policy_selection_busy = Some(node_name.clone());
+        self.status = if language == Language::English {
+            format!("Setting “{group_name}” to “{node_name}”…")
+        } else {
+            format!("正在将“{group_name}”设为“{node_name}”…")
+        };
+        let runtime = self.runtime.clone();
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let result = executor
+                .spawn({
+                    let group_name = group_name.clone();
+                    let node_name = node_name.clone();
+                    async move { runtime.select_policy_candidate(&group_name, &node_name) }
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                this.policy_selection_busy = None;
+                match result {
+                    Ok(snapshot) => {
+                        let current = snapshot
+                            .current
+                            .clone()
+                            .unwrap_or_else(|| node_name.clone());
+                        if let Some(catalog) = this.catalog.as_mut() {
+                            let _ = catalog.apply_selector_target(&group_name, &current);
+                        }
+                        if this.workspace.selected_group.as_ref() == Some(&group_id) {
+                            this.workspace.select_node(node_id);
+                        }
+                        if let Some(stored_group) = this
+                            .managed_policy_groups
+                            .iter()
+                            .find(|group| group.name == group_name)
+                        {
+                            this.managed_policy_runtime_generation =
+                                this.managed_policy_runtime_generation.wrapping_add(1);
+                            this.managed_policy_runtime_states.insert(
+                                stored_group.id.clone(),
+                                ManagedPolicyRuntimeState::Ready {
+                                    generation: this.managed_policy_runtime_generation,
+                                    current: snapshot.current,
+                                    candidates: snapshot.candidates,
+                                },
+                            );
+                        }
+                        record_operation(
+                            operation,
+                            LogLevel::Info,
+                            "policy.node.succeeded",
+                            format!("group={group_name}"),
+                        );
+                        this.status = if this.language() == Language::English {
+                            format!(
+                                "“{group_name}” now uses “{current}” when a rule selects this policy"
+                            )
+                        } else {
+                            format!("规则命中“{group_name}”时将使用“{current}”")
+                        };
+                    }
+                    Err(error) => {
+                        record_operation(
+                            operation,
+                            LogLevel::Error,
+                            "policy.node.failed",
+                            error.to_string(),
+                        );
+                        this.status = if this.language() == Language::English {
+                            format!(
+                                "Saved “{node_name}” for “{group_name}”, but it could not be applied now: {error}"
+                            )
+                        } else {
+                            format!(
+                                "已为“{group_name}”保存“{node_name}”，但暂时无法应用：{error}"
+                            )
+                        };
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn global_target_identity(&self) -> Option<&NodeIdentity> {
+        self.node_selection_preferences.global()
+    }
+
+    fn global_target(&self) -> Option<&str> {
+        self.global_target_identity()
+            .map(|identity| identity.node_name.as_str())
+            .or_else(|| self.runtime_global_target())
+    }
+
+    fn runtime_global_target(&self) -> Option<&str> {
+        self.policy_groups()
+            .find(|group| group.name.eq_ignore_ascii_case("GLOBAL"))
+            .map(|group| group.target.as_str())
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn chrome(&self, theme: Theme, size_class: WindowSizeClass, cx: &mut Context<Self>) -> Div {
+        let compact = size_class == WindowSizeClass::Compact;
+        let language = self.language();
+        let theme_label = if self.dark {
+            language.text("Light", "浅色")
+        } else {
+            language.text("Dark", "深色")
+        };
+
+        div()
+            .h(px(48.0))
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .px_4()
+            .gap_3()
+            .bg(theme.surface_chrome)
+            .border_b_1()
+            .border_color(theme.outline_subtle)
+            .child(
+                div()
+                    .w(if compact { px(86.0) } else { px(220.0) })
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    .gap(if compact { px(8.0) } else { px(12.0) })
+                    .child(
+                        div()
+                            .w(if compact { px(14.0) } else { px(20.0) })
+                            .h(px(3.0))
+                            .bg(theme.route_trace),
+                    )
+                    .child(
+                        div()
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(theme.text_primary)
+                            .child(brand::PRODUCT_NAME),
+                    ),
+            )
+            .child(div().flex_1())
+            .child(
+                div()
+                    .id("theme-toggle")
+                    .role(Role::Button)
+                    .tab_stop(true)
+                    .focusable()
+                    .cursor_pointer()
+                    .h(px(34.0))
+                    .px_3()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(theme.outline_subtle)
+                    .bg(theme.surface_high)
+                    .flex()
+                    .items_center()
+                    .child(theme_label)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.dark = !this.dark;
+                        let language = this.language();
+                        if this.dark {
+                            trace_ui(UiEvent::ThemeDarkSelected);
+                            language.text("Dark theme enabled", "已切换到深色主题")
+                        } else {
+                            trace_ui(UiEvent::ThemeLightSelected);
+                            language.text("Light theme enabled", "已切换到浅色主题")
+                        }
+                        .clone_into(&mut this.status);
+                        cx.notify();
+                    })),
+            )
+            .child(self.proxy_control(theme, size_class != WindowSizeClass::Wide, cx))
+            .child(self.routing_control(theme, size_class != WindowSizeClass::Wide, cx))
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn proxy_control(&self, theme: Theme, compact: bool, cx: &mut Context<Self>) -> Stateful<Div> {
+        let language = self.language();
+        if compact {
+            let next = self.proxy_mode.next();
+            return div()
+                .id("proxy-mode-cycle")
+                .role(Role::Button)
+                .aria_label(language.text("Change proxy mode", "切换代理模式"))
+                .tab_stop(true)
+                .focusable()
+                .cursor_pointer()
+                .h(px(34.0))
+                .px_3()
+                .rounded_md()
+                .border_1()
+                .border_color(theme.outline_subtle)
+                .bg(theme.surface_high)
+                .text_color(theme.text_primary)
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(if let Some(requested) = self.proxy_mode_busy {
+                    match requested {
+                        ProxyMode::Tun => {
+                            language.text("Proxy · Preparing TUN…", "接入 · 正在准备 TUN…")
+                        }
+                        ProxyMode::System => {
+                            language.text("Proxy · Enabling system…", "接入 · 正在启用系统代理…")
+                        }
+                        ProxyMode::Off => language.text("Proxy · Turning off…", "接入 · 正在关闭…"),
+                    }
+                } else {
+                    match self.proxy_mode {
+                        ProxyMode::Off => language.text("Proxy · Off", "接入 · 关闭"),
+                        ProxyMode::System => language.text("Proxy · System", "接入 · 系统"),
+                        ProxyMode::Tun => language.text("Proxy · TUN", "接入 · TUN"),
+                    }
+                })
+                .when(self.proxy_mode_busy.is_none(), |control| {
+                    control.child(
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(theme.text_tertiary)
+                            .child("↻"),
+                    )
+                })
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.apply_proxy_mode(next, cx);
+                }));
+        }
+
+        let mut control = div()
+            .id("proxy-modes")
+            .h(px(34.0))
+            .p(px(2.0))
+            .rounded_md()
+            .border_1()
+            .border_color(theme.outline_subtle)
+            .bg(theme.surface_high)
+            .flex()
+            .items_center()
+            .child(
+                div()
+                    .px_2()
+                    .text_size(px(10.0))
+                    .text_color(theme.text_tertiary)
+                    .child(language.text("Proxy", "接入")),
+            );
+        for mode in [ProxyMode::Off, ProxyMode::System, ProxyMode::Tun] {
+            let selected = mode == self.proxy_mode;
+            let pending = self.proxy_mode_busy == Some(mode);
+            let interactive = self.proxy_mode_busy.is_none();
+            control = control.child(
+                div()
+                    .id(format!("proxy-mode-{mode:?}"))
+                    .role(Role::Button)
+                    .aria_label(proxy_mode_label(language, mode))
+                    .aria_toggled(if selected {
+                        Toggled::True
+                    } else {
+                        Toggled::False
+                    })
+                    .tab_stop(interactive)
+                    .focusable()
+                    .h_full()
+                    .px_3()
+                    .rounded_sm()
+                    .flex()
+                    .items_center()
+                    .text_size(px(11.0))
+                    .font_weight(if pending || selected {
+                        FontWeight::SEMIBOLD
+                    } else {
+                        FontWeight::NORMAL
+                    })
+                    .bg(if pending || selected {
+                        theme.action_primary
+                    } else {
+                        theme.surface_high
+                    })
+                    .text_color(if pending || selected {
+                        theme.action_on_primary
+                    } else {
+                        theme.text_secondary
+                    })
+                    .child(if pending {
+                        match mode {
+                            ProxyMode::Tun => language.text("Preparing TUN…", "准备 TUN…"),
+                            ProxyMode::System => language.text("Enabling…", "启用中…"),
+                            ProxyMode::Off => language.text("Turning off…", "关闭中…"),
+                        }
+                    } else {
+                        proxy_mode_label(language, mode)
+                    })
+                    .when(interactive, |button| {
+                        button.cursor_pointer().on_click(
+                            cx.listener(move |this, _, _, cx| this.apply_proxy_mode(mode, cx)),
+                        )
+                    }),
+            );
+        }
+        control
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn routing_control(
+        &self,
+        theme: Theme,
+        compact: bool,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let language = self.language();
+        if compact {
+            let next = match self.routing_mode {
+                RoutingMode::Direct => RoutingMode::Global,
+                RoutingMode::Global => RoutingMode::Rule,
+                RoutingMode::Rule => RoutingMode::Direct,
+            };
+            return div()
+                .id("routing-mode-cycle")
+                .role(Role::Button)
+                .aria_label(language.text("Change routing mode", "切换路由模式"))
+                .tab_stop(true)
+                .focusable()
+                .cursor_pointer()
+                .h(px(34.0))
+                .px_3()
+                .rounded_md()
+                .border_1()
+                .border_color(theme.outline_subtle)
+                .bg(theme.surface_high)
+                .text_color(theme.text_primary)
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(if self.routing_mode_busy.is_some() {
+                    language.text("Routing · Switching…", "路由 · 切换中…")
+                } else {
+                    match self.routing_mode {
+                        RoutingMode::Direct => language.text("Routing · Direct", "路由 · 直连"),
+                        RoutingMode::Global => language.text("Routing · Global", "路由 · 全局"),
+                        RoutingMode::Rule => language.text("Routing · Rules", "路由 · 规则"),
+                    }
+                })
+                .when(self.routing_mode_busy.is_none(), |control| {
+                    control.child(
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(theme.text_tertiary)
+                            .child("↻"),
+                    )
+                })
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.apply_routing_mode(next, cx);
+                }));
+        }
+
+        let mut control = div()
+            .id("routing-modes")
+            .h(px(34.0))
+            .p(px(2.0))
+            .rounded_md()
+            .border_1()
+            .border_color(theme.outline_subtle)
+            .bg(theme.surface_high)
+            .flex()
+            .items_center()
+            .child(
+                div()
+                    .px_2()
+                    .text_size(px(10.0))
+                    .text_color(theme.text_tertiary)
+                    .child(language.text("Routing", "路由")),
+            );
+        for mode in [RoutingMode::Direct, RoutingMode::Global, RoutingMode::Rule] {
+            let selected = mode == self.routing_mode;
+            control = control.child(
+                div()
+                    .id(format!("routing-mode-{mode:?}"))
+                    .role(Role::Button)
+                    .aria_label(routing_mode_label(language, mode))
+                    .aria_toggled(if selected {
+                        Toggled::True
+                    } else {
+                        Toggled::False
+                    })
+                    .tab_stop(true)
+                    .focusable()
+                    .cursor_pointer()
+                    .h_full()
+                    .px_3()
+                    .rounded_sm()
+                    .flex()
+                    .items_center()
+                    .text_size(px(11.0))
+                    .font_weight(if selected {
+                        FontWeight::SEMIBOLD
+                    } else {
+                        FontWeight::NORMAL
+                    })
+                    .bg(if selected {
+                        theme.action_primary
+                    } else {
+                        theme.surface_high
+                    })
+                    .text_color(if selected {
+                        theme.action_on_primary
+                    } else {
+                        theme.text_secondary
+                    })
+                    .child(if self.routing_mode_busy == Some(mode) {
+                        language.text("Switching…", "切换中…")
+                    } else {
+                        routing_mode_label(language, mode)
+                    })
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.apply_routing_mode(mode, cx);
+                    })),
+            );
+        }
+        control
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn navigation(&self, theme: Theme, size_class: WindowSizeClass, cx: &mut Context<Self>) -> Div {
+        let language = self.language();
+        let entries = [
+            (
+                language.text("Nodes", "节点"),
+                language.text("Nodes", "节点"),
+                PrimaryWorkspace::Nodes,
+            ),
+            (
+                language.text("Policy groups", "策略组"),
+                language.text("Policies", "策略"),
+                PrimaryWorkspace::Policies,
+            ),
+            (
+                language.text("Routing rules", "分流规则"),
+                language.text("Rules", "规则"),
+                PrimaryWorkspace::RoutingRules,
+            ),
+            (
+                language.text("Network activity", "网络活动"),
+                language.text("Activity", "活动"),
+                PrimaryWorkspace::Activity,
+            ),
+            (
+                "Logs",
+                language.text("Logs", "日志"),
+                PrimaryWorkspace::Logs,
+            ),
+            (
+                language.text("Settings", "配置"),
+                language.text("Settings", "配置"),
+                PrimaryWorkspace::Configuration,
+            ),
+        ];
+        let show_labels = size_class == WindowSizeClass::Wide;
+        let width = match size_class {
+            WindowSizeClass::Wide => 220.0,
+            WindowSizeClass::Medium => 66.0,
+            WindowSizeClass::Compact => 56.0,
+        };
+        div()
+            .w(px(width))
+            .h_full()
+            .flex_shrink_0()
+            .p_2()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .bg(theme.surface_low)
+            .border_r_1()
+            .border_color(theme.outline_subtle)
+            .children(entries.into_iter().map(|(label, short_label, workspace)| {
+                let selected = workspace == self.primary_workspace;
+                div()
+                    .id(format!("navigation-{workspace:?}"))
+                    .role(Role::Button)
+                    .aria_label(label)
+                    .tab_stop(true)
+                    .focusable()
+                    .cursor_pointer()
+                    .h(px(40.0))
+                    .px_3()
+                    .rounded_md()
+                    .flex()
+                    .items_center()
+                    .when(!show_labels, |row| row.justify_center().px_0())
+                    .when(selected, |row| {
+                        row.bg(theme.action_soft).text_color(theme.action_primary)
+                    })
+                    .when(!selected, |row| row.text_color(theme.text_secondary))
+                    .font_weight(if selected {
+                        FontWeight::SEMIBOLD
+                    } else {
+                        FontWeight::NORMAL
+                    })
+                    .child(if show_labels { label } else { short_label })
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.primary_workspace = workspace;
+                        let language = this.language();
+                        this.status = match workspace {
+                            PrimaryWorkspace::Policies => {
+                                trace_ui(UiEvent::WorkspacePoliciesOpened);
+                                language
+                                    .text("Policy groups opened", "已打开策略组工作区")
+                                    .to_owned()
+                            }
+                            PrimaryWorkspace::Nodes => {
+                                trace_ui(UiEvent::WorkspaceNodesOpened);
+                                language.text("Nodes opened", "已打开节点工作区").to_owned()
+                            }
+                            PrimaryWorkspace::RoutingRules => {
+                                trace_ui(UiEvent::WorkspaceRoutingRulesOpened);
+                                language
+                                    .text("Routing rules opened", "已打开分流规则")
+                                    .to_owned()
+                            }
+                            PrimaryWorkspace::Activity => {
+                                trace_ui(UiEvent::WorkspaceActivityOpened);
+                                language
+                                    .text("Network activity opened", "已打开网络活动")
+                                    .to_owned()
+                            }
+                            PrimaryWorkspace::Logs => {
+                                trace_ui(UiEvent::WorkspaceLogsOpened);
+                                language.text("Logs opened", "已打开日志").to_owned()
+                            }
+                            PrimaryWorkspace::Configuration => {
+                                trace_ui(UiEvent::WorkspaceConfigurationOpened);
+                                language.text("Settings opened", "已打开配置").to_owned()
+                            }
+                        };
+                        cx.notify();
+                    }))
+            }))
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn empty_policy_workspace(&self, theme: Theme, cx: &mut Context<Self>) -> Div {
+        let language = self.language();
+        let (title, description) = match &self.controller {
+            ControllerState::Disconnected => (
+                language.text("No policy groups yet", "暂无策略组"),
+                language.text(
+                    "Start or connect the kernel to load its real policy groups. Manis does not fill this page with sample data.",
+                    "启动或连接内核后，这里会显示它返回的真实策略组。Manis 不再用示例数据填充此页面。",
+                ),
+            ),
+            ControllerState::Connecting { .. } => (
+                language.text("Loading policy groups…", "正在读取策略组…"),
+                language.text(
+                    "Waiting for the kernel to return its current groups and selected exits.",
+                    "正在等待内核返回当前策略组及其已选出口。",
+                ),
+            ),
+            ControllerState::Failed { .. } => (
+                language.text("Policy groups unavailable", "暂时无法读取策略组"),
+                language.text(
+                    "The kernel connection failed. Check Logs for the exact error, then try again.",
+                    "内核连接失败。请在“日志”中查看具体错误，然后重试。",
+                ),
+            ),
+            ControllerState::Connected { .. } => (
+                language.text("No policy groups returned", "内核未返回策略组"),
+                language.text(
+                    "The connected kernel did not expose any policy groups.",
+                    "当前连接的内核没有提供任何策略组。",
+                ),
+            ),
+        };
+
+        let mut body = div()
+            .id("offline-policy-scroll")
+            .flex_1()
+            .overflow_y_scroll()
+            .p_6();
+        if self.managed_policy_groups.is_empty() {
+            body = body.child(
+                div()
+                    .max_w(px(620.0))
+                    .p_5()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(theme.outline_subtle)
+                    .bg(theme.surface_high)
+                    .child(
+                        div()
+                            .text_size(px(18.0))
+                            .font_weight(FontWeight::BOLD)
+                            .child(title),
+                    )
+                    .child(
+                        div()
+                            .mt_2()
+                            .text_color(theme.text_secondary)
+                            .line_height(px(20.0))
+                            .child(description),
+                    ),
+            );
+        } else {
+            let mut rows = div().flex().flex_col().gap_3();
+            for policy in self.managed_policy_groups.clone() {
+                let policy_group_id = PolicyGroupId::new(policy.id.clone());
+                let expanded = self.expanded_policy_group.as_ref() == Some(&policy_group_id);
+                let candidates = self.managed_policy_candidate_names(&policy);
+                let candidate_count = candidates.len();
+                let automatic = policy.strategy == ManagedPolicyStrategy::LowestLatency;
+                let benchmarking =
+                    self.pending_policy_benchmark_name.as_deref() == Some(policy.name.as_str());
+                let selected_name = self
+                    .node_selection_preferences
+                    .policy_target(&policy.name)
+                    .map(str::to_owned);
+                let edit_id = policy.id.clone();
+                let remove_id = policy.id.clone();
+                let benchmark_name = policy.name.clone();
+                let benchmark_icon = policy.icon;
+                let benchmark_policy_name = policy.name.clone();
+                let toggle_id = policy_group_id.clone();
+                let kind = match policy.strategy {
+                    ManagedPolicyStrategy::Manual => language.text("Manual selection", "手动选择"),
+                    ManagedPolicyStrategy::LowestLatency => {
+                        language.text("Automatic selection", "自动选择")
+                    }
+                };
+                let action = if expanded {
+                    language.text("Collapse", "收起")
+                } else {
+                    language.text("Expand", "展开")
+                };
+                let header = div()
+                    .id(format!("saved-policy-header-{}", policy.id))
+                    .role(Role::Button)
+                    .aria_label(format!("{action} {}", policy.name))
+                    .tab_stop(true)
+                    .focusable()
+                    .cursor_pointer()
+                    .min_h(px(64.0))
+                    .px_4()
+                    .py_3()
+                    .bg(theme.surface_low)
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .child(Self::policy_group_icon(
+                        &format!("saved-{}", policy.id),
+                        benchmark_icon,
+                        &benchmark_policy_name,
+                        automatic,
+                        benchmarking,
+                        theme,
+                        cx.listener(move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            if !benchmarking {
+                                this.pending_policy_benchmark_name = Some(benchmark_name.clone());
+                                this.connect_mihomo(cx);
+                            }
+                        }),
+                    ))
+                    .child(
+                        div()
+                            .min_w(px(0.0))
+                            .flex_1()
+                            .child(
+                                div()
+                                    .overflow_x_hidden()
+                                    .whitespace_nowrap()
+                                    .text_ellipsis()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(policy.name.clone()),
+                            )
+                            .child(
+                                div()
+                                    .mt_1()
+                                    .text_size(px(11.0))
+                                    .text_color(theme.text_secondary)
+                                    .child(kind),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .flex()
+                            .items_center()
+                            .gap_3()
+                            .child(
+                                div()
+                                    .text_size(px(10.0))
+                                    .text_color(theme.text_secondary)
+                                    .child(if language == Language::English {
+                                        format!("{candidate_count} nodes")
+                                    } else {
+                                        format!("{candidate_count} 个节点")
+                                    }),
+                            )
+                            .child(
+                                div()
+                                    .min_w(px(32.0))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(theme.action_primary)
+                                    .child(action),
+                            ),
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if this.expanded_policy_group.as_ref() == Some(&toggle_id) {
+                            this.expanded_policy_group = None;
+                        } else {
+                            this.expanded_policy_group = Some(toggle_id.clone());
+                        }
+                        cx.notify();
+                    }));
+                let mut card = div()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(theme.outline_subtle)
+                    .bg(theme.surface_high)
+                    .overflow_hidden()
+                    .child(header);
+                if expanded {
+                    if candidates.is_empty() {
+                        card = card.child(
+                            div()
+                                .px_4()
+                                .py_3()
+                                .border_t_1()
+                                .border_color(theme.outline_subtle)
+                                .text_size(px(11.0))
+                                .text_color(theme.text_secondary)
+                                .child(language.text(
+                                    "No imported nodes currently match this policy.",
+                                    "当前没有已导入节点符合这个策略组。",
+                                )),
+                        );
+                    } else {
+                        for candidate in candidates {
+                            card = card.child(Self::saved_policy_candidate_row(
+                                candidate.clone(),
+                                selected_name.as_deref() == Some(candidate.as_str()),
+                                theme,
+                            ));
+                        }
+                    }
+                    card = card.child(
+                        div()
+                            .px_4()
+                            .py_3()
+                            .border_t_1()
+                            .border_color(theme.outline_subtle)
+                            .flex()
+                            .justify_end()
+                            .gap_2()
+                            .child(
+                                Self::small_button(
+                                    format!("edit-offline-policy-{}", policy.id),
+                                    language.text("Edit", "编辑"),
+                                    theme,
+                                )
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| {
+                                        cx.stop_propagation();
+                                        this.start_managed_policy_edit(&edit_id, cx);
+                                    },
+                                )),
+                            )
+                            .child(
+                                Self::small_button(
+                                    format!("remove-offline-policy-{}", policy.id),
+                                    language.text("Delete", "删除"),
+                                    theme,
+                                )
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| {
+                                        cx.stop_propagation();
+                                        this.remove_managed_policy(&remove_id, cx);
+                                    },
+                                )),
+                            ),
+                    );
+                }
+                rows = rows.child(card);
+            }
+            body = body.child(rows);
+        }
+
+        div()
+            .h_full()
+            .flex_1()
+            .min_w(px(0.0))
+            .bg(theme.surface_low)
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .p_4()
+                    .border_b_1()
+                    .border_color(theme.outline_subtle)
+                    .bg(theme.surface_high)
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .text_size(px(18.0))
+                            .font_weight(FontWeight::BOLD)
+                            .child(language.text("Policy groups", "策略组")),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(Self::managed_policy_add_button(
+                                "add-policy-group-empty",
+                                language,
+                                theme,
+                                cx,
+                            ))
+                            .child(self.connection_button(theme, cx)),
+                    ),
+            )
+            .child(body)
+    }
+
+    fn saved_policy_candidate_row(name: String, current: bool, theme: Theme) -> Div {
+        div()
+            .min_h(px(48.0))
+            .px_4()
+            .border_t_1()
+            .border_color(theme.outline_subtle)
+            .flex()
+            .items_center()
+            .gap_3()
+            .bg(if current {
+                theme.action_soft
+            } else {
+                theme.surface_high
+            })
+            .child(
+                div()
+                    .size(px(10.0))
+                    .rounded_full()
+                    .border_1()
+                    .border_color(if current {
+                        theme.action_primary
+                    } else {
+                        theme.outline_strong
+                    })
+                    .when(current, |dot| dot.bg(theme.action_primary)),
+            )
+            .child(
+                div()
+                    .min_w(px(0.0))
+                    .flex_1()
+                    .overflow_x_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .child(name),
+            )
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn policy_list(&self, theme: Theme, width: Option<f32>, cx: &mut Context<Self>) -> Div {
+        let language = self.language();
+        let compact = width.is_none();
+        let mut rows = div()
+            .id("policy-scroll")
+            .flex_1()
+            .overflow_y_scroll()
+            .p_3()
+            .flex()
+            .flex_col()
+            .gap_3();
+        for item in self.policy_groups().cloned() {
+            let selected = self.workspace.selected_group.as_ref() == Some(&item.id);
+            let expanded = self.expanded_policy_group.as_ref() == Some(&item.id);
+            let automatic = item.kind.is_automatic();
+            let policy_icon = self
+                .managed_policy_groups
+                .iter()
+                .find(|group| group.name == item.name)
+                .map_or(ManagedPolicyIcon::None, |group| group.icon);
+            let item_id = item.id.clone();
+            let item_name = item.name.clone();
+            let item_target_node = item
+                .nodes
+                .iter()
+                .find(|node| node.name == item.target)
+                .map(|node| node.id.clone());
+            let benchmark_id = item.id.clone();
+            let benchmark_key = Self::policy_group_benchmark_key(&item.id);
+            let benchmarking = self
+                .group_benchmarks
+                .get(&benchmark_key)
+                .is_some_and(GroupBenchmarkState::is_running);
+            let action = if expanded {
+                language.text("Collapse", "收起")
+            } else {
+                language.text("Expand", "展开")
+            };
+            let target = if language == Language::English {
+                format!(
+                    "{} · current {}",
+                    policy_kind_label(language, item.kind),
+                    item.target
+                )
+            } else {
+                format!(
+                    "{} · 当前 {}",
+                    policy_kind_label(language, item.kind),
+                    item.target
+                )
+            };
+            let header = div()
+                .id(format!("policy-{}", item.id.as_str()))
+                .role(Role::Button)
+                .aria_label(format!("{action} {}", item.name))
+                .tab_stop(true)
+                .focusable()
+                .cursor_pointer()
+                .min_h(px(64.0))
+                .px_4()
+                .py_3()
+                .flex()
+                .items_center()
+                .gap_3()
+                .bg(if selected || expanded {
+                    theme.surface_high
+                } else {
+                    theme.surface_low
+                })
+                .child(Self::policy_group_icon(
+                    &benchmark_key,
+                    policy_icon,
+                    &item.name,
+                    automatic,
+                    benchmarking,
+                    theme,
+                    cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        if automatic && !benchmarking {
+                            this.start_policy_group_benchmark(&benchmark_id, cx);
+                        }
+                    }),
+                ))
+                .child(
+                    div()
+                        .min_w(px(0.0))
+                        .flex_1()
+                        .child(
+                            div()
+                                .overflow_x_hidden()
+                                .whitespace_nowrap()
+                                .text_ellipsis()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(theme.text_primary)
+                                .child(item.name.clone()),
+                        )
+                        .child(
+                            div()
+                                .mt_1()
+                                .overflow_x_hidden()
+                                .whitespace_nowrap()
+                                .text_ellipsis()
+                                .text_size(px(10.0))
+                                .text_color(theme.text_tertiary)
+                                .child(target),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .flex()
+                        .items_center()
+                        .gap_3()
+                        .child(
+                            div()
+                                .text_size(px(10.0))
+                                .text_color(theme.text_secondary)
+                                .child(if language == Language::English {
+                                    format!("{} nodes", item.nodes.len())
+                                } else {
+                                    format!("{} 个节点", item.nodes.len())
+                                }),
+                        )
+                        .child(
+                            div()
+                                .min_w(px(32.0))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(theme.action_primary)
+                                .child(action),
+                        ),
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if this.expanded_policy_group.as_ref() == Some(&item_id) {
+                        this.expanded_policy_group = None;
+                    } else {
+                        this.expanded_policy_group = Some(item_id.clone());
+                    }
+                    this.policy_detail_tab = PolicyDetailTab::Nodes;
+                    this.workspace.select_group(item_id.clone());
+                    if compact {
+                        this.workspace.navigate_back();
+                    }
+                    if let Some(target) = item_target_node.clone() {
+                        this.workspace.select_node(target);
+                    }
+                    trace_ui(UiEvent::PolicyPreviewOpened);
+                    this.status = if this.language() == Language::English {
+                        format!("Policy group “{item_name}” {action}")
+                    } else {
+                        format!("策略组“{item_name}”已{action}")
+                    };
+                    cx.notify();
+                }));
+
+            let mut card = div()
+                .rounded_md()
+                .border_1()
+                .border_color(theme.outline_subtle)
+                .bg(theme.surface_high)
+                .overflow_hidden()
+                .child(header);
+            if expanded {
+                if let Some(feedback) =
+                    self.group_benchmarks.get(&benchmark_key).and_then(|state| {
+                        Self::policy_group_benchmark_feedback(state, item.nodes.len(), theme)
+                    })
+                {
+                    card = card.child(feedback.mx_3().mb_2());
+                }
+                if item.nodes.is_empty() {
+                    card = card.child(
+                        div()
+                            .px_4()
+                            .py_3()
+                            .border_t_1()
+                            .border_color(theme.outline_subtle)
+                            .text_size(px(11.0))
+                            .text_color(theme.text_secondary)
+                            .child(language.text(
+                                "This policy has no candidate nodes.",
+                                "这个策略组没有候选节点。",
+                            )),
+                    );
+                } else {
+                    for node in item.nodes.iter().cloned() {
+                        let current = node.name == item.target;
+                        let benchmark_state = self
+                            .group_benchmarks
+                            .get(&benchmark_key)
+                            .map_or(GroupBenchmarkNodeState::Idle, |state| {
+                                state.node_state(&node.name)
+                            });
+                        card = card.child(Self::policy_list_candidate_row(
+                            node,
+                            item.id.clone(),
+                            item.name.clone(),
+                            current,
+                            item.kind.allows_manual_selection(),
+                            self.policy_selection_busy.is_some(),
+                            benchmark_state,
+                            theme,
+                            cx,
+                        ));
+                    }
+                }
+            }
+            rows = rows.child(card);
+        }
+
+        div()
+            .when_some(width, |list, width| list.w(px(width)).flex_shrink_0())
+            .h_full()
+            .flex()
+            .flex_col()
+            .bg(theme.surface_low)
+            .border_r_1()
+            .border_color(theme.outline_subtle)
+            .child(
+                div()
+                    .p_4()
+                    .border_b_1()
+                    .border_color(theme.outline_subtle)
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                div()
+                                    .text_size(px(18.0))
+                                    .font_weight(FontWeight::BOLD)
+                                    .child(language.text("Policy groups", "策略组")),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(Self::managed_policy_add_button(
+                                        "add-policy-group-header",
+                                        language,
+                                        theme,
+                                        cx,
+                                    ))
+                                    .child(self.connection_button(theme, cx)),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .mt_1()
+                            .text_color(theme.text_secondary)
+                            .child(language.text(
+                                "Rules target a policy; open one to configure its exit",
+                                "分流规则指定策略组；打开后配置它的出口",
+                            )),
+                    ),
+            )
+            .child(rows)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn policy_list_candidate_row(
+        node: PolicyNode,
+        policy_id: PolicyGroupId,
+        policy_name: String,
+        current: bool,
+        manually_selectable: bool,
+        selection_busy: bool,
+        benchmark_state: GroupBenchmarkNodeState,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let node_id = node.id.clone();
+        let node_name = node.name.clone();
+        let idle_latency = node
+            .latency_ms
+            .map_or_else(|| "—".to_owned(), |latency| format!("{latency} ms"));
+        div()
+            .id(format!("policy-list-node-{}", node.id.as_str()))
+            .tab_stop(manually_selectable && !selection_busy)
+            .min_h(px(48.0))
+            .px_4()
+            .border_t_1()
+            .border_color(theme.outline_subtle)
+            .flex()
+            .items_center()
+            .gap_3()
+            .bg(if current {
+                theme.action_soft
+            } else {
+                theme.surface_high
+            })
+            .child(
+                div()
+                    .size(px(10.0))
+                    .rounded_full()
+                    .border_1()
+                    .border_color(if current {
+                        theme.action_primary
+                    } else {
+                        theme.outline_strong
+                    })
+                    .when(current, |dot| dot.bg(theme.action_primary)),
+            )
+            .child(
+                div()
+                    .min_w(px(0.0))
+                    .flex_1()
+                    .overflow_x_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .text_color(if manually_selectable {
+                        theme.text_primary
+                    } else {
+                        theme.text_secondary
+                    })
+                    .child(node.name),
+            )
+            .child(Self::benchmark_latency_content(
+                benchmark_state,
+                idle_latency,
+                &format!("policy-list-node-{}-spinner", node.id.as_str()),
+                theme,
+            ))
+            .when(manually_selectable, |row| {
+                row.role(Role::RadioButton)
+                    .aria_toggled(if current {
+                        Toggled::True
+                    } else {
+                        Toggled::False
+                    })
+                    .focusable()
+                    .when(!selection_busy, gpui::Styled::cursor_pointer)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if !selection_busy {
+                            this.select_policy_node(
+                                policy_id.clone(),
+                                policy_name.clone(),
+                                node_id.clone(),
+                                node_name.clone(),
+                                cx,
+                            );
+                        }
+                    }))
+            })
+    }
+
+    fn small_button(
+        id: impl Into<gpui::ElementId>,
+        label: &'static str,
+        theme: Theme,
+    ) -> Stateful<Div> {
+        div()
+            .id(id)
+            .role(Role::Button)
+            .tab_stop(true)
+            .focusable()
+            .cursor_pointer()
+            .h(px(34.0))
+            .px_3()
+            .rounded_md()
+            .border_1()
+            .border_color(theme.outline_subtle)
+            .bg(theme.surface_high)
+            .flex()
+            .items_center()
+            .text_color(theme.text_primary)
+            .child(label)
+    }
+
+    fn managed_policy_add_button(
+        id: &'static str,
+        language: Language,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        div()
+            .id(id)
+            .role(Role::Button)
+            .aria_label(language.text("Add policy group", "添加策略组"))
+            .tab_stop(true)
+            .focusable()
+            .cursor_pointer()
+            .h(px(34.0))
+            .px_3()
+            .rounded_md()
+            .bg(theme.action_primary)
+            .text_color(theme.action_on_primary)
+            .font_weight(FontWeight::SEMIBOLD)
+            .flex()
+            .items_center()
+            .child(language.text("Add policy", "添加策略组"))
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.workspace.compact_navigation = CompactNavigation::GroupDetail;
+                this.start_managed_policy_create(cx);
+            }))
+    }
+
+    fn connection_button(&self, theme: Theme, cx: &mut Context<Self>) -> Stateful<Div> {
+        let connecting = matches!(self.controller, ControllerState::Connecting { .. });
+        let language = self.language();
+        div()
+            .id("connect-mihomo")
+            .role(Role::Button)
+            .aria_label(language.text(
+                "Connect or refresh read-only kernel data",
+                "连接或刷新内核只读数据",
+            ))
+            .tab_stop(!connecting)
+            .focusable()
+            .cursor_pointer()
+            .h(px(34.0))
+            .px_3()
+            .rounded_md()
+            .border_1()
+            .border_color(if connecting {
+                theme.outline_subtle
+            } else {
+                theme.action_primary
+            })
+            .bg(if connecting {
+                theme.surface_high
+            } else {
+                theme.action_soft
+            })
+            .text_color(if connecting {
+                theme.text_tertiary
+            } else {
+                theme.action_primary
+            })
+            .flex()
+            .items_center()
+            .child(
+                self.runtime
+                    .button_label_in(&self.controller, self.language()),
+            )
+            .on_click(cx.listener(|this, _, _, cx| this.connect_mihomo(cx)))
+    }
+
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+    fn node_row(
+        item: PolicyNode,
+        policy_id: PolicyGroupId,
+        policy_name: String,
+        current: bool,
+        manually_selectable: bool,
+        selection_busy: bool,
+        benchmark_state: GroupBenchmarkNodeState,
+        language: Language,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let node_id = item.id.clone();
+        let node_name = item.name.clone();
+        let provider = if item.kind == manis_core::PolicyCandidateKind::PolicyGroup {
+            language.text("Policy group", "策略组").to_owned()
+        } else {
+            item.provider
+                .clone()
+                .unwrap_or_else(|| language.text("Built-in", "内置节点").to_owned())
+        };
+        let idle_latency = item
+            .latency_ms
+            .map_or_else(|| "—".to_owned(), |latency| format!("{latency} ms"));
+        let spinner_id = format!("policy-node-{}-latency", item.id.as_str());
+        let leading = if manually_selectable {
+            div()
+                .size(px(18.0))
+                .rounded_full()
+                .border_2()
+                .border_color(if current {
+                    theme.action_primary
+                } else {
+                    theme.outline_strong
+                })
+                .when(current, |dot| dot.bg(theme.action_primary))
+        } else {
+            div()
+                .size(px(22.0))
+                .rounded_sm()
+                .bg(theme.surface_high)
+                .text_size(px(9.0))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(theme.text_tertiary)
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    if item.kind == manis_core::PolicyCandidateKind::PolicyGroup {
+                        language.text("G", "组")
+                    } else {
+                        language.text("N", "点")
+                    },
+                )
+        };
+        div()
+            .id(format!("node-{}", item.id.as_str()))
+            .tab_stop(manually_selectable && !selection_busy)
+            .min_h(px(64.0))
+            .px_3()
+            .flex()
+            .items_center()
+            .gap_3()
+            .rounded_md()
+            .border_1()
+            .border_color(if manually_selectable && current {
+                theme.action_primary
+            } else {
+                theme.outline_subtle
+            })
+            .bg(if manually_selectable && current {
+                theme.action_soft
+            } else {
+                theme.surface_low
+            })
+            .child(leading)
+            .child(
+                div()
+                    .flex_1()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(if manually_selectable {
+                                theme.text_primary
+                            } else {
+                                theme.text_secondary
+                            })
+                            .child(item.name)
+                            .when(current && !manually_selectable, |name| {
+                                name.child(
+                                    div()
+                                        .px_2()
+                                        .py_1()
+                                        .rounded_sm()
+                                        .bg(theme.surface_high)
+                                        .text_size(px(9.0))
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .text_color(theme.text_secondary)
+                                        .child(language.text("Current", "当前出口")),
+                                )
+                            }),
+                    )
+                    .child(
+                        div()
+                            .mt_1()
+                            .text_size(px(11.0))
+                            .text_color(theme.text_tertiary)
+                            .child(item.detail),
+                    ),
+            )
+            .child(
+                div()
+                    .w(px(100.0))
+                    .text_color(if manually_selectable {
+                        theme.text_secondary
+                    } else {
+                        theme.text_tertiary
+                    })
+                    .child(provider),
+            )
+            .child(
+                div()
+                    .w(px(64.0))
+                    .min_h(px(18.0))
+                    .flex()
+                    .items_center()
+                    .justify_end()
+                    .child(Self::benchmark_latency_content(
+                        benchmark_state,
+                        idle_latency,
+                        &spinner_id,
+                        theme,
+                    )),
+            )
+            .when(manually_selectable, |row| {
+                row.role(Role::RadioButton)
+                    .aria_toggled(if current {
+                        Toggled::True
+                    } else {
+                        Toggled::False
+                    })
+                    .focusable()
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if !selection_busy {
+                            this.select_policy_node(
+                                policy_id.clone(),
+                                policy_name.clone(),
+                                node_id.clone(),
+                                node_name.clone(),
+                                cx,
+                            );
+                        }
+                    }))
+            })
+    }
+
+    fn editable_policy_group_id(&self, policy_name: &str) -> Option<&str> {
+        self.managed_policy_groups
+            .iter()
+            .find(|group| group.name == policy_name)
+            .map(|group| group.id.as_str())
+    }
+
+    fn policy_detail_tab_button(
+        tab: PolicyDetailTab,
+        label: &'static str,
+        active: bool,
+        editable_group_id: Option<String>,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        div()
+            .id(format!("policy-detail-tab-{tab:?}"))
+            .role(Role::Button)
+            .aria_label(label)
+            .aria_toggled(if active {
+                Toggled::True
+            } else {
+                Toggled::False
+            })
+            .tab_stop(true)
+            .focusable()
+            .cursor_pointer()
+            .pb_2()
+            .border_b_2()
+            .border_color(if active {
+                theme.action_primary
+            } else {
+                theme.surface_high
+            })
+            .text_color(if active {
+                theme.text_primary
+            } else {
+                theme.text_secondary
+            })
+            .child(label)
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.policy_detail_tab = tab;
+                if tab == PolicyDetailTab::Settings {
+                    if let Some(group_id) = editable_group_id.as_deref() {
+                        let already_editing = this
+                            .managed_policy_draft
+                            .as_ref()
+                            .and_then(|draft| draft.editing_id.as_deref())
+                            == Some(group_id);
+                        if !already_editing {
+                            this.start_managed_policy_edit(group_id, cx);
+                            return;
+                        }
+                    } else {
+                        this.language()
+                            .text(
+                                "This runtime policy is read-only in Manis",
+                                "这个运行时策略组在 Manis 中为只读",
+                            )
+                            .clone_into(&mut this.status);
+                    }
+                }
+                cx.notify();
+            }))
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn detail(&self, theme: Theme, compact: bool, cx: &mut Context<Self>) -> Div {
+        let language = self.language();
+        let (Some(selected_policy), Some(selected_node)) =
+            (self.selected_policy().cloned(), self.selected_node())
+        else {
+            return div().h_full().flex_1().bg(theme.surface_high);
+        };
+        let manually_selectable = selected_policy.kind.allows_manual_selection();
+        let benchmark_id = selected_policy.id.clone();
+        let benchmark_key = Self::policy_group_benchmark_key(&selected_policy.id);
+        let benchmarking = self
+            .group_benchmarks
+            .get(&benchmark_key)
+            .is_some_and(GroupBenchmarkState::is_running);
+        let editable_group_id = self
+            .editable_policy_group_id(&selected_policy.name)
+            .map(str::to_owned);
+        let display_icon = self
+            .managed_policy_groups
+            .iter()
+            .find(|group| group.name == selected_policy.name)
+            .map_or(ManagedPolicyIcon::None, |group| group.icon);
+        let guidance = match selected_policy.kind {
+            manis_core::PolicyGroupKind::Selector => language.text(
+                "Choose the exit used when a routing rule targets this policy",
+                "分流规则命中此策略组时，使用下方所选出口",
+            ),
+            manis_core::PolicyGroupKind::UrlTest => language.text(
+                "Mihomo measures the configured URL on schedule; candidates are automatic",
+                "Mihomo 按策略配置的 URL 和间隔自动测量，候选项不可手动切换",
+            ),
+            manis_core::PolicyGroupKind::Fallback => language.text(
+                "Mihomo checks candidates on schedule and fails over automatically",
+                "Mihomo 按策略配置的间隔自动检查并故障转移，候选项不可手动切换",
+            ),
+            manis_core::PolicyGroupKind::LoadBalance => language.text(
+                "Mihomo distributes connections across candidates automatically",
+                "Mihomo 自动在候选分组之间分配连接，候选项不可手动切换",
+            ),
+            manis_core::PolicyGroupKind::Direct => language.text(
+                "Direct policies have no selectable exit",
+                "直连策略没有可切换的出口",
+            ),
+        };
+        let mut body = div()
+            .id("detail-scroll")
+            .flex_1()
+            .overflow_y_scroll()
+            .p_4()
+            .flex()
+            .flex_col()
+            .gap_2();
+
+        if self.policy_detail_tab == PolicyDetailTab::Nodes {
+            body = body.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .child(div().text_color(theme.text_secondary).child(guidance)),
+            );
+            if selected_policy.kind.is_automatic() {
+                body = body.child(
+                    div()
+                        .mt_2()
+                        .p_3()
+                        .rounded_md()
+                        .border_1()
+                        .border_color(theme.outline_subtle)
+                        .bg(theme.surface_low)
+                        .child(
+                            div()
+                                .text_size(px(11.0))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(theme.text_secondary)
+                                .child(language.text(
+                                    "Automatic policy · read-only candidates",
+                                    "自动策略 · 只读候选项",
+                                )),
+                        )
+                        .child(
+                            div()
+                                .mt_1()
+                                .text_size(px(10.0))
+                                .text_color(theme.text_tertiary)
+                                .child(language.text(
+                                    "Names and candidate groups are user-defined; the interval belongs to the policy.",
+                                    "名称和候选项由用户配置；重新检查间隔属于策略设置。",
+                                )),
+                        ),
+                );
+            }
+            if let Some(feedback) = self.group_benchmarks.get(&benchmark_key).and_then(|state| {
+                Self::policy_group_benchmark_feedback(state, selected_policy.nodes.len(), theme)
+            }) {
+                body = body.child(feedback);
+            }
+            body = body.child(
+                div()
+                    .mt_2()
+                    .px_3()
+                    .flex()
+                    .text_size(px(11.0))
+                    .text_color(theme.text_tertiary)
+                    .child(
+                        div()
+                            .flex_1()
+                            .child(language.text("Candidate / group", "候选节点 / 分组")),
+                    )
+                    .child(div().w(px(100.0)).child(language.text("Source", "来源")))
+                    .child(div().w(px(64.0)).child(language.text("Latency", "延迟"))),
+            );
+            for item in selected_policy.nodes.iter().cloned() {
+                let current = item.id == selected_node.id;
+                let benchmark_state = self
+                    .group_benchmarks
+                    .get(&benchmark_key)
+                    .map_or(GroupBenchmarkNodeState::Idle, |state| {
+                        state.node_state(&item.name)
+                    });
+                body = body.child(Self::node_row(
+                    item,
+                    selected_policy.id.clone(),
+                    selected_policy.name.clone(),
+                    current,
+                    manually_selectable,
+                    self.policy_selection_busy.is_some(),
+                    benchmark_state,
+                    language,
+                    theme,
+                    cx,
+                ));
+            }
+        }
+
+        if self.policy_detail_tab == PolicyDetailTab::Rules {
+            body = body.child(
+                div()
+                    .mb_1()
+                    .flex()
+                    .justify_between()
+                    .child(
+                        div()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(language.text("Rules using this policy", "命中此策略的规则")),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(theme.text_tertiary)
+                            .child(if language == Language::English {
+                                format!("{} rules, matched in order", selected_policy.rules_count())
+                            } else {
+                                format!("{} 条，按顺序匹配", selected_policy.rules_count())
+                            }),
+                    ),
+            );
+            if selected_policy.rules.is_empty() {
+                body = body.child(
+                    div()
+                        .mt_3()
+                        .p_4()
+                        .rounded_md()
+                        .bg(theme.surface_low)
+                        .text_color(theme.text_secondary)
+                        .child(language.text(
+                            "No rule preview is available for this policy.",
+                            "这个策略组目前没有可预览的分流规则。",
+                        )),
+                );
+            }
+            for rule in &selected_policy.rules {
+                body = body.child(
+                    div()
+                        .h(px(50.0))
+                        .flex()
+                        .items_center()
+                        .gap_3()
+                        .border_t_1()
+                        .border_color(theme.outline_subtle)
+                        .child(
+                            div()
+                                .w(px(36.0))
+                                .text_color(theme.text_tertiary)
+                                .child(format!("#{}", rule.index)),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .child(format!("{}, {}", rule.kind, rule.payload)),
+                        )
+                        .child(
+                            div()
+                                .text_color(theme.status_success)
+                                .child(language.text("Match", "命中")),
+                        ),
+                );
+            }
+        }
+
+        if self.policy_detail_tab == PolicyDetailTab::Settings {
+            if let Some(group_id) = editable_group_id.as_deref() {
+                let edit_id = group_id.to_owned();
+                let remove_id = group_id.to_owned();
+                body = body
+                    .child(
+                        div()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(language.text("Managed policy settings", "托管策略组设置")),
+                    )
+                    .child(
+                        div()
+                            .text_color(theme.text_secondary)
+                            .child(language.text(
+                                "This group is saved in Manis and applied to the managed Mihomo configuration.",
+                                "这个策略组保存在 Manis 中，并会应用到 Manis 托管的 Mihomo 配置。",
+                            )),
+                    )
+                    .child(
+                        div()
+                            .mt_3()
+                            .flex()
+                            .gap_2()
+                            .child(
+                                Self::small_button(
+                                    "edit-managed-policy",
+                                    language.text("Edit policy group", "编辑策略组"),
+                                    theme,
+                                )
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.start_managed_policy_edit(&edit_id, cx);
+                                })),
+                            )
+                            .child(
+                                Self::small_button(
+                                    "remove-managed-policy",
+                                    language.text("Delete policy group", "删除策略组"),
+                                    theme,
+                                )
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.remove_managed_policy(&remove_id, cx);
+                                })),
+                            ),
+                    );
+            } else {
+                body = body
+                    .child(
+                        div()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(language.text(
+                                "Runtime policy · read-only",
+                                "运行时策略组 · 只读",
+                            )),
+                    )
+                    .child(
+                        div()
+                            .mt_1()
+                            .max_w(px(620.0))
+                            .text_color(theme.text_secondary)
+                            .child(language.text(
+                                "This policy comes from the active kernel configuration and is read-only. Create Manis-managed policies directly in this workspace.",
+                                "这个策略组来自当前内核配置，因此为只读；可以直接在此页面创建由 Manis 托管的策略组。",
+                            )),
+                    )
+                    .child(
+                        Self::managed_policy_add_button(
+                            "add-policy-group-readonly",
+                            language,
+                            theme,
+                            cx,
+                        )
+                        .mt_3(),
+                    );
+            }
+        }
+
+        div()
+            .h_full()
+            .flex_1()
+            .min_w(px(0.0))
+            .flex()
+            .flex_col()
+            .bg(theme.surface_high)
+            .child(
+                div()
+                    .p_4()
+                    .border_b_1()
+                    .border_color(theme.outline_subtle)
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_3()
+                            .when(compact, |header| {
+                                header.child(
+                                    div()
+                                        .id("compact-back")
+                                        .role(Role::Button)
+                                        .tab_stop(true)
+                                        .focusable()
+                                        .cursor_pointer()
+                                        .child(language.text("← Back", "← 返回"))
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.workspace.navigate_back();
+                                            cx.notify();
+                                        })),
+                                )
+                            })
+                            .child(Self::policy_group_icon(
+                                &benchmark_key,
+                                display_icon,
+                                &selected_policy.name,
+                                selected_policy.kind.is_automatic(),
+                                benchmarking,
+                                theme,
+                                cx.listener(move |this, _, _, cx| {
+                                    if !benchmarking {
+                                        this.start_policy_group_benchmark(&benchmark_id, cx);
+                                    }
+                                }),
+                            ))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .child(
+                                        div()
+                                            .text_size(px(18.0))
+                                            .font_weight(FontWeight::BOLD)
+                                            .child(selected_policy.name.clone()),
+                                    )
+                                    .child(div().mt_1().text_color(theme.text_secondary).child(
+                                        if language == Language::English {
+                                            format!(
+                                                "{} · {} nodes · {} rules",
+                                                policy_kind_label(language, selected_policy.kind),
+                                                selected_policy.nodes.len(),
+                                                selected_policy.rules_count()
+                                            )
+                                        } else {
+                                            format!(
+                                                "{} · {} 个节点 · {} 条规则",
+                                                policy_kind_label(language, selected_policy.kind),
+                                                selected_policy.nodes.len(),
+                                                selected_policy.rules_count()
+                                            )
+                                        },
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .id("open-inspector")
+                                    .role(Role::Button)
+                                    .tab_stop(true)
+                                    .focusable()
+                                    .cursor_pointer()
+                                    .h(px(34.0))
+                                    .px_3()
+                                    .rounded_md()
+                                    .border_1()
+                                    .border_color(theme.outline_subtle)
+                                    .flex()
+                                    .items_center()
+                                    .child(language.text("Explain route", "解释路由"))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.inspector_open = true;
+                                        trace_ui(UiEvent::RouteInspectorOpened);
+                                        this.language()
+                                            .text(
+                                                "Local route prediction opened",
+                                                "已打开本地路由预测",
+                                            )
+                                            .clone_into(&mut this.status);
+                                        cx.notify();
+                                    })),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .mt_4()
+                            .flex()
+                            .gap_5()
+                            .font_weight(FontWeight::MEDIUM)
+                            .child(Self::policy_detail_tab_button(
+                                PolicyDetailTab::Nodes,
+                                language.text("Nodes", "节点"),
+                                self.policy_detail_tab == PolicyDetailTab::Nodes,
+                                editable_group_id.clone(),
+                                theme,
+                                cx,
+                            ))
+                            .child(Self::policy_detail_tab_button(
+                                PolicyDetailTab::Rules,
+                                language.text("Rules", "规则"),
+                                self.policy_detail_tab == PolicyDetailTab::Rules,
+                                editable_group_id.clone(),
+                                theme,
+                                cx,
+                            ))
+                            .child(Self::policy_detail_tab_button(
+                                PolicyDetailTab::Settings,
+                                language.text("Settings", "设置"),
+                                self.policy_detail_tab == PolicyDetailTab::Settings,
+                                editable_group_id,
+                                theme,
+                                cx,
+                            )),
+                    ),
+            )
+            .child(body)
+    }
+
+    fn signal_stage(
+        index: &str,
+        label: &str,
+        value: String,
+        detail: String,
+        route: bool,
+        theme: Theme,
+    ) -> Div {
+        div()
+            .min_h(px(104.0))
+            .flex()
+            .gap_3()
+            .child(
+                div().w(px(40.0)).flex().justify_center().child(
+                    div()
+                        .mt_2()
+                        .size(px(34.0))
+                        .rounded_full()
+                        .border_2()
+                        .border_color(theme.outline_strong)
+                        .bg(theme.surface_high)
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(div().size(px(9.0)).rounded_full().bg(if route {
+                            theme.route_trace
+                        } else {
+                            theme.action_primary
+                        })),
+                ),
+            )
+            .child(
+                div()
+                    .pt_2()
+                    .flex_1()
+                    .child(
+                        div()
+                            .text_size(px(11.0))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(theme.text_tertiary)
+                            .child(format!("{index} · {label}")),
+                    )
+                    .child(div().mt_1().font_weight(FontWeight::BOLD).child(value))
+                    .child(div().mt_1().text_color(theme.text_secondary).child(detail)),
+            )
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn inspector(&self, theme: Theme, overlay: bool, cx: &mut Context<Self>) -> Div {
+        let language = self.language();
+        let (Some(selected_policy), Some(selected_node)) =
+            (self.selected_policy().cloned(), self.selected_node())
+        else {
+            return div().h_full().w(px(340.0)).bg(theme.surface_low);
+        };
+        let decision_copy = if selected_policy.kind.allows_manual_selection() {
+            format!(
+                "{} · {}",
+                policy_kind_label(language, selected_policy.kind),
+                language.text("manually selected", "当前人工选择")
+            )
+        } else {
+            format!(
+                "{} · {}",
+                policy_kind_label(language, selected_policy.kind),
+                language.text("automatically decided by Mihomo", "由 Mihomo 自动决策")
+            )
+        };
+        let first_rule = selected_policy.rules.first();
+        let route_target = first_rule.map_or_else(
+            || language.text("No rule target", "暂无规则目标").to_owned(),
+            |rule| rule.payload.clone(),
+        );
+        let rule_kind = first_rule.map_or_else(
+            || language.text("No matching rule", "暂无匹配规则").to_owned(),
+            |rule| rule.kind.clone(),
+        );
+        let rule_detail = first_rule.map_or_else(
+            || {
+                language
+                    .text("The kernel returned no rule", "内核未返回规则")
+                    .to_owned()
+            },
+            |rule| {
+                format!(
+                    "{} · {} #{}",
+                    route_target,
+                    language.text("rule", "规则"),
+                    rule.index
+                )
+            },
+        );
+        let route_target_for_status = route_target.clone();
+        let observed_route = self.observed_routes.first().cloned();
+
+        div()
+            .w(px(340.0))
+            .h_full()
+            .flex_shrink_0()
+            .flex()
+            .flex_col()
+            .bg(theme.surface_low)
+            .border_l_1()
+            .border_color(theme.outline_subtle)
+            .when(overlay, |panel| panel.absolute().top_0().right_0().bottom_0().shadow_xl())
+            .child(
+                div()
+                    .p_4()
+                    .border_b_1()
+                    .border_color(theme.outline_subtle)
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(div().text_size(px(18.0)).font_weight(FontWeight::BOLD).child(language.text("Route explanation", "路由解释")))
+                            .child(div().px_2().py_1().rounded_sm().bg(theme.route_soft).text_size(px(10.0)).font_weight(FontWeight::SEMIBOLD).text_color(theme.route_trace).child(language.text("Predicted path", "预测路径")))
+                            .child(div().flex_1())
+                            .when(overlay, |header| {
+                                header.child(
+                                    div()
+                                        .id("close-inspector")
+                                        .role(Role::Button)
+                                        .tab_stop(true)
+                                        .focusable()
+                                        .cursor_pointer()
+                                        .child(language.text("Close", "关闭"))
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.inspector_open = false;
+                                            trace_ui(UiEvent::RouteInspectorClosed);
+                                            cx.notify();
+                                        })),
+                                )
+                            }),
+                    )
+                    .child(div().mt_2().text_color(theme.text_secondary).child(language.text("Preview the path selected by the local rule model", "按本地规则模型预览可能选择的路径")))
+                    .child(
+                        div()
+                            .mt_4()
+                            .flex()
+                            .gap_2()
+                            .child(div().h(px(38.0)).flex_1().px_3().rounded_md().border_1().border_color(theme.outline_subtle).bg(theme.surface_high).flex().items_center().child(route_target.clone()))
+                            .child(
+                                div()
+                                    .id("predict-route")
+                                    .role(Role::Button)
+                                    .tab_stop(true)
+                                    .focusable()
+                                    .cursor_pointer()
+                                    .h(px(38.0))
+                                    .px_3()
+                                    .rounded_md()
+                                    .bg(theme.action_primary)
+                                    .text_color(theme.action_on_primary)
+                                    .flex()
+                                    .items_center()
+                                    .child(language.text("Predict route", "预测路由"))
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        trace_ui(UiEvent::RoutePredictionRequested);
+                                        if let (Some(policy), Some(node)) =
+                                            (this.selected_policy(), this.selected_node())
+                                        {
+                                            this.status = if this.language() == Language::English {
+                                                format!(
+                                                    "Predicted {}: {} → {}",
+                                                    route_target_for_status,
+                                                    policy.name, node.name
+                                                )
+                                            } else {
+                                                format!(
+                                                    "已预测 {}：{} → {}",
+                                                    route_target_for_status,
+                                                    policy.name, node.name
+                                                )
+                                            };
+                                        }
+                                        cx.notify();
+                                    })),
+                            ),
+                    ),
+            )
+            .child(
+                div()
+                    .id("inspector-scroll")
+                    .flex_1()
+                    .overflow_y_scroll()
+                    .p_4()
+                    .child(
+                        div()
+                            .relative()
+                            .child(
+                                div()
+                                    .absolute()
+                                    .left(px(19.0))
+                                    .top(px(28.0))
+                                    .bottom(px(70.0))
+                                    .w(px(2.0))
+                                    .bg(theme.route_trace),
+                            )
+                            .child(Self::signal_stage("01", language.text("First matching rule", "预测首条命中规则"), rule_kind, rule_detail, true, theme))
+                            .child(Self::signal_stage("02", language.text("Policy group", "交给策略组"), selected_policy.name.clone(), decision_copy, false, theme))
+                            .child(Self::signal_stage("03", language.text("Final exit", "最终出口"), selected_node.name.clone(), format!("{} · {}", selected_node.latency_ms.map_or_else(|| language.text("Unknown latency", "延迟未知").to_owned(), |latency| format!("{latency} ms")), selected_node.provider.as_deref().unwrap_or(language.text("Built-in", "内置节点"))), false, theme)),
+                    )
+                    .when_some(observed_route, |panel, observed| {
+                        let host = observed.host.unwrap_or_else(|| language.text("Unknown target", "目标未知").to_owned());
+                        let rule = observed.rule.unwrap_or_else(|| language.text("Unknown rule", "规则未知").to_owned());
+                        let payload = observed.rule_payload.unwrap_or_default();
+                        let chain = activity::route_summary(&observed.chains, language)
+                            .unwrap_or_else(|| language.text("No route returned", "链路未返回").to_owned());
+                        panel.child(
+                            div()
+                                .mt_3()
+                                .p_3()
+                                .rounded_md()
+                                .border_1()
+                                .border_color(theme.action_primary)
+                                .bg(theme.action_soft)
+                                .child(
+                                    div()
+                                        .text_size(px(11.0))
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .text_color(theme.action_primary)
+                                        .child(language.text("Recently observed · /connections", "最近已观察 · /connections")),
+                                )
+                                .child(div().mt_2().font_weight(FontWeight::BOLD).child(host))
+                                .child(
+                                    div()
+                                        .mt_1()
+                                        .text_color(theme.text_secondary)
+                                        .child(format!("{rule} · {payload}")),
+                                )
+                                .child(
+                                    div()
+                                        .mt_2()
+                                        .text_color(theme.text_primary)
+                                        .child(chain),
+                                ),
+                        )
+                    })
+                    .child(
+                        div()
+                            .mt_4()
+                            .pt_4()
+                            .border_t_1()
+                            .border_color(theme.outline_subtle)
+                            .text_color(theme.text_secondary)
+                            .child(language.text("Match method                         Rule mode", "匹配方式                         规则模式"))
+                            .child(div().mt_2().child(language.text("DNS                     Not queried (domain rule)", "DNS                     未查询（域名规则）")))
+                            .child(div().mt_2().child(language.text("Result type                   Local prediction", "结果类型                   本地规则预测"))),
+                    )
+                    .child(
+                        div()
+                            .mt_5()
+                            .pt_4()
+                            .border_t_1()
+                            .border_color(theme.outline_subtle)
+                            .text_size(px(11.0))
+                            .text_color(theme.text_tertiary)
+                            .child(language.text("This is not an established Mihomo connection. Only routes from /connections are marked as observed.", "这不是 Mihomo 已建立的连接。只有来自 /connections 的链路才能标为“已观察”。")),
+                    ),
+            )
+    }
+
+    fn status_bar(&self, theme: Theme) -> Div {
+        let language = self.language();
+        let kernel_name = self.runtime.kind().display_name();
+        let source = controller_status_label(&self.controller, kernel_name, language);
+        let (endpoint, download, upload, dot) = match &self.controller {
+            ControllerState::Disconnected => (
+                language.text("No runtime data", "无运行数据").to_owned(),
+                "↓ —".to_owned(),
+                "↑ —".to_owned(),
+                theme.route_trace,
+            ),
+            ControllerState::Connecting { endpoint } | ControllerState::Failed { endpoint, .. } => {
+                (
+                    endpoint.clone(),
+                    "↓ —".to_owned(),
+                    "↑ —".to_owned(),
+                    theme.route_trace,
+                )
+            }
+            ControllerState::Connected {
+                endpoint,
+                download_total,
+                upload_total,
+                ..
+            } => (
+                endpoint.clone(),
+                format!(
+                    "{}↓ {}",
+                    language.text("Total ", "累计"),
+                    format_bytes(*download_total)
+                ),
+                format!(
+                    "{}↑ {}",
+                    language.text("Total ", "累计"),
+                    format_bytes(*upload_total)
+                ),
+                theme.status_success,
+            ),
+        };
+
+        div()
+            .h(px(28.0))
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .px_3()
+            .gap_4()
+            .border_t_1()
+            .border_color(theme.outline_subtle)
+            .bg(theme.surface_chrome)
+            .text_size(px(11.0))
+            .text_color(theme.text_secondary)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(div().size(px(8.0)).rounded_full().bg(dot))
+                    .child(source),
+            )
+            .child(endpoint)
+            .child(self.status.clone())
+            .child(div().flex_1())
+            .child(download)
+            .child(upload)
+    }
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const KIB: u64 = 1024;
+    const MIB: u64 = KIB * 1024;
+    const GIB: u64 = MIB * 1024;
+
+    if bytes >= GIB {
+        format_bytes_in_unit(bytes, GIB, "GiB")
+    } else if bytes >= MIB {
+        format_bytes_in_unit(bytes, MIB, "MiB")
+    } else if bytes >= KIB {
+        format_bytes_in_unit(bytes, KIB, "KiB")
+    } else {
+        format!("{bytes} B")
+    }
+}
+
+fn format_bytes_in_unit(bytes: u64, unit: u64, suffix: &str) -> String {
+    let whole = bytes / unit;
+    let tenth = (bytes % unit) * 10 / unit;
+    format!("{whole}.{tenth} {suffix}")
+}
+
+/// Builds the one-line controller summary shown in the status bar.
+///
+/// The kernel name is supplied by the caller so the line always names the kernel that is
+/// actually running rather than assuming Mihomo.
+fn controller_status_label(
+    controller: &ControllerState,
+    kernel_name: &str,
+    language: Language,
+) -> String {
+    match controller {
+        ControllerState::Disconnected => {
+            format!("{kernel_name} {}", language.text("disconnected", "未连接"))
+        }
+        ControllerState::Connecting { .. } => {
+            format!("{kernel_name} {}", language.text("connecting", "连接中"))
+        }
+        ControllerState::Connected {
+            version,
+            active_connections,
+            ..
+        } => {
+            if language == Language::English {
+                format!("{kernel_name} {version} · {active_connections} connections")
+            } else {
+                format!("{kernel_name} {version} · {active_connections} 条连接")
+            }
+        }
+        // The reason travels with the label: the sidebar used to be the only place it appeared.
+        ControllerState::Failed { message, .. } => format!(
+            "{kernel_name} {} · {message}",
+            language.text("connection failed", "连接失败")
+        ),
+    }
+}
+
+fn enable_tun_with_dns(
+    runtime: &KernelRuntime,
+    dns: &mut TunDnsSession,
+    language: Language,
+) -> Result<(), String> {
+    record_event(
+        LogLevel::Info,
+        "controller.tun.dns.requested",
+        "action=prepare resolver=114.114.114.114",
+    );
+    dns.prepare_with_language(language).map_err(|error| {
+        record_event(
+            LogLevel::Error,
+            "controller.tun.dns.failed",
+            format!("action=prepare error={error}"),
+        );
+        error.to_string()
+    })?;
+    record_event(
+        LogLevel::Info,
+        "controller.tun.dns.succeeded",
+        "action=prepare recovery=saved",
+    );
+    if let Err(error) = runtime.set_tun_enabled(true) {
+        let rollback = dns.disable_with_language(language);
+        return Err(match rollback {
+            Ok(()) => error.to_string(),
+            Err(rollback) => {
+                format!("{error}；恢复原 DNS 设置也失败：{rollback}")
+            }
+        });
+    }
+
+    record_event(
+        LogLevel::Info,
+        "controller.tun.dns.requested",
+        "action=install resolver=114.114.114.114",
+    );
+    if let Err(error) = dns.activate_with_language(language) {
+        let dns_rollback = dns.disable_with_language(language);
+        let tun_rollback = runtime.set_tun_enabled(false);
+        record_event(
+            LogLevel::Error,
+            "controller.tun.dns.failed",
+            format!("action=install error={error}"),
+        );
+        return Err(match (dns_rollback, tun_rollback) {
+            (Ok(()), Ok(())) => error.to_string(),
+            (Err(dns_rollback), Ok(())) => {
+                format!("{error}；恢复原 DNS 设置也失败：{dns_rollback}")
+            }
+            (Ok(()), Err(tun_rollback)) => {
+                format!("{error}；关闭已启动的 TUN 也失败：{tun_rollback}")
+            }
+            (Err(dns_rollback), Err(tun_rollback)) => format!(
+                "{error}；恢复原 DNS 设置失败：{dns_rollback}；关闭已启动的 TUN 失败：{tun_rollback}"
+            ),
+        });
+    }
+    record_event(
+        LogLevel::Info,
+        "controller.tun.dns.succeeded",
+        "action=install recovery=retained",
+    );
+    Ok(())
+}
+
+fn disable_tun_with_dns(
+    runtime: &KernelRuntime,
+    dns: &mut TunDnsSession,
+    language: Language,
+) -> Result<(), String> {
+    runtime
+        .set_tun_enabled(false)
+        .map_err(|error| error.to_string())?;
+    record_event(
+        LogLevel::Info,
+        "controller.tun.dns.requested",
+        "action=restore",
+    );
+    dns.disable_with_language(language).map_or_else(
+        |error| {
+            record_event(
+                LogLevel::Warn,
+                "controller.tun.dns.restore_deferred",
+                format!("error={error}"),
+            );
+            Err(format!(
+                "{}：{error}",
+                language.text(
+                    "TUN is disabled, but restoring the original DNS failed; recovery will be retried",
+                    "TUN 已关闭，但恢复原 DNS 失败；Manis 将继续重试恢复"
+                )
+            ))
+        },
+        |()| {
+            record_event(
+                LogLevel::Info,
+                "controller.tun.dns.succeeded",
+                "action=restore recovery=removed",
+            );
+            Ok(())
+        },
+    )
+}
+
+fn proxy_mode_label(language: Language, mode: ProxyMode) -> &'static str {
+    match mode {
+        ProxyMode::Off => language.text("Off", "关闭代理"),
+        ProxyMode::System => language.text("System proxy", "系统代理"),
+        ProxyMode::Tun => language.text("TUN proxy", "TUN 代理"),
+    }
+}
+
+/// Whether the controller Manis talks to is currently usable.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ControllerReadiness {
+    Connected,
+    Disconnected,
+}
+
+/// Whether the active kernel and controller can hand traffic to a TUN device.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum TunSupport {
+    Supported,
+    KernelUnsupported,
+    ExternalControllerReadOnly,
+}
+
+/// The reason a proxy mode cannot be applied.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ProxyModeBlock {
+    Busy,
+    ControllerNotConnected,
+    KernelHasNoTun,
+    ExternalControllerReadOnly,
+}
+
+impl ProxyModeBlock {
+    /// A short phrase that fits after a tray menu label.
+    pub(crate) const fn tray_reason(self, language: Language) -> &'static str {
+        match self {
+            Self::Busy => language.text("switching", "切换中"),
+            Self::ControllerNotConnected => language.text("connect first", "需先连接"),
+            Self::KernelHasNoTun => language.text("kernel has no TUN", "当前内核无 TUN"),
+            Self::ExternalControllerReadOnly => {
+                language.text("external controller is read-only", "外部控制器只读")
+            }
+        }
+    }
+}
+
+/// Decides whether `requested` can be applied, mirroring the guards in `apply_proxy_mode`.
+///
+/// Keeping this pure lets the tray disable an entry for exactly the reason the switch would
+/// have failed, instead of duplicating the conditions and drifting from them.
+const fn proxy_mode_block(
+    requested: ProxyMode,
+    switching: Option<ProxyMode>,
+    controller: ControllerReadiness,
+    tun: TunSupport,
+) -> Option<ProxyModeBlock> {
+    if switching.is_some() {
+        return Some(ProxyModeBlock::Busy);
+    }
+    if matches!(controller, ControllerReadiness::Disconnected) {
+        return Some(ProxyModeBlock::ControllerNotConnected);
+    }
+    if !matches!(requested, ProxyMode::Tun) {
+        return None;
+    }
+    match tun {
+        TunSupport::Supported => None,
+        TunSupport::KernelUnsupported => Some(ProxyModeBlock::KernelHasNoTun),
+        TunSupport::ExternalControllerReadOnly => Some(ProxyModeBlock::ExternalControllerReadOnly),
+    }
+}
+
+fn routing_mode_label(language: Language, mode: RoutingMode) -> &'static str {
+    match mode {
+        RoutingMode::Direct => language.text("Direct", "直连"),
+        RoutingMode::Global => language.text("Global", "全局"),
+        RoutingMode::Rule => language.text("Rules", "规则"),
+    }
+}
+
+fn controller_state_label(state: &ControllerState) -> &'static str {
+    match state {
+        ControllerState::Disconnected => "disconnected",
+        ControllerState::Connecting { .. } => "connecting",
+        ControllerState::Connected { .. } => "connected",
+        ControllerState::Failed { .. } => "failed",
+    }
+}
+
+fn policy_target_is_selectable(
+    connected: bool,
+    catalog_allows: Option<bool>,
+    stored_group_allows: Option<bool>,
+) -> bool {
+    if connected {
+        catalog_allows == Some(true)
+    } else {
+        stored_group_allows == Some(true)
+    }
+}
+
+fn policy_kind_label(language: Language, kind: manis_core::PolicyGroupKind) -> &'static str {
+    match kind {
+        manis_core::PolicyGroupKind::Selector => language.text("Manual", "手动选择"),
+        manis_core::PolicyGroupKind::UrlTest => language.text("Auto select", "自动选择"),
+        manis_core::PolicyGroupKind::Fallback => language.text("Fallback", "故障转移"),
+        manis_core::PolicyGroupKind::LoadBalance => language.text("Load balance", "负载均衡"),
+        manis_core::PolicyGroupKind::Direct => language.text("Direct", "直连"),
+    }
+}
+
+impl Default for ManisApp {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Render for ManisApp {
+    #[allow(clippy::too_many_lines)]
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let width = window.viewport_size().width.as_f32();
+        self.workspace.resize(width);
+        let size_class = self.workspace.size_class;
+        let theme = self.theme();
+        self.ensure_subscription_input(theme, cx);
+        self.ensure_qx_rule_input(theme, cx);
+        self.ensure_policy_group_inputs(theme, cx);
+        self.ensure_runtime_search_inputs(theme, cx);
+        self.ensure_source_refresh_scheduler(cx);
+        let compact = size_class == WindowSizeClass::Compact;
+        let show_groups =
+            !compact || self.workspace.compact_navigation == CompactNavigation::GroupList;
+        let show_detail =
+            !compact || self.workspace.compact_navigation == CompactNavigation::GroupDetail;
+        let overlay_inspector = size_class != WindowSizeClass::Wide;
+        let show_inspector = size_class == WindowSizeClass::Wide || self.inspector_open;
+        let policies_active = self.primary_workspace == PrimaryWorkspace::Policies;
+        let policy_editor_active = policies_active && self.managed_policy_draft.is_some();
+        let has_policy_catalog = self.catalog.is_some();
+        let nodes_active = self.primary_workspace == PrimaryWorkspace::Nodes;
+        let routing_rules_active = self.primary_workspace == PrimaryWorkspace::RoutingRules;
+        let activity_active = self.primary_workspace == PrimaryWorkspace::Activity;
+        let logs_active = self.primary_workspace == PrimaryWorkspace::Logs;
+
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .bg(theme.surface_base)
+            .text_color(theme.text_primary)
+            .text_size(px(13.0))
+            .child(self.chrome(theme, size_class, cx))
+            .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .overflow_hidden()
+                    .flex()
+                    .child(self.navigation(theme, size_class, cx))
+                    .when(nodes_active, |main| {
+                        main.child(self.node_workspace(theme, size_class, cx))
+                    })
+                    .when(routing_rules_active, |main| {
+                        main.child(self.routing_rules_workspace(theme, size_class, cx))
+                    })
+                    .when(activity_active, |main| {
+                        main.child(self.activity_workspace(theme, size_class, cx))
+                    })
+                    .when(logs_active, |main| {
+                        main.child(self.logs_workspace(theme, size_class, cx))
+                    })
+                    .when(
+                        self.primary_workspace == PrimaryWorkspace::Configuration,
+                        |main| main.child(self.configuration_workspace(theme, size_class, cx)),
+                    )
+                    .when(policy_editor_active, |main| {
+                        let draft = self
+                            .managed_policy_draft
+                            .as_ref()
+                            .expect("policy editor state requires a draft");
+                        main.child(self.managed_policy_editor_workspace(
+                            draft,
+                            compact,
+                            self.language(),
+                            theme,
+                            cx,
+                        ))
+                    })
+                    .when(
+                        policies_active && !policy_editor_active && !has_policy_catalog,
+                        |main| main.child(self.empty_policy_workspace(theme, cx)),
+                    )
+                    .when(
+                        policies_active
+                            && !policy_editor_active
+                            && has_policy_catalog
+                            && show_groups,
+                        |main| {
+                            main.child(
+                                self.policy_list(
+                                    theme,
+                                    if compact {
+                                        None
+                                    } else if size_class == WindowSizeClass::Medium {
+                                        Some(292.0)
+                                    } else {
+                                        Some(326.0)
+                                    },
+                                    cx,
+                                )
+                                .when(compact, Styled::flex_1),
+                            )
+                        },
+                    )
+                    .when(
+                        policies_active
+                            && !policy_editor_active
+                            && has_policy_catalog
+                            && show_detail,
+                        |main| main.child(self.detail(theme, compact, cx)),
+                    )
+                    .when(
+                        policies_active
+                            && !policy_editor_active
+                            && has_policy_catalog
+                            && show_inspector,
+                        |main| main.child(self.inspector(theme, overlay_inspector, cx)),
+                    ),
+            )
+            .child(self.status_bar(theme))
+    }
+}
+
+#[cfg(all(test, not(windows)))]
+mod tests {
+    use std::collections::BTreeMap;
+    use std::fs;
+
+    use manis_core::{
+        ManagedPolicyGroup, NodeIdentity, PolicyCandidateKind, PolicyCatalog, PolicyGroup,
+        PolicyGroupId, PolicyGroupKind, PolicyNode, ProxyId,
+    };
+
+    use manis_core::ProxyMode;
+
+    use super::{
+        ControllerReadiness, DueRemoteSource, ImportedSubscription, ImportedSubscriptionState,
+        ManisApp, ProxyModeBlock, SourceRuntimeApply, TunSupport, proxy_mode_block,
+    };
+    use crate::mihomo;
+    use crate::subscription::SourceKind;
+
+    #[test]
+    fn app_startup_detects_a_privately_imported_subscription() {
+        let root = std::env::temp_dir().join(format!("manis-app-import-{}", std::process::id()));
+        if root.exists() {
+            fs::remove_dir_all(&root).expect("remove stale fixture");
+        }
+        let store = root.join("subscriptions");
+        mihomo::save_imported_subscription_in(
+            &store,
+            "https://subscription.example.invalid/client?token=fixture",
+        )
+        .expect("save fixture subscription");
+
+        let app = ManisApp::with_controller_and_subscription_store("http://127.0.0.1:9090", store);
+
+        assert_eq!(app.imported_subscriptions.len(), 1);
+        assert_eq!(
+            app.imported_subscriptions[0].state,
+            ImportedSubscriptionState::Pending(SourceKind::HttpsSubscription)
+        );
+        assert_eq!(
+            app.imported_subscriptions[0].refresh_interval,
+            mihomo::RemoteSourceRefreshInterval::Manual
+        );
+        assert_eq!(
+            app.imported_subscriptions[0].last_successful_update_unix_secs,
+            0
+        );
+        fs::remove_dir_all(root).expect("remove fixture");
+    }
+
+    #[test]
+    fn scheduled_refresh_selects_one_due_source_with_subscriptions_first() {
+        let subscription = ImportedSubscription {
+            id: "subscription:fixture".to_owned(),
+            source: manis_profile::SecretUrl::parse_subscription(
+                "https://subscription.example.invalid/client",
+            )
+            .expect("fixture subscription"),
+            state: ImportedSubscriptionState::Ready(SourceKind::HttpsSubscription),
+            providers: Vec::new(),
+            generation: 0,
+            refresh_interval: mihomo::RemoteSourceRefreshInterval::Hourly,
+            last_successful_update_unix_secs: 100,
+        };
+        let mut rule_source = mihomo::StoredQxRuleSource {
+            id: "qx-rule-source:fixture".to_owned(),
+            source: manis_profile::SecretUrl::parse_https("https://rules.example.invalid/list")
+                .expect("fixture rule URL"),
+            target_policy: manis_profile::Name::parse("Proxy").expect("fixture policy"),
+            content: "DOMAIN-SUFFIX,example.com,Proxy".to_owned(),
+            rule_count: 1,
+            diagnostic_count: 0,
+            refresh_interval: mihomo::RemoteSourceRefreshInterval::Hourly,
+            last_successful_update_unix_secs: 100,
+        };
+
+        assert_eq!(
+            super::next_due_remote_source(
+                std::slice::from_ref(&subscription),
+                std::slice::from_ref(&rule_source),
+                &BTreeMap::new(),
+                3_700,
+            ),
+            Some(DueRemoteSource::Subscription(subscription.id.clone()))
+        );
+
+        let mut second_subscription = subscription.clone();
+        second_subscription.id = "subscription:second".to_owned();
+        let retry_not_before = BTreeMap::from([(
+            DueRemoteSource::Subscription(subscription.id.clone()).scheduler_key(),
+            4_000,
+        )]);
+        assert_eq!(
+            super::next_due_remote_source(
+                &[subscription, second_subscription.clone()],
+                std::slice::from_ref(&rule_source),
+                &retry_not_before,
+                3_700,
+            ),
+            Some(DueRemoteSource::Subscription(second_subscription.id))
+        );
+
+        rule_source.refresh_interval = mihomo::RemoteSourceRefreshInterval::Manual;
+        assert_eq!(
+            super::next_due_remote_source(&[], &[rule_source], &BTreeMap::new(), 3_700),
+            None
+        );
+    }
+
+    #[test]
+    fn disconnected_app_starts_without_mock_policy_groups() {
+        let app = ManisApp::with_controller("http://127.0.0.1:9090");
+
+        assert!(app.catalog.is_none());
+        assert_eq!(app.workspace.selected_group, None);
+        assert_eq!(app.workspace.selected_node, None);
+    }
+
+    #[test]
+    fn policy_settings_only_match_a_saved_manis_group_by_exact_name() {
+        let mut app = ManisApp::with_controller("http://127.0.0.1:9090");
+        app.managed_policy_groups.push(
+            ManagedPolicyGroup::new("group-deadbeef", "Hong Kong")
+                .expect("valid managed policy group"),
+        );
+
+        assert_eq!(
+            app.editable_policy_group_id("Hong Kong"),
+            Some("group-deadbeef")
+        );
+        assert_eq!(app.editable_policy_group_id("Hong Kong Auto"), None);
+        assert_eq!(app.editable_policy_group_id("GLOBAL"), None);
+    }
+
+    #[test]
+    fn runtime_snapshot_populates_real_policy_groups() {
+        let mut app = ManisApp::with_controller("http://127.0.0.1:9090");
+        let policy_id = PolicyGroupId::new("runtime-policy");
+        let node_id = ProxyId::new("runtime-node");
+        let catalog = PolicyCatalog::try_new(vec![PolicyGroup {
+            id: policy_id.clone(),
+            name: "Runtime policy".to_owned(),
+            kind: PolicyGroupKind::Selector,
+            target: "Runtime node".to_owned(),
+            nodes: vec![PolicyNode {
+                id: node_id.clone(),
+                name: "Runtime node".to_owned(),
+                kind: PolicyCandidateKind::Node,
+                provider: Some("Runtime provider".to_owned()),
+                detail: "VLESS".to_owned(),
+                latency_ms: Some(42),
+                alive: Some(true),
+            }],
+            rules_total: 1,
+            rules: Vec::new(),
+        }])
+        .expect("runtime policy catalog");
+
+        app.apply_mihomo_snapshot(
+            "http://127.0.0.1:9090".to_owned(),
+            mihomo::LoadedSnapshot {
+                catalog,
+                providers: Vec::new(),
+                version: "fixture".to_owned(),
+                active_connections: 0,
+                download_total: 0,
+                upload_total: 0,
+                observed_routes: Vec::new(),
+                connections: Vec::new(),
+                runtime: manis_mihomo::RuntimeConfig::default(),
+            },
+        );
+
+        assert_eq!(app.policy_groups().count(), 1);
+        assert_eq!(app.workspace.selected_group, Some(policy_id));
+        assert_eq!(app.workspace.selected_node, Some(node_id));
+    }
+
+    #[test]
+    fn saved_global_node_overrides_runtime_target_without_losing_runtime_state() {
+        let mut app = ManisApp::with_controller("http://127.0.0.1:9090");
+        app.catalog = Some(
+            PolicyCatalog::try_new(vec![PolicyGroup {
+                id: PolicyGroupId::new("GLOBAL"),
+                name: "GLOBAL".to_owned(),
+                kind: PolicyGroupKind::Selector,
+                target: "Tokyo".to_owned(),
+                nodes: ["Tokyo", "Singapore"]
+                    .into_iter()
+                    .map(|name| PolicyNode {
+                        id: ProxyId::new(name),
+                        name: name.to_owned(),
+                        kind: PolicyCandidateKind::Node,
+                        provider: None,
+                        detail: "VLESS".to_owned(),
+                        latency_ms: None,
+                        alive: None,
+                    })
+                    .collect(),
+                rules_total: 0,
+                rules: Vec::new(),
+            }])
+            .expect("fixture global group"),
+        );
+
+        assert_eq!(app.global_target(), Some("Tokyo"));
+        assert_eq!(app.runtime_global_target(), Some("Tokyo"));
+
+        app.node_selection_preferences.set_global(
+            NodeIdentity::new("saved", "Singapore").expect("valid saved node identity"),
+        );
+        assert_eq!(app.global_target(), Some("Singapore"));
+        assert_eq!(app.runtime_global_target(), Some("Tokyo"));
+    }
+
+    #[test]
+    fn app_startup_restores_global_and_manual_policy_node_selections() {
+        let root =
+            std::env::temp_dir().join(format!("manis-app-node-selections-{}", std::process::id()));
+        if root.exists() {
+            fs::remove_dir_all(&root).expect("remove stale fixture");
+        }
+        let store = root.join("subscriptions");
+        let mut preferences = mihomo::NodeSelectionPreferences::default();
+        preferences.set_global(
+            NodeIdentity::new("saved", "Singapore").expect("valid saved node identity"),
+        );
+        preferences
+            .set_policy_target("Manual Video", "Tokyo")
+            .expect("valid manual policy target");
+        mihomo::save_node_selection_preferences_in(&store, &preferences)
+            .expect("save node selections");
+
+        let app = ManisApp::with_controller_and_subscription_store("http://127.0.0.1:9090", store);
+
+        assert_eq!(
+            app.global_target_identity()
+                .map(|identity| (identity.source_id.as_str(), identity.node_name.as_str())),
+            Some(("saved", "Singapore"))
+        );
+        assert_eq!(
+            app.node_selection_preferences.policy_target("Manual Video"),
+            Some("Tokyo")
+        );
+        fs::remove_dir_all(root).expect("remove selection fixture");
+    }
+
+    #[test]
+    fn manual_policy_detail_falls_back_to_the_catalog_target() {
+        let mut app = ManisApp::with_controller("http://127.0.0.1:9090");
+        let policy_id = PolicyGroupId::new("manual-video");
+        app.catalog = Some(
+            PolicyCatalog::try_new(vec![PolicyGroup {
+                id: policy_id.clone(),
+                name: "Manual Video".to_owned(),
+                kind: PolicyGroupKind::Selector,
+                target: "Singapore".to_owned(),
+                nodes: ["Tokyo", "Singapore"]
+                    .into_iter()
+                    .map(|name| PolicyNode {
+                        id: ProxyId::new(name),
+                        name: name.to_owned(),
+                        kind: PolicyCandidateKind::Node,
+                        provider: None,
+                        detail: "fixture".to_owned(),
+                        latency_ms: None,
+                        alive: None,
+                    })
+                    .collect(),
+                rules_total: 0,
+                rules: Vec::new(),
+            }])
+            .expect("manual policy catalog"),
+        );
+        app.workspace.select_group(policy_id);
+
+        assert_eq!(
+            app.selected_node().map(|node| node.name),
+            Some("Singapore".to_owned())
+        );
+    }
+
+    #[test]
+    fn offline_manual_policy_selection_uses_only_saved_group_candidates() {
+        assert!(super::policy_target_is_selectable(
+            false,
+            Some(false),
+            Some(true)
+        ));
+        assert!(!super::policy_target_is_selectable(
+            false,
+            Some(true),
+            Some(false)
+        ));
+        assert!(!super::policy_target_is_selectable(false, Some(true), None));
+    }
+
+    #[test]
+    fn connected_manual_policy_selection_uses_runtime_catalog() {
+        assert!(super::policy_target_is_selectable(
+            true,
+            Some(true),
+            Some(false)
+        ));
+        assert!(!super::policy_target_is_selectable(
+            true,
+            Some(false),
+            Some(true)
+        ));
+        assert!(!super::policy_target_is_selectable(true, None, Some(true)));
+    }
+
+    #[test]
+    fn app_startup_restores_saved_qx_rule_sources() {
+        let root = std::env::temp_dir().join(format!("manis-app-qx-rule-{}", std::process::id()));
+        if root.exists() {
+            fs::remove_dir_all(&root).expect("remove stale fixture");
+        }
+        let store = root.join("subscriptions");
+        mihomo::save_qx_rule_source_in(
+            &store,
+            "https://rules.example.invalid/airports.list",
+            "Proxy",
+            "DOMAIN-SUFFIX,example.com,Proxy",
+        )
+        .expect("save QX rule fixture");
+
+        let app = ManisApp::with_controller_and_subscription_store("http://127.0.0.1:9090", store);
+
+        assert_eq!(app.qx_rule_sources.len(), 1);
+        assert_eq!(app.qx_rule_sources[0].rule_count, 1);
+        assert_eq!(app.qx_rule_sources[0].target_policy.as_str(), "Proxy");
+        fs::remove_dir_all(root).expect("remove fixture");
+    }
+
+    #[test]
+    fn tun_is_blocked_until_a_capable_managed_kernel_is_connected() {
+        assert_eq!(
+            proxy_mode_block(
+                ProxyMode::Tun,
+                None,
+                ControllerReadiness::Disconnected,
+                TunSupport::Supported
+            ),
+            Some(ProxyModeBlock::ControllerNotConnected)
+        );
+        assert_eq!(
+            proxy_mode_block(
+                ProxyMode::Tun,
+                None,
+                ControllerReadiness::Connected,
+                TunSupport::KernelUnsupported
+            ),
+            Some(ProxyModeBlock::KernelHasNoTun)
+        );
+        assert_eq!(
+            proxy_mode_block(
+                ProxyMode::Tun,
+                None,
+                ControllerReadiness::Connected,
+                TunSupport::ExternalControllerReadOnly
+            ),
+            Some(ProxyModeBlock::ExternalControllerReadOnly)
+        );
+        assert_eq!(
+            proxy_mode_block(
+                ProxyMode::Tun,
+                None,
+                ControllerReadiness::Connected,
+                TunSupport::Supported
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn the_system_proxy_only_needs_a_connected_controller() {
+        assert_eq!(
+            proxy_mode_block(
+                ProxyMode::System,
+                None,
+                ControllerReadiness::Disconnected,
+                TunSupport::Supported
+            ),
+            Some(ProxyModeBlock::ControllerNotConnected)
+        );
+        assert_eq!(
+            proxy_mode_block(
+                ProxyMode::System,
+                None,
+                ControllerReadiness::Connected,
+                TunSupport::ExternalControllerReadOnly
+            ),
+            None
+        );
+        assert_eq!(
+            proxy_mode_block(
+                ProxyMode::System,
+                None,
+                ControllerReadiness::Connected,
+                TunSupport::KernelUnsupported
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn a_switch_in_flight_blocks_every_mode() {
+        assert_eq!(
+            proxy_mode_block(
+                ProxyMode::System,
+                Some(ProxyMode::Tun),
+                ControllerReadiness::Connected,
+                TunSupport::Supported
+            ),
+            Some(ProxyModeBlock::Busy)
+        );
+        assert_eq!(
+            proxy_mode_block(
+                ProxyMode::Tun,
+                Some(ProxyMode::System),
+                ControllerReadiness::Connected,
+                TunSupport::Supported
+            ),
+            Some(ProxyModeBlock::Busy)
+        );
+    }
+
+    #[test]
+    fn source_reload_tun_restore_failure_forces_the_ui_mode_off() {
+        let mut mode = ProxyMode::Tun;
+        let apply = SourceRuntimeApply::from_result(Err(mihomo::LoadError::ProxyModeLost(
+            "fixture restore failure".to_owned(),
+        )));
+
+        assert!(apply.reconcile_proxy_mode(&mut mode));
+        assert_eq!(mode, ProxyMode::Off);
+    }
+
+    #[test]
+    fn successful_source_reload_keeps_the_active_tun_mode() {
+        let mut mode = ProxyMode::Tun;
+        let apply = SourceRuntimeApply::from_result(Ok(mihomo::GeneratedProfileApply::Restarted));
+
+        assert!(!apply.reconcile_proxy_mode(&mut mode));
+        assert_eq!(mode, ProxyMode::Tun);
+    }
+
+    #[test]
+    fn the_status_line_names_the_kernel_that_is_actually_running() {
+        let connected = crate::mihomo::ControllerState::Connected {
+            endpoint: "http://127.0.0.1:9090".to_owned(),
+            version: "1.13.19".to_owned(),
+            active_connections: 5,
+            download_total: 0,
+            upload_total: 0,
+        };
+
+        // Hard-coding "Mihomo" here would mislabel every sing-box session.
+        assert_eq!(
+            super::controller_status_label(
+                &connected,
+                "sing-box",
+                crate::localization::Language::SimplifiedChinese
+            ),
+            "sing-box 1.13.19 · 5 条连接"
+        );
+        assert_eq!(
+            super::controller_status_label(
+                &connected,
+                "Mihomo",
+                crate::localization::Language::English
+            ),
+            "Mihomo 1.13.19 · 5 connections"
+        );
+        assert_eq!(
+            super::controller_status_label(
+                &crate::mihomo::ControllerState::Disconnected,
+                "sing-box",
+                crate::localization::Language::SimplifiedChinese
+            ),
+            "sing-box 未连接"
+        );
+        // The failure reason must survive; the status bar is now its only home.
+        assert_eq!(
+            super::controller_status_label(
+                &crate::mihomo::ControllerState::Failed {
+                    endpoint: "http://127.0.0.1:9090".to_owned(),
+                    message: "connection refused".to_owned(),
+                },
+                "Mihomo",
+                crate::localization::Language::SimplifiedChinese
+            ),
+            "Mihomo 连接失败 · connection refused"
+        );
+    }
+}

@@ -1,0 +1,17 @@
+[package]
+name = "manis-engine"
+description = "Safe lifecycle and configuration orchestration for Manis proxy cores"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+publish.workspace = true
+readme.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+manis-core = { path = "../manis-core" }
+
+[lints]
+workspace = true

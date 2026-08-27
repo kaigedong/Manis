@@ -1,0 +1,36 @@
+name: Feature request
+description: Propose a focused improvement to Manis.
+title: "feat: "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What task is difficult today, and who encounters it?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the user-visible result rather than a specific implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Rules
+        - Policy groups
+        - Nodes and subscriptions
+        - Proxy and TUN
+        - Network activity and logs
+        - Cross-platform support
+        - Other
+    validations:
+      required: true

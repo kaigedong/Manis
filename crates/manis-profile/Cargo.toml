@@ -1,0 +1,14 @@
+[package]
+name = "manis-profile"
+description = "Typed Manis profiles and deterministic Mihomo and sing-box configuration compilers"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+publish.workspace = true
+readme.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
