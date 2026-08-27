@@ -28,7 +28,9 @@ sha256sums=()
 
 build() {
   cd "$startdir/../.."
-  CARGO_TARGET_DIR="$srcdir/target" cargo build -p manis-ui --release --locked
+  RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }-C linker-features=-lld" \
+    CARGO_TARGET_DIR="$srcdir/target" \
+    cargo build -p manis-ui --release --locked
 }
 
 check() {
