@@ -974,6 +974,8 @@ impl ManisApp {
             .cursor_pointer()
             .min_h(px(44.0))
             .px_3()
+            .flex()
+            .items_center()
             .border_b_1()
             .border_color(theme.outline_subtle)
             .on_click(listener)
@@ -1172,6 +1174,8 @@ impl ManisApp {
                 .cursor_pointer()
                 .min_h(px(58.0))
                 .px_4()
+                .flex()
+                .items_center()
                 .border_b_1()
                 .border_color(theme.outline_subtle)
                 .child(

@@ -5480,10 +5480,24 @@ impl ManisApp {
                     .as_ref()
                     .filter(|draft| draft.editing_id.as_deref() == Some(group_id));
                 if let Some(draft) = active_draft {
+                    let remove_id = group_id.to_owned();
                     let actions = div()
                         .flex()
                         .items_center()
                         .gap(Space::Sm.px())
+                        .child(
+                            action_button(
+                                "remove-managed-policy-editing",
+                                language.text("Delete policy group", "删除策略组"),
+                                ActionRole::Danger,
+                                ControlSize::Compact,
+                            )
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| {
+                                    this.remove_managed_policy(&remove_id, cx);
+                                },
+                            )),
+                        )
                         .child(
                             action_button(
                                 "cancel-managed-policy-edit",
