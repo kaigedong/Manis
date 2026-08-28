@@ -20,7 +20,7 @@ const MANUAL_RULES_VERSION_V2: &str = "manis.manual-routing-rules.v2";
 #[cfg(not(windows))]
 const MAX_MANUAL_RULES_FILE_BYTES: u64 = 256 * 1024;
 const MAX_PARAMETER_BYTES: usize = 1_024;
-const MAX_CONDITIONS: usize = 4;
+pub(crate) const MAX_CONDITIONS: usize = 4;
 const LEGACY_GENERATED_PROXY_GROUP_NAME: &str = "Proxy";
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -301,6 +301,30 @@ pub(crate) enum ManualRuleError {
     Duplicate,
     DuplicateCondition,
     TooManyConditions,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ManualRuleEditError {
+    Missing,
+    Duplicate,
+}
+
+pub(crate) fn replace_manual_rule(
+    rules: &mut [ManualRule],
+    index: usize,
+    replacement: ManualRule,
+) -> Result<ManualRule, ManualRuleEditError> {
+    if index >= rules.len() {
+        return Err(ManualRuleEditError::Missing);
+    }
+    if rules
+        .iter()
+        .enumerate()
+        .any(|(candidate_index, candidate)| candidate_index != index && candidate == &replacement)
+    {
+        return Err(ManualRuleEditError::Duplicate);
+    }
+    Ok(std::mem::replace(&mut rules[index], replacement))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -683,8 +707,8 @@ mod tests {
     use std::fs;
 
     use super::{
-        ManualRule, ManualRuleError, ManualRuleKind, load_manual_rules_in, prepend_manual_rules,
-        save_manual_rules_in,
+        ManualRule, ManualRuleEditError, ManualRuleError, ManualRuleKind, load_manual_rules_in,
+        prepend_manual_rules, replace_manual_rule, save_manual_rules_in,
     };
 
     #[test]
@@ -817,6 +841,36 @@ mod tests {
         assert_eq!(load_manual_rules_in(&root)?, rules);
         fs::remove_dir_all(root)?;
         Ok(())
+    }
+
+    #[test]
+    fn replacing_a_manual_rule_preserves_order_and_ignores_itself_for_duplicates() {
+        let first = ManualRule::parse(ManualRuleKind::HostSuffix, "example.com", "DIRECT")
+            .expect("first rule");
+        let second =
+            ManualRule::parse(ManualRuleKind::DstPort, "22", "DIRECT").expect("second rule");
+        let replacement = ManualRule::parse(ManualRuleKind::HostSuffix, "github.com", "DIRECT")
+            .expect("replacement rule");
+        let mut rules = vec![first.clone(), second.clone()];
+
+        let previous = replace_manual_rule(&mut rules, 0, replacement.clone())
+            .expect("distinct replacement should succeed");
+
+        assert_eq!(previous, first);
+        assert_eq!(rules, vec![replacement.clone(), second.clone()]);
+        assert_eq!(
+            replace_manual_rule(&mut rules, 0, replacement),
+            Ok(rules[0].clone()),
+            "saving an unchanged rule must not be treated as a duplicate"
+        );
+        assert_eq!(
+            replace_manual_rule(&mut rules, 0, second),
+            Err(ManualRuleEditError::Duplicate)
+        );
+        assert_eq!(
+            replace_manual_rule(&mut rules, 9, first),
+            Err(ManualRuleEditError::Missing)
+        );
     }
 
     #[cfg(not(windows))]

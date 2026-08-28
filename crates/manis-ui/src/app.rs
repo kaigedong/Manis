@@ -350,7 +350,21 @@ enum ManualRulePopover {
 enum ManualRuleEditorState {
     #[default]
     Closed,
-    Open,
+    Creating,
+    Editing(usize),
+}
+
+impl ManualRuleEditorState {
+    const fn is_open(self) -> bool {
+        !matches!(self, Self::Closed)
+    }
+
+    const fn editing_index(self) -> Option<usize> {
+        match self {
+            Self::Editing(index) => Some(index),
+            Self::Closed | Self::Creating => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -570,6 +584,8 @@ pub struct ManisApp {
     qx_rule_target_policy: String,
     qx_rule_import_generation: u64,
     qx_rule_source_refreshes: BTreeMap<String, QxRuleSourceRefreshState>,
+    qx_rule_source_target_updates: BTreeMap<String, u64>,
+    qx_rule_target_popover: Option<String>,
     source_refresh_retry_not_before: BTreeMap<String, u64>,
     source_refresh_scheduler: SourceRefreshSchedulerState,
     managed_policy_groups: Vec<ManagedPolicyGroup>,
@@ -609,11 +625,9 @@ pub struct ManisApp {
     qx_rule_input: Option<Entity<SubscriptionTextInput>>,
     qx_rule_input_events: Option<Subscription>,
     manual_rules: Vec<crate::manual_rule::ManualRule>,
-    manual_rule_input: Option<Entity<SubscriptionTextInput>>,
-    manual_rule_kind: crate::manual_rule::ManualRuleKind,
-    manual_rule_second_input: Option<Entity<SubscriptionTextInput>>,
-    manual_rule_second_kind: crate::manual_rule::ManualRuleKind,
-    manual_rule_second_enabled: bool,
+    manual_rule_inputs: Vec<Entity<SubscriptionTextInput>>,
+    manual_rule_kinds: Vec<crate::manual_rule::ManualRuleKind>,
+    manual_rule_condition_count: usize,
     manual_rule_target: String,
     manual_rule_editor_state: ManualRuleEditorState,
     manual_rule_popover: Option<ManualRulePopover>,
@@ -850,6 +864,8 @@ impl ManisApp {
             qx_rule_target_policy: default_rule_target.clone(),
             qx_rule_import_generation: 0,
             qx_rule_source_refreshes: BTreeMap::new(),
+            qx_rule_source_target_updates: BTreeMap::new(),
+            qx_rule_target_popover: None,
             source_refresh_retry_not_before: BTreeMap::new(),
             source_refresh_scheduler: SourceRefreshSchedulerState::Stopped,
             managed_policy_groups,
@@ -889,11 +905,9 @@ impl ManisApp {
             qx_rule_input: None,
             qx_rule_input_events: None,
             manual_rules: Vec::new(),
-            manual_rule_input: None,
-            manual_rule_kind: crate::manual_rule::ManualRuleKind::default(),
-            manual_rule_second_input: None,
-            manual_rule_second_kind: crate::manual_rule::ManualRuleKind::DstPort,
-            manual_rule_second_enabled: false,
+            manual_rule_inputs: Vec::new(),
+            manual_rule_kinds: Vec::new(),
+            manual_rule_condition_count: 1,
             manual_rule_target: default_rule_target,
             manual_rule_editor_state: ManualRuleEditorState::Closed,
             manual_rule_popover: None,
@@ -1574,6 +1588,7 @@ impl ManisApp {
                 .qx_rule_source_refreshes
                 .values()
                 .any(QxRuleSourceRefreshState::is_refreshing)
+            || !self.qx_rule_source_target_updates.is_empty()
     }
 
     fn refresh_next_due_source(&mut self, cx: &mut Context<Self>) {
