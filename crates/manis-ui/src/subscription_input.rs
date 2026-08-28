@@ -23,10 +23,12 @@ actions!(
         Home,
         End,
         Paste,
+        Submit,
     ]
 );
 
 pub(crate) struct SubscriptionInputChanged;
+pub(crate) struct SubscriptionInputSubmitted;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum InputAvailability {
@@ -48,6 +50,7 @@ pub(crate) fn init(cx: &mut App) {
         KeyBinding::new("ctrl-a", SelectAll, Some("SubscriptionInput")),
         KeyBinding::new("cmd-v", Paste, Some("SubscriptionInput")),
         KeyBinding::new("ctrl-v", Paste, Some("SubscriptionInput")),
+        KeyBinding::new("enter", Submit, Some("SubscriptionInput")),
     ]);
 }
 
@@ -255,6 +258,12 @@ impl SubscriptionTextInput {
         }
     }
 
+    fn submit(&mut self, _: &Submit, _: &mut Window, cx: &mut Context<Self>) {
+        if self.availability == InputAvailability::Enabled {
+            cx.emit(SubscriptionInputSubmitted);
+        }
+    }
+
     fn on_mouse_down(
         &mut self,
         event: &MouseDownEvent,
@@ -401,6 +410,7 @@ fn replace_content(content: &str, range: Range<usize>, new_text: &str) -> (Strin
 }
 
 impl gpui::EventEmitter<SubscriptionInputChanged> for SubscriptionTextInput {}
+impl gpui::EventEmitter<SubscriptionInputSubmitted> for SubscriptionTextInput {}
 
 impl Focusable for SubscriptionTextInput {
     fn focus_handle(&self, _: &App) -> FocusHandle {
@@ -767,6 +777,7 @@ impl gpui::Render for SubscriptionTextInput {
         let focused = self.focus_handle.is_focused(window);
         div()
             .id(self.element_id.clone())
+            .aria_label(self.placeholder.clone())
             .key_context("SubscriptionInput")
             .track_focus(&self.focus_handle(cx))
             .cursor(if self.availability == InputAvailability::Enabled {
@@ -798,6 +809,7 @@ impl gpui::Render for SubscriptionTextInput {
             .on_action(cx.listener(Self::home))
             .on_action(cx.listener(Self::end))
             .on_action(cx.listener(Self::paste))
+            .on_action(cx.listener(Self::submit))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))

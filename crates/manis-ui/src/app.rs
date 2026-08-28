@@ -8,9 +8,11 @@ use gpui::{
     Render, Role, Stateful, Styled, Subscription, Task, Toggled, Window, div, prelude::*, px,
 };
 use manis_core::{
-    CompactNavigation, KernelKind, ManagedPolicyGroup, ManagedPolicyIcon, ManagedPolicyStrategy,
-    NodeIdentity, NodeWorkspaceState, PolicyCatalog, PolicyGroup, PolicyGroupId, PolicyNode,
-    PolicyWorkspaceState, PrimaryWorkspace, ProxyId, ProxyMode, RoutingMode, WindowSizeClass,
+    CompactNavigation, DomainRoutePrediction, KernelKind, ManagedPolicyGroup, ManagedPolicyIcon,
+    ManagedPolicyStrategy, NodeIdentity, NodeWorkspaceState, PolicyCatalog, PolicyGroup,
+    PolicyGroupId, PolicyNode, PolicyWorkspaceState, PrimaryWorkspace, ProxyId, ProxyMode,
+    RouteDomain, RouteDomainError, RoutePredictionReason, RouteTarget, RoutingMode,
+    WindowSizeClass,
 };
 use manis_mihomo::{Connection, ObservedRouteEvidence, RuntimeConfig};
 use manis_profile::{QxRuleList, SecretUrl};
@@ -30,7 +32,9 @@ use crate::{
     },
     rule_source::RuleDownloadError,
     subscription::{SourceKind, SubscriptionInputError, SubscriptionPreview},
-    subscription_input::{SubscriptionInputChanged, SubscriptionTextInput},
+    subscription_input::{
+        SubscriptionInputChanged, SubscriptionInputSubmitted, SubscriptionTextInput,
+    },
     system_proxy::{ProxyPorts, SystemProxySession, TunDnsSession},
     theme::Theme,
 };
@@ -49,6 +53,14 @@ enum SubscriptionFeedback {
     InvalidInput(SubscriptionInputError),
     PreviewFailed(SubscriptionPreviewError),
     StoreFailed(SubscriptionStoreError),
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+enum RouteInspectorPrediction {
+    #[default]
+    Idle,
+    Invalid(RouteDomainError),
+    Ready(DomainRoutePrediction),
 }
 
 enum SourceRuntimeApply {
@@ -556,6 +568,7 @@ pub struct ManisApp {
     kernel_logs: VecDeque<KernelLogEntry>,
     dropped_kernel_logs: u64,
     inspector_open: bool,
+    route_prediction: RouteInspectorPrediction,
     dark: bool,
     status: String,
     subscription_input: Option<Entity<SubscriptionTextInput>>,
@@ -578,6 +591,8 @@ pub struct ManisApp {
     activity_search_events: Option<Subscription>,
     logs_search_input: Option<Entity<SubscriptionTextInput>>,
     logs_search_events: Option<Subscription>,
+    route_domain_input: Option<Entity<SubscriptionTextInput>>,
+    route_domain_input_events: Vec<Subscription>,
     #[allow(dead_code)]
     app_lifecycle_events: Option<Subscription>,
 }
@@ -815,6 +830,7 @@ impl ManisApp {
             kernel_logs: VecDeque::with_capacity(500),
             dropped_kernel_logs: 0,
             inspector_open: false,
+            route_prediction: RouteInspectorPrediction::Idle,
             dark: false,
             status,
             subscription_input: None,
@@ -837,6 +853,8 @@ impl ManisApp {
             activity_search_events: None,
             logs_search_input: None,
             logs_search_events: None,
+            route_domain_input: None,
+            route_domain_input_events: Vec::new(),
             app_lifecycle_events: None,
         }
     }
@@ -1104,6 +1122,82 @@ impl ManisApp {
             self.logs_search_input = Some(input);
             self.logs_search_events = Some(events);
         }
+    }
+
+    fn ensure_route_domain_input(&mut self, theme: Theme, cx: &mut Context<Self>) {
+        let language = self.language();
+        let placeholder = language.text("For example: www.example.com", "例如：www.example.com");
+        if let Some(input) = self.route_domain_input.as_ref() {
+            input.update(cx, |input, cx| {
+                input.set_theme(theme, self.dark, cx);
+                input.set_placeholder(placeholder, cx);
+            });
+            return;
+        }
+
+        let input = cx.new(|cx| {
+            SubscriptionTextInput::new_field(
+                "route-domain-input",
+                placeholder,
+                253,
+                theme,
+                self.dark,
+                cx,
+            )
+        });
+        let changed = cx.subscribe(&input, |this, _input, _: &SubscriptionInputChanged, cx| {
+            if this.route_prediction != RouteInspectorPrediction::Idle {
+                this.route_prediction = RouteInspectorPrediction::Idle;
+                cx.notify();
+            }
+        });
+        let submitted = cx.subscribe(
+            &input,
+            |this, _input, _: &SubscriptionInputSubmitted, cx| {
+                this.predict_route(cx);
+            },
+        );
+        self.route_domain_input = Some(input);
+        self.route_domain_input_events = vec![changed, submitted];
+    }
+
+    fn predict_route(&mut self, cx: &mut Context<Self>) {
+        let Some(input) = self.route_domain_input.as_ref() else {
+            return;
+        };
+        let value = input.read(cx).value().to_owned();
+        let domain = match RouteDomain::parse(&value) {
+            Ok(domain) => domain,
+            Err(error) => {
+                self.route_prediction = RouteInspectorPrediction::Invalid(error);
+                route_domain_error_copy(error, self.language()).clone_into(&mut self.status);
+                cx.notify();
+                return;
+            }
+        };
+        let Some(catalog) = self.catalog.as_ref() else {
+            return;
+        };
+        let prediction = catalog.predict_domain(&domain);
+        self.status = match &prediction {
+            DomainRoutePrediction::Matched { domain, .. } => {
+                if self.language() == Language::English {
+                    format!("Predicted route for {}", domain.as_str())
+                } else {
+                    format!("已预测 {} 的路由", domain.as_str())
+                }
+            }
+            DomainRoutePrediction::NeedsConnection { domain, .. } => {
+                if self.language() == Language::English {
+                    format!("{} needs an actual connection to confirm", domain.as_str())
+                } else {
+                    format!("{} 需要实际连接才能确认", domain.as_str())
+                }
+            }
+        };
+        self.route_prediction = RouteInspectorPrediction::Ready(prediction);
+        trace_ui(UiEvent::RoutePredictionRequested);
+        cx.notify();
     }
 
     #[allow(clippy::too_many_lines)]
@@ -1997,35 +2091,36 @@ impl ManisApp {
 
     fn selected_node(&self) -> Option<PolicyNode> {
         let policy = self.selected_policy()?;
+        Some(self.node_for_policy(policy))
+    }
+
+    fn node_for_policy(&self, policy: &PolicyGroup) -> PolicyNode {
         let selected = if policy.kind.allows_manual_selection() {
             self.workspace
-                .selected_node
-                .as_ref()
+                .selection_for(&policy.id)
                 .and_then(|selected| policy.nodes.iter().find(|node| node.id == *selected))
                 .or_else(|| policy.nodes.iter().find(|node| node.name == policy.target))
         } else {
             policy.nodes.iter().find(|node| node.name == policy.target)
         };
-        Some(
-            selected
-                .or_else(|| policy.nodes.first())
-                .cloned()
-                .unwrap_or_else(|| PolicyNode {
-                    id: ProxyId::new("unavailable"),
-                    name: self
-                        .language()
-                        .text("No available nodes", "暂无可用节点")
-                        .to_owned(),
-                    kind: manis_core::PolicyCandidateKind::Node,
-                    provider: None,
-                    detail: self
-                        .language()
-                        .text("The kernel returned no group members", "内核未返回组内节点")
-                        .to_owned(),
-                    latency_ms: None,
-                    alive: None,
-                }),
-        )
+        selected
+            .or_else(|| policy.nodes.first())
+            .cloned()
+            .unwrap_or_else(|| PolicyNode {
+                id: ProxyId::new("unavailable"),
+                name: self
+                    .language()
+                    .text("No available nodes", "暂无可用节点")
+                    .to_owned(),
+                kind: manis_core::PolicyCandidateKind::Node,
+                provider: None,
+                detail: self
+                    .language()
+                    .text("The kernel returned no group members", "内核未返回组内节点")
+                    .to_owned(),
+                latency_ms: None,
+                alive: None,
+            })
     }
 
     fn switch_kernel(&mut self, requested: KernelKind, cx: &mut Context<Self>) {
@@ -2244,6 +2339,7 @@ impl ManisApp {
             .map(|node| node.id.clone());
         let policy_group_count = catalog.iter().count();
         self.catalog = Some(catalog);
+        self.route_prediction = RouteInspectorPrediction::Idle;
         self.workspace
             .replace_source_selection(group, selected_node);
         self.source_providers = snapshot.providers;
@@ -5411,52 +5507,265 @@ impl ManisApp {
     }
 
     #[allow(clippy::too_many_lines)]
+    fn route_prediction_panel(
+        &self,
+        prediction: &RouteInspectorPrediction,
+        language: Language,
+        theme: Theme,
+    ) -> Div {
+        match prediction {
+            RouteInspectorPrediction::Idle => div()
+                .p_4()
+                .rounded_md()
+                .border_1()
+                .border_color(theme.outline_subtle)
+                .bg(theme.surface_high)
+                .font_weight(FontWeight::SEMIBOLD)
+                .child(language.text(
+                    "Enter a domain to trace its first matching rule",
+                    "输入域名，查看首条命中规则",
+                ))
+                .child(
+                    div()
+                        .mt_2()
+                        .font_weight(FontWeight::NORMAL)
+                        .text_color(theme.text_secondary)
+                        .child(language.text(
+                            "The result is a local prediction and does not create a connection.",
+                            "结果是本地预测，不会发起网络连接。",
+                        )),
+                ),
+            RouteInspectorPrediction::Invalid(_) => div()
+                .p_4()
+                .rounded_md()
+                .border_1()
+                .border_color(theme.status_error)
+                .bg(theme.surface_high)
+                .text_color(theme.text_secondary)
+                .child(language.text(
+                    "Correct the domain above, then predict again.",
+                    "请修正上方域名后重新预测。",
+                )),
+            RouteInspectorPrediction::Ready(DomainRoutePrediction::Matched {
+                rule,
+                target,
+                ..
+            }) => {
+                let rule_detail = if rule.payload.is_empty() {
+                    format!("{} #{}", language.text("Rule", "规则"), rule.index)
+                } else {
+                    format!(
+                        "{} · {} #{}",
+                        rule.payload,
+                        language.text("rule", "规则"),
+                        rule.index
+                    )
+                };
+                let (policy, decision, exit, exit_detail) = match target {
+                    RouteTarget::Policy(id) => self
+                        .catalog
+                        .as_ref()
+                        .and_then(|catalog| catalog.group(id))
+                        .map_or_else(
+                            || {
+                                (
+                                    id.as_str().to_owned(),
+                                    language
+                                        .text("Runtime policy group", "运行时策略组")
+                                        .to_owned(),
+                                    language
+                                        .text("Needs an actual connection", "需要实际连接确认")
+                                        .to_owned(),
+                                    language
+                                        .text(
+                                            "The policy group is not present in the current snapshot",
+                                            "当前快照中没有这个策略组",
+                                        )
+                                        .to_owned(),
+                                )
+                            },
+                            |group| {
+                                let decision = if group.kind.allows_manual_selection() {
+                                    format!(
+                                        "{} · {}",
+                                        policy_kind_label(language, group.kind),
+                                        language.text("current selection", "当前选择")
+                                    )
+                                } else {
+                                    format!(
+                                        "{} · {}",
+                                        policy_kind_label(language, group.kind),
+                                        language.text("runtime decision", "运行时决策")
+                                    )
+                                };
+                                if group.kind == manis_core::PolicyGroupKind::LoadBalance {
+                                    return (
+                                        group.name.clone(),
+                                        decision,
+                                        language
+                                            .text("Per-connection choice", "按连接选择")
+                                            .to_owned(),
+                                        language
+                                            .text(
+                                                "Load balancing has no single predicted exit",
+                                                "负载均衡没有单一的预测出口",
+                                            )
+                                            .to_owned(),
+                                    );
+                                }
+                                let node = self.node_for_policy(group);
+                                let exit_detail = format!(
+                                    "{} · {}",
+                                    node.latency_ms.map_or_else(
+                                        || language.text("Unknown latency", "延迟未知").to_owned(),
+                                        |latency| format!("{latency} ms")
+                                    ),
+                                    node.provider.as_deref().unwrap_or(language.text(
+                                        "Built-in or runtime",
+                                        "内置或运行时节点"
+                                    ))
+                                );
+                                (group.name.clone(), decision, node.name, exit_detail)
+                            },
+                        ),
+                    RouteTarget::Direct => (
+                        "DIRECT".to_owned(),
+                        language.text("Bypass proxy", "不经过代理").to_owned(),
+                        language.text("Direct connection", "直连").to_owned(),
+                        language
+                            .text("No proxy node is selected", "不会选择代理节点")
+                            .to_owned(),
+                    ),
+                    RouteTarget::Reject => (
+                        "REJECT".to_owned(),
+                        language.text("Block request", "阻止请求").to_owned(),
+                        language.text("Connection blocked", "连接被阻止").to_owned(),
+                        language
+                            .text("No outbound connection is created", "不会建立出站连接")
+                            .to_owned(),
+                    ),
+                    RouteTarget::Named(name) => (
+                        name.clone(),
+                        language.text("Runtime target", "运行时目标").to_owned(),
+                        language
+                            .text("Needs an actual connection", "需要实际连接确认")
+                            .to_owned(),
+                        language
+                            .text(
+                                "The target is not a visible policy group",
+                                "该目标不是当前可见策略组",
+                            )
+                            .to_owned(),
+                    ),
+                };
+
+                div()
+                    .relative()
+                    .child(
+                        div()
+                            .absolute()
+                            .left(px(19.0))
+                            .top(px(28.0))
+                            .bottom(px(70.0))
+                            .w(px(2.0))
+                            .bg(theme.route_trace),
+                    )
+                    .child(Self::signal_stage(
+                        "01",
+                        language.text("First matching rule", "首条命中规则"),
+                        rule.kind.clone(),
+                        rule_detail,
+                        true,
+                        theme,
+                    ))
+                    .child(Self::signal_stage(
+                        "02",
+                        language.text("Policy group", "交给策略组"),
+                        policy,
+                        decision,
+                        false,
+                        theme,
+                    ))
+                    .child(Self::signal_stage(
+                        "03",
+                        language.text("Final exit", "最终出口"),
+                        exit,
+                        exit_detail,
+                        false,
+                        theme,
+                    ))
+            }
+            RouteInspectorPrediction::Ready(DomainRoutePrediction::NeedsConnection {
+                blocking_rule,
+                reason,
+                ..
+            }) => {
+                let rule = blocking_rule.as_ref().map(|rule| {
+                    if rule.payload.is_empty() {
+                        format!("#{} {}", rule.index, rule.kind)
+                    } else {
+                        format!("#{} {} · {}", rule.index, rule.kind, rule.payload)
+                    }
+                });
+                div()
+                    .p_4()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(theme.status_warning)
+                    .bg(theme.surface_high)
+                    .child(
+                        div()
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(theme.status_warning)
+                            .child(
+                                language.text(
+                                    "An actual connection is required",
+                                    "需要实际连接才能确认",
+                                ),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .mt_2()
+                            .text_color(theme.text_secondary)
+                            .child(route_prediction_reason_copy(*reason, language)),
+                    )
+                    .when_some(rule, |panel, rule| {
+                        panel.child(
+                            div()
+                                .mt_3()
+                                .text_size(px(11.0))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .child(rule),
+                        )
+                    })
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_lines)]
     fn inspector(&self, theme: Theme, overlay: bool, cx: &mut Context<Self>) -> Div {
         let language = self.language();
-        let (Some(selected_policy), Some(selected_node)) =
-            (self.selected_policy().cloned(), self.selected_node())
-        else {
-            return div().h_full().w(px(340.0)).bg(theme.surface_low);
+        let prediction = self.route_prediction.clone();
+        let route_input = self.route_domain_input.clone();
+        let input_error = match &prediction {
+            RouteInspectorPrediction::Invalid(error) => {
+                Some(route_domain_error_copy(*error, language))
+            }
+            RouteInspectorPrediction::Idle | RouteInspectorPrediction::Ready(_) => None,
         };
-        let decision_copy = if selected_policy.kind.allows_manual_selection() {
-            format!(
-                "{} · {}",
-                policy_kind_label(language, selected_policy.kind),
-                language.text("manually selected", "当前人工选择")
-            )
-        } else {
-            format!(
-                "{} · {}",
-                policy_kind_label(language, selected_policy.kind),
-                language.text("automatically decided by Mihomo", "由 Mihomo 自动决策")
-            )
-        };
-        let first_rule = selected_policy.rules.first();
-        let route_target = first_rule.map_or_else(
-            || language.text("No rule target", "暂无规则目标").to_owned(),
-            |rule| rule.payload.clone(),
-        );
-        let rule_kind = first_rule.map_or_else(
-            || language.text("No matching rule", "暂无匹配规则").to_owned(),
-            |rule| rule.kind.clone(),
-        );
-        let rule_detail = first_rule.map_or_else(
-            || {
-                language
-                    .text("The kernel returned no rule", "内核未返回规则")
-                    .to_owned()
-            },
-            |rule| {
-                format!(
-                    "{} · {} #{}",
-                    route_target,
-                    language.text("rule", "规则"),
-                    rule.index
-                )
-            },
-        );
-        let route_target_for_status = route_target.clone();
         let observed_route = self.observed_routes.first().cloned();
+        let prediction_badge = match &prediction {
+            RouteInspectorPrediction::Ready(DomainRoutePrediction::Matched { .. }) => {
+                language.text("Predicted path", "预测路径")
+            }
+            RouteInspectorPrediction::Ready(DomainRoutePrediction::NeedsConnection { .. }) => {
+                language.text("Needs connection", "需要连接")
+            }
+            RouteInspectorPrediction::Idle | RouteInspectorPrediction::Invalid(_) => {
+                language.text("Local model", "本地模型")
+            }
+        };
 
         div()
             .w(px(340.0))
@@ -5479,7 +5788,7 @@ impl ManisApp {
                             .items_center()
                             .gap_2()
                             .child(div().text_size(px(18.0)).font_weight(FontWeight::BOLD).child(language.text("Route explanation", "路由解释")))
-                            .child(div().px_2().py_1().rounded_sm().bg(theme.route_soft).text_size(px(10.0)).font_weight(FontWeight::SEMIBOLD).text_color(theme.route_trace).child(language.text("Predicted path", "预测路径")))
+                            .child(div().px_2().py_1().rounded_sm().bg(theme.route_soft).text_size(px(10.0)).font_weight(FontWeight::SEMIBOLD).text_color(theme.route_trace).child(prediction_badge))
                             .child(div().flex_1())
                             .when(overlay, |header| {
                                 header.child(
@@ -5502,45 +5811,63 @@ impl ManisApp {
                     .child(
                         div()
                             .mt_4()
-                            .flex()
-                            .gap_2()
-                            .child(div().h(px(38.0)).flex_1().px_3().rounded_md().border_1().border_color(theme.outline_subtle).bg(theme.surface_high).flex().items_center().child(route_target.clone()))
                             .child(
                                 div()
-                                    .id("predict-route")
-                                    .role(Role::Button)
-                                    .tab_stop(true)
-                                    .focusable()
-                                    .cursor_pointer()
-                                    .h(px(38.0))
-                                    .px_3()
-                                    .rounded_md()
-                                    .bg(theme.action_primary)
-                                    .text_color(theme.action_on_primary)
+                                    .text_size(px(11.0))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(language.text("Destination domain", "目标域名")),
+                            )
+                            .child(
+                                div()
+                                    .mt_2()
                                     .flex()
-                                    .items_center()
-                                    .child(language.text("Predict route", "预测路由"))
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        trace_ui(UiEvent::RoutePredictionRequested);
-                                        if let (Some(policy), Some(node)) =
-                                            (this.selected_policy(), this.selected_node())
-                                        {
-                                            this.status = if this.language() == Language::English {
-                                                format!(
-                                                    "Predicted {}: {} → {}",
-                                                    route_target_for_status,
-                                                    policy.name, node.name
-                                                )
-                                            } else {
-                                                format!(
-                                                    "已预测 {}：{} → {}",
-                                                    route_target_for_status,
-                                                    policy.name, node.name
-                                                )
-                                            };
-                                        }
-                                        cx.notify();
-                                    })),
+                                    .gap_2()
+                                    .when_some(route_input, |row, input| {
+                                        row.child(div().min_w_0().flex_1().child(input))
+                                    })
+                                    .child(
+                                        div()
+                                            .id("predict-route")
+                                            .role(Role::Button)
+                                            .aria_label(language.text(
+                                                "Predict route for this domain",
+                                                "预测此域名的路由",
+                                            ))
+                                            .tab_stop(true)
+                                            .focusable()
+                                            .cursor_pointer()
+                                            .h(px(38.0))
+                                            .px_3()
+                                            .rounded_md()
+                                            .bg(theme.action_primary)
+                                            .text_color(theme.action_on_primary)
+                                            .flex()
+                                            .items_center()
+                                            .child(language.text("Predict", "预测"))
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.predict_route(cx);
+                                            })),
+                                    ),
+                            )
+                            .when_some(input_error, |form, error| {
+                                form.child(
+                                    div()
+                                        .mt_2()
+                                        .text_size(px(11.0))
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .text_color(theme.status_error)
+                                        .child(error),
+                                )
+                            })
+                            .child(
+                                div()
+                                    .mt_2()
+                                    .text_size(px(11.0))
+                                    .text_color(theme.text_tertiary)
+                                    .child(language.text(
+                                        "Enter a domain only, without a protocol, path, port, or wildcard. Press Enter to predict.",
+                                        "只输入域名，不含协议、路径、端口或通配符；按 Enter 可预测。",
+                                    )),
                             ),
                     ),
             )
@@ -5550,22 +5877,7 @@ impl ManisApp {
                     .flex_1()
                     .overflow_y_scroll()
                     .p_4()
-                    .child(
-                        div()
-                            .relative()
-                            .child(
-                                div()
-                                    .absolute()
-                                    .left(px(19.0))
-                                    .top(px(28.0))
-                                    .bottom(px(70.0))
-                                    .w(px(2.0))
-                                    .bg(theme.route_trace),
-                            )
-                            .child(Self::signal_stage("01", language.text("First matching rule", "预测首条命中规则"), rule_kind, rule_detail, true, theme))
-                            .child(Self::signal_stage("02", language.text("Policy group", "交给策略组"), selected_policy.name.clone(), decision_copy, false, theme))
-                            .child(Self::signal_stage("03", language.text("Final exit", "最终出口"), selected_node.name.clone(), format!("{} · {}", selected_node.latency_ms.map_or_else(|| language.text("Unknown latency", "延迟未知").to_owned(), |latency| format!("{latency} ms")), selected_node.provider.as_deref().unwrap_or(language.text("Built-in", "内置节点"))), false, theme)),
-                    )
+                    .child(self.route_prediction_panel(&prediction, language, theme))
                     .when_some(observed_route, |panel, observed| {
                         let host = observed.host.unwrap_or_else(|| language.text("Unknown target", "目标未知").to_owned());
                         let rule = observed.rule.unwrap_or_else(|| language.text("Unknown rule", "规则未知").to_owned());
@@ -5585,7 +5897,7 @@ impl ManisApp {
                                         .text_size(px(11.0))
                                         .font_weight(FontWeight::SEMIBOLD)
                                         .text_color(theme.action_primary)
-                                        .child(language.text("Recently observed · /connections", "最近已观察 · /connections")),
+                                        .child(language.text("Recently observed, separate from this prediction · /connections", "最近已观察（独立于本次预测）· /connections")),
                                 )
                                 .child(div().mt_2().font_weight(FontWeight::BOLD).child(host))
                                 .child(
@@ -5609,9 +5921,9 @@ impl ManisApp {
                             .border_t_1()
                             .border_color(theme.outline_subtle)
                             .text_color(theme.text_secondary)
-                            .child(language.text("Match method                         Rule mode", "匹配方式                         规则模式"))
-                            .child(div().mt_2().child(language.text("DNS                     Not queried (domain rule)", "DNS                     未查询（域名规则）")))
-                            .child(div().mt_2().child(language.text("Result type                   Local prediction", "结果类型                   本地规则预测"))),
+                            .child(language.text("Evaluation source        Current ordered rule snapshot", "评估来源             当前有序规则快照"))
+                            .child(div().mt_2().child(language.text("DNS                      Not queried", "DNS                  未查询")))
+                            .child(div().mt_2().child(language.text("Result type              Local prediction", "结果类型             本地预测"))),
                     )
                     .child(
                         div()
@@ -5958,6 +6270,39 @@ fn policy_target_is_selectable(
     }
 }
 
+fn route_domain_error_copy(error: RouteDomainError, language: Language) -> &'static str {
+    match error {
+        RouteDomainError::Empty => {
+            language.text("Enter a domain to predict its route", "请输入要预测的域名")
+        }
+        RouteDomainError::TooLong => language.text(
+            "The domain is longer than the 253-byte DNS limit",
+            "域名超过 DNS 的 253 字节限制",
+        ),
+        RouteDomainError::IpAddress => language.text(
+            "Enter a domain rather than an IP address",
+            "这里请输入域名，而不是 IP 地址",
+        ),
+        RouteDomainError::InvalidFormat => language.text(
+            "Enter a plain domain such as www.example.com",
+            "请输入纯域名，例如 www.example.com",
+        ),
+    }
+}
+
+fn route_prediction_reason_copy(reason: RoutePredictionReason, language: Language) -> &'static str {
+    match reason {
+        RoutePredictionReason::RuleNeedsConnectionContext => language.text(
+            "An earlier rule depends on information the domain alone cannot provide, such as process, port, rule-set, network type, or a resolved IP.",
+            "更靠前的规则依赖进程、端口、规则集、网络类型或 DNS 解析后的 IP，仅凭域名无法判断。",
+        ),
+        RoutePredictionReason::NoMatchingRule => language.text(
+            "No rule that can be determined from the domain matched this snapshot.",
+            "当前快照中没有仅凭该域名即可确定命中的规则。",
+        ),
+    }
+}
+
 fn policy_kind_label(language: Language, kind: manis_core::PolicyGroupKind) -> &'static str {
     match kind {
         manis_core::PolicyGroupKind::Selector => language.text("Manual", "手动选择"),
@@ -5985,6 +6330,7 @@ impl Render for ManisApp {
         self.ensure_qx_rule_input(theme, cx);
         self.ensure_policy_group_inputs(theme, cx);
         self.ensure_runtime_search_inputs(theme, cx);
+        self.ensure_route_domain_input(theme, cx);
         self.ensure_source_refresh_scheduler(cx);
         let compact = size_class == WindowSizeClass::Compact;
         let show_groups =

@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use manis_core::{
     EmptyPolicyCatalog, PolicyCandidateKind, PolicyCatalog, PolicyGroup, PolicyGroupId,
-    PolicyGroupKind as CorePolicyGroupKind, PolicyNode, PolicyRule, ProxyId,
+    PolicyGroupKind as CorePolicyGroupKind, PolicyNode, PolicyRule, ProxyId, RoutingRule,
 };
 
 use crate::{GroupKind, MihomoSnapshot, Proxy};
@@ -20,6 +20,17 @@ const MANIS_GLOBAL_GROUP_NAME: &str = "__MANIS_GLOBAL__";
 ///
 /// Returns [`EmptyPolicyCatalog`] when Mihomo exposes no visible supported policy groups.
 pub fn to_policy_catalog(snapshot: &MihomoSnapshot) -> Result<PolicyCatalog, EmptyPolicyCatalog> {
+    let routing_rules = snapshot
+        .rules
+        .iter()
+        .map(|rule| RoutingRule {
+            index: u32::try_from(rule.index).unwrap_or(u32::MAX),
+            kind: rule.kind.clone(),
+            payload: rule.payload.clone(),
+            target: rule.proxy.clone(),
+            disabled: rule.extra.disabled.unwrap_or(false),
+        })
+        .collect();
     let proxies: HashMap<_, _> = snapshot
         .proxies
         .iter()
@@ -75,7 +86,7 @@ pub fn to_policy_catalog(snapshot: &MihomoSnapshot) -> Result<PolicyCatalog, Emp
         })
         .collect();
 
-    PolicyCatalog::try_new(groups)
+    PolicyCatalog::try_new_with_rules(groups, routing_rules)
 }
 
 fn policy_node(name: &str, proxy: Option<&Proxy>, is_group: bool) -> PolicyNode {
