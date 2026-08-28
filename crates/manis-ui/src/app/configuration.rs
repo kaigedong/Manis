@@ -692,11 +692,12 @@ impl ManisApp {
         &mut self,
         theme: Theme,
         size_class: WindowSizeClass,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
         let compact = size_class == WindowSizeClass::Compact;
         let language = self.language();
-        self.ensure_manual_rule_input(theme, cx);
+        self.ensure_manual_rule_input(theme, window, cx);
         div()
             .flex_1()
             .min_w(px(0.0))
@@ -2180,7 +2181,7 @@ impl ManisApp {
                 let width = window.viewport_size().width.as_f32();
                 let size_class = WindowSizeClass::for_width(width);
                 let theme = this.theme();
-                this.ensure_manual_rule_input(theme, cx);
+                this.ensure_manual_rule_input(theme, window, cx);
                 this.manual_rule_editor_modal(
                     dialog,
                     theme,
@@ -2208,7 +2209,12 @@ impl ManisApp {
         cx.notify();
     }
 
-    pub(super) fn ensure_manual_rule_input(&mut self, theme: Theme, cx: &mut Context<Self>) {
+    pub(super) fn ensure_manual_rule_input(
+        &mut self,
+        theme: Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if !self
             .manual_rule_targets()
             .contains(&self.manual_rule_target)
@@ -2238,6 +2244,7 @@ impl ManisApp {
                 MAX_MANUAL_RULE_INPUT_BYTES,
                 theme,
                 self.dark,
+                window,
                 cx,
             )
         }));
@@ -2248,6 +2255,7 @@ impl ManisApp {
                 MAX_MANUAL_RULE_INPUT_BYTES,
                 theme,
                 self.dark,
+                window,
                 cx,
             )
         }));

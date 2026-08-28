@@ -1007,7 +1007,12 @@ impl ManisApp {
         self.localizer.preference()
     }
 
-    fn ensure_subscription_input(&mut self, theme: Theme, cx: &mut Context<Self>) {
+    fn ensure_subscription_input(
+        &mut self,
+        theme: Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let language = self.language();
         if let Some(input) = self.subscription_input.as_ref() {
             input.update(cx, |input, cx| {
@@ -1017,8 +1022,9 @@ impl ManisApp {
             return;
         }
 
-        let input =
-            cx.new(|cx| SubscriptionTextInput::new_with_language(language, theme, self.dark, cx));
+        let input = cx.new(|cx| {
+            SubscriptionTextInput::new_with_language(language, theme, self.dark, window, cx)
+        });
         let events = cx.subscribe(&input, |this, _input, _: &SubscriptionInputChanged, cx| {
             if this.subscription_feedback != SubscriptionFeedback::Idle {
                 this.subscription_feedback = SubscriptionFeedback::Idle;
@@ -1030,7 +1036,7 @@ impl ManisApp {
         self.restore_imported_subscriptions(cx);
     }
 
-    fn ensure_qx_rule_input(&mut self, theme: Theme, cx: &mut Context<Self>) {
+    fn ensure_qx_rule_input(&mut self, theme: Theme, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(input) = self.qx_rule_input.as_ref() {
             input.update(cx, |input, cx| input.set_theme(theme, self.dark, cx));
             return;
@@ -1042,6 +1048,7 @@ impl ManisApp {
                 16 * 1024,
                 theme,
                 self.dark,
+                window,
                 cx,
             )
         });
@@ -1055,7 +1062,12 @@ impl ManisApp {
         self.qx_rule_input_events = Some(events);
     }
 
-    fn ensure_policy_group_inputs(&mut self, theme: Theme, cx: &mut Context<Self>) {
+    fn ensure_policy_group_inputs(
+        &mut self,
+        theme: Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let language = self.language();
         for input in [
             self.policy_group_name_input.as_ref(),
@@ -1074,6 +1086,7 @@ impl ManisApp {
                     96,
                     theme,
                     self.dark,
+                    window,
                     cx,
                 )
             }));
@@ -1086,13 +1099,19 @@ impl ManisApp {
                     256,
                     theme,
                     self.dark,
+                    window,
                     cx,
                 )
             }));
         }
     }
 
-    fn ensure_runtime_search_inputs(&mut self, theme: Theme, cx: &mut Context<Self>) {
+    fn ensure_runtime_search_inputs(
+        &mut self,
+        theme: Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let language = self.language();
         if let Some(input) = self.activity_search_input.as_ref() {
             input.update(cx, |input, cx| {
@@ -1116,6 +1135,7 @@ impl ManisApp {
                     256,
                     theme,
                     self.dark,
+                    window,
                     cx,
                 )
             });
@@ -1148,6 +1168,7 @@ impl ManisApp {
                     256,
                     theme,
                     self.dark,
+                    window,
                     cx,
                 )
             });
@@ -1159,7 +1180,12 @@ impl ManisApp {
         }
     }
 
-    fn ensure_route_domain_input(&mut self, theme: Theme, cx: &mut Context<Self>) {
+    fn ensure_route_domain_input(
+        &mut self,
+        theme: Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let language = self.language();
         let placeholder = language.text("For example: www.example.com", "例如：www.example.com");
         if let Some(input) = self.route_domain_input.as_ref() {
@@ -1177,6 +1203,7 @@ impl ManisApp {
                 253,
                 theme,
                 self.dark,
+                window,
                 cx,
             )
         });
@@ -6322,11 +6349,11 @@ impl Render for ManisApp {
         self.workspace.resize(width);
         let size_class = self.workspace.size_class;
         let theme = self.theme();
-        self.ensure_subscription_input(theme, cx);
-        self.ensure_qx_rule_input(theme, cx);
-        self.ensure_policy_group_inputs(theme, cx);
-        self.ensure_runtime_search_inputs(theme, cx);
-        self.ensure_route_domain_input(theme, cx);
+        self.ensure_subscription_input(theme, window, cx);
+        self.ensure_qx_rule_input(theme, window, cx);
+        self.ensure_policy_group_inputs(theme, window, cx);
+        self.ensure_runtime_search_inputs(theme, window, cx);
+        self.ensure_route_domain_input(theme, window, cx);
         self.ensure_source_refresh_scheduler(cx);
         let compact = size_class == WindowSizeClass::Compact;
         let show_groups =
@@ -6363,7 +6390,7 @@ impl Render for ManisApp {
                         main.child(self.node_workspace(theme, size_class, cx))
                     })
                     .when(routing_rules_active, |main| {
-                        main.child(self.routing_rules_workspace(theme, size_class, cx))
+                        main.child(self.routing_rules_workspace(theme, size_class, window, cx))
                     })
                     .when(activity_active, |main| {
                         main.child(self.activity_workspace(theme, size_class, cx))

@@ -53,5 +53,4 @@ pub fn root(
 pub fn init(cx: &mut gpui::App) {
     gpui_component::init(cx);
     theme::sync_component_theme(theme::Theme::light(), false, None, cx);
-    subscription_input::init(cx);
 }
