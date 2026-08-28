@@ -20,9 +20,4 @@ if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   exit 1
 fi
 
-if [[ "${GITHUB_REF_TYPE:-}" == "tag" && "${GITHUB_REF_NAME:-}" != "v$version" ]]; then
-  echo "release tag ${GITHUB_REF_NAME:-<missing>} does not match workspace version v$version" >&2
-  exit 1
-fi
-
 printf '%s\n' "$version"

@@ -58,7 +58,7 @@ The packaging script generates `Contents/Resources/Manis.icns` from
 `MANIS_BUNDLE_VERSION` may override the three-component app version and `MANIS_BUNDLE_BUILD` may
 set its positive integer build number. The Package workflow uses these inputs to create separate
 Apple Silicon and Intel verification artifacts. Manual runs keep them as short-lived Actions
-artifacts; a matching `v*` tag also creates a draft GitHub Release containing both archives and
+artifacts; pushing any tag also creates a draft GitHub Release containing both archives and
 their checksums. The draft is never published automatically. Those artifacts are ad-hoc signed and
 not notarized. The build downloads the official stable Mihomo asset selected for the target
 architecture, checks the SHA-256 digest published by GitHub Releases, validates `mihomo -v`, and

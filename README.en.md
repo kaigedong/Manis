@@ -67,7 +67,7 @@ network integration has been validated on that operating system.
 
 The Package workflow builds unnotarized macOS bundles for Apple Silicon and Intel, plus an
 experimental Arch Linux `x86_64` package with native Wayland support, and generates checksums for
-each package. Manual workflow artifacts are retained for 14 days. A matching `v*` tag also places
+each package. Manual workflow artifacts are retained for 14 days. Pushing any tag also places
 the same files in a draft GitHub Release until a maintainer completes the release checklist and
 decides whether to publish it. See the [macOS](packaging/macos/README.md) and
 [Arch Linux](packaging/archlinux/README.md) packaging notes before installing them.
