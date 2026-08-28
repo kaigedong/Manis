@@ -5,75 +5,71 @@
 [![Package](https://github.com/kaigedong/Manis/actions/workflows/package.yml/badge.svg)](https://github.com/kaigedong/Manis/actions/workflows/package.yml)
 [![License](https://img.shields.io/badge/source-Apache--2.0-blue.svg)](LICENSE)
 
-**English** · [简体中文](README.zh-CN.md)
+**简体中文** · [English](README.en.md)
 
-Manis is an experimental cross-platform proxy policy workbench built with Rust and GPUI. It makes
-the route from an ordered rule to a policy group and finally to a proxy node visible and editable,
-without requiring users to maintain Mihomo or sing-box configuration files by hand.
+Manis 是一个使用 Rust 和 GPUI 编写的小型实验项目。它目前只聚焦一件事：把“有序规则
+→ 策略组 → 节点”的路径展示清楚，并为一部分常用的 Mihomo 和 sing-box 操作提供界面。
 
-![Manis desktop interface](docs/assets/manis-overview.png)
+这是一个个人开源尝试，不是对代理工具的重新定义，也无意取代成熟客户端。现有工具已经能
+很好地服务大多数用户；Manis 主要是尝试一种维护者自己觉得更容易理解的工作方式。
 
 > [!WARNING]
-> Manis is alpha software. macOS is the current development and runtime-validation platform.
-> Windows and Linux builds are maintained as targets but still need broader device testing. Do not
-> rely on Manis as the only way to restore network access on a production machine.
+> Manis 目前仍是 alpha 软件。macOS 是主要开发和运行验证平台；Windows 与 Linux 已作为
+> 编译目标维护，但仍需要更多真实设备测试。请不要在生产机器上把 Manis 当成唯一的网络
+> 恢复手段。
 
-## Why Manis
+## 项目范围
 
-Many proxy clients expose providers, modes, groups, and configuration files without clearly showing
-how they combine. Manis treats this chain as the primary product model:
+Manis 只尝试把一条路由链路直接呈现出来：
 
 ```text
-ordered rule -> policy group -> selected node
+有序规则 -> 策略组 -> 最终节点
 ```
 
-- Rules decide which policy group handles a connection.
-- Manual groups use the node selected by the user.
-- Automatic groups benchmark candidates and select according to their configured strategy.
-- Global mode uses the active node selected in the Nodes workspace.
-- Network activity distinguishes observed core data from local routing predictions.
+- 分流规则决定一条连接进入哪个策略组。
+- 手动策略组使用用户在组内选中的节点。
+- 自动策略组测速后，按照配置的策略自动选择候选节点。
+- 全局模式使用“节点”页面中激活的全局出口。
+- 网络活动明确区分内核已经观察到的事实和本地规则预测。
 
-Manis takes inspiration from the understandable policy workflow of Quantumult X, but does not copy
-its interface or configuration format.
+这个模型刻意保持简单，不会适合所有代理配置。项目参考了 Quantumult X 较易理解的
+策略工作流，但不复制其界面或配置格式。
 
-## Current capabilities
+## 目前实现
 
-- Native adaptive GPUI interface with English, Simplified Chinese, light, and dark modes.
-- HTTP/HTTPS subscription and VLESS import with private local persistence.
-- Manual, latency-based, fallback, and load-balancing policy group models, gated by core capability.
-- Ordered routing rules, QX rule-list import, compound domain/port matching, and explicit fallback.
-- Per-source and per-policy latency tests with incremental results.
-- Direct, global, and rule routing modes.
-- System HTTP/SOCKS proxy control and macOS TUN integration.
-- Live connections, route evidence, core logs, and redacted application diagnostics.
-- Mihomo as the primary managed core and a capability-gated sing-box adapter.
+- 原生自适应 GPUI 界面，支持中英文、浅色和深色模式。
+- HTTP/HTTPS 订阅与 VLESS 导入，并在本地进行私有持久化。
+- 手动、延迟优选、故障转移和负载均衡策略模型；不可用能力由内核能力门禁控制。
+- 有序分流规则、QX 规则列表导入、域名与端口组合匹配、明确的兜底规则。
+- 订阅来源和策略组测速，逐节点增量展示结果。
+- 直连、全局和规则三种路由模式。
+- 系统 HTTP/SOCKS 代理控制与 macOS TUN 集成。
+- 活跃连接、真实路由证据、内核日志和脱敏的应用诊断。
+- 以 Mihomo 为主要托管内核，并提供按能力启用的 sing-box 适配器。
 
-Manis does not contain or download a proxy-core executable. It discovers an executable supplied by
-the user and only manages child processes it starts.
+Manis 仓库不包含、也不会自动下载代理内核。应用只寻找用户提供的可执行文件，而且只管理
+由自己启动的子进程。
 
-## Platform status
+## 平台状态
 
-| Platform | Build target | Runtime status |
+| 平台 | 编译目标 | 运行状态 |
 | --- | --- | --- |
-| macOS 13+ | Maintained | Primary development platform; system proxy and TUN tested manually |
-| Windows | Maintained | Experimental; external loopback controller path only |
-| Linux | Maintained | Experimental; native packages and desktop environments need broader testing |
+| macOS 13+ | 持续维护 | 主要开发平台；系统代理和 TUN 已进行人工测试 |
+| Windows | 持续维护 | 实验性；当前主要使用外部本机回环控制器 |
+| Linux | 持续维护 | 实验性；仍需覆盖更多发行版与桌面环境 |
 
-The CI configuration checks all three platforms. A green compile check is not a claim that every
-network integration has been validated on that operating system.
+CI 会检查三个平台，但“能够编译”不代表该平台上的所有网络集成都已经完成真实验证。
 
-The Package workflow builds unsigned macOS bundles for Apple Silicon and Intel, plus an experimental
-Arch Linux `x86_64` package with native Wayland support. These workflow artifacts contain no proxy
-core and are not notarized production releases. See the [macOS](packaging/macos/README.md) and
-[Arch Linux](packaging/archlinux/README.md) packaging notes before installing them.
+Package workflow 会分别构建 Apple Silicon、Intel 的未签名 macOS 应用包，以及支持原生
+Wayland 的实验性 Arch Linux `x86_64` 软件包。这些 Actions 产物不包含代理内核，也不是
+经过公证的正式发行版。安装前请阅读 [macOS](packaging/macos/README.md) 与
+[Arch Linux](packaging/archlinux/README.md) 打包说明。
 
-## Build from source
+## 从源码运行
 
-The repository pins its Rust toolchain in `rust-toolchain.toml` and its GPUI revision in
-`crates/manis-ui/Cargo.toml`.
-
-On macOS, install Xcode Command Line Tools. On Linux, install the Wayland/X11, GTK 3, fontconfig, and
-ALSA development packages required by GPUI. Then run:
+仓库通过 `rust-toolchain.toml` 固定 Rust 工具链，并在 `crates/manis-ui/Cargo.toml` 中固定
+GPUI 版本。macOS 需要 Xcode Command Line Tools；Linux 需要 GPUI 使用的 Wayland/X11、
+GTK 3、fontconfig 与 ALSA 开发包。
 
 ```bash
 git clone https://github.com/kaigedong/Manis.git
@@ -81,8 +77,8 @@ cd Manis
 cargo run -p manis-ui
 ```
 
-Without saved sources or an explicitly configured controller, Manis attempts a local Mihomo
-controller at `http://127.0.0.1:9090`. To use a different local controller:
+如果没有保存任何来源，也没有显式配置 controller，Manis 会尝试连接
+`http://127.0.0.1:9090`。使用其他本机 controller：
 
 ```bash
 MANIS_MIHOMO_CONTROLLER=http://127.0.0.1:9090 \
@@ -90,16 +86,16 @@ MANIS_MIHOMO_SECRET='controller-secret' \
 cargo run -p manis-ui
 ```
 
-On macOS and Linux, a Unix socket can be used instead:
+macOS 与 Linux 也可以使用 Unix socket：
 
 ```bash
 MANIS_MIHOMO_CONTROLLER=unix:///path/to/mihomo.sock cargo run -p manis-ui
 ```
 
-Controller TCP endpoints are restricted to loopback addresses. Unix socket paths are checked before
-use, and the application does not forward a TCP bearer secret to a Unix socket.
+TCP controller 只允许回环地址；Unix socket 在连接前会检查类型与符号链接，TCP bearer
+secret 不会被转发到 Unix socket。
 
-## Development checks
+## 开发验证
 
 ```bash
 cargo fmt --all -- --check
@@ -108,47 +104,43 @@ cargo test --workspace --all-targets --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
 ```
 
-Real-core and live-controller tests are ignored by default. They must be enabled explicitly and use
-synthetic fixtures; a private subscription must never be committed or used in public test output.
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the full workflow.
+真实内核和在线 controller 测试默认忽略，必须通过环境变量显式开启，并使用合成测试数据。
+私人订阅不能进入 Git 或公开测试输出。完整贡献流程见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
-## Security and privacy
+## 安全与隐私
 
-Subscription URLs, tokens, node credentials, controller secrets, and generated core configurations
-are private data. Manis stores them outside the repository in the platform user-data directory and
-redacts them from its own diagnostics. Plain HTTP subscriptions remain inherently observable on the
-network; HTTPS should be used whenever possible.
+订阅链接、token、节点凭据、controller secret 和生成的内核配置都属于私有数据。Manis 将
+其保存到平台用户数据目录，并从自身诊断日志中脱敏。明文 HTTP 订阅在网络上天然可见，应
+优先使用 HTTPS。
 
-The macOS TUN path uses a fixed-purpose privileged helper. Development-only insecure helper builds
-must never be distributed. Review [SECURITY.md](SECURITY.md) before testing privileged behavior and
-report vulnerabilities through GitHub private vulnerability reporting.
+macOS TUN 使用固定用途的特权 helper；仅供本地调试的不安全 helper 构建绝不能分发。
+测试特权能力前请阅读 [SECURITY.md](SECURITY.md)，安全漏洞请通过 GitHub 私有漏洞报告提交。
 
-## Repository layout
+## 仓库结构
 
-| Path | Responsibility |
+| 路径 | 职责 |
 | --- | --- |
-| `crates/manis-core` | Kernel-neutral policies, routing evidence, and application state |
-| `crates/manis-engine` | Core discovery, validation, process ownership, and lifecycle |
-| `crates/manis-profile` | Typed profiles and Mihomo/sing-box configuration compilation |
-| `crates/manis-mihomo` | Restricted Mihomo controller transport and domain mapping |
-| `crates/manis-ui` | GPUI application, persistence boundaries, and platform integration |
-| `packaging/macos` | macOS bundle and fixed-purpose privileged-helper tooling |
-| `packaging/archlinux` | Experimental Arch Linux package with Wayland support |
-| `docs` | Architecture, design, and maintainer documentation |
+| `crates/manis-core` | 与内核无关的策略、路由证据和应用状态 |
+| `crates/manis-engine` | 内核发现、校验、进程所有权和生命周期 |
+| `crates/manis-profile` | 类型化配置，以及 Mihomo/sing-box 配置编译 |
+| `crates/manis-mihomo` | 受限的 Mihomo controller 传输和领域映射 |
+| `crates/manis-ui` | GPUI 应用、持久化边界和平台集成 |
+| `packaging/macos` | macOS 打包与固定用途的特权 helper |
+| `packaging/archlinux` | 支持 Wayland 的实验性 Arch Linux 软件包 |
+| `docs` | 架构、设计和维护者文档 |
 
-Additional reading:
+相关文档：
 
-- [Product principles](PRODUCT.md)
-- [Design system](DESIGN.md)
-- [GPUI implementation notes](GPUI_IMPLEMENTATION.md)
-- [Development guide](docs/development.md)
-- [Direct and compound routing rules](docs/architecture/direct-rules.md)
-- [macOS packaging](packaging/macos/README.md)
-- [Release checklist](docs/maintainers/release-checklist.md)
+- [产品原则](PRODUCT.md)
+- [设计系统](DESIGN.md)
+- [GPUI 实现说明](GPUI_IMPLEMENTATION.md)
+- [开发指南（英文）](docs/development.md)
+- [直连与组合规则](docs/architecture/direct-rules.md)
+- [macOS 打包](packaging/macos/README.md)
+- [发布检查清单](docs/maintainers/release-checklist.md)
 
-## License
+## 许可证
 
-Manis source is licensed under [Apache License 2.0](LICENSE). Linked Rust dependencies and optional
-proxy-core executables have their own licenses, including GPL components. No prebuilt core is stored
-in this repository. Read [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) before distributing a
-binary build.
+Manis 源码使用 [Apache License 2.0](LICENSE)。Rust 链接依赖和可选代理内核拥有各自的
+许可证，其中包含 GPL 组件。本仓库不存放预编译代理内核；分发二进制前必须阅读
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
