@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use gpui::{
     AnyElement, Context, Div, Entity, Focusable, FontWeight, IntoElement, ParentElement, Render,
-    Role, Stateful, Styled, Subscription, Task, Toggled, Window, div, prelude::*, px,
+    Role, Stateful, Styled, Subscription, Task, Toggled, Window, div, img, prelude::*, px,
 };
 use gpui_component::{
     Disableable, IconName, Selectable, Sizable, WindowExt as _,
@@ -25,7 +25,7 @@ use manis_mihomo::{Connection, ObservedRouteEvidence, RuntimeConfig};
 use manis_profile::{QxRuleList, SecretUrl};
 
 use crate::{
-    brand,
+    assets, brand,
     diagnostics::{
         self, LogLevel, UiEvent, begin_operation, record_event, record_operation, trace_ui,
     },
@@ -3696,9 +3696,11 @@ impl ManisApp {
                     .gap(if compact { px(8.0) } else { px(12.0) })
                     .child(
                         div()
-                            .w(if compact { px(14.0) } else { px(20.0) })
-                            .h(px(3.0))
-                            .bg(theme.route_trace),
+                            .size(px(24.0))
+                            .flex_shrink_0()
+                            .rounded(px(6.0))
+                            .overflow_hidden()
+                            .child(img(assets::BRAND_MARK_PATH).size_full()),
                     )
                     .child(
                         div()

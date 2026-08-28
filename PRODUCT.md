@@ -36,11 +36,11 @@ The app is a long-running desktop utility used from a normal window and system t
 
 ## Brand Commitments
 
-`Manis` is the confirmed product and repository name, taken from the Latin genus name for Asian pangolins. The existing teal-and-copper Signal Patch Bay palette remains the confirmed visual baseline. A final logo has not yet been selected.
+`Manis` is the confirmed product and repository name, taken from the Latin genus name for Asian pangolins. The existing teal-and-copper Signal Patch Bay palette remains the confirmed visual baseline. The abstract Shanshui mark in `assets/brand/manis-mark.svg` is the compact product mark; the detailed companion artwork is reserved for large-format documentation and release material.
 
 ## Evidence on Hand
 
-The GPUI interface, adaptive layout, tray presence, macOS package, and native review screenshots are implemented. A final logo, production user research, signed release process, and broad Windows/Linux runtime validation do not yet exist. Example nodes, domains, latency values, and traffic data in screenshots remain illustrative rather than product claims.
+The GPUI interface, adaptive layout, tray presence, macOS package, native review screenshots, and source brand artwork are implemented. Production user research, a signed release process, and broad Windows/Linux runtime validation do not yet exist. Example nodes, domains, latency values, and traffic data in screenshots remain illustrative rather than product claims.
 
 ## Product Principles
 

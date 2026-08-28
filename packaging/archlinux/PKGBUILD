@@ -64,7 +64,7 @@ package() {
     "$pkgdir/usr/bin/manis"
   install -Dm644 "$startdir/dev.manis.app.desktop" \
     "$pkgdir/usr/share/applications/dev.manis.app.desktop"
-  install -Dm644 "$startdir/dev.manis.app.svg" \
+  install -Dm644 "$startdir/../../assets/brand/manis-mark.svg" \
     "$pkgdir/usr/share/icons/hicolor/scalable/apps/dev.manis.app.svg"
   install -Dm644 "$startdir/../../LICENSE" "$pkgdir/usr/share/licenses/manis/LICENSE"
   install -Dm644 "$startdir/../../THIRD_PARTY_NOTICES.md" \

@@ -1,4 +1,5 @@
 mod app;
+mod assets;
 mod brand;
 mod components;
 mod diagnostics;
@@ -17,6 +18,7 @@ mod theme;
 mod tray;
 
 pub use app::ManisApp;
+pub use assets::Assets;
 pub use tray::{install as install_tray, open_window, show_or_open_window};
 
 struct ManisRootView {

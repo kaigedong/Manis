@@ -17,7 +17,9 @@ CONTENTS_DIR="$BUILD_APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 LAUNCH_DAEMONS_DIR="$CONTENTS_DIR/Library/LaunchDaemons"
 HELPER_TOOLS_DIR="$CONTENTS_DIR/Library/PrivilegedHelperTools"
-RESOURCES_DIR="$CONTENTS_DIR/Resources/mihomo"
+CONTENTS_RESOURCES_DIR="$CONTENTS_DIR/Resources"
+MIHOMO_RESOURCES_DIR="$CONTENTS_RESOURCES_DIR/mihomo"
+BRAND_MARK="$ROOT_DIR/assets/brand/manis-mark.svg"
 HELPER_ID="dev.manis.app.helper"
 HELPERCTL_ID="dev.manis.app.helperctl"
 LOCAL_INSTALLER_ID="dev.manis.app.helper.local-installer"
@@ -62,7 +64,7 @@ fi
 
 cargo build -p manis-ui --release --locked
 
-mkdir -p "$MACOS_DIR" "$LAUNCH_DAEMONS_DIR" "$HELPER_TOOLS_DIR" "$RESOURCES_DIR"
+mkdir -p "$MACOS_DIR" "$LAUNCH_DAEMONS_DIR" "$HELPER_TOOLS_DIR" "$MIHOMO_RESOURCES_DIR"
 
 cp "$ROOT_DIR/packaging/macos/Info.plist" "$CONTENTS_DIR/Info.plist"
 plutil -replace CFBundleShortVersionString -string "$BUNDLE_VERSION" "$CONTENTS_DIR/Info.plist"
@@ -72,6 +74,17 @@ if [[ "${MANIS_ALLOW_INSECURE_LOCAL_HELPER:-0}" == "1" ]]; then
   plutil -insert ManisAllowInsecureLocalHelper -bool YES "$CONTENTS_DIR/Info.plist"
 fi
 cp "$ROOT_DIR/target/release/manis-ui" "$MACOS_DIR/Manis"
+
+ICONSET_DIR="$BUILD_ROOT/Manis.iconset"
+mkdir -p "$ICONSET_DIR"
+for icon_size in 16 32 128 256 512; do
+  double_size=$((icon_size * 2))
+  sips -s format png -z "$icon_size" "$icon_size" "$BRAND_MARK" \
+    --out "$ICONSET_DIR/icon_${icon_size}x${icon_size}.png" >/dev/null
+  sips -s format png -z "$double_size" "$double_size" "$BRAND_MARK" \
+    --out "$ICONSET_DIR/icon_${icon_size}x${icon_size}@2x.png" >/dev/null
+done
+iconutil -c icns "$ICONSET_DIR" -o "$CONTENTS_RESOURCES_DIR/Manis.icns"
 
 swiftc \
   -framework Foundation \
@@ -98,8 +111,8 @@ if [[ -n "$MIHOMO_SOURCE" ]]; then
     echo "MANIS_MIHOMO_BINARY must point to an executable Mihomo binary" >&2
     exit 1
   fi
-  cp "$MIHOMO_SOURCE" "$RESOURCES_DIR/mihomo"
-  chmod 0755 "$RESOURCES_DIR/mihomo"
+  cp "$MIHOMO_SOURCE" "$MIHOMO_RESOURCES_DIR/mihomo"
+  chmod 0755 "$MIHOMO_RESOURCES_DIR/mihomo"
 else
   echo "warning: MANIS_MIHOMO_BINARY not set; privileged TUN start will fail until Mihomo is bundled" >&2
 fi

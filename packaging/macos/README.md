@@ -45,6 +45,9 @@ MANIS_MIHOMO_BINARY=/absolute/path/to/mihomo \
 packaging/macos/build-app.sh
 ```
 
+The packaging script generates `Contents/Resources/Manis.icns` from
+`assets/brand/manis-mark.svg`; the SVG remains the canonical icon source.
+
 `MANIS_BUNDLE_VERSION` may override the three-component app version and `MANIS_BUNDLE_BUILD` may
 set its positive integer build number. The Package workflow uses these inputs to create separate
 Apple Silicon and Intel verification artifacts. Those artifacts are ad-hoc signed, not notarized,
