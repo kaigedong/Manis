@@ -1,9 +1,10 @@
 use gpui::{
-    AnyElement, Context, Div, Entity, Focusable, FontWeight, ParentElement, Role, Stateful, Styled,
-    Window, div, prelude::*, px,
+    AnyElement, Context, Div, Entity, Focusable, FontWeight, ParentElement, Role, Stateful,
+    StyleRefinement, Styled, Window, div, prelude::*, px,
 };
 use gpui_component::{
-    Disableable, IconName, Sizable, WindowExt as _,
+    Disableable, IconName, Sizable, Size, WindowExt as _,
+    accordion::Accordion,
     button::{Button, ButtonVariant, ButtonVariants},
     dialog::Dialog,
 };
@@ -27,6 +28,24 @@ use crate::{
 
 const MAX_MANUAL_RULE_INPUT_BYTES: usize = 1_024;
 const MANUAL_RULES_EXPANSION_KEY: &str = "routing-manual-rules";
+
+fn accordion_content_style() -> StyleRefinement {
+    let mut style = StyleRefinement::default();
+    style.padding.top = Some(px(0.0).into());
+    style.padding.right = Some(px(0.0).into());
+    style.padding.bottom = Some(px(0.0).into());
+    style.padding.left = Some(px(0.0).into());
+    style
+}
+
+fn accordion_title_style(compact: bool) -> StyleRefinement {
+    let mut style = StyleRefinement::default();
+    if compact {
+        style.padding.right = Some(px(12.0).into());
+        style.padding.left = Some(px(12.0).into());
+    }
+    style
+}
 
 fn manual_rule_placeholder(
     kind: crate::manual_rule::ManualRuleKind,
@@ -3046,11 +3065,6 @@ impl ManisApp {
             let expanded = self
                 .node_workspace
                 .is_group_collapsed(MANUAL_RULES_EXPANSION_KEY);
-            let action = if expanded {
-                language.text("Collapse", "收起")
-            } else {
-                language.text("Expand", "展开")
-            };
             let detail = if language == Language::English {
                 format!(
                     "{} rules · Saved locally · Before subscribed rules",
@@ -3062,87 +3076,68 @@ impl ManisApp {
                     self.manual_rules.len()
                 )
             };
-            let mut manual_group = div()
+            let title = div()
+                .flex_1()
+                .min_w(px(0.0))
+                .child(
+                    div()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(language.text("Manual rules", "手动规则")),
+                )
+                .child(
+                    div()
+                        .mt_1()
+                        .overflow_x_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .text_size(px(10.0))
+                        .text_color(theme.text_tertiary)
+                        .child(detail),
+                );
+            let mut rules = div()
+                .px(if compact { px(8.0) } else { px(12.0) })
+                .pb_3()
+                .border_t_1()
+                .border_color(theme.outline_subtle)
+                .bg(theme.surface_high);
+            for (index, rule) in self.manual_rules.iter().enumerate() {
+                rules = rules
+                    .child(self.manual_routing_rule_row(order, index, rule, theme, language, cx));
+                order += 1;
+            }
+            let manual_group = Accordion::new("routing-manual-rules")
+                .bordered(false)
+                .with_size(Size::Large)
                 .mt_4()
                 .border_t_1()
                 .border_b_1()
                 .border_color(theme.outline_subtle)
-                .bg(theme.surface_low)
-                .child(
-                    div()
-                        .id("routing-manual-rules")
-                        .role(Role::Button)
-                        .aria_label(format!(
-                            "{} {}",
-                            action,
-                            language.text("Manual rules", "手动规则")
-                        ))
-                        .tab_stop(true)
-                        .focusable()
-                        .cursor_pointer()
-                        .min_h(px(58.0))
-                        .px(if compact { px(12.0) } else { px(16.0) })
-                        .py_3()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .gap_3()
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w(px(0.0))
-                                .child(
-                                    div()
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .child(language.text("Manual rules", "手动规则")),
-                                )
-                                .child(
-                                    div()
-                                        .mt_1()
-                                        .overflow_x_hidden()
-                                        .whitespace_nowrap()
-                                        .text_ellipsis()
-                                        .text_size(px(10.0))
-                                        .text_color(theme.text_tertiary)
-                                        .child(detail),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .flex_shrink_0()
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(theme.action_primary)
-                                .child(action),
-                        )
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.node_workspace.toggle_group(MANUAL_RULES_EXPANSION_KEY);
-                            this.persist_node_workspace();
-                            this.language()
-                                .text(
-                                    "Manual rule expanded state updated",
-                                    "已更新手动规则展开状态",
-                                )
-                                .clone_into(&mut this.status);
-                            cx.notify();
-                        })),
-                );
-            if expanded {
-                let mut rules = div()
-                    .px(if compact { px(8.0) } else { px(12.0) })
-                    .pb_3()
-                    .border_t_1()
-                    .border_color(theme.outline_subtle)
-                    .bg(theme.surface_high);
-                for (index, rule) in self.manual_rules.iter().enumerate() {
-                    rules = rules.child(
-                        self.manual_routing_rule_row(order, index, rule, theme, language, cx),
-                    );
-                    order += 1;
-                }
-                manual_group = manual_group.child(rules);
-            } else {
-                order += self.manual_rules.len();
-            }
+                .item(|item| {
+                    item.open(expanded)
+                        .title_style(accordion_title_style(compact))
+                        .content_style(accordion_content_style())
+                        .bg(theme.surface_low)
+                        .title(title)
+                        .child(rules)
+                })
+                .on_toggle_click(cx.listener(|this, open_indices: &[usize], _, cx| {
+                    let should_expand = open_indices.contains(&0);
+                    if this
+                        .node_workspace
+                        .is_group_collapsed(MANUAL_RULES_EXPANSION_KEY)
+                        != should_expand
+                    {
+                        this.node_workspace.toggle_group(MANUAL_RULES_EXPANSION_KEY);
+                        this.persist_node_workspace();
+                        this.language()
+                            .text(
+                                "Manual rule expanded state updated",
+                                "已更新手动规则展开状态",
+                            )
+                            .clone_into(&mut this.status);
+                        cx.notify();
+                    }
+                }));
             list = list.child(manual_group);
         }
         for (source_index, source) in self.qx_rule_sources.iter().enumerate() {
@@ -3150,11 +3145,6 @@ impl ManisApp {
             let rule_count = parsed.rules.len();
             let expansion_key = rule_source_expansion_key(&source.id);
             let expanded = self.node_workspace.is_group_collapsed(&expansion_key);
-            let action = if expanded {
-                language.text("Collapse", "收起")
-            } else {
-                language.text("Expand", "展开")
-            };
             let name = source.source.subscription_name().unwrap_or_else(|| {
                 if language == Language::English {
                     format!("Rule source {}", source_index + 1)
@@ -3174,87 +3164,69 @@ impl ManisApp {
                 format!("{rule_count} 条规则 · 目标 {target_policy} · {update}")
             };
             let toggle_key = expansion_key.clone();
-            let mut source_group = div()
+            let title = div()
+                .flex_1()
+                .min_w(px(0.0))
+                .child(
+                    div()
+                        .overflow_x_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(name),
+                )
+                .child(
+                    div()
+                        .mt_1()
+                        .overflow_x_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .text_size(px(10.0))
+                        .text_color(theme.text_tertiary)
+                        .child(detail),
+                );
+            let mut rules = div()
+                .px(if compact { px(8.0) } else { px(12.0) })
+                .pb_3()
+                .border_t_1()
+                .border_color(theme.outline_subtle)
+                .bg(theme.surface_high);
+            for rule in parsed.rules {
+                rules = rules.child(Self::routing_rule_row(
+                    order,
+                    Self::qx_rule_kind_label(rule.kind),
+                    &rule.value,
+                    &target_policy,
+                    theme,
+                ));
+                order += 1;
+            }
+            let source_group = Accordion::new(format!("routing-rule-source-{}", source.id))
+                .bordered(false)
+                .with_size(Size::Large)
                 .mt_4()
                 .border_t_1()
                 .border_b_1()
                 .border_color(theme.outline_subtle)
-                .bg(theme.surface_low)
-                .child(
-                    div()
-                        .id(format!("routing-rule-source-{}", source.id))
-                        .role(Role::Button)
-                        .aria_label(format!("{action} {name}"))
-                        .tab_stop(true)
-                        .focusable()
-                        .cursor_pointer()
-                        .min_h(px(58.0))
-                        .px(if compact { px(12.0) } else { px(16.0) })
-                        .py_3()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .gap_3()
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w(px(0.0))
-                                .child(
-                                    div()
-                                        .overflow_x_hidden()
-                                        .whitespace_nowrap()
-                                        .text_ellipsis()
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .child(name),
-                                )
-                                .child(
-                                    div()
-                                        .mt_1()
-                                        .overflow_x_hidden()
-                                        .whitespace_nowrap()
-                                        .text_ellipsis()
-                                        .text_size(px(10.0))
-                                        .text_color(theme.text_tertiary)
-                                        .child(detail),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .flex_shrink_0()
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(theme.action_primary)
-                                .child(action),
-                        )
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.node_workspace.toggle_group(&toggle_key);
-                            this.persist_node_workspace();
-                            this.language()
-                                .text("Rule source expanded state updated", "已更新规则源展开状态")
-                                .clone_into(&mut this.status);
-                            cx.notify();
-                        })),
-                );
-            if expanded {
-                let mut rules = div()
-                    .px(if compact { px(8.0) } else { px(12.0) })
-                    .pb_3()
-                    .border_t_1()
-                    .border_color(theme.outline_subtle)
-                    .bg(theme.surface_high);
-                for rule in parsed.rules {
-                    rules = rules.child(Self::routing_rule_row(
-                        order,
-                        Self::qx_rule_kind_label(rule.kind),
-                        &rule.value,
-                        &target_policy,
-                        theme,
-                    ));
-                    order += 1;
-                }
-                source_group = source_group.child(rules);
-            } else {
-                order += rule_count;
-            }
+                .item(|item| {
+                    item.open(expanded)
+                        .title_style(accordion_title_style(compact))
+                        .content_style(accordion_content_style())
+                        .bg(theme.surface_low)
+                        .title(title)
+                        .child(rules)
+                })
+                .on_toggle_click(cx.listener(move |this, open_indices: &[usize], _, cx| {
+                    let should_expand = open_indices.contains(&0);
+                    if this.node_workspace.is_group_collapsed(&toggle_key) != should_expand {
+                        this.node_workspace.toggle_group(&toggle_key);
+                        this.persist_node_workspace();
+                        this.language()
+                            .text("Rule source expanded state updated", "已更新规则源展开状态")
+                            .clone_into(&mut this.status);
+                        cx.notify();
+                    }
+                }));
             list = list.child(source_group);
         }
 

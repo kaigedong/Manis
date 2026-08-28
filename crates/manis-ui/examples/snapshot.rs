@@ -1,7 +1,10 @@
 #[cfg(target_os = "macos")]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let platform = gpui_platform::current_platform(false);
-    let mut cx = gpui::VisualTestAppContext::new(platform);
+    let mut cx = gpui::VisualTestAppContext::with_asset_source(
+        platform,
+        std::sync::Arc::new(gpui_component_assets::Assets),
+    );
     cx.update(manis_ui::init);
     if std::env::args().any(|argument| argument == "--policy-settings") {
         capture_managed_policy_settings(&mut cx)?;
@@ -17,6 +20,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if std::env::args().any(|argument| argument == "--route-prediction") {
         capture_route_prediction(&mut cx)?;
+        return Ok(());
+    }
+    if std::env::args().any(|argument| argument == "--medium-sheet") {
+        capture_medium_sheet(&mut cx)?;
         return Ok(());
     }
     capture(&mut cx, 1420.0, 900.0, "native-wide.png")?;
@@ -44,6 +51,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     capture_routing_rules(&mut cx)?;
     capture_remote_subscription_preview(&mut cx)?;
     capture_compact_flow(&mut cx)?;
+    capture_medium_sheet(&mut cx)?;
     capture_connected(&mut cx)?;
     capture_live_when_configured(&mut cx)?;
     Ok(())
@@ -623,6 +631,17 @@ fn capture_routing_rule_interactions(
 ) -> Result<(), Box<dyn std::error::Error>> {
     use gpui::{Modifiers, point, px};
 
+    cx.simulate_click(window, point(px(700.0), px(260.0)), Modifiers::none());
+    settle_ui_animation(cx, window)?;
+    save_screenshot(cx, window, "routing-rules-wide-manual-accordion-open.png")?;
+    cx.simulate_click(window, point(px(700.0), px(260.0)), Modifiers::none());
+    settle_ui_animation(cx, window)?;
+    cx.simulate_click(window, point(px(700.0), px(348.0)), Modifiers::none());
+    settle_ui_animation(cx, window)?;
+    save_screenshot(cx, window, "routing-rules-wide-remote-accordion-open.png")?;
+    cx.simulate_click(window, point(px(700.0), px(348.0)), Modifiers::none());
+    settle_ui_animation(cx, window)?;
+
     cx.simulate_click(window, point(px(1_286.0), px(190.0)), Modifiers::none());
     settle_ui_animation(cx, window)?;
     save_screenshot(cx, window, "routing-rules-wide-add-modal.png")?;
@@ -632,12 +651,12 @@ fn capture_routing_rule_interactions(
     cx.simulate_click(window, point(px(410.0), px(260.0)), Modifiers::none());
     refresh(cx, window)?;
     cx.simulate_click(window, point(px(700.0), px(548.0)), Modifiers::none());
-    refresh(cx, window)?;
+    settle_ui_animation(cx, window)?;
     save_screenshot(cx, window, "routing-rules-wide-manual-expanded.png")?;
     cx.simulate_click(window, point(px(700.0), px(548.0)), Modifiers::none());
-    refresh(cx, window)?;
+    settle_ui_animation(cx, window)?;
     cx.simulate_click(window, point(px(700.0), px(632.0)), Modifiers::none());
-    refresh(cx, window)?;
+    settle_ui_animation(cx, window)?;
     save_screenshot(cx, window, "routing-rules-wide-expanded.png")?;
     cx.simulate_click(window, point(px(500.0), px(307.0)), Modifiers::none());
     refresh(cx, window)?;
@@ -708,6 +727,44 @@ fn capture_compact_flow(
     cx.simulate_click(window, point(px(664.0), px(80.0)), Modifiers::none());
     refresh(cx, window)?;
     save_screenshot(cx, window, "native-compact-dark-inspector.png")?;
+    close_window(cx, window)?;
+    server.stop()
+}
+
+#[cfg(target_os = "macos")]
+fn capture_medium_sheet(
+    cx: &mut gpui::VisualTestAppContext,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use gpui::{AnyWindowHandle, Modifiers, point, px, size};
+    use manis_ui::ManisApp;
+
+    let (endpoint, server) = spawn_mihomo_fixture()?;
+    let window = cx.open_offscreen_window(size(px(1060.0), px(800.0)), |window, cx| {
+        manis_root(window, cx, |_| ManisApp::with_controller(endpoint))
+    })?;
+    let window: AnyWindowHandle = window.into();
+
+    for _ in 0..24 {
+        std::thread::sleep(std::time::Duration::from_millis(25));
+        refresh(cx, window)?;
+    }
+    cx.simulate_click(window, point(px(985.0), px(80.0)), Modifiers::none());
+    for _ in 0..24 {
+        std::thread::sleep(std::time::Duration::from_millis(25));
+        refresh(cx, window)?;
+    }
+    cx.simulate_click(window, point(px(250.0), px(184.0)), Modifiers::none());
+    settle_ui_animation(cx, window)?;
+    cx.simulate_click(window, point(px(985.0), px(80.0)), Modifiers::none());
+    settle_ui_animation(cx, window)?;
+    cx.simulate_input(window, "openai.com");
+    refresh(cx, window)?;
+    cx.simulate_click(window, point(px(1_015.0), px(205.0)), Modifiers::none());
+    settle_ui_animation(cx, window)?;
+    save_screenshot(cx, window, "native-medium-sheet.png")?;
+    cx.simulate_click(window, point(px(1_040.0), px(68.0)), Modifiers::none());
+    settle_ui_animation(cx, window)?;
+    save_screenshot(cx, window, "native-medium-sheet-closed.png")?;
     close_window(cx, window)?;
     server.stop()
 }
@@ -967,6 +1024,7 @@ fn settle_ui_animation(
 ) -> Result<(), Box<dyn std::error::Error>> {
     for _ in 0..12 {
         std::thread::sleep(std::time::Duration::from_millis(25));
+        cx.advance_clock(std::time::Duration::from_millis(25));
         refresh(cx, window)?;
     }
     Ok(())

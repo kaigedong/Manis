@@ -5,9 +5,10 @@ use gpui::{
     prelude::*, px,
 };
 use gpui_component::{
-    Sizable,
+    Icon, IconName, Sizable,
     button::{Button, ButtonVariant, ButtonVariants},
     checkbox::Checkbox,
+    collapsible::Collapsible,
     radio::Radio,
 };
 use manis_core::{
@@ -2021,7 +2022,6 @@ impl ManisApp {
         counts.untested += group.saved_nodes.len();
         let visible_count = counts.count_for(filter);
         let collapsed = self.node_workspace.is_group_collapsed(&group.id);
-        let group_id = group.id.clone();
         let benchmark_key = Self::source_group_benchmark_key(&group.id);
         let benchmark = self
             .group_benchmarks
@@ -2056,50 +2056,27 @@ impl ManisApp {
         } else {
             language.text("Collapse", "收起")
         };
-        let header = div()
-            .id(format!("source-group-header-{}", group.id))
-            .role(Role::Button)
-            .aria_label(format!(
+        let trigger_group_id = group.id.clone();
+        let trigger = Button::new(format!("source-group-header-{}", group.id))
+            .accessibility_label(format!(
                 "{} {} {}",
                 action,
                 language.text("node source", "节点来源"),
                 group.name
             ))
-            .tab_stop(true)
-            .focusable()
-            .cursor_pointer()
-            .min_h(px(58.0))
-            .px(if compact { px(12.0) } else { px(16.0) })
-            .py_3()
-            .flex()
-            .items_center()
-            .justify_between()
-            .gap_3()
-            .bg(theme.surface_low)
+            .with_variant(ButtonVariant::Ghost)
+            .h_full()
+            .flex_1()
+            .px_0()
+            .text_color(theme.text_primary)
             .child(
                 div()
                     .min_w(px(0.0))
-                    .flex_1()
-                    .overflow_x_hidden()
+                    .w_full()
                     .flex()
                     .items_center()
+                    .justify_between()
                     .gap_3()
-                    .child(Self::group_benchmark_icon(
-                        &benchmark_key,
-                        benchmarking,
-                        theme,
-                        cx.listener(move |this, _, _, cx| {
-                            cx.stop_propagation();
-                            if !benchmarking {
-                                this.start_source_group_benchmark(
-                                    &benchmark_id,
-                                    &benchmark_name,
-                                    delay_targets.clone(),
-                                    cx,
-                                );
-                            }
-                        }),
-                    ))
                     .child(
                         div()
                             .min_w(px(0.0))
@@ -2119,30 +2096,32 @@ impl ManisApp {
                                     .text_color(theme.text_tertiary)
                                     .child(detail),
                             ),
-                    ),
-            )
-            .child(
-                div()
-                    .flex_shrink_0()
-                    .flex()
-                    .items_center()
-                    .gap_3()
-                    .child(
-                        div()
-                            .text_size(px(10.0))
-                            .text_color(theme.text_secondary)
-                            .child(Self::node_count_label(counts.total, language)),
                     )
                     .child(
                         div()
-                            .min_w(px(32.0))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(theme.action_primary)
-                            .child(action),
+                            .flex_shrink_0()
+                            .flex()
+                            .items_center()
+                            .gap_3()
+                            .child(
+                                div()
+                                    .text_size(px(10.0))
+                                    .text_color(theme.text_secondary)
+                                    .child(Self::node_count_label(counts.total, language)),
+                            )
+                            .child(
+                                Icon::new(if collapsed {
+                                    IconName::ChevronRight
+                                } else {
+                                    IconName::ChevronDown
+                                })
+                                .xsmall()
+                                .text_color(theme.action_primary),
+                            ),
                     ),
             )
             .on_click(cx.listener(move |this, _, _, cx| {
-                this.node_workspace.toggle_group(&group_id);
+                this.node_workspace.toggle_group(&trigger_group_id);
                 this.persist_node_workspace();
                 this.language()
                     .text(
@@ -2152,6 +2131,48 @@ impl ManisApp {
                     .clone_into(&mut this.status);
                 cx.notify();
             }));
+        let header = div()
+            .min_h(px(58.0))
+            .px(if compact { px(12.0) } else { px(16.0) })
+            .py_3()
+            .flex()
+            .items_center()
+            .gap_3()
+            .bg(theme.surface_low)
+            .child(Self::group_benchmark_icon(
+                &benchmark_key,
+                benchmarking,
+                theme,
+                cx.listener(move |this, _, _, cx| {
+                    if !benchmarking {
+                        this.start_source_group_benchmark(
+                            &benchmark_id,
+                            &benchmark_name,
+                            delay_targets.clone(),
+                            cx,
+                        );
+                    }
+                }),
+            ))
+            .child(trigger);
+
+        let content = if visible_count == 0 {
+            div()
+                .px_4()
+                .py_3()
+                .border_t_1()
+                .border_color(theme.outline_subtle)
+                .text_size(px(11.0))
+                .text_color(theme.text_secondary)
+                .child(language.text(
+                    "No nodes from this source match the current filter.",
+                    "这个来源中没有符合当前筛选的节点。",
+                ))
+                .into_any_element()
+        } else {
+            self.source_group_table(group, filter, &benchmark, compact, language, theme, cx)
+                .into_any_element()
+        };
 
         div()
             .rounded_md()
@@ -2159,29 +2180,12 @@ impl ManisApp {
             .border_color(theme.outline_subtle)
             .bg(theme.surface_high)
             .overflow_hidden()
-            .child(header)
-            .when(!collapsed && visible_count == 0, |container| {
-                container.child(
-                    div()
-                        .px_4()
-                        .py_3()
-                        .border_t_1()
-                        .border_color(theme.outline_subtle)
-                        .text_size(px(11.0))
-                        .text_color(theme.text_secondary)
-                        .child(language.text(
-                            "No nodes from this source match the current filter.",
-                            "这个来源中没有符合当前筛选的节点。",
-                        )),
-                )
-            })
-            .when(!collapsed && visible_count > 0, |container| {
-                container.child(
-                    self.source_group_table(
-                        group, filter, &benchmark, compact, language, theme, cx,
-                    ),
-                )
-            })
+            .child(
+                Collapsible::new()
+                    .open(!collapsed)
+                    .child(header)
+                    .content(content),
+            )
     }
 
     #[allow(clippy::too_many_arguments)]

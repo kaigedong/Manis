@@ -4,11 +4,11 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use gpui::{
-    AnyElement, Context, Div, Entity, FontWeight, IntoElement, ParentElement, Render, Role,
-    Stateful, Styled, Subscription, Task, Toggled, Window, div, prelude::*, px,
+    AnyElement, Context, Div, Entity, Focusable, FontWeight, IntoElement, ParentElement, Render,
+    Role, Stateful, Styled, Subscription, Task, Toggled, Window, div, prelude::*, px,
 };
 use gpui_component::{
-    Disableable, IconName, Selectable, Sizable,
+    Disableable, IconName, Selectable, Sizable, WindowExt as _,
     button::{Button, ButtonGroup, ButtonVariant, ButtonVariants},
     spinner::Spinner,
     status_bar::StatusBar,
@@ -628,6 +628,20 @@ pub struct ManisApp {
     route_domain_input_events: Vec<Subscription>,
     #[allow(dead_code)]
     app_lifecycle_events: Option<Subscription>,
+}
+
+struct RouteInspectorSheetContent {
+    app: Entity<ManisApp>,
+}
+
+impl Render for RouteInspectorSheetContent {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let app = self.app.clone();
+        let current = self.app.read(cx);
+        current.inspector_sheet_body(current.theme(), move |_, _, cx| {
+            app.update(cx, ManisApp::predict_route);
+        })
+    }
 }
 
 struct StoredWorkspace {
@@ -5340,16 +5354,8 @@ impl ManisApp {
                                     .h(px(34.0))
                                     .px_3()
                                     .border_color(theme.outline_subtle)
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.inspector_open = true;
-                                        trace_ui(UiEvent::RouteInspectorOpened);
-                                        this.language()
-                                            .text(
-                                                "Local route prediction opened",
-                                                "已打开本地路由预测",
-                                            )
-                                            .clone_into(&mut this.status);
-                                        cx.notify();
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.open_route_inspector(window, cx);
                                     })),
                             ),
                     )
@@ -5647,19 +5653,66 @@ impl ManisApp {
         }
     }
 
-    #[allow(clippy::too_many_lines)]
-    fn inspector(&self, theme: Theme, overlay: bool, cx: &mut Context<Self>) -> Div {
+    fn open_route_inspector(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let language = self.language();
-        let prediction = self.route_prediction.clone();
-        let route_input = self.route_domain_input.clone();
-        let input_error = match &prediction {
-            RouteInspectorPrediction::Invalid(error) => {
-                Some(route_domain_error_copy(*error, language))
+        let size_class = WindowSizeClass::for_width(window.viewport_size().width.as_f32());
+        language
+            .text("Local route prediction opened", "已打开本地路由预测")
+            .clone_into(&mut self.status);
+        trace_ui(UiEvent::RouteInspectorOpened);
+
+        if size_class == WindowSizeClass::Wide {
+            if let Some(input) = self.route_domain_input.as_ref() {
+                input.focus_handle(cx).focus(window, cx);
             }
-            RouteInspectorPrediction::Idle | RouteInspectorPrediction::Ready(_) => None,
-        };
-        let observed_route = self.observed_routes.first().cloned();
-        let prediction_badge = match &prediction {
+            cx.notify();
+            return;
+        }
+
+        if window.has_active_sheet(cx) {
+            if let Some(input) = self.route_domain_input.as_ref() {
+                input.focus_handle(cx).focus(window, cx);
+            }
+            return;
+        }
+
+        self.inspector_open = true;
+        gpui_component::Theme::global_mut(cx).sheet.margin_top = px(48.0);
+        let app = cx.entity();
+        let content_app = app.clone();
+        let content = cx.new(move |cx| {
+            cx.observe(&content_app, |_, _, cx| cx.notify()).detach();
+            RouteInspectorSheetContent { app: content_app }
+        });
+        window.open_sheet(cx, move |sheet, _, _| {
+            let app_for_close = app.clone();
+            sheet
+                .title(language.text("Route explanation", "路由解释"))
+                .size(px(340.0))
+                .resizable(false)
+                .on_close(move |_, _, cx| {
+                    app_for_close.update(cx, |this, cx| {
+                        this.close_route_inspector(cx);
+                    });
+                })
+                .child(content.clone())
+        });
+        if let Some(input) = self.route_domain_input.as_ref() {
+            input.focus_handle(cx).focus(window, cx);
+        }
+        cx.notify();
+    }
+
+    fn close_route_inspector(&mut self, cx: &mut Context<Self>) {
+        if self.inspector_open {
+            self.inspector_open = false;
+            trace_ui(UiEvent::RouteInspectorClosed);
+            cx.notify();
+        }
+    }
+
+    fn route_inspector_badge(&self, language: Language) -> &'static str {
+        match &self.route_prediction {
             RouteInspectorPrediction::Ready(DomainRoutePrediction::Matched { .. }) => {
                 language.text("Predicted path", "预测路径")
             }
@@ -5669,114 +5722,125 @@ impl ManisApp {
             RouteInspectorPrediction::Idle | RouteInspectorPrediction::Invalid(_) => {
                 language.text("Local model", "本地模型")
             }
+        }
+    }
+
+    fn inspector_badge(&self, theme: Theme) -> Div {
+        let language = self.language();
+        div()
+            .px_2()
+            .py_1()
+            .rounded_sm()
+            .bg(theme.route_soft)
+            .text_size(px(10.0))
+            .font_weight(FontWeight::SEMIBOLD)
+            .text_color(theme.route_trace)
+            .child(self.route_inspector_badge(language))
+    }
+
+    fn inspector_title(&self, theme: Theme) -> Div {
+        let language = self.language();
+        div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(
+                div()
+                    .text_size(px(18.0))
+                    .font_weight(FontWeight::BOLD)
+                    .child(language.text("Route explanation", "路由解释")),
+            )
+            .child(self.inspector_badge(theme))
+    }
+
+    fn inspector_form(
+        &self,
+        theme: Theme,
+        on_predict: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
+    ) -> Div {
+        let language = self.language();
+        let prediction = self.route_prediction.clone();
+        let route_input = self.route_domain_input.clone();
+        let input_error = match &prediction {
+            RouteInspectorPrediction::Invalid(error) => {
+                Some(route_domain_error_copy(*error, language))
+            }
+            RouteInspectorPrediction::Idle | RouteInspectorPrediction::Ready(_) => None,
         };
 
         div()
-            .w(px(340.0))
-            .h_full()
-            .flex_shrink_0()
-            .flex()
-            .flex_col()
-            .bg(theme.surface_low)
-            .border_l_1()
-            .border_color(theme.outline_subtle)
-            .when(overlay, |panel| panel.absolute().top_0().right_0().bottom_0().shadow_xl())
             .child(
                 div()
-                    .p_4()
-                    .border_b_1()
-                    .border_color(theme.outline_subtle)
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(div().text_size(px(18.0)).font_weight(FontWeight::BOLD).child(language.text("Route explanation", "路由解释")))
-                            .child(div().px_2().py_1().rounded_sm().bg(theme.route_soft).text_size(px(10.0)).font_weight(FontWeight::SEMIBOLD).text_color(theme.route_trace).child(prediction_badge))
-                            .child(div().flex_1())
-                            .when(overlay, |header| {
-                                header.child(
-                                    Button::new("close-inspector")
-                                        .accessibility_label(language.text(
-                                            "Close route explanation",
-                                            "关闭路由解释",
-                                        ))
-                                        .label(language.text("Close", "关闭"))
-                                        .with_variant(ButtonVariant::Text)
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.inspector_open = false;
-                                            trace_ui(UiEvent::RouteInspectorClosed);
-                                            cx.notify();
-                                        })),
-                                )
-                            }),
-                    )
-                    .child(div().mt_2().text_color(theme.text_secondary).child(language.text("Preview the path selected by the local rule model", "按本地规则模型预览可能选择的路径")))
-                    .child(
-                        div()
-                            .mt_4()
-                            .child(
-                                div()
-                                    .text_size(px(11.0))
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .child(language.text("Destination domain", "目标域名")),
-                            )
-                            .child(
-                                div()
-                                    .mt_2()
-                                    .flex()
-                                    .gap_2()
-                                    .when_some(route_input, |row, input| {
-                                        row.child(div().min_w_0().flex_1().child(input))
-                                    })
-                                    .child(
-                                        Button::new("predict-route")
-                                            .accessibility_label(language.text(
-                                                "Predict route for this domain",
-                                                "预测此域名的路由",
-                                            ))
-                                            .label(language.text("Predict", "预测"))
-                                            .primary()
-                                            .with_size(px(38.0))
-                                            .h(px(38.0))
-                                            .px_3()
-                                            .bg(theme.action_primary)
-                                            .text_color(theme.action_on_primary)
-                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                this.predict_route(cx);
-                                            })),
-                                    ),
-                            )
-                            .when_some(input_error, |form, error| {
-                                form.child(
-                                    div()
-                                        .mt_2()
-                                        .text_size(px(11.0))
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .text_color(theme.status_error)
-                                        .child(error),
-                                )
-                            })
-                            .child(
-                                div()
-                                    .mt_2()
-                                    .text_size(px(11.0))
-                                    .text_color(theme.text_tertiary)
-                                    .child(language.text(
-                                        "Enter a domain only, without a protocol, path, port, or wildcard. Press Enter to predict.",
-                                        "只输入域名，不含协议、路径、端口或通配符；按 Enter 可预测。",
-                                    )),
-                            ),
-                    ),
+                    .text_color(theme.text_secondary)
+                    .child(language.text(
+                        "Preview the path selected by the local rule model",
+                        "按本地规则模型预览可能选择的路径",
+                    )),
             )
             .child(
                 div()
-                    .id("inspector-scroll")
-                    .flex_1()
-                    .overflow_y_scroll()
-                    .p_4()
-                    .child(self.route_prediction_panel(&prediction, language, theme))
-                    .when_some(observed_route, |panel, observed| {
+                    .mt_4()
+                    .child(
+                        div()
+                            .text_size(px(11.0))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(language.text("Destination domain", "目标域名")),
+                    )
+                    .child(
+                        div()
+                            .mt_2()
+                            .flex()
+                            .gap_2()
+                            .when_some(route_input, |row, input| {
+                                row.child(div().min_w_0().flex_1().child(input))
+                            })
+                            .child(
+                                Button::new("predict-route")
+                                    .accessibility_label(language.text(
+                                        "Predict route for this domain",
+                                        "预测此域名的路由",
+                                    ))
+                                    .label(language.text("Predict", "预测"))
+                                    .primary()
+                                    .with_size(px(38.0))
+                                    .h(px(38.0))
+                                    .px_3()
+                                    .bg(theme.action_primary)
+                                    .text_color(theme.action_on_primary)
+                                    .on_click(on_predict),
+                            ),
+                    )
+                    .when_some(input_error, |form, error| {
+                        form.child(
+                            div()
+                                .mt_2()
+                                .text_size(px(11.0))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(theme.status_error)
+                                .child(error),
+                        )
+                    })
+                    .child(
+                        div()
+                            .mt_2()
+                            .text_size(px(11.0))
+                            .text_color(theme.text_tertiary)
+                            .child(language.text(
+                                "Enter a domain only, without a protocol, path, port, or wildcard. Press Enter to predict.",
+                                "只输入域名，不含协议、路径、端口或通配符；按 Enter 可预测。",
+                            )),
+                    ),
+            )
+    }
+
+    fn inspector_results(&self, theme: Theme) -> Div {
+        let language = self.language();
+        let prediction = self.route_prediction.clone();
+        let observed_route = self.observed_routes.first().cloned();
+
+        div()
+            .child(self.route_prediction_panel(&prediction, language, theme))
+            .when_some(observed_route, |panel, observed| {
                         let host = observed.host.unwrap_or_else(|| language.text("Unknown target", "目标未知").to_owned());
                         let rule = observed.rule.unwrap_or_else(|| language.text("Unknown rule", "规则未知").to_owned());
                         let payload = observed.rule_payload.unwrap_or_default();
@@ -5812,27 +5876,73 @@ impl ManisApp {
                                 ),
                         )
                     })
-                    .child(
-                        div()
-                            .mt_4()
-                            .pt_4()
-                            .border_t_1()
-                            .border_color(theme.outline_subtle)
-                            .text_color(theme.text_secondary)
-                            .child(language.text("Evaluation source        Current ordered rule snapshot", "评估来源             当前有序规则快照"))
-                            .child(div().mt_2().child(language.text("DNS                      Not queried", "DNS                  未查询")))
-                            .child(div().mt_2().child(language.text("Result type              Local prediction", "结果类型             本地预测"))),
-                    )
-                    .child(
-                        div()
-                            .mt_5()
-                            .pt_4()
-                            .border_t_1()
-                            .border_color(theme.outline_subtle)
-                            .text_size(px(11.0))
-                            .text_color(theme.text_tertiary)
-                            .child(language.text("This is not an established Mihomo connection. Only routes from /connections are marked as observed.", "这不是 Mihomo 已建立的连接。只有来自 /connections 的链路才能标为“已观察”。")),
-                    ),
+            .child(
+                div()
+                    .mt_4()
+                    .pt_4()
+                    .border_t_1()
+                    .border_color(theme.outline_subtle)
+                    .text_color(theme.text_secondary)
+                    .child(language.text("Evaluation source        Current ordered rule snapshot", "评估来源             当前有序规则快照"))
+                    .child(div().mt_2().child(language.text("DNS                      Not queried", "DNS                  未查询")))
+                    .child(div().mt_2().child(language.text("Result type              Local prediction", "结果类型             本地预测"))),
+            )
+            .child(
+                div()
+                    .mt_5()
+                    .pt_4()
+                    .border_t_1()
+                    .border_color(theme.outline_subtle)
+                    .text_size(px(11.0))
+                    .text_color(theme.text_tertiary)
+                    .child(language.text("This is not an established Mihomo connection. Only routes from /connections are marked as observed.", "这不是 Mihomo 已建立的连接。只有来自 /connections 的链路才能标为“已观察”。")),
+            )
+    }
+
+    fn inspector_sheet_body(
+        &self,
+        theme: Theme,
+        on_predict: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
+    ) -> Div {
+        div()
+            .min_h_full()
+            .bg(theme.surface_low)
+            .px_4()
+            .pb_4()
+            .text_color(theme.text_primary)
+            .child(div().mb_3().child(self.inspector_badge(theme)))
+            .child(self.inspector_form(theme, on_predict))
+            .child(div().mt_4().child(self.inspector_results(theme)))
+    }
+
+    fn inspector(&self, theme: Theme, cx: &mut Context<Self>) -> Div {
+        div()
+            .w(px(340.0))
+            .h_full()
+            .flex_shrink_0()
+            .flex()
+            .flex_col()
+            .bg(theme.surface_low)
+            .border_l_1()
+            .border_color(theme.outline_subtle)
+            .child(
+                div()
+                    .p_4()
+                    .border_b_1()
+                    .border_color(theme.outline_subtle)
+                    .child(self.inspector_title(theme))
+                    .child(div().mt_2().child(self.inspector_form(
+                        theme,
+                        cx.listener(|this, _, _, cx| this.predict_route(cx)),
+                    ))),
+            )
+            .child(
+                div()
+                    .id("inspector-scroll")
+                    .flex_1()
+                    .overflow_y_scroll()
+                    .p_4()
+                    .child(self.inspector_results(theme)),
             )
     }
 
@@ -6262,8 +6372,12 @@ impl Render for ManisApp {
             !compact || self.workspace.compact_navigation == CompactNavigation::GroupList;
         let show_detail =
             !compact || self.workspace.compact_navigation == CompactNavigation::GroupDetail;
-        let overlay_inspector = size_class != WindowSizeClass::Wide;
-        let show_inspector = size_class == WindowSizeClass::Wide || self.inspector_open;
+        if size_class == WindowSizeClass::Wide && self.inspector_open && window.has_active_sheet(cx)
+        {
+            self.inspector_open = false;
+            window.close_sheet(cx);
+        }
+        let show_inspector = size_class == WindowSizeClass::Wide;
         let policies_active = self.primary_workspace == PrimaryWorkspace::Policies;
         let policy_editor_active = policies_active && self.managed_policy_draft.is_some();
         let has_policy_catalog = self.catalog.is_some();
@@ -6355,9 +6469,10 @@ impl Render for ManisApp {
                             && !policy_editor_active
                             && has_policy_catalog
                             && show_inspector,
-                        |main| main.child(self.inspector(theme, overlay_inspector, cx)),
+                        |main| main.child(self.inspector(theme, cx)),
                     ),
             )
+            .children(gpui_component::Root::render_sheet_layer(window, cx))
             .child(self.status_bar(theme))
     }
 }
