@@ -3284,6 +3284,21 @@ impl ManisApp {
                                     }),
                             )
                             .child(
+                                Button::new("open-route-test")
+                                    .accessibility_label(
+                                        language.text("Test routing rules", "测试分流规则"),
+                                    )
+                                    .label(language.text("Test rules", "测试规则"))
+                                    .with_variant(ButtonVariant::Default)
+                                    .with_size(px(34.0))
+                                    .h(px(34.0))
+                                    .px_3()
+                                    .border_color(theme.outline_subtle)
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.open_route_inspector(window, cx);
+                                    })),
+                            )
+                            .child(
                                 Button::new("open-manual-rule-editor")
                                     .accessibility_label(
                                         language.text("Add routing rule", "添加分流规则"),

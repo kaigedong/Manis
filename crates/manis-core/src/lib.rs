@@ -8,8 +8,8 @@ use std::{
 mod route_prediction;
 
 pub use route_prediction::{
-    DomainRoutePrediction, RouteDomain, RouteDomainError, RoutePredictionReason, RouteTarget,
-    RoutingRule,
+    DomainRoutePrediction, RouteDomain, RouteDomainError, RoutePredictionReason, RouteQuery,
+    RouteQueryError, RouteTarget, RoutingRule,
 };
 
 /// A proxy core supported by Manis's kernel-neutral configuration boundary.

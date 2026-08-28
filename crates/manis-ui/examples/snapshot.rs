@@ -844,6 +844,8 @@ fn capture_route_prediction(
         std::thread::sleep(std::time::Duration::from_millis(25));
         refresh(cx, window)?;
     }
+    cx.simulate_click(window, point(px(110.0), px(155.0)), Modifiers::none());
+    refresh(cx, window)?;
     cx.simulate_click(window, point(px(1_190.0), px(175.0)), Modifiers::none());
     cx.simulate_input(window, "openai.com");
     refresh(cx, window)?;
