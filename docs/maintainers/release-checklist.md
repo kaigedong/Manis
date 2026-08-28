@@ -62,6 +62,8 @@ the remaining checklist.
 
 ## Publication
 
+- [ ] The tag workflow's draft release contains both macOS architectures, the Arch Linux package,
+      and a valid checksum for each asset.
 - [ ] Release notes state platform support and known limitations without claiming unverified
   behavior.
 - [ ] Checksums are published for every artifact.
