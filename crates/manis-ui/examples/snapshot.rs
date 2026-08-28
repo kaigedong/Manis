@@ -2,6 +2,7 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let platform = gpui_platform::current_platform(false);
     let mut cx = gpui::VisualTestAppContext::new(platform);
+    cx.update(manis_ui::init);
     if std::env::args().any(|argument| argument == "--policy-settings") {
         capture_managed_policy_settings(&mut cx)?;
         return Ok(());
@@ -605,10 +606,7 @@ fn capture_routing_rule_interactions(
     cx.simulate_click(window, point(px(1_286.0), px(190.0)), Modifiers::none());
     refresh(cx, window)?;
     save_screenshot(cx, window, "routing-rules-wide-add-modal.png")?;
-    cx.simulate_click(window, point(px(270.0), px(240.0)), Modifiers::none());
-    refresh(cx, window)?;
-
-    cx.simulate_click(window, point(px(410.0), px(260.0)), Modifiers::none());
+    cx.simulate_click(window, point(px(500.0), px(414.0)), Modifiers::none());
     refresh(cx, window)?;
     save_screenshot(cx, window, "routing-rules-wide-type-menu.png")?;
     cx.simulate_click(window, point(px(410.0), px(260.0)), Modifiers::none());

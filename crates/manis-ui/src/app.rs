@@ -3695,8 +3695,14 @@ impl ManisApp {
                     .flex()
                     .items_center()
                     .child(theme_label)
-                    .on_click(cx.listener(|this, _, _, cx| {
+                    .on_click(cx.listener(|this, _, window, cx| {
                         this.dark = !this.dark;
+                        crate::theme::sync_component_theme(
+                            this.theme(),
+                            this.dark,
+                            Some(window),
+                            cx,
+                        );
                         let language = this.language();
                         if this.dark {
                             trace_ui(UiEvent::ThemeDarkSelected);
