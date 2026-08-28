@@ -65,7 +65,7 @@ pub fn show_or_open_window(cx: &mut App) {
     if let Some(window) = cx
         .windows()
         .into_iter()
-        .find(|window| window.downcast::<ManisApp>().is_some())
+        .find(|window| window.downcast::<gpui_component::Root>().is_some())
     {
         let _ = window.update(cx, |_, window, _| window.activate_window());
         cx.activate(true);
@@ -93,7 +93,7 @@ pub fn open_window(cx: &mut App) -> gpui::Result<()> {
             focus: true,
             ..Default::default()
         },
-        move |_, _| app,
+        move |window, cx| cx.new(|cx| gpui_component::Root::new(app, window, cx)),
     )?;
     Ok(())
 }

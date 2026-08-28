@@ -1,6 +1,10 @@
 use gpui::{
-    Anchor, AnyElement, Context, Div, Entity, Focusable, FontWeight, KeyDownEvent, ParentElement,
-    Role, Stateful, Styled, Window, anchored, deferred, div, point, prelude::*, px,
+    AnyElement, Context, Div, Entity, Focusable, FontWeight, KeyDownEvent, ParentElement, Role,
+    Stateful, Styled, Window, div, prelude::*, px,
+};
+use gpui_component::{
+    Sizable,
+    button::{Button, ButtonVariant, ButtonVariants},
 };
 use manis_core::{KernelKind, WindowSizeClass};
 use manis_profile::{QxRuleKind, SecretUrl};
@@ -2400,55 +2404,14 @@ impl ManisApp {
         true
     }
 
-    fn toggle_manual_rule_popover(&mut self, popover: ManualRulePopover, cx: &mut Context<Self>) {
-        self.manual_rule_popover = (self.manual_rule_popover != Some(popover)).then_some(popover);
-        cx.notify();
-    }
-
-    fn manual_rule_popover(
-        id: &'static str,
-        content: Stateful<Div>,
-        width: f32,
-        theme: Theme,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        deferred(
-            anchored()
-                .anchor(Anchor::TopLeft)
-                .offset(point(px(0.0), px(40.0)))
-                .snap_to_window_with_margin(px(12.0))
-                .child(
-                    div()
-                        .id(id)
-                        .w(px(width))
-                        .max_h(px(360.0))
-                        .overflow_y_scroll()
-                        .rounded_md()
-                        .border_1()
-                        .border_color(theme.outline_subtle)
-                        .bg(theme.surface_high)
-                        .shadow_lg()
-                        .occlude()
-                        .child(content)
-                        .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                            this.manual_rule_popover = None;
-                            cx.notify();
-                        })),
-                ),
-        )
-        .priority(10)
-        .into_any_element()
-    }
-
     fn manual_rule_kind_menu(
         &self,
         condition_index: usize,
         selected_kind: crate::manual_rule::ManualRuleKind,
         theme: Theme,
         language: Language,
-        width: f32,
         cx: &mut Context<Self>,
-    ) -> AnyElement {
+    ) -> Stateful<Div> {
         let kernel = self.runtime.kind();
         let mut choices = div().id("manual-rule-kind-choices");
         for kind in crate::manual_rule::ManualRuleKind::ALL {
@@ -2508,15 +2471,10 @@ impl ManisApp {
                     })),
             );
         }
-        Self::manual_rule_popover("manual-rule-kind-menu", choices, width, theme, cx)
+        choices
     }
 
-    fn manual_rule_target_menu(
-        &self,
-        theme: Theme,
-        width: f32,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
+    fn manual_rule_target_menu(&self, theme: Theme, cx: &mut Context<Self>) -> Stateful<Div> {
         let mut choices = div().id("manual-rule-target-choices");
         for target in self.manual_rule_targets() {
             let selected = self.manual_rule_target == target;
@@ -2555,44 +2513,33 @@ impl ManisApp {
                     })),
             );
         }
-        Self::manual_rule_popover("manual-rule-target-menu", choices, width, theme, cx)
+        choices
     }
 
     fn manual_rule_select(
         id: &'static str,
         label: &'static str,
         value: String,
-        menu: Option<AnyElement>,
-        theme: Theme,
-        listener: impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
-    ) -> Div {
-        div()
-            .relative()
-            .child(
-                div()
-                    .id(id)
-                    .role(Role::Button)
-                    .aria_label(label)
-                    .tab_stop(true)
-                    .focusable()
-                    .cursor_pointer()
-                    .h(px(38.0))
-                    .px_3()
-                    .rounded_md()
-                    .border_1()
-                    .border_color(theme.outline_strong)
-                    .bg(theme.surface_base)
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap_2()
-                    .text_size(px(11.0))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(value)
-                    .child(div().text_color(theme.text_tertiary).child("⌄"))
-                    .on_click(listener),
-            )
-            .when_some(menu, gpui::ParentElement::child)
+        menu: impl gpui::IntoElement,
+        open: bool,
+        width: f32,
+        on_open_change: impl Fn(&bool, &mut gpui::Window, &mut gpui::App) + 'static,
+    ) -> AnyElement {
+        let trigger = Button::new(id)
+            .accessibility_label(label)
+            .label(value)
+            .dropdown_caret(true)
+            .with_variant(ButtonVariant::Default)
+            .with_size(px(38.0))
+            .h(px(38.0))
+            .w_full()
+            .text_size(px(11.0))
+            .font_weight(FontWeight::SEMIBOLD);
+
+        crate::components::anchored_popover(format!("{id}-popover"), trigger, menu, width, 360.0)
+            .open(open)
+            .on_open_change(on_open_change)
+            .into_any_element()
     }
 
     fn manual_rule_condition_editor(
@@ -2612,11 +2559,9 @@ impl ManisApp {
         .expect("manual rule condition input is initialized")
         .clone();
         let kind_width = if compact { 260.0 } else { 240.0 };
-        let kind_menu = (self.manual_rule_popover
-            == Some(ManualRulePopover::Kind(condition_index)))
-        .then(|| {
-            self.manual_rule_kind_menu(condition_index, kind, theme, language, kind_width, cx)
-        });
+        let kind_popover = ManualRulePopover::Kind(condition_index);
+        let kind_open = self.manual_rule_popover == Some(kind_popover);
+        let kind_menu = self.manual_rule_kind_menu(condition_index, kind, theme, language, cx);
         let (select_id, label) = if condition_index == 0 {
             (
                 "manual-rule-kind-select",
@@ -2628,15 +2573,20 @@ impl ManisApp {
                 language.text("Choose second condition type", "选择第二个条件类型"),
             )
         };
+        let app = cx.entity();
         let kind_select = Self::manual_rule_select(
             select_id,
             label,
             kind.display_label().to_owned(),
             kind_menu,
-            theme,
-            cx.listener(move |this, _, _, cx| {
-                this.toggle_manual_rule_popover(ManualRulePopover::Kind(condition_index), cx);
-            }),
+            kind_open,
+            kind_width,
+            move |open, _, cx| {
+                app.update(cx, |this, cx| {
+                    this.manual_rule_popover = open.then_some(kind_popover);
+                    cx.notify();
+                });
+            },
         );
         let mut row = div()
             .mt_3()
@@ -2698,17 +2648,22 @@ impl ManisApp {
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let target_width = if compact { 260.0 } else { 240.0 };
-        let target_menu = (self.manual_rule_popover == Some(ManualRulePopover::Target))
-            .then(|| self.manual_rule_target_menu(theme, target_width, cx));
+        let target_open = self.manual_rule_popover == Some(ManualRulePopover::Target);
+        let target_menu = self.manual_rule_target_menu(theme, cx);
+        let app = cx.entity();
         let target = Self::manual_rule_select(
             "manual-rule-target-select",
             language.text("Choose target policy", "选择目标策略"),
             self.manual_rule_target.clone(),
             target_menu,
-            theme,
-            cx.listener(|this, _, _, cx| {
-                this.toggle_manual_rule_popover(ManualRulePopover::Target, cx);
-            }),
+            target_open,
+            target_width,
+            move |open, _, cx| {
+                app.update(cx, |this, cx| {
+                    this.manual_rule_popover = open.then_some(ManualRulePopover::Target);
+                    cx.notify();
+                });
+            },
         );
 
         let mut conditions = div().child(self.manual_rule_condition_editor(

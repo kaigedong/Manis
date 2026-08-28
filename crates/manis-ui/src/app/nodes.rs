@@ -1,8 +1,12 @@
 use std::collections::BTreeSet;
 
 use gpui::{
-    Anchor, AnyElement, Context, Div, FontWeight, ParentElement, Role, Stateful, Styled, Toggled,
-    anchored, deferred, div, point, prelude::*, px,
+    AnyElement, Context, Div, FontWeight, ParentElement, Role, Stateful, Styled, Toggled, div,
+    prelude::*, px,
+};
+use gpui_component::{
+    Sizable,
+    button::{Button, ButtonVariant, ButtonVariants},
 };
 use manis_core::{
     ManagedPolicyGroup, ManagedPolicyIcon, ManagedPolicyStrategy, NodeAvailabilityFilter,
@@ -28,6 +32,32 @@ struct NodeSourceGroup<'a> {
     providers: Vec<&'a LoadedProvider>,
     runtime_provider_names: Vec<String>,
     saved_nodes: Vec<&'a SourceNodePreview>,
+}
+
+struct PolicyEditorPopup {
+    kind: PolicyEditorPopover,
+    open: bool,
+    content: AnyElement,
+    width: f32,
+    max_height: f32,
+}
+
+impl PolicyEditorPopup {
+    fn new(
+        kind: PolicyEditorPopover,
+        open: bool,
+        content: impl gpui::IntoElement,
+        width: f32,
+        max_height: f32,
+    ) -> Self {
+        Self {
+            kind,
+            open,
+            content: content.into_any_element(),
+            width,
+            max_height,
+        }
+    }
 }
 
 fn subscription_provider_refs<'a>(
@@ -699,11 +729,8 @@ impl ManisApp {
             .as_ref()
             .map_or_else(String::new, |input| input.read(cx).value().to_owned());
         let popover_width = if compact { 280.0 } else { 300.0 };
-        let strategy_menu = (self.managed_policy_editor_popover
-            == Some(PolicyEditorPopover::Strategy))
-        .then(|| Self::policy_strategy_menu(draft, language, theme, popover_width, cx));
-        let icon_menu = (self.managed_policy_editor_popover == Some(PolicyEditorPopover::Icon))
-            .then(|| Self::policy_icon_menu(draft, language, theme, popover_width, cx));
+        let strategy_menu = Self::policy_strategy_menu(draft, language, theme, cx);
+        let icon_menu = Self::policy_icon_menu(draft, language, theme, cx);
         let basics = div()
             .rounded_md()
             .border_1()
@@ -715,11 +742,14 @@ impl ManisApp {
                 strategy,
                 None,
                 theme,
-                strategy_menu,
-                cx.listener(|this, _, _, cx| {
-                    this.toggle_policy_editor_popover(PolicyEditorPopover::Strategy);
-                    cx.notify();
-                }),
+                PolicyEditorPopup::new(
+                    PolicyEditorPopover::Strategy,
+                    self.managed_policy_editor_popover == Some(PolicyEditorPopover::Strategy),
+                    strategy_menu,
+                    popover_width,
+                    220.0,
+                ),
+                cx,
             ))
             .child(Self::policy_editor_input_row(
                 language.text("Policy name", "策略名"),
@@ -738,16 +768,17 @@ impl ManisApp {
                     theme,
                 )),
                 theme,
-                icon_menu,
-                cx.listener(|this, _, _, cx| {
-                    this.toggle_policy_editor_popover(PolicyEditorPopover::Icon);
-                    cx.notify();
-                }),
+                PolicyEditorPopup::new(
+                    PolicyEditorPopover::Icon,
+                    self.managed_policy_editor_popover == Some(PolicyEditorPopover::Icon),
+                    icon_menu,
+                    popover_width,
+                    320.0,
+                ),
+                cx,
             ));
 
-        let candidate_mode_menu = (self.managed_policy_editor_popover
-            == Some(PolicyEditorPopover::CandidateMode))
-        .then(|| Self::policy_candidate_mode_menu(draft, language, theme, popover_width, cx));
+        let candidate_mode_menu = Self::policy_candidate_mode_menu(draft, language, theme, cx);
         let mut nodes = div()
             .rounded_md()
             .border_1()
@@ -759,11 +790,14 @@ impl ManisApp {
                 matcher,
                 None,
                 theme,
-                candidate_mode_menu,
-                cx.listener(|this, _, _, cx| {
-                    this.toggle_policy_editor_popover(PolicyEditorPopover::CandidateMode);
-                    cx.notify();
-                }),
+                PolicyEditorPopup::new(
+                    PolicyEditorPopover::CandidateMode,
+                    self.managed_policy_editor_popover == Some(PolicyEditorPopover::CandidateMode),
+                    candidate_mode_menu,
+                    popover_width,
+                    280.0,
+                ),
+                cx,
             ));
         if draft.matcher_kind == PolicyCandidateMatcherKind::NameContains {
             nodes = nodes.child(Self::policy_editor_input_row(
@@ -774,9 +808,7 @@ impl ManisApp {
             ));
         }
         if draft.matcher_kind == PolicyCandidateMatcherKind::Explicit {
-            let candidate_menu = (self.managed_policy_editor_popover
-                == Some(PolicyEditorPopover::CandidateNodes))
-            .then(|| self.policy_candidate_menu(draft, language, theme, popover_width, cx));
+            let candidate_menu = self.policy_candidate_menu(draft, language, theme, cx);
             nodes = nodes.child(Self::policy_editor_popup_row(
                 "policy-editor-selected-nodes",
                 language.text("Selected nodes", "已选节点"),
@@ -788,28 +820,32 @@ impl ManisApp {
                 },
                 None,
                 theme,
-                candidate_menu,
-                cx.listener(|this, _, _, cx| {
-                    this.toggle_policy_editor_popover(PolicyEditorPopover::CandidateNodes);
-                    cx.notify();
-                }),
+                PolicyEditorPopup::new(
+                    PolicyEditorPopover::CandidateNodes,
+                    self.managed_policy_editor_popover == Some(PolicyEditorPopover::CandidateNodes),
+                    candidate_menu,
+                    popover_width.max(480.0),
+                    420.0,
+                ),
+                cx,
             ));
         }
         if draft.strategy == ManagedPolicyStrategy::LowestLatency {
-            let interval_menu = (self.managed_policy_editor_popover
-                == Some(PolicyEditorPopover::Interval))
-            .then(|| Self::policy_interval_menu(draft, language, theme, popover_width, cx));
+            let interval_menu = Self::policy_interval_menu(draft, language, theme, cx);
             nodes = nodes.child(Self::policy_editor_popup_row(
                 "policy-editor-interval",
                 language.text("Retest interval", "重测间隔"),
                 interval,
                 None,
                 theme,
-                interval_menu,
-                cx.listener(|this, _, _, cx| {
-                    this.toggle_policy_editor_popover(PolicyEditorPopover::Interval);
-                    cx.notify();
-                }),
+                PolicyEditorPopup::new(
+                    PolicyEditorPopover::Interval,
+                    self.managed_policy_editor_popover == Some(PolicyEditorPopover::Interval),
+                    interval_menu,
+                    popover_width,
+                    320.0,
+                ),
+                cx,
             ));
         }
 
@@ -868,9 +904,59 @@ impl ManisApp {
         value: String,
         value_icon: Option<Div>,
         theme: Theme,
-        popover: Option<AnyElement>,
-        listener: impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
-    ) -> Div {
+        popup: PolicyEditorPopup,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let PolicyEditorPopup {
+            kind,
+            open,
+            content,
+            width,
+            max_height,
+        } = popup;
+        let app = cx.entity();
+        let trigger = Button::new(id)
+            .accessibility_label(format!("{label}: {value}"))
+            .dropdown_caret(true)
+            .with_variant(ButtonVariant::Default)
+            .with_size(px(38.0))
+            .h(px(38.0))
+            .w_full()
+            .border_color(theme.outline_subtle)
+            .bg(theme.surface_low)
+            .child(
+                div()
+                    .w_full()
+                    .min_w(px(0.0))
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .when_some(value_icon, ParentElement::child)
+                    .child(
+                        div()
+                            .flex_1()
+                            .overflow_x_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .text_color(theme.text_secondary)
+                            .child(value),
+                    ),
+            );
+        let popover = crate::components::anchored_popover(
+            format!("{id}-popover"),
+            trigger,
+            content,
+            width,
+            max_height,
+        )
+        .open(open)
+        .on_open_change(move |open, _, cx| {
+            app.update(cx, |this, cx| {
+                this.managed_policy_editor_popover = open.then_some(kind);
+                cx.notify();
+            });
+        });
+
         div()
             .min_h(px(64.0))
             .px_4()
@@ -885,49 +971,8 @@ impl ManisApp {
                     .font_weight(FontWeight::SEMIBOLD)
                     .child(label),
             )
-            .child(
-                div()
-                    .relative()
-                    .w(px(300.0))
-                    .max_w(px(300.0))
-                    .child(
-                        div()
-                            .id(id)
-                            .role(Role::Button)
-                            .aria_label(format!("{label}: {value}"))
-                            .tab_stop(true)
-                            .focusable()
-                            .cursor_pointer()
-                            .h(px(38.0))
-                            .px_3()
-                            .rounded_md()
-                            .border_1()
-                            .border_color(theme.outline_subtle)
-                            .bg(theme.surface_low)
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .when_some(value_icon, ParentElement::child)
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .overflow_x_hidden()
-                                    .whitespace_nowrap()
-                                    .text_ellipsis()
-                                    .text_color(theme.text_secondary)
-                                    .child(value),
-                            )
-                            .child(
-                                div()
-                                    .w(px(16.0))
-                                    .text_center()
-                                    .text_color(theme.text_tertiary)
-                                    .child("⌄"),
-                            )
-                            .on_click(listener),
-                    )
-                    .when_some(popover, ParentElement::child),
-            )
+            .child(div().w(px(300.0)).max_w(px(300.0)).child(popover))
+            .into_any_element()
     }
 
     fn policy_editor_input_row(
@@ -1047,54 +1092,12 @@ impl ManisApp {
             .on_click(listener)
     }
 
-    fn toggle_policy_editor_popover(&mut self, popover: PolicyEditorPopover) {
-        self.managed_policy_editor_popover =
-            (self.managed_policy_editor_popover != Some(popover)).then_some(popover);
-    }
-
-    fn policy_editor_popover(
-        id: &'static str,
-        content: Stateful<Div>,
-        width: f32,
-        max_height: f32,
-        theme: Theme,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        deferred(
-            anchored()
-                .anchor(Anchor::TopLeft)
-                .offset(point(px(0.0), px(42.0)))
-                .snap_to_window_with_margin(px(12.0))
-                .child(
-                    div()
-                        .id(id)
-                        .w(px(width))
-                        .max_h(px(max_height))
-                        .overflow_y_scroll()
-                        .rounded_md()
-                        .border_1()
-                        .border_color(theme.outline_subtle)
-                        .bg(theme.surface_high)
-                        .shadow_lg()
-                        .occlude()
-                        .child(content)
-                        .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                            this.managed_policy_editor_popover = None;
-                            cx.notify();
-                        })),
-                ),
-        )
-        .priority(10)
-        .into_any_element()
-    }
-
     fn policy_strategy_menu(
         draft: &ManagedPolicyDraft,
         _language: Language,
         theme: Theme,
-        width: f32,
         cx: &mut Context<Self>,
-    ) -> AnyElement {
+    ) -> Stateful<Div> {
         let mut choices = div().id("policy-strategy-choices");
         for (strategy, technical) in [
             (ManagedPolicyStrategy::Manual, "static"),
@@ -1118,16 +1121,15 @@ impl ManisApp {
                 }),
             ));
         }
-        Self::policy_editor_popover("policy-strategy-menu", choices, width, 220.0, theme, cx)
+        choices
     }
 
     fn policy_icon_menu(
         draft: &ManagedPolicyDraft,
         language: Language,
         theme: Theme,
-        width: f32,
         cx: &mut Context<Self>,
-    ) -> AnyElement {
+    ) -> Stateful<Div> {
         let mut choices = div().id("policy-icon-choices");
         for icon in [
             ManagedPolicyIcon::None,
@@ -1152,16 +1154,15 @@ impl ManisApp {
                 }),
             ));
         }
-        Self::policy_editor_popover("policy-icon-menu", choices, width, 320.0, theme, cx)
+        choices
     }
 
     fn policy_candidate_mode_menu(
         draft: &ManagedPolicyDraft,
         language: Language,
         theme: Theme,
-        width: f32,
         cx: &mut Context<Self>,
-    ) -> AnyElement {
+    ) -> Stateful<Div> {
         let mut choices = div().id("policy-candidate-mode-choices");
         for (matcher, title) in [
             (
@@ -1194,14 +1195,7 @@ impl ManisApp {
                 }),
             ));
         }
-        Self::policy_editor_popover(
-            "policy-candidate-mode-menu",
-            choices,
-            width,
-            280.0,
-            theme,
-            cx,
-        )
+        choices
     }
 
     fn policy_candidate_menu(
@@ -1209,9 +1203,8 @@ impl ManisApp {
         draft: &ManagedPolicyDraft,
         language: Language,
         theme: Theme,
-        width: f32,
         cx: &mut Context<Self>,
-    ) -> AnyElement {
+    ) -> Stateful<Div> {
         let inventory = self.node_inventory();
         let selected_count = draft.explicit_members.len();
         let mut list =
@@ -1298,14 +1291,7 @@ impl ManisApp {
                     })),
             );
         }
-        Self::policy_editor_popover(
-            "policy-candidate-nodes-menu",
-            list,
-            width.max(480.0),
-            420.0,
-            theme,
-            cx,
-        )
+        list
     }
 
     fn policy_candidate_menu_header(
@@ -1360,9 +1346,8 @@ impl ManisApp {
         draft: &ManagedPolicyDraft,
         language: Language,
         theme: Theme,
-        width: f32,
         cx: &mut Context<Self>,
-    ) -> AnyElement {
+    ) -> Stateful<Div> {
         let mut choices = div().id("policy-interval-choices");
         for (seconds, english, chinese) in [
             (60, "1 min", "1 分钟"),
@@ -1384,7 +1369,7 @@ impl ManisApp {
                 }),
             ));
         }
-        Self::policy_editor_popover("policy-interval-menu", choices, width, 320.0, theme, cx)
+        choices
     }
 
     fn node_inventory(&self) -> Vec<NodeIdentity> {
