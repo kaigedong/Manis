@@ -1,6 +1,6 @@
 use manis_core::{
     DomainRoutePrediction, PolicyCandidateKind, PolicyCatalog, PolicyGroup, PolicyGroupId,
-    PolicyGroupKind, PolicyNode, ProxyId, RouteDomain, RouteTarget, RoutingRule,
+    PolicyGroupKind, PolicyNode, ProxyId, RouteDomain, RouteQuery, RouteTarget, RoutingRule,
 };
 
 fn policy(name: &str, target: &str) -> PolicyGroup {
@@ -62,6 +62,82 @@ fn route_domain_rejects_urls_ip_addresses_and_malformed_labels() {
     ] {
         assert!(RouteDomain::parse(input).is_err(), "accepted {input}");
     }
+}
+
+#[test]
+fn route_query_defaults_to_https_and_accepts_an_explicit_port() {
+    let default_https = RouteQuery::parse("google.com").expect("valid route query");
+    let explicit_ssh = RouteQuery::parse("github.com:22").expect("valid route query");
+
+    assert_eq!(default_https.domain().as_str(), "google.com");
+    assert_eq!(default_https.port(), 443);
+    assert!(!default_https.has_explicit_port());
+    assert_eq!(explicit_ssh.domain().as_str(), "github.com");
+    assert_eq!(explicit_ssh.port(), 22);
+    assert!(explicit_ssh.has_explicit_port());
+
+    for input in ["google.com:", "google.com:0", "google.com:65536"] {
+        assert!(RouteQuery::parse(input).is_err(), "accepted {input}");
+    }
+}
+
+#[test]
+fn default_https_port_skips_an_earlier_ssh_rule_and_matches_the_domain() {
+    let catalog = catalog(vec![
+        rule(1, "DstPort", "22", "DIRECT"),
+        rule(2, "DomainSuffix", "google.com", "Search"),
+        rule(3, "MATCH", "", "DIRECT"),
+    ]);
+    let query = RouteQuery::parse("google.com").expect("valid route query");
+
+    assert!(matches!(
+        catalog.predict_route(&query),
+        DomainRoutePrediction::Matched {
+            rule,
+            target: RouteTarget::Policy(policy),
+            uncertain_rules,
+            ..
+        } if rule.index == 2
+            && policy == PolicyGroupId::new("Search")
+            && uncertain_rules.is_empty()
+    ));
+}
+
+#[test]
+fn slash_separated_destination_ports_follow_mihomo_format() {
+    let catalog = catalog(vec![
+        rule(1, "DstPort", "80/8080/443/8443", "Search"),
+        rule(2, "MATCH", "", "DIRECT"),
+    ]);
+    let query = RouteQuery::parse("google.com").expect("valid route query");
+
+    assert!(matches!(
+        catalog.predict_route(&query),
+        DomainRoutePrediction::Matched {
+            rule,
+            target: RouteTarget::Policy(policy),
+            ..
+        } if rule.index == 1 && policy == PolicyGroupId::new("Search")
+    ));
+}
+
+#[test]
+fn explicit_ssh_port_matches_the_earlier_port_rule() {
+    let catalog = catalog(vec![
+        rule(1, "DST-PORT", "22", "DIRECT"),
+        rule(2, "DOMAIN-SUFFIX", "github.com", "Search"),
+    ]);
+    let query = RouteQuery::parse("github.com:22").expect("valid route query");
+
+    assert!(matches!(
+        catalog.predict_route(&query),
+        DomainRoutePrediction::Matched {
+            rule,
+            target: RouteTarget::Direct,
+            uncertain_rules,
+            ..
+        } if rule.index == 1 && uncertain_rules.is_empty()
+    ));
 }
 
 #[test]
@@ -128,17 +204,32 @@ fn domain_wildcards_follow_mihomo_star_and_question_mark_semantics() {
 }
 
 #[test]
-fn prediction_stops_at_an_earlier_rule_that_needs_connection_context() {
+fn prediction_reports_an_earlier_context_rule_but_keeps_the_domain_result() {
     let catalog = catalog(vec![
         rule(1, "PROCESS-NAME", "curl", "DIRECT"),
         rule(2, "DOMAIN-SUFFIX", "example.com", "Streaming"),
     ]);
-    let domain = RouteDomain::parse("video.example.com").expect("valid domain");
+    let query = RouteQuery::parse("video.example.com").expect("valid route query");
 
-    let prediction = catalog.predict_domain(&domain);
+    let prediction = catalog.predict_route(&query);
 
     assert!(matches!(
         prediction,
+        DomainRoutePrediction::Matched { rule, uncertain_rules, .. }
+            if rule.index == 2
+                && uncertain_rules.len() == 1
+                && uncertain_rules[0].index == 1
+                && uncertain_rules[0].kind == "PROCESS-NAME"
+    ));
+}
+
+#[test]
+fn prediction_still_requires_connection_when_only_context_rules_can_decide() {
+    let catalog = catalog(vec![rule(1, "PROCESS-NAME", "curl", "DIRECT")]);
+    let query = RouteQuery::parse("video.example.com").expect("valid route query");
+
+    assert!(matches!(
+        catalog.predict_route(&query),
         DomainRoutePrediction::NeedsConnection { blocking_rule: Some(rule), .. }
             if rule.index == 1 && rule.kind == "PROCESS-NAME"
     ));

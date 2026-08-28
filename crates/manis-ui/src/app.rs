@@ -18,8 +18,7 @@ use manis_core::{
     CompactNavigation, DomainRoutePrediction, KernelKind, ManagedPolicyGroup, ManagedPolicyIcon,
     ManagedPolicyStrategy, NodeIdentity, NodeWorkspaceState, PolicyCatalog, PolicyGroup,
     PolicyGroupId, PolicyNode, PolicyWorkspaceState, PrimaryWorkspace, ProxyId, ProxyMode,
-    RouteDomain, RouteDomainError, RoutePredictionReason, RouteTarget, RoutingMode,
-    WindowSizeClass,
+    RoutePredictionReason, RouteQuery, RouteQueryError, RouteTarget, RoutingMode, WindowSizeClass,
 };
 use manis_mihomo::{Connection, ObservedRouteEvidence, RuntimeConfig};
 use manis_profile::{QxRuleList, SecretUrl};
@@ -66,7 +65,7 @@ enum SubscriptionFeedback {
 enum RouteInspectorPrediction {
     #[default]
     Idle,
-    Invalid(RouteDomainError),
+    Invalid(RouteQueryError),
     Ready(DomainRoutePrediction),
 }
 
@@ -1217,7 +1216,7 @@ impl ManisApp {
         cx: &mut Context<Self>,
     ) {
         let language = self.language();
-        let placeholder = language.text("For example: www.example.com", "例如：www.example.com");
+        let placeholder = language.text("For example: google.com:443", "例如：google.com:443");
         if let Some(input) = self.route_domain_input.as_ref() {
             input.update(cx, |input, cx| {
                 input.set_theme(theme, self.dark, cx);
@@ -1258,11 +1257,11 @@ impl ManisApp {
             return;
         };
         let value = input.read(cx).value().to_owned();
-        let domain = match RouteDomain::parse(&value) {
-            Ok(domain) => domain,
+        let query = match RouteQuery::parse(&value) {
+            Ok(query) => query,
             Err(error) => {
                 self.route_prediction = RouteInspectorPrediction::Invalid(error);
-                route_domain_error_copy(error, self.language()).clone_into(&mut self.status);
+                route_query_error_copy(error, self.language()).clone_into(&mut self.status);
                 cx.notify();
                 return;
             }
@@ -1270,20 +1269,52 @@ impl ManisApp {
         let Some(catalog) = self.catalog.as_ref() else {
             return;
         };
-        let prediction = catalog.predict_domain(&domain);
+        let prediction = catalog.predict_route(&query);
         self.status = match &prediction {
-            DomainRoutePrediction::Matched { domain, .. } => {
+            DomainRoutePrediction::Matched {
+                query,
+                uncertain_rules,
+                ..
+            } => {
                 if self.language() == Language::English {
-                    format!("Predicted route for {}", domain.as_str())
+                    if uncertain_rules.is_empty() {
+                        format!(
+                            "Predicted route for {}:{}",
+                            query.domain().as_str(),
+                            query.port()
+                        )
+                    } else {
+                        format!(
+                            "Conditionally predicted route for {}:{}",
+                            query.domain().as_str(),
+                            query.port()
+                        )
+                    }
                 } else {
-                    format!("已预测 {} 的路由", domain.as_str())
+                    if uncertain_rules.is_empty() {
+                        format!("已预测 {}:{} 的路由", query.domain().as_str(), query.port())
+                    } else {
+                        format!(
+                            "已按当前条件预测 {}:{} 的路由",
+                            query.domain().as_str(),
+                            query.port()
+                        )
+                    }
                 }
             }
-            DomainRoutePrediction::NeedsConnection { domain, .. } => {
+            DomainRoutePrediction::NeedsConnection { query, .. } => {
                 if self.language() == Language::English {
-                    format!("{} needs an actual connection to confirm", domain.as_str())
+                    format!(
+                        "{}:{} needs more connection context",
+                        query.domain().as_str(),
+                        query.port()
+                    )
                 } else {
-                    format!("{} 需要实际连接才能确认", domain.as_str())
+                    format!(
+                        "{}:{} 需要更多连接条件",
+                        query.domain().as_str(),
+                        query.port()
+                    )
                 }
             }
         };
@@ -5361,19 +5392,6 @@ impl ManisApp {
                                             )
                                         },
                                     )),
-                            )
-                            .child(
-                                Button::new("open-inspector")
-                                    .accessibility_label(language.text("Explain route", "解释路由"))
-                                    .label(language.text("Explain route", "解释路由"))
-                                    .with_variant(ButtonVariant::Default)
-                                    .with_size(px(34.0))
-                                    .h(px(34.0))
-                                    .px_3()
-                                    .border_color(theme.outline_subtle)
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.open_route_inspector(window, cx);
-                                    })),
                             ),
                     )
                     .child(
@@ -5449,8 +5467,8 @@ impl ManisApp {
                 .bg(theme.surface_high)
                 .font_weight(FontWeight::SEMIBOLD)
                 .child(language.text(
-                    "Enter a domain to trace its first matching rule",
-                    "输入域名，查看首条命中规则",
+                    "Enter a destination to test its first matching rule",
+                    "输入目标地址，测试首条命中规则",
                 ))
                 .child(
                     div()
@@ -5470,13 +5488,14 @@ impl ManisApp {
                 .bg(theme.surface_high)
                 .text_color(theme.text_secondary)
                 .child(language.text(
-                    "Correct the domain above, then predict again.",
-                    "请修正上方域名后重新预测。",
+                    "Correct the destination above, then test again.",
+                    "请修正上方目标地址后重新测试。",
                 )),
             RouteInspectorPrediction::Ready(DomainRoutePrediction::Matched {
+                query,
                 rule,
                 target,
-                ..
+                uncertain_rules,
             }) => {
                 let rule_detail = if rule.payload.is_empty() {
                     format!("{} #{}", language.text("Rule", "规则"), rule.index)
@@ -5586,41 +5605,106 @@ impl ManisApp {
                     ),
                 };
 
+                let query_detail = if language == Language::English {
+                    if query.has_explicit_port() {
+                        format!(
+                            "Tested destination  {}:{}",
+                            query.domain().as_str(),
+                            query.port()
+                        )
+                    } else {
+                        format!(
+                            "Tested destination  {} · assumed port {}",
+                            query.domain().as_str(),
+                            query.port()
+                        )
+                    }
+                } else if query.has_explicit_port() {
+                    format!("测试目标  {}:{}", query.domain().as_str(), query.port())
+                } else {
+                    format!(
+                        "测试目标  {} · 默认按 {} 端口",
+                        query.domain().as_str(),
+                        query.port()
+                    )
+                };
+                let uncertainty = uncertain_rules.first().map(|first| {
+                    let first_rule = if first.payload.is_empty() {
+                        format!("#{} {}", first.index, first.kind)
+                    } else {
+                        format!("#{} {} · {}", first.index, first.kind, first.payload)
+                    };
+                    if language == Language::English {
+                        format!(
+                            "Conditional result: {} earlier rule(s) need more context and may override this match. First: {first_rule}",
+                            uncertain_rules.len()
+                        )
+                    } else {
+                        format!(
+                            "条件预测：前面有 {} 条规则需要更多连接信息，实际连接时可能覆盖本次结果。第一条：{first_rule}",
+                            uncertain_rules.len()
+                        )
+                    }
+                });
+
                 div()
-                    .relative()
                     .child(
                         div()
-                            .absolute()
-                            .left(px(19.0))
-                            .top(px(28.0))
-                            .bottom(px(70.0))
-                            .w(px(2.0))
-                            .bg(theme.route_trace),
+                            .mb_3()
+                            .text_size(px(11.0))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(theme.text_secondary)
+                            .child(query_detail),
                     )
-                    .child(Self::signal_stage(
-                        "01",
-                        language.text("First matching rule", "首条命中规则"),
-                        rule.kind.clone(),
-                        rule_detail,
-                        true,
-                        theme,
-                    ))
-                    .child(Self::signal_stage(
-                        "02",
-                        language.text("Policy group", "交给策略组"),
-                        policy,
-                        decision,
-                        false,
-                        theme,
-                    ))
-                    .child(Self::signal_stage(
-                        "03",
-                        language.text("Final exit", "最终出口"),
-                        exit,
-                        exit_detail,
-                        false,
-                        theme,
-                    ))
+                    .when_some(uncertainty, |panel, uncertainty| {
+                        panel.child(
+                            div()
+                                .mb_3()
+                                .p_3()
+                                .rounded_md()
+                                .bg(theme.route_soft)
+                                .text_size(px(11.0))
+                                .text_color(theme.text_secondary)
+                                .child(uncertainty),
+                        )
+                    })
+                    .child(
+                        div()
+                            .relative()
+                            .child(
+                                div()
+                                    .absolute()
+                                    .left(px(19.0))
+                                    .top(px(28.0))
+                                    .bottom(px(70.0))
+                                    .w(px(2.0))
+                                    .bg(theme.route_trace),
+                            )
+                            .child(Self::signal_stage(
+                                "01",
+                                language.text("First matching rule", "首条命中规则"),
+                                rule.kind.clone(),
+                                rule_detail,
+                                true,
+                                theme,
+                            ))
+                            .child(Self::signal_stage(
+                                "02",
+                                language.text("Policy group", "交给策略组"),
+                                policy,
+                                decision,
+                                false,
+                                theme,
+                            ))
+                            .child(Self::signal_stage(
+                                "03",
+                                language.text("Final exit", "最终出口"),
+                                exit,
+                                exit_detail,
+                                false,
+                                theme,
+                            )),
+                    )
             }
             RouteInspectorPrediction::Ready(DomainRoutePrediction::NeedsConnection {
                 blocking_rule,
@@ -5704,7 +5788,7 @@ impl ManisApp {
         window.open_sheet(cx, move |sheet, _, _| {
             let app_for_close = app.clone();
             sheet
-                .title(language.text("Route explanation", "路由解释"))
+                .title(language.text("Rule test", "规则测试"))
                 .size(px(340.0))
                 .resizable(false)
                 .on_close(move |_, _, cx| {
@@ -5730,6 +5814,10 @@ impl ManisApp {
 
     fn route_inspector_badge(&self, language: Language) -> &'static str {
         match &self.route_prediction {
+            RouteInspectorPrediction::Ready(DomainRoutePrediction::Matched {
+                uncertain_rules,
+                ..
+            }) if !uncertain_rules.is_empty() => language.text("Conditional path", "条件预测"),
             RouteInspectorPrediction::Ready(DomainRoutePrediction::Matched { .. }) => {
                 language.text("Predicted path", "预测路径")
             }
@@ -5765,7 +5853,7 @@ impl ManisApp {
                 div()
                     .text_size(px(18.0))
                     .font_weight(FontWeight::BOLD)
-                    .child(language.text("Route explanation", "路由解释")),
+                    .child(language.text("Rule test", "规则测试")),
             )
             .child(self.inspector_badge(theme))
     }
@@ -5780,7 +5868,7 @@ impl ManisApp {
         let route_input = self.route_domain_input.clone();
         let input_error = match &prediction {
             RouteInspectorPrediction::Invalid(error) => {
-                Some(route_domain_error_copy(*error, language))
+                Some(route_query_error_copy(*error, language))
             }
             RouteInspectorPrediction::Idle | RouteInspectorPrediction::Ready(_) => None,
         };
@@ -5790,8 +5878,8 @@ impl ManisApp {
                 div()
                     .text_color(theme.text_secondary)
                     .child(language.text(
-                        "Preview the path selected by the local rule model",
-                        "按本地规则模型预览可能选择的路径",
+                        "Test which ordered rule, policy group, and exit a destination will use",
+                        "测试目标会依次命中哪条规则、策略组和出口",
                     )),
             )
             .child(
@@ -5801,7 +5889,7 @@ impl ManisApp {
                         div()
                             .text_size(px(11.0))
                             .font_weight(FontWeight::SEMIBOLD)
-                            .child(language.text("Destination domain", "目标域名")),
+                            .child(language.text("Destination", "目标地址")),
                     )
                     .child(
                         div()
@@ -5843,8 +5931,8 @@ impl ManisApp {
                             .text_size(px(11.0))
                             .text_color(theme.text_tertiary)
                             .child(language.text(
-                                "Enter a domain only, without a protocol, path, port, or wildcard. Press Enter to predict.",
-                                "只输入域名，不含协议、路径、端口或通配符；按 Enter 可预测。",
+                                "Enter a domain or domain:port. Port 443 is assumed when omitted; do not include a protocol, path, or wildcard.",
+                                "输入域名或域名:端口；省略端口时默认按 443，不要包含协议、路径或通配符。",
                             )),
                     ),
             )
@@ -6322,22 +6410,26 @@ fn policy_target_is_selectable(
     }
 }
 
-fn route_domain_error_copy(error: RouteDomainError, language: Language) -> &'static str {
+fn route_query_error_copy(error: RouteQueryError, language: Language) -> &'static str {
     match error {
-        RouteDomainError::Empty => {
+        RouteQueryError::Domain(manis_core::RouteDomainError::Empty) => {
             language.text("Enter a domain to predict its route", "请输入要预测的域名")
         }
-        RouteDomainError::TooLong => language.text(
+        RouteQueryError::Domain(manis_core::RouteDomainError::TooLong) => language.text(
             "The domain is longer than the 253-byte DNS limit",
             "域名超过 DNS 的 253 字节限制",
         ),
-        RouteDomainError::IpAddress => language.text(
+        RouteQueryError::Domain(manis_core::RouteDomainError::IpAddress) => language.text(
             "Enter a domain rather than an IP address",
             "这里请输入域名，而不是 IP 地址",
         ),
-        RouteDomainError::InvalidFormat => language.text(
-            "Enter a plain domain such as www.example.com",
-            "请输入纯域名，例如 www.example.com",
+        RouteQueryError::Domain(manis_core::RouteDomainError::InvalidFormat) => language.text(
+            "Enter a domain or domain:port, such as google.com:443",
+            "请输入域名或域名:端口，例如 google.com:443",
+        ),
+        RouteQueryError::InvalidPort => language.text(
+            "Enter a destination port between 1 and 65535",
+            "请输入 1 到 65535 之间的目标端口",
         ),
     }
 }
@@ -6481,13 +6573,9 @@ impl Render for ManisApp {
                             && show_detail,
                         |main| main.child(self.detail(theme, compact, cx)),
                     )
-                    .when(
-                        policies_active
-                            && !policy_editor_active
-                            && has_policy_catalog
-                            && show_inspector,
-                        |main| main.child(self.inspector(theme, cx)),
-                    ),
+                    .when(routing_rules_active && show_inspector, |main| {
+                        main.child(self.inspector(theme, cx))
+                    }),
             )
             .children(gpui_component::Root::render_sheet_layer(window, cx))
             .child(self.status_bar(theme))
