@@ -173,6 +173,14 @@ impl ImportedSubscription {
     }
 }
 
+fn managed_subscription_provider_index(provider: &str) -> Option<usize> {
+    provider
+        .strip_prefix("Subscription ")?
+        .parse::<usize>()
+        .ok()?
+        .checked_sub(1)
+}
+
 enum ImportSubscriptionError {
     Preview(SubscriptionPreviewError),
     Store(SubscriptionStoreError),
@@ -2197,6 +2205,55 @@ impl ManisApp {
                 latency_ms: None,
                 alive: None,
             })
+    }
+
+    fn policy_node_source_label(&self, node: &PolicyNode, language: Language) -> String {
+        if node.kind == manis_core::PolicyCandidateKind::PolicyGroup {
+            return language.text("Policy group", "策略组").to_owned();
+        }
+
+        if let Some(index) = node
+            .provider
+            .as_deref()
+            .and_then(managed_subscription_provider_index)
+            && let Some(subscription) = self.imported_subscriptions.get(index)
+        {
+            return subscription.source.subscription_name().unwrap_or_else(|| {
+                format!("{} {}", language.text("Subscription", "订阅"), index + 1)
+            });
+        }
+
+        if let Some(provider) = node.provider.as_ref() {
+            return provider.clone();
+        }
+
+        if self
+            .saved_vless_nodes
+            .iter()
+            .any(|saved| saved.source.preview().name == node.name)
+        {
+            return language.text("Saved", "已保存").to_owned();
+        }
+
+        if let Some((index, subscription)) =
+            self.imported_subscriptions
+                .iter()
+                .enumerate()
+                .find(|(_, subscription)| {
+                    subscription.providers.iter().any(|provider| {
+                        provider
+                            .nodes
+                            .iter()
+                            .any(|candidate| candidate.name == node.name)
+                    })
+                })
+        {
+            return subscription.source.subscription_name().unwrap_or_else(|| {
+                format!("{} {}", language.text("Subscription", "订阅"), index + 1)
+            });
+        }
+
+        language.text("Local configuration", "本地配置").to_owned()
     }
 
     fn switch_kernel(&mut self, requested: KernelKind, cx: &mut Context<Self>) {
@@ -4827,6 +4884,7 @@ impl ManisApp {
     #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
     fn node_row(
         item: PolicyNode,
+        source: String,
         policy_id: PolicyGroupId,
         policy_name: String,
         current: bool,
@@ -4839,12 +4897,10 @@ impl ManisApp {
     ) -> Stateful<Div> {
         let node_id = item.id.clone();
         let node_name = item.name.clone();
-        let provider = if item.kind == manis_core::PolicyCandidateKind::PolicyGroup {
-            language.text("Policy group", "策略组").to_owned()
+        let detail = if item.detail.trim().is_empty() {
+            language.text("Unknown type", "类型未知").to_owned()
         } else {
-            item.provider
-                .clone()
-                .unwrap_or_else(|| language.text("Built-in", "内置节点").to_owned())
+            item.detail.clone()
         };
         let idle_latency = item
             .latency_ms
@@ -4935,7 +4991,7 @@ impl ManisApp {
                             .mt_1()
                             .text_size(px(11.0))
                             .text_color(theme.text_tertiary)
-                            .child(item.detail),
+                            .child(detail),
                     ),
             )
             .child(
@@ -4946,7 +5002,7 @@ impl ManisApp {
                     } else {
                         theme.text_tertiary
                     })
-                    .child(provider),
+                    .child(source),
             )
             .child(
                 div()
@@ -5161,6 +5217,7 @@ impl ManisApp {
             );
             for item in selected_policy.nodes.iter().cloned() {
                 let current = item.id == selected_node.id;
+                let source = self.policy_node_source_label(&item, language);
                 let benchmark_state = self
                     .group_benchmarks
                     .get(&benchmark_key)
@@ -5169,6 +5226,7 @@ impl ManisApp {
                     });
                 body = body.child(Self::node_row(
                     item,
+                    source,
                     selected_policy.id.clone(),
                     selected_policy.name.clone(),
                     current,
@@ -6601,8 +6659,8 @@ mod tests {
         ManisApp, PolicyDetailTab, ProxyModeBlock, SourceRuntimeApply, TunSupport,
         proxy_mode_block,
     };
-    use crate::mihomo;
     use crate::subscription::SourceKind;
+    use crate::{localization::Language, mihomo};
 
     #[test]
     fn policy_detail_tabs_round_trip_through_component_indices() {
@@ -6644,6 +6702,37 @@ mod tests {
             0
         );
         fs::remove_dir_all(root).expect("remove fixture");
+    }
+
+    #[test]
+    fn policy_node_source_uses_the_imported_subscription_name() {
+        let mut app = ManisApp::with_controller("http://127.0.0.1:9090");
+        app.imported_subscriptions.push(ImportedSubscription {
+            id: "subscription:fixture".to_owned(),
+            source: manis_profile::SecretUrl::parse_subscription(
+                "https://subscription.example.invalid/client?name=NaiU_Net",
+            )
+            .expect("fixture subscription"),
+            state: ImportedSubscriptionState::Ready(SourceKind::HttpsSubscription),
+            providers: Vec::new(),
+            generation: 0,
+            refresh_interval: mihomo::RemoteSourceRefreshInterval::Manual,
+            last_successful_update_unix_secs: 0,
+        });
+        let node = PolicyNode {
+            id: ProxyId::new("HK 03"),
+            name: "HK 03".to_owned(),
+            kind: PolicyCandidateKind::Node,
+            provider: Some("Subscription 1".to_owned()),
+            detail: "Trojan".to_owned(),
+            latency_ms: None,
+            alive: None,
+        };
+
+        assert_eq!(
+            app.policy_node_source_label(&node, Language::SimplifiedChinese),
+            "NaiU_Net"
+        );
     }
 
     #[test]

@@ -36,6 +36,16 @@ pub fn to_policy_catalog(snapshot: &MihomoSnapshot) -> Result<PolicyCatalog, Emp
         .iter()
         .map(|proxy| (proxy.name.as_str(), proxy))
         .collect();
+    let provider_nodes: HashMap<_, _> = snapshot
+        .providers
+        .iter()
+        .flat_map(|provider| {
+            provider
+                .proxies
+                .iter()
+                .map(move |proxy| (proxy.name.as_str(), (provider.name.as_str(), proxy)))
+        })
+        .collect();
 
     let runtime_groups = snapshot.policy_groups();
     let group_names = runtime_groups
@@ -54,6 +64,7 @@ pub fn to_policy_catalog(snapshot: &MihomoSnapshot) -> Result<PolicyCatalog, Emp
                     policy_node(
                         name,
                         proxies.get(name.as_str()).copied(),
+                        provider_nodes.get(name.as_str()).copied(),
                         group_names.contains(name.as_str()),
                     )
                 })
@@ -89,7 +100,17 @@ pub fn to_policy_catalog(snapshot: &MihomoSnapshot) -> Result<PolicyCatalog, Emp
     PolicyCatalog::try_new_with_rules(groups, routing_rules)
 }
 
-fn policy_node(name: &str, proxy: Option<&Proxy>, is_group: bool) -> PolicyNode {
+fn policy_node(
+    name: &str,
+    runtime_proxy: Option<&Proxy>,
+    provider_node: Option<(&str, &Proxy)>,
+    is_group: bool,
+) -> PolicyNode {
+    let metadata_proxy = if is_group {
+        runtime_proxy
+    } else {
+        provider_node.map(|(_, proxy)| proxy).or(runtime_proxy)
+    };
     PolicyNode {
         id: ProxyId::new(name),
         name: name.to_owned(),
@@ -98,10 +119,22 @@ fn policy_node(name: &str, proxy: Option<&Proxy>, is_group: bool) -> PolicyNode 
         } else {
             PolicyCandidateKind::Node
         },
-        provider: proxy.and_then(|proxy| proxy.provider_name.clone()),
-        detail: proxy.map_or_else(|| "类型未知".to_owned(), |proxy| proxy.proxy_type.clone()),
-        latency_ms: proxy.and_then(|proxy| rounded_latency(proxy.latest_latency_ms())),
-        alive: proxy.and_then(|proxy| proxy.alive),
+        provider: if is_group {
+            runtime_proxy.and_then(|proxy| proxy.provider_name.clone())
+        } else {
+            provider_node
+                .map(|(provider, _)| provider.to_owned())
+                .or_else(|| runtime_proxy.and_then(|proxy| proxy.provider_name.clone()))
+        },
+        detail: metadata_proxy.map_or_else(String::new, |proxy| proxy.proxy_type.clone()),
+        latency_ms: runtime_proxy
+            .and_then(|proxy| rounded_latency(proxy.latest_latency_ms()))
+            .or_else(|| {
+                provider_node.and_then(|(_, proxy)| rounded_latency(proxy.latest_latency_ms()))
+            }),
+        alive: runtime_proxy
+            .and_then(|proxy| proxy.alive)
+            .or_else(|| provider_node.and_then(|(_, proxy)| proxy.alive)),
     }
 }
 
