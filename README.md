@@ -78,12 +78,9 @@ cargo run -p manis-ui
 ```
 
 Manis 只启动自己管理的 Mihomo 进程，并且只使用自己从界面数据生成的配置。它不会连接
-其他程序启动的 controller，也不会运行用户提供的 Mihomo YAML。可以显式指定官方
-Mihomo 可执行文件：
-
-```bash
-MANIS_MIHOMO_BINARY=/absolute/path/to/mihomo cargo run -p manis-ui
-```
+其他程序启动的 controller，也不会运行用户提供的 Mihomo YAML。发行包携带一个经过
+SHA-256 校验的官方稳定版种子内核；首次运行会安装到 Manis 私有数据目录，之后由应用内
+更新器负责下载、校验、版本验证、原子替换和失败回滚。
 
 未添加节点时，Manis 会准备一个只含 `DIRECT` 兜底的空配置；添加订阅或单独节点后，配置由
 Manis 校验并写入私有运行目录。controller endpoint 也由 Manis 分配，不作为用户配置项。

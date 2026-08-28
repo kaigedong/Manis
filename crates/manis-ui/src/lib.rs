@@ -2,6 +2,7 @@ mod app;
 mod assets;
 mod brand;
 mod components;
+mod core_update;
 mod diagnostics;
 mod direct_rule;
 mod kernel;

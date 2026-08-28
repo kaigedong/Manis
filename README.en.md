@@ -85,11 +85,9 @@ cargo run -p manis-ui
 
 Manis only starts Mihomo processes it owns and only runs configuration generated from data managed
 through the application. It does not attach to another application's controller or run a supplied
-Mihomo YAML file. An official Mihomo executable can be selected explicitly:
-
-```bash
-MANIS_MIHOMO_BINARY=/absolute/path/to/mihomo cargo run -p manis-ui
-```
+Mihomo YAML file. Release packages include a SHA-256-verified stable upstream seed. On first launch
+it is installed into Manis's private data directory; subsequent downloads, version validation,
+atomic replacement, and rollback are handled by the in-app updater.
 
 Before the first node is added, Manis prepares a direct-only bootstrap configuration. After a
 subscription or individual node is added, Manis validates and writes the generated configuration to

@@ -18,10 +18,13 @@ user-data directory, never in the repository.
 
 ## Core selection
 
-Mihomo is the default core. Manis looks for an executable beside the application, in `PATH`, and in
-common Homebrew locations. It does not discover or reuse a core installed by another application.
+Mihomo is the default core. Production builds only use the executable in Manis's private data
+directory. A packaged seed is installed there on first launch; if it is absent, Manis can download
+the current stable release from the official GitHub release, verify the release asset digest, check
+the reported version, and publish it atomically. It never searches `PATH`, Homebrew, or another
+application's files.
 
-Override discovery explicitly when needed:
+Debug builds may override the managed executable for local development:
 
 ```bash
 MANIS_MIHOMO_BINARY=/absolute/path/to/mihomo cargo run -p manis-ui
@@ -35,13 +38,14 @@ silently changing behavior.
 MANIS_SING_BOX_BINARY=/absolute/path/to/sing-box cargo run -p manis-ui
 ```
 
-Neither executable is downloaded or stored by this repository.
+sing-box remains externally discovered; Manis does not download it.
 
 ## Managed Mihomo runtime
 
 Mihomo has one production runtime path: Manis builds a private configuration from its saved sources,
 validates that configuration, starts the child process, owns the controller endpoint, and stops the
-same child on exit. A local official Mihomo executable can be selected explicitly:
+same child on exit. The binary override below is development-only; release builds ignore external
+Mihomo paths:
 
 ```bash
 MANIS_MIHOMO_BINARY=/absolute/path/to/mihomo \

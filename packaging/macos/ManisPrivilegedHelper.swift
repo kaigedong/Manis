@@ -1,9 +1,10 @@
+import CryptoKit
 import Foundation
 import Darwin
 import Security
 
 private let serviceName = "dev.manis.app.helper"
-private let helperProtocolVersion = "v5"
+private let helperProtocolVersion = "v6"
 private let requiredClientRequirement =
     ProcessInfo.processInfo.environment["MANIS_REQUIRED_CLIENT_REQUIREMENT"] ?? ""
 private let allowInsecureLocalRequirement =
@@ -11,10 +12,12 @@ private let allowInsecureLocalRequirement =
 private let allowedLocalUserIdentifier =
     ProcessInfo.processInfo.environment["MANIS_LOCAL_ALLOWED_UID"].flatMap(uid_t.init)
 private let insecureLocalMihomoPath = "/Library/Application Support/Manis/bin/mihomo"
+private let managedMihomoPath = "/Library/Application Support/Manis/bin/mihomo"
 private let logPath = "/var/log/manis-mihomo-helper.log"
 private let maximumConfigBytes = 16 * 1024 * 1024
 private let maximumGeodataBytes: off_t = 128 * 1024 * 1024
 private let maximumCoreLogBytes: off_t = 4 * 1024 * 1024
+private let maximumCoreBytes = 128 * 1024 * 1024
 private let coreLogName = "manis-privileged-core.log"
 private let optionalGeodataNames = ["geoip.metadb", "geoip.dat", "geosite.dat", "GeoLite2-ASN.mmdb"]
 
@@ -28,6 +31,11 @@ protocol ManisPrivilegedHelperProtocol {
         withReply reply: @escaping (String, Int32) -> Void
     )
     func stop(withReply reply: @escaping (String, Int32) -> Void)
+    func stageCore(
+        contents: Data,
+        sha256: String,
+        withReply reply: @escaping (String, Int32) -> Void
+    )
 }
 
 final class HelperDelegate: NSObject, NSXPCListenerDelegate {
@@ -85,6 +93,14 @@ final class HelperService: NSObject, ManisPrivilegedHelperProtocol {
 
     func stop(withReply reply: @escaping (String, Int32) -> Void) {
         core.stop(owner: clientUserIdentifier, withReply: reply)
+    }
+
+    func stageCore(
+        contents: Data,
+        sha256: String,
+        withReply reply: @escaping (String, Int32) -> Void
+    ) {
+        core.stageCore(contents: contents, sha256: sha256, owner: clientUserIdentifier, withReply: reply)
     }
 }
 
@@ -215,6 +231,43 @@ final class HelperCore {
         }
     }
 
+    func stageCore(
+        contents: Data,
+        sha256 expectedDigest: String,
+        owner: uid_t,
+        withReply reply: @escaping (String, Int32) -> Void
+    ) {
+        lock.withLock {
+            do {
+                reapExitedChild()
+                guard child == nil else {
+                    throw HelperError.invalidExecutable("stop Mihomo before replacing its core")
+                }
+                guard contents.count > 0, contents.count <= maximumCoreBytes else {
+                    throw HelperError.invalidExecutable("managed Mihomo has an invalid size")
+                }
+                let actualDigest = SHA256.hash(data: contents)
+                    .map { String(format: "%02x", $0) }
+                    .joined()
+                guard expectedDigest.count == 64,
+                    expectedDigest.allSatisfy({ $0.isHexDigit && !$0.isUppercase }),
+                    actualDigest == expectedDigest
+                else {
+                    throw HelperError.invalidExecutable("managed Mihomo digest does not match")
+                }
+                if !allowInsecureLocalRequirement {
+                    try validateContainingBundleSeal()
+                }
+                try installManagedCore(contents)
+                appendLog("staged managed mihomo for uid \(owner) sha256 \(actualDigest)")
+                reply("staged \(actualDigest)", 0)
+            } catch {
+                appendLog("core staging failed: \(error)")
+                reply("error \(error)", 1)
+            }
+        }
+    }
+
     private func reapExitedChild() {
         if let process = child, !process.isRunning {
             lastExitReason = describeExit(process, requested: false, forced: false)
@@ -244,11 +297,7 @@ private func bundledMihomoPath() throws -> String {
         }
         return insecureLocalMihomoPath
     }
-    return try bundleContentsURL()
-        .appendingPathComponent("Resources")
-        .appendingPathComponent("mihomo")
-        .appendingPathComponent("mihomo")
-        .path
+    return managedMihomoPath
 }
 
 private func bundleContentsURL() throws -> URL {
@@ -348,7 +397,7 @@ private func validateRuntime(_ request: LaunchRequest, owner: uid_t) throws {
 
 private func validateExecutable(_ path: String) throws {
     guard path == (try bundledMihomoPath()) else {
-        throw HelperError.invalidExecutable("privileged Mihomo binary must stay inside Manis.app")
+        throw HelperError.invalidExecutable("privileged Mihomo binary must stay in Manis storage")
     }
     if allowInsecureLocalRequirement {
         try requireRegularFile(path, owner: 0)
@@ -357,10 +406,68 @@ private func validateExecutable(_ path: String) throws {
         }
         return
     }
-    try validateContainingBundleSeal()
-    try requireRegularFile(path, owner: nil)
+    try requireRegularFile(path, owner: 0)
     guard FileManager.default.isExecutableFile(atPath: path) else {
         throw HelperError.invalidExecutable("privileged Mihomo binary is not executable")
+    }
+}
+
+private func installManagedCore(_ contents: Data) throws {
+    let directory = URL(fileURLWithPath: managedMihomoPath).deletingLastPathComponent().path
+    try createRootOwnedCoreDirectory(directory)
+    if FileManager.default.fileExists(atPath: managedMihomoPath) {
+        try rejectSymlink(managedMihomoPath)
+    }
+    let temporary = "\(managedMihomoPath).\(UUID().uuidString).tmp"
+    let descriptor = open(temporary, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o700)
+    guard descriptor >= 0 else {
+        throw HelperError.invalidExecutable("could not create a staged Mihomo core")
+    }
+    defer {
+        close(descriptor)
+        unlink(temporary)
+    }
+    let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: false)
+    try handle.write(contentsOf: contents)
+    try handle.synchronize()
+    guard fchown(descriptor, 0, 0) == 0, fchmod(descriptor, 0o755) == 0 else {
+        throw HelperError.invalidExecutable("could not secure the staged Mihomo core")
+    }
+    guard rename(temporary, managedMihomoPath) == 0 else {
+        throw HelperError.invalidExecutable("could not publish the staged Mihomo core")
+    }
+}
+
+private func createRootOwnedCoreDirectory(_ path: String) throws {
+    let boundary = "/Library/Application Support/Manis"
+    if !FileManager.default.fileExists(atPath: boundary) {
+        try FileManager.default.createDirectory(
+            atPath: boundary,
+            withIntermediateDirectories: false,
+            attributes: [
+                .ownerAccountID: 0,
+                .groupOwnerAccountID: 0,
+                .posixPermissions: 0o755,
+            ]
+        )
+    }
+    try requireDirectory(boundary, owner: 0)
+    if FileManager.default.fileExists(atPath: path) {
+        try rejectSymlink(path)
+    } else {
+        try FileManager.default.createDirectory(
+            atPath: path,
+            withIntermediateDirectories: false,
+            attributes: [
+                .ownerAccountID: 0,
+                .groupOwnerAccountID: 0,
+                .posixPermissions: 0o700,
+            ]
+        )
+    }
+    try requireDirectory(path, owner: 0)
+    guard chmod(path, 0o700) == 0 else {
+        throw HelperError.invalidExecutable("could not secure the Mihomo core directory")
     }
 }
 

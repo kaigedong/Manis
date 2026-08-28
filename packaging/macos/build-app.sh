@@ -42,11 +42,6 @@ if [[ "${MANIS_ALLOW_INSECURE_LOCAL_HELPER:-0}" == "1" && -n "${MANIS_CODESIGN_I
   echo "MANIS_ALLOW_INSECURE_LOCAL_HELPER cannot be combined with a signed production build" >&2
   exit 1
 fi
-if [[ "${MANIS_ALLOW_INSECURE_LOCAL_HELPER:-0}" == "1" && -z "$MIHOMO_SOURCE" ]]; then
-  echo "local TUN helper builds require MANIS_MIHOMO_BINARY" >&2
-  exit 1
-fi
-
 if [[ -n "${MANIS_CODESIGN_IDENTITY:-}" ]]; then
   if [[ -z "${MANIS_CLIENT_REQUIREMENT:-}" || -z "${MANIS_PARENT_REQUIREMENT:-}" ]]; then
     echo "signed helper builds require MANIS_CLIENT_REQUIREMENT and MANIS_PARENT_REQUIREMENT" >&2
@@ -106,16 +101,16 @@ swiftc \
   "$ROOT_DIR/packaging/macos/manis-local-helper-install.swift" \
   -o "$MACOS_DIR/manis-local-helper-install"
 
-if [[ -n "$MIHOMO_SOURCE" ]]; then
-  if [[ ! -x "$MIHOMO_SOURCE" ]]; then
-    echo "MANIS_MIHOMO_BINARY must point to an executable Mihomo binary" >&2
-    exit 1
-  fi
-  cp "$MIHOMO_SOURCE" "$MIHOMO_RESOURCES_DIR/mihomo"
-  chmod 0755 "$MIHOMO_RESOURCES_DIR/mihomo"
-else
-  echo "warning: MANIS_MIHOMO_BINARY not set; privileged TUN start will fail until Mihomo is bundled" >&2
+if [[ -z "$MIHOMO_SOURCE" ]]; then
+  MIHOMO_SOURCE="$BUILD_ROOT/mihomo"
+  "$ROOT_DIR/packaging/fetch-mihomo.sh" "$MIHOMO_SOURCE"
 fi
+if [[ ! -x "$MIHOMO_SOURCE" ]]; then
+  echo "MANIS_MIHOMO_BINARY must point to an executable Mihomo binary" >&2
+  exit 1
+fi
+cp "$MIHOMO_SOURCE" "$MIHOMO_RESOURCES_DIR/mihomo"
+chmod 0755 "$MIHOMO_RESOURCES_DIR/mihomo"
 
 PLIST_OUT="$LAUNCH_DAEMONS_DIR/dev.manis.app.helper.plist"
 sed \

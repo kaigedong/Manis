@@ -31,15 +31,17 @@ use manis_profile::{
 };
 use ureq::{Agent, ResponseExt as _};
 
-use crate::brand;
 use crate::diagnostics::{LogLevel, record_event};
 use crate::subscription::VlessSource;
+use crate::{brand, core_update};
 
 const CONTROLLER_ENV: &str = "MANIS_MIHOMO_CONTROLLER";
 const LEGACY_RELAY_CONTROLLER_ENV: &str = "RELAY_MIHOMO_CONTROLLER";
 const CONTROLLER_SECRET_ENV: &str = "MANIS_MIHOMO_SECRET";
 const LEGACY_RELAY_CONTROLLER_SECRET_ENV: &str = "RELAY_MIHOMO_SECRET";
+#[cfg(debug_assertions)]
 const BINARY_ENV: &str = "MANIS_MIHOMO_BINARY";
+#[cfg(debug_assertions)]
 const LEGACY_RELAY_BINARY_ENV: &str = "RELAY_MIHOMO_BINARY";
 const CONFIG_ENV: &str = "MANIS_MIHOMO_CONFIG";
 const LEGACY_RELAY_CONFIG_ENV: &str = "RELAY_MIHOMO_CONFIG";
@@ -1594,9 +1596,7 @@ impl fmt::Display for SubscriptionPreviewError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
             Self::UnsupportedPlatform => "当前平台尚不能启动隔离的 Mihomo 预览进程",
-            Self::BinaryUnavailable => {
-                "找不到 Mihomo 内核；请安装官方内核或设置 MANIS_MIHOMO_BINARY"
-            }
+            Self::BinaryUnavailable => "找不到 Manis 管理的 Mihomo 内核，请在设置中下载后重试",
             Self::InvalidSource => "订阅地址无效，请检查后重试",
             Self::WorkspaceUnavailable => "无法创建私有预览空间，请检查临时目录权限",
             Self::ProfileUnavailable => "无法生成安全的订阅预览配置",
@@ -3883,17 +3883,13 @@ fn require_clean_absolute_store(directory: &Path) -> Result<(), SubscriptionStor
 }
 
 fn discover_preview_binary() -> Result<PathBuf, SubscriptionPreviewError> {
+    #[cfg(debug_assertions)]
     if let Some(explicit) = brand::env_var_os(BINARY_ENV, LEGACY_RELAY_BINARY_ENV) {
         return canonical_binary(Path::new(&explicit));
     }
-
-    let executable_name = if cfg!(windows) {
-        "mihomo.exe"
-    } else {
-        "mihomo"
-    };
-    first_existing_binary(mihomo_binary_candidates(executable_name))
-        .ok_or(SubscriptionPreviewError::BinaryUnavailable)
+    core_update::managed_core_binary_path()
+        .map_err(|_error| SubscriptionPreviewError::BinaryUnavailable)
+        .and_then(|path| canonical_binary(&path))
 }
 
 fn canonical_binary(path: &Path) -> Result<PathBuf, SubscriptionPreviewError> {
@@ -4031,11 +4027,16 @@ pub(crate) fn configured_runtime(store_dir: Option<&Path>) -> ControllerRuntime 
             message: "无法确定 Manis 来源目录".to_owned(),
         };
     };
-    let binary = match brand::env_var_os(BINARY_ENV, LEGACY_RELAY_BINARY_ENV) {
-        Some(binary) => canonical_binary(Path::new(&binary))
-            .map_err(|_error| format!("{BINARY_ENV} 不是可执行文件")),
-        None => discover_mihomo_binary(),
-    };
+    #[cfg(debug_assertions)]
+    let binary = brand::env_var_os(BINARY_ENV, LEGACY_RELAY_BINARY_ENV).map_or_else(
+        discover_mihomo_binary,
+        |binary| {
+            canonical_binary(Path::new(&binary))
+                .map_err(|_error| format!("{BINARY_ENV} 不是可执行文件"))
+        },
+    );
+    #[cfg(not(debug_assertions))]
+    let binary = discover_mihomo_binary();
     binary
         .and_then(|binary| build_saved_sources_mihomo_runtime_with_binary(store_dir, &binary))
         .unwrap_or_else(|message| ControllerRuntime::Invalid { message })
@@ -4171,37 +4172,13 @@ pub(crate) fn sing_box_binary_available() -> bool {
 }
 
 fn discover_mihomo_binary() -> Result<PathBuf, String> {
-    let executable_name = if cfg!(windows) {
-        "mihomo.exe"
-    } else {
-        "mihomo"
-    };
-    first_existing_binary(mihomo_binary_candidates(executable_name))
-        .ok_or_else(|| format!("未找到 Mihomo；请安装官方内核或设置 {BINARY_ENV}"))
-}
-
-fn mihomo_binary_candidates(executable_name: &str) -> Vec<PathBuf> {
-    let mut candidates = Vec::new();
-    if let Ok(current_exe) = env::current_exe()
-        && let Some(directory) = current_exe.parent()
-    {
-        candidates.push(directory.join(executable_name));
-    }
-    if let Some(path) = env::var_os("PATH") {
-        candidates.extend(env::split_paths(&path).map(|directory| directory.join(executable_name)));
-    }
-    #[cfg(target_os = "macos")]
-    candidates.extend([
-        PathBuf::from("/opt/homebrew/bin/mihomo"),
-        PathBuf::from("/usr/local/bin/mihomo"),
-    ]);
-    candidates
-}
-
-fn first_existing_binary(candidates: Vec<PathBuf>) -> Option<PathBuf> {
-    candidates
-        .into_iter()
-        .find_map(|candidate| canonical_binary(&candidate).ok())
+    core_update::managed_core_binary_path()
+        .map_err(|error| error.to_string())
+        .and_then(|path| {
+            canonical_binary(&path).map_err(|_error| {
+                "Manis 托管的 Mihomo 尚未安装；请在运行内核中下载稳定版".to_owned()
+            })
+        })
 }
 
 #[cfg(unix)]
@@ -6360,24 +6337,6 @@ IP-CIDR,192.0.2.0/24,DIRECT
         assert_eq!(providers[0].nodes[1].name, "Fixture Beta");
         assert_eq!(restored_providers, providers);
         fs::remove_dir_all(import_root)?;
-        Ok(())
-    }
-
-    #[test]
-    fn first_existing_binary_prefers_canonical_candidate() -> Result<(), Box<dyn std::error::Error>>
-    {
-        let root = test_temp_dir("manis-mihomo-discovery");
-        let missing = root.join("missing-mihomo");
-        let binary = root.join("mihomo");
-        fs::write(&binary, "#!/bin/sh\nexit 0\n")?;
-        fs::set_permissions(&binary, fs::Permissions::from_mode(0o700))?;
-
-        assert_eq!(
-            super::first_existing_binary(vec![missing, binary.clone()]),
-            Some(binary.canonicalize()?)
-        );
-
-        fs::remove_dir_all(root)?;
         Ok(())
     }
 

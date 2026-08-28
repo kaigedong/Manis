@@ -24,7 +24,7 @@ use manis_mihomo::{Connection, ObservedRouteEvidence, RuntimeConfig};
 use manis_profile::{QxRuleList, SecretUrl};
 
 use crate::{
-    assets, brand,
+    assets, brand, core_update,
     diagnostics::{
         self, LogLevel, UiEvent, begin_operation, record_event, record_operation, trace_ui,
     },
@@ -126,6 +126,64 @@ impl SourceRuntimeApply {
                 )
             ),
         }
+    }
+}
+
+enum MihomoCoreUpdateOutcome {
+    Installed {
+        version: String,
+        runtime: KernelRuntime,
+        snapshot: Option<mihomo::RuntimeSnapshot>,
+    },
+    Failed {
+        message: String,
+        recovered: Option<mihomo::RuntimeSnapshot>,
+    },
+}
+
+fn perform_mihomo_core_update(
+    previous: &KernelRuntime,
+    store_dir: &std::path::Path,
+    language: Language,
+    reconnect: bool,
+) -> MihomoCoreUpdateOutcome {
+    if let Err(message) = previous.stop_managed() {
+        return MihomoCoreUpdateOutcome::Failed {
+            message,
+            recovered: None,
+        };
+    }
+
+    let mut prepared = None;
+    let install = core_update::install_latest_core_update(|| {
+        let runtime =
+            KernelRuntime::prepare_with_language(KernelKind::Mihomo, Some(store_dir), language)
+                .map_err(|_message| core_update::CoreUpdateError::PublishFailed)?;
+        let snapshot = reconnect
+            .then(|| runtime.connect())
+            .transpose()
+            .map_err(|_error| core_update::CoreUpdateError::PublishFailed)?;
+        #[cfg(target_os = "macos")]
+        crate::macos_privileged::MacosPrivilegedProcessSpawner::sync_managed_core_if_available()
+            .map_err(|_error| core_update::CoreUpdateError::PublishFailed)?;
+        prepared = Some((runtime, snapshot));
+        Ok(())
+    });
+
+    match (install, prepared) {
+        (Ok(installed), Some((runtime, snapshot))) => MihomoCoreUpdateOutcome::Installed {
+            version: installed.version,
+            runtime,
+            snapshot,
+        },
+        (Ok(_installed), None) => MihomoCoreUpdateOutcome::Failed {
+            message: core_update::CoreUpdateError::PublishFailed.to_string(),
+            recovered: reconnect.then(|| previous.connect()).and_then(Result::ok),
+        },
+        (Err(error), _) => MihomoCoreUpdateOutcome::Failed {
+            message: error.to_string(),
+            recovered: reconnect.then(|| previous.connect()).and_then(Result::ok),
+        },
     }
 }
 
@@ -254,6 +312,20 @@ enum KernelSwitchState {
     #[default]
     Idle,
     Preparing,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+enum MihomoCoreUpdateState {
+    #[default]
+    Missing,
+    Ready(String),
+    Updating,
+}
+
+impl MihomoCoreUpdateState {
+    const fn is_busy(&self) -> bool {
+        matches!(self, Self::Updating)
+    }
 }
 
 impl KernelSwitchState {
@@ -572,6 +644,7 @@ pub struct ManisApp {
     catalog: Option<PolicyCatalog>,
     runtime: KernelRuntime,
     kernel_switch_state: KernelSwitchState,
+    mihomo_core_update_state: MihomoCoreUpdateState,
     controller: ControllerState,
     observed_routes: Vec<ObservedRouteEvidence>,
     source_providers: Vec<LoadedProvider>,
@@ -732,6 +805,19 @@ impl ManisApp {
         let store = mihomo::imported_subscription_store_dir();
         let store = store.ok();
         diagnostics::initialize(store.as_deref().and_then(std::path::Path::parent));
+        #[cfg(not(test))]
+        match core_update::install_bundled_seed_if_missing() {
+            Ok(core_update::SeedInstallOutcome::Installed(path)) => record_event(
+                LogLevel::Info,
+                "core.seed.installed",
+                format!("path={}", path.display()),
+            ),
+            Ok(
+                core_update::SeedInstallOutcome::AlreadyPresent(_)
+                | core_update::SeedInstallOutcome::MissingSeed { .. },
+            ) => {}
+            Err(error) => record_event(LogLevel::Warn, "core.seed.failed", error.to_string()),
+        }
         let language = Localizer::load(store.as_deref()).language();
         let runtime = KernelRuntime::configured(store.as_deref(), language);
         diagnostics::record_event(
@@ -765,6 +851,9 @@ impl ManisApp {
         let mut app = Self::new();
         app.app_lifecycle_events = Some(cx.on_app_quit(Self::shutdown_for_quit));
         app.restore_imported_subscriptions(cx);
+        if matches!(app.mihomo_core_update_state, MihomoCoreUpdateState::Missing) {
+            app.update_mihomo_core(cx);
+        }
         app
     }
 
@@ -859,6 +948,19 @@ impl ManisApp {
             catalog: None,
             runtime,
             kernel_switch_state: KernelSwitchState::Idle,
+            mihomo_core_update_state: {
+                #[cfg(test)]
+                {
+                    MihomoCoreUpdateState::Missing
+                }
+                #[cfg(not(test))]
+                {
+                    core_update::managed_core_binary_path()
+                        .map_or(MihomoCoreUpdateState::Missing, |_path| {
+                            MihomoCoreUpdateState::Ready(String::new())
+                        })
+                }
+            },
             controller: ControllerState::Disconnected,
             observed_routes: Vec::new(),
             source_providers: Vec::new(),
@@ -2339,6 +2441,114 @@ impl ManisApp {
         })
         .detach();
         cx.notify();
+    }
+
+    fn update_mihomo_core(&mut self, cx: &mut Context<Self>) {
+        if self.mihomo_core_update_state.is_busy() {
+            return;
+        }
+        if self.proxy_mode != ProxyMode::Off {
+            self.language()
+                .text(
+                    "Turn off the active proxy mode before updating Mihomo",
+                    "请先关闭当前代理模式，再更新 Mihomo",
+                )
+                .clone_into(&mut self.status);
+            cx.notify();
+            return;
+        }
+        let Some(store_dir) = self.subscription_store_dir.clone() else {
+            self.language()
+                .text(
+                    "The Manis data directory is unavailable; Mihomo cannot be updated",
+                    "无法确定 Manis 数据目录，不能更新 Mihomo",
+                )
+                .clone_into(&mut self.status);
+            cx.notify();
+            return;
+        };
+
+        let language = self.language();
+        let reconnect = matches!(self.controller, ControllerState::Connected { .. });
+        let previous = self.runtime.clone();
+        self.mihomo_core_update_state = MihomoCoreUpdateState::Updating;
+        self.live_generation = self.live_generation.wrapping_add(1);
+        self.live_runtime = None;
+        self.controller = ControllerState::Disconnected;
+        language
+            .text(
+                "Downloading and verifying the stable Mihomo release…",
+                "正在下载并校验 Mihomo 稳定版…",
+            )
+            .clone_into(&mut self.status);
+
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let outcome = executor
+                .spawn(async move {
+                    perform_mihomo_core_update(&previous, &store_dir, language, reconnect)
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                this.apply_mihomo_core_update_outcome(outcome, cx);
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn apply_mihomo_core_update_outcome(
+        &mut self,
+        outcome: MihomoCoreUpdateOutcome,
+        cx: &mut Context<Self>,
+    ) {
+        let language = self.language();
+        match outcome {
+            MihomoCoreUpdateOutcome::Installed {
+                version,
+                runtime,
+                snapshot,
+            } => {
+                self.runtime = runtime;
+                self.mihomo_core_update_state = MihomoCoreUpdateState::Ready(version.clone());
+                self.apply_core_update_snapshot(snapshot, cx);
+                self.status = if language == Language::English {
+                    format!("Mihomo {version} installed and verified")
+                } else {
+                    format!("Mihomo {version} 已安装并校验")
+                };
+            }
+            MihomoCoreUpdateOutcome::Failed { message, recovered } => {
+                self.mihomo_core_update_state = core_update::managed_core_binary_path()
+                    .map_or(MihomoCoreUpdateState::Missing, |_path| {
+                        MihomoCoreUpdateState::Ready(String::new())
+                    });
+                self.apply_core_update_snapshot(recovered, cx);
+                self.status = format!(
+                    "{}{message}",
+                    language.text(
+                        "Mihomo update failed; the previous core was restored: ",
+                        "Mihomo 更新失败，已恢复原内核：",
+                    )
+                );
+            }
+        }
+        cx.notify();
+    }
+
+    fn apply_core_update_snapshot(
+        &mut self,
+        result: Option<mihomo::RuntimeSnapshot>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(result) = result else {
+            return;
+        };
+        let controller_endpoint = result.controller_endpoint.clone();
+        let controller_secret = result.controller_secret.clone();
+        self.apply_mihomo_snapshot(result.endpoint, result.snapshot);
+        self.start_live_runtime(&controller_endpoint, controller_secret.as_deref(), cx);
     }
 
     fn connect_mihomo(&mut self, cx: &mut Context<Self>) {

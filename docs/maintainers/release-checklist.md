@@ -47,7 +47,8 @@ the remaining checklist.
 - [ ] The package is built by `makepkg` in the pinned Arch Linux container.
 - [ ] `pacman -Qip` and `pacman -Qlp` show the intended metadata and file layout.
 - [ ] The application opens in a native Wayland session and its tray appears in a compatible shell.
-- [ ] The external Mihomo and sing-box discovery paths are tested without bundling either core.
+- [ ] The managed Mihomo seed and first-run install path are tested; external Mihomo locations are
+      ignored. The external sing-box discovery path is tested separately.
 - [ ] System proxy and TUN limitations are stated in the release notes.
 
 ## Runtime verification

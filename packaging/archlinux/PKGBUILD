@@ -6,7 +6,7 @@ pkgrel=1
 pkgdesc="GPUI desktop workbench for policy-based proxy routing"
 arch=('x86_64')
 url="https://github.com/kaigedong/Manis"
-license=('Apache-2.0')
+license=('Apache-2.0' 'GPL-3.0-only')
 depends=(
   'alsa-lib'
   'fontconfig'
@@ -53,6 +53,9 @@ build() {
     CARGO_TARGET_DIR="$target_dir" \
     cargo rustc -p manis-ui --bin manis-ui --release --locked -- \
       -L "native=$ring_directory" -l "static:+whole-archive=$ring_library"
+
+  MANIS_MIHOMO_OS=Linux MANIS_MIHOMO_ARCH=x86_64 \
+    "$startdir/../fetch-mihomo.sh" "$target_dir/release/mihomo"
 }
 
 check() {
@@ -62,11 +65,15 @@ check() {
 package() {
   install -Dm755 "$startdir/../../target/archlinux/release/manis-ui" \
     "$pkgdir/usr/bin/manis"
+  install -Dm755 "$startdir/../../target/archlinux/release/mihomo" \
+    "$pkgdir/usr/lib/manis/mihomo"
   install -Dm644 "$startdir/dev.manis.app.desktop" \
     "$pkgdir/usr/share/applications/dev.manis.app.desktop"
   install -Dm644 "$startdir/../../assets/brand/manis-mark.svg" \
     "$pkgdir/usr/share/icons/hicolor/scalable/apps/dev.manis.app.svg"
   install -Dm644 "$startdir/../../LICENSE" "$pkgdir/usr/share/licenses/manis/LICENSE"
+  ln -s /usr/share/licenses/common/GPL3/license.txt \
+    "$pkgdir/usr/share/licenses/manis/Mihomo-GPL-3.0.txt"
   install -Dm644 "$startdir/../../THIRD_PARTY_NOTICES.md" \
     "$pkgdir/usr/share/doc/manis/THIRD_PARTY_NOTICES.md"
 }
