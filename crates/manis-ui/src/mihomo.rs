@@ -75,6 +75,11 @@ const QX_RULE_SOURCE_VERSION: &str = "manis-qx-rule-source-v1";
 const LEGACY_RELAY_QX_RULE_SOURCE_VERSION: &str = "relay-qx-rule-source-v1";
 const MAX_QX_RULE_SOURCE_CONTENT_BYTES: usize = 1024 * 1024;
 const MAX_QX_RULE_SOURCE_FILE_BYTES: u64 = 2 * 1024 * 1024 + 64 * 1024;
+const ROUTING_RULE_GROUP_ORDER_FILE: &str = "routing-rule-group-order.state";
+const ROUTING_RULE_GROUP_ORDER_VERSION: &str = "manis-routing-rule-group-order-v1";
+const MAX_ROUTING_RULE_GROUPS: usize = 257;
+const MAX_ROUTING_RULE_GROUP_ORDER_FILE_BYTES: u64 = 64 * 1024;
+pub(crate) const MANUAL_ROUTING_RULE_GROUP_ID: &str = "manual";
 const WORKSPACE_STATE_FILE: &str = "workspace.state";
 const ROUTING_MODE_FILE: &str = "routing.mode";
 const NODE_SELECTION_PREFERENCES_FILE: &str = "node-selection.state";
@@ -1152,11 +1157,23 @@ fn compile_saved_profile(
     profile.set_mode(profile_mode(routing_mode));
     let qx_rule_sources = load_qx_rule_sources_in(store_dir)
         .map_err(|_error| LoadError::Runtime("无法读取 QX 规则来源".to_owned()))?;
-    apply_qx_rule_sources(&mut profile, &qx_rule_sources)?;
     let manual_rules = crate::manual_rule::load_manual_rules_in(store_dir)
         .map_err(|error| LoadError::Runtime(error.to_string()))?;
-    crate::manual_rule::prepend_manual_rules(&mut profile, &manual_rules, kernel)
-        .map_err(|error| LoadError::Runtime(error.to_string()))?;
+    let stored_group_order = load_routing_rule_group_order_in(store_dir)
+        .map_err(|_error| LoadError::Runtime("无法读取已保存的分流规则分组顺序".to_owned()))?;
+    let group_order = normalized_routing_rule_group_order(
+        &stored_group_order,
+        !manual_rules.is_empty(),
+        &qx_rule_sources,
+    );
+    for group_id in group_order {
+        if group_id == MANUAL_ROUTING_RULE_GROUP_ID {
+            crate::manual_rule::append_manual_rules(&mut profile, &manual_rules, kernel)
+                .map_err(|error| LoadError::Runtime(error.to_string()))?;
+        } else if let Some(source) = qx_rule_sources.iter().find(|source| source.id == group_id) {
+            apply_qx_rule_sources(&mut profile, std::slice::from_ref(source))?;
+        }
+    }
     Ok(profile)
 }
 
@@ -2294,6 +2311,133 @@ pub(crate) fn load_qx_rule_sources_in(
     Ok(sources)
 }
 
+pub(crate) fn normalized_routing_rule_group_order(
+    stored_order: &[String],
+    has_manual_rules: bool,
+    sources: &[StoredQxRuleSource],
+) -> Vec<String> {
+    let source_ids = sources
+        .iter()
+        .map(|source| source.id.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut seen = BTreeSet::new();
+    let mut order = stored_order
+        .iter()
+        .filter(|id| {
+            (has_manual_rules && id.as_str() == MANUAL_ROUTING_RULE_GROUP_ID)
+                || source_ids.contains(id.as_str())
+        })
+        .filter(|id| seen.insert((*id).clone()))
+        .cloned()
+        .collect::<Vec<_>>();
+    if has_manual_rules && seen.insert(MANUAL_ROUTING_RULE_GROUP_ID.to_owned()) {
+        order.insert(0, MANUAL_ROUTING_RULE_GROUP_ID.to_owned());
+    }
+    for source in sources {
+        if seen.insert(source.id.clone()) {
+            order.push(source.id.clone());
+        }
+    }
+    order
+}
+
+pub(crate) fn move_routing_rule_group(order: &mut [String], group_id: &str, direction: i8) -> bool {
+    if !matches!(direction, -1 | 1) {
+        return false;
+    }
+    let Some(index) = order.iter().position(|id| id == group_id) else {
+        return false;
+    };
+    let target = if direction < 0 {
+        index.checked_sub(1)
+    } else {
+        index.checked_add(1).filter(|target| *target < order.len())
+    };
+    let Some(target) = target else {
+        return false;
+    };
+    order.swap(index, target);
+    true
+}
+
+fn valid_routing_rule_group_id(id: &str) -> bool {
+    id == MANUAL_ROUTING_RULE_GROUP_ID || valid_stored_id(id, QX_RULE_SOURCE_PREFIX)
+}
+
+#[cfg(not(windows))]
+pub(crate) fn save_routing_rule_group_order_in(
+    directory: &Path,
+    order: &[String],
+) -> Result<(), SubscriptionStoreError> {
+    if order.len() > MAX_ROUTING_RULE_GROUPS {
+        return Err(SubscriptionStoreError::StoreUnavailable);
+    }
+    let mut seen = BTreeSet::new();
+    if order
+        .iter()
+        .any(|id| !valid_routing_rule_group_id(id) || !seen.insert(id.as_str()))
+    {
+        return Err(SubscriptionStoreError::StoreUnavailable);
+    }
+    let mut contents = ROUTING_RULE_GROUP_ORDER_VERSION.to_owned();
+    for id in order {
+        contents.push('\n');
+        contents.push_str(id);
+    }
+    write_private_atomic(
+        directory,
+        ROUTING_RULE_GROUP_ORDER_FILE,
+        contents.as_bytes(),
+    )
+    .map(|_path| ())
+    .map_err(|_error| SubscriptionStoreError::StoreUnavailable)
+}
+
+#[cfg(windows)]
+pub(crate) fn save_routing_rule_group_order_in(
+    _directory: &Path,
+    _order: &[String],
+) -> Result<(), SubscriptionStoreError> {
+    Err(SubscriptionStoreError::StoreUnavailable)
+}
+
+#[cfg(not(windows))]
+pub(crate) fn load_routing_rule_group_order_in(
+    directory: &Path,
+) -> Result<Vec<String>, SubscriptionStoreError> {
+    require_clean_absolute_store(directory)?;
+    let path = directory.join(ROUTING_RULE_GROUP_ORDER_FILE);
+    let contents = match fs::symlink_metadata(&path) {
+        Ok(_) => {
+            read_private_source_allow_empty_max(&path, MAX_ROUTING_RULE_GROUP_ORDER_FILE_BYTES)?
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(_error) => return Err(SubscriptionStoreError::StoredSourceUnavailable),
+    };
+    let mut lines = contents.lines();
+    if lines.next() != Some(ROUTING_RULE_GROUP_ORDER_VERSION) {
+        return Err(SubscriptionStoreError::StoredSourceUnavailable);
+    }
+    let mut seen = BTreeSet::new();
+    lines
+        .map(str::to_owned)
+        .map(|id| {
+            if valid_routing_rule_group_id(&id) && seen.insert(id.clone()) {
+                Ok(id)
+            } else {
+                Err(SubscriptionStoreError::StoredSourceUnavailable)
+            }
+        })
+        .collect()
+}
+
+#[cfg(windows)]
+pub(crate) fn load_routing_rule_group_order_in(
+    _directory: &Path,
+) -> Result<Vec<String>, SubscriptionStoreError> {
+    Ok(Vec::new())
+}
+
 #[cfg(windows)]
 pub(crate) fn load_qx_rule_sources_in(
     _directory: &Path,
@@ -2451,7 +2595,7 @@ fn apply_qx_rule_sources(
     let insert_at = profile
         .rules
         .iter()
-        .position(|rule| matches!(rule, Rule::GeoIp { .. } | Rule::Match { .. }))
+        .position(|rule| matches!(rule, Rule::Match { .. }))
         .unwrap_or(profile.rules.len());
     profile.rules.splice(insert_at..insert_at, imported_rules);
     profile
@@ -5880,6 +6024,111 @@ IP-CIDR,192.0.2.0/24,DIRECT
 
     #[cfg(not(windows))]
     #[test]
+    fn routing_rule_group_order_round_trips_and_appends_new_groups()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = test_temp_dir("manis-routing-rule-group-order");
+        let store = root.join("subscriptions");
+        let first = super::save_qx_rule_source_in(
+            &store,
+            "https://rules.example.invalid/first.list",
+            "DIRECT",
+            "DOMAIN-SUFFIX,first.example,DIRECT\n",
+        )?
+        .into_source();
+        let second = super::save_qx_rule_source_in(
+            &store,
+            "https://rules.example.invalid/second.list",
+            "DIRECT",
+            "DOMAIN-SUFFIX,second.example,DIRECT\n",
+        )?
+        .into_source();
+        let stored_order = vec![
+            second.id.clone(),
+            super::MANUAL_ROUTING_RULE_GROUP_ID.to_owned(),
+            first.id.clone(),
+        ];
+
+        super::save_routing_rule_group_order_in(&store, &stored_order)?;
+        assert_eq!(
+            super::load_routing_rule_group_order_in(&store)?,
+            stored_order
+        );
+
+        let sources = super::load_qx_rule_sources_in(&store)?;
+        let normalized = super::normalized_routing_rule_group_order(
+            &[second.id.clone(), "qx-rule-removed".to_owned()],
+            true,
+            &sources,
+        );
+        assert_eq!(normalized[0], super::MANUAL_ROUTING_RULE_GROUP_ID);
+        assert_eq!(normalized[1], second.id);
+        assert_eq!(normalized[2], first.id);
+
+        let mut moved = normalized.clone();
+        assert!(super::move_routing_rule_group(&mut moved, &second.id, -1));
+        assert_eq!(moved[0], second.id);
+        assert_eq!(moved[1], super::MANUAL_ROUTING_RULE_GROUP_ID);
+        assert!(!super::move_routing_rule_group(&mut moved, &second.id, -1));
+        assert!(!super::move_routing_rule_group(&mut moved, &first.id, 1));
+
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn saved_rule_group_order_controls_compiled_rule_priority()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = test_temp_dir("manis-compiled-rule-group-order");
+        let store = root.join("subscriptions");
+        super::save_subscription_source_in(
+            &store,
+            "https://subscription.example.invalid/client?token=fixture",
+        )?;
+        let first = super::save_qx_rule_source_in(
+            &store,
+            "https://rules.example.invalid/first.list",
+            "DIRECT",
+            "DOMAIN-SUFFIX,first.example,DIRECT\n",
+        )?
+        .into_source();
+        let second = super::save_qx_rule_source_in(
+            &store,
+            "https://rules.example.invalid/second.list",
+            "DIRECT",
+            "DOMAIN-SUFFIX,second.example,DIRECT\n",
+        )?
+        .into_source();
+        let manual = crate::manual_rule::ManualRule::parse(
+            crate::manual_rule::ManualRuleKind::Host,
+            "manual.example",
+            "DIRECT",
+        )?;
+        crate::manual_rule::save_manual_rules_in(&store, &[manual])?;
+        super::save_routing_rule_group_order_in(
+            &store,
+            &[
+                second.id,
+                super::MANUAL_ROUTING_RULE_GROUP_ID.to_owned(),
+                first.id,
+            ],
+        )?;
+
+        let profile = super::compile_saved_profile(&store, None, manis_core::KernelKind::Mihomo)?;
+        let yaml = manis_profile::render_mihomo_yaml(&profile)?;
+        let second_index = yaml.find("DOMAIN-SUFFIX,second.example,DIRECT");
+        let manual_index = yaml.find("DOMAIN,manual.example,DIRECT");
+        let first_index = yaml.find("DOMAIN-SUFFIX,first.example,DIRECT");
+        assert!(second_index < manual_index && manual_index < first_index);
+        assert!(!yaml.contains("GEOIP,CN,DIRECT"));
+        assert!(!yaml.contains("MATCH,__MANIS_GLOBAL__"));
+
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[cfg(not(windows))]
+    #[test]
     fn qx_rule_sources_update_interval_and_success_atomically()
     -> Result<(), Box<dyn std::error::Error>> {
         let root = test_temp_dir("manis-qx-rule-refresh");
@@ -6066,7 +6315,7 @@ IP-CIDR,192.0.2.0/24,DIRECT
     }
 
     #[test]
-    fn qx_rule_sources_apply_before_generated_terminal_rules()
+    fn qx_rule_sources_compile_in_source_order_without_generated_fallbacks()
     -> Result<(), Box<dyn std::error::Error>> {
         let runtime = super::ControllerRuntime::External {
             endpoint: "http://127.0.0.1:9".to_owned(),
@@ -6099,12 +6348,10 @@ IP-CIDR,192.0.2.0/24,DIRECT
 
         assert!(
             yaml.find("- \"DOMAIN-KEYWORD,google,__MANIS_GLOBAL__\"")
-                < yaml.find("- \"GEOIP,CN,DIRECT,no-resolve\"")
+                < yaml.find("- \"DOMAIN-SUFFIX,githubusercontent.com,__MANIS_GLOBAL__\"")
         );
-        assert!(
-            yaml.find("- \"DOMAIN-SUFFIX,githubusercontent.com,__MANIS_GLOBAL__\"")
-                < yaml.find("- \"MATCH,__MANIS_GLOBAL__\"")
-        );
+        assert!(!yaml.contains("GEOIP,CN,DIRECT"));
+        assert!(!yaml.contains("MATCH,__MANIS_GLOBAL__"));
         Ok(())
     }
 

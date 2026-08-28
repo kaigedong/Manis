@@ -152,14 +152,12 @@ fn qx_default_renders_ordered_minimal_mihomo_yaml() {
         yaml.contains("url: \"https://subscription.example.invalid/client?token=fixture-secret\"")
     );
     assert!(yaml.contains("type: \"select\""));
-    assert!(yaml.contains("- \"GEOIP,CN,DIRECT,no-resolve\""));
-    assert!(yaml.contains("- \"MATCH,__MANIS_GLOBAL__\""));
+    assert!(profile.rules.is_empty());
+    assert!(!yaml.contains("GEOIP,CN,DIRECT"));
+    assert!(!yaml.contains("MATCH,__MANIS_GLOBAL__"));
     assert!(
         yaml.find("proxy-providers:").expect("providers section")
             < yaml.find("proxy-groups:").expect("groups section")
-    );
-    assert!(
-        yaml.find("- \"GEOIP,CN,DIRECT,no-resolve\"") < yaml.find("- \"MATCH,__MANIS_GLOBAL__\"")
     );
 }
 
@@ -320,7 +318,7 @@ fn manual_reality_tcp_profile_renders_as_sing_box_json() {
             "\"clash_mode\": \"Global\", \"action\": \"route\", \"outbound\": \"GLOBAL\""
         )
     );
-    assert!(json.contains("\"rule_set\": \"geoip-cn\""));
+    assert!(!json.contains("\"rule_set\": \"geoip-cn\""));
     assert!(json.contains("\"external_controller\": \"127.0.0.1:19090\""));
     assert!(json.contains("\"secret\": \"fixture-controller-secret\""));
 }
@@ -505,7 +503,8 @@ fn qx_sources_only_generates_the_hidden_global_exit_group() {
     assert!(yaml.contains("name: \"__MANIS_GLOBAL__\""));
     assert!(!yaml.contains("name: \"Auto\""));
     assert!(!yaml.contains("name: \"Proxy\""));
-    assert!(yaml.contains("- \"MATCH,__MANIS_GLOBAL__\""));
+    assert!(profile.rules.is_empty());
+    assert!(!yaml.contains("- \"MATCH,__MANIS_GLOBAL__\""));
 }
 
 #[test]
@@ -557,7 +556,8 @@ fn qx_sources_with_groups_only_compiles_user_groups_and_the_hidden_global_exit()
     assert!(yaml.find("name: \"Manual Saved\"") < yaml.find("name: \"__MANIS_GLOBAL__\""));
     assert!(!yaml.contains("name: \"Auto\""));
     assert!(!yaml.contains("name: \"Proxy\""));
-    assert!(yaml.contains("- \"MATCH,__MANIS_GLOBAL__\""));
+    assert!(profile.rules.is_empty());
+    assert!(!yaml.contains("- \"MATCH,__MANIS_GLOBAL__\""));
 }
 
 #[test]
@@ -626,14 +626,11 @@ fn domain_keyword_rules_validate_and_render_to_mihomo_yaml() {
     let yaml = render_mihomo_yaml(&profile).expect("profile should render");
 
     assert!(yaml.contains("- \"DOMAIN-KEYWORD,google,__MANIS_GLOBAL__\""));
-    assert!(
-        yaml.find("- \"DOMAIN-KEYWORD,google,__MANIS_GLOBAL__\"")
-            < yaml.find("- \"MATCH,__MANIS_GLOBAL__\"")
-    );
+    assert!(!yaml.contains("- \"MATCH,__MANIS_GLOBAL__\""));
 }
 
 #[test]
-fn destination_port_rules_render_to_mihomo_yaml_ahead_of_the_terminal_match() {
+fn destination_port_rules_render_to_mihomo_yaml_without_a_generated_fallback() {
     let mut profile = Profile::qx_default(fixture_secret()).expect("default profile is valid");
     profile.rules.insert(
         0,
@@ -646,7 +643,7 @@ fn destination_port_rules_render_to_mihomo_yaml_ahead_of_the_terminal_match() {
     let yaml = render_mihomo_yaml(&profile).expect("profile should render");
 
     assert!(yaml.contains("- \"DST-PORT,22,DIRECT\""));
-    assert!(yaml.find("- \"DST-PORT,22,DIRECT\"") < yaml.find("- \"MATCH,__MANIS_GLOBAL__\""));
+    assert!(!yaml.contains("- \"MATCH,__MANIS_GLOBAL__\""));
 }
 
 #[test]
@@ -847,7 +844,7 @@ fn renderer_escapes_double_quoted_yaml_scalars() {
 }
 
 #[test]
-fn validation_rejects_invalid_names_duplicates_dangling_refs_and_missing_match() {
+fn validation_rejects_invalid_names_duplicates_dangling_refs_and_misplaced_match() {
     assert!(Name::parse("bad,name").is_err());
     assert!(Name::parse("bad\u{7f}name").is_err());
 
@@ -909,9 +906,15 @@ fn validation_rejects_invalid_names_duplicates_dangling_refs_and_missing_match()
         .to_string();
     assert!(!message.contains("fixture-secret"));
 
-    let mut missing_match = Profile::qx_default(fixture_secret()).expect("default profile");
-    missing_match.rules.pop();
-    assert!(missing_match.validate().is_err());
+    let mut misplaced_match = Profile::qx_default(fixture_secret()).expect("default profile");
+    misplaced_match.rules.push(Rule::Match {
+        policy: PolicyRef::Direct,
+    });
+    misplaced_match.rules.push(Rule::DomainSuffix {
+        value: "example.com".to_owned(),
+        policy: PolicyRef::Direct,
+    });
+    assert!(misplaced_match.validate().is_err());
 
     let mut control_character = Profile::qx_default(fixture_secret()).expect("default profile");
     control_character.providers[0].health_check.url.push('\t');

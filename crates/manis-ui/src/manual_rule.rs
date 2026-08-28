@@ -468,7 +468,7 @@ fn normalize_cidr(value: &str, ipv6: bool) -> Result<String, ManualRuleError> {
     }
 }
 
-pub(crate) fn prepend_manual_rules(
+pub(crate) fn append_manual_rules(
     profile: &mut Profile,
     rules: &[ManualRule],
     kernel: KernelKind,
@@ -500,7 +500,7 @@ pub(crate) fn prepend_manual_rules(
         .iter()
         .map(|rule| rule.to_profile_rule(legacy_proxy_target.as_ref()))
         .collect::<Result<Vec<_>, _>>()?;
-    profile.rules.splice(0..0, compiled);
+    profile.rules.extend(compiled);
     Ok(())
 }
 
@@ -707,8 +707,8 @@ mod tests {
     use std::fs;
 
     use super::{
-        ManualRule, ManualRuleEditError, ManualRuleError, ManualRuleKind, load_manual_rules_in,
-        prepend_manual_rules, replace_manual_rule, save_manual_rules_in,
+        ManualRule, ManualRuleEditError, ManualRuleError, ManualRuleKind, append_manual_rules,
+        load_manual_rules_in, replace_manual_rule, save_manual_rules_in,
     };
 
     #[test]
@@ -778,7 +778,7 @@ mod tests {
     }
 
     #[test]
-    fn manual_rules_compile_ahead_of_inherited_rules() {
+    fn manual_rules_append_in_source_order_without_generated_fallbacks() {
         let mut profile = manis_profile::Profile::qx_default(
             manis_profile::SecretUrl::parse_https("https://example.invalid/subscription")
                 .expect("fixture URL"),
@@ -788,13 +788,14 @@ mod tests {
             ManualRule::parse(ManualRuleKind::Host, "example.com", "DIRECT").expect("rule"),
             ManualRule::parse(ManualRuleKind::IpAsn, "13335", "Proxy").expect("rule"),
         ];
-        prepend_manual_rules(&mut profile, &rules, manis_core::KernelKind::Mihomo)
+        append_manual_rules(&mut profile, &rules, manis_core::KernelKind::Mihomo)
             .expect("supported rules");
         let yaml = manis_profile::render_mihomo_yaml(&profile).expect("rendered profile");
         assert!(
             yaml.find("DOMAIN,example.com,DIRECT") < yaml.find("IP-ASN,13335,__MANIS_GLOBAL__")
         );
-        assert!(yaml.find("IP-ASN,13335,__MANIS_GLOBAL__") < yaml.find("GEOIP,CN,DIRECT"));
+        assert!(!yaml.contains("GEOIP,CN,DIRECT"));
+        assert!(!yaml.contains("MATCH,__MANIS_GLOBAL__"));
     }
 
     #[test]
@@ -812,7 +813,7 @@ mod tests {
             "DIRECT",
         )
         .expect("compound rule");
-        prepend_manual_rules(&mut profile, &[rule], manis_core::KernelKind::Mihomo)
+        append_manual_rules(&mut profile, &[rule], manis_core::KernelKind::Mihomo)
             .expect("supported rule");
 
         let yaml = manis_profile::render_mihomo_yaml(&profile).expect("rendered profile");

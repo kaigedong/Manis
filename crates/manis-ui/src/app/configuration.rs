@@ -2422,7 +2422,10 @@ impl ManisApp {
             return;
         };
         match crate::manual_rule::load_manual_rules_in(store_dir) {
-            Ok(rules) => self.manual_rules = rules,
+            Ok(rules) => {
+                self.manual_rules = rules;
+                self.sync_routing_rule_group_order();
+            }
             Err(error) => {
                 self.status = format!(
                     "{}{error}",
@@ -2628,6 +2631,19 @@ impl ManisApp {
             cx.notify();
             return false;
         };
+        self.sync_routing_rule_group_order();
+        if mihomo::save_routing_rule_group_order_in(&store_dir, &self.routing_rule_group_order)
+            .is_err()
+        {
+            language
+                .text(
+                    "Could not save routing rule group order",
+                    "无法保存分流规则分组顺序",
+                )
+                .clone_into(&mut self.status);
+            cx.notify();
+            return false;
+        }
         if let Err(error) = crate::manual_rule::save_manual_rules_in(&store_dir, &self.manual_rules)
         {
             self.status = format!(
@@ -2646,6 +2662,53 @@ impl ManisApp {
         );
         cx.notify();
         true
+    }
+
+    fn sync_routing_rule_group_order(&mut self) {
+        self.routing_rule_group_order = mihomo::normalized_routing_rule_group_order(
+            &self.routing_rule_group_order,
+            !self.manual_rules.is_empty(),
+            &self.qx_rule_sources,
+        );
+    }
+
+    fn move_routing_rule_group(&mut self, group_id: &str, direction: i8, cx: &mut Context<Self>) {
+        self.sync_routing_rule_group_order();
+        let previous = self.routing_rule_group_order.clone();
+        if !mihomo::move_routing_rule_group(&mut self.routing_rule_group_order, group_id, direction)
+        {
+            return;
+        }
+        let Some(store_dir) = self.subscription_store_dir.clone() else {
+            self.routing_rule_group_order = previous;
+            return;
+        };
+        if mihomo::save_routing_rule_group_order_in(&store_dir, &self.routing_rule_group_order)
+            .is_err()
+        {
+            self.routing_rule_group_order = previous;
+            self.language()
+                .text(
+                    "Could not save routing rule group order",
+                    "无法保存分流规则分组顺序",
+                )
+                .clone_into(&mut self.status);
+            cx.notify();
+            return;
+        }
+        let language = self.language();
+        let apply = SourceRuntimeApply::from_result(self.runtime.apply_saved_sources(&store_dir));
+        apply.reconcile_proxy_mode(&mut self.proxy_mode);
+        self.status = format!(
+            "{}{}",
+            if direction < 0 {
+                language.text("Rule group moved up", "规则分组已上移")
+            } else {
+                language.text("Rule group moved down", "规则分组已下移")
+            },
+            apply.status_suffix(language)
+        );
+        cx.notify();
     }
 
     fn manual_rule_kind_menu(
@@ -3051,8 +3114,8 @@ impl ManisApp {
                             .font_weight(FontWeight::NORMAL)
                             .text_color(theme.text_secondary)
                             .child(language.text(
-                                "All conditions must match. The selected policy is applied before subscribed rules.",
-                                "同一条规则中的条件必须全部命中；所选策略优先于规则订阅。",
+                                "All conditions must match. Group order determines rule priority.",
+                                "同一条规则中的条件必须全部命中；分组顺序决定规则优先级。",
                             )),
                     ),
             )
@@ -3077,7 +3140,7 @@ impl ManisApp {
                                 .text_color(theme.status_error)
                                 .child(manual_rule_error_label(error, language)),
                         )
-                    })
+                    }),
             )
             .footer(footer)
             .on_close(move |_, _, cx| {
@@ -3211,6 +3274,58 @@ impl ManisApp {
             .child(Self::manual_rule_actions(index, theme, language, cx))
     }
 
+    fn rule_group_order_controls(
+        group_id: &str,
+        group_name: &str,
+        position: usize,
+        group_count: usize,
+        theme: Theme,
+        language: Language,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let up_id = group_id.to_owned();
+        let down_id = group_id.to_owned();
+        div()
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .gap_1()
+            .child(
+                Button::new(format!("move-rule-group-up-{group_id}"))
+                    .accessibility_label(if language == Language::English {
+                        format!("Move {group_name} up")
+                    } else {
+                        format!("上移{group_name}")
+                    })
+                    .icon(IconName::ArrowUp)
+                    .text()
+                    .with_size(px(30.0))
+                    .text_color(theme.text_secondary)
+                    .disabled(position == 0)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.move_routing_rule_group(&up_id, -1, cx);
+                    })),
+            )
+            .child(
+                Button::new(format!("move-rule-group-down-{group_id}"))
+                    .accessibility_label(if language == Language::English {
+                        format!("Move {group_name} down")
+                    } else {
+                        format!("下移{group_name}")
+                    })
+                    .icon(IconName::ArrowDown)
+                    .text()
+                    .with_size(px(30.0))
+                    .text_color(theme.text_secondary)
+                    .disabled(position + 1 >= group_count)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.move_routing_rule_group(&down_id, 1, cx);
+                    })),
+            )
+    }
+
     #[allow(clippy::too_many_lines)]
     fn active_rules_panel(
         &self,
@@ -3254,8 +3369,8 @@ impl ManisApp {
                                     .text_size(px(11.0))
                                     .text_color(theme.text_secondary)
                                     .child(language.text(
-                                        "Matched from top to bottom; the first hit wins.",
-                                        "从上到下匹配；第一条命中后停止。",
+                                        "Groups match from top to bottom; use the arrows to change priority.",
+                                        "分组从上到下匹配；使用箭头调整优先级。",
                                     )),
                             ),
                     )
@@ -3277,10 +3392,10 @@ impl ManisApp {
                                     .child(if language == Language::English {
                                         format!(
                                             "{} rules",
-                                            self.manual_rules.len() + remote_count + 2
+                                            self.manual_rules.len() + remote_count
                                         )
                                     } else {
-                                        format!("{} 条", self.manual_rules.len() + remote_count + 2)
+                                        format!("{} 条", self.manual_rules.len() + remote_count)
                                     }),
                             )
                             .child(
@@ -3319,87 +3434,104 @@ impl ManisApp {
                     ),
             );
 
+        let group_order = mihomo::normalized_routing_rule_group_order(
+            &self.routing_rule_group_order,
+            !self.manual_rules.is_empty(),
+            &self.qx_rule_sources,
+        );
+        let group_count = group_order.len();
         let mut order = 1;
-        if !self.manual_rules.is_empty() {
-            let expanded = self
-                .node_workspace
-                .is_group_collapsed(MANUAL_RULES_EXPANSION_KEY);
-            let detail = if language == Language::English {
-                format!(
-                    "{} rules · Saved locally · Before subscribed rules",
-                    self.manual_rules.len()
-                )
-            } else {
-                format!(
-                    "{} 条规则 · 本地保存 · 优先于规则订阅",
-                    self.manual_rules.len()
-                )
-            };
-            let title = div()
-                .flex_1()
-                .min_w(px(0.0))
-                .child(
-                    div()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .child(language.text("Manual rules", "手动规则")),
-                )
-                .child(
-                    div()
-                        .mt_1()
-                        .overflow_x_hidden()
-                        .whitespace_nowrap()
-                        .text_ellipsis()
-                        .text_size(px(10.0))
-                        .text_color(theme.text_tertiary)
-                        .child(detail),
-                );
-            let mut rules = div()
-                .px(if compact { px(8.0) } else { px(12.0) })
-                .pb_3()
-                .border_t_1()
-                .border_color(theme.outline_subtle)
-                .bg(theme.surface_high);
-            for (index, rule) in self.manual_rules.iter().enumerate() {
-                rules = rules
-                    .child(self.manual_routing_rule_row(order, index, rule, theme, language, cx));
-                order += 1;
+        for (group_position, group_id) in group_order.iter().enumerate() {
+            if group_id == mihomo::MANUAL_ROUTING_RULE_GROUP_ID {
+                let expanded = self
+                    .node_workspace
+                    .is_group_collapsed(MANUAL_RULES_EXPANSION_KEY);
+                let group_name = language.text("Manual rules", "手动规则");
+                let detail = if language == Language::English {
+                    format!("{} rules · Saved locally", self.manual_rules.len())
+                } else {
+                    format!("{} 条规则 · 本地保存", self.manual_rules.len())
+                };
+                let title_detail = div()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .child(div().font_weight(FontWeight::SEMIBOLD).child(group_name))
+                    .child(
+                        div()
+                            .mt_1()
+                            .overflow_x_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .text_size(px(10.0))
+                            .text_color(theme.text_tertiary)
+                            .child(detail),
+                    );
+                let title = div()
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .child(title_detail)
+                    .child(Self::rule_group_order_controls(
+                        group_id,
+                        group_name,
+                        group_position,
+                        group_count,
+                        theme,
+                        language,
+                        cx,
+                    ));
+                let mut rules = div()
+                    .px(if compact { px(8.0) } else { px(12.0) })
+                    .pb_3()
+                    .border_t_1()
+                    .border_color(theme.outline_subtle)
+                    .bg(theme.surface_high);
+                for (index, rule) in self.manual_rules.iter().enumerate() {
+                    rules = rules.child(
+                        self.manual_routing_rule_row(order, index, rule, theme, language, cx),
+                    );
+                    order += 1;
+                }
+                let manual_group = Accordion::new("routing-manual-rules")
+                    .bordered(false)
+                    .with_size(Size::Large)
+                    .mt_4()
+                    .border_t_1()
+                    .border_b_1()
+                    .border_color(theme.outline_subtle)
+                    .item(|item| {
+                        item.open(expanded)
+                            .title_style(accordion_title_style(compact))
+                            .content_style(accordion_content_style())
+                            .bg(theme.surface_low)
+                            .title(title)
+                            .child(rules)
+                    })
+                    .on_toggle_click(cx.listener(|this, open_indices: &[usize], _, cx| {
+                        let should_expand = open_indices.contains(&0);
+                        if this
+                            .node_workspace
+                            .is_group_collapsed(MANUAL_RULES_EXPANSION_KEY)
+                            != should_expand
+                        {
+                            this.node_workspace.toggle_group(MANUAL_RULES_EXPANSION_KEY);
+                            this.persist_node_workspace();
+                            cx.notify();
+                        }
+                    }));
+                list = list.child(manual_group);
+                continue;
             }
-            let manual_group = Accordion::new("routing-manual-rules")
-                .bordered(false)
-                .with_size(Size::Large)
-                .mt_4()
-                .border_t_1()
-                .border_b_1()
-                .border_color(theme.outline_subtle)
-                .item(|item| {
-                    item.open(expanded)
-                        .title_style(accordion_title_style(compact))
-                        .content_style(accordion_content_style())
-                        .bg(theme.surface_low)
-                        .title(title)
-                        .child(rules)
-                })
-                .on_toggle_click(cx.listener(|this, open_indices: &[usize], _, cx| {
-                    let should_expand = open_indices.contains(&0);
-                    if this
-                        .node_workspace
-                        .is_group_collapsed(MANUAL_RULES_EXPANSION_KEY)
-                        != should_expand
-                    {
-                        this.node_workspace.toggle_group(MANUAL_RULES_EXPANSION_KEY);
-                        this.persist_node_workspace();
-                        this.language()
-                            .text(
-                                "Manual rule expanded state updated",
-                                "已更新手动规则展开状态",
-                            )
-                            .clone_into(&mut this.status);
-                        cx.notify();
-                    }
-                }));
-            list = list.child(manual_group);
-        }
-        for (source_index, source) in self.qx_rule_sources.iter().enumerate() {
+            let Some((source_index, source)) = self
+                .qx_rule_sources
+                .iter()
+                .enumerate()
+                .find(|(_, source)| source.id == *group_id)
+            else {
+                continue;
+            };
             let parsed = QxRuleList::parse(&source.content);
             let rule_count = parsed.rules.len();
             let expansion_key = rule_source_expansion_key(&source.id);
@@ -3432,7 +3564,7 @@ impl ManisApp {
                         .whitespace_nowrap()
                         .text_ellipsis()
                         .font_weight(FontWeight::SEMIBOLD)
-                        .child(name),
+                        .child(name.clone()),
                 )
                 .child(
                     div()
@@ -3455,6 +3587,15 @@ impl ManisApp {
                     source,
                     !self.source_refresh_busy(),
                     theme,
+                    cx,
+                ))
+                .child(Self::rule_group_order_controls(
+                    group_id,
+                    &name,
+                    group_position,
+                    group_count,
+                    theme,
+                    language,
                     cx,
                 ));
             let mut rules = div()
@@ -3502,7 +3643,7 @@ impl ManisApp {
             list = list.child(source_group);
         }
 
-        if self.qx_rule_sources.is_empty() {
+        if group_order.is_empty() {
             list = list.child(
                 div()
                     .mt_4()
@@ -3511,35 +3652,11 @@ impl ManisApp {
                     .bg(theme.surface_low)
                     .text_color(theme.text_secondary)
                     .child(language.text(
-                        "After adding a rule source, DOMAIN, DOMAIN-SUFFIX, and DOMAIN-KEYWORD rules will appear here.",
-                        "添加规则源后，这里会逐条显示 DOMAIN、DOMAIN-SUFFIX 和 DOMAIN-KEYWORD 规则。",
+                        "No active routing rules. Manis does not add locked fallback rules.",
+                        "暂无生效规则；Manis 不会添加不可编辑的兜底规则。",
                     )),
             );
         }
-
-        list = list
-            .child(
-                div()
-                    .mt_5()
-                    .mb_1()
-                    .text_size(px(11.0))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(language.text("System fallback", "系统兜底")),
-            )
-            .child(Self::routing_rule_row(
-                order,
-                "GEOIP",
-                "CN · no-resolve",
-                "DIRECT",
-                theme,
-            ))
-            .child(Self::routing_rule_row(
-                order + 1,
-                "MATCH",
-                language.text("Remaining traffic", "其余流量"),
-                language.text("Global exit", "全局出口"),
-                theme,
-            ));
         list
     }
 
@@ -3841,6 +3958,13 @@ impl ManisApp {
                         } else {
                             this.qx_rule_sources.push(stored);
                         }
+                        this.sync_routing_rule_group_order();
+                        if let Some(store_dir) = this.subscription_store_dir.as_ref() {
+                            let _ = mihomo::save_routing_rule_group_order_in(
+                                store_dir,
+                                &this.routing_rule_group_order,
+                            );
+                        }
                         this.qx_rule_source_refreshes.remove(&stored_id);
                         this.qx_rule_feedback = QxRuleImportFeedback::Imported {
                             rule_count,
@@ -3881,6 +4005,13 @@ impl ManisApp {
                             .any(|source| source.id == source_id)
                         {
                             this.qx_rule_sources.push(stored);
+                        }
+                        this.sync_routing_rule_group_order();
+                        if let Some(store_dir) = this.subscription_store_dir.as_ref() {
+                            let _ = mihomo::save_routing_rule_group_order_in(
+                                store_dir,
+                                &this.routing_rule_group_order,
+                            );
                         }
                         this.qx_rule_feedback = QxRuleImportFeedback::AlreadyExists {
                             source_id: source_id.clone(),
@@ -3982,6 +4113,13 @@ impl ManisApp {
                 match result {
                     Ok((id, apply)) => {
                         this.qx_rule_sources.retain(|source| source.id != id);
+                        this.sync_routing_rule_group_order();
+                        if let Some(store_dir) = this.subscription_store_dir.as_ref() {
+                            let _ = mihomo::save_routing_rule_group_order_in(
+                                store_dir,
+                                &this.routing_rule_group_order,
+                            );
+                        }
                         this.qx_rule_source_refreshes.remove(&id);
                         this.source_refresh_retry_not_before
                             .remove(&super::DueRemoteSource::QxRule(id.clone()).scheduler_key());
