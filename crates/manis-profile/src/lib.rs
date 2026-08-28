@@ -1025,7 +1025,7 @@ pub fn render_mihomo_yaml_with_tun(
     writeln!(yaml, "mode: {}", quoted(profile.mode.as_mihomo_mode()))
         .expect("String write cannot fail");
     yaml.push_str(
-        "unified-delay: true\nallow-lan: false\nbind-address: \"127.0.0.1\"\nipv6: false\n",
+        "unified-delay: true\nfind-process-mode: \"always\"\nallow-lan: false\nbind-address: \"127.0.0.1\"\nipv6: false\n",
     );
     writeln!(yaml, "mixed-port: {}", profile.mixed_port).expect("String write cannot fail");
     writeln!(

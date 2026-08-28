@@ -127,6 +127,7 @@ fn qx_default_renders_ordered_minimal_mihomo_yaml() {
 
     assert_eq!(profile.mode, ProfileMode::Rule);
     assert!(yaml.contains("mode: \"rule\""));
+    assert!(yaml.contains("find-process-mode: \"always\""));
     assert!(yaml.contains("unified-delay: true"));
     assert!(yaml.contains("allow-lan: false"));
     assert!(yaml.contains("bind-address: \"127.0.0.1\""));
