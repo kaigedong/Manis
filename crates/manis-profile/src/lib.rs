@@ -671,7 +671,7 @@ pub struct UserPolicyGroup {
     pub kind: UserPolicyGroupKind,
     pub provider_indexes: Vec<usize>,
     pub direct_proxies: Vec<Name>,
-    pub direct_groups: Vec<Name>,
+    pub direct_policies: Vec<PolicyRef>,
     pub filter: Option<String>,
 }
 
@@ -1343,7 +1343,7 @@ fn compile_user_groups(
             }
             if group.provider_indexes.is_empty()
                 && group.direct_proxies.is_empty()
-                && group.direct_groups.is_empty()
+                && group.direct_policies.is_empty()
             {
                 return Err(ProfileError::InvalidValue("user proxy group"));
             }
@@ -1382,14 +1382,17 @@ fn compile_user_groups(
                 }
                 proxies.push(PolicyRef::Proxy(name));
             }
-            for name in group.direct_groups {
-                if name == group.name || !group_names.contains(&name) {
+            let mut seen_policies = HashSet::new();
+            for policy in group.direct_policies {
+                if let PolicyRef::Group(name) = &policy
+                    && (name == &group.name || !group_names.contains(name))
+                {
                     return Err(ProfileError::DanglingReference);
                 }
-                if !seen_proxies.insert(name.clone()) {
+                if matches!(policy, PolicyRef::Proxy(_)) || !seen_policies.insert(policy.clone()) {
                     return Err(ProfileError::DuplicateName);
                 }
-                proxies.push(PolicyRef::Group(name));
+                proxies.push(policy);
             }
 
             let kind = match group.kind {

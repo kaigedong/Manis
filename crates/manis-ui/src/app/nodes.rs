@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use gpui::{
     AnyElement, Context, Div, FontWeight, ParentElement, Role, Stateful, Styled, Toggled, div,
@@ -1139,6 +1139,13 @@ impl ManisApp {
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let inventory = self.policy_candidate_inventory();
+        let has_local_sources =
+            !self.imported_subscriptions.is_empty() || !self.saved_vless_nodes.is_empty();
+        let source_labels = self
+            .node_source_groups(has_local_sources, language)
+            .into_iter()
+            .map(|group| (group.id, group.name))
+            .collect::<BTreeMap<_, _>>();
         let selected_count = draft.explicit_members.len();
         let mut list =
             div()
@@ -1184,10 +1191,15 @@ impl ManisApp {
                             .text_size(TextRole::Metadata.size())
                             .line_height(TextRole::Metadata.line_height())
                             .text_color(theme.text_tertiary)
-                            .child(if member.source_id.starts_with("policy:") {
-                                language.text("Policy group", "策略组").to_owned()
-                            } else {
-                                member.source_id
+                            .child(match member.source_id.as_str() {
+                                "builtin" => language.text("Built-in", "内置").to_owned(),
+                                source if source.starts_with("policy:") => {
+                                    language.text("Policy group", "策略组").to_owned()
+                                }
+                                source => source_labels
+                                    .get(source)
+                                    .cloned()
+                                    .unwrap_or_else(|| source.to_owned()),
                             }),
                     ),
                 )
@@ -1281,26 +1293,35 @@ impl ManisApp {
     fn node_inventory(&self) -> Vec<NodeIdentity> {
         let has_local_sources =
             !self.imported_subscriptions.is_empty() || !self.saved_vless_nodes.is_empty();
-        let mut inventory = BTreeSet::new();
+        let mut inventory = Vec::new();
+        let mut seen = BTreeSet::new();
         for group in self.node_source_groups(has_local_sources, self.language()) {
             for provider in group.providers {
                 for node in &provider.nodes {
-                    if let Ok(identity) = NodeIdentity::new(&group.id, &node.name) {
-                        inventory.insert(identity);
+                    if let Ok(identity) = NodeIdentity::new(&group.id, &node.name)
+                        && seen.insert(identity.clone())
+                    {
+                        inventory.push(identity);
                     }
                 }
             }
             for node in group.saved_nodes {
-                if let Ok(identity) = NodeIdentity::new(&group.id, &node.name) {
-                    inventory.insert(identity);
+                if let Ok(identity) = NodeIdentity::new(&group.id, &node.name)
+                    && seen.insert(identity.clone())
+                {
+                    inventory.push(identity);
                 }
             }
         }
-        inventory.into_iter().collect()
+        inventory
     }
 
     fn policy_candidate_inventory(&self) -> Vec<NodeIdentity> {
-        let mut inventory = self.node_inventory().into_iter().collect::<BTreeSet<_>>();
+        let mut inventory = ["DIRECT", "REJECT"]
+            .into_iter()
+            .filter_map(|name| NodeIdentity::new("builtin", name).ok())
+            .collect::<Vec<_>>();
+        inventory.extend(self.node_inventory());
         let editing_id = self
             .managed_policy_draft
             .as_ref()
@@ -1310,10 +1331,10 @@ impl ManisApp {
                 && let Ok(identity) =
                     NodeIdentity::new(&format!("policy:{}", group.id), &group.name)
             {
-                inventory.insert(identity);
+                inventory.push(identity);
             }
         }
-        inventory.into_iter().collect()
+        inventory
     }
 
     fn managed_policy_candidate_count(&self, group: &ManagedPolicyGroup) -> usize {
@@ -1324,12 +1345,12 @@ impl ManisApp {
     }
 
     pub(super) fn managed_policy_candidate_names(&self, group: &ManagedPolicyGroup) -> Vec<String> {
+        let mut seen = BTreeSet::new();
         self.node_inventory()
             .into_iter()
             .filter(|node| group.matches(&node.source_id, &node.node_name))
             .map(|node| node.node_name)
-            .collect::<BTreeSet<_>>()
-            .into_iter()
+            .filter(|name| seen.insert(name.clone()))
             .collect()
     }
 

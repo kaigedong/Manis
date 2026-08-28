@@ -2995,6 +2995,35 @@ pub(crate) fn new_managed_policy_id() -> String {
     next_stored_source_id(MANAGED_POLICY_PREFIX)
 }
 
+fn direct_policy_for_member(
+    member: &NodeIdentity,
+    current_group_id: &str,
+    groups: &[ManagedPolicyGroup],
+) -> Result<Option<PolicyRef>, LoadError> {
+    if member.source_id == "builtin" {
+        return Ok(match member.node_name.as_str() {
+            "DIRECT" => Some(PolicyRef::Direct),
+            "REJECT" => Some(PolicyRef::Reject),
+            _ => None,
+        });
+    }
+    let Some(policy_id) = member.source_id.strip_prefix("policy:") else {
+        return Ok(None);
+    };
+    if policy_id == current_group_id {
+        return Ok(None);
+    }
+    groups
+        .iter()
+        .find(|candidate| candidate.id == policy_id)
+        .map(|candidate| {
+            Name::parse(&candidate.name)
+                .map(PolicyRef::Group)
+                .map_err(|error| LoadError::Runtime(error.to_string()))
+        })
+        .transpose()
+}
+
 fn compile_managed_policy_groups(
     groups: &[ManagedPolicyGroup],
     stored_provider_indexes: &HashMap<&str, usize>,
@@ -3007,7 +3036,7 @@ fn compile_managed_policy_groups(
         .map(|group| {
             let mut provider_indexes = Vec::new();
             let mut direct_proxies = Vec::new();
-            let mut direct_groups = Vec::new();
+            let mut direct_policies = Vec::new();
             let filter = match &group.matcher {
                 PolicyCandidateMatcher::All => {
                     provider_indexes.extend(0..provider_count);
@@ -3030,15 +3059,12 @@ fn compile_managed_policy_groups(
                 PolicyCandidateMatcher::Explicit(members) => {
                     let mut provider_names = Vec::new();
                     for member in members {
-                        if let Some(policy_id) = member.source_id.strip_prefix("policy:") {
-                            if policy_id != group.id
-                                && let Some(candidate) =
-                                    groups.iter().find(|item| item.id == policy_id)
+                        if member.source_id == "builtin" || member.source_id.starts_with("policy:")
+                        {
+                            if let Some(policy) =
+                                direct_policy_for_member(member, &group.id, groups)?
                             {
-                                direct_groups.push(
-                                    Name::parse(&candidate.name)
-                                        .map_err(|error| LoadError::Runtime(error.to_string()))?,
-                                );
+                                direct_policies.push(policy);
                             }
                             continue;
                         }
@@ -3074,7 +3100,9 @@ fn compile_managed_policy_groups(
                     })
                 }
             };
-            if provider_indexes.is_empty() && direct_proxies.is_empty() && direct_groups.is_empty()
+            if provider_indexes.is_empty()
+                && direct_proxies.is_empty()
+                && direct_policies.is_empty()
             {
                 return Err(LoadError::Runtime(format!(
                     "策略组“{}”没有匹配到可用节点",
@@ -3095,7 +3123,7 @@ fn compile_managed_policy_groups(
                 kind,
                 provider_indexes,
                 direct_proxies,
-                direct_groups,
+                direct_policies,
                 filter,
             })
         })
@@ -6147,7 +6175,7 @@ IP-CIDR,192.0.2.0/24,DIRECT
             },
             provider_indexes: vec![0],
             direct_proxies: Vec::new(),
-            direct_groups: Vec::new(),
+            direct_policies: Vec::new(),
             filter: None,
         };
         let mut profile = manis_profile::Profile::qx_sources_with_groups(
@@ -6254,7 +6282,7 @@ IP-CIDR,192.0.2.0/24,DIRECT
         use manis_core::{
             ManagedPolicyGroup, ManagedPolicyStrategy, NodeIdentity, PolicyCandidateMatcher,
         };
-        use manis_profile::{UserPolicyGroupKind, VlessProxy};
+        use manis_profile::{Name, PolicyRef, UserPolicyGroupKind, VlessProxy};
 
         let saved = VlessProxy::parse_share_link(
             "vless://00000000-0000-4000-8000-000000000000@edge.example.invalid:443?security=tls#Private%20Edge",
@@ -6271,6 +6299,8 @@ IP-CIDR,192.0.2.0/24,DIRECT
         explicit.toggle_member(NodeIdentity::new("subscription:source-a", "Tokyo (Fast)")?);
         explicit.toggle_member(NodeIdentity::new("saved", "Private Edge")?);
         explicit.toggle_member(NodeIdentity::new("policy:group-a-1", "香港优选")?);
+        explicit.toggle_member(NodeIdentity::new("builtin", "DIRECT")?);
+        explicit.toggle_member(NodeIdentity::new("builtin", "REJECT")?);
 
         let compiled =
             super::compile_managed_policy_groups(&[latency, explicit], &indexes, &[saved], 2)?;
@@ -6290,7 +6320,13 @@ IP-CIDR,192.0.2.0/24,DIRECT
             Some("^(?:Tokyo \\(Fast\\))$")
         );
         assert_eq!(compiled[1].direct_proxies.len(), 1);
-        assert_eq!(compiled[1].direct_groups[0].as_str(), "香港优选");
+        assert!(compiled[1].direct_policies.contains(&PolicyRef::Direct));
+        assert!(compiled[1].direct_policies.contains(&PolicyRef::Reject));
+        assert!(
+            compiled[1]
+                .direct_policies
+                .contains(&PolicyRef::Group(Name::parse("香港优选")?))
+        );
         Ok(())
     }
 

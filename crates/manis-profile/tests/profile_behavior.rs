@@ -557,7 +557,7 @@ fn qx_sources_with_groups_only_compiles_user_groups_and_the_hidden_global_exit()
         },
         provider_indexes: vec![0],
         direct_proxies: vec![saved_name],
-        direct_groups: Vec::new(),
+        direct_policies: Vec::new(),
         filter: Some("HK|JP|US".to_owned()),
     };
     let manual = UserPolicyGroup {
@@ -566,7 +566,9 @@ fn qx_sources_with_groups_only_compiles_user_groups_and_the_hidden_global_exit()
         kind: UserPolicyGroupKind::Select,
         provider_indexes: Vec::new(),
         direct_proxies: vec![Name::parse("Saved").expect("valid proxy")],
-        direct_groups: vec![Name::parse("Streaming").expect("valid group")],
+        direct_policies: vec![PolicyRef::Group(
+            Name::parse("Streaming").expect("valid group"),
+        )],
         filter: None,
     };
 
@@ -609,7 +611,7 @@ fn qx_sources_with_groups_rejects_bad_user_group_references_and_names() {
         kind: UserPolicyGroupKind::Select,
         provider_indexes: vec![0],
         direct_proxies: vec![Name::parse("Saved").expect("valid proxy")],
-        direct_groups: Vec::new(),
+        direct_policies: Vec::new(),
         filter: None,
     };
 
