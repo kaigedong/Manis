@@ -381,10 +381,7 @@ fn route_summary_with_group(
                 .map(|stage| route_stage_label(stage, language)),
         );
     let route = stages.by_ref().collect::<Vec<_>>().join(" → ");
-    (!route.is_empty()).then(|| match language {
-        Language::English => format!("Route · {route}"),
-        Language::SimplifiedChinese => format!("路由 · {route}"),
-    })
+    (!route.is_empty()).then_some(route)
 }
 
 fn normalized_rule_kind(value: &str) -> String {
@@ -546,7 +543,7 @@ mod tests {
                 crate::localization::Language::SimplifiedChinese
             )
             .as_deref(),
-            Some("路由 · Manual rules → HK05")
+            Some("Manual rules → HK05")
         );
 
         let policy_route = vec![
@@ -561,7 +558,7 @@ mod tests {
                 crate::localization::Language::English
             )
             .as_deref(),
-            Some("Route · Streaming rules → Streaming → Hong Kong → HK05")
+            Some("Streaming rules → Streaming → Hong Kong → HK05")
         );
 
         assert_eq!(
@@ -570,7 +567,7 @@ mod tests {
                 crate::localization::Language::SimplifiedChinese
             )
             .as_deref(),
-            Some("路由 · 直连")
+            Some("直连")
         );
     }
 

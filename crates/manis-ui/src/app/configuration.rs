@@ -3888,6 +3888,8 @@ impl ManisApp {
                     .bg(theme.surface_low)
                     .item(|item| {
                         item.open(open)
+                            .rounded(Radius::Pane.px())
+                            .overflow_hidden()
                             .title_style(accordion_title_style(compact))
                             .content_style(accordion_content_style())
                             .bg(theme.surface_low)
@@ -4017,6 +4019,8 @@ impl ManisApp {
                 .bg(theme.surface_low)
                 .item(|item| {
                     item.open(open)
+                        .rounded(Radius::Pane.px())
+                        .overflow_hidden()
                         .title_style(accordion_title_style(compact))
                         .content_style(accordion_content_style())
                         .bg(theme.surface_low)

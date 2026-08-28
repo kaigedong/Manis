@@ -4487,6 +4487,13 @@ impl ManisApp {
                     .min_h(px(64.0))
                     .px(Space::Lg.px())
                     .py(Space::Md.px())
+                    .rounded_tl(Radius::Pane.px())
+                    .rounded_tr(Radius::Pane.px())
+                    .when(!expanded, |header| {
+                        header
+                            .rounded_bl(Radius::Pane.px())
+                            .rounded_br(Radius::Pane.px())
+                    })
                     .bg(theme.surface_low)
                     .flex()
                     .items_center()
@@ -4778,6 +4785,13 @@ impl ManisApp {
                 .min_h(px(64.0))
                 .px(Space::Lg.px())
                 .py(Space::Md.px())
+                .rounded_tl(Radius::Pane.px())
+                .rounded_tr(Radius::Pane.px())
+                .when(!expanded, |header| {
+                    header
+                        .rounded_bl(Radius::Pane.px())
+                        .rounded_br(Radius::Pane.px())
+                })
                 .flex()
                 .items_center()
                 .gap(Space::Md.px())

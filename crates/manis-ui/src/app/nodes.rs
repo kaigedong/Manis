@@ -44,6 +44,7 @@ struct PolicyEditorPopup {
     content: AnyElement,
     width: f32,
     max_height: f32,
+    show_divider: bool,
 }
 
 impl PolicyEditorPopup {
@@ -60,7 +61,13 @@ impl PolicyEditorPopup {
             content: content.into_any_element(),
             width,
             max_height,
+            show_divider: true,
         }
+    }
+
+    fn with_divider(mut self, show_divider: bool) -> Self {
+        self.show_divider = show_divider;
+        self
     }
 }
 
@@ -682,6 +689,7 @@ impl ManisApp {
         let icon_menu = Self::policy_icon_menu(draft, language, theme, cx);
         let basics = div()
             .rounded(Radius::Pane.px())
+            .overflow_hidden()
             .border_1()
             .border_color(theme.outline_subtle)
             .bg(theme.surface_high)
@@ -704,6 +712,7 @@ impl ManisApp {
                 language.text("Policy group name", "策略组名称"),
                 true,
                 name_input,
+                true,
                 theme,
             ))
             .child(Self::policy_editor_popup_row(
@@ -723,13 +732,17 @@ impl ManisApp {
                     icon_menu,
                     popover_width,
                     320.0,
-                ),
+                )
+                .with_divider(false),
                 cx,
             ));
 
         let candidate_mode_menu = Self::policy_candidate_mode_menu(draft, language, theme, cx);
+        let has_candidate_details = draft.matcher_kind != PolicyCandidateMatcherKind::All
+            || draft.strategy == ManagedPolicyStrategy::LowestLatency;
         let mut nodes = div()
             .rounded(Radius::Pane.px())
+            .overflow_hidden()
             .border_1()
             .border_color(theme.outline_subtle)
             .bg(theme.surface_high)
@@ -745,7 +758,8 @@ impl ManisApp {
                     candidate_mode_menu,
                     popover_width,
                     280.0,
-                ),
+                )
+                .with_divider(has_candidate_details),
                 cx,
             ));
         if draft.matcher_kind == PolicyCandidateMatcherKind::NameContains {
@@ -753,6 +767,7 @@ impl ManisApp {
                 language.text("Node name contains", "节点名称包含"),
                 false,
                 filter_input,
+                draft.strategy == ManagedPolicyStrategy::LowestLatency,
                 theme,
             ));
         }
@@ -775,7 +790,8 @@ impl ManisApp {
                     candidate_menu,
                     popover_width.max(480.0),
                     420.0,
-                ),
+                )
+                .with_divider(draft.strategy == ManagedPolicyStrategy::LowestLatency),
                 cx,
             ));
         }
@@ -793,7 +809,8 @@ impl ManisApp {
                     interval_menu,
                     popover_width,
                     320.0,
-                ),
+                )
+                .with_divider(false),
                 cx,
             ));
         }
@@ -868,6 +885,7 @@ impl ManisApp {
             content,
             width,
             max_height,
+            show_divider,
         } = popup;
         let app = cx.entity();
         let trigger = Button::new(id)
@@ -918,8 +936,8 @@ impl ManisApp {
         div()
             .min_h(px(64.0))
             .px_4()
-            .border_b_1()
             .border_color(theme.outline_subtle)
+            .when(show_divider, gpui::Styled::border_b_1)
             .flex()
             .items_center()
             .gap_4()
@@ -937,14 +955,15 @@ impl ManisApp {
         label: &'static str,
         required: bool,
         input: Option<gpui::Entity<crate::subscription_input::SubscriptionTextInput>>,
+        show_divider: bool,
         theme: Theme,
     ) -> Div {
         div()
             .min_h(px(82.0))
             .px_4()
             .py_3()
-            .border_b_1()
             .border_color(theme.outline_subtle)
+            .when(show_divider, gpui::Styled::border_b_1)
             .child(
                 div()
                     .mb_2()
