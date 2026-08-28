@@ -1,6 +1,6 @@
 use gpui::{
-    Anchor, AnyElement, Context, Div, Entity, FontWeight, ParentElement, Role, Stateful, Styled,
-    anchored, deferred, div, point, prelude::*, px,
+    Anchor, AnyElement, Context, Div, Entity, Focusable, FontWeight, KeyDownEvent, ParentElement,
+    Role, Stateful, Styled, Window, anchored, deferred, div, point, prelude::*, px,
 };
 use manis_core::{KernelKind, WindowSizeClass};
 use manis_profile::{QxRuleKind, SecretUrl};
@@ -721,7 +721,6 @@ impl ManisApp {
                         div()
                             .max_w(px(1040.0))
                             .mx_auto()
-                            .child(self.manual_rule_editor_panel(theme, language, compact, cx))
                             .child(self.active_rules_panel(theme, language, compact, cx)),
                     ),
             )
@@ -1983,6 +1982,7 @@ impl ManisApp {
             Some(QxRuleSourceRefreshState::Failed { message, .. }) => Some(message.clone()),
             _ => None,
         };
+        let target_policy = self.effective_rule_target(source.target_policy.as_str(), language);
         div()
             .mt_2()
             .p_3()
@@ -2034,16 +2034,12 @@ impl ManisApp {
                     .child(if language == Language::English {
                         format!(
                             "{} rules · {} skipped · → {} · {last_update}",
-                            source.rule_count,
-                            source.diagnostic_count,
-                            source.target_policy.as_str()
+                            source.rule_count, source.diagnostic_count, target_policy
                         )
                     } else {
                         format!(
                             "{} 条 · 跳过 {} 条 · → {} · {last_update}",
-                            source.rule_count,
-                            source.diagnostic_count,
-                            source.target_policy.as_str()
+                            source.rule_count, source.diagnostic_count, target_policy
                         )
                     }),
             )
@@ -2163,12 +2159,29 @@ impl ManisApp {
             )
     }
 
+    fn open_manual_rule_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.manual_rule_editor_state = super::ManualRuleEditorState::Open;
+        self.manual_rule_popover = None;
+        self.manual_rule_error = None;
+        if let Some(input) = self.manual_rule_input.as_ref() {
+            input.focus_handle(cx).focus(window, cx);
+        }
+        cx.notify();
+    }
+
+    fn close_manual_rule_editor(&mut self, cx: &mut Context<Self>) {
+        self.manual_rule_editor_state = super::ManualRuleEditorState::Closed;
+        self.manual_rule_popover = None;
+        self.manual_rule_error = None;
+        cx.notify();
+    }
+
     pub(super) fn ensure_manual_rule_input(&mut self, theme: Theme, cx: &mut Context<Self>) {
         if !self
             .manual_rule_targets()
             .contains(&self.manual_rule_target)
         {
-            "Proxy".clone_into(&mut self.manual_rule_target);
+            self.manual_rule_target = self.manual_rule_targets().remove(0);
         }
         let placeholder = manual_rule_placeholder(self.manual_rule_kind, self.language());
         let second_placeholder =
@@ -2223,12 +2236,12 @@ impl ManisApp {
     }
 
     fn manual_rule_targets(&self) -> Vec<String> {
-        let mut targets = vec!["Proxy".to_owned(), "DIRECT".to_owned(), "REJECT".to_owned()];
-        for group in &self.managed_policy_groups {
-            if !targets.contains(&group.name) {
-                targets.push(group.name.clone());
-            }
-        }
+        let mut targets = self
+            .managed_policy_groups
+            .iter()
+            .map(|group| group.name.clone())
+            .collect::<Vec<_>>();
+        targets.extend(["DIRECT".to_owned(), "REJECT".to_owned()]);
         targets
     }
 
@@ -2320,6 +2333,8 @@ impl ManisApp {
             second_input.update(cx, SubscriptionTextInput::clear_without_event);
         }
         self.manual_rule_second_enabled = false;
+        self.manual_rule_editor_state = super::ManualRuleEditorState::Closed;
+        self.manual_rule_popover = None;
         record_event(
             LogLevel::Info,
             "routing.manual_rule.added",
@@ -2675,13 +2690,13 @@ impl ManisApp {
     }
 
     #[allow(clippy::too_many_lines)]
-    fn manual_rule_editor_panel(
+    pub(super) fn manual_rule_editor_modal(
         &self,
         theme: Theme,
         language: Language,
         compact: bool,
         cx: &mut Context<Self>,
-    ) -> Div {
+    ) -> Stateful<Div> {
         let target_width = if compact { 260.0 } else { 240.0 };
         let target_menu = (self.manual_rule_popover == Some(ManualRulePopover::Target))
             .then(|| self.manual_rule_target_menu(theme, target_width, cx));
@@ -2738,29 +2753,52 @@ impl ManisApp {
             );
         }
 
-        let actions = div()
+        let target_field = div()
             .mt_4()
-            .pt_3()
+            .child(
+                div()
+                    .mb_1()
+                    .text_size(px(10.0))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(theme.text_secondary)
+                    .child(language.text("Policy after match", "命中后的策略")),
+            )
+            .child(target);
+
+        let footer = div()
+            .flex_shrink_0()
+            .px_5()
+            .py_3()
             .border_t_1()
             .border_color(theme.outline_subtle)
             .flex()
-            .when(compact, gpui::Styled::flex_col)
-            .items_stretch()
+            .items_center()
+            .justify_end()
             .gap_2()
             .child(
                 div()
-                    .when(compact, gpui::Styled::w_full)
-                    .when(!compact, |item| item.w(px(240.0)))
-                    .flex_shrink_0()
-                    .child(
-                        div()
-                            .mb_1()
-                            .text_size(px(10.0))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(theme.text_secondary)
-                            .child(language.text("Policy after match", "命中后的策略")),
-                    )
-                    .child(target),
+                    .id("cancel-manual-rule")
+                    .role(Role::Button)
+                    .aria_label(language.text("Cancel adding rule", "取消添加规则"))
+                    .tab_stop(true)
+                    .focusable()
+                    .cursor_pointer()
+                    .h(px(38.0))
+                    .px_4()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(theme.outline_subtle)
+                    .bg(theme.surface_high)
+                    .text_color(theme.text_primary)
+                    .text_size(px(11.0))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(language.text("Cancel", "取消"))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.close_manual_rule_editor(cx);
+                    })),
             )
             .child(
                 div()
@@ -2777,7 +2815,6 @@ impl ManisApp {
                     .text_color(theme.action_on_primary)
                     .text_size(px(11.0))
                     .font_weight(FontWeight::SEMIBOLD)
-                    .when(!compact, |button| button.mt(px(18.0)))
                     .flex()
                     .items_center()
                     .justify_center()
@@ -2786,44 +2823,97 @@ impl ManisApp {
             );
 
         div()
-            .w_full()
-            .min_w(px(0.0))
+            .id("manual-rule-modal-scrim")
+            .absolute()
+            .top_0()
+            .right_0()
+            .bottom_0()
+            .left_0()
             .p_4()
-            .mb_3()
-            .rounded_md()
-            .border_1()
-            .border_color(theme.outline_subtle)
-            .bg(theme.surface_high)
+            .bg(theme.surface_base.opacity(0.88))
+            .flex()
+            .items_center()
+            .justify_center()
+            .occlude()
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.close_manual_rule_editor(cx);
+            }))
             .child(
                 div()
-                    .text_size(px(13.0))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(language.text("Add routing rule", "添加分流规则")),
+                    .id("manual-rule-modal")
+                    .role(Role::Dialog)
+                    .aria_label(language.text("Add routing rule", "添加分流规则"))
+                    .tab_stop(true)
+                    .focusable()
+                    .w_full()
+                    .max_w(px(720.0))
+                    .max_h_full()
+                    .rounded_md()
+                    .bg(theme.surface_high)
+                    .shadow_xl()
+                    .overflow_hidden()
+                    .flex()
+                    .flex_col()
+                    .on_click(|_, _, cx| cx.stop_propagation())
+                    .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                        if event.keystroke.key == "escape" {
+                            cx.stop_propagation();
+                            this.close_manual_rule_editor(cx);
+                        }
+                    }))
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .px_5()
+                            .py_4()
+                            .border_b_1()
+                            .border_color(theme.outline_subtle)
+                            .child(
+                                div()
+                                    .text_size(px(17.0))
+                                    .font_weight(FontWeight::BOLD)
+                                    .child(language.text("Add routing rule", "添加分流规则")),
+                            )
+                            .child(
+                                div()
+                                    .mt_1()
+                                    .text_size(px(11.0))
+                                    .text_color(theme.text_secondary)
+                                    .child(language.text(
+                                        "All conditions must match. The selected policy is applied before subscribed rules.",
+                                        "同一条规则中的条件必须全部命中；所选策略优先于规则订阅。",
+                                    )),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .id("manual-rule-modal-body")
+                            .flex_1()
+                            .min_h(px(0.0))
+                            .overflow_y_scroll()
+                            .px_5()
+                            .py_4()
+                            .child(conditions)
+                            .child(target_field)
+                            .when_some(self.manual_rule_error, |body, error| {
+                                body.child(
+                                    div()
+                                        .mt_3()
+                                        .p_3()
+                                        .rounded_md()
+                                        .bg(theme.surface_low)
+                                        .text_size(px(11.0))
+                                        .text_color(theme.status_error)
+                                        .child(manual_rule_error_label(error, language)),
+                                )
+                            }),
+                    )
+                    .child(footer),
             )
-            .child(
-                div()
-                    .mt_1()
-                    .text_size(px(11.0))
-                    .text_color(theme.text_secondary)
-                    .child(language.text(
-                        "All conditions in one rule must match. The selected policy is then applied before subscribed rules.",
-                        "同一条规则中的条件必须全部命中；随后使用所选策略，并优先于订阅规则。",
-                    )),
-            )
-            .child(conditions)
-            .child(actions)
-            .when_some(self.manual_rule_error, |panel, error| {
-                panel.child(
-                    div()
-                        .mt_2()
-                        .text_size(px(11.0))
-                        .text_color(theme.status_error)
-                        .child(manual_rule_error_label(error, language)),
-                )
-            })
     }
 
     fn manual_routing_rule_row(
+        &self,
         order: usize,
         index: usize,
         rule: &crate::manual_rule::ManualRule,
@@ -2831,6 +2921,7 @@ impl ManisApp {
         language: Language,
         cx: &mut Context<Self>,
     ) -> Div {
+        let target = self.effective_rule_target(rule.target(), language);
         let mut matchers = div()
             .flex_1()
             .min_w(px(0.0))
@@ -2898,7 +2989,7 @@ impl ManisApp {
                     .text_size(px(11.0))
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(theme.action_primary)
-                    .child(rule.target().to_owned()),
+                    .child(target),
             )
             .child(
                 div()
@@ -2970,18 +3061,50 @@ impl ManisApp {
                     )
                     .child(
                         div()
-                            .px_2()
-                            .py_1()
-                            .rounded_sm()
-                            .bg(theme.action_soft)
-                            .text_size(px(10.0))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(theme.action_primary)
-                            .child(if language == Language::English {
-                                format!("{} rules", self.manual_rules.len() + remote_count + 2)
-                            } else {
-                                format!("{} 条", self.manual_rules.len() + remote_count + 2)
-                            }),
+                            .flex_shrink_0()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .px_2()
+                                    .py_1()
+                                    .rounded_sm()
+                                    .bg(theme.action_soft)
+                                    .text_size(px(10.0))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(theme.action_primary)
+                                    .child(if language == Language::English {
+                                        format!(
+                                            "{} rules",
+                                            self.manual_rules.len() + remote_count + 2
+                                        )
+                                    } else {
+                                        format!("{} 条", self.manual_rules.len() + remote_count + 2)
+                                    }),
+                            )
+                            .child(
+                                div()
+                                    .id("open-manual-rule-editor")
+                                    .role(Role::Button)
+                                    .aria_label(language.text("Add routing rule", "添加分流规则"))
+                                    .tab_stop(true)
+                                    .focusable()
+                                    .cursor_pointer()
+                                    .h(px(34.0))
+                                    .px_3()
+                                    .rounded_md()
+                                    .bg(theme.action_primary)
+                                    .text_size(px(11.0))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(theme.action_on_primary)
+                                    .flex()
+                                    .items_center()
+                                    .child(language.text("Add rule", "添加规则"))
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.open_manual_rule_editor(window, cx);
+                                    })),
+                            ),
                     ),
             );
 
@@ -3078,9 +3201,9 @@ impl ManisApp {
                     .border_color(theme.outline_subtle)
                     .bg(theme.surface_high);
                 for (index, rule) in self.manual_rules.iter().enumerate() {
-                    rules = rules.child(Self::manual_routing_rule_row(
-                        order, index, rule, theme, language, cx,
-                    ));
+                    rules = rules.child(
+                        self.manual_routing_rule_row(order, index, rule, theme, language, cx),
+                    );
                     order += 1;
                 }
                 manual_group = manual_group.child(rules);
@@ -3111,16 +3234,11 @@ impl ManisApp {
                 mihomo::current_unix_secs(),
                 language,
             );
+            let target_policy = self.effective_rule_target(source.target_policy.as_str(), language);
             let detail = if language == Language::English {
-                format!(
-                    "{rule_count} rules · Target {} · {update}",
-                    source.target_policy.as_str()
-                )
+                format!("{rule_count} rules · Target {target_policy} · {update}")
             } else {
-                format!(
-                    "{rule_count} 条规则 · 目标 {} · {update}",
-                    source.target_policy.as_str()
-                )
+                format!("{rule_count} 条规则 · 目标 {target_policy} · {update}")
             };
             let toggle_key = expansion_key.clone();
             let mut source_group = div()
@@ -3195,7 +3313,7 @@ impl ManisApp {
                         order,
                         Self::qx_rule_kind_label(rule.kind),
                         &rule.value,
-                        source.target_policy.as_str(),
+                        &target_policy,
                         theme,
                     ));
                     order += 1;
@@ -3242,7 +3360,7 @@ impl ManisApp {
                 order + 1,
                 "MATCH",
                 language.text("Remaining traffic", "其余流量"),
-                "Proxy",
+                language.text("Global exit", "全局出口"),
                 theme,
             ));
         list
@@ -3384,13 +3502,28 @@ impl ManisApp {
     }
 
     fn qx_rule_targets(&self) -> Vec<String> {
-        let mut targets = vec!["Proxy".to_owned(), "DIRECT".to_owned()];
-        for group in &self.managed_policy_groups {
-            if !targets.iter().any(|target| target == &group.name) {
-                targets.push(group.name.clone());
-            }
-        }
+        let mut targets = self
+            .managed_policy_groups
+            .iter()
+            .map(|group| group.name.clone())
+            .collect::<Vec<_>>();
+        targets.push("DIRECT".to_owned());
         targets
+    }
+
+    fn effective_rule_target(&self, target: &str, language: Language) -> String {
+        if target != "Proxy"
+            || self
+                .managed_policy_groups
+                .iter()
+                .any(|group| group.name == target)
+        {
+            return target.to_owned();
+        }
+        self.managed_policy_groups.first().map_or_else(
+            || language.text("Global exit", "全局出口").to_owned(),
+            |group| group.name.clone(),
+        )
     }
 
     fn cycle_qx_rule_target(&mut self) {
@@ -3448,7 +3581,8 @@ impl ManisApp {
                 .iter()
                 .find(|existing| existing.source == source)
         {
-            let target_policy = existing.target_policy.as_str().to_owned();
+            let target_policy =
+                self.effective_rule_target(existing.target_policy.as_str(), self.language());
             self.qx_rule_feedback = QxRuleImportFeedback::AlreadyExists {
                 source_id: existing.id.clone(),
                 rule_count: existing.rule_count,
@@ -3519,7 +3653,8 @@ impl ManisApp {
                         let rule_count = stored.rule_count;
                         let diagnostic_count = stored.diagnostic_count;
                         let stored_id = stored.id.clone();
-                        let target_policy = stored.target_policy.as_str().to_owned();
+                        let target_policy = this
+                            .effective_rule_target(stored.target_policy.as_str(), this.language());
                         if let Some(existing) = this
                             .qx_rule_sources
                             .iter_mut()
@@ -3559,7 +3694,8 @@ impl ManisApp {
                         );
                     }
                     Ok(ImportQxRuleSuccess::AlreadyExists { stored }) => {
-                        let target_policy = stored.target_policy.as_str().to_owned();
+                        let target_policy = this
+                            .effective_rule_target(stored.target_policy.as_str(), this.language());
                         let source_id = stored.id.clone();
                         let rule_count = stored.rule_count;
                         if !this

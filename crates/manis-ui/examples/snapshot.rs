@@ -583,6 +583,10 @@ fn capture_routing_rules(
         save_screenshot(cx, window, file_name)?;
         if width >= 1_280.0 {
             capture_routing_rule_interactions(cx, window)?;
+        } else {
+            cx.simulate_click(window, point(px(654.0), px(157.0)), Modifiers::none());
+            refresh(cx, window)?;
+            save_screenshot(cx, window, "routing-rules-compact-add-modal.png")?;
         }
         close_window(cx, window)?;
     }
@@ -597,6 +601,12 @@ fn capture_routing_rule_interactions(
     window: gpui::AnyWindowHandle,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use gpui::{Modifiers, point, px};
+
+    cx.simulate_click(window, point(px(1_286.0), px(190.0)), Modifiers::none());
+    refresh(cx, window)?;
+    save_screenshot(cx, window, "routing-rules-wide-add-modal.png")?;
+    cx.simulate_click(window, point(px(270.0), px(240.0)), Modifiers::none());
+    refresh(cx, window)?;
 
     cx.simulate_click(window, point(px(410.0), px(260.0)), Modifiers::none());
     refresh(cx, window)?;

@@ -2,15 +2,20 @@ use std::fs;
 use std::path::Path;
 
 use manis_profile::{
-    HealthCheck, LogLevel, Name, OutboundProxy, PolicyGroup, PolicyGroupKind, PolicyRef, Profile,
-    ProfileError, ProfileMode, ProxyDnsServer, ProxyProvider, QxRuleDiagnosticKind, QxRuleKind,
-    QxRuleList, Rule, SecretUrl, SingBoxOptions, UserPolicyGroup, UserPolicyGroupKind, VlessProxy,
-    render_mihomo_yaml, render_mihomo_yaml_with_tun, render_sing_box_json, write_private_atomic,
+    HealthCheck, LogLevel, MANIS_GLOBAL_GROUP_NAME, Name, OutboundProxy, PolicyGroup,
+    PolicyGroupKind, PolicyRef, Profile, ProfileError, ProfileMode, ProxyDnsServer, ProxyProvider,
+    QxRuleDiagnosticKind, QxRuleKind, QxRuleList, Rule, SecretUrl, SingBoxOptions, UserPolicyGroup,
+    UserPolicyGroupKind, VlessProxy, render_mihomo_yaml, render_mihomo_yaml_with_tun,
+    render_sing_box_json, write_private_atomic,
 };
 
 fn fixture_secret() -> SecretUrl {
     SecretUrl::parse_https("https://subscription.example.invalid/client?token=fixture-secret")
         .expect("fixture url is valid")
+}
+
+fn global_exit_policy() -> PolicyRef {
+    PolicyRef::Group(Name::parse(MANIS_GLOBAL_GROUP_NAME).expect("valid internal group"))
 }
 
 #[test]
@@ -147,14 +152,15 @@ fn qx_default_renders_ordered_minimal_mihomo_yaml() {
         yaml.contains("url: \"https://subscription.example.invalid/client?token=fixture-secret\"")
     );
     assert!(yaml.contains("type: \"select\""));
-    assert!(yaml.contains("type: \"url-test\""));
     assert!(yaml.contains("- \"GEOIP,CN,DIRECT,no-resolve\""));
-    assert!(yaml.contains("- \"MATCH,Proxy\""));
+    assert!(yaml.contains("- \"MATCH,__MANIS_GLOBAL__\""));
     assert!(
         yaml.find("proxy-providers:").expect("providers section")
             < yaml.find("proxy-groups:").expect("groups section")
     );
-    assert!(yaml.find("- \"GEOIP,CN,DIRECT,no-resolve\"") < yaml.find("- \"MATCH,Proxy\""));
+    assert!(
+        yaml.find("- \"GEOIP,CN,DIRECT,no-resolve\"") < yaml.find("- \"MATCH,__MANIS_GLOBAL__\"")
+    );
 }
 
 #[test]
@@ -237,8 +243,8 @@ fn vless_share_link_compiles_into_a_direct_proxy_and_policy_reference() {
     let proxy_name = vless.name().clone();
     let mut profile = Profile::qx_default(fixture_secret()).expect("default profile is valid");
     profile.proxies.push(OutboundProxy::Vless(vless));
-    let PolicyGroupKind::Select { proxies, .. } = &mut profile.groups[1].kind else {
-        panic!("Proxy is a select group");
+    let PolicyGroupKind::Select { proxies, .. } = &mut profile.groups[0].kind else {
+        panic!("the hidden global exit is a select group");
     };
     proxies.insert(0, PolicyRef::Proxy(proxy_name));
 
@@ -314,7 +320,6 @@ fn manual_reality_tcp_profile_renders_as_sing_box_json() {
             "\"clash_mode\": \"Global\", \"action\": \"route\", \"outbound\": \"GLOBAL\""
         )
     );
-    assert!(json.contains("\"type\": \"urltest\""));
     assert!(json.contains("\"rule_set\": \"geoip-cn\""));
     assert!(json.contains("\"external_controller\": \"127.0.0.1:19090\""));
     assert!(json.contains("\"secret\": \"fixture-controller-secret\""));
@@ -380,7 +385,7 @@ fn qx_manual_rule_shapes_render_exactly_for_mihomo() {
         [
             Rule::DomainWildcard {
                 value: "*.example.?om".to_owned(),
-                policy: PolicyRef::Group(Name::parse("Proxy").expect("policy")),
+                policy: global_exit_policy(),
             },
             Rule::IpCidr {
                 value: "192.0.2.0/24".to_owned(),
@@ -394,17 +399,17 @@ fn qx_manual_rule_shapes_render_exactly_for_mihomo() {
             },
             Rule::IpAsn {
                 asn: 13_335,
-                policy: PolicyRef::Group(Name::parse("Proxy").expect("policy")),
+                policy: global_exit_policy(),
                 no_resolve: true,
             },
         ],
     );
 
     let yaml = render_mihomo_yaml(&profile).expect("manual rules should render");
-    assert!(yaml.contains("DOMAIN-WILDCARD,*.example.?om,Proxy"));
+    assert!(yaml.contains("DOMAIN-WILDCARD,*.example.?om,__MANIS_GLOBAL__"));
     assert!(yaml.contains("IP-CIDR,192.0.2.0/24,DIRECT,no-resolve"));
     assert!(yaml.contains("IP-CIDR6,2001:db8::/32,DIRECT,no-resolve"));
-    assert!(yaml.contains("IP-ASN,13335,Proxy,no-resolve"));
+    assert!(yaml.contains("IP-ASN,13335,__MANIS_GLOBAL__,no-resolve"));
 }
 
 #[test]
@@ -420,7 +425,7 @@ fn sing_box_translates_wildcards_and_cidr_but_rejects_ip_asn() {
         [
             Rule::DomainWildcard {
                 value: "*.example.?om".to_owned(),
-                policy: PolicyRef::Group(Name::parse("Proxy").expect("policy")),
+                policy: global_exit_policy(),
             },
             Rule::IpCidr {
                 value: "192.0.2.0/24".to_owned(),
@@ -482,7 +487,7 @@ fn vless_parser_is_fail_closed_and_redacts_credentials() {
 }
 
 #[test]
-fn qx_sources_routes_subscriptions_and_saved_nodes_through_auto_and_proxy() {
+fn qx_sources_only_generates_the_hidden_global_exit_group() {
     let subscription = fixture_secret();
     let vless = VlessProxy::parse_share_link(
         "vless://00000000-0000-4000-8000-000000000000@edge.example.invalid:443?encryption=none&security=tls&type=ws&path=%2Fmanis#Saved",
@@ -495,14 +500,16 @@ fn qx_sources_routes_subscriptions_and_saved_nodes_through_auto_and_proxy() {
 
     assert!(yaml.contains("mixed-port: 17890"));
     assert!(yaml.contains("name: \"Saved\""));
-    assert_eq!(yaml.matches("- \"Saved\"").count(), 3);
+    assert_eq!(yaml.matches("- \"Saved\"").count(), 1);
     assert!(yaml.contains("- \"Subscription 1\""));
     assert!(yaml.contains("name: \"__MANIS_GLOBAL__\""));
-    assert!(yaml.contains("- \"MATCH,Proxy\""));
+    assert!(!yaml.contains("name: \"Auto\""));
+    assert!(!yaml.contains("name: \"Proxy\""));
+    assert!(yaml.contains("- \"MATCH,__MANIS_GLOBAL__\""));
 }
 
 #[test]
-fn qx_sources_with_groups_compiles_user_groups_before_auto_and_proxy() {
+fn qx_sources_with_groups_only_compiles_user_groups_and_the_hidden_global_exit() {
     let subscription = fixture_secret();
     let saved = VlessProxy::parse_share_link(
         "vless://00000000-0000-4000-8000-000000000000@edge.example.invalid:443?encryption=none&security=tls&type=ws&path=%2Fmanis#Saved",
@@ -546,11 +553,11 @@ fn qx_sources_with_groups_compiles_user_groups_before_auto_and_proxy() {
     assert!(yaml.contains("interval: 300"));
     assert!(yaml.contains("name: \"Manual Saved\""));
     assert!(yaml.contains("type: \"select\""));
-    assert!(yaml.find("name: \"Streaming\"") < yaml.find("name: \"Auto\""));
-    assert!(yaml.find("name: \"Manual Saved\"") < yaml.find("name: \"Auto\""));
-    assert!(yaml.find("name: \"Auto\"") < yaml.find("name: \"Proxy\""));
-    assert!(yaml.contains("      - \"Streaming\""));
-    assert!(yaml.contains("      - \"Manual Saved\""));
+    assert!(yaml.find("name: \"Streaming\"") < yaml.find("name: \"__MANIS_GLOBAL__\""));
+    assert!(yaml.find("name: \"Manual Saved\"") < yaml.find("name: \"__MANIS_GLOBAL__\""));
+    assert!(!yaml.contains("name: \"Auto\""));
+    assert!(!yaml.contains("name: \"Proxy\""));
+    assert!(yaml.contains("- \"MATCH,__MANIS_GLOBAL__\""));
 }
 
 #[test]
@@ -612,14 +619,17 @@ fn domain_keyword_rules_validate_and_render_to_mihomo_yaml() {
         0,
         Rule::DomainKeyword {
             value: "google".to_owned(),
-            policy: PolicyRef::Group(Name::parse("Proxy").expect("valid group")),
+            policy: global_exit_policy(),
         },
     );
 
     let yaml = render_mihomo_yaml(&profile).expect("profile should render");
 
-    assert!(yaml.contains("- \"DOMAIN-KEYWORD,google,Proxy\""));
-    assert!(yaml.find("- \"DOMAIN-KEYWORD,google,Proxy\"") < yaml.find("- \"MATCH,Proxy\""));
+    assert!(yaml.contains("- \"DOMAIN-KEYWORD,google,__MANIS_GLOBAL__\""));
+    assert!(
+        yaml.find("- \"DOMAIN-KEYWORD,google,__MANIS_GLOBAL__\"")
+            < yaml.find("- \"MATCH,__MANIS_GLOBAL__\"")
+    );
 }
 
 #[test]
@@ -636,7 +646,7 @@ fn destination_port_rules_render_to_mihomo_yaml_ahead_of_the_terminal_match() {
     let yaml = render_mihomo_yaml(&profile).expect("profile should render");
 
     assert!(yaml.contains("- \"DST-PORT,22,DIRECT\""));
-    assert!(yaml.find("- \"DST-PORT,22,DIRECT\"") < yaml.find("- \"MATCH,Proxy\""));
+    assert!(yaml.find("- \"DST-PORT,22,DIRECT\"") < yaml.find("- \"MATCH,__MANIS_GLOBAL__\""));
 }
 
 #[test]
@@ -766,7 +776,7 @@ DOMAIN,example.com,proxy
 ",
     );
     assert!(parsed.diagnostics.is_empty());
-    let proxy = Name::parse("Proxy").expect("valid group");
+    let proxy = Name::parse(MANIS_GLOBAL_GROUP_NAME).expect("valid internal group");
     let mapped_rules = parsed
         .to_profile_rules(|source| {
             (source.as_str().eq_ignore_ascii_case("PROXY")).then(|| PolicyRef::Group(proxy.clone()))
@@ -777,9 +787,9 @@ DOMAIN,example.com,proxy
     profile.rules.splice(0..0, mapped_rules);
     let yaml = render_mihomo_yaml(&profile).expect("mapped QX rules should render");
 
-    assert!(yaml.contains("- \"DOMAIN-KEYWORD,google,Proxy\""));
-    assert!(yaml.contains("- \"DOMAIN-SUFFIX,githubusercontent.com,Proxy\""));
-    assert!(yaml.contains("- \"DOMAIN,example.com,Proxy\""));
+    assert!(yaml.contains("- \"DOMAIN-KEYWORD,google,__MANIS_GLOBAL__\""));
+    assert!(yaml.contains("- \"DOMAIN-SUFFIX,githubusercontent.com,__MANIS_GLOBAL__\""));
+    assert!(yaml.contains("- \"DOMAIN,example.com,__MANIS_GLOBAL__\""));
 }
 
 #[test]
