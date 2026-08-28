@@ -31,7 +31,8 @@ jobs:
       - name: Check all targets
         run: cargo check --workspace --all-targets --locked
       - name: Run tests
-        run: cargo test --workspace --all-targets --locked
+        # Keep successful runs readable while preserving libtest's failure details.
+        run: cargo test --workspace --all-targets --locked --quiet
       - name: Run Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 

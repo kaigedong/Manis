@@ -703,6 +703,27 @@ fn maps_snapshot_to_owned_policy_catalog() -> Result<(), Box<dyn std::error::Err
 }
 
 #[test]
+fn policy_catalog_recovers_node_metadata_from_its_provider()
+-> Result<(), Box<dyn std::error::Error>> {
+    let transport = FakeTransport::default();
+    let mut snapshot =
+        MihomoClient::new(ControllerConfig::default(), &transport).fetch_snapshot()?;
+    snapshot.proxies.retain(|proxy| proxy.name != "US 01");
+
+    let catalog = to_policy_catalog(&snapshot)?;
+    let node = catalog
+        .iter()
+        .find(|group| group.name == "Proxy")
+        .and_then(|group| group.nodes.iter().find(|node| node.name == "US 01"))
+        .expect("provider-backed policy node");
+
+    assert_eq!(node.detail, "Trojan");
+    assert_eq!(node.provider.as_deref(), Some("airport"));
+    assert_eq!(node.alive, Some(false));
+    Ok(())
+}
+
+#[test]
 fn std_http_transport_sends_bearer_auth_and_accepts_chunked()
 -> Result<(), Box<dyn std::error::Error>> {
     let (address, handle) = spawn_one_response_server(
