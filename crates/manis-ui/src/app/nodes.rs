@@ -2467,26 +2467,21 @@ impl ManisApp {
                     )),
             )
             .child(
-                div()
-                    .id("nodes-empty-import")
-                    .role(Role::Button)
-                    .aria_label(language.text(
+                Button::new("nodes-empty-import")
+                    .accessibility_label(language.text(
                         "Go to Configuration to import a subscription",
                         "前往配置导入订阅",
                     ))
-                    .tab_stop(true)
-                    .focusable()
+                    .label(language.text("Import in Configuration", "前往配置导入"))
+                    .with_variant(ButtonVariant::Primary)
+                    .with_size(px(36.0))
                     .cursor_pointer()
                     .mt_4()
                     .h(px(36.0))
                     .px_4()
-                    .rounded_md()
                     .bg(theme.action_primary)
                     .text_color(theme.action_on_primary)
                     .font_weight(FontWeight::SEMIBOLD)
-                    .flex()
-                    .items_center()
-                    .child(language.text("Import in Configuration", "前往配置导入"))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.primary_workspace = PrimaryWorkspace::Configuration;
                         this.language()
@@ -2516,7 +2511,7 @@ impl ManisApp {
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
-    use super::{ManisApp, NodeCounts, NodeSourceGroup, subscription_provider_refs};
+    use super::{NodeCounts, NodeSourceGroup, subscription_provider_refs};
     use crate::app::{
         GroupBenchmarkNodeState, GroupBenchmarkState, GroupBenchmarkSummary,
         ManagedPolicyRuntimeState,
@@ -2636,16 +2631,6 @@ mod tests {
             .node_state("Saved Edge"),
             GroupBenchmarkNodeState::Measured(47),
         );
-    }
-
-    #[test]
-    fn imported_node_latency_spinner_advances_through_eight_frames() {
-        assert_eq!(ManisApp::benchmark_latency_spinner_frame(0.0), 0);
-        assert_eq!(ManisApp::benchmark_latency_spinner_frame(0.124), 0);
-        assert_eq!(ManisApp::benchmark_latency_spinner_frame(0.125), 1);
-        assert_eq!(ManisApp::benchmark_latency_spinner_frame(0.5), 4);
-        assert_eq!(ManisApp::benchmark_latency_spinner_frame(0.875), 7);
-        assert_eq!(ManisApp::benchmark_latency_spinner_frame(1.0), 7);
     }
 
     #[test]

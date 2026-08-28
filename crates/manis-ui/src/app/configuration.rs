@@ -3,7 +3,7 @@ use gpui::{
     Window, div, prelude::*, px,
 };
 use gpui_component::{
-    Sizable, WindowExt as _,
+    Disableable, IconName, Sizable, WindowExt as _,
     button::{Button, ButtonVariant, ButtonVariants},
     dialog::Dialog,
 };
@@ -953,20 +953,25 @@ impl ManisApp {
             .flex()
             .gap_2()
             .child(
-                div()
-                    .id("subscription-preview")
-                    .role(Role::Button)
-                    .aria_label(if direct_input {
+                Button::new("subscription-preview")
+                    .accessibility_label(if direct_input {
                         language.text("Save VLESS node", "保存 VLESS 节点")
                     } else {
                         language.text("Validate and import subscription", "验证并导入订阅")
                     })
-                    .tab_stop(true)
-                    .focusable()
+                    .label(if busy {
+                        language.text("Processing…", "正在处理…")
+                    } else if direct_input {
+                        language.text("Save VLESS node", "保存 VLESS 节点")
+                    } else {
+                        language.text("Import subscription", "导入订阅")
+                    })
+                    .loading(busy)
+                    .with_variant(ButtonVariant::Primary)
+                    .with_size(px(36.0))
                     .when(!busy, gpui::Styled::cursor_pointer)
                     .h(px(36.0))
                     .px_3()
-                    .rounded_md()
                     .bg(if busy {
                         theme.action_soft
                     } else {
@@ -978,17 +983,7 @@ impl ManisApp {
                         theme.action_on_primary
                     })
                     .font_weight(FontWeight::SEMIBOLD)
-                    .flex()
-                    .items_center()
-                    .justify_center()
                     .flex_1()
-                    .child(if busy {
-                        language.text("Processing…", "正在处理…")
-                    } else if direct_input {
-                        language.text("Save VLESS node", "保存 VLESS 节点")
-                    } else {
-                        language.text("Import subscription", "导入订阅")
-                    })
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if busy {
                             return;
@@ -997,24 +992,20 @@ impl ManisApp {
                     })),
             )
             .child(
-                div()
-                    .id("subscription-clear")
-                    .role(Role::Button)
-                    .aria_label(language.text("Clear subscription link draft", "清除订阅链接草稿"))
-                    .tab_stop(true)
-                    .focusable()
+                Button::new("subscription-clear")
+                    .accessibility_label(
+                        language.text("Clear subscription link draft", "清除订阅链接草稿"),
+                    )
+                    .label(language.text("Clear", "清除"))
+                    .loading(busy)
+                    .with_variant(ButtonVariant::Default)
+                    .with_size(px(36.0))
                     .when(!busy, gpui::Styled::cursor_pointer)
                     .h(px(36.0))
                     .px_3()
-                    .rounded_md()
-                    .border_1()
                     .border_color(theme.outline_subtle)
                     .bg(theme.surface_high)
                     .text_color(theme.text_secondary)
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(language.text("Clear", "清除"))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if busy {
                             return;
@@ -1532,17 +1523,23 @@ impl ManisApp {
                                     })),
                             )
                             .child(
-                                div()
-                                    .id(format!("subscription-refresh-{refresh_id}"))
-                                    .role(Role::Button)
-                                    .aria_label(
+                                Button::new(format!("subscription-refresh-{refresh_id}"))
+                                    .accessibility_label(
                                         language.text(
                                             "Update this subscription now",
                                             "立即更新这个订阅",
                                         ),
                                     )
+                                    .label(if busy {
+                                        language.text("Updating…", "更新中…")
+                                    } else {
+                                        language.text("Update now", "立即更新")
+                                    })
+                                    .icon(IconName::Redo2)
                                     .tab_stop(controls_enabled)
-                                    .focusable()
+                                    .disabled(!controls_enabled)
+                                    .loading(busy)
+                                    .with_variant(ButtonVariant::Text)
                                     .when(controls_enabled, gpui::Styled::cursor_pointer)
                                     .px_2()
                                     .py_1()
@@ -1553,11 +1550,6 @@ impl ManisApp {
                                     .text_size(px(10.0))
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(theme.action_primary)
-                                    .child(if busy {
-                                        language.text("Updating…", "更新中…")
-                                    } else {
-                                        language.text("↻ Update now", "↻ 立即更新")
-                                    })
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         if controls_enabled {
                                             this.refresh_imported_subscription(
@@ -1570,22 +1562,19 @@ impl ManisApp {
                             .child(div().flex_1())
                             .when(controls_enabled, |controls| {
                                 controls.child(
-                                    div()
-                                        .id(format!("remove-{id}"))
-                                        .role(Role::Button)
-                                        .aria_label(
+                                    Button::new(format!("remove-{id}"))
+                                        .accessibility_label(
                                             language
                                                 .text("Remove this subscription", "移除这个订阅"),
                                         )
-                                        .tab_stop(true)
-                                        .focusable()
+                                        .label(language.text("Remove", "移除"))
+                                        .with_variant(ButtonVariant::Text)
                                         .cursor_pointer()
                                         .px_2()
                                         .py_1()
                                         .rounded_md()
                                         .text_size(px(10.0))
                                         .text_color(theme.route_trace)
-                                        .child(language.text("Remove", "移除"))
                                         .on_click(cx.listener(move |this, _, _, cx| {
                                             this.remove_imported_subscription(id.clone(), cx);
                                         })),
@@ -1628,14 +1617,12 @@ impl ManisApp {
                                     .child(node.name.clone()),
                             )
                             .child(
-                                div()
-                                    .id(format!("remove-{id}"))
-                                    .role(Role::Button)
-                                    .aria_label(
+                                Button::new(format!("remove-{id}"))
+                                    .accessibility_label(
                                         language.text("Remove saved node", "移除已保存节点"),
                                     )
-                                    .tab_stop(true)
-                                    .focusable()
+                                    .label(language.text("Remove", "移除"))
+                                    .with_variant(ButtonVariant::Text)
                                     .cursor_pointer()
                                     .px_2()
                                     .py_1()
@@ -1645,7 +1632,6 @@ impl ManisApp {
                                     .bg(theme.surface_high)
                                     .text_size(px(10.0))
                                     .text_color(theme.text_secondary)
-                                    .child(language.text("Remove", "移除"))
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         let Some(store_dir) = this.subscription_store_dir.clone()
                                         else {
@@ -1847,19 +1833,17 @@ impl ManisApp {
                             })),
                     )
                     .child(
-                        div()
-                            .id("qx-rule-import")
-                            .role(Role::Button)
-                            .aria_label(language.text(
+                        Button::new("qx-rule-import")
+                            .accessibility_label(language.text(
                                 "Download, validate, and import QX rules",
                                 "下载、校验并导入 QX 规则",
                             ))
-                            .tab_stop(true)
-                            .focusable()
+                            .loading(busy)
+                            .with_variant(ButtonVariant::Primary)
+                            .with_size(px(36.0))
                             .when(!busy, gpui::Styled::cursor_pointer)
                             .h(px(36.0))
                             .px_3()
-                            .rounded_md()
                             .bg(if busy {
                                 theme.action_soft
                             } else {
@@ -1871,9 +1855,6 @@ impl ManisApp {
                                 theme.action_on_primary
                             })
                             .font_weight(FontWeight::SEMIBOLD)
-                            .flex()
-                            .items_center()
-                            .justify_center()
                             .gap_2()
                             .flex_1()
                             .when(busy, |button| {
@@ -2107,17 +2088,23 @@ impl ManisApp {
                             })),
                     )
                     .child(
-                        div()
-                            .id(format!("qx-rule-refresh-{refresh_id}"))
-                            .role(Role::Button)
-                            .aria_label(
+                        Button::new(format!("qx-rule-refresh-{refresh_id}"))
+                            .accessibility_label(
                                 language.text(
                                     "Update this remote QX rule now",
                                     "立即更新这份远程 QX 规则",
                                 ),
                             )
+                            .label(if refreshing {
+                                language.text("Updating…", "更新中…")
+                            } else {
+                                language.text("Update now", "立即更新")
+                            })
+                            .icon(IconName::Redo2)
                             .tab_stop(controls_enabled)
-                            .focusable()
+                            .disabled(!controls_enabled)
+                            .loading(refreshing)
+                            .with_variant(ButtonVariant::Text)
                             .when(controls_enabled, gpui::Styled::cursor_pointer)
                             .px_2()
                             .py_1()
@@ -2128,11 +2115,6 @@ impl ManisApp {
                             .text_size(px(10.0))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(theme.action_primary)
-                            .child(if refreshing {
-                                language.text("Updating…", "更新中…")
-                            } else {
-                                language.text("↻ Update now", "↻ 立即更新")
-                            })
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 if controls_enabled {
                                     this.refresh_qx_rule_source(refresh_id.clone(), cx);
@@ -2141,21 +2123,20 @@ impl ManisApp {
                     )
                     .child(div().flex_1())
                     .child(
-                        div()
-                            .id(format!("qx-rule-remove-{index}"))
-                            .role(Role::Button)
-                            .aria_label(
+                        Button::new(format!("qx-rule-remove-{index}"))
+                            .accessibility_label(
                                 language.text("Delete this remote QX rule", "删除这份远程 QX 规则"),
                             )
+                            .label(language.text("Delete", "删除"))
                             .tab_stop(controls_enabled)
-                            .focusable()
+                            .disabled(!controls_enabled)
+                            .with_variant(ButtonVariant::Text)
                             .when(controls_enabled, gpui::Styled::cursor_pointer)
                             .px_2()
                             .py_1()
                             .rounded_sm()
                             .text_size(px(10.0))
                             .text_color(theme.route_trace)
-                            .child(language.text("Delete", "删除"))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 if controls_enabled {
                                     this.remove_qx_rule_source(id.clone(), cx);

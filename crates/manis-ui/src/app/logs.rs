@@ -1,4 +1,8 @@
-use gpui::{Div, FontWeight, ParentElement, Rgba, Role, Styled, div, prelude::*, px};
+use gpui::{Div, FontWeight, ParentElement, Rgba, Styled, div, prelude::*, px};
+use gpui_component::{
+    Sizable,
+    button::{Button, ButtonVariant, ButtonVariants},
+};
 use manis_core::WindowSizeClass;
 
 use super::ManisApp;
@@ -213,21 +217,16 @@ impl ManisApp {
                         )
                     })
                     .child(
-                        div()
-                            .id("refresh-logs")
-                            .role(Role::Button)
-                            .tab_stop(true)
-                            .focusable()
+                        Button::new("refresh-logs")
+                            .accessibility_label(language.text("Reconnect", "重新连接"))
+                            .label(language.text("Reconnect", "重新连接"))
+                            .with_variant(ButtonVariant::Default)
+                            .with_size(px(34.0))
                             .cursor_pointer()
                             .h(px(34.0))
                             .px_3()
-                            .rounded_md()
-                            .border_1()
                             .border_color(theme.outline_subtle)
                             .bg(theme.surface_high)
-                            .flex()
-                            .items_center()
-                            .child(language.text("Reconnect", "重新连接"))
                             .on_click(cx.listener(|this, _, _, cx| this.connect_mihomo(cx))),
                     ),
             )
