@@ -587,6 +587,7 @@ pub struct ManisApp {
     imported_subscriptions: Vec<ImportedSubscription>,
     saved_vless_nodes: Vec<StoredVlessNode>,
     qx_rule_sources: Vec<StoredQxRuleSource>,
+    routing_rule_group_order: Vec<String>,
     qx_rule_feedback: QxRuleImportFeedback,
     qx_rule_target_policy: String,
     qx_rule_import_generation: u64,
@@ -669,6 +670,7 @@ struct StoredWorkspace {
     imported_subscriptions: Vec<ImportedSubscription>,
     saved_vless_nodes: Vec<StoredVlessNode>,
     qx_rule_sources: Vec<StoredQxRuleSource>,
+    routing_rule_group_order: Vec<String>,
     collapsed_groups: Vec<String>,
     managed_policy_groups: Vec<ManagedPolicyGroup>,
     node_selection_preferences: mihomo::NodeSelectionPreferences,
@@ -683,6 +685,7 @@ impl StoredWorkspace {
                 imported_subscriptions: Vec::new(),
                 saved_vless_nodes: Vec::new(),
                 qx_rule_sources: Vec::new(),
+                routing_rule_group_order: Vec::new(),
                 collapsed_groups: Vec::new(),
                 managed_policy_groups: Vec::new(),
                 node_selection_preferences: mihomo::NodeSelectionPreferences::default(),
@@ -693,6 +696,7 @@ impl StoredWorkspace {
         let subscriptions = mihomo::load_subscription_sources_in(directory);
         let nodes = mihomo::load_vless_sources_in(directory);
         let qx_rule_sources = mihomo::load_qx_rule_sources_in(directory);
+        let routing_rule_group_order = mihomo::load_routing_rule_group_order_in(directory);
         let collapsed = mihomo::load_collapsed_groups_in(directory);
         let policy_groups = mihomo::load_managed_policy_groups_in(directory);
         let node_selection_preferences = mihomo::load_node_selection_preferences_in(directory);
@@ -701,6 +705,7 @@ impl StoredWorkspace {
             subscriptions.is_err(),
             nodes.is_err(),
             qx_rule_sources.is_err(),
+            routing_rule_group_order.is_err(),
             collapsed.is_err(),
             policy_groups.is_err(),
             node_selection_preferences.is_err(),
@@ -717,6 +722,7 @@ impl StoredWorkspace {
                 .collect(),
             saved_vless_nodes: nodes.unwrap_or_default(),
             qx_rule_sources: qx_rule_sources.unwrap_or_default(),
+            routing_rule_group_order: routing_rule_group_order.unwrap_or_default(),
             collapsed_groups: collapsed.unwrap_or_default(),
             managed_policy_groups: policy_groups.unwrap_or_default(),
             node_selection_preferences: node_selection_preferences.unwrap_or_default(),
@@ -807,6 +813,7 @@ impl ManisApp {
             imported_subscriptions,
             saved_vless_nodes,
             qx_rule_sources,
+            routing_rule_group_order,
             collapsed_groups,
             managed_policy_groups,
             node_selection_preferences,
@@ -867,6 +874,7 @@ impl ManisApp {
             imported_subscriptions,
             saved_vless_nodes,
             qx_rule_sources,
+            routing_rule_group_order,
             qx_rule_feedback: QxRuleImportFeedback::Idle,
             qx_rule_target_policy: default_rule_target.clone(),
             qx_rule_import_generation: 0,

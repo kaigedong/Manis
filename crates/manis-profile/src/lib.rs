@@ -253,16 +253,7 @@ impl Profile {
             proxies: vless_nodes.into_iter().map(OutboundProxy::Vless).collect(),
             providers,
             groups,
-            rules: vec![
-                Rule::GeoIp {
-                    country: "CN".to_owned(),
-                    policy: PolicyRef::Direct,
-                    no_resolve: true,
-                },
-                Rule::Match {
-                    policy: PolicyRef::Group(global_exit_name),
-                },
-            ],
+            rules: Vec::new(),
         };
         profile.validate()?;
         Ok(profile)
@@ -368,9 +359,6 @@ impl Profile {
 
         validate_groups(&self.groups, &group_names, &proxy_names, &provider_names)?;
 
-        if !matches!(self.rules.last(), Some(Rule::Match { .. })) {
-            return Err(ProfileError::MissingTerminalMatch);
-        }
         for (index, rule) in self.rules.iter().enumerate() {
             if matches!(rule, Rule::Match { .. }) && index + 1 != self.rules.len() {
                 return Err(ProfileError::MissingTerminalMatch);
@@ -926,7 +914,7 @@ impl fmt::Display for ProfileError {
             Self::DuplicateName => formatter.write_str("profile names must be unique"),
             Self::DanglingReference => formatter.write_str("profile contains a dangling reference"),
             Self::MissingTerminalMatch => {
-                formatter.write_str("profile rules must end with exactly one MATCH")
+                formatter.write_str("MATCH must be the final profile rule when present")
             }
             Self::UnsupportedKernelFeature(feature) => {
                 write!(formatter, "selected kernel does not support {feature}")

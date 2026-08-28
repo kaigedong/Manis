@@ -149,6 +149,6 @@ if [[ -e "$APP_DIR" ]]; then
   echo "previous bundle moved to $BACKUP_DIR" >&2
 fi
 mv "$BUILD_APP_DIR" "$APP_DIR"
-rmdir "$BUILD_ROOT"
+cleanup_build_root
 trap - EXIT
 echo "$APP_DIR"
