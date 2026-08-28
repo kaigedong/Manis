@@ -1,10 +1,12 @@
 use gpui::{
-    AnyElement, Context, Div, Entity, Focusable, FontWeight, KeyDownEvent, ParentElement, Role,
-    Stateful, Styled, Window, div, prelude::*, px,
+    AnyElement, Context, Div, Entity, Focusable, FontWeight, ParentElement, Role, Stateful,
+    StyleRefinement, Styled, Window, div, prelude::*, px,
 };
 use gpui_component::{
-    Sizable,
+    Disableable, IconName, Sizable, Size, WindowExt as _,
+    accordion::Accordion,
     button::{Button, ButtonVariant, ButtonVariants},
+    dialog::Dialog,
 };
 use manis_core::{KernelKind, WindowSizeClass};
 use manis_profile::{QxRuleKind, SecretUrl};
@@ -26,6 +28,24 @@ use crate::{
 
 const MAX_MANUAL_RULE_INPUT_BYTES: usize = 1_024;
 const MANUAL_RULES_EXPANSION_KEY: &str = "routing-manual-rules";
+
+fn accordion_content_style() -> StyleRefinement {
+    let mut style = StyleRefinement::default();
+    style.padding.top = Some(px(0.0).into());
+    style.padding.right = Some(px(0.0).into());
+    style.padding.bottom = Some(px(0.0).into());
+    style.padding.left = Some(px(0.0).into());
+    style
+}
+
+fn accordion_title_style(compact: bool) -> StyleRefinement {
+    let mut style = StyleRefinement::default();
+    if compact {
+        style.padding.right = Some(px(12.0).into());
+        style.padding.left = Some(px(12.0).into());
+    }
+    style
+}
 
 fn manual_rule_placeholder(
     kind: crate::manual_rule::ManualRuleKind,
@@ -691,11 +711,12 @@ impl ManisApp {
         &mut self,
         theme: Theme,
         size_class: WindowSizeClass,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
         let compact = size_class == WindowSizeClass::Compact;
         let language = self.language();
-        self.ensure_manual_rule_input(theme, cx);
+        self.ensure_manual_rule_input(theme, window, cx);
         div()
             .flex_1()
             .min_w(px(0.0))
@@ -951,20 +972,25 @@ impl ManisApp {
             .flex()
             .gap_2()
             .child(
-                div()
-                    .id("subscription-preview")
-                    .role(Role::Button)
-                    .aria_label(if direct_input {
+                Button::new("subscription-preview")
+                    .accessibility_label(if direct_input {
                         language.text("Save VLESS node", "保存 VLESS 节点")
                     } else {
                         language.text("Validate and import subscription", "验证并导入订阅")
                     })
-                    .tab_stop(true)
-                    .focusable()
+                    .label(if busy {
+                        language.text("Processing…", "正在处理…")
+                    } else if direct_input {
+                        language.text("Save VLESS node", "保存 VLESS 节点")
+                    } else {
+                        language.text("Import subscription", "导入订阅")
+                    })
+                    .loading(busy)
+                    .with_variant(ButtonVariant::Primary)
+                    .with_size(px(36.0))
                     .when(!busy, gpui::Styled::cursor_pointer)
                     .h(px(36.0))
                     .px_3()
-                    .rounded_md()
                     .bg(if busy {
                         theme.action_soft
                     } else {
@@ -976,17 +1002,7 @@ impl ManisApp {
                         theme.action_on_primary
                     })
                     .font_weight(FontWeight::SEMIBOLD)
-                    .flex()
-                    .items_center()
-                    .justify_center()
                     .flex_1()
-                    .child(if busy {
-                        language.text("Processing…", "正在处理…")
-                    } else if direct_input {
-                        language.text("Save VLESS node", "保存 VLESS 节点")
-                    } else {
-                        language.text("Import subscription", "导入订阅")
-                    })
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if busy {
                             return;
@@ -995,24 +1011,20 @@ impl ManisApp {
                     })),
             )
             .child(
-                div()
-                    .id("subscription-clear")
-                    .role(Role::Button)
-                    .aria_label(language.text("Clear subscription link draft", "清除订阅链接草稿"))
-                    .tab_stop(true)
-                    .focusable()
+                Button::new("subscription-clear")
+                    .accessibility_label(
+                        language.text("Clear subscription link draft", "清除订阅链接草稿"),
+                    )
+                    .label(language.text("Clear", "清除"))
+                    .loading(busy)
+                    .with_variant(ButtonVariant::Default)
+                    .with_size(px(36.0))
                     .when(!busy, gpui::Styled::cursor_pointer)
                     .h(px(36.0))
                     .px_3()
-                    .rounded_md()
-                    .border_1()
                     .border_color(theme.outline_subtle)
                     .bg(theme.surface_high)
                     .text_color(theme.text_secondary)
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(language.text("Clear", "清除"))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if busy {
                             return;
@@ -1530,17 +1542,23 @@ impl ManisApp {
                                     })),
                             )
                             .child(
-                                div()
-                                    .id(format!("subscription-refresh-{refresh_id}"))
-                                    .role(Role::Button)
-                                    .aria_label(
+                                Button::new(format!("subscription-refresh-{refresh_id}"))
+                                    .accessibility_label(
                                         language.text(
                                             "Update this subscription now",
                                             "立即更新这个订阅",
                                         ),
                                     )
+                                    .label(if busy {
+                                        language.text("Updating…", "更新中…")
+                                    } else {
+                                        language.text("Update now", "立即更新")
+                                    })
+                                    .icon(IconName::Redo2)
                                     .tab_stop(controls_enabled)
-                                    .focusable()
+                                    .disabled(!controls_enabled)
+                                    .loading(busy)
+                                    .with_variant(ButtonVariant::Text)
                                     .when(controls_enabled, gpui::Styled::cursor_pointer)
                                     .px_2()
                                     .py_1()
@@ -1551,11 +1569,6 @@ impl ManisApp {
                                     .text_size(px(10.0))
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(theme.action_primary)
-                                    .child(if busy {
-                                        language.text("Updating…", "更新中…")
-                                    } else {
-                                        language.text("↻ Update now", "↻ 立即更新")
-                                    })
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         if controls_enabled {
                                             this.refresh_imported_subscription(
@@ -1568,22 +1581,19 @@ impl ManisApp {
                             .child(div().flex_1())
                             .when(controls_enabled, |controls| {
                                 controls.child(
-                                    div()
-                                        .id(format!("remove-{id}"))
-                                        .role(Role::Button)
-                                        .aria_label(
+                                    Button::new(format!("remove-{id}"))
+                                        .accessibility_label(
                                             language
                                                 .text("Remove this subscription", "移除这个订阅"),
                                         )
-                                        .tab_stop(true)
-                                        .focusable()
+                                        .label(language.text("Remove", "移除"))
+                                        .with_variant(ButtonVariant::Text)
                                         .cursor_pointer()
                                         .px_2()
                                         .py_1()
                                         .rounded_md()
                                         .text_size(px(10.0))
                                         .text_color(theme.route_trace)
-                                        .child(language.text("Remove", "移除"))
                                         .on_click(cx.listener(move |this, _, _, cx| {
                                             this.remove_imported_subscription(id.clone(), cx);
                                         })),
@@ -1626,14 +1636,12 @@ impl ManisApp {
                                     .child(node.name.clone()),
                             )
                             .child(
-                                div()
-                                    .id(format!("remove-{id}"))
-                                    .role(Role::Button)
-                                    .aria_label(
+                                Button::new(format!("remove-{id}"))
+                                    .accessibility_label(
                                         language.text("Remove saved node", "移除已保存节点"),
                                     )
-                                    .tab_stop(true)
-                                    .focusable()
+                                    .label(language.text("Remove", "移除"))
+                                    .with_variant(ButtonVariant::Text)
                                     .cursor_pointer()
                                     .px_2()
                                     .py_1()
@@ -1643,7 +1651,6 @@ impl ManisApp {
                                     .bg(theme.surface_high)
                                     .text_size(px(10.0))
                                     .text_color(theme.text_secondary)
-                                    .child(language.text("Remove", "移除"))
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         let Some(store_dir) = this.subscription_store_dir.clone()
                                         else {
@@ -1845,19 +1852,17 @@ impl ManisApp {
                             })),
                     )
                     .child(
-                        div()
-                            .id("qx-rule-import")
-                            .role(Role::Button)
-                            .aria_label(language.text(
+                        Button::new("qx-rule-import")
+                            .accessibility_label(language.text(
                                 "Download, validate, and import QX rules",
                                 "下载、校验并导入 QX 规则",
                             ))
-                            .tab_stop(true)
-                            .focusable()
+                            .loading(busy)
+                            .with_variant(ButtonVariant::Primary)
+                            .with_size(px(36.0))
                             .when(!busy, gpui::Styled::cursor_pointer)
                             .h(px(36.0))
                             .px_3()
-                            .rounded_md()
                             .bg(if busy {
                                 theme.action_soft
                             } else {
@@ -1869,9 +1874,6 @@ impl ManisApp {
                                 theme.action_on_primary
                             })
                             .font_weight(FontWeight::SEMIBOLD)
-                            .flex()
-                            .items_center()
-                            .justify_center()
                             .gap_2()
                             .flex_1()
                             .when(busy, |button| {
@@ -2105,17 +2107,23 @@ impl ManisApp {
                             })),
                     )
                     .child(
-                        div()
-                            .id(format!("qx-rule-refresh-{refresh_id}"))
-                            .role(Role::Button)
-                            .aria_label(
+                        Button::new(format!("qx-rule-refresh-{refresh_id}"))
+                            .accessibility_label(
                                 language.text(
                                     "Update this remote QX rule now",
                                     "立即更新这份远程 QX 规则",
                                 ),
                             )
+                            .label(if refreshing {
+                                language.text("Updating…", "更新中…")
+                            } else {
+                                language.text("Update now", "立即更新")
+                            })
+                            .icon(IconName::Redo2)
                             .tab_stop(controls_enabled)
-                            .focusable()
+                            .disabled(!controls_enabled)
+                            .loading(refreshing)
+                            .with_variant(ButtonVariant::Text)
                             .when(controls_enabled, gpui::Styled::cursor_pointer)
                             .px_2()
                             .py_1()
@@ -2126,11 +2134,6 @@ impl ManisApp {
                             .text_size(px(10.0))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(theme.action_primary)
-                            .child(if refreshing {
-                                language.text("Updating…", "更新中…")
-                            } else {
-                                language.text("↻ Update now", "↻ 立即更新")
-                            })
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 if controls_enabled {
                                     this.refresh_qx_rule_source(refresh_id.clone(), cx);
@@ -2139,21 +2142,20 @@ impl ManisApp {
                     )
                     .child(div().flex_1())
                     .child(
-                        div()
-                            .id(format!("qx-rule-remove-{index}"))
-                            .role(Role::Button)
-                            .aria_label(
+                        Button::new(format!("qx-rule-remove-{index}"))
+                            .accessibility_label(
                                 language.text("Delete this remote QX rule", "删除这份远程 QX 规则"),
                             )
+                            .label(language.text("Delete", "删除"))
                             .tab_stop(controls_enabled)
-                            .focusable()
+                            .disabled(!controls_enabled)
+                            .with_variant(ButtonVariant::Text)
                             .when(controls_enabled, gpui::Styled::cursor_pointer)
                             .px_2()
                             .py_1()
                             .rounded_sm()
                             .text_size(px(10.0))
                             .text_color(theme.route_trace)
-                            .child(language.text("Delete", "删除"))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 if controls_enabled {
                                     this.remove_qx_rule_source(id.clone(), cx);
@@ -2164,23 +2166,55 @@ impl ManisApp {
     }
 
     fn open_manual_rule_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.manual_rule_editor_state == super::ManualRuleEditorState::Open {
+            if let Some(input) = self.manual_rule_input.as_ref() {
+                input.focus_handle(cx).focus(window, cx);
+            }
+            return;
+        }
         self.manual_rule_editor_state = super::ManualRuleEditorState::Open;
         self.manual_rule_popover = None;
         self.manual_rule_error = None;
+        let app = cx.entity();
+        window.open_dialog(cx, move |dialog, window, cx| {
+            app.update(cx, |this, cx| {
+                let width = window.viewport_size().width.as_f32();
+                let size_class = WindowSizeClass::for_width(width);
+                let theme = this.theme();
+                this.ensure_manual_rule_input(theme, window, cx);
+                this.manual_rule_editor_modal(
+                    dialog,
+                    theme,
+                    this.language(),
+                    size_class == WindowSizeClass::Compact,
+                    window,
+                    cx,
+                )
+            })
+        });
         if let Some(input) = self.manual_rule_input.as_ref() {
             input.focus_handle(cx).focus(window, cx);
         }
         cx.notify();
     }
 
-    fn close_manual_rule_editor(&mut self, cx: &mut Context<Self>) {
+    fn reset_manual_rule_editor_state(&mut self) {
         self.manual_rule_editor_state = super::ManualRuleEditorState::Closed;
         self.manual_rule_popover = None;
         self.manual_rule_error = None;
+    }
+
+    fn close_manual_rule_editor(&mut self, cx: &mut Context<Self>) {
+        self.reset_manual_rule_editor_state();
         cx.notify();
     }
 
-    pub(super) fn ensure_manual_rule_input(&mut self, theme: Theme, cx: &mut Context<Self>) {
+    pub(super) fn ensure_manual_rule_input(
+        &mut self,
+        theme: Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if !self
             .manual_rule_targets()
             .contains(&self.manual_rule_target)
@@ -2210,6 +2244,7 @@ impl ManisApp {
                 MAX_MANUAL_RULE_INPUT_BYTES,
                 theme,
                 self.dark,
+                window,
                 cx,
             )
         }));
@@ -2220,6 +2255,7 @@ impl ManisApp {
                 MAX_MANUAL_RULE_INPUT_BYTES,
                 theme,
                 self.dark,
+                window,
                 cx,
             )
         }));
@@ -2290,9 +2326,9 @@ impl ManisApp {
         cx.notify();
     }
 
-    fn add_manual_rule(&mut self, cx: &mut Context<Self>) {
+    fn add_manual_rule(&mut self, cx: &mut Context<Self>) -> bool {
         let Some(input) = self.manual_rule_input.clone() else {
-            return;
+            return false;
         };
         let second_kind = self.manual_rule_second_kind;
         if !self.manual_rule_kind.supported_by(self.runtime.kind())
@@ -2300,12 +2336,12 @@ impl ManisApp {
         {
             self.manual_rule_error = Some(crate::manual_rule::ManualRuleError::UnsupportedByKernel);
             cx.notify();
-            return;
+            return false;
         }
         let mut conditions = vec![(self.manual_rule_kind, input.read(cx).value().to_owned())];
         if self.manual_rule_second_enabled {
             let Some(second_input) = self.manual_rule_second_input.clone() else {
-                return;
+                return false;
             };
             conditions.push((second_kind, second_input.read(cx).value().to_owned()));
         }
@@ -2318,18 +2354,18 @@ impl ManisApp {
             Err(error) => {
                 self.manual_rule_error = Some(error);
                 cx.notify();
-                return;
+                return false;
             }
         };
         if self.manual_rules.contains(&rule) {
             self.manual_rule_error = Some(crate::manual_rule::ManualRuleError::Duplicate);
             cx.notify();
-            return;
+            return false;
         }
         self.manual_rules.push(rule);
         if !self.persist_manual_rules(cx) {
             self.manual_rules.pop();
-            return;
+            return false;
         }
         self.manual_rule_error = None;
         input.update(cx, SubscriptionTextInput::clear_without_event);
@@ -2337,8 +2373,7 @@ impl ManisApp {
             second_input.update(cx, SubscriptionTextInput::clear_without_event);
         }
         self.manual_rule_second_enabled = false;
-        self.manual_rule_editor_state = super::ManualRuleEditorState::Closed;
-        self.manual_rule_popover = None;
+        self.reset_manual_rule_editor_state();
         record_event(
             LogLevel::Info,
             "routing.manual_rule.added",
@@ -2349,6 +2384,7 @@ impl ManisApp {
                 self.manual_rules.len()
             ),
         );
+        true
     }
 
     fn remove_manual_rule(&mut self, index: usize, cx: &mut Context<Self>) {
@@ -2619,18 +2655,15 @@ impl ManisApp {
             );
         if condition_index > 0 {
             row = row.child(
-                div()
-                    .id("remove-manual-rule-condition")
-                    .role(Role::Button)
-                    .aria_label(language.text("Remove second condition", "移除第二个条件"))
-                    .tab_stop(true)
-                    .focusable()
-                    .cursor_pointer()
+                Button::new("remove-manual-rule-condition")
+                    .accessibility_label(language.text("Remove second condition", "移除第二个条件"))
+                    .label(language.text("Remove condition", "移除条件"))
+                    .text()
+                    .with_size(px(30.0))
                     .mt_2()
-                    .text_size(px(10.0))
+                    .cursor_pointer()
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(theme.status_error)
-                    .child(language.text("Remove condition", "移除条件"))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.set_second_manual_rule_condition_enabled(false, cx);
                     })),
@@ -2642,11 +2675,13 @@ impl ManisApp {
     #[allow(clippy::too_many_lines)]
     pub(super) fn manual_rule_editor_modal(
         &self,
+        dialog: Dialog,
         theme: Theme,
         language: Language,
         compact: bool,
+        window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
+    ) -> Dialog {
         let target_width = if compact { 260.0 } else { 240.0 };
         let target_open = self.manual_rule_popover == Some(ManualRulePopover::Target);
         let target_menu = self.manual_rule_target_menu(theme, cx);
@@ -2685,23 +2720,18 @@ impl ManisApp {
             ));
         } else {
             conditions = conditions.child(
-                div()
-                    .id("add-manual-rule-condition")
-                    .role(Role::Button)
-                    .aria_label(language.text("Add an AND condition", "添加并且条件"))
-                    .tab_stop(true)
-                    .focusable()
-                    .cursor_pointer()
+                Button::new("add-manual-rule-condition")
+                    .accessibility_label(language.text("Add an AND condition", "添加并且条件"))
+                    .label(language.text("+ Add AND condition", "+ 添加“并且”条件"))
+                    .with_variant(ButtonVariant::Default)
+                    .with_size(px(38.0))
                     .mt_3()
                     .px_3()
                     .py_2()
-                    .rounded_md()
-                    .border_1()
+                    .cursor_pointer()
                     .border_color(theme.outline_strong)
-                    .text_size(px(10.0))
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(theme.action_primary)
-                    .child(language.text("+ Add AND condition", "+ 添加“并且”条件"))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.set_second_manual_rule_condition_enabled(true, cx);
                     })),
@@ -2731,140 +2761,113 @@ impl ManisApp {
             .justify_end()
             .gap_2()
             .child(
-                div()
-                    .id("cancel-manual-rule")
-                    .role(Role::Button)
-                    .aria_label(language.text("Cancel adding rule", "取消添加规则"))
-                    .tab_stop(true)
-                    .focusable()
-                    .cursor_pointer()
+                Button::new("cancel-manual-rule")
+                    .accessibility_label(language.text("Cancel adding rule", "取消添加规则"))
+                    .label(language.text("Cancel", "取消"))
+                    .with_variant(ButtonVariant::Default)
+                    .with_size(px(38.0))
                     .h(px(38.0))
                     .px_4()
-                    .rounded_md()
-                    .border_1()
+                    .cursor_pointer()
                     .border_color(theme.outline_subtle)
                     .bg(theme.surface_high)
                     .text_color(theme.text_primary)
-                    .text_size(px(11.0))
                     .font_weight(FontWeight::SEMIBOLD)
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(language.text("Cancel", "取消"))
-                    .on_click(cx.listener(|this, _, _, cx| {
+                    .on_click(cx.listener(|this, _, window, cx| {
                         this.close_manual_rule_editor(cx);
+                        window.close_dialog(cx);
                     })),
             )
             .child(
-                div()
-                    .id("add-manual-rule")
-                    .role(Role::Button)
-                    .aria_label(language.text("Add manual rule", "添加手动规则"))
-                    .tab_stop(true)
-                    .focusable()
-                    .cursor_pointer()
+                Button::new("add-manual-rule")
+                    .accessibility_label(language.text("Add manual rule", "添加手动规则"))
+                    .label(language.text("Add rule", "添加规则"))
+                    .primary()
+                    .with_size(px(38.0))
                     .h(px(38.0))
                     .px_4()
-                    .rounded_md()
+                    .cursor_pointer()
                     .bg(theme.action_primary)
                     .text_color(theme.action_on_primary)
-                    .text_size(px(11.0))
                     .font_weight(FontWeight::SEMIBOLD)
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(language.text("Add rule", "添加规则"))
-                    .on_click(cx.listener(|this, _, _, cx| this.add_manual_rule(cx))),
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        if this.add_manual_rule(cx) {
+                            window.close_dialog(cx);
+                        }
+                    })),
             );
 
-        div()
-            .id("manual-rule-modal-scrim")
-            .absolute()
-            .top_0()
-            .right_0()
-            .bottom_0()
-            .left_0()
-            .p_4()
-            .bg(theme.surface_base.opacity(0.88))
-            .flex()
-            .items_center()
-            .justify_center()
-            .occlude()
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.close_manual_rule_editor(cx);
-            }))
+        let viewport = window.viewport_size();
+        let dialog_width = (viewport.width.as_f32() - 32.0).clamp(280.0, 720.0);
+        let estimated_height = if compact { 520.0 } else { 368.0 };
+        let margin_top = ((viewport.height.as_f32() - estimated_height) / 2.0).max(16.0);
+        let app = cx.entity();
+
+        dialog
+            .width(px(dialog_width))
+            .max_h(px((viewport.height.as_f32() - 32.0).max(320.0)))
+            .margin_top(px(margin_top))
+            .overlay(true)
+            .overlay_closable(true)
+            .keyboard(true)
+            .close_button(false)
+            .p_0()
+            .rounded_md()
+            .bg(theme.surface_high)
+            .overflow_hidden()
+            .title(
+                div()
+                    .id("manual-rule-modal-header")
+                    .flex_shrink_0()
+                    .px_5()
+                    .py_4()
+                    .border_b_1()
+                    .border_color(theme.outline_subtle)
+                    .child(
+                        div()
+                            .text_size(px(17.0))
+                            .font_weight(FontWeight::BOLD)
+                            .child(language.text("Add routing rule", "添加分流规则")),
+                    )
+                    .child(
+                        div()
+                            .mt_1()
+                            .text_size(px(11.0))
+                            .font_weight(FontWeight::NORMAL)
+                            .text_color(theme.text_secondary)
+                            .child(language.text(
+                                "All conditions must match. The selected policy is applied before subscribed rules.",
+                                "同一条规则中的条件必须全部命中；所选策略优先于规则订阅。",
+                            )),
+                    ),
+            )
             .child(
                 div()
-                    .id("manual-rule-modal")
-                    .role(Role::Dialog)
-                    .aria_label(language.text("Add routing rule", "添加分流规则"))
-                    .tab_stop(true)
-                    .focusable()
-                    .w_full()
-                    .max_w(px(720.0))
-                    .max_h_full()
-                    .rounded_md()
-                    .bg(theme.surface_high)
-                    .shadow_xl()
-                    .overflow_hidden()
-                    .flex()
-                    .flex_col()
-                    .on_click(|_, _, cx| cx.stop_propagation())
-                    .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
-                        if event.keystroke.key == "escape" {
-                            cx.stop_propagation();
-                            this.close_manual_rule_editor(cx);
-                        }
-                    }))
-                    .child(
-                        div()
-                            .flex_shrink_0()
-                            .px_5()
-                            .py_4()
-                            .border_b_1()
-                            .border_color(theme.outline_subtle)
-                            .child(
-                                div()
-                                    .text_size(px(17.0))
-                                    .font_weight(FontWeight::BOLD)
-                                    .child(language.text("Add routing rule", "添加分流规则")),
-                            )
-                            .child(
-                                div()
-                                    .mt_1()
-                                    .text_size(px(11.0))
-                                    .text_color(theme.text_secondary)
-                                    .child(language.text(
-                                        "All conditions must match. The selected policy is applied before subscribed rules.",
-                                        "同一条规则中的条件必须全部命中；所选策略优先于规则订阅。",
-                                    )),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .id("manual-rule-modal-body")
-                            .flex_1()
-                            .min_h(px(0.0))
-                            .overflow_y_scroll()
-                            .px_5()
-                            .py_4()
-                            .child(conditions)
-                            .child(target_field)
-                            .when_some(self.manual_rule_error, |body, error| {
-                                body.child(
-                                    div()
-                                        .mt_3()
-                                        .p_3()
-                                        .rounded_md()
-                                        .bg(theme.surface_low)
-                                        .text_size(px(11.0))
-                                        .text_color(theme.status_error)
-                                        .child(manual_rule_error_label(error, language)),
-                                )
-                            }),
-                    )
-                    .child(footer),
+                    .id("manual-rule-modal-body")
+                    .flex_1()
+                    .min_h(px(0.0))
+                    .overflow_y_scroll()
+                    .px_5()
+                    .py_4()
+                    .child(conditions)
+                    .child(target_field)
+                    .when_some(self.manual_rule_error, |body, error| {
+                        body.child(
+                            div()
+                                .mt_3()
+                                .p_3()
+                                .rounded_md()
+                                .bg(theme.surface_low)
+                                .text_size(px(11.0))
+                                .text_color(theme.status_error)
+                                .child(manual_rule_error_label(error, language)),
+                        )
+                    })
             )
+            .footer(footer)
+            .on_close(move |_, _, cx| {
+                app.update(cx, ManisApp::close_manual_rule_editor);
+            })
     }
 
     fn manual_routing_rule_row(
@@ -2947,19 +2950,17 @@ impl ManisApp {
                     .child(target),
             )
             .child(
-                div()
-                    .id(format!("remove-manual-rule-{index}"))
-                    .role(Role::Button)
-                    .aria_label(language.text("Remove this manual rule", "移除这条手动规则"))
-                    .tab_stop(true)
-                    .focusable()
-                    .cursor_pointer()
+                Button::new(format!("remove-manual-rule-{index}"))
+                    .accessibility_label(
+                        language.text("Remove this manual rule", "移除这条手动规则"),
+                    )
+                    .label(language.text("Remove", "移除"))
+                    .text()
+                    .with_size(px(30.0))
                     .px_2()
                     .py_1()
-                    .rounded_md()
-                    .text_size(px(10.0))
+                    .cursor_pointer()
                     .text_color(theme.status_error)
-                    .child(language.text("Remove", "移除"))
                     .on_click(
                         cx.listener(move |this, _, _, cx| this.remove_manual_rule(index, cx)),
                     ),
@@ -3039,23 +3040,19 @@ impl ManisApp {
                                     }),
                             )
                             .child(
-                                div()
-                                    .id("open-manual-rule-editor")
-                                    .role(Role::Button)
-                                    .aria_label(language.text("Add routing rule", "添加分流规则"))
-                                    .tab_stop(true)
-                                    .focusable()
-                                    .cursor_pointer()
+                                Button::new("open-manual-rule-editor")
+                                    .accessibility_label(
+                                        language.text("Add routing rule", "添加分流规则"),
+                                    )
+                                    .label(language.text("Add rule", "添加规则"))
+                                    .primary()
+                                    .with_size(px(34.0))
                                     .h(px(34.0))
                                     .px_3()
-                                    .rounded_md()
+                                    .cursor_pointer()
                                     .bg(theme.action_primary)
-                                    .text_size(px(11.0))
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(theme.action_on_primary)
-                                    .flex()
-                                    .items_center()
-                                    .child(language.text("Add rule", "添加规则"))
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.open_manual_rule_editor(window, cx);
                                     })),
@@ -3068,11 +3065,6 @@ impl ManisApp {
             let expanded = self
                 .node_workspace
                 .is_group_collapsed(MANUAL_RULES_EXPANSION_KEY);
-            let action = if expanded {
-                language.text("Collapse", "收起")
-            } else {
-                language.text("Expand", "展开")
-            };
             let detail = if language == Language::English {
                 format!(
                     "{} rules · Saved locally · Before subscribed rules",
@@ -3084,87 +3076,68 @@ impl ManisApp {
                     self.manual_rules.len()
                 )
             };
-            let mut manual_group = div()
+            let title = div()
+                .flex_1()
+                .min_w(px(0.0))
+                .child(
+                    div()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(language.text("Manual rules", "手动规则")),
+                )
+                .child(
+                    div()
+                        .mt_1()
+                        .overflow_x_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .text_size(px(10.0))
+                        .text_color(theme.text_tertiary)
+                        .child(detail),
+                );
+            let mut rules = div()
+                .px(if compact { px(8.0) } else { px(12.0) })
+                .pb_3()
+                .border_t_1()
+                .border_color(theme.outline_subtle)
+                .bg(theme.surface_high);
+            for (index, rule) in self.manual_rules.iter().enumerate() {
+                rules = rules
+                    .child(self.manual_routing_rule_row(order, index, rule, theme, language, cx));
+                order += 1;
+            }
+            let manual_group = Accordion::new("routing-manual-rules")
+                .bordered(false)
+                .with_size(Size::Large)
                 .mt_4()
                 .border_t_1()
                 .border_b_1()
                 .border_color(theme.outline_subtle)
-                .bg(theme.surface_low)
-                .child(
-                    div()
-                        .id("routing-manual-rules")
-                        .role(Role::Button)
-                        .aria_label(format!(
-                            "{} {}",
-                            action,
-                            language.text("Manual rules", "手动规则")
-                        ))
-                        .tab_stop(true)
-                        .focusable()
-                        .cursor_pointer()
-                        .min_h(px(58.0))
-                        .px(if compact { px(12.0) } else { px(16.0) })
-                        .py_3()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .gap_3()
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w(px(0.0))
-                                .child(
-                                    div()
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .child(language.text("Manual rules", "手动规则")),
-                                )
-                                .child(
-                                    div()
-                                        .mt_1()
-                                        .overflow_x_hidden()
-                                        .whitespace_nowrap()
-                                        .text_ellipsis()
-                                        .text_size(px(10.0))
-                                        .text_color(theme.text_tertiary)
-                                        .child(detail),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .flex_shrink_0()
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(theme.action_primary)
-                                .child(action),
-                        )
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.node_workspace.toggle_group(MANUAL_RULES_EXPANSION_KEY);
-                            this.persist_node_workspace();
-                            this.language()
-                                .text(
-                                    "Manual rule expanded state updated",
-                                    "已更新手动规则展开状态",
-                                )
-                                .clone_into(&mut this.status);
-                            cx.notify();
-                        })),
-                );
-            if expanded {
-                let mut rules = div()
-                    .px(if compact { px(8.0) } else { px(12.0) })
-                    .pb_3()
-                    .border_t_1()
-                    .border_color(theme.outline_subtle)
-                    .bg(theme.surface_high);
-                for (index, rule) in self.manual_rules.iter().enumerate() {
-                    rules = rules.child(
-                        self.manual_routing_rule_row(order, index, rule, theme, language, cx),
-                    );
-                    order += 1;
-                }
-                manual_group = manual_group.child(rules);
-            } else {
-                order += self.manual_rules.len();
-            }
+                .item(|item| {
+                    item.open(expanded)
+                        .title_style(accordion_title_style(compact))
+                        .content_style(accordion_content_style())
+                        .bg(theme.surface_low)
+                        .title(title)
+                        .child(rules)
+                })
+                .on_toggle_click(cx.listener(|this, open_indices: &[usize], _, cx| {
+                    let should_expand = open_indices.contains(&0);
+                    if this
+                        .node_workspace
+                        .is_group_collapsed(MANUAL_RULES_EXPANSION_KEY)
+                        != should_expand
+                    {
+                        this.node_workspace.toggle_group(MANUAL_RULES_EXPANSION_KEY);
+                        this.persist_node_workspace();
+                        this.language()
+                            .text(
+                                "Manual rule expanded state updated",
+                                "已更新手动规则展开状态",
+                            )
+                            .clone_into(&mut this.status);
+                        cx.notify();
+                    }
+                }));
             list = list.child(manual_group);
         }
         for (source_index, source) in self.qx_rule_sources.iter().enumerate() {
@@ -3172,11 +3145,6 @@ impl ManisApp {
             let rule_count = parsed.rules.len();
             let expansion_key = rule_source_expansion_key(&source.id);
             let expanded = self.node_workspace.is_group_collapsed(&expansion_key);
-            let action = if expanded {
-                language.text("Collapse", "收起")
-            } else {
-                language.text("Expand", "展开")
-            };
             let name = source.source.subscription_name().unwrap_or_else(|| {
                 if language == Language::English {
                     format!("Rule source {}", source_index + 1)
@@ -3196,87 +3164,69 @@ impl ManisApp {
                 format!("{rule_count} 条规则 · 目标 {target_policy} · {update}")
             };
             let toggle_key = expansion_key.clone();
-            let mut source_group = div()
+            let title = div()
+                .flex_1()
+                .min_w(px(0.0))
+                .child(
+                    div()
+                        .overflow_x_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(name),
+                )
+                .child(
+                    div()
+                        .mt_1()
+                        .overflow_x_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .text_size(px(10.0))
+                        .text_color(theme.text_tertiary)
+                        .child(detail),
+                );
+            let mut rules = div()
+                .px(if compact { px(8.0) } else { px(12.0) })
+                .pb_3()
+                .border_t_1()
+                .border_color(theme.outline_subtle)
+                .bg(theme.surface_high);
+            for rule in parsed.rules {
+                rules = rules.child(Self::routing_rule_row(
+                    order,
+                    Self::qx_rule_kind_label(rule.kind),
+                    &rule.value,
+                    &target_policy,
+                    theme,
+                ));
+                order += 1;
+            }
+            let source_group = Accordion::new(format!("routing-rule-source-{}", source.id))
+                .bordered(false)
+                .with_size(Size::Large)
                 .mt_4()
                 .border_t_1()
                 .border_b_1()
                 .border_color(theme.outline_subtle)
-                .bg(theme.surface_low)
-                .child(
-                    div()
-                        .id(format!("routing-rule-source-{}", source.id))
-                        .role(Role::Button)
-                        .aria_label(format!("{action} {name}"))
-                        .tab_stop(true)
-                        .focusable()
-                        .cursor_pointer()
-                        .min_h(px(58.0))
-                        .px(if compact { px(12.0) } else { px(16.0) })
-                        .py_3()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .gap_3()
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w(px(0.0))
-                                .child(
-                                    div()
-                                        .overflow_x_hidden()
-                                        .whitespace_nowrap()
-                                        .text_ellipsis()
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .child(name),
-                                )
-                                .child(
-                                    div()
-                                        .mt_1()
-                                        .overflow_x_hidden()
-                                        .whitespace_nowrap()
-                                        .text_ellipsis()
-                                        .text_size(px(10.0))
-                                        .text_color(theme.text_tertiary)
-                                        .child(detail),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .flex_shrink_0()
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(theme.action_primary)
-                                .child(action),
-                        )
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.node_workspace.toggle_group(&toggle_key);
-                            this.persist_node_workspace();
-                            this.language()
-                                .text("Rule source expanded state updated", "已更新规则源展开状态")
-                                .clone_into(&mut this.status);
-                            cx.notify();
-                        })),
-                );
-            if expanded {
-                let mut rules = div()
-                    .px(if compact { px(8.0) } else { px(12.0) })
-                    .pb_3()
-                    .border_t_1()
-                    .border_color(theme.outline_subtle)
-                    .bg(theme.surface_high);
-                for rule in parsed.rules {
-                    rules = rules.child(Self::routing_rule_row(
-                        order,
-                        Self::qx_rule_kind_label(rule.kind),
-                        &rule.value,
-                        &target_policy,
-                        theme,
-                    ));
-                    order += 1;
-                }
-                source_group = source_group.child(rules);
-            } else {
-                order += rule_count;
-            }
+                .item(|item| {
+                    item.open(expanded)
+                        .title_style(accordion_title_style(compact))
+                        .content_style(accordion_content_style())
+                        .bg(theme.surface_low)
+                        .title(title)
+                        .child(rules)
+                })
+                .on_toggle_click(cx.listener(move |this, open_indices: &[usize], _, cx| {
+                    let should_expand = open_indices.contains(&0);
+                    if this.node_workspace.is_group_collapsed(&toggle_key) != should_expand {
+                        this.node_workspace.toggle_group(&toggle_key);
+                        this.persist_node_workspace();
+                        this.language()
+                            .text("Rule source expanded state updated", "已更新规则源展开状态")
+                            .clone_into(&mut this.status);
+                        cx.notify();
+                    }
+                }));
             list = list.child(source_group);
         }
 

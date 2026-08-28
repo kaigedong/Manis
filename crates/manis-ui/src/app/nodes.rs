@@ -5,8 +5,11 @@ use gpui::{
     prelude::*, px,
 };
 use gpui_component::{
-    Sizable,
+    Icon, IconName, Sizable,
     button::{Button, ButtonVariant, ButtonVariants},
+    checkbox::Checkbox,
+    collapsible::Collapsible,
+    radio::Radio,
 };
 use manis_core::{
     ManagedPolicyGroup, ManagedPolicyIcon, ManagedPolicyStrategy, NodeAvailabilityFilter,
@@ -657,34 +660,29 @@ impl ManisApp {
         primary: bool,
         theme: Theme,
         listener: impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
-    ) -> Stateful<Div> {
-        div()
-            .id(id)
-            .role(Role::Button)
-            .aria_label(label)
-            .tab_stop(true)
-            .focusable()
-            .cursor_pointer()
+    ) -> Button {
+        Button::new(id)
+            .accessibility_label(label)
+            .label(label)
+            .with_size(px(36.0))
             .h(px(36.0))
             .px_3()
-            .rounded_md()
+            .cursor_pointer()
             .when(primary, |button| {
                 button
+                    .primary()
                     .bg(theme.action_primary)
                     .text_color(theme.action_on_primary)
             })
             .when(!primary, |button| {
                 button
+                    .with_variant(ButtonVariant::Default)
                     .border_1()
                     .border_color(theme.outline_subtle)
                     .bg(theme.surface_high)
                     .text_color(theme.text_secondary)
             })
             .font_weight(FontWeight::SEMIBOLD)
-            .flex()
-            .items_center()
-            .justify_center()
-            .child(label)
             .on_click(listener)
     }
 
@@ -1006,45 +1004,18 @@ impl ManisApp {
         title: impl Into<gpui::SharedString>,
         selected: bool,
         theme: Theme,
-        listener: impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
-    ) -> Stateful<Div> {
+        listener: impl Fn(&bool, &mut gpui::Window, &mut gpui::App) + 'static,
+    ) -> Radio {
         let title = title.into();
-        div()
-            .id(id)
-            .role(Role::RadioButton)
-            .aria_toggled(if selected {
-                Toggled::True
-            } else {
-                Toggled::False
-            })
+        Radio::new(id)
+            .label(title)
+            .checked(selected)
             .tab_stop(true)
-            .focusable()
             .cursor_pointer()
             .min_h(px(44.0))
             .px_3()
             .border_b_1()
             .border_color(theme.outline_subtle)
-            .flex()
-            .items_center()
-            .gap_2()
-            .child(
-                div()
-                    .size(px(18.0))
-                    .rounded_full()
-                    .border_2()
-                    .border_color(if selected {
-                        theme.action_primary
-                    } else {
-                        theme.outline_strong
-                    })
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .when(selected, |radio| {
-                        radio.child(div().size(px(8.0)).rounded_full().bg(theme.action_primary))
-                    }),
-            )
-            .child(div().flex_1().font_weight(FontWeight::MEDIUM).child(title))
             .on_click(listener)
     }
 
@@ -1231,64 +1202,34 @@ impl ManisApp {
             let selected = draft.explicit_members.contains(&member);
             let member_for_click = member.clone();
             list = list.child(
-                div()
-                    .id(format!(
-                        "policy-group-member-{}-{}",
-                        member.source_id, member.node_name
-                    ))
-                    .role(Role::CheckBox)
-                    .aria_label(format!(
-                        "{} {}",
-                        language.text("Select node", "选择节点"),
-                        member.node_name
-                    ))
-                    .aria_toggled(if selected {
-                        Toggled::True
-                    } else {
-                        Toggled::False
-                    })
-                    .tab_stop(true)
-                    .focusable()
-                    .cursor_pointer()
-                    .min_h(px(58.0))
-                    .px_4()
-                    .border_b_1()
-                    .border_color(theme.outline_subtle)
-                    .flex()
-                    .items_center()
-                    .gap_3()
-                    .child(
-                        div()
-                            .size(px(18.0))
-                            .rounded_sm()
-                            .border_1()
-                            .border_color(if selected {
-                                theme.action_primary
-                            } else {
-                                theme.outline_strong
-                            })
-                            .when(selected, |box_| box_.bg(theme.action_primary)),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(member.node_name),
-                    )
-                    .child(
+                Checkbox::new(format!(
+                    "policy-group-member-{}-{}",
+                    member.source_id, member.node_name
+                ))
+                .label(member.node_name.clone())
+                .checked(selected)
+                .tab_stop(true)
+                .cursor_pointer()
+                .min_h(px(58.0))
+                .px_4()
+                .border_b_1()
+                .border_color(theme.outline_subtle)
+                .child(
+                    div().flex().items_center().gap_3().child(
                         div()
                             .text_size(px(10.0))
                             .text_color(theme.text_tertiary)
                             .child(member.source_id),
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if let Some(draft) = this.managed_policy_draft.as_mut()
-                            && !draft.explicit_members.remove(&member_for_click)
-                        {
-                            draft.explicit_members.insert(member_for_click.clone());
-                        }
-                        cx.notify();
-                    })),
+                    ),
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if let Some(draft) = this.managed_policy_draft.as_mut()
+                        && !draft.explicit_members.remove(&member_for_click)
+                    {
+                        draft.explicit_members.insert(member_for_click.clone());
+                    }
+                    cx.notify();
+                })),
             );
         }
         list
@@ -1319,22 +1260,17 @@ impl ManisApp {
                     }),
             )
             .child(
-                div()
-                    .id("policy-editor-node-menu-done")
-                    .role(Role::Button)
-                    .aria_label(language.text("Finish selecting nodes", "完成选择节点"))
-                    .tab_stop(true)
-                    .focusable()
-                    .cursor_pointer()
-                    .px_3()
+                Button::new("policy-editor-node-menu-done")
+                    .accessibility_label(language.text("Finish selecting nodes", "完成选择节点"))
+                    .label(language.text("Done", "完成"))
+                    .primary()
+                    .with_size(px(30.0))
                     .h(px(30.0))
-                    .rounded_md()
+                    .px_3()
+                    .cursor_pointer()
                     .bg(theme.action_primary)
                     .text_color(theme.action_on_primary)
                     .font_weight(FontWeight::SEMIBOLD)
-                    .flex()
-                    .items_center()
-                    .child(language.text("Done", "完成"))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.managed_policy_editor_popover = None;
                         cx.notify();
@@ -1839,28 +1775,18 @@ impl ManisApp {
         cx.notify();
     }
 
-    fn node_configuration_link(
-        language: Language,
-        theme: Theme,
-        cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
-        div()
-            .id("nodes-open-configuration")
-            .role(Role::Button)
-            .aria_label(language.text("Manage subscription sources", "管理订阅来源"))
-            .tab_stop(true)
-            .focusable()
-            .cursor_pointer()
+    fn node_configuration_link(language: Language, theme: Theme, cx: &mut Context<Self>) -> Button {
+        Button::new("nodes-open-configuration")
+            .accessibility_label(language.text("Manage subscription sources", "管理订阅来源"))
+            .label(language.text("Manage Sources", "管理来源"))
+            .with_variant(ButtonVariant::Default)
+            .with_size(px(34.0))
             .h(px(34.0))
             .px_3()
-            .rounded_md()
-            .border_1()
+            .cursor_pointer()
             .border_color(theme.outline_subtle)
             .bg(theme.surface_low)
             .text_color(theme.text_primary)
-            .flex()
-            .items_center()
-            .child(language.text("Manage Sources", "管理来源"))
             .on_click(cx.listener(|this, _, _, cx| {
                 this.primary_workspace = PrimaryWorkspace::Configuration;
                 this.language()
@@ -1878,18 +1804,20 @@ impl ManisApp {
         language: Language,
         theme: Theme,
         cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
-        div()
-            .id("nodes-refresh")
-            .role(Role::Button)
-            .aria_label(language.text("Refresh node health", "刷新节点健康状态"))
+    ) -> Button {
+        Button::new("nodes-refresh")
+            .accessibility_label(language.text("Refresh node health", "刷新节点健康状态"))
+            .label(if refreshing {
+                language.text("Loading...", "读取中…")
+            } else {
+                language.text("Refresh Nodes", "刷新节点")
+            })
             .tab_stop(!refreshing)
-            .focusable()
-            .cursor_pointer()
+            .with_variant(ButtonVariant::Default)
+            .with_size(px(34.0))
             .h(px(34.0))
             .px_3()
-            .rounded_md()
-            .border_1()
+            .cursor_pointer()
             .border_color(if refreshing {
                 theme.outline_subtle
             } else {
@@ -1904,13 +1832,6 @@ impl ManisApp {
                 theme.text_tertiary
             } else {
                 theme.action_primary
-            })
-            .flex()
-            .items_center()
-            .child(if refreshing {
-                language.text("Loading...", "读取中…")
-            } else {
-                language.text("Refresh Nodes", "刷新节点")
             })
             .on_click(cx.listener(move |this, _, _, cx| {
                 if refreshing {
@@ -2101,7 +2022,6 @@ impl ManisApp {
         counts.untested += group.saved_nodes.len();
         let visible_count = counts.count_for(filter);
         let collapsed = self.node_workspace.is_group_collapsed(&group.id);
-        let group_id = group.id.clone();
         let benchmark_key = Self::source_group_benchmark_key(&group.id);
         let benchmark = self
             .group_benchmarks
@@ -2136,50 +2056,27 @@ impl ManisApp {
         } else {
             language.text("Collapse", "收起")
         };
-        let header = div()
-            .id(format!("source-group-header-{}", group.id))
-            .role(Role::Button)
-            .aria_label(format!(
+        let trigger_group_id = group.id.clone();
+        let trigger = Button::new(format!("source-group-header-{}", group.id))
+            .accessibility_label(format!(
                 "{} {} {}",
                 action,
                 language.text("node source", "节点来源"),
                 group.name
             ))
-            .tab_stop(true)
-            .focusable()
-            .cursor_pointer()
-            .min_h(px(58.0))
-            .px(if compact { px(12.0) } else { px(16.0) })
-            .py_3()
-            .flex()
-            .items_center()
-            .justify_between()
-            .gap_3()
-            .bg(theme.surface_low)
+            .with_variant(ButtonVariant::Ghost)
+            .h_full()
+            .flex_1()
+            .px_0()
+            .text_color(theme.text_primary)
             .child(
                 div()
                     .min_w(px(0.0))
-                    .flex_1()
-                    .overflow_x_hidden()
+                    .w_full()
                     .flex()
                     .items_center()
+                    .justify_between()
                     .gap_3()
-                    .child(Self::group_benchmark_icon(
-                        &benchmark_key,
-                        benchmarking,
-                        theme,
-                        cx.listener(move |this, _, _, cx| {
-                            cx.stop_propagation();
-                            if !benchmarking {
-                                this.start_source_group_benchmark(
-                                    &benchmark_id,
-                                    &benchmark_name,
-                                    delay_targets.clone(),
-                                    cx,
-                                );
-                            }
-                        }),
-                    ))
                     .child(
                         div()
                             .min_w(px(0.0))
@@ -2199,30 +2096,32 @@ impl ManisApp {
                                     .text_color(theme.text_tertiary)
                                     .child(detail),
                             ),
-                    ),
-            )
-            .child(
-                div()
-                    .flex_shrink_0()
-                    .flex()
-                    .items_center()
-                    .gap_3()
-                    .child(
-                        div()
-                            .text_size(px(10.0))
-                            .text_color(theme.text_secondary)
-                            .child(Self::node_count_label(counts.total, language)),
                     )
                     .child(
                         div()
-                            .min_w(px(32.0))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(theme.action_primary)
-                            .child(action),
+                            .flex_shrink_0()
+                            .flex()
+                            .items_center()
+                            .gap_3()
+                            .child(
+                                div()
+                                    .text_size(px(10.0))
+                                    .text_color(theme.text_secondary)
+                                    .child(Self::node_count_label(counts.total, language)),
+                            )
+                            .child(
+                                Icon::new(if collapsed {
+                                    IconName::ChevronRight
+                                } else {
+                                    IconName::ChevronDown
+                                })
+                                .xsmall()
+                                .text_color(theme.action_primary),
+                            ),
                     ),
             )
             .on_click(cx.listener(move |this, _, _, cx| {
-                this.node_workspace.toggle_group(&group_id);
+                this.node_workspace.toggle_group(&trigger_group_id);
                 this.persist_node_workspace();
                 this.language()
                     .text(
@@ -2232,6 +2131,48 @@ impl ManisApp {
                     .clone_into(&mut this.status);
                 cx.notify();
             }));
+        let header = div()
+            .min_h(px(58.0))
+            .px(if compact { px(12.0) } else { px(16.0) })
+            .py_3()
+            .flex()
+            .items_center()
+            .gap_3()
+            .bg(theme.surface_low)
+            .child(Self::group_benchmark_icon(
+                &benchmark_key,
+                benchmarking,
+                theme,
+                cx.listener(move |this, _, _, cx| {
+                    if !benchmarking {
+                        this.start_source_group_benchmark(
+                            &benchmark_id,
+                            &benchmark_name,
+                            delay_targets.clone(),
+                            cx,
+                        );
+                    }
+                }),
+            ))
+            .child(trigger);
+
+        let content = if visible_count == 0 {
+            div()
+                .px_4()
+                .py_3()
+                .border_t_1()
+                .border_color(theme.outline_subtle)
+                .text_size(px(11.0))
+                .text_color(theme.text_secondary)
+                .child(language.text(
+                    "No nodes from this source match the current filter.",
+                    "这个来源中没有符合当前筛选的节点。",
+                ))
+                .into_any_element()
+        } else {
+            self.source_group_table(group, filter, &benchmark, compact, language, theme, cx)
+                .into_any_element()
+        };
 
         div()
             .rounded_md()
@@ -2239,29 +2180,12 @@ impl ManisApp {
             .border_color(theme.outline_subtle)
             .bg(theme.surface_high)
             .overflow_hidden()
-            .child(header)
-            .when(!collapsed && visible_count == 0, |container| {
-                container.child(
-                    div()
-                        .px_4()
-                        .py_3()
-                        .border_t_1()
-                        .border_color(theme.outline_subtle)
-                        .text_size(px(11.0))
-                        .text_color(theme.text_secondary)
-                        .child(language.text(
-                            "No nodes from this source match the current filter.",
-                            "这个来源中没有符合当前筛选的节点。",
-                        )),
-                )
-            })
-            .when(!collapsed && visible_count > 0, |container| {
-                container.child(
-                    self.source_group_table(
-                        group, filter, &benchmark, compact, language, theme, cx,
-                    ),
-                )
-            })
+            .child(
+                Collapsible::new()
+                    .open(!collapsed)
+                    .child(header)
+                    .content(content),
+            )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2547,26 +2471,21 @@ impl ManisApp {
                     )),
             )
             .child(
-                div()
-                    .id("nodes-empty-import")
-                    .role(Role::Button)
-                    .aria_label(language.text(
+                Button::new("nodes-empty-import")
+                    .accessibility_label(language.text(
                         "Go to Configuration to import a subscription",
                         "前往配置导入订阅",
                     ))
-                    .tab_stop(true)
-                    .focusable()
+                    .label(language.text("Import in Configuration", "前往配置导入"))
+                    .with_variant(ButtonVariant::Primary)
+                    .with_size(px(36.0))
                     .cursor_pointer()
                     .mt_4()
                     .h(px(36.0))
                     .px_4()
-                    .rounded_md()
                     .bg(theme.action_primary)
                     .text_color(theme.action_on_primary)
                     .font_weight(FontWeight::SEMIBOLD)
-                    .flex()
-                    .items_center()
-                    .child(language.text("Import in Configuration", "前往配置导入"))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.primary_workspace = PrimaryWorkspace::Configuration;
                         this.language()
@@ -2596,7 +2515,7 @@ impl ManisApp {
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
-    use super::{ManisApp, NodeCounts, NodeSourceGroup, subscription_provider_refs};
+    use super::{NodeCounts, NodeSourceGroup, subscription_provider_refs};
     use crate::app::{
         GroupBenchmarkNodeState, GroupBenchmarkState, GroupBenchmarkSummary,
         ManagedPolicyRuntimeState,
@@ -2716,16 +2635,6 @@ mod tests {
             .node_state("Saved Edge"),
             GroupBenchmarkNodeState::Measured(47),
         );
-    }
-
-    #[test]
-    fn imported_node_latency_spinner_advances_through_eight_frames() {
-        assert_eq!(ManisApp::benchmark_latency_spinner_frame(0.0), 0);
-        assert_eq!(ManisApp::benchmark_latency_spinner_frame(0.124), 0);
-        assert_eq!(ManisApp::benchmark_latency_spinner_frame(0.125), 1);
-        assert_eq!(ManisApp::benchmark_latency_spinner_frame(0.5), 4);
-        assert_eq!(ManisApp::benchmark_latency_spinner_frame(0.875), 7);
-        assert_eq!(ManisApp::benchmark_latency_spinner_frame(1.0), 7);
     }
 
     #[test]

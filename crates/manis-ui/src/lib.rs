@@ -19,8 +19,38 @@ mod tray;
 pub use app::ManisApp;
 pub use tray::{install as install_tray, open_window, show_or_open_window};
 
+struct ManisRootView {
+    app: gpui::Entity<ManisApp>,
+}
+
+impl gpui::Render for ManisRootView {
+    fn render(
+        &mut self,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> impl gpui::IntoElement {
+        use gpui::{ParentElement as _, Styled as _, div};
+
+        div()
+            .size_full()
+            .child(self.app.clone())
+            .children(gpui_component::Root::render_dialog_layer(window, cx))
+    }
+}
+
+/// Builds the common application host used by both native windows and visual tests.
+pub fn root(
+    app: gpui::Entity<ManisApp>,
+    window: &mut gpui::Window,
+    cx: &mut gpui::Context<gpui_component::Root>,
+) -> gpui_component::Root {
+    use gpui::AppContext as _;
+
+    let view = cx.new(|_| ManisRootView { app });
+    gpui_component::Root::new(view, window, cx)
+}
+
 pub fn init(cx: &mut gpui::App) {
     gpui_component::init(cx);
     theme::sync_component_theme(theme::Theme::light(), false, None, cx);
-    subscription_input::init(cx);
 }

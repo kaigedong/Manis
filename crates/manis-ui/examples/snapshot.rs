@@ -1,7 +1,10 @@
 #[cfg(target_os = "macos")]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let platform = gpui_platform::current_platform(false);
-    let mut cx = gpui::VisualTestAppContext::new(platform);
+    let mut cx = gpui::VisualTestAppContext::with_asset_source(
+        platform,
+        std::sync::Arc::new(gpui_component_assets::Assets),
+    );
     cx.update(manis_ui::init);
     if std::env::args().any(|argument| argument == "--policy-settings") {
         capture_managed_policy_settings(&mut cx)?;
@@ -17,6 +20,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if std::env::args().any(|argument| argument == "--route-prediction") {
         capture_route_prediction(&mut cx)?;
+        return Ok(());
+    }
+    if std::env::args().any(|argument| argument == "--medium-sheet") {
+        capture_medium_sheet(&mut cx)?;
         return Ok(());
     }
     capture(&mut cx, 1420.0, 900.0, "native-wide.png")?;
@@ -44,16 +51,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     capture_routing_rules(&mut cx)?;
     capture_remote_subscription_preview(&mut cx)?;
     capture_compact_flow(&mut cx)?;
+    capture_medium_sheet(&mut cx)?;
     capture_connected(&mut cx)?;
     capture_live_when_configured(&mut cx)?;
     Ok(())
 }
 
 #[cfg(target_os = "macos")]
+fn manis_root(
+    window: &mut gpui::Window,
+    cx: &mut gpui::App,
+    build: impl FnOnce(&mut gpui::Context<manis_ui::ManisApp>) -> manis_ui::ManisApp + 'static,
+) -> gpui::Entity<gpui_component::Root> {
+    use gpui::AppContext as _;
+
+    let app = cx.new(build);
+    cx.new(|cx| manis_ui::root(app, window, cx))
+}
+
+#[cfg(target_os = "macos")]
 fn capture_managed_policy_settings(
     cx: &mut gpui::VisualTestAppContext,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use gpui::{AnyWindowHandle, AppContext, Modifiers, point, px, size};
+    use gpui::{AnyWindowHandle, Modifiers, point, px, size};
     use manis_ui::ManisApp;
     use std::os::unix::fs::PermissionsExt;
 
@@ -78,8 +98,10 @@ fn capture_managed_policy_settings(
     let (endpoint, server) = spawn_mihomo_fixture()?;
     let window_store = store.clone();
     let wide_endpoint = endpoint.clone();
-    let window = cx.open_offscreen_window(size(px(1420.0), px(900.0)), |_, cx| {
-        cx.new(|_| ManisApp::with_controller_and_subscription_store(wide_endpoint, window_store))
+    let window = cx.open_offscreen_window(size(px(1420.0), px(900.0)), |window, cx| {
+        manis_root(window, cx, |_| {
+            ManisApp::with_controller_and_subscription_store(wide_endpoint, window_store)
+        })
     })?;
     let window: AnyWindowHandle = window.into();
 
@@ -116,8 +138,10 @@ fn capture_managed_policy_settings(
     close_window(cx, window)?;
 
     let compact_store = store.clone();
-    let compact_window = cx.open_offscreen_window(size(px(720.0), px(720.0)), |_, cx| {
-        cx.new(|_| ManisApp::with_controller_and_subscription_store(endpoint, compact_store))
+    let compact_window = cx.open_offscreen_window(size(px(720.0), px(720.0)), |window, cx| {
+        manis_root(window, cx, |_| {
+            ManisApp::with_controller_and_subscription_store(endpoint, compact_store)
+        })
     })?;
     let compact_window: AnyWindowHandle = compact_window.into();
     refresh(cx, compact_window)?;
@@ -150,12 +174,12 @@ fn capture_managed_policy_settings(
 fn capture_automatic_policy(
     cx: &mut gpui::VisualTestAppContext,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use gpui::{AnyWindowHandle, AppContext, Modifiers, point, px, size};
+    use gpui::{AnyWindowHandle, Modifiers, point, px, size};
     use manis_ui::ManisApp;
 
     let (endpoint, server) = spawn_mihomo_fixture()?;
-    let window = cx.open_offscreen_window(size(px(1420.0), px(900.0)), |_, cx| {
-        cx.new(|_| ManisApp::with_controller(endpoint))
+    let window = cx.open_offscreen_window(size(px(1420.0), px(900.0)), |window, cx| {
+        manis_root(window, cx, |_| ManisApp::with_controller(endpoint))
     })?;
     let window: AnyWindowHandle = window.into();
 
@@ -184,7 +208,7 @@ fn capture_automatic_policy(
 fn capture_remote_subscription_preview(
     cx: &mut gpui::VisualTestAppContext,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use gpui::{AnyWindowHandle, AppContext, Modifiers, point, px, size};
+    use gpui::{AnyWindowHandle, Modifiers, point, px, size};
     use manis_ui::ManisApp;
     use std::io::{BufRead, BufReader, Write};
     use std::net::TcpListener;
@@ -244,8 +268,8 @@ fn capture_remote_subscription_preview(
     let store = fixture_root.join("subscriptions");
     let initial_store = store.clone();
 
-    let window = cx.open_offscreen_window(size(px(1420.0), px(900.0)), |_, cx| {
-        cx.new(|_| {
+    let window = cx.open_offscreen_window(size(px(1420.0), px(900.0)), |window, cx| {
+        manis_root(window, cx, |_| {
             ManisApp::with_controller_and_subscription_store("http://127.0.0.1:9090", initial_store)
         })
     })?;
@@ -319,7 +343,7 @@ fn capture_restored_subscription_views(
     cx: &mut gpui::VisualTestAppContext,
     store: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use gpui::{AnyWindowHandle, AppContext, Modifiers, point, px, size};
+    use gpui::{AnyWindowHandle, Modifiers, point, px, size};
     use manis_ui::ManisApp;
     use std::time::Duration;
 
@@ -344,8 +368,8 @@ fn capture_restored_subscription_views(
         ),
     ] {
         let window_store = store.to_owned();
-        let window = cx.open_offscreen_window(size(px(width), px(height)), |_, cx| {
-            cx.new(|_| {
+        let window = cx.open_offscreen_window(size(px(width), px(height)), |window, cx| {
+            manis_root(window, cx, |_| {
                 ManisApp::with_controller_and_subscription_store(
                     "http://127.0.0.1:9090",
                     window_store,
@@ -390,11 +414,13 @@ fn capture_configuration(
     height: f32,
     file_name: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use gpui::{AnyWindowHandle, AppContext, Modifiers, point, px, size};
+    use gpui::{AnyWindowHandle, Modifiers, point, px, size};
     use manis_ui::ManisApp;
 
-    let window = cx.open_offscreen_window(size(px(width), px(height)), |_, cx| {
-        cx.new(|_| ManisApp::with_controller("http://127.0.0.1:9090"))
+    let window = cx.open_offscreen_window(size(px(width), px(height)), |window, cx| {
+        manis_root(window, cx, |_| {
+            ManisApp::with_controller("http://127.0.0.1:9090")
+        })
     })?;
     let window: AnyWindowHandle = window.into();
 
@@ -447,7 +473,7 @@ fn capture_localization(
     preference: &str,
     file_name: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use gpui::{AnyWindowHandle, AppContext, Modifiers, point, px, size};
+    use gpui::{AnyWindowHandle, Modifiers, point, px, size};
     use manis_ui::ManisApp;
     use std::os::unix::fs::PermissionsExt as _;
 
@@ -465,8 +491,10 @@ fn capture_localization(
     std::fs::set_permissions(&preference_file, std::fs::Permissions::from_mode(0o600))?;
 
     let store = fixture_root.clone();
-    let window = cx.open_offscreen_window(size(px(width), px(height)), |_, cx| {
-        cx.new(|_| ManisApp::with_controller_and_subscription_store("http://127.0.0.1:9090", store))
+    let window = cx.open_offscreen_window(size(px(width), px(height)), |window, cx| {
+        manis_root(window, cx, |_| {
+            ManisApp::with_controller_and_subscription_store("http://127.0.0.1:9090", store)
+        })
     })?;
     let window: AnyWindowHandle = window.into();
     refresh(cx, window)?;
@@ -498,7 +526,7 @@ fn capture_localization(
 fn capture_routing_rules(
     cx: &mut gpui::VisualTestAppContext,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use gpui::{AnyWindowHandle, AppContext, Modifiers, point, px, size};
+    use gpui::{AnyWindowHandle, Modifiers, point, px, size};
     use manis_ui::ManisApp;
     use std::os::unix::fs::PermissionsExt;
 
@@ -555,8 +583,8 @@ fn capture_routing_rules(
         (720.0, 720.0, 30.0, "routing-rules-compact.png"),
     ] {
         let window_store = store.clone();
-        let window = cx.open_offscreen_window(size(px(width), px(height)), |_, cx| {
-            cx.new(|_| {
+        let window = cx.open_offscreen_window(size(px(width), px(height)), |window, cx| {
+            manis_root(window, cx, |_| {
                 ManisApp::with_controller_and_subscription_store(
                     "http://127.0.0.1:9090",
                     window_store,
@@ -586,7 +614,7 @@ fn capture_routing_rules(
             capture_routing_rule_interactions(cx, window)?;
         } else {
             cx.simulate_click(window, point(px(654.0), px(157.0)), Modifiers::none());
-            refresh(cx, window)?;
+            settle_ui_animation(cx, window)?;
             save_screenshot(cx, window, "routing-rules-compact-add-modal.png")?;
         }
         close_window(cx, window)?;
@@ -603,8 +631,19 @@ fn capture_routing_rule_interactions(
 ) -> Result<(), Box<dyn std::error::Error>> {
     use gpui::{Modifiers, point, px};
 
+    cx.simulate_click(window, point(px(700.0), px(260.0)), Modifiers::none());
+    settle_ui_animation(cx, window)?;
+    save_screenshot(cx, window, "routing-rules-wide-manual-accordion-open.png")?;
+    cx.simulate_click(window, point(px(700.0), px(260.0)), Modifiers::none());
+    settle_ui_animation(cx, window)?;
+    cx.simulate_click(window, point(px(700.0), px(348.0)), Modifiers::none());
+    settle_ui_animation(cx, window)?;
+    save_screenshot(cx, window, "routing-rules-wide-remote-accordion-open.png")?;
+    cx.simulate_click(window, point(px(700.0), px(348.0)), Modifiers::none());
+    settle_ui_animation(cx, window)?;
+
     cx.simulate_click(window, point(px(1_286.0), px(190.0)), Modifiers::none());
-    refresh(cx, window)?;
+    settle_ui_animation(cx, window)?;
     save_screenshot(cx, window, "routing-rules-wide-add-modal.png")?;
     cx.simulate_click(window, point(px(500.0), px(414.0)), Modifiers::none());
     refresh(cx, window)?;
@@ -612,12 +651,12 @@ fn capture_routing_rule_interactions(
     cx.simulate_click(window, point(px(410.0), px(260.0)), Modifiers::none());
     refresh(cx, window)?;
     cx.simulate_click(window, point(px(700.0), px(548.0)), Modifiers::none());
-    refresh(cx, window)?;
+    settle_ui_animation(cx, window)?;
     save_screenshot(cx, window, "routing-rules-wide-manual-expanded.png")?;
     cx.simulate_click(window, point(px(700.0), px(548.0)), Modifiers::none());
-    refresh(cx, window)?;
+    settle_ui_animation(cx, window)?;
     cx.simulate_click(window, point(px(700.0), px(632.0)), Modifiers::none());
-    refresh(cx, window)?;
+    settle_ui_animation(cx, window)?;
     save_screenshot(cx, window, "routing-rules-wide-expanded.png")?;
     cx.simulate_click(window, point(px(500.0), px(307.0)), Modifiers::none());
     refresh(cx, window)?;
@@ -643,11 +682,13 @@ fn capture(
     height: f32,
     file_name: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use gpui::{AnyWindowHandle, AppContext, px, size};
+    use gpui::{AnyWindowHandle, px, size};
     use manis_ui::ManisApp;
 
-    let window = cx.open_offscreen_window(size(px(width), px(height)), |_, cx| {
-        cx.new(|_| ManisApp::with_controller("http://127.0.0.1:9090"))
+    let window = cx.open_offscreen_window(size(px(width), px(height)), |window, cx| {
+        manis_root(window, cx, |_| {
+            ManisApp::with_controller("http://127.0.0.1:9090")
+        })
     })?;
     let window: AnyWindowHandle = window.into();
 
@@ -660,12 +701,12 @@ fn capture(
 fn capture_compact_flow(
     cx: &mut gpui::VisualTestAppContext,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use gpui::{AnyWindowHandle, AppContext, Modifiers, point, px, size};
+    use gpui::{AnyWindowHandle, Modifiers, point, px, size};
     use manis_ui::ManisApp;
 
     let (endpoint, server) = spawn_mihomo_fixture()?;
-    let window = cx.open_offscreen_window(size(px(720.0), px(720.0)), |_, cx| {
-        cx.new(|_| ManisApp::with_controller(endpoint))
+    let window = cx.open_offscreen_window(size(px(720.0), px(720.0)), |window, cx| {
+        manis_root(window, cx, |_| ManisApp::with_controller(endpoint))
     })?;
     let window: AnyWindowHandle = window.into();
 
@@ -691,15 +732,53 @@ fn capture_compact_flow(
 }
 
 #[cfg(target_os = "macos")]
-fn capture_connected(
+fn capture_medium_sheet(
     cx: &mut gpui::VisualTestAppContext,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use gpui::{AnyWindowHandle, AppContext, Modifiers, point, px, size};
+    use gpui::{AnyWindowHandle, Modifiers, point, px, size};
     use manis_ui::ManisApp;
 
     let (endpoint, server) = spawn_mihomo_fixture()?;
-    let window = cx.open_offscreen_window(size(px(1420.0), px(900.0)), |_, cx| {
-        cx.new(|_| ManisApp::with_controller(endpoint))
+    let window = cx.open_offscreen_window(size(px(1060.0), px(800.0)), |window, cx| {
+        manis_root(window, cx, |_| ManisApp::with_controller(endpoint))
+    })?;
+    let window: AnyWindowHandle = window.into();
+
+    for _ in 0..24 {
+        std::thread::sleep(std::time::Duration::from_millis(25));
+        refresh(cx, window)?;
+    }
+    cx.simulate_click(window, point(px(985.0), px(80.0)), Modifiers::none());
+    for _ in 0..24 {
+        std::thread::sleep(std::time::Duration::from_millis(25));
+        refresh(cx, window)?;
+    }
+    cx.simulate_click(window, point(px(250.0), px(184.0)), Modifiers::none());
+    settle_ui_animation(cx, window)?;
+    cx.simulate_click(window, point(px(985.0), px(80.0)), Modifiers::none());
+    settle_ui_animation(cx, window)?;
+    cx.simulate_input(window, "openai.com");
+    refresh(cx, window)?;
+    cx.simulate_click(window, point(px(1_015.0), px(205.0)), Modifiers::none());
+    settle_ui_animation(cx, window)?;
+    save_screenshot(cx, window, "native-medium-sheet.png")?;
+    cx.simulate_click(window, point(px(1_040.0), px(68.0)), Modifiers::none());
+    settle_ui_animation(cx, window)?;
+    save_screenshot(cx, window, "native-medium-sheet-closed.png")?;
+    close_window(cx, window)?;
+    server.stop()
+}
+
+#[cfg(target_os = "macos")]
+fn capture_connected(
+    cx: &mut gpui::VisualTestAppContext,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use gpui::{AnyWindowHandle, Modifiers, point, px, size};
+    use manis_ui::ManisApp;
+
+    let (endpoint, server) = spawn_mihomo_fixture()?;
+    let window = cx.open_offscreen_window(size(px(1420.0), px(900.0)), |window, cx| {
+        manis_root(window, cx, |_| ManisApp::with_controller(endpoint))
     })?;
     let window: AnyWindowHandle = window.into();
 
@@ -750,12 +829,12 @@ fn capture_connected(
 fn capture_route_prediction(
     cx: &mut gpui::VisualTestAppContext,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use gpui::{AnyWindowHandle, AppContext, Modifiers, point, px, size};
+    use gpui::{AnyWindowHandle, Modifiers, point, px, size};
     use manis_ui::ManisApp;
 
     let (endpoint, server) = spawn_mihomo_fixture()?;
-    let window = cx.open_offscreen_window(size(px(1420.0), px(900.0)), |_, cx| {
-        cx.new(|_| ManisApp::with_controller(endpoint))
+    let window = cx.open_offscreen_window(size(px(1420.0), px(900.0)), |window, cx| {
+        manis_root(window, cx, |_| ManisApp::with_controller(endpoint))
     })?;
     let window: AnyWindowHandle = window.into();
 
@@ -779,7 +858,7 @@ fn capture_route_prediction(
 fn capture_live_when_configured(
     cx: &mut gpui::VisualTestAppContext,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use gpui::{AnyWindowHandle, AppContext, Modifiers, point, px, size};
+    use gpui::{AnyWindowHandle, Modifiers, point, px, size};
     use manis_ui::ManisApp;
     use std::path::PathBuf;
 
@@ -792,8 +871,8 @@ fn capture_live_when_configured(
     );
     validate_live_output(&output)?;
 
-    let window = cx.open_offscreen_window(size(px(1420.0), px(900.0)), |_, cx| {
-        cx.new(|_| ManisApp::with_controller(endpoint))
+    let window = cx.open_offscreen_window(size(px(1420.0), px(900.0)), |window, cx| {
+        manis_root(window, cx, |_| ManisApp::with_controller(endpoint))
     })?;
     let window: AnyWindowHandle = window.into();
 
@@ -935,6 +1014,19 @@ fn refresh(
     cx.run_until_parked();
     cx.update_window(window, |_, window, _| window.refresh())?;
     cx.run_until_parked();
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn settle_ui_animation(
+    cx: &mut gpui::VisualTestAppContext,
+    window: gpui::AnyWindowHandle,
+) -> Result<(), Box<dyn std::error::Error>> {
+    for _ in 0..12 {
+        std::thread::sleep(std::time::Duration::from_millis(25));
+        cx.advance_clock(std::time::Duration::from_millis(25));
+        refresh(cx, window)?;
+    }
     Ok(())
 }
 

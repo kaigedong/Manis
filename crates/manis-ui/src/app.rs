@@ -4,8 +4,15 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use gpui::{
-    Animation, AnimationExt as _, Context, Div, Entity, FontWeight, IntoElement, ParentElement,
-    Render, Role, Stateful, Styled, Subscription, Task, Toggled, Window, div, prelude::*, px,
+    AnyElement, Context, Div, Entity, Focusable, FontWeight, IntoElement, ParentElement, Render,
+    Role, Stateful, Styled, Subscription, Task, Toggled, Window, div, prelude::*, px,
+};
+use gpui_component::{
+    Disableable, IconName, Selectable, Sizable, WindowExt as _,
+    button::{Button, ButtonGroup, ButtonVariant, ButtonVariants},
+    spinner::Spinner,
+    status_bar::StatusBar,
+    tab::{Tab, TabBar},
 };
 use manis_core::{
     CompactNavigation, DomainRoutePrediction, KernelKind, ManagedPolicyGroup, ManagedPolicyIcon,
@@ -354,6 +361,24 @@ enum PolicyDetailTab {
     Settings,
 }
 
+impl PolicyDetailTab {
+    const fn index(self) -> usize {
+        match self {
+            Self::Nodes => 0,
+            Self::Rules => 1,
+            Self::Settings => 2,
+        }
+    }
+
+    const fn from_index(index: usize) -> Self {
+        match index {
+            1 => Self::Rules,
+            2 => Self::Settings,
+            _ => Self::Nodes,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct GroupBenchmarkSummary {
     total: usize,
@@ -603,6 +628,20 @@ pub struct ManisApp {
     route_domain_input_events: Vec<Subscription>,
     #[allow(dead_code)]
     app_lifecycle_events: Option<Subscription>,
+}
+
+struct RouteInspectorSheetContent {
+    app: Entity<ManisApp>,
+}
+
+impl Render for RouteInspectorSheetContent {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let app = self.app.clone();
+        let current = self.app.read(cx);
+        current.inspector_sheet_body(current.theme(), move |_, _, cx| {
+            app.update(cx, ManisApp::predict_route);
+        })
+    }
 }
 
 struct StoredWorkspace {
@@ -984,7 +1023,12 @@ impl ManisApp {
         self.localizer.preference()
     }
 
-    fn ensure_subscription_input(&mut self, theme: Theme, cx: &mut Context<Self>) {
+    fn ensure_subscription_input(
+        &mut self,
+        theme: Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let language = self.language();
         if let Some(input) = self.subscription_input.as_ref() {
             input.update(cx, |input, cx| {
@@ -994,8 +1038,9 @@ impl ManisApp {
             return;
         }
 
-        let input =
-            cx.new(|cx| SubscriptionTextInput::new_with_language(language, theme, self.dark, cx));
+        let input = cx.new(|cx| {
+            SubscriptionTextInput::new_with_language(language, theme, self.dark, window, cx)
+        });
         let events = cx.subscribe(&input, |this, _input, _: &SubscriptionInputChanged, cx| {
             if this.subscription_feedback != SubscriptionFeedback::Idle {
                 this.subscription_feedback = SubscriptionFeedback::Idle;
@@ -1007,7 +1052,7 @@ impl ManisApp {
         self.restore_imported_subscriptions(cx);
     }
 
-    fn ensure_qx_rule_input(&mut self, theme: Theme, cx: &mut Context<Self>) {
+    fn ensure_qx_rule_input(&mut self, theme: Theme, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(input) = self.qx_rule_input.as_ref() {
             input.update(cx, |input, cx| input.set_theme(theme, self.dark, cx));
             return;
@@ -1019,6 +1064,7 @@ impl ManisApp {
                 16 * 1024,
                 theme,
                 self.dark,
+                window,
                 cx,
             )
         });
@@ -1032,7 +1078,12 @@ impl ManisApp {
         self.qx_rule_input_events = Some(events);
     }
 
-    fn ensure_policy_group_inputs(&mut self, theme: Theme, cx: &mut Context<Self>) {
+    fn ensure_policy_group_inputs(
+        &mut self,
+        theme: Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let language = self.language();
         for input in [
             self.policy_group_name_input.as_ref(),
@@ -1051,6 +1102,7 @@ impl ManisApp {
                     96,
                     theme,
                     self.dark,
+                    window,
                     cx,
                 )
             }));
@@ -1063,13 +1115,19 @@ impl ManisApp {
                     256,
                     theme,
                     self.dark,
+                    window,
                     cx,
                 )
             }));
         }
     }
 
-    fn ensure_runtime_search_inputs(&mut self, theme: Theme, cx: &mut Context<Self>) {
+    fn ensure_runtime_search_inputs(
+        &mut self,
+        theme: Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let language = self.language();
         if let Some(input) = self.activity_search_input.as_ref() {
             input.update(cx, |input, cx| {
@@ -1093,6 +1151,7 @@ impl ManisApp {
                     256,
                     theme,
                     self.dark,
+                    window,
                     cx,
                 )
             });
@@ -1125,6 +1184,7 @@ impl ManisApp {
                     256,
                     theme,
                     self.dark,
+                    window,
                     cx,
                 )
             });
@@ -1136,7 +1196,12 @@ impl ManisApp {
         }
     }
 
-    fn ensure_route_domain_input(&mut self, theme: Theme, cx: &mut Context<Self>) {
+    fn ensure_route_domain_input(
+        &mut self,
+        theme: Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let language = self.language();
         let placeholder = language.text("For example: www.example.com", "例如：www.example.com");
         if let Some(input) = self.route_domain_input.as_ref() {
@@ -1154,6 +1219,7 @@ impl ManisApp {
                 253,
                 theme,
                 self.dark,
+                window,
                 cx,
             )
         });
@@ -1971,63 +2037,11 @@ impl ManisApp {
     }
 
     fn benchmark_latency_spinner(id: String, theme: Theme) -> impl IntoElement {
-        div().relative().size(px(14.0)).with_animation(
-            id,
-            Animation::new(Duration::from_millis(720)).repeat(),
-            move |spinner, delta| {
-                let active = Self::benchmark_latency_spinner_frame(delta);
-                (0..8).fold(spinner, |spinner, index| {
-                    spinner.child(Self::benchmark_latency_dot(
-                        index,
-                        active,
-                        theme.action_primary,
-                    ))
-                })
-            },
+        div().id(id).size(px(14.0)).child(
+            Spinner::new()
+                .with_size(px(14.0))
+                .color(theme.action_primary.into()),
         )
-    }
-
-    fn benchmark_latency_spinner_frame(delta: f32) -> usize {
-        if delta < 0.125 {
-            0
-        } else if delta < 0.25 {
-            1
-        } else if delta < 0.375 {
-            2
-        } else if delta < 0.5 {
-            3
-        } else if delta < 0.625 {
-            4
-        } else if delta < 0.75 {
-            5
-        } else if delta < 0.875 {
-            6
-        } else {
-            7
-        }
-    }
-
-    fn benchmark_latency_dot(index: usize, active: usize, color: gpui::Rgba) -> Div {
-        const POSITIONS: [(f32, f32); 8] = [
-            (5.5, 0.0),
-            (9.5, 1.5),
-            (11.0, 5.5),
-            (9.5, 9.5),
-            (5.5, 11.0),
-            (1.5, 9.5),
-            (0.0, 5.5),
-            (1.5, 1.5),
-        ];
-        const OPACITY: [f32; 8] = [1.0, 0.82, 0.68, 0.54, 0.42, 0.32, 0.24, 0.18];
-        let distance = (index + 8 - active) % 8;
-        let (left, top) = POSITIONS[index];
-        div()
-            .absolute()
-            .left(px(left))
-            .top(px(top))
-            .size(px(3.0))
-            .rounded_full()
-            .bg(color.opacity(OPACITY[distance]))
     }
 
     fn policy_benchmark_status(
@@ -3680,21 +3694,15 @@ impl ManisApp {
             )
             .child(div().flex_1())
             .child(
-                div()
-                    .id("theme-toggle")
-                    .role(Role::Button)
-                    .tab_stop(true)
-                    .focusable()
-                    .cursor_pointer()
+                Button::new("theme-toggle")
+                    .accessibility_label(theme_label)
+                    .label(theme_label)
+                    .with_variant(ButtonVariant::Default)
+                    .with_size(px(34.0))
                     .h(px(34.0))
                     .px_3()
-                    .rounded_md()
-                    .border_1()
                     .border_color(theme.outline_subtle)
                     .bg(theme.surface_high)
-                    .flex()
-                    .items_center()
-                    .child(theme_label)
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.dark = !this.dark;
                         crate::theme::sync_component_theme(
@@ -3719,96 +3727,57 @@ impl ManisApp {
             .child(self.routing_control(theme, size_class != WindowSizeClass::Wide, cx))
     }
 
-    #[allow(clippy::too_many_lines)]
-    fn proxy_control(&self, theme: Theme, compact: bool, cx: &mut Context<Self>) -> Stateful<Div> {
+    fn proxy_control(&self, theme: Theme, compact: bool, cx: &mut Context<Self>) -> AnyElement {
         let language = self.language();
         if compact {
             let next = self.proxy_mode.next();
-            return div()
-                .id("proxy-mode-cycle")
-                .role(Role::Button)
-                .aria_label(language.text("Change proxy mode", "切换代理模式"))
-                .tab_stop(true)
-                .focusable()
-                .cursor_pointer()
+            return Button::new("proxy-mode-cycle")
+                .accessibility_label(language.text("Change proxy mode", "切换代理模式"))
+                .label(compact_proxy_mode_label(
+                    language,
+                    self.proxy_mode,
+                    self.proxy_mode_busy,
+                ))
+                .with_variant(ButtonVariant::Default)
+                .with_size(px(34.0))
                 .h(px(34.0))
                 .px_3()
-                .rounded_md()
-                .border_1()
                 .border_color(theme.outline_subtle)
                 .bg(theme.surface_high)
                 .text_color(theme.text_primary)
-                .flex()
-                .items_center()
-                .gap_2()
-                .child(if let Some(requested) = self.proxy_mode_busy {
-                    match requested {
-                        ProxyMode::Tun => {
-                            language.text("Proxy · Preparing TUN…", "接入 · 正在准备 TUN…")
-                        }
-                        ProxyMode::System => {
-                            language.text("Proxy · Enabling system…", "接入 · 正在启用系统代理…")
-                        }
-                        ProxyMode::Off => language.text("Proxy · Turning off…", "接入 · 正在关闭…"),
-                    }
-                } else {
-                    match self.proxy_mode {
-                        ProxyMode::Off => language.text("Proxy · Off", "接入 · 关闭"),
-                        ProxyMode::System => language.text("Proxy · System", "接入 · 系统"),
-                        ProxyMode::Tun => language.text("Proxy · TUN", "接入 · TUN"),
-                    }
-                })
-                .when(self.proxy_mode_busy.is_none(), |control| {
-                    control.child(
-                        div()
-                            .text_size(px(10.0))
-                            .text_color(theme.text_tertiary)
-                            .child("↻"),
-                    )
+                .when(self.proxy_mode_busy.is_none(), |button| {
+                    button.icon(IconName::Redo2)
                 })
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.apply_proxy_mode(next, cx);
-                }));
+                }))
+                .into_any_element();
         }
 
-        let mut control = div()
-            .id("proxy-modes")
-            .h(px(34.0))
-            .p(px(2.0))
-            .rounded_md()
-            .border_1()
-            .border_color(theme.outline_subtle)
-            .bg(theme.surface_high)
-            .flex()
-            .items_center()
-            .child(
-                div()
-                    .px_2()
-                    .text_size(px(10.0))
-                    .text_color(theme.text_tertiary)
-                    .child(language.text("Proxy", "接入")),
-            );
+        let interactive = self.proxy_mode_busy.is_none();
+        let mut modes = ButtonGroup::new("proxy-mode-options")
+            .with_variant(ButtonVariant::Ghost)
+            .with_size(px(30.0));
         for mode in [ProxyMode::Off, ProxyMode::System, ProxyMode::Tun] {
             let selected = mode == self.proxy_mode;
             let pending = self.proxy_mode_busy == Some(mode);
-            let interactive = self.proxy_mode_busy.is_none();
-            control = control.child(
-                div()
-                    .id(format!("proxy-mode-{mode:?}"))
-                    .role(Role::Button)
-                    .aria_label(proxy_mode_label(language, mode))
-                    .aria_toggled(if selected {
-                        Toggled::True
+            modes = modes.child(
+                Button::new(format!("proxy-mode-{mode:?}"))
+                    .accessibility_label(proxy_mode_label(language, mode))
+                    .label(if pending {
+                        match mode {
+                            ProxyMode::Tun => language.text("Preparing TUN…", "准备 TUN…"),
+                            ProxyMode::System => language.text("Enabling…", "启用中…"),
+                            ProxyMode::Off => language.text("Turning off…", "关闭中…"),
+                        }
                     } else {
-                        Toggled::False
+                        proxy_mode_label(language, mode)
                     })
+                    .selected(selected)
                     .tab_stop(interactive)
-                    .focusable()
+                    .disabled(!interactive)
                     .h_full()
                     .px_3()
-                    .rounded_sm()
-                    .flex()
-                    .items_center()
                     .text_size(px(11.0))
                     .font_weight(if pending || selected {
                         FontWeight::SEMIBOLD
@@ -3825,80 +3794,13 @@ impl ManisApp {
                     } else {
                         theme.text_secondary
                     })
-                    .child(if pending {
-                        match mode {
-                            ProxyMode::Tun => language.text("Preparing TUN…", "准备 TUN…"),
-                            ProxyMode::System => language.text("Enabling…", "启用中…"),
-                            ProxyMode::Off => language.text("Turning off…", "关闭中…"),
-                        }
-                    } else {
-                        proxy_mode_label(language, mode)
-                    })
-                    .when(interactive, |button| {
-                        button.cursor_pointer().on_click(
-                            cx.listener(move |this, _, _, cx| this.apply_proxy_mode(mode, cx)),
-                        )
-                    }),
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.apply_proxy_mode(mode, cx);
+                    })),
             );
         }
-        control
-    }
-
-    #[allow(clippy::too_many_lines)]
-    fn routing_control(
-        &self,
-        theme: Theme,
-        compact: bool,
-        cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
-        let language = self.language();
-        if compact {
-            let next = match self.routing_mode {
-                RoutingMode::Direct => RoutingMode::Global,
-                RoutingMode::Global => RoutingMode::Rule,
-                RoutingMode::Rule => RoutingMode::Direct,
-            };
-            return div()
-                .id("routing-mode-cycle")
-                .role(Role::Button)
-                .aria_label(language.text("Change routing mode", "切换路由模式"))
-                .tab_stop(true)
-                .focusable()
-                .cursor_pointer()
-                .h(px(34.0))
-                .px_3()
-                .rounded_md()
-                .border_1()
-                .border_color(theme.outline_subtle)
-                .bg(theme.surface_high)
-                .text_color(theme.text_primary)
-                .flex()
-                .items_center()
-                .gap_2()
-                .child(if self.routing_mode_busy.is_some() {
-                    language.text("Routing · Switching…", "路由 · 切换中…")
-                } else {
-                    match self.routing_mode {
-                        RoutingMode::Direct => language.text("Routing · Direct", "路由 · 直连"),
-                        RoutingMode::Global => language.text("Routing · Global", "路由 · 全局"),
-                        RoutingMode::Rule => language.text("Routing · Rules", "路由 · 规则"),
-                    }
-                })
-                .when(self.routing_mode_busy.is_none(), |control| {
-                    control.child(
-                        div()
-                            .text_size(px(10.0))
-                            .text_color(theme.text_tertiary)
-                            .child("↻"),
-                    )
-                })
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.apply_routing_mode(next, cx);
-                }));
-        }
-
-        let mut control = div()
-            .id("routing-modes")
+        div()
+            .id("proxy-modes")
             .h(px(34.0))
             .p(px(2.0))
             .rounded_md()
@@ -3912,28 +3814,64 @@ impl ManisApp {
                     .px_2()
                     .text_size(px(10.0))
                     .text_color(theme.text_tertiary)
-                    .child(language.text("Routing", "路由")),
-            );
+                    .child(language.text("Proxy", "接入")),
+            )
+            .child(modes)
+            .into_any_element()
+    }
+
+    fn routing_control(&self, theme: Theme, compact: bool, cx: &mut Context<Self>) -> AnyElement {
+        let language = self.language();
+        if compact {
+            let next = match self.routing_mode {
+                RoutingMode::Direct => RoutingMode::Global,
+                RoutingMode::Global => RoutingMode::Rule,
+                RoutingMode::Rule => RoutingMode::Direct,
+            };
+            let label = if self.routing_mode_busy.is_some() {
+                language.text("Routing · Switching…", "路由 · 切换中…")
+            } else {
+                match self.routing_mode {
+                    RoutingMode::Direct => language.text("Routing · Direct", "路由 · 直连"),
+                    RoutingMode::Global => language.text("Routing · Global", "路由 · 全局"),
+                    RoutingMode::Rule => language.text("Routing · Rules", "路由 · 规则"),
+                }
+            };
+            return Button::new("routing-mode-cycle")
+                .accessibility_label(language.text("Change routing mode", "切换路由模式"))
+                .label(label)
+                .with_variant(ButtonVariant::Default)
+                .with_size(px(34.0))
+                .h(px(34.0))
+                .px_3()
+                .border_color(theme.outline_subtle)
+                .bg(theme.surface_high)
+                .text_color(theme.text_primary)
+                .when(self.routing_mode_busy.is_none(), |button| {
+                    button.icon(IconName::Redo2)
+                })
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.apply_routing_mode(next, cx);
+                }))
+                .into_any_element();
+        }
+
+        let mut modes = ButtonGroup::new("routing-mode-options")
+            .with_variant(ButtonVariant::Ghost)
+            .with_size(px(30.0));
         for mode in [RoutingMode::Direct, RoutingMode::Global, RoutingMode::Rule] {
             let selected = mode == self.routing_mode;
-            control = control.child(
-                div()
-                    .id(format!("routing-mode-{mode:?}"))
-                    .role(Role::Button)
-                    .aria_label(routing_mode_label(language, mode))
-                    .aria_toggled(if selected {
-                        Toggled::True
+            modes = modes.child(
+                Button::new(format!("routing-mode-{mode:?}"))
+                    .accessibility_label(routing_mode_label(language, mode))
+                    .label(if self.routing_mode_busy == Some(mode) {
+                        language.text("Switching…", "切换中…")
                     } else {
-                        Toggled::False
+                        routing_mode_label(language, mode)
                     })
-                    .tab_stop(true)
-                    .focusable()
-                    .cursor_pointer()
+                    .selected(selected)
                     .h_full()
                     .px_3()
-                    .rounded_sm()
-                    .flex()
-                    .items_center()
                     .text_size(px(11.0))
                     .font_weight(if selected {
                         FontWeight::SEMIBOLD
@@ -3950,17 +3888,30 @@ impl ManisApp {
                     } else {
                         theme.text_secondary
                     })
-                    .child(if self.routing_mode_busy == Some(mode) {
-                        language.text("Switching…", "切换中…")
-                    } else {
-                        routing_mode_label(language, mode)
-                    })
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.apply_routing_mode(mode, cx);
                     })),
             );
         }
-        control
+        div()
+            .id("routing-modes")
+            .h(px(34.0))
+            .p(px(2.0))
+            .rounded_md()
+            .border_1()
+            .border_color(theme.outline_subtle)
+            .bg(theme.surface_high)
+            .flex()
+            .items_center()
+            .child(
+                div()
+                    .px_2()
+                    .text_size(px(10.0))
+                    .text_color(theme.text_tertiary)
+                    .child(language.text("Routing", "路由")),
+            )
+            .child(modes)
+            .into_any_element()
     }
 
     #[allow(clippy::too_many_lines)]
@@ -4751,27 +4702,18 @@ impl ManisApp {
             })
     }
 
-    fn small_button(
-        id: impl Into<gpui::ElementId>,
-        label: &'static str,
-        theme: Theme,
-    ) -> Stateful<Div> {
-        div()
-            .id(id)
-            .role(Role::Button)
-            .tab_stop(true)
-            .focusable()
-            .cursor_pointer()
+    fn small_button(id: impl Into<gpui::ElementId>, label: &'static str, theme: Theme) -> Button {
+        Button::new(id)
+            .accessibility_label(label)
+            .label(label)
+            .with_size(px(34.0))
             .h(px(34.0))
             .px_3()
-            .rounded_md()
-            .border_1()
+            .with_variant(ButtonVariant::Default)
+            .cursor_pointer()
             .border_color(theme.outline_subtle)
             .bg(theme.surface_high)
-            .flex()
-            .items_center()
             .text_color(theme.text_primary)
-            .child(label)
     }
 
     fn managed_policy_add_button(
@@ -4779,46 +4721,41 @@ impl ManisApp {
         language: Language,
         theme: Theme,
         cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
-        div()
-            .id(id)
-            .role(Role::Button)
-            .aria_label(language.text("Add policy group", "添加策略组"))
-            .tab_stop(true)
-            .focusable()
-            .cursor_pointer()
+    ) -> Button {
+        Button::new(id)
+            .accessibility_label(language.text("Add policy group", "添加策略组"))
+            .label(language.text("Add policy", "添加策略组"))
+            .primary()
+            .with_size(px(34.0))
             .h(px(34.0))
             .px_3()
-            .rounded_md()
+            .cursor_pointer()
             .bg(theme.action_primary)
             .text_color(theme.action_on_primary)
             .font_weight(FontWeight::SEMIBOLD)
-            .flex()
-            .items_center()
-            .child(language.text("Add policy", "添加策略组"))
             .on_click(cx.listener(|this, _, _, cx| {
                 this.workspace.compact_navigation = CompactNavigation::GroupDetail;
                 this.start_managed_policy_create(cx);
             }))
     }
 
-    fn connection_button(&self, theme: Theme, cx: &mut Context<Self>) -> Stateful<Div> {
+    fn connection_button(&self, theme: Theme, cx: &mut Context<Self>) -> Button {
         let connecting = matches!(self.controller, ControllerState::Connecting { .. });
         let language = self.language();
-        div()
-            .id("connect-mihomo")
-            .role(Role::Button)
-            .aria_label(language.text(
+        Button::new("connect-mihomo")
+            .accessibility_label(language.text(
                 "Connect or refresh read-only kernel data",
                 "连接或刷新内核只读数据",
             ))
+            .label(
+                self.runtime
+                    .button_label_in(&self.controller, self.language()),
+            )
             .tab_stop(!connecting)
-            .focusable()
-            .cursor_pointer()
+            .with_size(px(34.0))
             .h(px(34.0))
             .px_3()
-            .rounded_md()
-            .border_1()
+            .cursor_pointer()
             .border_color(if connecting {
                 theme.outline_subtle
             } else {
@@ -4834,12 +4771,6 @@ impl ManisApp {
             } else {
                 theme.action_primary
             })
-            .flex()
-            .items_center()
-            .child(
-                self.runtime
-                    .button_label_in(&self.controller, self.language()),
-            )
             .on_click(cx.listener(|this, _, _, cx| this.connect_mihomo(cx)))
     }
 
@@ -5011,63 +4942,58 @@ impl ManisApp {
             .map(|group| group.id.as_str())
     }
 
-    fn policy_detail_tab_button(
-        tab: PolicyDetailTab,
-        label: &'static str,
-        active: bool,
+    fn policy_detail_tabs(
+        &self,
         editable_group_id: Option<String>,
-        theme: Theme,
+        language: Language,
         cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
-        div()
-            .id(format!("policy-detail-tab-{tab:?}"))
-            .role(Role::Button)
-            .aria_label(label)
-            .aria_toggled(if active {
-                Toggled::True
-            } else {
-                Toggled::False
-            })
-            .tab_stop(true)
-            .focusable()
-            .cursor_pointer()
-            .pb_2()
-            .border_b_2()
-            .border_color(if active {
-                theme.action_primary
-            } else {
-                theme.surface_high
-            })
-            .text_color(if active {
-                theme.text_primary
-            } else {
-                theme.text_secondary
-            })
-            .child(label)
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.policy_detail_tab = tab;
-                if tab == PolicyDetailTab::Settings {
-                    if let Some(group_id) = editable_group_id.as_deref() {
-                        let already_editing = this
-                            .managed_policy_draft
-                            .as_ref()
-                            .and_then(|draft| draft.editing_id.as_deref())
-                            == Some(group_id);
-                        if !already_editing {
-                            this.start_managed_policy_edit(group_id, cx);
-                            return;
+    ) -> TabBar {
+        let app = cx.entity();
+        TabBar::new("policy-detail-tabs")
+            .underline()
+            .selected_index(self.policy_detail_tab.index())
+            .child(
+                Tab::new()
+                    .label(language.text("Nodes", "节点"))
+                    .aria_label(language.text("Nodes", "节点")),
+            )
+            .child(
+                Tab::new()
+                    .label(language.text("Rules", "规则"))
+                    .aria_label(language.text("Rules", "规则")),
+            )
+            .child(
+                Tab::new()
+                    .label(language.text("Settings", "设置"))
+                    .aria_label(language.text("Settings", "设置")),
+            )
+            .on_click(move |index, _, cx| {
+                let tab = PolicyDetailTab::from_index(*index);
+                app.update(cx, |this, cx| {
+                    this.policy_detail_tab = tab;
+                    if tab == PolicyDetailTab::Settings {
+                        if let Some(group_id) = editable_group_id.as_deref() {
+                            let already_editing = this
+                                .managed_policy_draft
+                                .as_ref()
+                                .and_then(|draft| draft.editing_id.as_deref())
+                                == Some(group_id);
+                            if !already_editing {
+                                this.start_managed_policy_edit(group_id, cx);
+                                return;
+                            }
+                        } else {
+                            this.language()
+                                .text(
+                                    "This runtime policy is read-only in Manis",
+                                    "这个运行时策略组在 Manis 中为只读",
+                                )
+                                .clone_into(&mut this.status);
                         }
-                    } else {
-                        this.language()
-                            .text(
-                                "This runtime policy is read-only in Manis",
-                                "这个运行时策略组在 Manis 中为只读",
-                            )
-                            .clone_into(&mut this.status);
                     }
-                }
-                cx.notify();
-            }))
+                    cx.notify();
+                });
+            })
     }
 
     #[allow(clippy::too_many_lines)]
@@ -5366,13 +5292,13 @@ impl ManisApp {
                             .gap_3()
                             .when(compact, |header| {
                                 header.child(
-                                    div()
-                                        .id("compact-back")
-                                        .role(Role::Button)
-                                        .tab_stop(true)
-                                        .focusable()
-                                        .cursor_pointer()
-                                        .child(language.text("← Back", "← 返回"))
+                                    Button::new("compact-back")
+                                        .accessibility_label(
+                                            language.text("Back to policy groups", "返回策略组"),
+                                        )
+                                        .label(language.text("Back", "返回"))
+                                        .icon(IconName::ArrowLeft)
+                                        .with_variant(ButtonVariant::Text)
                                         .on_click(cx.listener(|this, _, _, cx| {
                                             this.workspace.navigate_back();
                                             cx.notify();
@@ -5420,63 +5346,24 @@ impl ManisApp {
                                     )),
                             )
                             .child(
-                                div()
-                                    .id("open-inspector")
-                                    .role(Role::Button)
-                                    .tab_stop(true)
-                                    .focusable()
-                                    .cursor_pointer()
+                                Button::new("open-inspector")
+                                    .accessibility_label(language.text("Explain route", "解释路由"))
+                                    .label(language.text("Explain route", "解释路由"))
+                                    .with_variant(ButtonVariant::Default)
+                                    .with_size(px(34.0))
                                     .h(px(34.0))
                                     .px_3()
-                                    .rounded_md()
-                                    .border_1()
                                     .border_color(theme.outline_subtle)
-                                    .flex()
-                                    .items_center()
-                                    .child(language.text("Explain route", "解释路由"))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.inspector_open = true;
-                                        trace_ui(UiEvent::RouteInspectorOpened);
-                                        this.language()
-                                            .text(
-                                                "Local route prediction opened",
-                                                "已打开本地路由预测",
-                                            )
-                                            .clone_into(&mut this.status);
-                                        cx.notify();
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.open_route_inspector(window, cx);
                                     })),
                             ),
                     )
                     .child(
                         div()
                             .mt_4()
-                            .flex()
-                            .gap_5()
                             .font_weight(FontWeight::MEDIUM)
-                            .child(Self::policy_detail_tab_button(
-                                PolicyDetailTab::Nodes,
-                                language.text("Nodes", "节点"),
-                                self.policy_detail_tab == PolicyDetailTab::Nodes,
-                                editable_group_id.clone(),
-                                theme,
-                                cx,
-                            ))
-                            .child(Self::policy_detail_tab_button(
-                                PolicyDetailTab::Rules,
-                                language.text("Rules", "规则"),
-                                self.policy_detail_tab == PolicyDetailTab::Rules,
-                                editable_group_id.clone(),
-                                theme,
-                                cx,
-                            ))
-                            .child(Self::policy_detail_tab_button(
-                                PolicyDetailTab::Settings,
-                                language.text("Settings", "设置"),
-                                self.policy_detail_tab == PolicyDetailTab::Settings,
-                                editable_group_id,
-                                theme,
-                                cx,
-                            )),
+                            .child(self.policy_detail_tabs(editable_group_id, language, cx)),
                     ),
             )
             .child(body)
@@ -5766,19 +5653,66 @@ impl ManisApp {
         }
     }
 
-    #[allow(clippy::too_many_lines)]
-    fn inspector(&self, theme: Theme, overlay: bool, cx: &mut Context<Self>) -> Div {
+    fn open_route_inspector(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let language = self.language();
-        let prediction = self.route_prediction.clone();
-        let route_input = self.route_domain_input.clone();
-        let input_error = match &prediction {
-            RouteInspectorPrediction::Invalid(error) => {
-                Some(route_domain_error_copy(*error, language))
+        let size_class = WindowSizeClass::for_width(window.viewport_size().width.as_f32());
+        language
+            .text("Local route prediction opened", "已打开本地路由预测")
+            .clone_into(&mut self.status);
+        trace_ui(UiEvent::RouteInspectorOpened);
+
+        if size_class == WindowSizeClass::Wide {
+            if let Some(input) = self.route_domain_input.as_ref() {
+                input.focus_handle(cx).focus(window, cx);
             }
-            RouteInspectorPrediction::Idle | RouteInspectorPrediction::Ready(_) => None,
-        };
-        let observed_route = self.observed_routes.first().cloned();
-        let prediction_badge = match &prediction {
+            cx.notify();
+            return;
+        }
+
+        if window.has_active_sheet(cx) {
+            if let Some(input) = self.route_domain_input.as_ref() {
+                input.focus_handle(cx).focus(window, cx);
+            }
+            return;
+        }
+
+        self.inspector_open = true;
+        gpui_component::Theme::global_mut(cx).sheet.margin_top = px(48.0);
+        let app = cx.entity();
+        let content_app = app.clone();
+        let content = cx.new(move |cx| {
+            cx.observe(&content_app, |_, _, cx| cx.notify()).detach();
+            RouteInspectorSheetContent { app: content_app }
+        });
+        window.open_sheet(cx, move |sheet, _, _| {
+            let app_for_close = app.clone();
+            sheet
+                .title(language.text("Route explanation", "路由解释"))
+                .size(px(340.0))
+                .resizable(false)
+                .on_close(move |_, _, cx| {
+                    app_for_close.update(cx, |this, cx| {
+                        this.close_route_inspector(cx);
+                    });
+                })
+                .child(content.clone())
+        });
+        if let Some(input) = self.route_domain_input.as_ref() {
+            input.focus_handle(cx).focus(window, cx);
+        }
+        cx.notify();
+    }
+
+    fn close_route_inspector(&mut self, cx: &mut Context<Self>) {
+        if self.inspector_open {
+            self.inspector_open = false;
+            trace_ui(UiEvent::RouteInspectorClosed);
+            cx.notify();
+        }
+    }
+
+    fn route_inspector_badge(&self, language: Language) -> &'static str {
+        match &self.route_prediction {
             RouteInspectorPrediction::Ready(DomainRoutePrediction::Matched { .. }) => {
                 language.text("Predicted path", "预测路径")
             }
@@ -5788,120 +5722,125 @@ impl ManisApp {
             RouteInspectorPrediction::Idle | RouteInspectorPrediction::Invalid(_) => {
                 language.text("Local model", "本地模型")
             }
+        }
+    }
+
+    fn inspector_badge(&self, theme: Theme) -> Div {
+        let language = self.language();
+        div()
+            .px_2()
+            .py_1()
+            .rounded_sm()
+            .bg(theme.route_soft)
+            .text_size(px(10.0))
+            .font_weight(FontWeight::SEMIBOLD)
+            .text_color(theme.route_trace)
+            .child(self.route_inspector_badge(language))
+    }
+
+    fn inspector_title(&self, theme: Theme) -> Div {
+        let language = self.language();
+        div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(
+                div()
+                    .text_size(px(18.0))
+                    .font_weight(FontWeight::BOLD)
+                    .child(language.text("Route explanation", "路由解释")),
+            )
+            .child(self.inspector_badge(theme))
+    }
+
+    fn inspector_form(
+        &self,
+        theme: Theme,
+        on_predict: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
+    ) -> Div {
+        let language = self.language();
+        let prediction = self.route_prediction.clone();
+        let route_input = self.route_domain_input.clone();
+        let input_error = match &prediction {
+            RouteInspectorPrediction::Invalid(error) => {
+                Some(route_domain_error_copy(*error, language))
+            }
+            RouteInspectorPrediction::Idle | RouteInspectorPrediction::Ready(_) => None,
         };
 
         div()
-            .w(px(340.0))
-            .h_full()
-            .flex_shrink_0()
-            .flex()
-            .flex_col()
-            .bg(theme.surface_low)
-            .border_l_1()
-            .border_color(theme.outline_subtle)
-            .when(overlay, |panel| panel.absolute().top_0().right_0().bottom_0().shadow_xl())
             .child(
                 div()
-                    .p_4()
-                    .border_b_1()
-                    .border_color(theme.outline_subtle)
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(div().text_size(px(18.0)).font_weight(FontWeight::BOLD).child(language.text("Route explanation", "路由解释")))
-                            .child(div().px_2().py_1().rounded_sm().bg(theme.route_soft).text_size(px(10.0)).font_weight(FontWeight::SEMIBOLD).text_color(theme.route_trace).child(prediction_badge))
-                            .child(div().flex_1())
-                            .when(overlay, |header| {
-                                header.child(
-                                    div()
-                                        .id("close-inspector")
-                                        .role(Role::Button)
-                                        .tab_stop(true)
-                                        .focusable()
-                                        .cursor_pointer()
-                                        .child(language.text("Close", "关闭"))
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.inspector_open = false;
-                                            trace_ui(UiEvent::RouteInspectorClosed);
-                                            cx.notify();
-                                        })),
-                                )
-                            }),
-                    )
-                    .child(div().mt_2().text_color(theme.text_secondary).child(language.text("Preview the path selected by the local rule model", "按本地规则模型预览可能选择的路径")))
-                    .child(
-                        div()
-                            .mt_4()
-                            .child(
-                                div()
-                                    .text_size(px(11.0))
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .child(language.text("Destination domain", "目标域名")),
-                            )
-                            .child(
-                                div()
-                                    .mt_2()
-                                    .flex()
-                                    .gap_2()
-                                    .when_some(route_input, |row, input| {
-                                        row.child(div().min_w_0().flex_1().child(input))
-                                    })
-                                    .child(
-                                        div()
-                                            .id("predict-route")
-                                            .role(Role::Button)
-                                            .aria_label(language.text(
-                                                "Predict route for this domain",
-                                                "预测此域名的路由",
-                                            ))
-                                            .tab_stop(true)
-                                            .focusable()
-                                            .cursor_pointer()
-                                            .h(px(38.0))
-                                            .px_3()
-                                            .rounded_md()
-                                            .bg(theme.action_primary)
-                                            .text_color(theme.action_on_primary)
-                                            .flex()
-                                            .items_center()
-                                            .child(language.text("Predict", "预测"))
-                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                this.predict_route(cx);
-                                            })),
-                                    ),
-                            )
-                            .when_some(input_error, |form, error| {
-                                form.child(
-                                    div()
-                                        .mt_2()
-                                        .text_size(px(11.0))
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .text_color(theme.status_error)
-                                        .child(error),
-                                )
-                            })
-                            .child(
-                                div()
-                                    .mt_2()
-                                    .text_size(px(11.0))
-                                    .text_color(theme.text_tertiary)
-                                    .child(language.text(
-                                        "Enter a domain only, without a protocol, path, port, or wildcard. Press Enter to predict.",
-                                        "只输入域名，不含协议、路径、端口或通配符；按 Enter 可预测。",
-                                    )),
-                            ),
-                    ),
+                    .text_color(theme.text_secondary)
+                    .child(language.text(
+                        "Preview the path selected by the local rule model",
+                        "按本地规则模型预览可能选择的路径",
+                    )),
             )
             .child(
                 div()
-                    .id("inspector-scroll")
-                    .flex_1()
-                    .overflow_y_scroll()
-                    .p_4()
-                    .child(self.route_prediction_panel(&prediction, language, theme))
-                    .when_some(observed_route, |panel, observed| {
+                    .mt_4()
+                    .child(
+                        div()
+                            .text_size(px(11.0))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(language.text("Destination domain", "目标域名")),
+                    )
+                    .child(
+                        div()
+                            .mt_2()
+                            .flex()
+                            .gap_2()
+                            .when_some(route_input, |row, input| {
+                                row.child(div().min_w_0().flex_1().child(input))
+                            })
+                            .child(
+                                Button::new("predict-route")
+                                    .accessibility_label(language.text(
+                                        "Predict route for this domain",
+                                        "预测此域名的路由",
+                                    ))
+                                    .label(language.text("Predict", "预测"))
+                                    .primary()
+                                    .with_size(px(38.0))
+                                    .h(px(38.0))
+                                    .px_3()
+                                    .bg(theme.action_primary)
+                                    .text_color(theme.action_on_primary)
+                                    .on_click(on_predict),
+                            ),
+                    )
+                    .when_some(input_error, |form, error| {
+                        form.child(
+                            div()
+                                .mt_2()
+                                .text_size(px(11.0))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(theme.status_error)
+                                .child(error),
+                        )
+                    })
+                    .child(
+                        div()
+                            .mt_2()
+                            .text_size(px(11.0))
+                            .text_color(theme.text_tertiary)
+                            .child(language.text(
+                                "Enter a domain only, without a protocol, path, port, or wildcard. Press Enter to predict.",
+                                "只输入域名，不含协议、路径、端口或通配符；按 Enter 可预测。",
+                            )),
+                    ),
+            )
+    }
+
+    fn inspector_results(&self, theme: Theme) -> Div {
+        let language = self.language();
+        let prediction = self.route_prediction.clone();
+        let observed_route = self.observed_routes.first().cloned();
+
+        div()
+            .child(self.route_prediction_panel(&prediction, language, theme))
+            .when_some(observed_route, |panel, observed| {
                         let host = observed.host.unwrap_or_else(|| language.text("Unknown target", "目标未知").to_owned());
                         let rule = observed.rule.unwrap_or_else(|| language.text("Unknown rule", "规则未知").to_owned());
                         let payload = observed.rule_payload.unwrap_or_default();
@@ -5937,31 +5876,77 @@ impl ManisApp {
                                 ),
                         )
                     })
-                    .child(
-                        div()
-                            .mt_4()
-                            .pt_4()
-                            .border_t_1()
-                            .border_color(theme.outline_subtle)
-                            .text_color(theme.text_secondary)
-                            .child(language.text("Evaluation source        Current ordered rule snapshot", "评估来源             当前有序规则快照"))
-                            .child(div().mt_2().child(language.text("DNS                      Not queried", "DNS                  未查询")))
-                            .child(div().mt_2().child(language.text("Result type              Local prediction", "结果类型             本地预测"))),
-                    )
-                    .child(
-                        div()
-                            .mt_5()
-                            .pt_4()
-                            .border_t_1()
-                            .border_color(theme.outline_subtle)
-                            .text_size(px(11.0))
-                            .text_color(theme.text_tertiary)
-                            .child(language.text("This is not an established Mihomo connection. Only routes from /connections are marked as observed.", "这不是 Mihomo 已建立的连接。只有来自 /connections 的链路才能标为“已观察”。")),
-                    ),
+            .child(
+                div()
+                    .mt_4()
+                    .pt_4()
+                    .border_t_1()
+                    .border_color(theme.outline_subtle)
+                    .text_color(theme.text_secondary)
+                    .child(language.text("Evaluation source        Current ordered rule snapshot", "评估来源             当前有序规则快照"))
+                    .child(div().mt_2().child(language.text("DNS                      Not queried", "DNS                  未查询")))
+                    .child(div().mt_2().child(language.text("Result type              Local prediction", "结果类型             本地预测"))),
+            )
+            .child(
+                div()
+                    .mt_5()
+                    .pt_4()
+                    .border_t_1()
+                    .border_color(theme.outline_subtle)
+                    .text_size(px(11.0))
+                    .text_color(theme.text_tertiary)
+                    .child(language.text("This is not an established Mihomo connection. Only routes from /connections are marked as observed.", "这不是 Mihomo 已建立的连接。只有来自 /connections 的链路才能标为“已观察”。")),
             )
     }
 
-    fn status_bar(&self, theme: Theme) -> Div {
+    fn inspector_sheet_body(
+        &self,
+        theme: Theme,
+        on_predict: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
+    ) -> Div {
+        div()
+            .min_h_full()
+            .bg(theme.surface_low)
+            .px_4()
+            .pb_4()
+            .text_color(theme.text_primary)
+            .child(div().mb_3().child(self.inspector_badge(theme)))
+            .child(self.inspector_form(theme, on_predict))
+            .child(div().mt_4().child(self.inspector_results(theme)))
+    }
+
+    fn inspector(&self, theme: Theme, cx: &mut Context<Self>) -> Div {
+        div()
+            .w(px(340.0))
+            .h_full()
+            .flex_shrink_0()
+            .flex()
+            .flex_col()
+            .bg(theme.surface_low)
+            .border_l_1()
+            .border_color(theme.outline_subtle)
+            .child(
+                div()
+                    .p_4()
+                    .border_b_1()
+                    .border_color(theme.outline_subtle)
+                    .child(self.inspector_title(theme))
+                    .child(div().mt_2().child(self.inspector_form(
+                        theme,
+                        cx.listener(|this, _, _, cx| this.predict_route(cx)),
+                    ))),
+            )
+            .child(
+                div()
+                    .id("inspector-scroll")
+                    .flex_1()
+                    .overflow_y_scroll()
+                    .p_4()
+                    .child(self.inspector_results(theme)),
+            )
+    }
+
+    fn status_bar(&self, theme: Theme) -> StatusBar {
         let language = self.language();
         let kernel_name = self.runtime.kind().display_name();
         let source = controller_status_label(&self.controller, kernel_name, language);
@@ -6001,18 +5986,10 @@ impl ManisApp {
             ),
         };
 
-        div()
-            .h(px(28.0))
-            .flex_shrink_0()
+        let left = div()
             .flex()
             .items_center()
-            .px_3()
             .gap_4()
-            .border_t_1()
-            .border_color(theme.outline_subtle)
-            .bg(theme.surface_chrome)
-            .text_size(px(11.0))
-            .text_color(theme.text_secondary)
             .child(
                 div()
                     .flex()
@@ -6022,10 +5999,26 @@ impl ManisApp {
                     .child(source),
             )
             .child(endpoint)
-            .child(self.status.clone())
-            .child(div().flex_1())
+            .child(self.status.clone());
+        let right = div()
+            .flex()
+            .items_center()
+            .gap_4()
             .child(download)
-            .child(upload)
+            .child(upload);
+
+        StatusBar::new()
+            .h(px(28.0))
+            .flex_shrink_0()
+            .py_0()
+            .px_3()
+            .border_t_1()
+            .border_color(theme.outline_subtle)
+            .bg(theme.surface_chrome)
+            .text_size(px(11.0))
+            .text_color(theme.text_secondary)
+            .left(left)
+            .right(right)
     }
 }
 
@@ -6200,6 +6193,25 @@ fn proxy_mode_label(language: Language, mode: ProxyMode) -> &'static str {
     }
 }
 
+fn compact_proxy_mode_label(
+    language: Language,
+    current: ProxyMode,
+    pending: Option<ProxyMode>,
+) -> &'static str {
+    match pending {
+        Some(ProxyMode::Tun) => language.text("Proxy · Preparing TUN…", "接入 · 正在准备 TUN…"),
+        Some(ProxyMode::System) => {
+            language.text("Proxy · Enabling system…", "接入 · 正在启用系统代理…")
+        }
+        Some(ProxyMode::Off) => language.text("Proxy · Turning off…", "接入 · 正在关闭…"),
+        None => match current {
+            ProxyMode::Off => language.text("Proxy · Off", "接入 · 关闭"),
+            ProxyMode::System => language.text("Proxy · System", "接入 · 系统"),
+            ProxyMode::Tun => language.text("Proxy · TUN", "接入 · TUN"),
+        },
+    }
+}
+
 /// Whether the controller Manis talks to is currently usable.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ControllerReadiness {
@@ -6349,19 +6361,23 @@ impl Render for ManisApp {
         self.workspace.resize(width);
         let size_class = self.workspace.size_class;
         let theme = self.theme();
-        self.ensure_subscription_input(theme, cx);
-        self.ensure_qx_rule_input(theme, cx);
-        self.ensure_policy_group_inputs(theme, cx);
-        self.ensure_runtime_search_inputs(theme, cx);
-        self.ensure_route_domain_input(theme, cx);
+        self.ensure_subscription_input(theme, window, cx);
+        self.ensure_qx_rule_input(theme, window, cx);
+        self.ensure_policy_group_inputs(theme, window, cx);
+        self.ensure_runtime_search_inputs(theme, window, cx);
+        self.ensure_route_domain_input(theme, window, cx);
         self.ensure_source_refresh_scheduler(cx);
         let compact = size_class == WindowSizeClass::Compact;
         let show_groups =
             !compact || self.workspace.compact_navigation == CompactNavigation::GroupList;
         let show_detail =
             !compact || self.workspace.compact_navigation == CompactNavigation::GroupDetail;
-        let overlay_inspector = size_class != WindowSizeClass::Wide;
-        let show_inspector = size_class == WindowSizeClass::Wide || self.inspector_open;
+        if size_class == WindowSizeClass::Wide && self.inspector_open && window.has_active_sheet(cx)
+        {
+            self.inspector_open = false;
+            window.close_sheet(cx);
+        }
+        let show_inspector = size_class == WindowSizeClass::Wide;
         let policies_active = self.primary_workspace == PrimaryWorkspace::Policies;
         let policy_editor_active = policies_active && self.managed_policy_draft.is_some();
         let has_policy_catalog = self.catalog.is_some();
@@ -6390,7 +6406,7 @@ impl Render for ManisApp {
                         main.child(self.node_workspace(theme, size_class, cx))
                     })
                     .when(routing_rules_active, |main| {
-                        main.child(self.routing_rules_workspace(theme, size_class, cx))
+                        main.child(self.routing_rules_workspace(theme, size_class, window, cx))
                     })
                     .when(activity_active, |main| {
                         main.child(self.activity_workspace(theme, size_class, cx))
@@ -6453,15 +6469,11 @@ impl Render for ManisApp {
                             && !policy_editor_active
                             && has_policy_catalog
                             && show_inspector,
-                        |main| main.child(self.inspector(theme, overlay_inspector, cx)),
+                        |main| main.child(self.inspector(theme, cx)),
                     ),
             )
+            .children(gpui_component::Root::render_sheet_layer(window, cx))
             .child(self.status_bar(theme))
-            .when(
-                routing_rules_active
-                    && self.manual_rule_editor_state == ManualRuleEditorState::Open,
-                |app| app.child(self.manual_rule_editor_modal(theme, self.language(), compact, cx)),
-            )
     }
 }
 
@@ -6479,10 +6491,22 @@ mod tests {
 
     use super::{
         ControllerReadiness, DueRemoteSource, ImportedSubscription, ImportedSubscriptionState,
-        ManisApp, ProxyModeBlock, SourceRuntimeApply, TunSupport, proxy_mode_block,
+        ManisApp, PolicyDetailTab, ProxyModeBlock, SourceRuntimeApply, TunSupport,
+        proxy_mode_block,
     };
     use crate::mihomo;
     use crate::subscription::SourceKind;
+
+    #[test]
+    fn policy_detail_tabs_round_trip_through_component_indices() {
+        assert_eq!(PolicyDetailTab::Nodes.index(), 0);
+        assert_eq!(PolicyDetailTab::Rules.index(), 1);
+        assert_eq!(PolicyDetailTab::Settings.index(), 2);
+        assert_eq!(PolicyDetailTab::from_index(0), PolicyDetailTab::Nodes);
+        assert_eq!(PolicyDetailTab::from_index(1), PolicyDetailTab::Rules);
+        assert_eq!(PolicyDetailTab::from_index(2), PolicyDetailTab::Settings);
+        assert_eq!(PolicyDetailTab::from_index(99), PolicyDetailTab::Nodes);
+    }
 
     #[test]
     fn app_startup_detects_a_privately_imported_subscription() {
