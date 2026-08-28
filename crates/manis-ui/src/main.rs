@@ -3,7 +3,7 @@ use gpui_platform::application;
 use manis_ui::{init, install_tray, open_window, show_or_open_window};
 
 fn main() {
-    let application = application();
+    let application = application().with_assets(gpui_component_assets::Assets);
     application.on_reopen(show_or_open_window);
     application.run(|cx: &mut App| {
         init(cx);
