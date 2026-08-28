@@ -1594,7 +1594,9 @@ impl fmt::Display for SubscriptionPreviewError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
             Self::UnsupportedPlatform => "当前平台尚不能启动隔离的 Mihomo 预览进程",
-            Self::BinaryUnavailable => "找不到 Mihomo 内核；请安装 Clash Verge Rev 或配置预览内核",
+            Self::BinaryUnavailable => {
+                "找不到 Mihomo 内核；请安装官方内核或设置 MANIS_MIHOMO_BINARY"
+            }
             Self::InvalidSource => "订阅地址无效，请检查后重试",
             Self::WorkspaceUnavailable => "无法创建私有预览空间，请检查临时目录权限",
             Self::ProfileUnavailable => "无法生成安全的订阅预览配置",

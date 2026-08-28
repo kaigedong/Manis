@@ -19,8 +19,7 @@ user-data directory, never in the repository.
 ## Core selection
 
 Mihomo is the default core. Manis looks for an executable beside the application, in `PATH`, and in
-common Homebrew locations. A development build on macOS can also discover the Mihomo installed by
-Clash Verge Rev, but Manis does not stop or modify that application's process.
+common Homebrew locations. It does not discover or reuse a core installed by another application.
 
 Override discovery explicitly when needed:
 
