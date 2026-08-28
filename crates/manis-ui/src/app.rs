@@ -4093,7 +4093,7 @@ impl ManisApp {
                     self.proxy_mode_busy,
                 ))
                 .with_variant(ButtonVariant::Default)
-                .with_size(ControlSize::Compact.height())
+                .with_size(ControlSize::Compact.component_size())
                 .h(ControlSize::Compact.height())
                 .px(Space::Md.px())
                 .border_color(theme.outline_subtle)
@@ -4112,7 +4112,7 @@ impl ManisApp {
         let interactive = self.proxy_mode_busy.is_none();
         let mut modes = ButtonGroup::new("proxy-mode-options")
             .with_variant(ButtonVariant::Ghost)
-            .with_size(ControlSize::Icon.min_pointer_target())
+            .with_size(ControlSize::Icon.component_size())
             .h_full();
         for mode in [ProxyMode::Off, ProxyMode::System, ProxyMode::Tun] {
             let selected = mode == self.proxy_mode;
@@ -4199,7 +4199,7 @@ impl ManisApp {
                 .accessibility_label(language.text("Change routing mode", "切换路由模式"))
                 .label(label)
                 .with_variant(ButtonVariant::Default)
-                .with_size(ControlSize::Compact.height())
+                .with_size(ControlSize::Compact.component_size())
                 .h(ControlSize::Compact.height())
                 .px(Space::Md.px())
                 .border_color(theme.outline_subtle)
@@ -4217,7 +4217,7 @@ impl ManisApp {
 
         let mut modes = ButtonGroup::new("routing-mode-options")
             .with_variant(ButtonVariant::Ghost)
-            .with_size(ControlSize::Icon.min_pointer_target())
+            .with_size(ControlSize::Icon.component_size())
             .h_full();
         for mode in [RoutingMode::Direct, RoutingMode::Global, RoutingMode::Rule] {
             let selected = mode == self.routing_mode;
@@ -5641,7 +5641,8 @@ impl ManisApp {
                                         )
                                         .label(language.text("Back", "返回"))
                                         .icon(IconName::ArrowLeft)
-                                        .with_size(ControlSize::Compact.height())
+                                        .with_size(ControlSize::Compact.component_size())
+                                        .h(ControlSize::Compact.height())
                                         .with_variant(ButtonVariant::Text)
                                         .on_click(cx.listener(|this, _, _, cx| {
                                             this.workspace.navigate_back();

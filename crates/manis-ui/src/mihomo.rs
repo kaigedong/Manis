@@ -1207,7 +1207,12 @@ fn compile_saved_profile(
             apply_qx_rule_sources(&mut profile, std::slice::from_ref(source))?;
         }
     }
-    if let Some(fallback) = bootstrap_fallback {
+    if let Some(fallback) = bootstrap_fallback
+        && !profile
+            .rules
+            .iter()
+            .any(|rule| matches!(rule, Rule::Match { .. }))
+    {
         profile.rules.push(fallback);
     }
     Ok(profile)
@@ -5813,7 +5818,8 @@ IP-CIDR,192.0.2.0/24,DIRECT
             "manual.example",
             "DIRECT",
         )?;
-        crate::manual_rule::save_manual_rules_in(&store, &[manual])?;
+        let final_rule = crate::manual_rule::ManualRule::final_rule("DIRECT")?;
+        crate::manual_rule::save_manual_rules_in(&store, &[final_rule, manual])?;
         super::save_routing_rule_group_order_in(
             &store,
             &[
@@ -5828,7 +5834,10 @@ IP-CIDR,192.0.2.0/24,DIRECT
         let second_index = yaml.find("DOMAIN-SUFFIX,second.example,DIRECT");
         let manual_index = yaml.find("DOMAIN,manual.example,DIRECT");
         let first_index = yaml.find("DOMAIN-SUFFIX,first.example,DIRECT");
+        let final_index = yaml.find("MATCH,DIRECT");
         assert!(second_index < manual_index && manual_index < first_index);
+        assert!(first_index < final_index);
+        assert!(yaml.trim_end().ends_with("\"MATCH,DIRECT\""));
         assert!(!yaml.contains("GEOIP,CN,DIRECT"));
         assert!(!yaml.contains("MATCH,__MANIS_GLOBAL__"));
 

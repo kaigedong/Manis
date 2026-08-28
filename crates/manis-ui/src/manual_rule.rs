@@ -20,6 +20,8 @@ const MANUAL_RULES_VERSION_V2: &str = "manis.manual-routing-rules.v2";
 #[cfg(not(windows))]
 const MANUAL_RULES_VERSION_V3: &str = "manis.manual-routing-rules.v3";
 #[cfg(not(windows))]
+const MANUAL_RULES_VERSION_V4: &str = "manis.manual-routing-rules.v4";
+#[cfg(not(windows))]
 const MAX_MANUAL_RULES_FILE_BYTES: u64 = 256 * 1024;
 const MAX_PARAMETER_BYTES: usize = 1_024;
 pub(crate) const MAX_CONDITIONS: usize = 4;
@@ -38,10 +40,11 @@ pub(crate) enum ManualRuleKind {
     GeoIp,
     IpAsn,
     DstPort,
+    Final,
 }
 
 impl ManualRuleKind {
-    pub(crate) const ALL: [Self; 10] = [
+    pub(crate) const ALL: [Self; 11] = [
         Self::Host,
         Self::HostSuffix,
         Self::HostWildcard,
@@ -52,6 +55,7 @@ impl ManualRuleKind {
         Self::GeoIp,
         Self::IpAsn,
         Self::DstPort,
+        Self::Final,
     ];
 
     pub(crate) const fn qx_label(self) -> &'static str {
@@ -66,6 +70,7 @@ impl ManualRuleKind {
             Self::GeoIp => "GEOIP",
             Self::IpAsn => "IP-ASN",
             Self::DstPort => "DST-PORT",
+            Self::Final => "FINAL",
         }
     }
 
@@ -81,6 +86,7 @@ impl ManualRuleKind {
             Self::GeoIp => "GEOIP",
             Self::IpAsn => "IP-ASN",
             Self::DstPort => "DST-PORT",
+            Self::Final => "FINAL",
         }
     }
 
@@ -96,6 +102,7 @@ impl ManualRuleKind {
             Self::GeoIp => "geoip",
             Self::IpAsn => "ip-asn",
             Self::DstPort => "dst-port",
+            Self::Final => "final",
         }
     }
 
@@ -112,6 +119,7 @@ impl ManualRuleKind {
             "geoip" => Self::GeoIp,
             "ip-asn" => Self::IpAsn,
             "dst-port" => Self::DstPort,
+            "final" => Self::Final,
             _ => return None,
         })
     }
@@ -177,13 +185,20 @@ impl ManualRuleCondition {
                     .parse()
                     .map_err(|_error| ManualRuleCompileError::CorruptValue)?,
             ),
+            ManualRuleKind::Final => return Err(ManualRuleCompileError::CorruptValue),
         })
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+enum ManualRuleMatcher {
+    Conditions(Vec<ManualRuleCondition>),
+    Final,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ManualRule {
-    conditions: Vec<ManualRuleCondition>,
+    matcher: ManualRuleMatcher,
     target: Name,
     enabled: bool,
 }
@@ -207,6 +222,18 @@ impl ManualRule {
         if conditions.len() > MAX_CONDITIONS {
             return Err(ManualRuleError::TooManyConditions);
         }
+        if conditions
+            .iter()
+            .any(|(kind, _parameter)| *kind == ManualRuleKind::Final)
+        {
+            if conditions.len() != 1 {
+                return Err(ManualRuleError::FinalMustStandAlone);
+            }
+            if !conditions[0].1.trim().is_empty() {
+                return Err(ManualRuleError::FinalHasNoParameter);
+            }
+            return Self::final_rule(target);
+        }
         let conditions = conditions
             .into_iter()
             .map(|(kind, parameter)| {
@@ -221,14 +248,30 @@ impl ManualRule {
         }
         let target = Name::parse(target).map_err(|_error| ManualRuleError::InvalidPolicy)?;
         Ok(Self {
-            conditions,
+            matcher: ManualRuleMatcher::Conditions(conditions),
+            target,
+            enabled: true,
+        })
+    }
+
+    pub(crate) fn final_rule(target: &str) -> Result<Self, ManualRuleError> {
+        let target = Name::parse(target).map_err(|_error| ManualRuleError::InvalidPolicy)?;
+        Ok(Self {
+            matcher: ManualRuleMatcher::Final,
             target,
             enabled: true,
         })
     }
 
     pub(crate) fn conditions(&self) -> &[ManualRuleCondition] {
-        &self.conditions
+        match &self.matcher {
+            ManualRuleMatcher::Conditions(conditions) => conditions,
+            ManualRuleMatcher::Final => &[],
+        }
+    }
+
+    pub(crate) const fn is_final(&self) -> bool {
+        matches!(&self.matcher, ManualRuleMatcher::Final)
     }
 
     pub(crate) fn target(&self) -> &str {
@@ -244,7 +287,7 @@ impl ManualRule {
     }
 
     pub(crate) fn same_definition(&self, other: &Self) -> bool {
-        self.conditions == other.conditions && self.target == other.target
+        self.matcher == other.matcher && self.target == other.target
     }
 
     fn to_profile_rule(
@@ -259,17 +302,20 @@ impl ManualRule {
                 .unwrap_or_else(|| PolicyRef::Group(self.target.clone())),
             _ => PolicyRef::Group(self.target.clone()),
         };
-        if self.conditions.len() > 1 {
+        if self.is_final() {
+            return Ok(Rule::Match { policy });
+        }
+        let conditions = self.conditions();
+        if conditions.len() > 1 {
             return Ok(Rule::All {
-                conditions: self
-                    .conditions
+                conditions: conditions
                     .iter()
                     .map(ManualRuleCondition::to_profile_condition)
                     .collect::<Result<Vec<_>, _>>()?,
                 policy,
             });
         }
-        let condition = self.conditions[0].to_profile_condition()?;
+        let condition = conditions[0].to_profile_condition()?;
         Ok(match condition {
             manis_profile::RuleCondition::Domain(value) => Rule::Domain { value, policy },
             manis_profile::RuleCondition::DomainKeyword(value) => {
@@ -320,12 +366,16 @@ pub(crate) enum ManualRuleError {
     Duplicate,
     DuplicateCondition,
     TooManyConditions,
+    FinalMustStandAlone,
+    FinalHasNoParameter,
+    FinalAlreadyExists,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ManualRuleEditError {
     Missing,
     Duplicate,
+    FinalAlreadyExists,
 }
 
 pub(crate) fn replace_manual_rule(
@@ -344,6 +394,14 @@ pub(crate) fn replace_manual_rule(
         })
     {
         return Err(ManualRuleEditError::Duplicate);
+    }
+    if replacement.is_final()
+        && rules
+            .iter()
+            .enumerate()
+            .any(|(candidate_index, candidate)| candidate_index != index && candidate.is_final())
+    {
+        return Err(ManualRuleEditError::FinalAlreadyExists);
     }
     replacement.enabled = rules[index].enabled;
     Ok(std::mem::replace(&mut rules[index], replacement))
@@ -370,6 +428,7 @@ impl std::error::Error for ManualRuleStoreError {}
 pub(crate) enum ManualRuleCompileError {
     UnsupportedType(ManualRuleKind),
     CorruptValue,
+    MultipleFinalRules,
 }
 
 impl fmt::Display for ManualRuleCompileError {
@@ -381,6 +440,7 @@ impl fmt::Display for ManualRuleCompileError {
                 kind.qx_label()
             ),
             Self::CorruptValue => formatter.write_str("手动分流规则参数无效"),
+            Self::MultipleFinalRules => formatter.write_str("只能配置一条 FINAL 分流规则"),
         }
     }
 }
@@ -441,6 +501,7 @@ fn normalize_parameter(kind: ManualRuleKind, parameter: &str) -> Result<String, 
             .filter(|port| *port > 0)
             .map(|port| port.to_string())
             .ok_or(ManualRuleError::InvalidDestinationPort),
+        ManualRuleKind::Final => Err(ManualRuleError::FinalHasNoParameter),
     }
 }
 
@@ -495,9 +556,9 @@ pub(crate) fn append_manual_rules(
     rules: &[ManualRule],
     kernel: KernelKind,
 ) -> Result<(), ManualRuleCompileError> {
-    for rule in rules.iter().filter(|rule| rule.enabled) {
+    for rule in rules.iter().filter(|rule| rule.enabled && !rule.is_final()) {
         if let Some(condition) = rule
-            .conditions
+            .conditions()
             .iter()
             .find(|condition| !condition.kind.supported_by(kernel))
         {
@@ -520,30 +581,119 @@ pub(crate) fn append_manual_rules(
         .flatten();
     let compiled = rules
         .iter()
-        .filter(|rule| rule.enabled)
+        .filter(|rule| rule.enabled && !rule.is_final())
         .map(|rule| rule.to_profile_rule(legacy_proxy_target.as_ref()))
         .collect::<Result<Vec<_>, _>>()?;
-    profile.rules.extend(compiled);
+    let insert_at = profile
+        .rules
+        .iter()
+        .position(|rule| matches!(rule, Rule::Match { .. }))
+        .unwrap_or(profile.rules.len());
+    profile.rules.splice(insert_at..insert_at, compiled);
+
+    let mut final_rules = rules.iter().filter(|rule| rule.enabled && rule.is_final());
+    let terminal = final_rules.next();
+    if final_rules.next().is_some() {
+        return Err(ManualRuleCompileError::MultipleFinalRules);
+    }
+    if let Some(terminal) = terminal {
+        let compiled = terminal.to_profile_rule(legacy_proxy_target.as_ref())?;
+        profile
+            .rules
+            .retain(|rule| !matches!(rule, Rule::Match { .. }));
+        profile.rules.push(compiled);
+    }
     Ok(())
 }
 
 #[cfg(not(windows))]
-fn encode_manual_rules(rules: &[ManualRule]) -> String {
-    let mut contents = String::from(MANUAL_RULES_VERSION_V3);
+fn encode_manual_rules(rules: &[ManualRule]) -> Result<String, ManualRuleStoreError> {
+    if rules.iter().filter(|rule| rule.is_final()).count() > 1 {
+        return Err(ManualRuleStoreError::Corrupt);
+    }
+    let mut contents = String::from(MANUAL_RULES_VERSION_V4);
     contents.push_str("\nlegacy-direct-rules-migrated\t1");
-    for rule in rules {
+    for rule in rules.iter().filter(|rule| !rule.is_final()) {
         contents.push_str("\nrule\t");
         contents.push_str(if rule.enabled { "1" } else { "0" });
         contents.push('\t');
         contents.push_str(rule.target.as_str());
-        for condition in &rule.conditions {
+        for condition in rule.conditions() {
             contents.push('\t');
             contents.push_str(condition.kind.storage_key());
             contents.push('\t');
             contents.push_str(&condition.parameter);
         }
     }
-    contents
+    if let Some(rule) = rules.iter().find(|rule| rule.is_final()) {
+        contents.push_str("\nfinal\t");
+        contents.push_str(if rule.enabled { "1" } else { "0" });
+        contents.push('\t');
+        contents.push_str(rule.target.as_str());
+    }
+    Ok(contents)
+}
+
+#[cfg(not(windows))]
+fn normalize_loaded_rule_order(
+    mut rules: Vec<ManualRule>,
+) -> Result<Vec<ManualRule>, ManualRuleStoreError> {
+    if rules.iter().filter(|rule| rule.is_final()).count() > 1 {
+        return Err(ManualRuleStoreError::Corrupt);
+    }
+    if let Some(index) = rules.iter().position(ManualRule::is_final) {
+        let final_rule = rules.remove(index);
+        rules.push(final_rule);
+    }
+    Ok(rules)
+}
+
+#[cfg(not(windows))]
+fn decode_v4_manual_rules<'a>(
+    mut lines: impl Iterator<Item = &'a str>,
+) -> Result<Vec<ManualRule>, ManualRuleStoreError> {
+    if lines.next() != Some("legacy-direct-rules-migrated\t1") {
+        return Err(ManualRuleStoreError::Corrupt);
+    }
+    let rules = lines
+        .filter(|line| !line.is_empty())
+        .map(|line| {
+            let fields = line.split('\t').collect::<Vec<_>>();
+            match fields.as_slice() {
+                ["final", enabled @ ("0" | "1"), target] => {
+                    let mut rule = ManualRule::final_rule(target)
+                        .map_err(|_error| ManualRuleStoreError::Corrupt)?;
+                    rule.enabled = *enabled == "1";
+                    Ok(rule)
+                }
+                _ if fields.first() == Some(&"rule")
+                    && matches!(fields.get(1), Some(&"0" | &"1"))
+                    && fields.len() >= 5
+                    && (fields.len() - 3).is_multiple_of(2) =>
+                {
+                    let enabled = fields[1] == "1";
+                    let target = fields[2];
+                    let conditions = fields[3..]
+                        .as_chunks::<2>()
+                        .0
+                        .iter()
+                        .map(|pair| {
+                            ManualRuleKind::from_storage_key(pair[0])
+                                .filter(|kind| *kind != ManualRuleKind::Final)
+                                .map(|kind| (kind, pair[1].to_owned()))
+                                .ok_or(ManualRuleStoreError::Corrupt)
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let mut rule = ManualRule::parse_conditions(conditions, target)
+                        .map_err(|_error| ManualRuleStoreError::Corrupt)?;
+                    rule.enabled = enabled;
+                    Ok(rule)
+                }
+                _ => Err(ManualRuleStoreError::Corrupt),
+            }
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    normalize_loaded_rule_order(rules)
 }
 
 #[cfg(not(windows))]
@@ -572,6 +722,7 @@ fn decode_v3_manual_rules<'a>(
                 .iter()
                 .map(|pair| {
                     ManualRuleKind::from_storage_key(pair[0])
+                        .filter(|kind| *kind != ManualRuleKind::Final)
                         .map(|kind| (kind, pair[1].to_owned()))
                         .ok_or(ManualRuleStoreError::Corrupt)
                 })
@@ -595,6 +746,7 @@ fn decode_v1_manual_rules<'a>(
             let kind = fields
                 .next()
                 .and_then(ManualRuleKind::from_storage_key)
+                .filter(|kind| *kind != ManualRuleKind::Final)
                 .ok_or(ManualRuleStoreError::Corrupt)?;
             let parameter = fields.next().ok_or(ManualRuleStoreError::Corrupt)?;
             let target = fields.next().ok_or(ManualRuleStoreError::Corrupt)?;
@@ -631,6 +783,7 @@ fn decode_v2_manual_rules<'a>(
                 .iter()
                 .map(|pair| {
                     ManualRuleKind::from_storage_key(pair[0])
+                        .filter(|kind| *kind != ManualRuleKind::Final)
                         .map(|kind| (kind, pair[1].to_owned()))
                         .ok_or(ManualRuleStoreError::Corrupt)
                 })
@@ -648,6 +801,7 @@ fn decode_manual_rules(contents: &str) -> Result<(Vec<ManualRule>, bool), Manual
         Some(MANUAL_RULES_VERSION_V1) => decode_v1_manual_rules(lines).map(|rules| (rules, false)),
         Some(MANUAL_RULES_VERSION_V2) => decode_v2_manual_rules(lines).map(|rules| (rules, true)),
         Some(MANUAL_RULES_VERSION_V3) => decode_v3_manual_rules(lines).map(|rules| (rules, true)),
+        Some(MANUAL_RULES_VERSION_V4) => decode_v4_manual_rules(lines).map(|rules| (rules, true)),
         _ => Err(ManualRuleStoreError::Corrupt),
     }
 }
@@ -724,13 +878,10 @@ pub(crate) fn save_manual_rules_in(
     directory: &Path,
     rules: &[ManualRule],
 ) -> Result<(), ManualRuleStoreError> {
-    write_private_atomic(
-        directory,
-        MANUAL_RULES_FILE,
-        encode_manual_rules(rules).as_bytes(),
-    )
-    .map(|_path| ())
-    .map_err(|_error| ManualRuleStoreError::Unavailable)
+    let contents = encode_manual_rules(rules)?;
+    write_private_atomic(directory, MANUAL_RULES_FILE, contents.as_bytes())
+        .map(|_path| ())
+        .map_err(|_error| ManualRuleStoreError::Unavailable)
 }
 
 #[cfg(windows)]
@@ -815,6 +966,31 @@ mod tests {
             ManualRuleKind::HostKeyword.display_label(),
             "DOMAIN-KEYWORD"
         );
+        assert_eq!(ManualRuleKind::Final.display_label(), "FINAL");
+    }
+
+    #[test]
+    fn final_is_parameterless_and_cannot_be_combined() {
+        let final_rule =
+            ManualRule::parse(ManualRuleKind::Final, "", "DIRECT").expect("parameterless FINAL");
+
+        assert!(final_rule.is_final());
+        assert!(final_rule.conditions().is_empty());
+        assert_eq!(final_rule.target(), "DIRECT");
+        assert_eq!(
+            ManualRule::parse(ManualRuleKind::Final, "unused", "DIRECT"),
+            Err(ManualRuleError::FinalHasNoParameter)
+        );
+        assert_eq!(
+            ManualRule::parse_conditions(
+                vec![
+                    (ManualRuleKind::HostSuffix, "example.com".to_owned()),
+                    (ManualRuleKind::Final, String::new()),
+                ],
+                "DIRECT",
+            ),
+            Err(ManualRuleError::FinalMustStandAlone)
+        );
     }
 
     #[test]
@@ -860,6 +1036,46 @@ mod tests {
         );
         assert!(!yaml.contains("GEOIP,CN,DIRECT"));
         assert!(!yaml.contains("MATCH,__MANIS_GLOBAL__"));
+    }
+
+    #[test]
+    fn final_compiles_after_every_specific_rule_regardless_of_saved_order() {
+        let mut profile = manis_profile::Profile::qx_default(
+            manis_profile::SecretUrl::parse_https("https://example.invalid/subscription")
+                .expect("fixture URL"),
+        )
+        .expect("fixture profile");
+        let rules = vec![
+            ManualRule::final_rule("DIRECT").expect("FINAL"),
+            ManualRule::parse(ManualRuleKind::HostSuffix, "example.com", "Proxy")
+                .expect("specific rule"),
+        ];
+
+        append_manual_rules(&mut profile, &rules, manis_core::KernelKind::Mihomo)
+            .expect("supported rules");
+        let yaml = manis_profile::render_mihomo_yaml(&profile).expect("rendered profile");
+
+        assert!(
+            yaml.find("DOMAIN-SUFFIX,example.com,__MANIS_GLOBAL__") < yaml.find("MATCH,DIRECT")
+        );
+        assert!(yaml.trim_end().ends_with("\"MATCH,DIRECT\""));
+    }
+
+    #[test]
+    fn replacing_with_a_second_final_is_rejected_even_when_targets_differ() {
+        let first = ManualRule::parse(ManualRuleKind::Host, "example.com", "DIRECT")
+            .expect("specific rule");
+        let final_rule = ManualRule::final_rule("DIRECT").expect("FINAL");
+        let mut rules = vec![first, final_rule];
+
+        assert_eq!(
+            replace_manual_rule(
+                &mut rules,
+                0,
+                ManualRule::final_rule("REJECT").expect("replacement FINAL"),
+            ),
+            Err(ManualRuleEditError::FinalAlreadyExists)
+        );
     }
 
     #[test]
@@ -917,6 +1133,7 @@ mod tests {
         }
         fs::create_dir_all(&root)?;
         let mut rules = vec![
+            ManualRule::final_rule("DIRECT")?,
             ManualRule::parse_conditions(
                 vec![
                     (ManualRuleKind::HostSuffix, "example.com".to_owned()),
@@ -926,11 +1143,38 @@ mod tests {
             )?,
             ManualRule::parse(ManualRuleKind::GeoIp, "US", "DIRECT")?,
         ];
-        rules[1].set_enabled(false);
+        rules[2].set_enabled(false);
         save_manual_rules_in(&root, &rules)?;
         let loaded = load_manual_rules_in(&root)?;
-        assert_eq!(loaded, rules);
+        assert_eq!(loaded.len(), 3);
+        assert!(loaded.last().is_some_and(ManualRule::is_final));
         assert!(!loaded[1].is_enabled());
+        let stored = fs::read_to_string(root.join(super::MANUAL_RULES_FILE))?;
+        assert!(stored.starts_with(super::MANUAL_RULES_VERSION_V4));
+        assert!(
+            stored
+                .lines()
+                .last()
+                .is_some_and(|line| line == "final\t1\tDIRECT")
+        );
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn storage_rejects_more_than_one_final_rule() -> Result<(), Box<dyn std::error::Error>> {
+        let root = std::env::temp_dir().join(format!("manis-manual-final-{}", std::process::id()));
+        fs::create_dir_all(&root)?;
+        let rules = [
+            ManualRule::final_rule("DIRECT")?,
+            ManualRule::final_rule("REJECT")?,
+        ];
+
+        assert_eq!(
+            save_manual_rules_in(&root, &rules),
+            Err(super::ManualRuleStoreError::Corrupt)
+        );
         fs::remove_dir_all(root)?;
         Ok(())
     }

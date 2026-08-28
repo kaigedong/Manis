@@ -173,6 +173,13 @@ pub(crate) enum ControlSize {
 
 #[allow(dead_code)]
 impl ControlSize {
+    pub(crate) const fn component_size(self) -> gpui_component::Size {
+        match self {
+            Self::Compact | Self::Icon => gpui_component::Size::Small,
+            Self::Standard => gpui_component::Size::Medium,
+        }
+    }
+
     pub(crate) fn height(self) -> Pixels {
         match self {
             Self::Compact => px(34.0),
@@ -307,6 +314,14 @@ mod tests {
         assert_px(ControlSize::Compact.height(), 34.0);
         assert_px(ControlSize::Standard.height(), 38.0);
         assert_px(ControlSize::Icon.min_pointer_target(), 32.0);
+        assert_eq!(
+            ControlSize::Compact.component_size(),
+            gpui_component::Size::Small
+        );
+        assert_eq!(
+            ControlSize::Standard.component_size(),
+            gpui_component::Size::Medium
+        );
     }
 
     #[test]

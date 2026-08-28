@@ -138,6 +138,7 @@ fn manual_rule_placeholder(
         ManualRuleKind::GeoIp => language.text("US", "US（国家代码）"),
         ManualRuleKind::IpAsn => "6185",
         ManualRuleKind::DstPort => "22",
+        ManualRuleKind::Final => "",
     }
 }
 
@@ -157,6 +158,10 @@ fn manual_rule_kind_detail(
         ManualRuleKind::GeoIp => language.text("Country or region", "国家或地区"),
         ManualRuleKind::IpAsn => language.text("Autonomous system", "自治系统"),
         ManualRuleKind::DstPort => language.text("Destination port", "目标端口"),
+        ManualRuleKind::Final => language.text(
+            "Fallback for traffic not matched above",
+            "兜底处理此前未命中的流量",
+        ),
     }
 }
 
@@ -216,6 +221,18 @@ fn manual_rule_error_label(
         ManualRuleError::TooManyConditions => language.text(
             "A rule can contain at most four conditions",
             "一条规则最多包含四个条件",
+        ),
+        ManualRuleError::FinalMustStandAlone => language.text(
+            "FINAL cannot be combined with another condition",
+            "FINAL 不能和其他匹配条件组合",
+        ),
+        ManualRuleError::FinalHasNoParameter => language.text(
+            "FINAL does not need a match parameter",
+            "FINAL 不需要匹配参数",
+        ),
+        ManualRuleError::FinalAlreadyExists => language.text(
+            "Only one FINAL rule can be configured",
+            "只能配置一条 FINAL 规则",
         ),
     }
 }
@@ -2259,9 +2276,9 @@ impl ManisApp {
             choices = choices.child(
                 Button::new(format!("qx-rule-source-target-{source_id}-{target_id}"))
                     .accessibility_label(format!("Target {target}"))
-                    .label(target)
                     .selected(selected)
                     .with_variant(ButtonVariant::Text)
+                    .with_size(ControlSize::Compact.component_size())
                     .w_full()
                     .min_h(ControlSize::Standard.min_pointer_target())
                     .px(Space::Md.px())
@@ -2273,14 +2290,19 @@ impl ManisApp {
                     } else {
                         theme.surface_high
                     })
-                    .text_size(TextRole::Label.size())
-                    .line_height(TextRole::Label.line_height())
-                    .font_weight(TextRole::Label.weight())
                     .text_color(if selected {
                         theme.action_primary
                     } else {
                         theme.text_primary
                     })
+                    .child(
+                        div()
+                            .w_full()
+                            .text_size(TextRole::Label.size())
+                            .line_height(TextRole::Label.line_height())
+                            .font_weight(TextRole::Label.weight())
+                            .child(target),
+                    )
                     .on_click(cx.listener(move |this, _, _, cx| {
                         cx.stop_propagation();
                         this.update_qx_rule_source_target(source_id.clone(), target_id.clone(), cx);
@@ -2303,26 +2325,34 @@ impl ManisApp {
         let open = self.qx_rule_target_popover.as_deref() == Some(source.id.as_str());
         let updating = self.qx_rule_source_target_updates.contains_key(&source.id);
         let menu = self.qx_rule_source_target_menu(&source.id, &selected_target, theme, cx);
+        let display_value = if updating {
+            language.text("Saving…", "保存中…").to_owned()
+        } else {
+            format!(
+                "{} · {selected_target}",
+                language.message(Message::PolicyGroup)
+            )
+        };
         let trigger = Button::new(format!("qx-rule-target-select-{}", source.id))
             .accessibility_label(language.text(
                 "Change target policy for this rule source",
                 "修改这个规则源的目标策略",
             ))
-            .label(if updating {
-                language.text("Saving…", "保存中…").to_owned()
-            } else {
-                format!(
-                    "{} · {selected_target}",
-                    language.message(Message::PolicyGroup)
-                )
-            })
             .dropdown_caret(true)
             .with_variant(ButtonVariant::Default)
-            .with_size(ControlSize::Compact.height())
+            .with_size(ControlSize::Compact.component_size())
             .h(ControlSize::Compact.height())
-            .text_size(TextRole::Metadata.size())
-            .line_height(TextRole::Metadata.line_height())
-            .font_weight(FontWeight::SEMIBOLD)
+            .child(
+                div()
+                    .min_w(px(0.0))
+                    .overflow_x_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .text_size(TextRole::Label.size())
+                    .line_height(TextRole::Label.line_height())
+                    .font_weight(TextRole::Label.weight())
+                    .child(display_value),
+            )
             .disabled(!enabled);
         let app = cx.entity();
         crate::components::anchored_popover(
@@ -2384,9 +2414,16 @@ impl ManisApp {
         self.manual_rule_editor_state = super::ManualRuleEditorState::Editing(index);
         self.manual_rule_popover = None;
         self.manual_rule_error = None;
-        self.manual_rule_condition_count = rule.conditions().len();
+        self.manual_rule_condition_count = if rule.is_final() {
+            1
+        } else {
+            rule.conditions().len()
+        };
         for (condition_index, input) in self.manual_rule_inputs.iter().enumerate() {
-            if let Some(condition) = rule.conditions().get(condition_index) {
+            if rule.is_final() && condition_index == 0 {
+                self.manual_rule_kinds[condition_index] = crate::manual_rule::ManualRuleKind::Final;
+                input.update(cx, SubscriptionTextInput::clear_without_event);
+            } else if let Some(condition) = rule.conditions().get(condition_index) {
                 self.manual_rule_kinds[condition_index] = condition.kind();
                 input.update(cx, |input, cx| {
                     input.set_value_without_event(condition.parameter().to_owned(), cx);
@@ -2546,6 +2583,12 @@ impl ManisApp {
             return;
         };
         *selected_kind = kind;
+        if kind == crate::manual_rule::ManualRuleKind::Final {
+            self.manual_rule_condition_count = 1;
+            for input in &self.manual_rule_inputs {
+                input.update(cx, SubscriptionTextInput::clear_without_event);
+            }
+        }
         self.manual_rule_error = None;
         self.manual_rule_popover = None;
         let placeholder = manual_rule_placeholder(kind, self.language());
@@ -2556,7 +2599,9 @@ impl ManisApp {
     }
 
     fn add_manual_rule_condition(&mut self, cx: &mut Context<Self>) {
-        if self.manual_rule_condition_count >= crate::manual_rule::MAX_CONDITIONS {
+        if self.manual_rule_condition_count >= crate::manual_rule::MAX_CONDITIONS
+            || self.manual_rule_kinds.first() == Some(&crate::manual_rule::ManualRuleKind::Final)
+        {
             return;
         }
         let index = self.manual_rule_condition_count;
@@ -2594,6 +2639,34 @@ impl ManisApp {
         cx.notify();
     }
 
+    fn apply_manual_rule_edit(
+        &mut self,
+        editing_index: Option<usize>,
+        rule: crate::manual_rule::ManualRule,
+    ) -> Result<(), crate::manual_rule::ManualRuleEditError> {
+        if let Some(index) = editing_index {
+            crate::manual_rule::replace_manual_rule(&mut self.manual_rules, index, rule)?;
+        } else {
+            if rule.is_final()
+                && self
+                    .manual_rules
+                    .iter()
+                    .any(crate::manual_rule::ManualRule::is_final)
+            {
+                return Err(crate::manual_rule::ManualRuleEditError::FinalAlreadyExists);
+            }
+            if self
+                .manual_rules
+                .iter()
+                .any(|existing| existing.same_definition(&rule))
+            {
+                return Err(crate::manual_rule::ManualRuleEditError::Duplicate);
+            }
+            self.manual_rules.push(rule);
+        }
+        Ok(())
+    }
+
     fn submit_manual_rule(&mut self, cx: &mut Context<Self>) -> bool {
         if self.manual_rule_editor_state == super::ManualRuleEditorState::Closed {
             return false;
@@ -2625,45 +2698,36 @@ impl ManisApp {
             }
         };
         let editing_index = self.manual_rule_editor_state.editing_index();
-        let previous = if let Some(index) = editing_index {
-            match crate::manual_rule::replace_manual_rule(&mut self.manual_rules, index, rule) {
-                Ok(previous) => Some(previous),
-                Err(crate::manual_rule::ManualRuleEditError::Duplicate) => {
-                    self.manual_rule_error = Some(crate::manual_rule::ManualRuleError::Duplicate);
-                    cx.notify();
-                    return false;
-                }
-                Err(crate::manual_rule::ManualRuleEditError::Missing) => {
-                    self.reset_manual_rule_editor_state();
-                    cx.notify();
-                    return false;
-                }
-            }
-        } else {
-            if self
-                .manual_rules
-                .iter()
-                .any(|existing| existing.same_definition(&rule))
-            {
+        let previous_rules = self.manual_rules.clone();
+        match self.apply_manual_rule_edit(editing_index, rule) {
+            Ok(()) => {}
+            Err(crate::manual_rule::ManualRuleEditError::Duplicate) => {
                 self.manual_rule_error = Some(crate::manual_rule::ManualRuleError::Duplicate);
                 cx.notify();
                 return false;
             }
-            self.manual_rules.push(rule);
-            None
-        };
-        if !self.persist_manual_rules(cx) {
-            if let Some(index) = editing_index {
-                if let Some(previous) = previous {
-                    let _ = crate::manual_rule::replace_manual_rule(
-                        &mut self.manual_rules,
-                        index,
-                        previous,
-                    );
-                }
-            } else {
-                self.manual_rules.pop();
+            Err(crate::manual_rule::ManualRuleEditError::FinalAlreadyExists) => {
+                self.manual_rule_error =
+                    Some(crate::manual_rule::ManualRuleError::FinalAlreadyExists);
+                cx.notify();
+                return false;
             }
+            Err(crate::manual_rule::ManualRuleEditError::Missing) => {
+                self.reset_manual_rule_editor_state();
+                cx.notify();
+                return false;
+            }
+        }
+        if let Some(index) = self
+            .manual_rules
+            .iter()
+            .position(crate::manual_rule::ManualRule::is_final)
+        {
+            let final_rule = self.manual_rules.remove(index);
+            self.manual_rules.push(final_rule);
+        }
+        if !self.persist_manual_rules(cx) {
+            self.manual_rules = previous_rules;
             return false;
         }
         self.manual_rule_error = None;
@@ -2847,12 +2911,24 @@ impl ManisApp {
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let kernel = self.runtime.kind();
+        let editing_index = self.manual_rule_editor_state.editing_index();
+        let final_available = !self
+            .manual_rules
+            .iter()
+            .enumerate()
+            .any(|(index, rule)| rule.is_final() && Some(index) != editing_index);
         let mut choices = div().id("manual-rule-kind-choices");
         for kind in crate::manual_rule::ManualRuleKind::ALL {
-            let supported = kind.supported_by(kernel);
+            if kind == crate::manual_rule::ManualRuleKind::Final && condition_index > 0 {
+                continue;
+            }
+            let supported = kind.supported_by(kernel)
+                && (kind != crate::manual_rule::ManualRuleKind::Final || final_available);
             let selected = selected_kind == kind;
             let detail = if supported {
                 manual_rule_kind_detail(kind, language)
+            } else if kind == crate::manual_rule::ManualRuleKind::Final {
+                language.text("Already configured", "已经配置")
             } else if kind == crate::manual_rule::ManualRuleKind::UserAgent {
                 language.text("No exact kernel equivalent", "内核无精确等价规则")
             } else {
@@ -2903,7 +2979,9 @@ impl ManisApp {
                             .child(detail),
                     )
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        this.set_manual_rule_kind(condition_index, kind, cx);
+                        if supported {
+                            this.set_manual_rule_kind(condition_index, kind, cx);
+                        }
                     })),
             );
         }
@@ -2964,15 +3042,23 @@ impl ManisApp {
     ) -> AnyElement {
         let trigger = Button::new(id.to_owned())
             .accessibility_label(label)
-            .label(value)
             .dropdown_caret(true)
             .with_variant(ButtonVariant::Default)
-            .with_size(ControlSize::Standard.height())
+            .with_size(ControlSize::Standard.component_size())
             .h(ControlSize::Standard.height())
             .w_full()
-            .text_size(TextRole::Label.size())
-            .line_height(TextRole::Label.line_height())
-            .font_weight(TextRole::Label.weight());
+            .child(
+                div()
+                    .w_full()
+                    .min_w(px(0.0))
+                    .overflow_x_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .text_size(TextRole::Label.size())
+                    .line_height(TextRole::Label.line_height())
+                    .font_weight(TextRole::Label.weight())
+                    .child(value),
+            );
 
         crate::components::anchored_popover(format!("{id}-popover"), trigger, menu, width, 360.0)
             .open(open)
@@ -3015,6 +3101,7 @@ impl ManisApp {
                 });
             },
         );
+        let is_final = kind == crate::manual_rule::ManualRuleKind::Final;
         let mut row = div()
             .mt_3()
             .child(div().child(field_label(
@@ -3040,7 +3127,30 @@ impl ManisApp {
                             .flex_shrink_0()
                             .child(kind_select),
                     )
-                    .child(div().flex_1().min_w(px(0.0)).child(input)),
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .when(!is_final, |field| field.child(input))
+                            .when(is_final, |field| {
+                                field.child(
+                                    div()
+                                        .h(ControlSize::Standard.height())
+                                        .px(Space::Md.px())
+                                        .flex()
+                                        .items_center()
+                                        .rounded(Radius::Control.px())
+                                        .bg(theme.surface_low)
+                                        .text_size(TextRole::Body.size())
+                                        .line_height(TextRole::Body.line_height())
+                                        .text_color(theme.text_secondary)
+                                        .child(language.text(
+                                            "Matches only after every rule above misses",
+                                            "仅在上方所有规则均未命中时生效",
+                                        )),
+                                )
+                            }),
+                    ),
             );
         if condition_index > 0 {
             row = row.child(
@@ -3048,7 +3158,8 @@ impl ManisApp {
                     .accessibility_label(language.text("Remove this condition", "移除这个条件"))
                     .label(language.text("Remove condition", "移除条件"))
                     .text()
-                    .with_size(ControlSize::Compact.height())
+                    .with_size(ControlSize::Compact.component_size())
+                    .h(ControlSize::Compact.height())
                     .mt(Space::Sm.px())
                     .cursor_pointer()
                     .font_weight(FontWeight::SEMIBOLD)
@@ -3091,6 +3202,8 @@ impl ManisApp {
         );
 
         let editing = self.manual_rule_editor_state.editing_index().is_some();
+        let final_selected =
+            self.manual_rule_kinds.first() == Some(&crate::manual_rule::ManualRuleKind::Final);
         let mut conditions = div();
         for condition_index in 0..self.manual_rule_condition_count {
             conditions = conditions.child(self.manual_rule_condition_editor(
@@ -3102,13 +3215,15 @@ impl ManisApp {
                 cx,
             ));
         }
-        if self.manual_rule_condition_count < crate::manual_rule::MAX_CONDITIONS {
+        if !final_selected && self.manual_rule_condition_count < crate::manual_rule::MAX_CONDITIONS
+        {
             conditions = conditions.child(
                 Button::new("add-manual-rule-condition")
                     .accessibility_label(language.text("Add an AND condition", "添加并且条件"))
                     .label(language.text("+ Add AND condition", "+ 添加“并且”条件"))
                     .with_variant(ButtonVariant::Default)
-                    .with_size(ControlSize::Standard.height())
+                    .with_size(ControlSize::Standard.component_size())
+                    .h(ControlSize::Standard.height())
                     .mt(Space::Md.px())
                     .px(Space::Md.px())
                     .py(Space::Sm.px())
@@ -3240,10 +3355,17 @@ impl ManisApp {
                             .line_height(TextRole::Metadata.line_height())
                             .font_weight(FontWeight::NORMAL)
                             .text_color(theme.text_secondary)
-                            .child(language.text(
-                                "All conditions must match. Group order determines rule priority.",
-                                "同一条规则中的条件必须全部命中；分组顺序决定规则优先级。",
-                            )),
+                            .child(if final_selected {
+                                language.text(
+                                    "FINAL is always evaluated last and handles unmatched traffic.",
+                                    "FINAL 始终最后匹配，用于处理此前未命中的流量。",
+                                )
+                            } else {
+                                language.text(
+                                    "All conditions must match. Group order determines rule priority.",
+                                    "同一条规则中的条件必须全部命中；分组顺序决定规则优先级。",
+                                )
+                            }),
                     ),
             )
             .child(
@@ -3422,6 +3544,33 @@ impl ManisApp {
         } else {
             theme.text_tertiary
         };
+        if rule.is_final() {
+            return div()
+                .flex_1()
+                .min_w(px(0.0))
+                .flex()
+                .items_center()
+                .gap(Space::Sm.px())
+                .child(
+                    div()
+                        .px(Space::Sm.px())
+                        .py(Space::Xs.px())
+                        .rounded(Radius::Control.px())
+                        .bg(theme.surface_high)
+                        .text_size(TextRole::Label.size())
+                        .line_height(TextRole::Label.line_height())
+                        .font_weight(TextRole::Label.weight())
+                        .text_color(primary_text)
+                        .child("FINAL"),
+                )
+                .child(
+                    div()
+                        .text_size(TextRole::Metadata.size())
+                        .line_height(TextRole::Metadata.line_height())
+                        .text_color(secondary_text)
+                        .child(language.text("Fallback · always last", "兜底规则 · 始终最后")),
+                );
+        }
         let mut matchers = div()
             .flex_1()
             .min_w(px(0.0))
@@ -3495,7 +3644,7 @@ impl ManisApp {
                     })
                     .icon(IconName::ArrowUp)
                     .text()
-                    .with_size(ControlSize::Icon.min_pointer_target())
+                    .with_size(ControlSize::Icon.component_size())
                     .text_color(theme.text_secondary)
                     .disabled(position == 0)
                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -3512,7 +3661,7 @@ impl ManisApp {
                     })
                     .icon(IconName::ArrowDown)
                     .text()
-                    .with_size(ControlSize::Icon.min_pointer_target())
+                    .with_size(ControlSize::Icon.component_size())
                     .text_color(theme.text_secondary)
                     .disabled(position + 1 >= group_count)
                     .on_click(cx.listener(move |this, _, _, cx| {

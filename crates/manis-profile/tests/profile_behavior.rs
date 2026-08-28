@@ -324,6 +324,39 @@ fn manual_reality_tcp_profile_renders_as_sing_box_json() {
 }
 
 #[test]
+fn terminal_match_maps_to_mihomo_match_and_sing_box_route_final() {
+    let vless = VlessProxy::parse_share_link(
+        "vless://00000000-0000-4000-8000-000000000000@198.51.100.7:443?security=reality&encryption=none&pbk=fixture_reality-public-key&fp=chrome&type=tcp&flow=xtls-rprx-vision&sni=cdn.example.invalid#Reality%20TCP",
+    )
+    .expect("Reality TCP fixture should parse");
+    let mut profile = Profile::qx_sources(Vec::new(), vec![vless], 17_890)
+        .expect("manual VLESS fixture should build a profile");
+    profile.rules = vec![
+        Rule::DomainSuffix {
+            value: "example.com".to_owned(),
+            policy: PolicyRef::Direct,
+        },
+        Rule::Match {
+            policy: global_exit_policy(),
+        },
+    ];
+
+    let yaml = render_mihomo_yaml(&profile).expect("Mihomo profile should render");
+    let json = render_sing_box_json(
+        &profile,
+        &SingBoxOptions::new("127.0.0.1:19090", "fixture-controller-secret"),
+    )
+    .expect("sing-box profile should render");
+
+    assert!(yaml.trim_end().ends_with("\"MATCH,__MANIS_GLOBAL__\""));
+    assert!(json.contains("\"final\": \"__MANIS_GLOBAL__\""));
+    assert_eq!(
+        json.matches("\"domain_suffix\": [\"example.com\"]").count(),
+        1
+    );
+}
+
+#[test]
 fn sing_box_renderer_rejects_untranslated_subscription_providers() {
     let profile = Profile::qx_default(fixture_secret()).expect("default profile is valid");
 
