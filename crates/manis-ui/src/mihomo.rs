@@ -3001,11 +3001,13 @@ fn compile_managed_policy_groups(
     vless_nodes: &[VlessProxy],
     provider_count: usize,
 ) -> Result<Vec<UserPolicyGroup>, LoadError> {
+    validate_managed_policy_references(groups)?;
     groups
         .iter()
         .map(|group| {
             let mut provider_indexes = Vec::new();
             let mut direct_proxies = Vec::new();
+            let mut direct_groups = Vec::new();
             let filter = match &group.matcher {
                 PolicyCandidateMatcher::All => {
                     provider_indexes.extend(0..provider_count);
@@ -3028,6 +3030,18 @@ fn compile_managed_policy_groups(
                 PolicyCandidateMatcher::Explicit(members) => {
                     let mut provider_names = Vec::new();
                     for member in members {
+                        if let Some(policy_id) = member.source_id.strip_prefix("policy:") {
+                            if policy_id != group.id
+                                && let Some(candidate) =
+                                    groups.iter().find(|item| item.id == policy_id)
+                            {
+                                direct_groups.push(
+                                    Name::parse(&candidate.name)
+                                        .map_err(|error| LoadError::Runtime(error.to_string()))?,
+                                );
+                            }
+                            continue;
+                        }
                         if member.source_id == "saved" {
                             if let Some(proxy) = vless_nodes
                                 .iter()
@@ -3060,7 +3074,8 @@ fn compile_managed_policy_groups(
                     })
                 }
             };
-            if provider_indexes.is_empty() && direct_proxies.is_empty() {
+            if provider_indexes.is_empty() && direct_proxies.is_empty() && direct_groups.is_empty()
+            {
                 return Err(LoadError::Runtime(format!(
                     "策略组“{}”没有匹配到可用节点",
                     group.name
@@ -3080,10 +3095,53 @@ fn compile_managed_policy_groups(
                 kind,
                 provider_indexes,
                 direct_proxies,
+                direct_groups,
                 filter,
             })
         })
         .collect()
+}
+
+pub(crate) fn validate_managed_policy_references(
+    groups: &[ManagedPolicyGroup],
+) -> Result<(), LoadError> {
+    fn visit(
+        id: &str,
+        groups: &[ManagedPolicyGroup],
+        visiting: &mut BTreeSet<String>,
+        visited: &mut BTreeSet<String>,
+    ) -> Result<(), LoadError> {
+        if visited.contains(id) {
+            return Ok(());
+        }
+        if !visiting.insert(id.to_owned()) {
+            return Err(LoadError::Runtime("策略组之间不能形成循环引用".to_owned()));
+        }
+        let group = groups
+            .iter()
+            .find(|group| group.id == id)
+            .ok_or_else(|| LoadError::Runtime("策略组引用不存在".to_owned()))?;
+        if let PolicyCandidateMatcher::Explicit(members) = &group.matcher {
+            for member in members {
+                if let Some(candidate_id) = member.source_id.strip_prefix("policy:") {
+                    if candidate_id == id {
+                        return Err(LoadError::Runtime("策略组不能引用自身".to_owned()));
+                    }
+                    visit(candidate_id, groups, visiting, visited)?;
+                }
+            }
+        }
+        visiting.remove(id);
+        visited.insert(id.to_owned());
+        Ok(())
+    }
+
+    let mut visiting = BTreeSet::new();
+    let mut visited = BTreeSet::new();
+    for group in groups {
+        visit(&group.id, groups, &mut visiting, &mut visited)?;
+    }
+    Ok(())
 }
 
 fn escape_regex(value: &str) -> String {
@@ -6089,6 +6147,7 @@ IP-CIDR,192.0.2.0/24,DIRECT
             },
             provider_indexes: vec![0],
             direct_proxies: Vec::new(),
+            direct_groups: Vec::new(),
             filter: None,
         };
         let mut profile = manis_profile::Profile::qx_sources_with_groups(
@@ -6211,6 +6270,7 @@ IP-CIDR,192.0.2.0/24,DIRECT
         explicit.set_matcher(PolicyCandidateMatcher::Explicit(BTreeSet::default()))?;
         explicit.toggle_member(NodeIdentity::new("subscription:source-a", "Tokyo (Fast)")?);
         explicit.toggle_member(NodeIdentity::new("saved", "Private Edge")?);
+        explicit.toggle_member(NodeIdentity::new("policy:group-a-1", "香港优选")?);
 
         let compiled =
             super::compile_managed_policy_groups(&[latency, explicit], &indexes, &[saved], 2)?;
@@ -6230,6 +6290,7 @@ IP-CIDR,192.0.2.0/24,DIRECT
             Some("^(?:Tokyo \\(Fast\\))$")
         );
         assert_eq!(compiled[1].direct_proxies.len(), 1);
+        assert_eq!(compiled[1].direct_groups[0].as_str(), "香港优选");
         Ok(())
     }
 

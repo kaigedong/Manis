@@ -97,6 +97,7 @@ fn generated_user_policy_groups_pass_mihomo_validation() -> Result<(), Box<dyn s
         },
         provider_indexes: vec![0],
         direct_proxies: Vec::new(),
+        direct_groups: Vec::new(),
         filter: Some("(?i)Hong Kong".to_owned()),
     };
     let profile =

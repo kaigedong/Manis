@@ -671,6 +671,7 @@ pub struct UserPolicyGroup {
     pub kind: UserPolicyGroupKind,
     pub provider_indexes: Vec<usize>,
     pub direct_proxies: Vec<Name>,
+    pub direct_groups: Vec<Name>,
     pub filter: Option<String>,
 }
 
@@ -1325,7 +1326,13 @@ fn compile_user_groups(
     proxy_names: &HashSet<Name>,
     test_url: &str,
 ) -> Result<Vec<PolicyGroup>, ProfileError> {
-    let mut group_names = HashSet::new();
+    let group_names = user_groups
+        .iter()
+        .map(|group| group.name.clone())
+        .collect::<HashSet<_>>();
+    if group_names.len() != user_groups.len() {
+        return Err(ProfileError::DuplicateName);
+    }
     user_groups
         .into_iter()
         .map(|group| {
@@ -1334,10 +1341,10 @@ fn compile_user_groups(
             {
                 return Err(ProfileError::InvalidValue("reserved proxy group name"));
             }
-            if !group_names.insert(group.name.clone()) {
-                return Err(ProfileError::DuplicateName);
-            }
-            if group.provider_indexes.is_empty() && group.direct_proxies.is_empty() {
+            if group.provider_indexes.is_empty()
+                && group.direct_proxies.is_empty()
+                && group.direct_groups.is_empty()
+            {
                 return Err(ProfileError::InvalidValue("user proxy group"));
             }
             if group
@@ -1374,6 +1381,15 @@ fn compile_user_groups(
                     return Err(ProfileError::DuplicateName);
                 }
                 proxies.push(PolicyRef::Proxy(name));
+            }
+            for name in group.direct_groups {
+                if name == group.name || !group_names.contains(&name) {
+                    return Err(ProfileError::DanglingReference);
+                }
+                if !seen_proxies.insert(name.clone()) {
+                    return Err(ProfileError::DuplicateName);
+                }
+                proxies.push(PolicyRef::Group(name));
             }
 
             let kind = match group.kind {
