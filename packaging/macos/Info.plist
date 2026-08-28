@@ -10,6 +10,8 @@
     <string>Manis</string>
     <key>CFBundleIdentifier</key>
     <string>dev.manis.app</string>
+    <key>CFBundleIconFile</key>
+    <string>Manis</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>

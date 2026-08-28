@@ -3,7 +3,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let platform = gpui_platform::current_platform(false);
     let mut cx = gpui::VisualTestAppContext::with_asset_source(
         platform,
-        std::sync::Arc::new(gpui_component_assets::Assets),
+        std::sync::Arc::new(manis_ui::Assets),
     );
     cx.update(manis_ui::init);
     if std::env::args().any(|argument| argument == "--policy-settings") {

@@ -1,9 +1,9 @@
 use gpui::App;
 use gpui_platform::application;
-use manis_ui::{init, install_tray, open_window, show_or_open_window};
+use manis_ui::{Assets, init, install_tray, open_window, show_or_open_window};
 
 fn main() {
-    let application = application().with_assets(gpui_component_assets::Assets);
+    let application = application().with_assets(Assets);
     application.on_reopen(show_or_open_window);
     application.run(|cx: &mut App| {
         init(cx);
