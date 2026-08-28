@@ -26,6 +26,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         capture_medium_sheet(&mut cx)?;
         return Ok(());
     }
+    if std::env::args().any(|argument| argument == "--data-pages") {
+        capture_data_page_coverage(&mut cx)?;
+        return Ok(());
+    }
     capture(&mut cx, 1420.0, 900.0, "native-wide.png")?;
     capture_automatic_policy(&mut cx)?;
     capture_managed_policy_settings(&mut cx)?;
@@ -51,8 +55,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     capture_routing_rules(&mut cx)?;
     capture_remote_subscription_preview(&mut cx)?;
     capture_compact_flow(&mut cx)?;
+    cx.update(manis_ui::init);
     capture_medium_sheet(&mut cx)?;
     capture_connected(&mut cx)?;
+    capture_data_page_coverage(&mut cx)?;
     capture_live_when_configured(&mut cx)?;
     Ok(())
 }
@@ -106,7 +112,7 @@ fn capture_managed_policy_settings(
     let window: AnyWindowHandle = window.into();
 
     refresh(cx, window)?;
-    cx.simulate_click(window, point(px(620.0), px(510.0)), Modifiers::none());
+    cx.simulate_click(window, point(px(1_340.0), px(76.0)), Modifiers::none());
     for _ in 0..24 {
         std::thread::sleep(std::time::Duration::from_millis(25));
         refresh(cx, window)?;
@@ -323,6 +329,8 @@ fn capture_remote_subscription_preview(
 fn write_managed_policy_fixture(store: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
     use std::os::unix::fs::PermissionsExt;
 
+    std::fs::create_dir_all(store)?;
+    std::fs::set_permissions(store, std::fs::Permissions::from_mode(0o700))?;
     let path = store.join("policy-deadbeef.policy");
     std::fs::write(
         &path,
@@ -728,7 +736,7 @@ fn capture_compact_flow(
     refresh(cx, window)?;
     save_screenshot(cx, window, "native-compact-detail.png")?;
 
-    cx.simulate_click(window, point(px(592.0), px(24.0)), Modifiers::none());
+    cx.simulate_click(window, point(px(475.0), px(24.0)), Modifiers::none());
     refresh(cx, window)?;
     save_screenshot(cx, window, "native-compact-dark-detail.png")?;
 
@@ -791,7 +799,7 @@ fn capture_connected(
     let window: AnyWindowHandle = window.into();
 
     refresh(cx, window)?;
-    cx.simulate_click(window, point(px(620.0), px(510.0)), Modifiers::none());
+    cx.simulate_click(window, point(px(1_340.0), px(76.0)), Modifiers::none());
     for _ in 0..24 {
         std::thread::sleep(std::time::Duration::from_millis(25));
         refresh(cx, window)?;
@@ -831,6 +839,145 @@ fn capture_connected(
     close_window(cx, window)?;
     server.stop()?;
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn capture_data_page_coverage(
+    cx: &mut gpui::VisualTestAppContext,
+) -> Result<(), Box<dyn std::error::Error>> {
+    capture_activity_compact_connected(cx)?;
+    capture_activity_compact_empty(cx)?;
+    capture_logs_compact_connected_and_filtered(cx)?;
+    capture_activity_wide_dark_connected(cx)?;
+    capture_configuration_dark(cx)
+}
+
+#[cfg(target_os = "macos")]
+fn capture_activity_wide_dark_connected(
+    cx: &mut gpui::VisualTestAppContext,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use gpui::{AnyWindowHandle, Modifiers, point, px, size};
+    use manis_ui::ManisApp;
+
+    let (endpoint, server) = spawn_mihomo_fixture()?;
+    let window = cx.open_offscreen_window(size(px(1420.0), px(900.0)), |window, cx| {
+        manis_root(window, cx, |_| ManisApp::with_fixture_controller(endpoint))
+    })?;
+    let window: AnyWindowHandle = window.into();
+
+    refresh(cx, window)?;
+    cx.simulate_click(window, point(px(1_340.0), px(76.0)), Modifiers::none());
+    settle_ui_animation(cx, window)?;
+    cx.simulate_click(window, point(px(850.0), px(24.0)), Modifiers::none());
+    settle_ui_animation(cx, window)?;
+    cx.simulate_click(window, point(px(110.0), px(199.0)), Modifiers::none());
+    settle_ui_animation(cx, window)?;
+    save_screenshot(cx, window, "activity-wide-dark-connected.png")?;
+
+    close_window(cx, window)?;
+    server.stop()
+}
+
+#[cfg(target_os = "macos")]
+fn capture_activity_compact_connected(
+    cx: &mut gpui::VisualTestAppContext,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use gpui::{AnyWindowHandle, Modifiers, point, px, size};
+    use manis_ui::ManisApp;
+
+    let (endpoint, server) = spawn_mihomo_fixture()?;
+    let window = cx.open_offscreen_window(size(px(720.0), px(720.0)), |window, cx| {
+        manis_root(window, cx, |_| ManisApp::with_fixture_controller(endpoint))
+    })?;
+    let window: AnyWindowHandle = window.into();
+
+    refresh(cx, window)?;
+    cx.simulate_click(window, point(px(640.0), px(76.0)), Modifiers::none());
+    settle_ui_animation(cx, window)?;
+    cx.simulate_click(window, point(px(30.0), px(199.0)), Modifiers::none());
+    settle_ui_animation(cx, window)?;
+    save_screenshot(cx, window, "activity-compact-connected.png")?;
+
+    close_window(cx, window)?;
+    server.stop()
+}
+
+#[cfg(target_os = "macos")]
+fn capture_activity_compact_empty(
+    cx: &mut gpui::VisualTestAppContext,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use gpui::{AnyWindowHandle, Modifiers, point, px, size};
+    use manis_ui::ManisApp;
+
+    let (endpoint, server) = spawn_empty_mihomo_fixture()?;
+    let window = cx.open_offscreen_window(size(px(720.0), px(720.0)), |window, cx| {
+        manis_root(window, cx, |_| ManisApp::with_fixture_controller(endpoint))
+    })?;
+    let window: AnyWindowHandle = window.into();
+
+    refresh(cx, window)?;
+    cx.simulate_click(window, point(px(640.0), px(76.0)), Modifiers::none());
+    settle_ui_animation(cx, window)?;
+    cx.simulate_click(window, point(px(30.0), px(199.0)), Modifiers::none());
+    settle_ui_animation(cx, window)?;
+    save_screenshot(cx, window, "activity-compact-empty.png")?;
+
+    close_window(cx, window)?;
+    server.stop()
+}
+
+#[cfg(target_os = "macos")]
+fn capture_logs_compact_connected_and_filtered(
+    cx: &mut gpui::VisualTestAppContext,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use gpui::{AnyWindowHandle, Modifiers, point, px, size};
+    use manis_ui::ManisApp;
+
+    let (endpoint, server) = spawn_mihomo_fixture()?;
+    let window = cx.open_offscreen_window(size(px(720.0), px(720.0)), |window, cx| {
+        manis_root(window, cx, |_| ManisApp::with_fixture_controller(endpoint))
+    })?;
+    let window: AnyWindowHandle = window.into();
+
+    refresh(cx, window)?;
+    cx.simulate_click(window, point(px(640.0), px(76.0)), Modifiers::none());
+    settle_ui_animation(cx, window)?;
+    cx.simulate_click(window, point(px(30.0), px(240.0)), Modifiers::none());
+    settle_ui_animation(cx, window)?;
+    save_screenshot(cx, window, "logs-compact-connected.png")?;
+    cx.simulate_click(window, point(px(220.0), px(145.0)), Modifiers::none());
+    refresh(cx, window)?;
+    cx.simulate_input(window, "no-match-fixture-token");
+    refresh(cx, window)?;
+    settle_ui_animation(cx, window)?;
+    save_screenshot(cx, window, "logs-compact-empty-filtered.png")?;
+
+    close_window(cx, window)?;
+    server.stop()
+}
+
+#[cfg(target_os = "macos")]
+fn capture_configuration_dark(
+    cx: &mut gpui::VisualTestAppContext,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use gpui::{AnyWindowHandle, Modifiers, point, px, size};
+    use manis_ui::ManisApp;
+
+    let window = cx.open_offscreen_window(size(px(1420.0), px(900.0)), |window, cx| {
+        manis_root(window, cx, |_| {
+            ManisApp::with_fixture_controller("http://127.0.0.1:9090")
+        })
+    })?;
+    let window: AnyWindowHandle = window.into();
+
+    refresh(cx, window)?;
+    cx.simulate_click(window, point(px(850.0), px(24.0)), Modifiers::none());
+    refresh(cx, window)?;
+    cx.simulate_click(window, point(px(110.0), px(284.0)), Modifiers::none());
+    settle_ui_animation(cx, window)?;
+    save_screenshot(cx, window, "configuration-wide-dark.png")?;
+
+    close_window(cx, window)
 }
 
 #[cfg(target_os = "macos")]
@@ -971,6 +1118,55 @@ fn spawn_mihomo_fixture() -> Result<(String, FixtureServer), Box<dyn std::error:
 }
 
 #[cfg(target_os = "macos")]
+fn spawn_empty_mihomo_fixture() -> Result<(String, FixtureServer), Box<dyn std::error::Error>> {
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpListener;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::Duration;
+
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    listener.set_nonblocking(true)?;
+    let endpoint = format!("http://{}", listener.local_addr()?);
+    let stop = Arc::new(AtomicBool::new(false));
+    let server_stop = stop.clone();
+    let server = std::thread::spawn(move || -> std::io::Result<()> {
+        while !server_stop.load(Ordering::Relaxed) {
+            let (mut stream, _) = match listener.accept() {
+                Ok(connection) => connection,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(10));
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
+            let mut request_line = String::new();
+            BufReader::new(stream.try_clone()?).read_line(&mut request_line)?;
+            let path = request_line.split_whitespace().nth(1).unwrap_or("/");
+            let body = if path.starts_with("/connections") {
+                r#"{"downloadTotal":0,"uploadTotal":0,"connections":[]}"#
+            } else if path.starts_with("/logs?level=") {
+                ""
+            } else {
+                fixture_response(path)
+            };
+            let response = if path.starts_with("/logs?level=") {
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n".to_owned()
+            } else {
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+            };
+            stream.write_all(response.as_bytes())?;
+        }
+        Ok(())
+    });
+
+    Ok((endpoint, FixtureServer { stop, server }))
+}
+
+#[cfg(target_os = "macos")]
 struct FixtureServer {
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
     server: std::thread::JoinHandle<Result<(), std::io::Error>>,
@@ -1095,6 +1291,9 @@ fn save_screenshot_at(
     output: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let screenshot = cx.capture_screenshot(window)?;
+    if let Some(parent) = output.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
     screenshot.save(&output)?;
     println!("saved {}", output.display());
     Ok(())

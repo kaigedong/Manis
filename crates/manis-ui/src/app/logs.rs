@@ -1,16 +1,13 @@
 use gpui::{Div, FontWeight, ParentElement, Rgba, Styled, div, prelude::*, px};
-use gpui_component::{
-    Sizable,
-    button::{Button, ButtonVariant, ButtonVariants},
-};
 use manis_core::WindowSizeClass;
 
 use super::ManisApp;
 use crate::{
+    components::{ActionRole, action_button, empty_state, page_heading},
     diagnostics::{UiLogEntry, recent_ui_logs},
-    localization::Language,
+    localization::{CountNoun, Language, Message},
     mihomo::KernelLogEntry,
-    theme::Theme,
+    theme::{ControlSize, Radius, Space, TextRole, Theme},
 };
 
 impl ManisApp {
@@ -51,122 +48,74 @@ impl ManisApp {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .text_color(theme.text_tertiary)
-                    .child(if query.is_empty() {
-                        language.text(
-                            "No kernel logs or Manis UI events yet",
-                            "还没有内核日志或 Manis UI 事件",
-                        )
-                    } else {
-                        language.text("No log entry matches this filter", "没有符合当前筛选的日志")
-                    }),
+                    .p(Space::Xl.px())
+                    .child(logs_empty_state(language, query.is_empty(), theme)),
             );
         } else {
             for entry in kernel_logs.into_iter().rev() {
-                rows = rows.child(
-                    div()
-                        .min_h(px(48.0))
-                        .px_5()
-                        .py_2()
-                        .flex()
-                        .items_center()
-                        .gap_4()
-                        .border_b_1()
-                        .border_color(theme.outline_subtle)
-                        .child(
-                            div()
-                                .w(px(86.0))
-                                .flex_shrink_0()
-                                .font_family("monospace")
-                                .text_size(px(11.0))
-                                .text_color(theme.text_tertiary)
-                                .child(format!("K#{:04}", entry.sequence)),
-                        )
-                        .child(
-                            div()
-                                .w(px(64.0))
-                                .flex_shrink_0()
-                                .text_size(px(10.0))
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(log_level_color(&entry.level, theme))
-                                .child(entry.level.to_uppercase()),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .font_family("monospace")
-                                .text_size(px(11.0))
-                                .text_color(theme.text_primary)
-                                .child(entry.payload.clone()),
-                        )
-                        .child(
-                            div()
-                                .font_family("monospace")
-                                .text_size(px(10.0))
-                                .text_color(theme.text_tertiary)
-                                .child(format_log_time(entry.timestamp_ms)),
-                        ),
-                );
+                rows = rows.child(kernel_log_row(entry, theme));
             }
             for entry in logs.into_iter().rev() {
                 let reference = entry.operation_id.map_or_else(
                     || format!("#{:04}", entry.sequence),
                     |operation| format!("#{:04} · OP-{operation:04}", entry.sequence),
                 );
-                rows = rows.child(
-                    div()
-                        .min_h(px(48.0))
-                        .px_5()
-                        .py_2()
-                        .flex()
-                        .items_center()
-                        .gap_4()
-                        .border_b_1()
-                        .border_color(theme.outline_subtle)
-                        .child(
-                            div()
-                                .w(px(86.0))
-                                .flex_shrink_0()
-                                .font_family("monospace")
-                                .text_size(px(11.0))
-                                .text_color(theme.text_tertiary)
-                                .child(reference),
-                        )
-                        .child(
-                            div()
-                                .w(px(64.0))
-                                .flex_shrink_0()
-                                .text_size(px(10.0))
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(log_level_color(&entry.level, theme))
-                                .child(entry.level),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .flex()
-                                .flex_col()
-                                .gap_1()
-                                .font_family("monospace")
-                                .text_size(px(11.0))
-                                .text_color(theme.text_primary)
-                                .child(entry.event)
-                                .when_some(entry.detail, |row, detail| {
-                                    row.child(div().text_color(theme.text_secondary).child(detail))
-                                }),
-                        )
-                        .child(
-                            div()
-                                .font_family("monospace")
-                                .text_size(px(10.0))
-                                .text_color(theme.text_tertiary)
-                                .child(format_log_time(entry.timestamp_ms)),
-                        ),
-                );
+                rows = rows.child(ui_log_row(entry, reference, theme));
             }
         }
+
+        let refresh_action = action_button(
+            "refresh-logs",
+            language.message(Message::RefreshData),
+            ActionRole::Secondary,
+            ControlSize::Compact,
+        )
+        .accessibility_label(language.text("Refresh log data", "刷新日志数据"))
+        .border_color(theme.outline_subtle)
+        .bg(theme.surface_high)
+        .text_color(theme.text_primary)
+        .on_click(cx.listener(|this, _, _, cx| this.connect_mihomo(cx)));
+        let heading = page_heading(
+            language.message(Message::Logs),
+            logs_summary(
+                language,
+                count,
+                &self.live_status.logs,
+                self.dropped_kernel_logs,
+            ),
+            None,
+            theme,
+        );
+        let header = div()
+            .flex_shrink_0()
+            .px(Space::Xl.px())
+            .py(Space::Md.px())
+            .border_b_1()
+            .border_color(theme.outline_subtle)
+            .when(compact, |header| {
+                header.flex().flex_col().gap(Space::Md.px())
+            })
+            .when(!compact, |header| {
+                header.flex().items_center().gap(Space::Lg.px())
+            })
+            .child(div().flex_1().min_w_0().child(heading))
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    .gap(Space::Sm.px())
+                    .when(compact, gpui::Styled::w_full)
+                    .when_some(self.logs_search_input.clone(), |tools, input| {
+                        tools.child(
+                            div()
+                                .w(if compact { px(240.0) } else { px(320.0) })
+                                .max_w_full()
+                                .child(input),
+                        )
+                    })
+                    .child(refresh_action),
+            );
 
         div()
             .flex_1()
@@ -175,63 +124,128 @@ impl ManisApp {
             .flex()
             .flex_col()
             .bg(theme.surface_base)
-            .child(
-                div()
-                    .h(px(72.0))
-                    .flex_shrink_0()
-                    .px_5()
-                    .flex()
-                    .items_center()
-                    .gap_4()
-                    .border_b_1()
-                    .border_color(theme.outline_subtle)
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap_1()
-                            .child(
-                                div()
-                                    .text_size(px(18.0))
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .child(language.text("Logs", "日志")),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(11.0))
-                                    .text_color(theme.text_tertiary)
-                                    .child(logs_summary(
-                                        language,
-                                        count,
-                                        &self.live_status.logs,
-                                        self.dropped_kernel_logs,
-                                    )),
-                            ),
-                    )
-                    .child(div().flex_1())
-                    .when_some(self.logs_search_input.clone(), |header, input| {
-                        header.child(
-                            div()
-                                .w(if compact { px(210.0) } else { px(320.0) })
-                                .child(input),
-                        )
-                    })
-                    .child(
-                        Button::new("refresh-logs")
-                            .accessibility_label(language.text("Reconnect", "重新连接"))
-                            .label(language.text("Reconnect", "重新连接"))
-                            .with_variant(ButtonVariant::Default)
-                            .with_size(px(34.0))
-                            .cursor_pointer()
-                            .h(px(34.0))
-                            .px_3()
-                            .border_color(theme.outline_subtle)
-                            .bg(theme.surface_high)
-                            .on_click(cx.listener(|this, _, _, cx| this.connect_mihomo(cx))),
-                    ),
-            )
+            .child(header)
             .child(rows)
     }
+}
+
+fn logs_empty_state(language: Language, no_query: bool, theme: Theme) -> Div {
+    let (title, detail) = if no_query {
+        (
+            language.message(Message::NoLogs),
+            language.text(
+                "Kernel output and Manis UI events will appear here after a connection attempt.",
+                "连接或刷新之后，内核输出和 Manis UI 事件会显示在这里。",
+            ),
+        )
+    } else {
+        (
+            language.message(Message::NoFilterMatches),
+            language.text(
+                "Clear the log filter or search for an event name, OP ID, level, or detail.",
+                "清除筛选，或按事件名、OP 编号、级别、详情继续搜索。",
+            ),
+        )
+    };
+    empty_state(title, detail, None, theme)
+}
+
+fn kernel_log_row(entry: &KernelLogEntry, theme: Theme) -> Div {
+    log_row(
+        format!("K#{:04}", entry.sequence),
+        &entry.level,
+        div()
+            .font_family("monospace")
+            .text_size(TextRole::Data.size())
+            .line_height(TextRole::Data.line_height())
+            .text_color(theme.text_primary)
+            .child(entry.payload.clone()),
+        format_log_time(entry.timestamp_ms),
+        theme,
+    )
+}
+
+fn ui_log_row(entry: UiLogEntry, reference: String, theme: Theme) -> Div {
+    log_row(
+        reference,
+        &entry.level,
+        div()
+            .flex()
+            .flex_col()
+            .gap(Space::Xs.px())
+            .font_family("monospace")
+            .text_size(TextRole::Data.size())
+            .line_height(TextRole::Data.line_height())
+            .text_color(theme.text_primary)
+            .child(entry.event)
+            .when_some(entry.detail, |row, detail| {
+                row.child(
+                    div()
+                        .font_family("monospace")
+                        .text_size(TextRole::Metadata.size())
+                        .line_height(TextRole::Metadata.line_height())
+                        .text_color(theme.text_secondary)
+                        .child(detail),
+                )
+            }),
+        format_log_time(entry.timestamp_ms),
+        theme,
+    )
+}
+
+fn log_row(reference: String, level: &str, body: Div, timestamp: String, theme: Theme) -> Div {
+    div()
+        .min_h(px(52.0))
+        .px(Space::Xl.px())
+        .py(Space::Sm.px())
+        .flex()
+        .items_start()
+        .gap(Space::Md.px())
+        .border_b_1()
+        .border_color(theme.outline_subtle)
+        .child(log_reference(reference, theme))
+        .child(log_level_badge(level, theme))
+        .child(div().flex_1().min_w_0().child(body))
+        .child(log_timestamp(timestamp, theme))
+}
+
+fn log_reference(reference: String, theme: Theme) -> Div {
+    div()
+        .w(px(112.0))
+        .flex_shrink_0()
+        .font_family("monospace")
+        .text_size(TextRole::Metadata.size())
+        .line_height(TextRole::Metadata.line_height())
+        .text_color(theme.text_tertiary)
+        .child(reference)
+}
+
+fn log_level_badge(level: &str, theme: Theme) -> Div {
+    div()
+        .w(px(72.0))
+        .h(px(24.0))
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(Radius::Control.px())
+        .bg(theme.surface_low)
+        .text_size(TextRole::Label.size())
+        .line_height(TextRole::Label.line_height())
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(log_level_color(level, theme))
+        .child(level.to_uppercase())
+}
+
+fn log_timestamp(timestamp: String, theme: Theme) -> Div {
+    div()
+        .w(px(68.0))
+        .flex_shrink_0()
+        .font_family("monospace")
+        .text_size(TextRole::Metadata.size())
+        .line_height(TextRole::Metadata.line_height())
+        .text_color(theme.text_tertiary)
+        .child(timestamp)
 }
 
 fn ui_log_matches_query(entry: &UiLogEntry, query: &str) -> bool {
@@ -265,13 +279,14 @@ fn kernel_log_matches_query(entry: &KernelLogEntry, query: &str) -> bool {
 }
 
 fn logs_summary(language: Language, count: usize, live_status: &str, dropped: u64) -> String {
+    let count = language.count(CountNoun::Log, count);
     match language {
         Language::English => format!(
-            "{count} entries · persistent event chain with OP IDs · Mihomo {live_status} · dropped {dropped} overloaded logs · URLs/tokens redacted"
+            "{count} · OP IDs preserved · Mihomo {live_status} · dropped {dropped} overloaded logs · URLs/tokens redacted"
         ),
         Language::SimplifiedChinese => {
             format!(
-                "{count} 条 · 操作链与 OP 编号已持久化 · Mihomo {live_status} · 已丢弃 {dropped} 条过载日志 · URL/令牌已脱敏"
+                "{count} · OP 编号已持久化 · Mihomo {live_status} · 已丢弃 {dropped} 条过载日志 · URL/令牌已脱敏"
             )
         }
     }
@@ -376,7 +391,7 @@ mod tests {
     fn log_summary_uses_selected_language() {
         assert_eq!(
             super::logs_summary(crate::localization::Language::English, 2, "connected", 1),
-            "2 entries · persistent event chain with OP IDs · Mihomo connected · dropped 1 overloaded logs · URLs/tokens redacted"
+            "2 logs · OP IDs preserved · Mihomo connected · dropped 1 overloaded logs · URLs/tokens redacted"
         );
         assert_eq!(
             super::logs_summary(
@@ -385,7 +400,7 @@ mod tests {
                 "已连接",
                 1
             ),
-            "2 条 · 操作链与 OP 编号已持久化 · Mihomo 已连接 · 已丢弃 1 条过载日志 · URL/令牌已脱敏"
+            "2 条日志 · OP 编号已持久化 · Mihomo 已连接 · 已丢弃 1 条过载日志 · URL/令牌已脱敏"
         );
     }
 

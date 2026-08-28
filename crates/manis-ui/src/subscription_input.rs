@@ -1,13 +1,17 @@
 use gpui::{
     App, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, ParentElement,
-    SharedString, Styled, Subscription, Window, div, prelude::*, px,
+    SharedString, Styled, Subscription, Window, div, prelude::*,
 };
 use gpui_component::{
     Sizable,
     input::{Input, InputEvent, InputState},
 };
 
-use crate::{localization::Language, subscription::MAX_SUBSCRIPTION_BYTES, theme::Theme};
+use crate::{
+    localization::Language,
+    subscription::MAX_SUBSCRIPTION_BYTES,
+    theme::{ControlSize, Radius, TextRole, Theme},
+};
 
 pub(crate) struct SubscriptionInputChanged;
 pub(crate) struct SubscriptionInputSubmitted;
@@ -213,15 +217,18 @@ impl gpui::Render for SubscriptionTextInput {
         self.sync_pending(window, cx);
         let focused = self.focus_handle(cx).is_focused(window);
         let disabled = self.availability == InputAvailability::Disabled;
+        let control_height = ControlSize::Standard.height();
+        let text_role = TextRole::Label;
         let mut input = Input::new(&self.state)
             .aria_label(self.placeholder.clone())
             .disabled(disabled)
-            .with_size(px(38.0))
+            .with_size(control_height)
             .w_full()
             .px_3()
-            .text_size(px(12.0))
-            .line_height(px(36.0))
-            .rounded_md()
+            .text_size(text_role.size())
+            .line_height(text_role.line_height())
+            .font_weight(text_role.weight())
+            .rounded(Radius::Control.px())
             .border_1()
             .border_color(if focused {
                 self.theme.action_primary
@@ -233,13 +240,13 @@ impl gpui::Render for SubscriptionTextInput {
 
         // `Input::h` configures multiline height. Set the single-line frame
         // through its style so it matches the other standard controls.
-        input.style().size.height = Some(px(38.0).into());
+        input.style().size.height = Some(control_height.into());
 
         div()
             .id(self.element_id.clone())
-            .h(px(38.0))
+            .h(control_height)
             .w_full()
-            .text_size(px(12.0))
+            .text_size(text_role.size())
             .child(input)
     }
 }

@@ -1,6 +1,6 @@
 use gpui::{
-    AnyElement, Context, Div, Entity, Focusable, FontWeight, ParentElement, Role, Stateful,
-    StyleRefinement, Styled, Window, div, prelude::*, px,
+    AnyElement, Context, Div, Entity, Focusable, FontWeight, KeyDownEvent, ParentElement, Role,
+    Stateful, StyleRefinement, Styled, Window, div, prelude::*, px,
 };
 use gpui_component::{
     Disableable, IconName, Selectable, Sizable, Size, WindowExt as _,
@@ -18,17 +18,91 @@ use super::{
     SourceRuntimeApply, SubscriptionFeedback,
 };
 use crate::{
+    components::{
+        ActionRole, StatusTone, action_button, empty_state, page_heading, section_heading,
+        status_badge, style_action_button,
+    },
     diagnostics::{LogLevel, UiEvent, begin_operation, record_event, record_operation, trace_ui},
-    localization::{Language, LanguagePreference, save_language_preference_in},
+    localization::{CountNoun, Language, LanguagePreference, Message, save_language_preference_in},
     mihomo::{self, LoadedProvider, RemoteSourceRefreshInterval, SubscriptionStoreError},
     rule_source::{download_qx_rule_document, download_qx_rule_document_secret},
     subscription::{SourceKind, SubscriptionPreview, validate_subscription_preview},
     subscription_input::SubscriptionTextInput,
-    theme::Theme,
+    theme::{ControlSize, Radius, Space, TextRole, Theme},
 };
 
 const MAX_MANUAL_RULE_INPUT_BYTES: usize = 1_024;
 const MANUAL_RULES_EXPANSION_KEY: &str = "routing-manual-rules";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ManualRuleKeyboardAction {
+    Edit,
+    Toggle,
+    Delete,
+}
+
+fn manual_rule_keyboard_action(event: &KeyDownEvent) -> Option<ManualRuleKeyboardAction> {
+    manual_rule_keyboard_action_for(
+        event.keystroke.key.as_str(),
+        event.keystroke.modifiers.modified(),
+        event.is_held,
+    )
+}
+
+fn manual_rule_keyboard_action_for(
+    key: &str,
+    modified: bool,
+    held: bool,
+) -> Option<ManualRuleKeyboardAction> {
+    if held || modified {
+        return None;
+    }
+    match key {
+        "enter" => Some(ManualRuleKeyboardAction::Edit),
+        "space" => Some(ManualRuleKeyboardAction::Toggle),
+        "backspace" | "delete" => Some(ManualRuleKeyboardAction::Delete),
+        _ => None,
+    }
+}
+
+fn rule_group_is_open(workspace: &manis_core::NodeWorkspaceState, key: &str) -> bool {
+    !workspace.is_group_collapsed(key)
+}
+
+fn panel_surface(id: &'static str, compact: bool, theme: Theme) -> Stateful<Div> {
+    div()
+        .id(id)
+        .w_full()
+        .p(if compact {
+            Space::Md.px()
+        } else {
+            Space::Lg.px()
+        })
+        .rounded(Radius::Pane.px())
+        .border_1()
+        .border_color(theme.outline_subtle)
+        .bg(theme.surface_high)
+}
+
+fn field_label(label: impl Into<gpui::SharedString>, theme: Theme) -> Div {
+    let label = label.into();
+    div()
+        .mb(Space::Xs.px())
+        .text_size(TextRole::Label.size())
+        .line_height(TextRole::Label.line_height())
+        .font_weight(TextRole::Label.weight())
+        .text_color(theme.text_secondary)
+        .child(label)
+}
+
+fn metadata_text(content: impl Into<gpui::SharedString>, theme: Theme) -> Div {
+    let content = content.into();
+    div()
+        .text_size(TextRole::Metadata.size())
+        .line_height(TextRole::Metadata.line_height())
+        .text_color(theme.text_secondary)
+        .child(content)
+}
 
 fn accordion_content_style() -> StyleRefinement {
     let mut style = StyleRefinement::default();
@@ -254,7 +328,7 @@ impl ManisApp {
             .flex_col()
             .bg(theme.surface_base)
             .child(Self::workspace_header(
-                language.text("Settings", "配置"),
+                language.message(Message::Configuration),
                 language.text(
                     "Manage sources only; nodes and active rules live in their own pages",
                     "只管理来源；节点与最终生效规则在各自页面查看",
@@ -280,7 +354,7 @@ impl ManisApp {
                             .child(self.kernel_panel(theme, compact, cx).mt_4())
                             .child(self.source_panel(theme, compact, cx).mt_4())
                             .child(
-                                self.rule_source_manager(rule_input, rule_busy, theme, cx)
+                                self.rule_source_manager(rule_input, rule_busy, theme, compact, cx)
                                     .mt_4(),
                             ),
                     ),
@@ -291,60 +365,28 @@ impl ManisApp {
         let language = self.language();
         let current_preference = self.language_preference();
         let current_language = language.display_name();
-        div()
-            .id("configuration-language")
-            .w_full()
-            .p(if compact { px(12.0) } else { px(16.0) })
-            .rounded_md()
-            .border_1()
-            .border_color(theme.outline_subtle)
-            .bg(theme.surface_high)
-            .child(
-                div()
-                    .flex()
-                    .items_start()
-                    .justify_between()
-                    .gap_3()
-                    .child(
-                        div()
-                            .min_w(px(0.0))
-                            .child(
-                                div()
-                                    .text_size(px(17.0))
-                                    .font_weight(FontWeight::BOLD)
-                                    .child(language.text("Interface language", "界面语言")),
-                            )
-                            .child(
-                                div()
-                                    .mt_1()
-                                    .text_size(px(11.0))
-                                    .text_color(theme.text_secondary)
-                                    .child(language.text(
-                                        "Follows the operating system by default and falls back to English.",
-                                        "默认跟随系统语言，检测不到时回退到英文。",
-                                    )),
-                            ),
+        panel_surface("configuration-language", compact, theme)
+            .child(section_heading(
+                language.text("Interface language", "界面语言"),
+                language.text(
+                    "Follows the operating system by default and falls back to English.",
+                    "默认跟随系统语言，检测不到时回退到英文。",
+                ),
+                Some(
+                    status_badge(
+                        format!("{} · {current_language}", language.text("Current", "当前")),
+                        StatusTone::Neutral,
+                        theme,
                     )
-                    .child(
-                        div()
-                            .px_2()
-                            .py_1()
-                            .rounded_sm()
-                            .bg(theme.action_soft)
-                            .text_size(px(10.0))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(theme.action_primary)
-                            .child(format!(
-                                "{} · {current_language}",
-                                language.text("Current", "当前")
-                            )),
-                    ),
-            )
+                    .into_any_element(),
+                ),
+                theme,
+            ))
             .child(
                 div()
-                    .mt_3()
+                    .mt(Space::Md.px())
                     .grid()
-                    .gap_2()
+                    .gap(Space::Sm.px())
                     .grid_cols(if compact { 1 } else { 3 })
                     .children(
                         [
@@ -393,8 +435,8 @@ impl ManisApp {
             .focusable()
             .cursor_pointer()
             .min_h(px(68.0))
-            .p_3()
-            .rounded_md()
+            .p(Space::Md.px())
+            .rounded(Radius::Row.px())
             .border_1()
             .border_color(if selected {
                 theme.action_primary
@@ -414,7 +456,9 @@ impl ManisApp {
                     .gap_2()
                     .child(
                         div()
-                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_size(TextRole::Label.size())
+                            .line_height(TextRole::Label.line_height())
+                            .font_weight(TextRole::Label.weight())
                             .text_color(if selected {
                                 theme.action_primary
                             } else {
@@ -425,7 +469,8 @@ impl ManisApp {
                     .when(selected, |row| {
                         row.child(
                             div()
-                                .text_size(px(10.0))
+                                .text_size(TextRole::Metadata.size())
+                                .line_height(TextRole::Metadata.line_height())
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .text_color(theme.action_primary)
                                 .child(language.text("Selected", "已选择")),
@@ -434,8 +479,9 @@ impl ManisApp {
             )
             .child(
                 div()
-                    .mt_2()
-                    .text_size(px(10.0))
+                    .mt(Space::Sm.px())
+                    .text_size(TextRole::Metadata.size())
+                    .line_height(TextRole::Metadata.line_height())
                     .text_color(theme.text_secondary)
                     .child(language_preference_detail(preference, language)),
             )
@@ -545,56 +591,31 @@ impl ManisApp {
             MihomoCoreUpdateState::Missing
         );
 
-        div()
-            .id("configuration-kernel")
-            .w_full()
-            .p(if compact { px(12.0) } else { px(16.0) })
-            .rounded_md()
-            .border_1()
-            .border_color(theme.outline_subtle)
-            .bg(theme.surface_high)
-            .child(
-                div()
-                    .flex()
-                    .items_start()
-                    .justify_between()
-                    .gap_3()
-                    .child(
-                        div()
-                            .min_w(px(0.0))
-                            .child(
-                                div()
-                                    .text_size(px(17.0))
-                                    .font_weight(FontWeight::BOLD)
-                                    .child(language.text("Runtime kernel", "运行内核")),
-                            )
-                            .child(
-                                div()
-                                    .mt_1()
-                                    .text_size(px(11.0))
-                                    .text_color(theme.text_secondary)
-                                    .child(language.text(
-                                        "Manis compiles and validates the target config before switching; failures keep the current kernel.",
-                                        "切换前先编译并校验目标配置；失败不会替换当前内核。",
-                                    )),
-                            ),
+        panel_surface("configuration-kernel", compact, theme)
+            .child(section_heading(
+                language.text("Runtime kernel", "运行内核"),
+                language.text(
+                    "Manis compiles and validates the target config before switching; failures keep the current kernel.",
+                    "切换前先编译并校验目标配置；失败不会替换当前内核。",
+                ),
+                Some(
+                    status_badge(
+                        if self.kernel_switch_state.is_busy() {
+                            language.text("Validating", "正在校验")
+                        } else {
+                            active.display_name()
+                        },
+                        if self.kernel_switch_state.is_busy() {
+                            StatusTone::Warning
+                        } else {
+                            StatusTone::Neutral
+                        },
+                        theme,
                     )
-                    .child(
-                        div()
-                            .px_2()
-                            .py_1()
-                            .rounded_sm()
-                            .bg(theme.action_soft)
-                            .text_size(px(10.0))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(theme.action_primary)
-                            .child(if self.kernel_switch_state.is_busy() {
-                                language.text("Validating", "正在校验")
-                            } else {
-                                active.display_name()
-                            }),
-                    ),
-            )
+                    .into_any_element(),
+                ),
+                theme,
+            ))
             .child(Self::kernel_option_row(
                 KernelKind::Mihomo,
                 language.text(
@@ -609,15 +630,16 @@ impl ManisApp {
             ))
             .child(
                 div()
-                    .mt_2()
-                    .ml_3()
+                    .mt(Space::Sm.px())
+                    .ml(Space::Md.px())
                     .flex()
                     .items_center()
                     .justify_between()
                     .gap_3()
                     .child(
                         div()
-                            .text_size(px(11.0))
+                            .text_size(TextRole::Metadata.size())
+                            .line_height(TextRole::Metadata.line_height())
                             .text_color(theme.text_secondary)
                             .child(if language == Language::English {
                                 format!("Manis-managed stable core · {core_version}")
@@ -626,7 +648,8 @@ impl ManisApp {
                             }),
                     )
                     .child(
-                        Button::new("mihomo-core-update")
+                        style_action_button(
+                            Button::new("mihomo-core-update")
                             .accessibility_label(language.text(
                                 "Download or update the Manis-managed Mihomo core",
                                 "下载或更新 Manis 托管的 Mihomo 内核",
@@ -642,7 +665,10 @@ impl ManisApp {
                             .loading(core_updating)
                             .disabled(!core_update_enabled)
                             .tab_stop(core_update_enabled)
-                            .with_variant(ButtonVariant::Text)
+                            ,
+                            ActionRole::Quiet,
+                            ControlSize::Compact,
+                        )
                             .when(core_update_enabled, gpui::Styled::cursor_pointer)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.update_mihomo_core(cx);
@@ -660,11 +686,12 @@ impl ManisApp {
             ))
             .child(
                 div()
-                    .mt_3()
-                    .pt_3()
+                    .mt(Space::Md.px())
+                    .pt(Space::Md.px())
                     .border_t_1()
                     .border_color(theme.outline_subtle)
-                    .text_size(px(10.0))
+                    .text_size(TextRole::Metadata.size())
+                    .line_height(TextRole::Metadata.line_height())
                     .text_color(theme.text_tertiary)
                     .child(if language == Language::English {
                         format!(
@@ -694,26 +721,29 @@ impl ManisApp {
         cx: &mut Context<Self>,
     ) -> Div {
         div()
-            .mt_3()
-            .pt_3()
+            .mt(Space::Md.px())
+            .pt(Space::Md.px())
             .border_t_1()
             .border_color(theme.outline_subtle)
             .flex()
             .items_center()
             .justify_between()
-            .gap_3()
+            .gap(Space::Md.px())
             .child(
                 div()
                     .min_w(px(0.0))
                     .child(
                         div()
-                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_size(TextRole::Label.size())
+                            .line_height(TextRole::Label.line_height())
+                            .font_weight(TextRole::Label.weight())
                             .child(kind.display_name()),
                     )
                     .child(
                         div()
-                            .mt_1()
-                            .text_size(px(11.0))
+                            .mt(Space::Xs.px())
+                            .text_size(TextRole::Metadata.size())
+                            .line_height(TextRole::Metadata.line_height())
                             .text_color(theme.text_secondary)
                             .child(detail.to_owned()),
                     ),
@@ -730,9 +760,9 @@ impl ManisApp {
                     .tab_stop(enabled)
                     .focusable()
                     .when(enabled, gpui::Styled::cursor_pointer)
-                    .h(px(34.0))
-                    .px_3()
-                    .rounded_md()
+                    .h(ControlSize::Compact.height())
+                    .px(Space::Md.px())
+                    .rounded(Radius::Control.px())
                     .border_1()
                     .border_color(if selected {
                         theme.action_primary
@@ -744,8 +774,9 @@ impl ManisApp {
                     } else {
                         theme.surface_high
                     })
-                    .text_size(px(11.0))
-                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_size(TextRole::Label.size())
+                    .line_height(TextRole::Label.line_height())
+                    .font_weight(TextRole::Label.weight())
                     .text_color(if selected || enabled {
                         theme.action_primary
                     } else {
@@ -782,7 +813,7 @@ impl ManisApp {
             .flex_col()
             .bg(theme.surface_base)
             .child(Self::workspace_header(
-                language.text("Routing rules", "分流规则"),
+                language.message(Message::RoutingRules),
                 language.text(
                     "Inspect the ordered rules that actually participate in matching; manage sources in Settings",
                     "查看最终参与匹配的有序规则；来源请前往配置页管理",
@@ -816,8 +847,12 @@ impl ManisApp {
         compact: bool,
     ) -> Div {
         div()
-            .px(if compact { px(12.0) } else { px(20.0) })
-            .py_3()
+            .px(if compact {
+                Space::Lg.px()
+            } else {
+                Space::Xl.px()
+            })
+            .py(Space::Md.px())
             .flex_shrink_0()
             .border_b_1()
             .border_color(theme.outline_subtle)
@@ -825,32 +860,13 @@ impl ManisApp {
             .flex()
             .items_start()
             .justify_between()
-            .gap_3()
-            .child(
-                div()
-                    .flex_1()
-                    .min_w(px(0.0))
-                    .child(
-                        div()
-                            .text_size(px(19.0))
-                            .font_weight(FontWeight::BOLD)
-                            .child(title),
-                    )
-                    .when(!compact, |header| {
-                        header.child(div().mt_1().text_color(theme.text_secondary).child(detail))
-                    }),
-            )
-            .child(
-                div()
-                    .px_2()
-                    .py_1()
-                    .rounded_sm()
-                    .bg(theme.action_soft)
-                    .text_size(px(10.0))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(theme.action_primary)
-                    .child(badge),
-            )
+            .gap(Space::Lg.px())
+            .child(page_heading(
+                title,
+                if compact { "" } else { detail },
+                Some(status_badge(badge, StatusTone::Route, theme).into_any_element()),
+                theme,
+            ))
     }
 
     #[allow(clippy::too_many_lines)]
@@ -871,27 +887,11 @@ impl ManisApp {
             })
             || self.source_refresh_busy();
 
-        let panel = div()
-            .id("configuration-source")
-            .w_full()
+        let panel = panel_surface("configuration-source", compact, theme)
             .min_h(px(330.0))
-            .p(if compact { px(12.0) } else { px(16.0) })
-            .rounded_md()
-            .border_1()
-            .border_color(theme.outline_subtle)
-            .bg(theme.surface_high)
-            .child(
-                div()
-                    .text_size(px(17.0))
-                    .font_weight(FontWeight::BOLD)
-                    .child(language.text("Add proxy source", "添加代理来源")),
-            )
-            .child(
-                div()
-                    .mt_1()
-                    .text_size(px(11.0))
-                    .text_color(theme.text_secondary)
-                    .child(if compact {
+            .child(section_heading(
+                language.text("Add proxy source", "添加代理来源"),
+                if compact {
                         language.text(
                             "HTTP/HTTPS subscription or one vless:// node",
                             "HTTP/HTTPS 订阅或单个 vless:// 节点",
@@ -901,15 +901,21 @@ impl ManisApp {
                             "Supports HTTP/HTTPS subscriptions and single vless:// node links.",
                             "支持 HTTP/HTTPS 订阅，也支持单个 vless:// 节点链接。",
                         )
-                    }),
-            )
+                    },
+                None,
+                theme,
+            ))
             .child(
                 div()
-                    .mt(if compact { px(10.0) } else { px(16.0) })
-                    .mb_1()
-                    .text_size(px(11.0))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(language.text("Source address", "来源地址")),
+                    .mt(if compact {
+                        Space::Md.px()
+                    } else {
+                        Space::Lg.px()
+                    })
+                    .child(field_label(
+                        language.text("Source address", "来源地址"),
+                        theme,
+                    )),
             )
             .child(input.clone())
             .child(Self::subscription_actions(
@@ -940,8 +946,12 @@ impl ManisApp {
             })
             .child(
                 div()
-                    .mt(if compact { px(14.0) } else { px(20.0) })
-                    .pt(if compact { px(12.0) } else { px(16.0) })
+                    .mt(if compact {
+                        Space::Lg.px()
+                    } else {
+                        Space::Xl.px()
+                    })
+                    .pt(Space::Lg.px())
                     .border_t_1()
                     .border_color(theme.outline_subtle)
                     .flex()
@@ -949,33 +959,31 @@ impl ManisApp {
                     .justify_between()
                     .child(
                         div()
-                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_size(TextRole::Label.size())
+                            .line_height(TextRole::Label.line_height())
+                            .font_weight(TextRole::Label.weight())
                             .child(language.text("Saved sources", "已保存来源")),
                     )
                     .child(
-                        div()
-                            .text_size(px(11.0))
-                            .text_color(theme.text_tertiary)
-                            .child(if language == Language::English {
-                                format!("{saved_source_count} total")
-                            } else {
-                                format!("{saved_source_count} 个")
-                            }),
+                        status_badge(
+                            language.count(CountNoun::Source, saved_source_count),
+                            StatusTone::Neutral,
+                            theme,
+                        )
                     ),
             )
             .when(saved_source_count == 0, |panel| {
                 panel.child(
-                    div()
-                        .mt_3()
-                        .p_3()
-                        .rounded_md()
-                        .bg(theme.surface_low)
-                        .text_size(px(11.0))
-                        .text_color(theme.text_secondary)
-                        .child(language.text(
+                    empty_state(
+                        language.text("No proxy sources", "暂无代理来源"),
+                        language.text(
                             "No proxy sources yet. Nodes will appear on the Nodes page after adding one.",
                             "还没有代理来源。添加后可在节点页查看其中的节点。",
-                        )),
+                        ),
+                        None,
+                        theme,
+                    )
+                    .mt(Space::Md.px()),
                 )
             })
             .child(self.imported_subscription_cards(theme, cx))
@@ -988,11 +996,12 @@ impl ManisApp {
         let language = self.language();
         let source = self.runtime.profile_source();
         div()
-            .mt_3()
-            .pt_3()
+            .mt(Space::Md.px())
+            .pt(Space::Md.px())
             .border_t_1()
             .border_color(theme.outline_subtle)
-            .text_size(px(10.0))
+            .text_size(TextRole::Metadata.size())
+            .line_height(TextRole::Metadata.line_height())
             .text_color(theme.text_tertiary)
             .child(language.text(
                 "Links are saved in a private local directory; the UI and logs never show full addresses.",
@@ -1027,73 +1036,75 @@ impl ManisApp {
         div()
             .mt_2()
             .flex()
-            .gap_2()
+            .gap(Space::Sm.px())
             .child(
-                Button::new("subscription-preview")
-                    .accessibility_label(if direct_input {
-                        language.text("Save VLESS node", "保存 VLESS 节点")
-                    } else {
-                        language.text("Validate and import subscription", "验证并导入订阅")
-                    })
-                    .label(if busy {
-                        language.text("Processing…", "正在处理…")
-                    } else if direct_input {
-                        language.text("Save VLESS node", "保存 VLESS 节点")
-                    } else {
-                        language.text("Import subscription", "导入订阅")
-                    })
-                    .loading(busy)
-                    .with_variant(ButtonVariant::Primary)
-                    .with_size(px(36.0))
-                    .when(!busy, gpui::Styled::cursor_pointer)
-                    .h(px(36.0))
-                    .px_3()
-                    .bg(if busy {
-                        theme.action_soft
-                    } else {
-                        theme.action_primary
-                    })
-                    .text_color(if busy {
-                        theme.action_primary
-                    } else {
-                        theme.action_on_primary
-                    })
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .flex_1()
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if busy {
-                            return;
-                        }
-                        this.submit_source_import(&input, cx);
-                    })),
+                style_action_button(
+                    Button::new("subscription-preview")
+                        .accessibility_label(if direct_input {
+                            language.text("Save VLESS node", "保存 VLESS 节点")
+                        } else {
+                            language.text("Validate and import subscription", "验证并导入订阅")
+                        })
+                        .label(if busy {
+                            language.text("Processing…", "正在处理…")
+                        } else if direct_input {
+                            language.text("Save VLESS node", "保存 VLESS 节点")
+                        } else {
+                            language.message(Message::ImportSubscription)
+                        })
+                        .loading(busy),
+                    ActionRole::Primary,
+                    ControlSize::Standard,
+                )
+                .when(!busy, gpui::Styled::cursor_pointer)
+                .px(Space::Md.px())
+                .bg(if busy {
+                    theme.action_soft
+                } else {
+                    theme.action_primary
+                })
+                .text_color(if busy {
+                    theme.action_primary
+                } else {
+                    theme.action_on_primary
+                })
+                .font_weight(FontWeight::SEMIBOLD)
+                .min_w(px(180.0))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if busy {
+                        return;
+                    }
+                    this.submit_source_import(&input, cx);
+                })),
             )
             .child(
-                Button::new("subscription-clear")
-                    .accessibility_label(
-                        language.text("Clear subscription link draft", "清除订阅链接草稿"),
-                    )
-                    .label(language.text("Clear", "清除"))
-                    .loading(busy)
-                    .with_variant(ButtonVariant::Default)
-                    .with_size(px(36.0))
-                    .when(!busy, gpui::Styled::cursor_pointer)
-                    .h(px(36.0))
-                    .px_3()
-                    .border_color(theme.outline_subtle)
-                    .bg(theme.surface_high)
-                    .text_color(theme.text_secondary)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if busy {
-                            return;
-                        }
-                        clear_input.update(cx, SubscriptionTextInput::clear);
-                        this.subscription_feedback = SubscriptionFeedback::Idle;
-                        this.language()
-                            .text("Subscription link draft cleared", "已清除订阅链接草稿")
-                            .clone_into(&mut this.status);
-                        trace_ui(UiEvent::SubscriptionDraftCleared);
-                        cx.notify();
-                    })),
+                style_action_button(
+                    Button::new("subscription-clear")
+                        .accessibility_label(
+                            language.text("Clear subscription link draft", "清除订阅链接草稿"),
+                        )
+                        .label(language.message(Message::Clear))
+                        .loading(busy),
+                    ActionRole::Secondary,
+                    ControlSize::Standard,
+                )
+                .when(!busy, gpui::Styled::cursor_pointer)
+                .px(Space::Md.px())
+                .border_color(theme.outline_subtle)
+                .bg(theme.surface_high)
+                .text_color(theme.text_secondary)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if busy {
+                        return;
+                    }
+                    clear_input.update(cx, SubscriptionTextInput::clear);
+                    this.subscription_feedback = SubscriptionFeedback::Idle;
+                    this.language()
+                        .text("Subscription link draft cleared", "已清除订阅链接草稿")
+                        .clone_into(&mut this.status);
+                    trace_ui(UiEvent::SubscriptionDraftCleared);
+                    cx.notify();
+                })),
             )
     }
 
@@ -1229,11 +1240,8 @@ impl ManisApp {
         theme: Theme,
     ) -> Div {
         match feedback {
-            SubscriptionFeedback::Idle => div()
-                .mt_3()
-                .text_size(px(11.0))
-                .text_color(theme.text_secondary)
-                .child(if has_imported_subscription {
+            SubscriptionFeedback::Idle => div().mt(Space::Md.px()).child(metadata_text(
+                if has_imported_subscription {
                     language.text(
                         "You can keep adding HTTP/HTTPS subscriptions or save one vless:// node.",
                         "可继续添加 HTTP/HTTPS 订阅，或保存单个 vless:// 节点",
@@ -1243,7 +1251,9 @@ impl ManisApp {
                         "Waiting for input · HTTP/HTTPS subscription or vless:// node",
                         "等待输入 · HTTP/HTTPS 订阅或 vless:// 节点",
                     )
-                }),
+                },
+                theme,
+            )),
             SubscriptionFeedback::Importing(kind) => {
                 Self::subscription_loading(*kind, language, theme)
             }
@@ -1293,20 +1303,23 @@ impl ManisApp {
             SourceKind::VlessNode => language.text("Saving VLESS node", "正在保存 VLESS 节点"),
         };
         div()
-            .mt_3()
-            .p_3()
-            .rounded_md()
+            .mt(Space::Md.px())
+            .p(Space::Md.px())
+            .rounded(Radius::Pane.px())
             .bg(theme.action_soft)
             .child(
                 div()
-                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_size(TextRole::Label.size())
+                    .line_height(TextRole::Label.line_height())
+                    .font_weight(TextRole::Label.weight())
                     .text_color(theme.action_primary)
                     .child(title),
             )
             .child(
                 div()
-                    .mt_1()
-                    .text_size(px(11.0))
+                    .mt(Space::Xs.px())
+                    .text_size(TextRole::Metadata.size())
+                    .line_height(TextRole::Metadata.line_height())
                     .text_color(theme.text_secondary)
                     .child(language.text(
                         "An isolated Mihomo process is parsing nodes; Manis only saves after success.",
@@ -1347,28 +1360,32 @@ impl ManisApp {
         let node_count: usize = providers.iter().map(|provider| provider.nodes.len()).sum();
 
         div()
-            .mt_3()
-            .p_3()
-            .rounded_md()
+            .mt(Space::Md.px())
+            .p(Space::Md.px())
+            .rounded(Radius::Pane.px())
             .bg(theme.action_soft)
             .child(
                 div()
-                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_size(TextRole::Label.size())
+                    .line_height(TextRole::Label.line_height())
+                    .font_weight(TextRole::Label.weight())
                     .text_color(theme.status_success)
                     .child(title),
             )
             .child(
                 div()
-                    .mt_1()
-                    .text_size(px(11.0))
+                    .mt(Space::Xs.px())
+                    .text_size(TextRole::Metadata.size())
+                    .line_height(TextRole::Metadata.line_height())
                     .text_color(theme.text_secondary)
                     .child(detail),
             )
             .when(preview.kind != SourceKind::VlessNode, |card| {
                 card.child(
                     div()
-                        .mt_2()
-                        .text_size(px(11.0))
+                        .mt(Space::Sm.px())
+                        .text_size(TextRole::Label.size())
+                        .line_height(TextRole::Label.line_height())
                         .font_weight(FontWeight::SEMIBOLD)
                         .child(if language == Language::English {
                             format!("{} sources · {node_count} nodes", providers.len())
@@ -1507,9 +1524,9 @@ impl ManisApp {
             let next_interval = subscription.refresh_interval.next();
             list = list.child(
                 div()
-                    .mt_3()
-                    .p_3()
-                    .rounded_md()
+                    .mt(Space::Md.px())
+                    .p(Space::Md.px())
+                    .rounded(Radius::Row.px())
                     .border_1()
                     .border_color(theme.outline_subtle)
                     .bg(theme.surface_low)
@@ -1518,14 +1535,16 @@ impl ManisApp {
                             .flex()
                             .items_center()
                             .justify_between()
-                            .gap_3()
+                            .gap(Space::Md.px())
                             .child(
                                 div()
                                     .min_w(px(0.0))
                                     .overflow_x_hidden()
                                     .whitespace_nowrap()
                                     .text_ellipsis()
-                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_size(TextRole::Label.size())
+                                    .line_height(TextRole::Label.line_height())
+                                    .font_weight(TextRole::Label.weight())
                                     .text_color(if healthy {
                                         theme.status_success
                                     } else {
@@ -1542,14 +1561,15 @@ impl ManisApp {
                     )
                     .child(
                         div()
-                            .mt_1()
-                            .text_size(px(11.0))
+                            .mt(Space::Xs.px())
+                            .text_size(TextRole::Metadata.size())
+                            .line_height(TextRole::Metadata.line_height())
                             .text_color(theme.text_secondary)
                             .child(detail),
                     )
                     .child(
                         div()
-                            .mt_3()
+                            .mt(Space::Md.px())
                             .flex()
                             .flex_wrap()
                             .items_center()
@@ -1572,13 +1592,14 @@ impl ManisApp {
                                     .tab_stop(controls_enabled)
                                     .focusable()
                                     .when(controls_enabled, gpui::Styled::cursor_pointer)
-                                    .px_2()
-                                    .py_1()
-                                    .rounded_md()
+                                    .h(ControlSize::Compact.height())
+                                    .px(Space::Sm.px())
+                                    .rounded(Radius::Control.px())
                                     .border_1()
                                     .border_color(theme.outline_subtle)
                                     .bg(theme.surface_high)
-                                    .text_size(px(10.0))
+                                    .text_size(TextRole::Metadata.size())
+                                    .line_height(TextRole::Metadata.line_height())
                                     .text_color(theme.text_secondary)
                                     .child(format!(
                                         "{} · {}",
@@ -1617,13 +1638,13 @@ impl ManisApp {
                                     .loading(busy)
                                     .with_variant(ButtonVariant::Text)
                                     .when(controls_enabled, gpui::Styled::cursor_pointer)
-                                    .px_2()
-                                    .py_1()
-                                    .rounded_md()
+                                    .px(Space::Sm.px())
+                                    .rounded(Radius::Control.px())
                                     .border_1()
                                     .border_color(theme.action_primary)
                                     .bg(theme.surface_high)
-                                    .text_size(px(10.0))
+                                    .text_size(TextRole::Metadata.size())
+                                    .line_height(TextRole::Metadata.line_height())
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(theme.action_primary)
                                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -1646,10 +1667,10 @@ impl ManisApp {
                                         .label(language.text("Remove", "移除"))
                                         .with_variant(ButtonVariant::Text)
                                         .cursor_pointer()
-                                        .px_2()
-                                        .py_1()
-                                        .rounded_md()
-                                        .text_size(px(10.0))
+                                        .px(Space::Sm.px())
+                                        .rounded(Radius::Control.px())
+                                        .text_size(TextRole::Metadata.size())
+                                        .line_height(TextRole::Metadata.line_height())
                                         .text_color(theme.route_trace)
                                         .on_click(cx.listener(move |this, _, _, cx| {
                                             this.remove_imported_subscription(id.clone(), cx);
@@ -1671,9 +1692,9 @@ impl ManisApp {
             let node = saved.source.preview();
             list = list.child(
                 div()
-                    .mt_3()
-                    .p_3()
-                    .rounded_md()
+                    .mt(Space::Md.px())
+                    .p(Space::Md.px())
+                    .rounded(Radius::Row.px())
                     .border_1()
                     .border_color(theme.outline_subtle)
                     .bg(theme.surface_low)
@@ -1682,14 +1703,16 @@ impl ManisApp {
                             .flex()
                             .items_center()
                             .justify_between()
-                            .gap_3()
+                            .gap(Space::Md.px())
                             .child(
                                 div()
                                     .min_w(px(0.0))
                                     .overflow_x_hidden()
                                     .whitespace_nowrap()
                                     .text_ellipsis()
-                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_size(TextRole::Label.size())
+                                    .line_height(TextRole::Label.line_height())
+                                    .font_weight(TextRole::Label.weight())
                                     .child(node.name.clone()),
                             )
                             .child(
@@ -1700,13 +1723,13 @@ impl ManisApp {
                                     .label(language.text("Remove", "移除"))
                                     .with_variant(ButtonVariant::Text)
                                     .cursor_pointer()
-                                    .px_2()
-                                    .py_1()
-                                    .rounded_md()
+                                    .px(Space::Sm.px())
+                                    .rounded(Radius::Control.px())
                                     .border_1()
                                     .border_color(theme.outline_subtle)
                                     .bg(theme.surface_high)
-                                    .text_size(px(10.0))
+                                    .text_size(TextRole::Metadata.size())
+                                    .line_height(TextRole::Metadata.line_height())
                                     .text_color(theme.text_secondary)
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         let Some(store_dir) = this.subscription_store_dir.clone()
@@ -1786,8 +1809,9 @@ impl ManisApp {
                     )
                     .child(
                         div()
-                            .mt_1()
-                            .text_size(px(11.0))
+                            .mt(Space::Xs.px())
+                            .text_size(TextRole::Metadata.size())
+                            .line_height(TextRole::Metadata.line_height())
                             .text_color(theme.text_secondary)
                             .child(format!("{} · {}", node.protocol, node.detail)),
                     ),
@@ -1803,25 +1827,33 @@ impl ManisApp {
         theme: Theme,
     ) -> Div {
         div()
-            .mt_3()
-            .p_3()
-            .rounded_md()
+            .mt(Space::Md.px())
+            .p(Space::Md.px())
+            .rounded(Radius::Pane.px())
             .border_1()
             .border_color(theme.outline_strong)
             .bg(theme.surface_low)
-            .child(div().font_weight(FontWeight::SEMIBOLD).child(title))
             .child(
                 div()
-                    .mt_1()
-                    .text_size(px(11.0))
+                    .text_size(TextRole::Label.size())
+                    .line_height(TextRole::Label.line_height())
+                    .font_weight(TextRole::Label.weight())
+                    .child(title),
+            )
+            .child(
+                div()
+                    .mt(Space::Xs.px())
+                    .text_size(TextRole::Metadata.size())
+                    .line_height(TextRole::Metadata.line_height())
                     .text_color(theme.text_secondary)
                     .child(message),
             )
             .when_some(recovery, |card, recovery| {
                 card.child(
                     div()
-                        .mt_2()
-                        .text_size(px(10.0))
+                        .mt(Space::Sm.px())
+                        .text_size(TextRole::Metadata.size())
+                        .line_height(TextRole::Metadata.line_height())
                         .text_color(theme.text_tertiary)
                         .child(recovery),
                 )
@@ -1834,46 +1866,30 @@ impl ManisApp {
         input: Entity<SubscriptionTextInput>,
         busy: bool,
         theme: Theme,
+        compact: bool,
         cx: &mut Context<Self>,
-    ) -> Div {
+    ) -> Stateful<Div> {
         let language = self.language();
-        let mut panel = div()
-            .w_full()
-            .p_4()
-            .rounded_md()
-            .border_1()
-            .border_color(theme.outline_subtle)
-            .bg(theme.surface_high)
-            .child(
-                div()
-                    .text_size(px(17.0))
-                    .font_weight(FontWeight::BOLD)
-                    .child(language.text("Rule subscriptions", "规则订阅")),
-            )
-            .child(
-                div()
-                    .mt_1()
-                    .text_size(px(11.0))
-                    .text_color(theme.text_secondary)
-                    .child(language.text(
-                        "Add QX rule URLs and choose the target policy used after a match.",
-                        "添加 QX 规则地址，并选择命中后使用的目标策略。",
-                    )),
-            )
-            .child(
-                div()
-                    .mt_4()
-                    .mb_1()
-                    .text_size(px(11.0))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(language.text("HTTPS rule URL", "HTTPS 规则地址")),
-            )
+        let mut panel = panel_surface("configuration-rule-sources", compact, theme)
+            .child(section_heading(
+                language.text("Rule subscriptions", "规则订阅"),
+                language.text(
+                    "Add QX rule URLs and choose the target policy used after a match.",
+                    "添加 QX 规则地址，并选择命中后使用的目标策略。",
+                ),
+                None,
+                theme,
+            ))
+            .child(div().mt(Space::Lg.px()).child(field_label(
+                language.text("HTTPS rule URL", "HTTPS 规则地址"),
+                theme,
+            )))
             .child(input.clone())
             .child(
                 div()
-                    .mt_2()
+                    .mt(Space::Sm.px())
                     .flex()
-                    .gap_2()
+                    .gap(Space::Sm.px())
                     .child(
                         div()
                             .id("qx-rule-target-policy")
@@ -1885,15 +1901,16 @@ impl ManisApp {
                             .tab_stop(true)
                             .focusable()
                             .when(!busy, gpui::Styled::cursor_pointer)
-                            .h(px(36.0))
-                            .px_3()
-                            .rounded_md()
+                            .h(ControlSize::Standard.height())
+                            .px(Space::Md.px())
+                            .rounded(Radius::Control.px())
                             .border_1()
                             .border_color(theme.outline_strong)
                             .bg(theme.surface_high)
-                            .text_size(px(11.0))
+                            .text_size(TextRole::Label.size())
+                            .line_height(TextRole::Label.line_height())
                             .text_color(theme.action_primary)
-                            .font_weight(FontWeight::SEMIBOLD)
+                            .font_weight(TextRole::Label.weight())
                             .flex()
                             .items_center()
                             .child(format!(
@@ -1909,53 +1926,54 @@ impl ManisApp {
                             })),
                     )
                     .child(
-                        Button::new("qx-rule-import")
-                            .accessibility_label(language.text(
-                                "Download, validate, and import QX rules",
-                                "下载、校验并导入 QX 规则",
-                            ))
-                            .loading(busy)
-                            .with_variant(ButtonVariant::Primary)
-                            .with_size(px(36.0))
-                            .when(!busy, gpui::Styled::cursor_pointer)
-                            .h(px(36.0))
-                            .px_3()
-                            .bg(if busy {
-                                theme.action_soft
-                            } else {
-                                theme.action_primary
-                            })
-                            .text_color(if busy {
-                                theme.action_primary
-                            } else {
-                                theme.action_on_primary
-                            })
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .gap_2()
-                            .flex_1()
-                            .when(busy, |button| {
-                                button.child(Self::benchmark_latency_spinner(
-                                    "qx-rule-import-spinner".to_owned(),
-                                    theme,
+                        style_action_button(
+                            Button::new("qx-rule-import")
+                                .accessibility_label(language.text(
+                                    "Download, validate, and import QX rules",
+                                    "下载、校验并导入 QX 规则",
                                 ))
-                            })
-                            .child(if busy {
-                                language.text("Processing…", "处理中…")
-                            } else {
-                                language.text("Add rule source", "添加规则源")
-                            })
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                if !busy {
-                                    this.submit_qx_rule_import(&input, cx);
-                                }
-                            })),
+                                .loading(busy),
+                            ActionRole::Primary,
+                            ControlSize::Standard,
+                        )
+                        .when(!busy, gpui::Styled::cursor_pointer)
+                        .px(Space::Md.px())
+                        .bg(if busy {
+                            theme.action_soft
+                        } else {
+                            theme.action_primary
+                        })
+                        .text_color(if busy {
+                            theme.action_primary
+                        } else {
+                            theme.action_on_primary
+                        })
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .gap(Space::Sm.px())
+                        .flex_1()
+                        .when(busy, |button| {
+                            button.child(Self::benchmark_latency_spinner(
+                                "qx-rule-import-spinner".to_owned(),
+                                theme,
+                            ))
+                        })
+                        .child(if busy {
+                            language.text("Processing…", "处理中…")
+                        } else {
+                            language.text("Add rule source", "添加规则源")
+                        })
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            if !busy {
+                                this.submit_qx_rule_import(&input, cx);
+                            }
+                        })),
                     ),
             )
             .child(self.qx_rule_import_feedback(theme, language))
             .child(
                 div()
-                    .mt_5()
-                    .pt_4()
+                    .mt(Space::Xl.px())
+                    .pt(Space::Lg.px())
                     .border_t_1()
                     .border_color(theme.outline_subtle)
                     .flex()
@@ -1963,34 +1981,30 @@ impl ManisApp {
                     .justify_between()
                     .child(
                         div()
-                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_size(TextRole::Label.size())
+                            .line_height(TextRole::Label.line_height())
+                            .font_weight(TextRole::Label.weight())
                             .child(language.text("Added rule sources", "已添加规则源")),
                     )
-                    .child(
-                        div()
-                            .text_size(px(11.0))
-                            .text_color(theme.text_tertiary)
-                            .child(if language == Language::English {
-                                format!("{} total", self.qx_rule_sources.len())
-                            } else {
-                                format!("{} 个", self.qx_rule_sources.len())
-                            }),
-                    ),
+                    .child(status_badge(
+                        language.count(CountNoun::Source, self.qx_rule_sources.len()),
+                        StatusTone::Neutral,
+                        theme,
+                    )),
             );
 
         if self.qx_rule_sources.is_empty() {
             panel = panel.child(
-                div()
-                    .mt_3()
-                    .p_3()
-                    .rounded_md()
-                    .bg(theme.surface_low)
-                    .text_size(px(11.0))
-                    .text_color(theme.text_secondary)
-                    .child(language.text(
+                empty_state(
+                    language.text("No rule sources", "暂无规则源"),
+                    language.text(
                         "No rule subscription sources yet. After adding one, Routing rules will show the rules that actually participate in matching.",
                         "还没有规则订阅源。添加后，分流规则页会显示实际参与匹配的规则。",
-                    )),
+                    ),
+                    None,
+                    theme,
+                )
+                .mt(Space::Md.px()),
             );
         }
         for (index, source) in self.qx_rule_sources.iter().enumerate() {
@@ -1998,8 +2012,9 @@ impl ManisApp {
         }
         panel.child(
             div()
-                .mt_3()
-                .text_size(px(10.0))
+                .mt(Space::Md.px())
+                .text_size(TextRole::Metadata.size())
+                .line_height(TextRole::Metadata.line_height())
                 .text_color(theme.text_tertiary)
                 .child(language.text(
                     "Rule URLs and content are stored only in the private local directory; logs never record links.",
@@ -2047,9 +2062,9 @@ impl ManisApp {
         };
         let target_policy = self.effective_rule_target(source.target_policy.as_str(), language);
         div()
-            .mt_2()
-            .p_3()
-            .rounded_md()
+            .mt(Space::Sm.px())
+            .p(Space::Md.px())
+            .rounded(Radius::Row.px())
             .border_1()
             .border_color(if duplicate {
                 theme.status_warning
@@ -2061,7 +2076,7 @@ impl ManisApp {
                 div()
                     .flex()
                     .items_center()
-                    .gap_3()
+                    .gap(Space::Md.px())
                     .child(
                         div()
                             .flex_1()
@@ -2069,7 +2084,9 @@ impl ManisApp {
                             .overflow_x_hidden()
                             .whitespace_nowrap()
                             .text_ellipsis()
-                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_size(TextRole::Label.size())
+                            .line_height(TextRole::Label.line_height())
+                            .font_weight(TextRole::Label.weight())
                             .child(name),
                     )
                     .when(refreshing, |header| {
@@ -2082,7 +2099,8 @@ impl ManisApp {
                         header.child(
                             div()
                                 .flex_shrink_0()
-                                .text_size(px(10.0))
+                                .text_size(TextRole::Metadata.size())
+                                .line_height(TextRole::Metadata.line_height())
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .text_color(theme.status_warning)
                                 .child(language.text("Already added", "已添加")),
@@ -2091,8 +2109,9 @@ impl ManisApp {
             )
             .child(
                 div()
-                    .mt_1()
-                    .text_size(px(10.0))
+                    .mt(Space::Xs.px())
+                    .text_size(TextRole::Metadata.size())
+                    .line_height(TextRole::Metadata.line_height())
                     .text_color(theme.text_secondary)
                     .child(if language == Language::English {
                         format!(
@@ -2109,8 +2128,9 @@ impl ManisApp {
             .when_some(refresh_error, |card, error| {
                 card.child(
                     div()
-                        .mt_2()
-                        .text_size(px(10.0))
+                        .mt(Space::Sm.px())
+                        .text_size(TextRole::Metadata.size())
+                        .line_height(TextRole::Metadata.line_height())
                         .text_color(theme.route_trace)
                         .child(format!(
                             "{}: {error}",
@@ -2120,7 +2140,7 @@ impl ManisApp {
             })
             .child(
                 div()
-                    .mt_3()
+                    .mt(Space::Md.px())
                     .flex()
                     .flex_wrap()
                     .items_center()
@@ -2141,13 +2161,14 @@ impl ManisApp {
                             .tab_stop(controls_enabled)
                             .focusable()
                             .when(controls_enabled, gpui::Styled::cursor_pointer)
-                            .px_2()
-                            .py_1()
-                            .rounded_md()
+                            .h(ControlSize::Compact.height())
+                            .px(Space::Sm.px())
+                            .rounded(Radius::Control.px())
                             .border_1()
                             .border_color(theme.outline_subtle)
                             .bg(theme.surface_high)
-                            .text_size(px(10.0))
+                            .text_size(TextRole::Metadata.size())
+                            .line_height(TextRole::Metadata.line_height())
                             .text_color(theme.text_secondary)
                             .child(format!(
                                 "{} · {}",
@@ -2183,13 +2204,13 @@ impl ManisApp {
                             .loading(refreshing)
                             .with_variant(ButtonVariant::Text)
                             .when(controls_enabled, gpui::Styled::cursor_pointer)
-                            .px_2()
-                            .py_1()
-                            .rounded_md()
+                            .px(Space::Sm.px())
+                            .rounded(Radius::Control.px())
                             .border_1()
                             .border_color(theme.action_primary)
                             .bg(theme.surface_high)
-                            .text_size(px(10.0))
+                            .text_size(TextRole::Metadata.size())
+                            .line_height(TextRole::Metadata.line_height())
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(theme.action_primary)
                             .on_click(cx.listener(move |this, _, _, cx| {
@@ -2204,15 +2225,15 @@ impl ManisApp {
                             .accessibility_label(
                                 language.text("Delete this remote QX rule", "删除这份远程 QX 规则"),
                             )
-                            .label(language.text("Delete", "删除"))
+                            .label(language.message(Message::Delete))
                             .tab_stop(controls_enabled)
                             .disabled(!controls_enabled)
                             .with_variant(ButtonVariant::Text)
                             .when(controls_enabled, gpui::Styled::cursor_pointer)
-                            .px_2()
-                            .py_1()
-                            .rounded_sm()
-                            .text_size(px(10.0))
+                            .px(Space::Sm.px())
+                            .rounded(Radius::Control.px())
+                            .text_size(TextRole::Metadata.size())
+                            .line_height(TextRole::Metadata.line_height())
                             .text_color(theme.route_trace)
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 if controls_enabled {
@@ -2242,9 +2263,9 @@ impl ManisApp {
                     .selected(selected)
                     .with_variant(ButtonVariant::Text)
                     .w_full()
-                    .min_h(px(40.0))
-                    .px_3()
-                    .py_2()
+                    .min_h(ControlSize::Standard.min_pointer_target())
+                    .px(Space::Md.px())
+                    .py(Space::Sm.px())
                     .border_b_1()
                     .border_color(theme.outline_subtle)
                     .bg(if selected {
@@ -2252,8 +2273,9 @@ impl ManisApp {
                     } else {
                         theme.surface_high
                     })
-                    .text_size(px(11.0))
-                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_size(TextRole::Label.size())
+                    .line_height(TextRole::Label.line_height())
+                    .font_weight(TextRole::Label.weight())
                     .text_color(if selected {
                         theme.action_primary
                     } else {
@@ -2289,13 +2311,17 @@ impl ManisApp {
             .label(if updating {
                 language.text("Saving…", "保存中…").to_owned()
             } else {
-                format!("{} · {selected_target}", language.text("Policy", "策略"))
+                format!(
+                    "{} · {selected_target}",
+                    language.message(Message::PolicyGroup)
+                )
             })
             .dropdown_caret(true)
             .with_variant(ButtonVariant::Default)
-            .with_size(px(34.0))
-            .h(px(34.0))
-            .text_size(px(10.0))
+            .with_size(ControlSize::Compact.height())
+            .h(ControlSize::Compact.height())
+            .text_size(TextRole::Metadata.size())
+            .line_height(TextRole::Metadata.line_height())
             .font_weight(FontWeight::SEMIBOLD)
             .disabled(!enabled);
         let app = cx.entity();
@@ -2844,8 +2870,8 @@ impl ManisApp {
                     .focusable()
                     .when(supported, gpui::Styled::cursor_pointer)
                     .min_h(px(36.0))
-                    .px_3()
-                    .py_1()
+                    .px(Space::Md.px())
+                    .py(Space::Xs.px())
                     .border_b_1()
                     .border_color(theme.outline_subtle)
                     .bg(if selected {
@@ -2859,8 +2885,9 @@ impl ManisApp {
                     .gap_3()
                     .child(
                         div()
-                            .text_size(px(11.0))
-                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_size(TextRole::Label.size())
+                            .line_height(TextRole::Label.line_height())
+                            .font_weight(TextRole::Label.weight())
                             .text_color(if supported {
                                 theme.text_primary
                             } else {
@@ -2870,7 +2897,8 @@ impl ManisApp {
                     )
                     .child(
                         div()
-                            .text_size(px(9.0))
+                            .text_size(TextRole::Metadata.size())
+                            .line_height(TextRole::Metadata.line_height())
                             .text_color(theme.text_tertiary)
                             .child(detail),
                     )
@@ -2895,9 +2923,9 @@ impl ManisApp {
                     .tab_stop(true)
                     .focusable()
                     .cursor_pointer()
-                    .min_h(px(40.0))
-                    .px_3()
-                    .py_2()
+                    .min_h(ControlSize::Standard.min_pointer_target())
+                    .px(Space::Md.px())
+                    .py(Space::Sm.px())
                     .border_b_1()
                     .border_color(theme.outline_subtle)
                     .bg(if selected {
@@ -2905,8 +2933,9 @@ impl ManisApp {
                     } else {
                         theme.surface_high
                     })
-                    .text_size(px(11.0))
-                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_size(TextRole::Label.size())
+                    .line_height(TextRole::Label.line_height())
+                    .font_weight(TextRole::Label.weight())
                     .text_color(if selected {
                         theme.action_primary
                     } else {
@@ -2938,11 +2967,12 @@ impl ManisApp {
             .label(value)
             .dropdown_caret(true)
             .with_variant(ButtonVariant::Default)
-            .with_size(px(38.0))
-            .h(px(38.0))
+            .with_size(ControlSize::Standard.height())
+            .h(ControlSize::Standard.height())
             .w_full()
-            .text_size(px(11.0))
-            .font_weight(FontWeight::SEMIBOLD);
+            .text_size(TextRole::Label.size())
+            .line_height(TextRole::Label.line_height())
+            .font_weight(TextRole::Label.weight());
 
         crate::components::anchored_popover(format!("{id}-popover"), trigger, menu, width, 360.0)
             .open(open)
@@ -2987,20 +3017,16 @@ impl ManisApp {
         );
         let mut row = div()
             .mt_3()
-            .child(
-                div()
-                    .mb_1()
-                    .text_size(px(10.0))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(theme.text_secondary)
-                    .child(if condition_index == 0 {
-                        language.text("Condition 1", "条件 1").to_owned()
-                    } else if language == Language::English {
-                        format!("AND · Condition {}", condition_index + 1)
-                    } else {
-                        format!("并且 · 条件 {}", condition_index + 1)
-                    }),
-            )
+            .child(div().child(field_label(
+                if condition_index == 0 {
+                    language.text("Condition 1", "条件 1").to_owned()
+                } else if language == Language::English {
+                    format!("AND · Condition {}", condition_index + 1)
+                } else {
+                    format!("并且 · 条件 {}", condition_index + 1)
+                },
+                theme,
+            )))
             .child(
                 div()
                     .flex()
@@ -3022,8 +3048,8 @@ impl ManisApp {
                     .accessibility_label(language.text("Remove this condition", "移除这个条件"))
                     .label(language.text("Remove condition", "移除条件"))
                     .text()
-                    .with_size(px(30.0))
-                    .mt_2()
+                    .with_size(ControlSize::Compact.height())
+                    .mt(Space::Sm.px())
                     .cursor_pointer()
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(theme.status_error)
@@ -3082,10 +3108,10 @@ impl ManisApp {
                     .accessibility_label(language.text("Add an AND condition", "添加并且条件"))
                     .label(language.text("+ Add AND condition", "+ 添加“并且”条件"))
                     .with_variant(ButtonVariant::Default)
-                    .with_size(px(38.0))
-                    .mt_3()
-                    .px_3()
-                    .py_2()
+                    .with_size(ControlSize::Standard.height())
+                    .mt(Space::Md.px())
+                    .px(Space::Md.px())
+                    .py(Space::Sm.px())
                     .cursor_pointer()
                     .border_color(theme.outline_strong)
                     .font_weight(FontWeight::SEMIBOLD)
@@ -3098,14 +3124,10 @@ impl ManisApp {
 
         let target_field = div()
             .mt_4()
-            .child(
-                div()
-                    .mb_1()
-                    .text_size(px(10.0))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(theme.text_secondary)
-                    .child(language.text("Policy after match", "命中后的策略")),
-            )
+            .child(field_label(
+                language.text("Policy group after match", "命中后的策略组"),
+                theme,
+            ))
             .child(target);
 
         let footer = div()
@@ -3119,48 +3141,50 @@ impl ManisApp {
             .justify_end()
             .gap_2()
             .child(
-                Button::new("cancel-manual-rule")
-                    .accessibility_label(language.text("Cancel editing rule", "取消编辑规则"))
-                    .label(language.text("Cancel", "取消"))
-                    .with_variant(ButtonVariant::Default)
-                    .with_size(px(38.0))
-                    .h(px(38.0))
-                    .px_4()
-                    .cursor_pointer()
-                    .border_color(theme.outline_subtle)
-                    .bg(theme.surface_high)
-                    .text_color(theme.text_primary)
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.close_manual_rule_editor(cx);
-                        window.close_dialog(cx);
-                    })),
+                style_action_button(
+                    Button::new("cancel-manual-rule")
+                        .accessibility_label(language.text("Cancel editing rule", "取消编辑规则"))
+                        .label(language.message(Message::Cancel)),
+                    ActionRole::Secondary,
+                    ControlSize::Standard,
+                )
+                .px(Space::Lg.px())
+                .cursor_pointer()
+                .border_color(theme.outline_subtle)
+                .bg(theme.surface_high)
+                .text_color(theme.text_primary)
+                .font_weight(FontWeight::SEMIBOLD)
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.close_manual_rule_editor(cx);
+                    window.close_dialog(cx);
+                })),
             )
             .child(
-                Button::new("save-manual-rule")
-                    .accessibility_label(if editing {
-                        language.text("Save manual rule changes", "保存手动规则修改")
-                    } else {
-                        language.text("Add manual rule", "添加手动规则")
-                    })
-                    .label(if editing {
-                        language.text("Save changes", "保存修改")
-                    } else {
-                        language.text("Add rule", "添加规则")
-                    })
-                    .primary()
-                    .with_size(px(38.0))
-                    .h(px(38.0))
-                    .px_4()
-                    .cursor_pointer()
-                    .bg(theme.action_primary)
-                    .text_color(theme.action_on_primary)
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        if this.submit_manual_rule(cx) {
-                            window.close_dialog(cx);
-                        }
-                    })),
+                style_action_button(
+                    Button::new("save-manual-rule")
+                        .accessibility_label(if editing {
+                            language.text("Save manual rule changes", "保存手动规则修改")
+                        } else {
+                            language.text("Add manual rule", "添加手动规则")
+                        })
+                        .label(if editing {
+                            language.message(Message::SaveChanges)
+                        } else {
+                            language.message(Message::AddRule)
+                        }),
+                    ActionRole::Primary,
+                    ControlSize::Standard,
+                )
+                .px(Space::Lg.px())
+                .cursor_pointer()
+                .bg(theme.action_primary)
+                .text_color(theme.action_on_primary)
+                .font_weight(FontWeight::SEMIBOLD)
+                .on_click(cx.listener(|this, _, window, cx| {
+                    if this.submit_manual_rule(cx) {
+                        window.close_dialog(cx);
+                    }
+                })),
             );
 
         let viewport = window.viewport_size();
@@ -3201,7 +3225,8 @@ impl ManisApp {
                     .child(
                         div()
                             .text_size(px(17.0))
-                            .font_weight(FontWeight::BOLD)
+                            .line_height(TextRole::SectionTitle.line_height())
+                            .font_weight(TextRole::SectionTitle.weight())
                             .child(if editing {
                                 language.text("Edit routing rule", "编辑分流规则")
                             } else {
@@ -3211,7 +3236,8 @@ impl ManisApp {
                     .child(
                         div()
                             .mt_1()
-                            .text_size(px(11.0))
+                            .text_size(TextRole::Metadata.size())
+                            .line_height(TextRole::Metadata.line_height())
                             .font_weight(FontWeight::NORMAL)
                             .text_color(theme.text_secondary)
                             .child(language.text(
@@ -3237,7 +3263,8 @@ impl ManisApp {
                                 .p_3()
                                 .rounded_md()
                                 .bg(theme.surface_low)
-                                .text_size(px(11.0))
+                                .text_size(TextRole::Body.size())
+                                .line_height(TextRole::Body.line_height())
                                 .text_color(theme.status_error)
                                 .child(manual_rule_error_label(error, language)),
                         )
@@ -3261,24 +3288,18 @@ impl ManisApp {
         let enabled = rule.is_enabled();
         let target = self.effective_rule_target(rule.target(), language);
         let matchers = Self::manual_rule_matchers(rule, enabled, theme, language);
-        let toggle_label = if enabled {
-            language.text("Disable", "禁用")
-        } else {
-            language.text("Enable", "启用")
-        };
         let edit_label = if language == Language::English {
-            format!("Edit manual rule {order}")
+            format!("Manual rule {order}. Enter edits, Space toggles, Delete removes the rule")
         } else {
-            format!("编辑第 {order} 条手动规则")
+            format!("第 {order} 条手动规则。回车编辑，空格启用或禁用，Delete 删除")
         };
-        let app = cx.entity();
         let row = div()
             .id(format!("manual-routing-rule-{index}"))
             .mt_1()
             .min_h(px(44.0))
-            .px_3()
-            .py_2()
-            .rounded_md()
+            .px(Space::Md.px())
+            .py(Space::Sm.px())
+            .rounded(Radius::Row.px())
             .bg(if enabled {
                 theme.surface_low
             } else {
@@ -3286,18 +3307,38 @@ impl ManisApp {
             })
             .flex()
             .items_center()
-            .gap_3()
+            .gap(Space::Md.px())
             .cursor_pointer()
             .role(Role::Button)
+            .tab_stop(true)
+            .focusable()
             .aria_label(edit_label)
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.open_manual_rule_editor_for_edit(index, window, cx);
+            }))
+            .on_key_down(cx.listener(move |this, event, window, cx| {
+                let Some(action) = manual_rule_keyboard_action(event) else {
+                    return;
+                };
+                cx.stop_propagation();
+                match action {
+                    ManualRuleKeyboardAction::Edit => {
+                        this.open_manual_rule_editor_for_edit(index, window, cx);
+                    }
+                    ManualRuleKeyboardAction::Toggle => {
+                        this.set_manual_rule_enabled(index, !enabled, cx);
+                    }
+                    ManualRuleKeyboardAction::Delete => {
+                        this.remove_manual_rule(index, cx);
+                    }
+                }
             }))
             .child(
                 div()
                     .w(px(42.0))
                     .flex_shrink_0()
-                    .text_size(px(10.0))
+                    .text_size(TextRole::Metadata.size())
+                    .line_height(TextRole::Metadata.line_height())
                     .text_color(theme.text_tertiary)
                     .child(format!("#{order:03}")),
             )
@@ -3305,8 +3346,9 @@ impl ManisApp {
             .child(
                 div()
                     .flex_shrink_0()
-                    .text_size(px(11.0))
-                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_size(TextRole::Data.size())
+                    .line_height(TextRole::Data.line_height())
+                    .font_weight(TextRole::Data.weight())
                     .text_color(if enabled {
                         theme.action_primary
                     } else {
@@ -3320,14 +3362,30 @@ impl ManisApp {
                         .flex_shrink_0()
                         .px_2()
                         .py_1()
-                        .rounded_sm()
+                        .rounded(Radius::Control.px())
                         .bg(theme.surface_chrome)
-                        .text_size(px(9.0))
+                        .text_size(TextRole::Metadata.size())
+                        .line_height(TextRole::Metadata.line_height())
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(theme.text_tertiary)
                         .child(language.text("Disabled", "已禁用")),
                 )
             });
+        Self::manual_rule_context_menu(row, index, enabled, language, cx.entity())
+    }
+
+    fn manual_rule_context_menu(
+        row: Stateful<Div>,
+        index: usize,
+        enabled: bool,
+        language: Language,
+        app: Entity<Self>,
+    ) -> AnyElement {
+        let toggle_label = if enabled {
+            language.message(Message::Disable)
+        } else {
+            language.message(Message::Enable)
+        };
         row.context_menu(move |menu, _, _| {
             let toggle_app = app.clone();
             let delete_app = app.clone();
@@ -3338,7 +3396,7 @@ impl ManisApp {
             }))
             .separator()
             .item(
-                PopupMenuItem::new(language.text("Delete", "删除")).on_click(move |_, _, cx| {
+                PopupMenuItem::new(language.message(Message::Delete)).on_click(move |_, _, cx| {
                     delete_app.update(cx, |this, cx| {
                         this.remove_manual_rule(index, cx);
                     });
@@ -3376,7 +3434,8 @@ impl ManisApp {
                 matchers = matchers.child(
                     div()
                         .mx_1()
-                        .text_size(px(9.0))
+                        .text_size(TextRole::Metadata.size())
+                        .line_height(TextRole::Metadata.line_height())
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(theme.text_tertiary)
                         .child(language.text("AND", "并且")),
@@ -3386,21 +3445,23 @@ impl ManisApp {
                 div()
                     .flex()
                     .items_center()
-                    .gap_2()
-                    .px_2()
-                    .py_1()
-                    .rounded_sm()
+                    .gap(Space::Sm.px())
+                    .px(Space::Sm.px())
+                    .py(Space::Xs.px())
+                    .rounded(Radius::Control.px())
                     .bg(theme.surface_high)
                     .child(
                         div()
-                            .text_size(px(9.0))
+                            .text_size(TextRole::Metadata.size())
+                            .line_height(TextRole::Metadata.line_height())
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(secondary_text)
                             .child(condition.kind().display_label()),
                     )
                     .child(
                         div()
-                            .text_size(px(11.0))
+                            .text_size(TextRole::Data.size())
+                            .line_height(TextRole::Data.line_height())
                             .text_color(primary_text)
                             .child(condition.parameter().to_owned()),
                     ),
@@ -3424,7 +3485,7 @@ impl ManisApp {
             .flex_shrink_0()
             .flex()
             .items_center()
-            .gap_1()
+            .gap(Space::Xs.px())
             .child(
                 Button::new(format!("move-rule-group-up-{group_id}"))
                     .accessibility_label(if language == Language::English {
@@ -3434,7 +3495,7 @@ impl ManisApp {
                     })
                     .icon(IconName::ArrowUp)
                     .text()
-                    .with_size(px(30.0))
+                    .with_size(ControlSize::Icon.min_pointer_target())
                     .text_color(theme.text_secondary)
                     .disabled(position == 0)
                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -3451,7 +3512,7 @@ impl ManisApp {
                     })
                     .icon(IconName::ArrowDown)
                     .text()
-                    .with_size(px(30.0))
+                    .with_size(ControlSize::Icon.min_pointer_target())
                     .text_color(theme.text_secondary)
                     .disabled(position + 1 >= group_count)
                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -3486,8 +3547,12 @@ impl ManisApp {
             .w_full()
             .flex_1()
             .min_w(px(0.0))
-            .p_4()
-            .rounded_md()
+            .p(if compact {
+                Space::Md.px()
+            } else {
+                Space::Lg.px()
+            })
+            .rounded(Radius::Pane.px())
             .border_1()
             .border_color(theme.outline_subtle)
             .bg(theme.surface_high)
@@ -3496,89 +3561,73 @@ impl ManisApp {
                     .flex()
                     .items_center()
                     .justify_between()
-                    .gap_3()
-                    .child(
-                        div()
-                            .child(
-                                div()
-                                    .text_size(px(17.0))
-                                    .font_weight(FontWeight::BOLD)
-                                    .child(language.text("Active rules", "生效规则")),
-                            )
-                            .child(
-                                div()
-                                    .mt_1()
-                                    .text_size(px(11.0))
-                                    .text_color(theme.text_secondary)
-                                    .child(language.text(
-                                        "Groups match from top to bottom; use the arrows to change priority.",
-                                        "分组从上到下匹配；使用箭头调整优先级。",
-                                    )),
-                            ),
-                    )
+                    .gap(Space::Md.px())
+                    .child(section_heading(
+                        language.text("Active rules", "生效规则"),
+                        language.text(
+                            "Groups match from top to bottom; use the arrows to change priority.",
+                            "分组从上到下匹配；使用箭头调整优先级。",
+                        ),
+                        None,
+                        theme,
+                    ))
                     .child(
                         div()
                             .flex_shrink_0()
                             .flex()
                             .items_center()
-                            .gap_2()
-                            .child(
-                                div()
-                                    .px_2()
-                                    .py_1()
-                                    .rounded_sm()
-                                    .bg(theme.action_soft)
-                                    .text_size(px(10.0))
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(theme.action_primary)
-                                    .child(if disabled_manual_count == 0 {
-                                        if language == Language::English {
-                                            format!("{active_count} rules")
-                                        } else {
-                                            format!("{active_count} 条")
-                                        }
-                                    } else if language == Language::English {
-                                        format!(
-                                            "{active_count} active · {disabled_manual_count} disabled"
-                                        )
-                                    } else {
-                                        format!(
-                                            "{active_count} 条生效 · {disabled_manual_count} 条已禁用"
-                                        )
-                                    }),
-                            )
-                            .child(
-                                Button::new("open-route-test")
-                                    .accessibility_label(
-                                        language.text("Test routing rules", "测试分流规则"),
+                            .gap(Space::Sm.px())
+                            .child(status_badge(
+                                if disabled_manual_count == 0 {
+                                    language.count(CountNoun::Rule, active_count)
+                                } else if language == Language::English {
+                                    format!(
+                                        "{active_count} active · {disabled_manual_count} disabled"
                                     )
-                                    .label(language.text("Test rules", "测试规则"))
-                                    .with_variant(ButtonVariant::Default)
-                                    .with_size(px(34.0))
-                                    .h(px(34.0))
-                                    .px_3()
-                                    .border_color(theme.outline_subtle)
-                                    .on_click(cx.listener(|this, _, window, cx| {
+                                } else {
+                                    format!(
+                                        "{active_count} 条生效 · {disabled_manual_count} 条已禁用"
+                                    )
+                                },
+                                StatusTone::Route,
+                                theme,
+                            ))
+                            .child(
+                                action_button(
+                                    "open-route-test",
+                                    language.message(Message::TestRules),
+                                    ActionRole::Secondary,
+                                    ControlSize::Compact,
+                                )
+                                .accessibility_label(
+                                    language.text("Test routing rules", "测试分流规则"),
+                                )
+                                .border_color(theme.outline_subtle)
+                                .on_click(cx.listener(
+                                    |this, _, window, cx| {
                                         this.open_route_inspector(window, cx);
-                                    })),
+                                    },
+                                )),
                             )
                             .child(
-                                Button::new("open-manual-rule-editor")
-                                    .accessibility_label(
-                                        language.text("Add routing rule", "添加分流规则"),
-                                    )
-                                    .label(language.text("Add rule", "添加规则"))
-                                    .primary()
-                                    .with_size(px(34.0))
-                                    .h(px(34.0))
-                                    .px_3()
-                                    .cursor_pointer()
-                                    .bg(theme.action_primary)
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(theme.action_on_primary)
-                                    .on_click(cx.listener(|this, _, window, cx| {
+                                action_button(
+                                    "open-manual-rule-editor",
+                                    language.message(Message::AddRule),
+                                    ActionRole::Primary,
+                                    ControlSize::Compact,
+                                )
+                                .accessibility_label(
+                                    language.text("Add routing rule", "添加分流规则"),
+                                )
+                                .cursor_pointer()
+                                .bg(theme.action_primary)
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(theme.action_on_primary)
+                                .on_click(cx.listener(
+                                    |this, _, window, cx| {
                                         this.open_manual_rule_editor(window, cx);
-                                    })),
+                                    },
+                                )),
                             ),
                     ),
             );
@@ -3592,45 +3641,67 @@ impl ManisApp {
         let mut order = 1;
         for (group_position, group_id) in group_order.iter().enumerate() {
             if group_id == mihomo::MANUAL_ROUTING_RULE_GROUP_ID {
-                let expanded = self
-                    .node_workspace
-                    .is_group_collapsed(MANUAL_RULES_EXPANSION_KEY);
+                let open = rule_group_is_open(&self.node_workspace, MANUAL_RULES_EXPANSION_KEY);
                 let group_name = language.text("Manual rules", "手动规则");
                 let detail = if disabled_manual_count == 0 && language == Language::English {
-                    format!("{} rules · Saved locally", self.manual_rules.len())
+                    format!(
+                        "{} · Saved locally",
+                        language.count(CountNoun::Rule, self.manual_rules.len())
+                    )
                 } else if disabled_manual_count == 0 {
-                    format!("{} 条规则 · 本地保存", self.manual_rules.len())
+                    format!(
+                        "{} · 本地保存",
+                        language.count(CountNoun::Rule, self.manual_rules.len())
+                    )
                 } else if language == Language::English {
                     format!(
-                        "{} rules · {disabled_manual_count} disabled · Saved locally",
-                        self.manual_rules.len()
+                        "{} · {disabled_manual_count} disabled · Saved locally",
+                        language.count(CountNoun::Rule, self.manual_rules.len())
                     )
                 } else {
                     format!(
-                        "{} 条规则 · {disabled_manual_count} 条已禁用 · 本地保存",
-                        self.manual_rules.len()
+                        "{} · {disabled_manual_count} 条已禁用 · 本地保存",
+                        language.count(CountNoun::Rule, self.manual_rules.len())
                     )
                 };
                 let title_detail = div()
                     .flex_1()
                     .min_w(px(0.0))
-                    .child(div().font_weight(FontWeight::SEMIBOLD).child(group_name))
                     .child(
                         div()
-                            .mt_1()
+                            .text_size(TextRole::Label.size())
+                            .line_height(TextRole::Label.line_height())
+                            .font_weight(TextRole::Label.weight())
+                            .child(group_name),
+                    )
+                    .child(
+                        div()
+                            .mt(Space::Xs.px())
                             .overflow_x_hidden()
                             .whitespace_nowrap()
                             .text_ellipsis()
-                            .text_size(px(10.0))
+                            .text_size(TextRole::Metadata.size())
+                            .line_height(TextRole::Metadata.line_height())
                             .text_color(theme.text_tertiary)
                             .child(detail),
+                    )
+                    .child(
+                        div()
+                            .mt(Space::Xs.px())
+                            .text_size(TextRole::Metadata.size())
+                            .line_height(TextRole::Metadata.line_height())
+                            .text_color(theme.text_secondary)
+                            .child(language.text(
+                                "Click a rule to edit; right-click to disable or delete.",
+                                "点击规则编辑；右键可禁用或删除。",
+                            )),
                     );
                 let title = div()
                     .w_full()
                     .flex()
                     .items_center()
                     .justify_between()
-                    .gap_2()
+                    .gap(Space::Sm.px())
                     .child(title_detail)
                     .child(Self::rule_group_order_controls(
                         group_id,
@@ -3642,8 +3713,12 @@ impl ManisApp {
                         cx,
                     ));
                 let mut rules = div()
-                    .px(if compact { px(8.0) } else { px(12.0) })
-                    .pb_3()
+                    .px(if compact {
+                        Space::Sm.px()
+                    } else {
+                        Space::Md.px()
+                    })
+                    .pb(Space::Md.px())
                     .border_t_1()
                     .border_color(theme.outline_subtle)
                     .bg(theme.surface_high);
@@ -3656,12 +3731,12 @@ impl ManisApp {
                 let manual_group = Accordion::new("routing-manual-rules")
                     .bordered(false)
                     .with_size(Size::Large)
-                    .mt_4()
+                    .mt(Space::Lg.px())
                     .border_t_1()
                     .border_b_1()
                     .border_color(theme.outline_subtle)
                     .item(|item| {
-                        item.open(expanded)
+                        item.open(open)
                             .title_style(accordion_title_style(compact))
                             .content_style(accordion_content_style())
                             .bg(theme.surface_low)
@@ -3669,11 +3744,11 @@ impl ManisApp {
                             .child(rules)
                     })
                     .on_toggle_click(cx.listener(|this, open_indices: &[usize], _, cx| {
-                        let should_expand = open_indices.contains(&0);
+                        let should_collapse = !open_indices.contains(&0);
                         if this
                             .node_workspace
                             .is_group_collapsed(MANUAL_RULES_EXPANSION_KEY)
-                            != should_expand
+                            != should_collapse
                         {
                             this.node_workspace.toggle_group(MANUAL_RULES_EXPANSION_KEY);
                             this.persist_node_workspace();
@@ -3694,7 +3769,7 @@ impl ManisApp {
             let parsed = QxRuleList::parse(&source.content);
             let rule_count = parsed.rules.len();
             let expansion_key = rule_source_expansion_key(&source.id);
-            let expanded = self.node_workspace.is_group_collapsed(&expansion_key);
+            let open = rule_group_is_open(&self.node_workspace, &expansion_key);
             let name = source.source.subscription_name().unwrap_or_else(|| {
                 if language == Language::English {
                     format!("Rule source {}", source_index + 1)
@@ -3722,16 +3797,19 @@ impl ManisApp {
                         .overflow_x_hidden()
                         .whitespace_nowrap()
                         .text_ellipsis()
-                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_size(TextRole::Label.size())
+                        .line_height(TextRole::Label.line_height())
+                        .font_weight(TextRole::Label.weight())
                         .child(name.clone()),
                 )
                 .child(
                     div()
-                        .mt_1()
+                        .mt(Space::Xs.px())
                         .overflow_x_hidden()
                         .whitespace_nowrap()
                         .text_ellipsis()
-                        .text_size(px(10.0))
+                        .text_size(TextRole::Metadata.size())
+                        .line_height(TextRole::Metadata.line_height())
                         .text_color(theme.text_tertiary)
                         .child(detail),
                 );
@@ -3740,7 +3818,7 @@ impl ManisApp {
                 .flex()
                 .items_center()
                 .justify_between()
-                .gap_2()
+                .gap(Space::Sm.px())
                 .child(title_detail)
                 .child(self.qx_rule_source_target_select(
                     source,
@@ -3758,8 +3836,12 @@ impl ManisApp {
                     cx,
                 ));
             let mut rules = div()
-                .px(if compact { px(8.0) } else { px(12.0) })
-                .pb_3()
+                .px(if compact {
+                    Space::Sm.px()
+                } else {
+                    Space::Md.px()
+                })
+                .pb(Space::Md.px())
                 .border_t_1()
                 .border_color(theme.outline_subtle)
                 .bg(theme.surface_high);
@@ -3776,12 +3858,12 @@ impl ManisApp {
             let source_group = Accordion::new(format!("routing-rule-source-{}", source.id))
                 .bordered(false)
                 .with_size(Size::Large)
-                .mt_4()
+                .mt(Space::Lg.px())
                 .border_t_1()
                 .border_b_1()
                 .border_color(theme.outline_subtle)
                 .item(|item| {
-                    item.open(expanded)
+                    item.open(open)
                         .title_style(accordion_title_style(compact))
                         .content_style(accordion_content_style())
                         .bg(theme.surface_low)
@@ -3789,8 +3871,8 @@ impl ManisApp {
                         .child(rules)
                 })
                 .on_toggle_click(cx.listener(move |this, open_indices: &[usize], _, cx| {
-                    let should_expand = open_indices.contains(&0);
-                    if this.node_workspace.is_group_collapsed(&toggle_key) != should_expand {
+                    let should_collapse = !open_indices.contains(&0);
+                    if this.node_workspace.is_group_collapsed(&toggle_key) != should_collapse {
                         this.node_workspace.toggle_group(&toggle_key);
                         this.persist_node_workspace();
                         this.language()
@@ -3804,16 +3886,16 @@ impl ManisApp {
 
         if group_order.is_empty() {
             list = list.child(
-                div()
-                    .mt_4()
-                    .p_4()
-                    .rounded_md()
-                    .bg(theme.surface_low)
-                    .text_color(theme.text_secondary)
-                    .child(language.text(
+                empty_state(
+                    language.text("No active routing rules", "暂无生效规则"),
+                    language.text(
                         "No active routing rules. Manis does not add locked fallback rules.",
                         "暂无生效规则；Manis 不会添加不可编辑的兜底规则。",
-                    )),
+                    ),
+                    None,
+                    theme,
+                )
+                .mt(Space::Lg.px()),
             );
         }
         list
@@ -3837,18 +3919,19 @@ impl ManisApp {
         div()
             .mt_1()
             .min_h(px(44.0))
-            .px_3()
-            .py_2()
-            .rounded_md()
+            .px(Space::Md.px())
+            .py(Space::Sm.px())
+            .rounded(Radius::Row.px())
             .bg(theme.surface_low)
             .flex()
             .items_center()
-            .gap_3()
+            .gap(Space::Md.px())
             .child(
                 div()
                     .w(px(42.0))
                     .flex_shrink_0()
-                    .text_size(px(10.0))
+                    .text_size(TextRole::Metadata.size())
+                    .line_height(TextRole::Metadata.line_height())
                     .text_color(theme.text_tertiary)
                     .child(format!("#{order:03}")),
             )
@@ -3856,7 +3939,8 @@ impl ManisApp {
                 div()
                     .w(px(124.0))
                     .flex_shrink_0()
-                    .text_size(px(10.0))
+                    .text_size(TextRole::Metadata.size())
+                    .line_height(TextRole::Metadata.line_height())
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(theme.text_secondary)
                     .child(kind),
@@ -3868,13 +3952,16 @@ impl ManisApp {
                     .overflow_x_hidden()
                     .whitespace_nowrap()
                     .text_ellipsis()
+                    .text_size(TextRole::Data.size())
+                    .line_height(TextRole::Data.line_height())
                     .child(value.to_owned()),
             )
             .child(
                 div()
                     .flex_shrink_0()
-                    .text_size(px(11.0))
-                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_size(TextRole::Data.size())
+                    .line_height(TextRole::Data.line_height())
+                    .font_weight(TextRole::Data.weight())
                     .text_color(theme.action_primary)
                     .child(target.to_owned()),
             )
@@ -3949,7 +4036,8 @@ impl ManisApp {
         };
         div()
             .mt_2()
-            .text_size(px(11.0))
+            .text_size(TextRole::Body.size())
+            .line_height(TextRole::Body.line_height())
             .text_color(color)
             .child(message)
     }
@@ -4690,17 +4778,21 @@ mod tests {
     use manis_core::NodeWorkspaceState;
 
     use super::{
-        Language, MANUAL_RULES_EXPANSION_KEY, rule_source_expansion_key, source_update_label,
+        Language, MANUAL_RULES_EXPANSION_KEY, ManualRuleKeyboardAction,
+        manual_rule_keyboard_action_for, rule_group_is_open, rule_source_expansion_key,
+        source_update_label,
     };
 
     #[test]
-    fn remote_rule_sources_start_collapsed_and_remember_expansion() {
+    fn remote_rule_sources_start_open_and_remember_collapse() {
         let mut workspace = NodeWorkspaceState::default();
         let key = rule_source_expansion_key("qx-rule-deadbeef");
 
         assert!(!workspace.is_group_collapsed(&key));
+        assert!(rule_group_is_open(&workspace, &key));
         workspace.toggle_group(&key);
         assert!(workspace.is_group_collapsed(&key));
+        assert!(!rule_group_is_open(&workspace, &key));
         assert_eq!(key, "routing-rule-source:qx-rule-deadbeef");
     }
 
@@ -4709,8 +4801,28 @@ mod tests {
         let mut workspace = NodeWorkspaceState::default();
 
         assert!(!workspace.is_group_collapsed(MANUAL_RULES_EXPANSION_KEY));
+        assert!(rule_group_is_open(&workspace, MANUAL_RULES_EXPANSION_KEY));
         workspace.toggle_group(MANUAL_RULES_EXPANSION_KEY);
         assert!(workspace.is_group_collapsed(MANUAL_RULES_EXPANSION_KEY));
+        assert!(!rule_group_is_open(&workspace, MANUAL_RULES_EXPANSION_KEY));
+    }
+
+    #[test]
+    fn manual_rule_rows_expose_keyboard_edit_toggle_and_delete_actions() {
+        assert_eq!(
+            manual_rule_keyboard_action_for("enter", false, false),
+            Some(ManualRuleKeyboardAction::Edit)
+        );
+        assert_eq!(
+            manual_rule_keyboard_action_for("space", false, false),
+            Some(ManualRuleKeyboardAction::Toggle)
+        );
+        assert_eq!(
+            manual_rule_keyboard_action_for("delete", false, false),
+            Some(ManualRuleKeyboardAction::Delete)
+        );
+        assert_eq!(manual_rule_keyboard_action_for("enter", true, false), None);
+        assert_eq!(manual_rule_keyboard_action_for("delete", false, true), None);
     }
 
     #[test]

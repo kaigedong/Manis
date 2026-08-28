@@ -14,6 +14,8 @@ use sha2::{Digest as _, Sha256};
 use ureq::{Agent, ResponseExt as _};
 use zip::ZipArchive;
 
+use crate::localization::Language;
+
 pub(crate) const LATEST_STABLE_RELEASE_API: &str =
     "https://api.github.com/repos/MetaCubeX/mihomo/releases/latest";
 pub(crate) const MAX_CORE_PACKAGE_BYTES: u64 = 64 * 1024 * 1024;
@@ -70,23 +72,84 @@ pub(crate) enum CoreUpdateError {
 
 impl fmt::Display for CoreUpdateError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::MissingAsset => "未找到适用于当前平台的 Mihomo 内核包",
-            Self::UnsupportedPlatform => "当前平台暂不支持自动更新 Mihomo 内核",
-            Self::DataDirUnavailable => "无法定位 Manis 数据目录",
-            Self::NetworkUnavailable => "Mihomo release 下载失败，请检查网络后重试",
-            Self::InvalidReleaseMetadata => "Mihomo release 元数据格式无效",
-            Self::InsecureRedirect => "Mihomo release 下载跳转到了非 HTTPS 页面",
-            Self::MissingDigest => "Mihomo release asset 缺少 sha256 digest",
-            Self::InvalidDigest => "Mihomo release asset digest 格式无效",
-            Self::DigestMismatch => "Mihomo 内核包 sha256 校验失败",
-            Self::PackageTooLarge => "Mihomo 内核包超过 64 MiB",
-            Self::InvalidArchive => "Mihomo 内核包格式无效",
-            Self::Io => "Mihomo 内核文件读写失败",
-            Self::VersionMismatch => "Mihomo 内核版本验证失败",
-            Self::PublishFailed => "Mihomo 内核发布失败",
-            Self::RollbackFailed => "Mihomo 内核回滚失败",
-        })
+        formatter.write_str(self.localized_message(Language::English))
+    }
+}
+
+impl CoreUpdateError {
+    pub(crate) const fn localized_message(self, language: Language) -> &'static str {
+        match (self, language) {
+            (Self::MissingAsset, Language::English) => {
+                "No Mihomo core package is available for this platform"
+            }
+            (Self::MissingAsset, Language::SimplifiedChinese) => {
+                "未找到适用于当前平台的 Mihomo 内核包"
+            }
+            (Self::UnsupportedPlatform, Language::English) => {
+                "Automatic Mihomo core updates are unavailable on this platform"
+            }
+            (Self::UnsupportedPlatform, Language::SimplifiedChinese) => {
+                "当前平台暂不支持自动更新 Mihomo 内核"
+            }
+            (Self::DataDirUnavailable, Language::English) => {
+                "The Manis data directory could not be located"
+            }
+            (Self::DataDirUnavailable, Language::SimplifiedChinese) => "无法定位 Manis 数据目录",
+            (Self::NetworkUnavailable, Language::English) => {
+                "The Mihomo release download failed; check the network and try again"
+            }
+            (Self::NetworkUnavailable, Language::SimplifiedChinese) => {
+                "Mihomo release 下载失败，请检查网络后重试"
+            }
+            (Self::InvalidReleaseMetadata, Language::English) => {
+                "The Mihomo release metadata is invalid"
+            }
+            (Self::InvalidReleaseMetadata, Language::SimplifiedChinese) => {
+                "Mihomo release 元数据格式无效"
+            }
+            (Self::InsecureRedirect, Language::English) => {
+                "The Mihomo release download redirected to a non-HTTPS page"
+            }
+            (Self::InsecureRedirect, Language::SimplifiedChinese) => {
+                "Mihomo release 下载跳转到了非 HTTPS 页面"
+            }
+            (Self::MissingDigest, Language::English) => {
+                "The Mihomo release asset is missing its sha256 digest"
+            }
+            (Self::MissingDigest, Language::SimplifiedChinese) => {
+                "Mihomo release asset 缺少 sha256 digest"
+            }
+            (Self::InvalidDigest, Language::English) => {
+                "The Mihomo release asset digest is invalid"
+            }
+            (Self::InvalidDigest, Language::SimplifiedChinese) => {
+                "Mihomo release asset digest 格式无效"
+            }
+            (Self::DigestMismatch, Language::English) => {
+                "The Mihomo core package failed sha256 verification"
+            }
+            (Self::DigestMismatch, Language::SimplifiedChinese) => "Mihomo 内核包 sha256 校验失败",
+            (Self::PackageTooLarge, Language::English) => "The Mihomo core package exceeds 64 MiB",
+            (Self::PackageTooLarge, Language::SimplifiedChinese) => "Mihomo 内核包超过 64 MiB",
+            (Self::InvalidArchive, Language::English) => {
+                "The Mihomo core package has an invalid archive format"
+            }
+            (Self::InvalidArchive, Language::SimplifiedChinese) => "Mihomo 内核包格式无效",
+            (Self::Io, Language::English) => "The Mihomo core file could not be read or written",
+            (Self::Io, Language::SimplifiedChinese) => "Mihomo 内核文件读写失败",
+            (Self::VersionMismatch, Language::English) => {
+                "The Mihomo core version could not be verified"
+            }
+            (Self::VersionMismatch, Language::SimplifiedChinese) => "Mihomo 内核版本验证失败",
+            (Self::PublishFailed, Language::English) => {
+                "The Mihomo core update could not be published"
+            }
+            (Self::PublishFailed, Language::SimplifiedChinese) => "Mihomo 内核发布失败",
+            (Self::RollbackFailed, Language::English) => {
+                "The previous Mihomo core could not be restored"
+            }
+            (Self::RollbackFailed, Language::SimplifiedChinese) => "Mihomo 内核回滚失败",
+        }
     }
 }
 
@@ -742,6 +805,22 @@ fn remove_file_if_exists(path: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn core_update_errors_have_language_specific_user_messages() {
+        assert_eq!(
+            CoreUpdateError::NetworkUnavailable.localized_message(Language::English),
+            "The Mihomo release download failed; check the network and try again"
+        );
+        assert_eq!(
+            CoreUpdateError::NetworkUnavailable.localized_message(Language::SimplifiedChinese),
+            "Mihomo release 下载失败，请检查网络后重试"
+        );
+        assert_eq!(
+            CoreUpdateError::PublishFailed.to_string(),
+            "The Mihomo core update could not be published"
+        );
+    }
     use flate2::{Compression, write::GzEncoder};
     use std::fs;
     use std::io::{Cursor, Write};
