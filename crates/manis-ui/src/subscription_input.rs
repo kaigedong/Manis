@@ -213,32 +213,34 @@ impl gpui::Render for SubscriptionTextInput {
         self.sync_pending(window, cx);
         let focused = self.focus_handle(cx).is_focused(window);
         let disabled = self.availability == InputAvailability::Disabled;
+        let mut input = Input::new(&self.state)
+            .aria_label(self.placeholder.clone())
+            .disabled(disabled)
+            .with_size(px(38.0))
+            .w_full()
+            .px_3()
+            .text_size(px(12.0))
+            .line_height(px(36.0))
+            .rounded_md()
+            .border_1()
+            .border_color(if focused {
+                self.theme.action_primary
+            } else {
+                self.theme.outline_strong
+            })
+            .bg(self.theme.surface_high)
+            .text_color(self.theme.text_primary);
+
+        // `Input::h` configures multiline height. Set the single-line frame
+        // through its style so it matches the other standard controls.
+        input.style().size.height = Some(px(38.0).into());
 
         div()
             .id(self.element_id.clone())
             .h(px(38.0))
             .w_full()
             .text_size(px(12.0))
-            .child(
-                Input::new(&self.state)
-                    .aria_label(self.placeholder.clone())
-                    .disabled(disabled)
-                    .with_size(px(38.0))
-                    .h(px(38.0))
-                    .w_full()
-                    .px_3()
-                    .text_size(px(12.0))
-                    .line_height(px(36.0))
-                    .rounded_md()
-                    .border_1()
-                    .border_color(if focused {
-                        self.theme.action_primary
-                    } else {
-                        self.theme.outline_strong
-                    })
-                    .bg(self.theme.surface_high)
-                    .text_color(self.theme.text_primary),
-            )
+            .child(input)
     }
 }
 

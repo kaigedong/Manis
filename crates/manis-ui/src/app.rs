@@ -3772,7 +3772,8 @@ impl ManisApp {
         let interactive = self.proxy_mode_busy.is_none();
         let mut modes = ButtonGroup::new("proxy-mode-options")
             .with_variant(ButtonVariant::Ghost)
-            .with_size(px(30.0));
+            .with_size(px(30.0))
+            .h_full();
         for mode in [ProxyMode::Off, ProxyMode::System, ProxyMode::Tun] {
             let selected = mode == self.proxy_mode;
             let pending = self.proxy_mode_busy == Some(mode);
@@ -3873,7 +3874,8 @@ impl ManisApp {
 
         let mut modes = ButtonGroup::new("routing-mode-options")
             .with_variant(ButtonVariant::Ghost)
-            .with_size(px(30.0));
+            .with_size(px(30.0))
+            .h_full();
         for mode in [RoutingMode::Direct, RoutingMode::Global, RoutingMode::Rule] {
             let selected = mode == self.routing_mode;
             modes = modes.child(
