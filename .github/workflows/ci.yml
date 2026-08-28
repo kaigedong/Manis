@@ -4,12 +4,13 @@ on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, closed]
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref }}
   cancel-in-progress: true
 
 env:
@@ -17,6 +18,7 @@ env:
 
 jobs:
   quality:
+    if: github.event_name != 'pull_request' || github.event.action != 'closed'
     name: Format, lint, and test (macOS)
     runs-on: macos-14
     timeout-minutes: 60
@@ -34,6 +36,7 @@ jobs:
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
   platform-check:
+    if: github.event_name != 'pull_request' || github.event.action != 'closed'
     name: Check ${{ matrix.name }}
     strategy:
       fail-fast: false
