@@ -868,7 +868,7 @@ impl ManisApp {
             .accessibility_label(format!("{label}: {value}"))
             .dropdown_caret(true)
             .with_variant(ButtonVariant::Default)
-            .with_size(ControlSize::Standard.height())
+            .with_size(ControlSize::Standard.component_size())
             .h(ControlSize::Standard.height())
             .w_full()
             .border_color(theme.outline_subtle)
@@ -887,6 +887,9 @@ impl ManisApp {
                             .overflow_x_hidden()
                             .whitespace_nowrap()
                             .text_ellipsis()
+                            .text_size(TextRole::Label.size())
+                            .line_height(TextRole::Label.line_height())
+                            .font_weight(TextRole::Label.weight())
                             .text_color(theme.text_secondary)
                             .child(value),
                     ),

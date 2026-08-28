@@ -43,13 +43,9 @@ pub(crate) fn action_button(
 
 #[allow(dead_code)]
 pub(crate) fn style_action_button(button: Button, role: ActionRole, size: ControlSize) -> Button {
-    let component_size = match size {
-        ControlSize::Compact | ControlSize::Icon => gpui_component::Size::Small,
-        ControlSize::Standard => gpui_component::Size::Medium,
-    };
     button
         .with_variant(role.variant())
-        .with_size(component_size)
+        .with_size(size.component_size())
         .h(size.height())
         .rounded(Radius::Control.px())
 }
