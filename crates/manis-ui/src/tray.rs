@@ -93,7 +93,7 @@ pub fn open_window(cx: &mut App) -> gpui::Result<()> {
             focus: true,
             ..Default::default()
         },
-        move |window, cx| cx.new(|cx| gpui_component::Root::new(app, window, cx)),
+        move |window, cx| cx.new(|cx| crate::root(app, window, cx)),
     )?;
     Ok(())
 }

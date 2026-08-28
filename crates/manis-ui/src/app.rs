@@ -7,6 +7,11 @@ use gpui::{
     Animation, AnimationExt as _, Context, Div, Entity, FontWeight, IntoElement, ParentElement,
     Render, Role, Stateful, Styled, Subscription, Task, Toggled, Window, div, prelude::*, px,
 };
+use gpui_component::{
+    Sizable,
+    button::{Button, ButtonVariant, ButtonVariants},
+    tab::{Tab, TabBar},
+};
 use manis_core::{
     CompactNavigation, DomainRoutePrediction, KernelKind, ManagedPolicyGroup, ManagedPolicyIcon,
     ManagedPolicyStrategy, NodeIdentity, NodeWorkspaceState, PolicyCatalog, PolicyGroup,
@@ -352,6 +357,24 @@ enum PolicyDetailTab {
     Nodes,
     Rules,
     Settings,
+}
+
+impl PolicyDetailTab {
+    const fn index(self) -> usize {
+        match self {
+            Self::Nodes => 0,
+            Self::Rules => 1,
+            Self::Settings => 2,
+        }
+    }
+
+    const fn from_index(index: usize) -> Self {
+        match index {
+            1 => Self::Rules,
+            2 => Self::Settings,
+            _ => Self::Nodes,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -4751,27 +4774,18 @@ impl ManisApp {
             })
     }
 
-    fn small_button(
-        id: impl Into<gpui::ElementId>,
-        label: &'static str,
-        theme: Theme,
-    ) -> Stateful<Div> {
-        div()
-            .id(id)
-            .role(Role::Button)
-            .tab_stop(true)
-            .focusable()
-            .cursor_pointer()
+    fn small_button(id: impl Into<gpui::ElementId>, label: &'static str, theme: Theme) -> Button {
+        Button::new(id)
+            .accessibility_label(label)
+            .label(label)
+            .with_size(px(34.0))
             .h(px(34.0))
             .px_3()
-            .rounded_md()
-            .border_1()
+            .with_variant(ButtonVariant::Default)
+            .cursor_pointer()
             .border_color(theme.outline_subtle)
             .bg(theme.surface_high)
-            .flex()
-            .items_center()
             .text_color(theme.text_primary)
-            .child(label)
     }
 
     fn managed_policy_add_button(
@@ -4779,46 +4793,41 @@ impl ManisApp {
         language: Language,
         theme: Theme,
         cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
-        div()
-            .id(id)
-            .role(Role::Button)
-            .aria_label(language.text("Add policy group", "添加策略组"))
-            .tab_stop(true)
-            .focusable()
-            .cursor_pointer()
+    ) -> Button {
+        Button::new(id)
+            .accessibility_label(language.text("Add policy group", "添加策略组"))
+            .label(language.text("Add policy", "添加策略组"))
+            .primary()
+            .with_size(px(34.0))
             .h(px(34.0))
             .px_3()
-            .rounded_md()
+            .cursor_pointer()
             .bg(theme.action_primary)
             .text_color(theme.action_on_primary)
             .font_weight(FontWeight::SEMIBOLD)
-            .flex()
-            .items_center()
-            .child(language.text("Add policy", "添加策略组"))
             .on_click(cx.listener(|this, _, _, cx| {
                 this.workspace.compact_navigation = CompactNavigation::GroupDetail;
                 this.start_managed_policy_create(cx);
             }))
     }
 
-    fn connection_button(&self, theme: Theme, cx: &mut Context<Self>) -> Stateful<Div> {
+    fn connection_button(&self, theme: Theme, cx: &mut Context<Self>) -> Button {
         let connecting = matches!(self.controller, ControllerState::Connecting { .. });
         let language = self.language();
-        div()
-            .id("connect-mihomo")
-            .role(Role::Button)
-            .aria_label(language.text(
+        Button::new("connect-mihomo")
+            .accessibility_label(language.text(
                 "Connect or refresh read-only kernel data",
                 "连接或刷新内核只读数据",
             ))
+            .label(
+                self.runtime
+                    .button_label_in(&self.controller, self.language()),
+            )
             .tab_stop(!connecting)
-            .focusable()
-            .cursor_pointer()
+            .with_size(px(34.0))
             .h(px(34.0))
             .px_3()
-            .rounded_md()
-            .border_1()
+            .cursor_pointer()
             .border_color(if connecting {
                 theme.outline_subtle
             } else {
@@ -4834,12 +4843,6 @@ impl ManisApp {
             } else {
                 theme.action_primary
             })
-            .flex()
-            .items_center()
-            .child(
-                self.runtime
-                    .button_label_in(&self.controller, self.language()),
-            )
             .on_click(cx.listener(|this, _, _, cx| this.connect_mihomo(cx)))
     }
 
@@ -5011,63 +5014,58 @@ impl ManisApp {
             .map(|group| group.id.as_str())
     }
 
-    fn policy_detail_tab_button(
-        tab: PolicyDetailTab,
-        label: &'static str,
-        active: bool,
+    fn policy_detail_tabs(
+        &self,
         editable_group_id: Option<String>,
-        theme: Theme,
+        language: Language,
         cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
-        div()
-            .id(format!("policy-detail-tab-{tab:?}"))
-            .role(Role::Button)
-            .aria_label(label)
-            .aria_toggled(if active {
-                Toggled::True
-            } else {
-                Toggled::False
-            })
-            .tab_stop(true)
-            .focusable()
-            .cursor_pointer()
-            .pb_2()
-            .border_b_2()
-            .border_color(if active {
-                theme.action_primary
-            } else {
-                theme.surface_high
-            })
-            .text_color(if active {
-                theme.text_primary
-            } else {
-                theme.text_secondary
-            })
-            .child(label)
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.policy_detail_tab = tab;
-                if tab == PolicyDetailTab::Settings {
-                    if let Some(group_id) = editable_group_id.as_deref() {
-                        let already_editing = this
-                            .managed_policy_draft
-                            .as_ref()
-                            .and_then(|draft| draft.editing_id.as_deref())
-                            == Some(group_id);
-                        if !already_editing {
-                            this.start_managed_policy_edit(group_id, cx);
-                            return;
+    ) -> TabBar {
+        let app = cx.entity();
+        TabBar::new("policy-detail-tabs")
+            .underline()
+            .selected_index(self.policy_detail_tab.index())
+            .child(
+                Tab::new()
+                    .label(language.text("Nodes", "节点"))
+                    .aria_label(language.text("Nodes", "节点")),
+            )
+            .child(
+                Tab::new()
+                    .label(language.text("Rules", "规则"))
+                    .aria_label(language.text("Rules", "规则")),
+            )
+            .child(
+                Tab::new()
+                    .label(language.text("Settings", "设置"))
+                    .aria_label(language.text("Settings", "设置")),
+            )
+            .on_click(move |index, _, cx| {
+                let tab = PolicyDetailTab::from_index(*index);
+                app.update(cx, |this, cx| {
+                    this.policy_detail_tab = tab;
+                    if tab == PolicyDetailTab::Settings {
+                        if let Some(group_id) = editable_group_id.as_deref() {
+                            let already_editing = this
+                                .managed_policy_draft
+                                .as_ref()
+                                .and_then(|draft| draft.editing_id.as_deref())
+                                == Some(group_id);
+                            if !already_editing {
+                                this.start_managed_policy_edit(group_id, cx);
+                                return;
+                            }
+                        } else {
+                            this.language()
+                                .text(
+                                    "This runtime policy is read-only in Manis",
+                                    "这个运行时策略组在 Manis 中为只读",
+                                )
+                                .clone_into(&mut this.status);
                         }
-                    } else {
-                        this.language()
-                            .text(
-                                "This runtime policy is read-only in Manis",
-                                "这个运行时策略组在 Manis 中为只读",
-                            )
-                            .clone_into(&mut this.status);
                     }
-                }
-                cx.notify();
-            }))
+                    cx.notify();
+                });
+            })
     }
 
     #[allow(clippy::too_many_lines)]
@@ -5450,33 +5448,8 @@ impl ManisApp {
                     .child(
                         div()
                             .mt_4()
-                            .flex()
-                            .gap_5()
                             .font_weight(FontWeight::MEDIUM)
-                            .child(Self::policy_detail_tab_button(
-                                PolicyDetailTab::Nodes,
-                                language.text("Nodes", "节点"),
-                                self.policy_detail_tab == PolicyDetailTab::Nodes,
-                                editable_group_id.clone(),
-                                theme,
-                                cx,
-                            ))
-                            .child(Self::policy_detail_tab_button(
-                                PolicyDetailTab::Rules,
-                                language.text("Rules", "规则"),
-                                self.policy_detail_tab == PolicyDetailTab::Rules,
-                                editable_group_id.clone(),
-                                theme,
-                                cx,
-                            ))
-                            .child(Self::policy_detail_tab_button(
-                                PolicyDetailTab::Settings,
-                                language.text("Settings", "设置"),
-                                self.policy_detail_tab == PolicyDetailTab::Settings,
-                                editable_group_id,
-                                theme,
-                                cx,
-                            )),
+                            .child(self.policy_detail_tabs(editable_group_id, language, cx)),
                     ),
             )
             .child(body)
@@ -6457,11 +6430,6 @@ impl Render for ManisApp {
                     ),
             )
             .child(self.status_bar(theme))
-            .when(
-                routing_rules_active
-                    && self.manual_rule_editor_state == ManualRuleEditorState::Open,
-                |app| app.child(self.manual_rule_editor_modal(theme, self.language(), compact, cx)),
-            )
     }
 }
 
@@ -6479,10 +6447,22 @@ mod tests {
 
     use super::{
         ControllerReadiness, DueRemoteSource, ImportedSubscription, ImportedSubscriptionState,
-        ManisApp, ProxyModeBlock, SourceRuntimeApply, TunSupport, proxy_mode_block,
+        ManisApp, PolicyDetailTab, ProxyModeBlock, SourceRuntimeApply, TunSupport,
+        proxy_mode_block,
     };
     use crate::mihomo;
     use crate::subscription::SourceKind;
+
+    #[test]
+    fn policy_detail_tabs_round_trip_through_component_indices() {
+        assert_eq!(PolicyDetailTab::Nodes.index(), 0);
+        assert_eq!(PolicyDetailTab::Rules.index(), 1);
+        assert_eq!(PolicyDetailTab::Settings.index(), 2);
+        assert_eq!(PolicyDetailTab::from_index(0), PolicyDetailTab::Nodes);
+        assert_eq!(PolicyDetailTab::from_index(1), PolicyDetailTab::Rules);
+        assert_eq!(PolicyDetailTab::from_index(2), PolicyDetailTab::Settings);
+        assert_eq!(PolicyDetailTab::from_index(99), PolicyDetailTab::Nodes);
+    }
 
     #[test]
     fn app_startup_detects_a_privately_imported_subscription() {
