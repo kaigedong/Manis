@@ -7,6 +7,7 @@ use gpui_component::{
     accordion::Accordion,
     button::{Button, ButtonVariant, ButtonVariants},
     dialog::Dialog,
+    menu::{ContextMenuExt, PopupMenuItem},
 };
 use manis_core::{KernelKind, ProxyMode, WindowSizeClass};
 use manis_profile::{QxRuleKind, SecretUrl};
@@ -2613,7 +2614,11 @@ impl ManisApp {
                 }
             }
         } else {
-            if self.manual_rules.contains(&rule) {
+            if self
+                .manual_rules
+                .iter()
+                .any(|existing| existing.same_definition(&rule))
+            {
                 self.manual_rule_error = Some(crate::manual_rule::ManualRuleError::Duplicate);
                 cx.notify();
                 return false;
@@ -2673,6 +2678,46 @@ impl ManisApp {
                 self.manual_rules.len()
             ),
         );
+    }
+
+    fn set_manual_rule_enabled(&mut self, index: usize, enabled: bool, cx: &mut Context<Self>) {
+        let Some(rule) = self.manual_rules.get_mut(index) else {
+            return;
+        };
+        if rule.is_enabled() == enabled {
+            return;
+        }
+        rule.set_enabled(enabled);
+        if !self.persist_manual_rules(cx) {
+            if let Some(rule) = self.manual_rules.get_mut(index) {
+                rule.set_enabled(!enabled);
+            }
+            return;
+        }
+        self.language()
+            .text(
+                if enabled {
+                    "Manual rule enabled"
+                } else {
+                    "Manual rule disabled"
+                },
+                if enabled {
+                    "手动规则已启用"
+                } else {
+                    "手动规则已禁用"
+                },
+            )
+            .clone_into(&mut self.status);
+        record_event(
+            LogLevel::Info,
+            if enabled {
+                "routing.manual_rule.enabled"
+            } else {
+                "routing.manual_rule.disabled"
+            },
+            format!("index={index} total={}", self.manual_rules.len()),
+        );
+        cx.notify();
     }
 
     fn persist_manual_rules(&mut self, cx: &mut Context<Self>) -> bool {
@@ -3204,50 +3249,6 @@ impl ManisApp {
             })
     }
 
-    fn manual_rule_actions(
-        index: usize,
-        theme: Theme,
-        language: Language,
-        cx: &mut Context<Self>,
-    ) -> Div {
-        div()
-            .flex_shrink_0()
-            .flex()
-            .items_center()
-            .gap_1()
-            .child(
-                Button::new(format!("edit-manual-rule-{index}"))
-                    .accessibility_label(language.text("Edit this manual rule", "编辑这条手动规则"))
-                    .label(language.text("Edit", "编辑"))
-                    .text()
-                    .with_size(px(30.0))
-                    .px_2()
-                    .py_1()
-                    .cursor_pointer()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(theme.action_primary)
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.open_manual_rule_editor_for_edit(index, window, cx);
-                    })),
-            )
-            .child(
-                Button::new(format!("remove-manual-rule-{index}"))
-                    .accessibility_label(
-                        language.text("Remove this manual rule", "移除这条手动规则"),
-                    )
-                    .label(language.text("Remove", "移除"))
-                    .text()
-                    .with_size(px(30.0))
-                    .px_2()
-                    .py_1()
-                    .cursor_pointer()
-                    .text_color(theme.status_error)
-                    .on_click(
-                        cx.listener(move |this, _, _, cx| this.remove_manual_rule(index, cx)),
-                    ),
-            )
-    }
-
     fn manual_routing_rule_row(
         &self,
         order: usize,
@@ -3256,8 +3257,113 @@ impl ManisApp {
         theme: Theme,
         language: Language,
         cx: &mut Context<Self>,
-    ) -> Div {
+    ) -> AnyElement {
+        let enabled = rule.is_enabled();
         let target = self.effective_rule_target(rule.target(), language);
+        let matchers = Self::manual_rule_matchers(rule, enabled, theme, language);
+        let toggle_label = if enabled {
+            language.text("Disable", "禁用")
+        } else {
+            language.text("Enable", "启用")
+        };
+        let edit_label = if language == Language::English {
+            format!("Edit manual rule {order}")
+        } else {
+            format!("编辑第 {order} 条手动规则")
+        };
+        let app = cx.entity();
+        let row = div()
+            .id(format!("manual-routing-rule-{index}"))
+            .mt_1()
+            .min_h(px(44.0))
+            .px_3()
+            .py_2()
+            .rounded_md()
+            .bg(if enabled {
+                theme.surface_low
+            } else {
+                theme.surface_base
+            })
+            .flex()
+            .items_center()
+            .gap_3()
+            .cursor_pointer()
+            .role(Role::Button)
+            .aria_label(edit_label)
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.open_manual_rule_editor_for_edit(index, window, cx);
+            }))
+            .child(
+                div()
+                    .w(px(42.0))
+                    .flex_shrink_0()
+                    .text_size(px(10.0))
+                    .text_color(theme.text_tertiary)
+                    .child(format!("#{order:03}")),
+            )
+            .child(matchers)
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .text_size(px(11.0))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(if enabled {
+                        theme.action_primary
+                    } else {
+                        theme.text_tertiary
+                    })
+                    .child(target),
+            )
+            .when(!enabled, |row| {
+                row.child(
+                    div()
+                        .flex_shrink_0()
+                        .px_2()
+                        .py_1()
+                        .rounded_sm()
+                        .bg(theme.surface_chrome)
+                        .text_size(px(9.0))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(theme.text_tertiary)
+                        .child(language.text("Disabled", "已禁用")),
+                )
+            });
+        row.context_menu(move |menu, _, _| {
+            let toggle_app = app.clone();
+            let delete_app = app.clone();
+            menu.item(PopupMenuItem::new(toggle_label).on_click(move |_, _, cx| {
+                toggle_app.update(cx, |this, cx| {
+                    this.set_manual_rule_enabled(index, !enabled, cx);
+                });
+            }))
+            .separator()
+            .item(
+                PopupMenuItem::new(language.text("Delete", "删除")).on_click(move |_, _, cx| {
+                    delete_app.update(cx, |this, cx| {
+                        this.remove_manual_rule(index, cx);
+                    });
+                }),
+            )
+        })
+        .into_any_element()
+    }
+
+    fn manual_rule_matchers(
+        rule: &crate::manual_rule::ManualRule,
+        enabled: bool,
+        theme: Theme,
+        language: Language,
+    ) -> Div {
+        let primary_text = if enabled {
+            theme.text_primary
+        } else {
+            theme.text_tertiary
+        };
+        let secondary_text = if enabled {
+            theme.text_secondary
+        } else {
+            theme.text_tertiary
+        };
         let mut matchers = div()
             .flex_1()
             .min_w(px(0.0))
@@ -3289,45 +3395,18 @@ impl ManisApp {
                         div()
                             .text_size(px(9.0))
                             .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(theme.text_secondary)
+                            .text_color(secondary_text)
                             .child(condition.kind().display_label()),
                     )
                     .child(
                         div()
                             .text_size(px(11.0))
-                            .text_color(theme.text_primary)
+                            .text_color(primary_text)
                             .child(condition.parameter().to_owned()),
                     ),
             );
         }
-        div()
-            .mt_1()
-            .min_h(px(44.0))
-            .px_3()
-            .py_2()
-            .rounded_md()
-            .bg(theme.surface_low)
-            .flex()
-            .items_center()
-            .gap_3()
-            .child(
-                div()
-                    .w(px(42.0))
-                    .flex_shrink_0()
-                    .text_size(px(10.0))
-                    .text_color(theme.text_tertiary)
-                    .child(format!("#{order:03}")),
-            )
-            .child(matchers)
-            .child(
-                div()
-                    .flex_shrink_0()
-                    .text_size(px(11.0))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(theme.action_primary)
-                    .child(target),
-            )
-            .child(Self::manual_rule_actions(index, theme, language, cx))
+        matchers
     }
 
     fn rule_group_order_controls(
@@ -3395,6 +3474,13 @@ impl ManisApp {
             .iter()
             .map(|source| source.rule_count)
             .sum::<usize>();
+        let enabled_manual_count = self
+            .manual_rules
+            .iter()
+            .filter(|rule| rule.is_enabled())
+            .count();
+        let disabled_manual_count = self.manual_rules.len() - enabled_manual_count;
+        let active_count = enabled_manual_count + remote_count;
         let mut list = div()
             .id("active-routing-rules")
             .w_full()
@@ -3445,13 +3531,20 @@ impl ManisApp {
                                     .text_size(px(10.0))
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(theme.action_primary)
-                                    .child(if language == Language::English {
+                                    .child(if disabled_manual_count == 0 {
+                                        if language == Language::English {
+                                            format!("{active_count} rules")
+                                        } else {
+                                            format!("{active_count} 条")
+                                        }
+                                    } else if language == Language::English {
                                         format!(
-                                            "{} rules",
-                                            self.manual_rules.len() + remote_count
+                                            "{active_count} active · {disabled_manual_count} disabled"
                                         )
                                     } else {
-                                        format!("{} 条", self.manual_rules.len() + remote_count)
+                                        format!(
+                                            "{active_count} 条生效 · {disabled_manual_count} 条已禁用"
+                                        )
                                     }),
                             )
                             .child(
@@ -3503,10 +3596,20 @@ impl ManisApp {
                     .node_workspace
                     .is_group_collapsed(MANUAL_RULES_EXPANSION_KEY);
                 let group_name = language.text("Manual rules", "手动规则");
-                let detail = if language == Language::English {
+                let detail = if disabled_manual_count == 0 && language == Language::English {
                     format!("{} rules · Saved locally", self.manual_rules.len())
-                } else {
+                } else if disabled_manual_count == 0 {
                     format!("{} 条规则 · 本地保存", self.manual_rules.len())
+                } else if language == Language::English {
+                    format!(
+                        "{} rules · {disabled_manual_count} disabled · Saved locally",
+                        self.manual_rules.len()
+                    )
+                } else {
+                    format!(
+                        "{} 条规则 · {disabled_manual_count} 条已禁用 · 本地保存",
+                        self.manual_rules.len()
+                    )
                 };
                 let title_detail = div()
                     .flex_1()

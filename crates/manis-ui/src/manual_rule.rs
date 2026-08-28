@@ -18,6 +18,8 @@ const MANUAL_RULES_VERSION_V1: &str = "manis.manual-routing-rules.v1";
 #[cfg(not(windows))]
 const MANUAL_RULES_VERSION_V2: &str = "manis.manual-routing-rules.v2";
 #[cfg(not(windows))]
+const MANUAL_RULES_VERSION_V3: &str = "manis.manual-routing-rules.v3";
+#[cfg(not(windows))]
 const MAX_MANUAL_RULES_FILE_BYTES: u64 = 256 * 1024;
 const MAX_PARAMETER_BYTES: usize = 1_024;
 pub(crate) const MAX_CONDITIONS: usize = 4;
@@ -183,6 +185,7 @@ impl ManualRuleCondition {
 pub(crate) struct ManualRule {
     conditions: Vec<ManualRuleCondition>,
     target: Name,
+    enabled: bool,
 }
 
 impl ManualRule {
@@ -217,7 +220,11 @@ impl ManualRule {
             }
         }
         let target = Name::parse(target).map_err(|_error| ManualRuleError::InvalidPolicy)?;
-        Ok(Self { conditions, target })
+        Ok(Self {
+            conditions,
+            target,
+            enabled: true,
+        })
     }
 
     pub(crate) fn conditions(&self) -> &[ManualRuleCondition] {
@@ -226,6 +233,18 @@ impl ManualRule {
 
     pub(crate) fn target(&self) -> &str {
         self.target.as_str()
+    }
+
+    pub(crate) const fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
+    pub(crate) fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+    }
+
+    pub(crate) fn same_definition(&self, other: &Self) -> bool {
+        self.conditions == other.conditions && self.target == other.target
     }
 
     fn to_profile_rule(
@@ -312,7 +331,7 @@ pub(crate) enum ManualRuleEditError {
 pub(crate) fn replace_manual_rule(
     rules: &mut [ManualRule],
     index: usize,
-    replacement: ManualRule,
+    mut replacement: ManualRule,
 ) -> Result<ManualRule, ManualRuleEditError> {
     if index >= rules.len() {
         return Err(ManualRuleEditError::Missing);
@@ -320,10 +339,13 @@ pub(crate) fn replace_manual_rule(
     if rules
         .iter()
         .enumerate()
-        .any(|(candidate_index, candidate)| candidate_index != index && candidate == &replacement)
+        .any(|(candidate_index, candidate)| {
+            candidate_index != index && candidate.same_definition(&replacement)
+        })
     {
         return Err(ManualRuleEditError::Duplicate);
     }
+    replacement.enabled = rules[index].enabled;
     Ok(std::mem::replace(&mut rules[index], replacement))
 }
 
@@ -473,7 +495,7 @@ pub(crate) fn append_manual_rules(
     rules: &[ManualRule],
     kernel: KernelKind,
 ) -> Result<(), ManualRuleCompileError> {
-    for rule in rules {
+    for rule in rules.iter().filter(|rule| rule.enabled) {
         if let Some(condition) = rule
             .conditions
             .iter()
@@ -498,6 +520,7 @@ pub(crate) fn append_manual_rules(
         .flatten();
     let compiled = rules
         .iter()
+        .filter(|rule| rule.enabled)
         .map(|rule| rule.to_profile_rule(legacy_proxy_target.as_ref()))
         .collect::<Result<Vec<_>, _>>()?;
     profile.rules.extend(compiled);
@@ -506,10 +529,12 @@ pub(crate) fn append_manual_rules(
 
 #[cfg(not(windows))]
 fn encode_manual_rules(rules: &[ManualRule]) -> String {
-    let mut contents = String::from(MANUAL_RULES_VERSION_V2);
+    let mut contents = String::from(MANUAL_RULES_VERSION_V3);
     contents.push_str("\nlegacy-direct-rules-migrated\t1");
     for rule in rules {
         contents.push_str("\nrule\t");
+        contents.push_str(if rule.enabled { "1" } else { "0" });
+        contents.push('\t');
         contents.push_str(rule.target.as_str());
         for condition in &rule.conditions {
             contents.push('\t');
@@ -519,6 +544,44 @@ fn encode_manual_rules(rules: &[ManualRule]) -> String {
         }
     }
     contents
+}
+
+#[cfg(not(windows))]
+fn decode_v3_manual_rules<'a>(
+    mut lines: impl Iterator<Item = &'a str>,
+) -> Result<Vec<ManualRule>, ManualRuleStoreError> {
+    if lines.next() != Some("legacy-direct-rules-migrated\t1") {
+        return Err(ManualRuleStoreError::Corrupt);
+    }
+    lines
+        .filter(|line| !line.is_empty())
+        .map(|line| {
+            let fields = line.split('\t').collect::<Vec<_>>();
+            if fields.first() != Some(&"rule")
+                || !matches!(fields.get(1), Some(&"0" | &"1"))
+                || fields.len() < 5
+                || !(fields.len() - 3).is_multiple_of(2)
+            {
+                return Err(ManualRuleStoreError::Corrupt);
+            }
+            let enabled = fields[1] == "1";
+            let target = fields[2];
+            let conditions = fields[3..]
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|pair| {
+                    ManualRuleKind::from_storage_key(pair[0])
+                        .map(|kind| (kind, pair[1].to_owned()))
+                        .ok_or(ManualRuleStoreError::Corrupt)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let mut rule = ManualRule::parse_conditions(conditions, target)
+                .map_err(|_error| ManualRuleStoreError::Corrupt)?;
+            rule.enabled = enabled;
+            Ok(rule)
+        })
+        .collect()
 }
 
 #[cfg(not(windows))]
@@ -584,6 +647,7 @@ fn decode_manual_rules(contents: &str) -> Result<(Vec<ManualRule>, bool), Manual
     match lines.next() {
         Some(MANUAL_RULES_VERSION_V1) => decode_v1_manual_rules(lines).map(|rules| (rules, false)),
         Some(MANUAL_RULES_VERSION_V2) => decode_v2_manual_rules(lines).map(|rules| (rules, true)),
+        Some(MANUAL_RULES_VERSION_V3) => decode_v3_manual_rules(lines).map(|rules| (rules, true)),
         _ => Err(ManualRuleStoreError::Corrupt),
     }
 }
@@ -799,6 +863,30 @@ mod tests {
     }
 
     #[test]
+    fn disabled_manual_rules_are_not_compiled() {
+        let mut profile = manis_profile::Profile::qx_default(
+            manis_profile::SecretUrl::parse_https("https://example.invalid/subscription")
+                .expect("fixture URL"),
+        )
+        .expect("fixture profile");
+        let enabled =
+            ManualRule::parse(ManualRuleKind::Host, "enabled.example", "DIRECT").expect("rule");
+        let mut disabled =
+            ManualRule::parse(ManualRuleKind::Host, "disabled.example", "DIRECT").expect("rule");
+        disabled.set_enabled(false);
+
+        append_manual_rules(
+            &mut profile,
+            &[enabled, disabled],
+            manis_core::KernelKind::Mihomo,
+        )
+        .expect("supported rules");
+        let yaml = manis_profile::render_mihomo_yaml(&profile).expect("rendered profile");
+        assert!(yaml.contains("DOMAIN,enabled.example,DIRECT"));
+        assert!(!yaml.contains("disabled.example"));
+    }
+
+    #[test]
     fn compound_domain_and_port_rule_compiles_as_an_exact_and_match() {
         let mut profile = manis_profile::Profile::qx_default(
             manis_profile::SecretUrl::parse_https("https://example.invalid/subscription")
@@ -828,7 +916,7 @@ mod tests {
             fs::remove_dir_all(&root)?;
         }
         fs::create_dir_all(&root)?;
-        let rules = vec![
+        let mut rules = vec![
             ManualRule::parse_conditions(
                 vec![
                     (ManualRuleKind::HostSuffix, "example.com".to_owned()),
@@ -838,10 +926,44 @@ mod tests {
             )?,
             ManualRule::parse(ManualRuleKind::GeoIp, "US", "DIRECT")?,
         ];
+        rules[1].set_enabled(false);
         save_manual_rules_in(&root, &rules)?;
-        assert_eq!(load_manual_rules_in(&root)?, rules);
+        let loaded = load_manual_rules_in(&root)?;
+        assert_eq!(loaded, rules);
+        assert!(!loaded[1].is_enabled());
         fs::remove_dir_all(root)?;
         Ok(())
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn version_two_rules_upgrade_as_enabled() {
+        let contents = format!(
+            "{}\nlegacy-direct-rules-migrated\t1\nrule\tDIRECT\thost\texample.com",
+            super::MANUAL_RULES_VERSION_V2
+        );
+
+        let (rules, migrated) = super::decode_manual_rules(&contents).expect("legacy v2 rules");
+
+        assert!(migrated);
+        assert_eq!(rules.len(), 1);
+        assert!(rules[0].is_enabled());
+    }
+
+    #[test]
+    fn replacing_a_manual_rule_preserves_its_enabled_state() {
+        let mut existing = ManualRule::parse(ManualRuleKind::HostSuffix, "old.example", "DIRECT")
+            .expect("existing rule");
+        existing.set_enabled(false);
+        let replacement =
+            ManualRule::parse(ManualRuleKind::HostSuffix, "replacement.example", "DIRECT")
+                .expect("replacement rule");
+        let mut rules = vec![existing];
+
+        replace_manual_rule(&mut rules, 0, replacement).expect("replace rule");
+
+        assert!(!rules[0].is_enabled());
+        assert_eq!(rules[0].conditions()[0].parameter(), "replacement.example");
     }
 
     #[test]

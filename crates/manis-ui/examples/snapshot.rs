@@ -573,10 +573,10 @@ fn capture_routing_rules(
     std::fs::write(
         &manual_file,
         concat!(
-            "manis.manual-routing-rules.v2\n",
+            "manis.manual-routing-rules.v3\n",
             "legacy-direct-rules-migrated\t1\n",
-            "rule\tDIRECT\thost-suffix\tgithub.com\tdst-port\t22\n",
-            "rule\tProxy\thost-keyword\tgoogle",
+            "rule\t1\tDIRECT\thost-suffix\tgithub.com\tdst-port\t22\n",
+            "rule\t0\tProxy\thost-keyword\tgoogle",
         ),
     )?;
     std::fs::set_permissions(manual_file, std::fs::Permissions::from_mode(0o600))?;
@@ -637,6 +637,11 @@ fn capture_routing_rule_interactions(
     cx.simulate_click(window, point(px(700.0), px(260.0)), Modifiers::none());
     settle_ui_animation(cx, window)?;
     save_screenshot(cx, window, "routing-rules-wide-manual-accordion-open.png")?;
+    cx.simulate_click(window, point(px(700.0), px(330.0)), Modifiers::none());
+    settle_ui_animation(cx, window)?;
+    save_screenshot(cx, window, "routing-rules-wide-manual-edit-modal.png")?;
+    cx.simulate_keystrokes(window, "escape");
+    settle_ui_animation(cx, window)?;
     cx.simulate_click(window, point(px(700.0), px(260.0)), Modifiers::none());
     settle_ui_animation(cx, window)?;
     cx.simulate_click(window, point(px(700.0), px(348.0)), Modifiers::none());
