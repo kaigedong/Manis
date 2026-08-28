@@ -18,6 +18,17 @@ cleanup() {
 }
 trap cleanup EXIT
 
+sha256_file() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  else
+    echo "no SHA-256 utility is available" >&2
+    return 1
+  fi
+}
+
 case "$OS_NAME:$ARCH_NAME" in
   Darwin:arm64) asset_stem="mihomo-darwin-arm64-go122"; archive_kind="gz" ;;
   Darwin:x86_64) asset_stem="mihomo-darwin-amd64-v2-go122"; archive_kind="gz" ;;
@@ -71,7 +82,7 @@ if (( $(wc -c < "$ARCHIVE") > 67108864 )); then
   exit 1
 fi
 
-actual_digest="$(shasum -a 256 "$ARCHIVE" | awk '{print $1}')"
+actual_digest="$(sha256_file "$ARCHIVE")"
 if [[ "$actual_digest" != "$digest" ]]; then
   echo "Mihomo asset digest mismatch for $asset_name" >&2
   exit 1
