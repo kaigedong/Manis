@@ -671,6 +671,7 @@ pub struct UserPolicyGroup {
     pub kind: UserPolicyGroupKind,
     pub provider_indexes: Vec<usize>,
     pub direct_proxies: Vec<Name>,
+    pub direct_policies: Vec<PolicyRef>,
     pub filter: Option<String>,
 }
 
@@ -1024,7 +1025,7 @@ pub fn render_mihomo_yaml_with_tun(
     writeln!(yaml, "mode: {}", quoted(profile.mode.as_mihomo_mode()))
         .expect("String write cannot fail");
     yaml.push_str(
-        "unified-delay: true\nallow-lan: false\nbind-address: \"127.0.0.1\"\nipv6: false\n",
+        "unified-delay: true\nfind-process-mode: \"always\"\nallow-lan: false\nbind-address: \"127.0.0.1\"\nipv6: false\n",
     );
     writeln!(yaml, "mixed-port: {}", profile.mixed_port).expect("String write cannot fail");
     writeln!(
@@ -1325,7 +1326,13 @@ fn compile_user_groups(
     proxy_names: &HashSet<Name>,
     test_url: &str,
 ) -> Result<Vec<PolicyGroup>, ProfileError> {
-    let mut group_names = HashSet::new();
+    let group_names = user_groups
+        .iter()
+        .map(|group| group.name.clone())
+        .collect::<HashSet<_>>();
+    if group_names.len() != user_groups.len() {
+        return Err(ProfileError::DuplicateName);
+    }
     user_groups
         .into_iter()
         .map(|group| {
@@ -1334,10 +1341,10 @@ fn compile_user_groups(
             {
                 return Err(ProfileError::InvalidValue("reserved proxy group name"));
             }
-            if !group_names.insert(group.name.clone()) {
-                return Err(ProfileError::DuplicateName);
-            }
-            if group.provider_indexes.is_empty() && group.direct_proxies.is_empty() {
+            if group.provider_indexes.is_empty()
+                && group.direct_proxies.is_empty()
+                && group.direct_policies.is_empty()
+            {
                 return Err(ProfileError::InvalidValue("user proxy group"));
             }
             if group
@@ -1374,6 +1381,18 @@ fn compile_user_groups(
                     return Err(ProfileError::DuplicateName);
                 }
                 proxies.push(PolicyRef::Proxy(name));
+            }
+            let mut seen_policies = HashSet::new();
+            for policy in group.direct_policies {
+                if let PolicyRef::Group(name) = &policy
+                    && (name == &group.name || !group_names.contains(name))
+                {
+                    return Err(ProfileError::DanglingReference);
+                }
+                if matches!(policy, PolicyRef::Proxy(_)) || !seen_policies.insert(policy.clone()) {
+                    return Err(ProfileError::DuplicateName);
+                }
+                proxies.push(policy);
             }
 
             let kind = match group.kind {

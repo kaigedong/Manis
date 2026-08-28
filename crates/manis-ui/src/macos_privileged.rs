@@ -36,7 +36,11 @@ pub(crate) struct MacosPrivilegedProcessSpawner {
 
 impl MacosPrivilegedProcessSpawner {
     pub(crate) fn recover_if_available() -> io::Result<Option<Self>> {
-        let control = helper_control_path()?;
+        let control = match helper_control_path() {
+            Ok(control) => control,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error),
+        };
         let status = run_control(&control, [OsStr::new("status")])?;
         if !status.status.success() || !is_current_status(&status.stdout) {
             return Ok(None);

@@ -2,8 +2,8 @@ use std::fs;
 use std::process::Command;
 
 use manis_profile::{
-    Name, Profile, SecretUrl, UserPolicyGroup, UserPolicyGroupKind, VlessProxy, render_mihomo_yaml,
-    render_mihomo_yaml_with_tun, write_private_atomic,
+    Name, PolicyRef, Profile, SecretUrl, UserPolicyGroup, UserPolicyGroupKind, VlessProxy,
+    render_mihomo_yaml, render_mihomo_yaml_with_tun, write_private_atomic,
 };
 
 #[test]
@@ -97,6 +97,7 @@ fn generated_user_policy_groups_pass_mihomo_validation() -> Result<(), Box<dyn s
         },
         provider_indexes: vec![0],
         direct_proxies: Vec::new(),
+        direct_policies: vec![PolicyRef::Direct, PolicyRef::Reject],
         filter: Some("(?i)Hong Kong".to_owned()),
     };
     let profile =

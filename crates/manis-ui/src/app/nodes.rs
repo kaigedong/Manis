@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use gpui::{
     AnyElement, Context, Div, FontWeight, ParentElement, Role, Stateful, Styled, Toggled, div,
@@ -44,6 +44,7 @@ struct PolicyEditorPopup {
     content: AnyElement,
     width: f32,
     max_height: f32,
+    show_divider: bool,
 }
 
 impl PolicyEditorPopup {
@@ -60,7 +61,13 @@ impl PolicyEditorPopup {
             content: content.into_any_element(),
             width,
             max_height,
+            show_divider: true,
         }
+    }
+
+    fn with_divider(mut self, show_divider: bool) -> Self {
+        self.show_divider = show_divider;
+        self
     }
 }
 
@@ -558,7 +565,7 @@ impl ManisApp {
             .flex_col()
             .bg(theme.surface_low)
             .child(Self::policy_editor_header(draft, language, theme, cx))
-            .child(self.policy_editor_form(draft, compact, language, theme, cx))
+            .child(self.policy_editor_form(draft, compact, false, language, theme, cx))
     }
 
     fn policy_editor_header(
@@ -637,10 +644,11 @@ impl ManisApp {
     }
 
     #[allow(clippy::too_many_lines)]
-    fn policy_editor_form(
+    pub(super) fn policy_editor_form(
         &self,
         draft: &ManagedPolicyDraft,
         compact: bool,
+        embedded: bool,
         language: Language,
         theme: Theme,
         cx: &mut Context<Self>,
@@ -654,9 +662,9 @@ impl ManisApp {
             PolicyCandidateMatcherKind::NameContains => {
                 language.text("Name contains", "名称包含").to_owned()
             }
-            PolicyCandidateMatcherKind::Explicit => {
-                language.text("Select nodes", "手动选择节点").to_owned()
-            }
+            PolicyCandidateMatcherKind::Explicit => language
+                .text("Select nodes or groups", "选择节点或策略组")
+                .to_owned(),
         };
         let interval = match (draft.test_interval_secs, language) {
             (60, Language::English) => "1 min".to_owned(),
@@ -681,6 +689,7 @@ impl ManisApp {
         let icon_menu = Self::policy_icon_menu(draft, language, theme, cx);
         let basics = div()
             .rounded(Radius::Pane.px())
+            .overflow_hidden()
             .border_1()
             .border_color(theme.outline_subtle)
             .bg(theme.surface_high)
@@ -703,6 +712,7 @@ impl ManisApp {
                 language.text("Policy group name", "策略组名称"),
                 true,
                 name_input,
+                true,
                 theme,
             ))
             .child(Self::policy_editor_popup_row(
@@ -722,13 +732,17 @@ impl ManisApp {
                     icon_menu,
                     popover_width,
                     320.0,
-                ),
+                )
+                .with_divider(false),
                 cx,
             ));
 
         let candidate_mode_menu = Self::policy_candidate_mode_menu(draft, language, theme, cx);
+        let has_candidate_details = draft.matcher_kind != PolicyCandidateMatcherKind::All
+            || draft.strategy == ManagedPolicyStrategy::LowestLatency;
         let mut nodes = div()
             .rounded(Radius::Pane.px())
+            .overflow_hidden()
             .border_1()
             .border_color(theme.outline_subtle)
             .bg(theme.surface_high)
@@ -744,7 +758,8 @@ impl ManisApp {
                     candidate_mode_menu,
                     popover_width,
                     280.0,
-                ),
+                )
+                .with_divider(has_candidate_details),
                 cx,
             ));
         if draft.matcher_kind == PolicyCandidateMatcherKind::NameContains {
@@ -752,6 +767,7 @@ impl ManisApp {
                 language.text("Node name contains", "节点名称包含"),
                 false,
                 filter_input,
+                draft.strategy == ManagedPolicyStrategy::LowestLatency,
                 theme,
             ));
         }
@@ -759,11 +775,11 @@ impl ManisApp {
             let candidate_menu = self.policy_candidate_menu(draft, language, theme, cx);
             nodes = nodes.child(Self::policy_editor_popup_row(
                 "policy-editor-selected-nodes",
-                language.text("Selected nodes", "已选节点"),
+                language.text("Selected candidates", "已选候选项"),
                 match language {
-                    Language::English => format!("{} nodes", draft.explicit_members.len()),
+                    Language::English => format!("{} selected", draft.explicit_members.len()),
                     Language::SimplifiedChinese => {
-                        format!("{} 个", draft.explicit_members.len())
+                        format!("已选 {} 项", draft.explicit_members.len())
                     }
                 },
                 None,
@@ -774,7 +790,8 @@ impl ManisApp {
                     candidate_menu,
                     popover_width.max(480.0),
                     420.0,
-                ),
+                )
+                .with_divider(draft.strategy == ManagedPolicyStrategy::LowestLatency),
                 cx,
             ));
         }
@@ -792,17 +809,23 @@ impl ManisApp {
                     interval_menu,
                     popover_width,
                     320.0,
-                ),
+                )
+                .with_divider(false),
                 cx,
             ));
         }
 
         div()
             .id("policy-editor-scroll")
-            .flex_1()
-            .overflow_y_scroll()
-            .px(if compact { px(16.0) } else { px(28.0) })
-            .py_6()
+            .when(!embedded, |form| form.flex_1().overflow_y_scroll())
+            .px(if embedded {
+                px(0.0)
+            } else if compact {
+                px(16.0)
+            } else {
+                px(28.0)
+            })
+            .py(if embedded { px(0.0) } else { px(24.0) })
             .child(
                 div()
                     .w_full()
@@ -862,6 +885,7 @@ impl ManisApp {
             content,
             width,
             max_height,
+            show_divider,
         } = popup;
         let app = cx.entity();
         let trigger = Button::new(id)
@@ -912,8 +936,8 @@ impl ManisApp {
         div()
             .min_h(px(64.0))
             .px_4()
-            .border_b_1()
             .border_color(theme.outline_subtle)
+            .when(show_divider, gpui::Styled::border_b_1)
             .flex()
             .items_center()
             .gap_4()
@@ -931,14 +955,15 @@ impl ManisApp {
         label: &'static str,
         required: bool,
         input: Option<gpui::Entity<crate::subscription_input::SubscriptionTextInput>>,
+        show_divider: bool,
         theme: Theme,
     ) -> Div {
         div()
             .min_h(px(82.0))
             .px_4()
             .py_3()
-            .border_b_1()
             .border_color(theme.outline_subtle)
+            .when(show_divider, gpui::Styled::border_b_1)
             .child(
                 div()
                     .mb_2()
@@ -968,6 +993,8 @@ impl ManisApp {
             .cursor_pointer()
             .min_h(px(44.0))
             .px_3()
+            .flex()
+            .items_center()
             .border_b_1()
             .border_color(theme.outline_subtle)
             .on_click(listener)
@@ -1100,7 +1127,7 @@ impl ManisApp {
             ),
             (
                 PolicyCandidateMatcherKind::Explicit,
-                language.text("Select nodes", "手动选择节点"),
+                language.text("Select nodes or groups", "选择节点或策略组"),
             ),
         ] {
             let selected = draft.matcher_kind == matcher;
@@ -1130,7 +1157,14 @@ impl ManisApp {
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let inventory = self.node_inventory();
+        let inventory = self.policy_candidate_inventory();
+        let has_local_sources =
+            !self.imported_subscriptions.is_empty() || !self.saved_vless_nodes.is_empty();
+        let source_labels = self
+            .node_source_groups(has_local_sources, language)
+            .into_iter()
+            .map(|group| (group.id, group.name))
+            .collect::<BTreeMap<_, _>>();
         let selected_count = draft.explicit_members.len();
         let mut list =
             div()
@@ -1147,8 +1181,8 @@ impl ManisApp {
                     .p_5()
                     .text_color(theme.text_secondary)
                     .child(language.text(
-                        "Import nodes before making an explicit selection.",
-                        "请先导入节点，再进行手动选择。",
+                        "Import nodes or create another policy group before making a selection.",
+                        "请先导入节点或创建其他策略组，再进行选择。",
                     )),
             );
         }
@@ -1166,6 +1200,8 @@ impl ManisApp {
                 .cursor_pointer()
                 .min_h(px(58.0))
                 .px_4()
+                .flex()
+                .items_center()
                 .border_b_1()
                 .border_color(theme.outline_subtle)
                 .child(
@@ -1174,7 +1210,16 @@ impl ManisApp {
                             .text_size(TextRole::Metadata.size())
                             .line_height(TextRole::Metadata.line_height())
                             .text_color(theme.text_tertiary)
-                            .child(member.source_id),
+                            .child(match member.source_id.as_str() {
+                                "builtin" => language.text("Built-in", "内置").to_owned(),
+                                source if source.starts_with("policy:") => {
+                                    language.text("Policy group", "策略组").to_owned()
+                                }
+                                source => source_labels
+                                    .get(source)
+                                    .cloned()
+                                    .unwrap_or_else(|| source.to_owned()),
+                            }),
                     ),
                 )
                 .on_click(cx.listener(move |this, _, _, cx| {
@@ -1208,9 +1253,11 @@ impl ManisApp {
                 div()
                     .font_weight(FontWeight::SEMIBOLD)
                     .child(match language {
-                        Language::English => format!("Select nodes · {selected_count} selected"),
+                        Language::English => {
+                            format!("Select candidates · {selected_count} selected")
+                        }
                         Language::SimplifiedChinese => {
-                            format!("选择节点 · 已选 {selected_count} 个")
+                            format!("选择候选项 · 已选 {selected_count} 项")
                         }
                     }),
             )
@@ -1221,7 +1268,7 @@ impl ManisApp {
                     ActionRole::Primary,
                     ControlSize::Icon,
                 )
-                .accessibility_label(language.text("Finish selecting nodes", "完成选择节点"))
+                .accessibility_label(language.text("Finish selecting candidates", "完成选择候选项"))
                 .px_3()
                 .cursor_pointer()
                 .font_weight(FontWeight::SEMIBOLD)
@@ -1265,22 +1312,48 @@ impl ManisApp {
     fn node_inventory(&self) -> Vec<NodeIdentity> {
         let has_local_sources =
             !self.imported_subscriptions.is_empty() || !self.saved_vless_nodes.is_empty();
-        let mut inventory = BTreeSet::new();
+        let mut inventory = Vec::new();
+        let mut seen = BTreeSet::new();
         for group in self.node_source_groups(has_local_sources, self.language()) {
             for provider in group.providers {
                 for node in &provider.nodes {
-                    if let Ok(identity) = NodeIdentity::new(&group.id, &node.name) {
-                        inventory.insert(identity);
+                    if let Ok(identity) = NodeIdentity::new(&group.id, &node.name)
+                        && seen.insert(identity.clone())
+                    {
+                        inventory.push(identity);
                     }
                 }
             }
             for node in group.saved_nodes {
-                if let Ok(identity) = NodeIdentity::new(&group.id, &node.name) {
-                    inventory.insert(identity);
+                if let Ok(identity) = NodeIdentity::new(&group.id, &node.name)
+                    && seen.insert(identity.clone())
+                {
+                    inventory.push(identity);
                 }
             }
         }
-        inventory.into_iter().collect()
+        inventory
+    }
+
+    fn policy_candidate_inventory(&self) -> Vec<NodeIdentity> {
+        let mut inventory = ["DIRECT", "REJECT"]
+            .into_iter()
+            .filter_map(|name| NodeIdentity::new("builtin", name).ok())
+            .collect::<Vec<_>>();
+        inventory.extend(self.node_inventory());
+        let editing_id = self
+            .managed_policy_draft
+            .as_ref()
+            .and_then(|draft| draft.editing_id.as_deref());
+        for group in &self.managed_policy_groups {
+            if editing_id != Some(group.id.as_str())
+                && let Ok(identity) =
+                    NodeIdentity::new(&format!("policy:{}", group.id), &group.name)
+            {
+                inventory.push(identity);
+            }
+        }
+        inventory
     }
 
     fn managed_policy_candidate_count(&self, group: &ManagedPolicyGroup) -> usize {
@@ -1291,12 +1364,12 @@ impl ManisApp {
     }
 
     pub(super) fn managed_policy_candidate_names(&self, group: &ManagedPolicyGroup) -> Vec<String> {
+        let mut seen = BTreeSet::new();
         self.node_inventory()
             .into_iter()
             .filter(|node| group.matches(&node.source_id, &node.node_name))
             .map(|node| node.node_name)
-            .collect::<BTreeSet<_>>()
-            .into_iter()
+            .filter(|name| seen.insert(name.clone()))
             .collect()
     }
 
@@ -1499,7 +1572,7 @@ impl ManisApp {
     }
 
     #[allow(clippy::too_many_lines)]
-    fn save_managed_policy(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn save_managed_policy(&mut self, cx: &mut Context<Self>) {
         let Some(draft) = self.managed_policy_draft.clone() else {
             return;
         };
@@ -1582,7 +1655,10 @@ impl ManisApp {
             PolicyCandidateMatcherKind::Explicit => {
                 if draft.explicit_members.is_empty() {
                     language
-                        .text("Select at least one node", "请至少选择一个节点")
+                        .text(
+                            "Select at least one node or policy group",
+                            "请至少选择一个节点或策略组",
+                        )
                         .clone_into(&mut self.status);
                     cx.notify();
                     return;
@@ -1590,13 +1666,30 @@ impl ManisApp {
                 PolicyCandidateMatcher::Explicit(draft.explicit_members)
             }
         };
-        if group.set_matcher(matcher).is_err() || self.managed_policy_candidate_count(&group) == 0 {
+        let explicit = matches!(matcher, PolicyCandidateMatcher::Explicit(_));
+        if group.set_matcher(matcher).is_err()
+            || (!explicit && self.managed_policy_candidate_count(&group) == 0)
+        {
             language
                 .text(
                     "The current rule does not match any imported nodes",
                     "当前规则没有匹配到任何已导入节点",
                 )
                 .clone_into(&mut self.status);
+            cx.notify();
+            return;
+        }
+        let mut proposed_groups = self.managed_policy_groups.clone();
+        if let Some(existing) = proposed_groups
+            .iter_mut()
+            .find(|existing| existing.id == group.id)
+        {
+            existing.clone_from(&group);
+        } else {
+            proposed_groups.push(group.clone());
+        }
+        if let Err(error) = mihomo::validate_managed_policy_references(&proposed_groups) {
+            self.status = error.to_string();
             cx.notify();
             return;
         }
@@ -1652,6 +1745,23 @@ impl ManisApp {
     }
 
     pub(super) fn remove_managed_policy(&mut self, id: &str, cx: &mut Context<Self>) {
+        let reference = format!("policy:{id}");
+        if self.managed_policy_groups.iter().any(|group| {
+            matches!(
+                &group.matcher,
+                PolicyCandidateMatcher::Explicit(members)
+                    if members.iter().any(|member| member.source_id == reference)
+            )
+        }) {
+            self.language()
+                .text(
+                    "This policy group is used by another policy group and cannot be deleted",
+                    "该策略组正被其他策略组使用，无法删除",
+                )
+                .clone_into(&mut self.status);
+            cx.notify();
+            return;
+        }
         let Some(store_dir) = self.subscription_store_dir.clone() else {
             return;
         };

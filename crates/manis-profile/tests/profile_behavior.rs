@@ -127,6 +127,7 @@ fn qx_default_renders_ordered_minimal_mihomo_yaml() {
 
     assert_eq!(profile.mode, ProfileMode::Rule);
     assert!(yaml.contains("mode: \"rule\""));
+    assert!(yaml.contains("find-process-mode: \"always\""));
     assert!(yaml.contains("unified-delay: true"));
     assert!(yaml.contains("allow-lan: false"));
     assert!(yaml.contains("bind-address: \"127.0.0.1\""));
@@ -557,6 +558,7 @@ fn qx_sources_with_groups_only_compiles_user_groups_and_the_hidden_global_exit()
         },
         provider_indexes: vec![0],
         direct_proxies: vec![saved_name],
+        direct_policies: Vec::new(),
         filter: Some("HK|JP|US".to_owned()),
     };
     let manual = UserPolicyGroup {
@@ -565,6 +567,9 @@ fn qx_sources_with_groups_only_compiles_user_groups_and_the_hidden_global_exit()
         kind: UserPolicyGroupKind::Select,
         provider_indexes: Vec::new(),
         direct_proxies: vec![Name::parse("Saved").expect("valid proxy")],
+        direct_policies: vec![PolicyRef::Group(
+            Name::parse("Streaming").expect("valid group"),
+        )],
         filter: None,
     };
 
@@ -585,6 +590,7 @@ fn qx_sources_with_groups_only_compiles_user_groups_and_the_hidden_global_exit()
     assert!(yaml.contains("interval: 300"));
     assert!(yaml.contains("name: \"Manual Saved\""));
     assert!(yaml.contains("type: \"select\""));
+    assert!(yaml.contains("- \"Streaming\""));
     assert!(yaml.find("name: \"Streaming\"") < yaml.find("name: \"__MANIS_GLOBAL__\""));
     assert!(yaml.find("name: \"Manual Saved\"") < yaml.find("name: \"__MANIS_GLOBAL__\""));
     assert!(!yaml.contains("name: \"Auto\""));
@@ -606,6 +612,7 @@ fn qx_sources_with_groups_rejects_bad_user_group_references_and_names() {
         kind: UserPolicyGroupKind::Select,
         provider_indexes: vec![0],
         direct_proxies: vec![Name::parse("Saved").expect("valid proxy")],
+        direct_policies: Vec::new(),
         filter: None,
     };
 

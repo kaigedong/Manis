@@ -1,7 +1,7 @@
 use gpui::{AnyElement, Div, FontWeight, ParentElement, Styled, div, prelude::*, px};
 use manis_core::WindowSizeClass;
 use manis_mihomo::Connection;
-use manis_profile::MANIS_GLOBAL_GROUP_NAME;
+use manis_profile::{MANIS_GLOBAL_GROUP_NAME, QxRuleKind, QxRuleList};
 
 use super::{ManisApp, format_bytes};
 use crate::{
@@ -24,14 +24,19 @@ impl ManisApp {
             .as_ref()
             .map(|input| input.read(cx).value().trim().to_owned())
             .unwrap_or_default();
+        let language = self.language();
         let visible_connections = self
             .active_connections
             .iter()
-            .filter(|connection| connection_matches_query(connection, &query))
+            .filter(|connection| {
+                connection_matches_query(connection, &query)
+                    || self
+                        .route_rule_group_label(connection, language)
+                        .is_some_and(|group| group.to_lowercase().contains(&query.to_lowercase()))
+            })
             .collect::<Vec<_>>();
         let total_upload: u64 = visible_connections.iter().map(|item| item.upload).sum();
         let total_download: u64 = visible_connections.iter().map(|item| item.download).sum();
-        let language = self.language();
         let visible_count = visible_connections.len();
         let total_count = self.active_connections.len();
         let summary = activity_summary(
@@ -103,7 +108,13 @@ impl ManisApp {
             }));
         } else {
             for connection in visible_connections.iter().copied() {
-                rows = rows.child(activity_row(connection, theme, compact, language));
+                rows = rows.child(activity_row(
+                    connection,
+                    self.route_rule_group_label(connection, language).as_deref(),
+                    theme,
+                    compact,
+                    language,
+                ));
             }
         }
 
@@ -157,6 +168,53 @@ impl ManisApp {
     }
 }
 
+impl ManisApp {
+    /// Recovers the Manis routing-rule group because Mihomo's connection chain only contains
+    /// policy groups and the final node. Iterating in configured group order mirrors compilation
+    /// order and therefore preserves first-match semantics when rule sources overlap.
+    fn route_rule_group_label(
+        &self,
+        connection: &Connection,
+        language: Language,
+    ) -> Option<String> {
+        let group_order = crate::mihomo::normalized_routing_rule_group_order(
+            &self.routing_rule_group_order,
+            !self.manual_rules.is_empty(),
+            &self.qx_rule_sources,
+        );
+        for group_id in group_order {
+            if group_id == crate::mihomo::MANUAL_ROUTING_RULE_GROUP_ID {
+                if self
+                    .manual_rules
+                    .iter()
+                    .any(|rule| manual_rule_matches_connection(rule, connection))
+                {
+                    return Some(language.text("Manual rules", "手动规则").to_owned());
+                }
+                continue;
+            }
+            let Some((index, source)) = self
+                .qx_rule_sources
+                .iter()
+                .enumerate()
+                .find(|(_, source)| source.id == group_id)
+            else {
+                continue;
+            };
+            if qx_source_matches_connection(&source.content, connection) {
+                return Some(source.source.subscription_name().unwrap_or_else(|| {
+                    if language == Language::English {
+                        format!("Rule source {}", index + 1)
+                    } else {
+                        format!("规则源 {}", index + 1)
+                    }
+                }));
+            }
+        }
+        None
+    }
+}
+
 fn activity_summary(
     language: Language,
     unfiltered: bool,
@@ -204,10 +262,16 @@ fn connection_matches_query(connection: &Connection, query: &str) -> bool {
     .any(|value| value.to_lowercase().contains(&query))
 }
 
-fn activity_row(connection: &Connection, theme: Theme, compact: bool, language: Language) -> Div {
+fn activity_row(
+    connection: &Connection,
+    rule_group: Option<&str>,
+    theme: Theme,
+    compact: bool,
+    language: Language,
+) -> Div {
     let target = connection_target(connection, language);
     let metadata = connection_metadata(connection, language);
-    let chain = route_summary(&connection.chains, language)
+    let chain = route_summary_with_group(&connection.chains, rule_group, language)
         .unwrap_or_else(|| language.text("Route unavailable", "路由未返回").to_owned());
 
     div()
@@ -299,14 +363,69 @@ fn route_stage_label(stage: &str, language: Language) -> &str {
 }
 
 pub(super) fn route_summary(chains: &[String], language: Language) -> Option<String> {
-    let route = user_route_stages(chains)
-        .rev()
-        .map(|stage| route_stage_label(stage, language))
-        .collect::<Vec<_>>()
-        .join(" → ");
-    (!route.is_empty()).then(|| match language {
-        Language::English => format!("Route · {route}"),
-        Language::SimplifiedChinese => format!("路由 · {route}"),
+    route_summary_with_group(chains, None, language)
+}
+
+fn route_summary_with_group(
+    chains: &[String],
+    rule_group: Option<&str>,
+    language: Language,
+) -> Option<String> {
+    let mut stages = rule_group
+        .map(str::trim)
+        .filter(|group| !group.is_empty())
+        .into_iter()
+        .chain(
+            user_route_stages(chains)
+                .rev()
+                .map(|stage| route_stage_label(stage, language)),
+        );
+    let route = stages.by_ref().collect::<Vec<_>>().join(" → ");
+    (!route.is_empty()).then_some(route)
+}
+
+fn normalized_rule_kind(value: &str) -> String {
+    value
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn manual_rule_matches_connection(
+    rule: &crate::manual_rule::ManualRule,
+    connection: &Connection,
+) -> bool {
+    if !rule.is_enabled() {
+        return false;
+    }
+    let Some(kind) = connection.rule.as_deref().map(str::trim) else {
+        return false;
+    };
+    if rule.is_final() {
+        return kind.eq_ignore_ascii_case("Match");
+    }
+    let [condition] = rule.conditions() else {
+        return false;
+    };
+    normalized_rule_kind(kind) == normalized_rule_kind(condition.kind().display_label())
+        && connection.rule_payload.as_deref().map(str::trim) == Some(condition.parameter())
+}
+
+fn qx_source_matches_connection(content: &str, connection: &Connection) -> bool {
+    let Some(kind) = connection.rule.as_deref().map(normalized_rule_kind) else {
+        return false;
+    };
+    let Some(payload) = connection.rule_payload.as_deref().map(str::trim) else {
+        return false;
+    };
+    QxRuleList::parse(content).rules.into_iter().any(|rule| {
+        let source_kind = match rule.kind {
+            QxRuleKind::Domain => "domain",
+            QxRuleKind::DomainKeyword => "domainkeyword",
+            QxRuleKind::DomainSuffix => "domainsuffix",
+        };
+        kind == source_kind && rule.value == payload
     })
 }
 
@@ -418,12 +537,13 @@ mod tests {
             "GLOBAL".to_owned(),
         ];
         assert_eq!(
-            super::route_summary(
+            super::route_summary_with_group(
                 &global_route,
+                Some("Manual rules"),
                 crate::localization::Language::SimplifiedChinese
             )
             .as_deref(),
-            Some("路由 · HK05")
+            Some("Manual rules → HK05")
         );
 
         let policy_route = vec![
@@ -432,8 +552,13 @@ mod tests {
             "Streaming".to_owned(),
         ];
         assert_eq!(
-            super::route_summary(&policy_route, crate::localization::Language::English).as_deref(),
-            Some("Route · Streaming → Hong Kong → HK05")
+            super::route_summary_with_group(
+                &policy_route,
+                Some("Streaming rules"),
+                crate::localization::Language::English
+            )
+            .as_deref(),
+            Some("Streaming rules → Streaming → Hong Kong → HK05")
         );
 
         assert_eq!(
@@ -442,7 +567,7 @@ mod tests {
                 crate::localization::Language::SimplifiedChinese
             )
             .as_deref(),
-            Some("路由 · 直连")
+            Some("直连")
         );
     }
 

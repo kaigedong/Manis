@@ -451,7 +451,6 @@ impl ManualRuleEditorState {
 enum PolicyDetailTab {
     #[default]
     Nodes,
-    Rules,
     Settings,
 }
 
@@ -459,15 +458,13 @@ impl PolicyDetailTab {
     const fn index(self) -> usize {
         match self {
             Self::Nodes => 0,
-            Self::Rules => 1,
-            Self::Settings => 2,
+            Self::Settings => 1,
         }
     }
 
     const fn from_index(index: usize) -> Self {
         match index {
-            1 => Self::Rules,
-            2 => Self::Settings,
+            1 => Self::Settings,
             _ => Self::Nodes,
         }
     }
@@ -4490,6 +4487,13 @@ impl ManisApp {
                     .min_h(px(64.0))
                     .px(Space::Lg.px())
                     .py(Space::Md.px())
+                    .rounded_tl(Radius::Pane.px())
+                    .rounded_tr(Radius::Pane.px())
+                    .when(!expanded, |header| {
+                        header
+                            .rounded_bl(Radius::Pane.px())
+                            .rounded_br(Radius::Pane.px())
+                    })
                     .bg(theme.surface_low)
                     .flex()
                     .items_center()
@@ -4781,6 +4785,13 @@ impl ManisApp {
                 .min_h(px(64.0))
                 .px(Space::Lg.px())
                 .py(Space::Md.px())
+                .rounded_tl(Radius::Pane.px())
+                .rounded_tr(Radius::Pane.px())
+                .when(!expanded, |header| {
+                    header
+                        .rounded_bl(Radius::Pane.px())
+                        .rounded_br(Radius::Pane.px())
+                })
                 .flex()
                 .items_center()
                 .gap(Space::Md.px())
@@ -5315,11 +5326,6 @@ impl ManisApp {
             )
             .child(
                 Tab::new()
-                    .label(language.text("Rules", "规则"))
-                    .aria_label(language.text("Rules", "规则")),
-            )
-            .child(
-                Tab::new()
                     .label(language.message(Message::Settings))
                     .aria_label(language.message(Message::Settings)),
             )
@@ -5481,111 +5487,113 @@ impl ManisApp {
             }
         }
 
-        if self.policy_detail_tab == PolicyDetailTab::Rules {
-            body = body.child(section_heading(
-                language.text("Rules using this policy", "命中此策略的规则"),
-                format!(
-                    "{} · {}",
-                    language.count(CountNoun::Rule, selected_policy.rules_count()),
-                    language.text("matched in order", "按顺序匹配")
-                ),
-                None,
-                theme,
-            ));
-            if selected_policy.rules.is_empty() {
-                body = body.child(empty_state(
-                    language.text("No rule preview", "暂无规则预览"),
-                    language.text(
-                        "No routing rule currently targets this policy group.",
-                        "当前没有分流规则指向这个策略组。",
-                    ),
-                    None,
-                    theme,
-                ));
-            }
-            for rule in &selected_policy.rules {
-                body = body.child(
-                    div()
-                        .min_h(px(50.0))
-                        .flex()
-                        .items_center()
-                        .gap(Space::Md.px())
-                        .border_t_1()
-                        .border_color(theme.outline_subtle)
-                        .child(
-                            div()
-                                .w(px(36.0))
-                                .text_size(TextRole::Metadata.size())
-                                .line_height(TextRole::Metadata.line_height())
-                                .text_color(theme.text_tertiary)
-                                .child(format!("#{}", rule.index)),
-                        )
-                        .child(
-                            div()
-                                .min_w(px(0.0))
-                                .flex_1()
-                                .overflow_x_hidden()
-                                .whitespace_nowrap()
-                                .text_ellipsis()
-                                .text_size(TextRole::Body.size())
-                                .line_height(TextRole::Body.line_height())
-                                .child(format!("{}, {}", rule.kind, rule.payload)),
-                        )
-                        .child(status_badge(
-                            language.text("Match", "命中"),
-                            StatusTone::Success,
-                            theme,
-                        )),
-                );
-            }
-        }
-
         if self.policy_detail_tab == PolicyDetailTab::Settings {
             if let Some(group_id) = editable_group_id.as_deref() {
-                let edit_id = group_id.to_owned();
-                let remove_id = group_id.to_owned();
-                body = body
-                    .child(section_heading(
-                        language.text("Managed policy settings", "托管策略组设置"),
-                        language.text(
-                            "Saved in Manis and applied to the managed Mihomo configuration.",
-                            "保存在 Manis 中，并会应用到 Manis 托管的 Mihomo 配置。",
-                        ),
-                        None,
-                        theme,
-                    ))
-                    .child(
-                        div()
-                            .mt(Space::Sm.px())
-                            .flex()
-                            .gap(Space::Sm.px())
-                            .child(
-                                action_button(
-                                    "edit-managed-policy",
-                                    language.text("Edit policy group", "编辑策略组"),
-                                    ActionRole::Secondary,
-                                    ControlSize::Compact,
-                                )
-                                .on_click(cx.listener(
-                                    move |this, _, _, cx| {
-                                        this.start_managed_policy_edit(&edit_id, cx);
-                                    },
-                                )),
+                let active_draft = self
+                    .managed_policy_draft
+                    .as_ref()
+                    .filter(|draft| draft.editing_id.as_deref() == Some(group_id));
+                if let Some(draft) = active_draft {
+                    let remove_id = group_id.to_owned();
+                    let actions = div()
+                        .flex()
+                        .items_center()
+                        .gap(Space::Sm.px())
+                        .child(
+                            action_button(
+                                "remove-managed-policy-editing",
+                                language.text("Delete policy group", "删除策略组"),
+                                ActionRole::Danger,
+                                ControlSize::Compact,
                             )
-                            .child(
-                                action_button(
-                                    "remove-managed-policy",
-                                    language.text("Delete policy group", "删除策略组"),
-                                    ActionRole::Danger,
-                                    ControlSize::Compact,
-                                )
-                                .on_click(cx.listener(
-                                    move |this, _, _, cx| {
-                                        this.remove_managed_policy(&remove_id, cx);
-                                    },
-                                )),
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| {
+                                    this.remove_managed_policy(&remove_id, cx);
+                                },
+                            )),
+                        )
+                        .child(
+                            action_button(
+                                "cancel-managed-policy-edit",
+                                language.message(Message::Cancel),
+                                ActionRole::Quiet,
+                                ControlSize::Compact,
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.managed_policy_draft = None;
+                                this.managed_policy_editor_popover = None;
+                                cx.notify();
+                            })),
+                        )
+                        .child(
+                            action_button(
+                                "save-managed-policy-edit",
+                                language.message(Message::SaveChanges),
+                                ActionRole::Primary,
+                                ControlSize::Compact,
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.save_managed_policy(cx);
+                            })),
+                        )
+                        .into_any_element();
+                    body = body
+                        .child(section_heading(
+                            language.text("Managed policy settings", "托管策略组设置"),
+                            language.text(
+                                "Saved in Manis and applied to the managed Mihomo configuration.",
+                                "保存在 Manis 中，并会应用到 Manis 托管的 Mihomo 配置。",
                             ),
-                    );
+                            Some(actions),
+                            theme,
+                        ))
+                        .child(self.policy_editor_form(draft, compact, true, language, theme, cx));
+                } else {
+                    let edit_id = group_id.to_owned();
+                    let remove_id = group_id.to_owned();
+                    body = body
+                        .child(section_heading(
+                            language.text("Managed policy settings", "托管策略组设置"),
+                            language.text(
+                                "Saved in Manis and applied to the managed Mihomo configuration.",
+                                "保存在 Manis 中，并会应用到 Manis 托管的 Mihomo 配置。",
+                            ),
+                            None,
+                            theme,
+                        ))
+                        .child(
+                            div()
+                                .mt(Space::Sm.px())
+                                .flex()
+                                .gap(Space::Sm.px())
+                                .child(
+                                    action_button(
+                                        "edit-managed-policy",
+                                        language.text("Edit policy group", "编辑策略组"),
+                                        ActionRole::Secondary,
+                                        ControlSize::Compact,
+                                    )
+                                    .on_click(cx.listener(
+                                        move |this, _, _, cx| {
+                                            this.start_managed_policy_edit(&edit_id, cx);
+                                        },
+                                    )),
+                                )
+                                .child(
+                                    action_button(
+                                        "remove-managed-policy",
+                                        language.text("Delete policy group", "删除策略组"),
+                                        ActionRole::Danger,
+                                        ControlSize::Compact,
+                                    )
+                                    .on_click(cx.listener(
+                                        move |this, _, _, cx| {
+                                            this.remove_managed_policy(&remove_id, cx);
+                                        },
+                                    )),
+                                ),
+                        );
+                }
             } else {
                 body = body
                     .child(section_heading(
@@ -5687,15 +5695,11 @@ impl ManisApp {
                                             .line_height(TextRole::Metadata.line_height())
                                             .text_color(theme.text_secondary)
                                             .child(format!(
-                                                "{} · {} · {}",
+                                                "{} · {}",
                                                 policy_kind_label(language, selected_policy.kind),
                                                 language.count(
                                                     CountNoun::Node,
                                                     selected_policy.nodes.len()
-                                                ),
-                                                language.count(
-                                                    CountNoun::Rule,
-                                                    selected_policy.rules_count()
                                                 )
                                             )),
                                     ),
@@ -6841,7 +6845,13 @@ impl Render for ManisApp {
         }
         let show_inspector = size_class == WindowSizeClass::Wide;
         let policies_active = self.primary_workspace == PrimaryWorkspace::Policies;
-        let policy_editor_active = policies_active && self.managed_policy_draft.is_some();
+        // Creating a group has no existing detail context, so it keeps the standalone editor.
+        // Editing an existing group stays inside its Settings tab and preserves the policy header.
+        let policy_editor_active = policies_active
+            && self
+                .managed_policy_draft
+                .as_ref()
+                .is_some_and(|draft| draft.editing_id.is_none());
         let has_policy_catalog = self.catalog.is_some();
         let nodes_active = self.primary_workspace == PrimaryWorkspace::Nodes;
         let routing_rules_active = self.primary_workspace == PrimaryWorkspace::RoutingRules;
@@ -6961,11 +6971,10 @@ mod tests {
     #[test]
     fn policy_detail_tabs_round_trip_through_component_indices() {
         assert_eq!(PolicyDetailTab::Nodes.index(), 0);
-        assert_eq!(PolicyDetailTab::Rules.index(), 1);
-        assert_eq!(PolicyDetailTab::Settings.index(), 2);
+        assert_eq!(PolicyDetailTab::Settings.index(), 1);
         assert_eq!(PolicyDetailTab::from_index(0), PolicyDetailTab::Nodes);
-        assert_eq!(PolicyDetailTab::from_index(1), PolicyDetailTab::Rules);
-        assert_eq!(PolicyDetailTab::from_index(2), PolicyDetailTab::Settings);
+        assert_eq!(PolicyDetailTab::from_index(1), PolicyDetailTab::Settings);
+        assert_eq!(PolicyDetailTab::from_index(2), PolicyDetailTab::Nodes);
         assert_eq!(PolicyDetailTab::from_index(99), PolicyDetailTab::Nodes);
     }
 
