@@ -340,6 +340,13 @@ enum ManualRulePopover {
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum ManualRuleEditorState {
+    #[default]
+    Closed,
+    Open,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum PolicyDetailTab {
     #[default]
     Nodes,
@@ -583,6 +590,7 @@ pub struct ManisApp {
     manual_rule_second_kind: crate::manual_rule::ManualRuleKind,
     manual_rule_second_enabled: bool,
     manual_rule_target: String,
+    manual_rule_editor_state: ManualRuleEditorState,
     manual_rule_popover: Option<ManualRulePopover>,
     manual_rule_error: Option<crate::manual_rule::ManualRuleError>,
     policy_group_name_input: Option<Entity<SubscriptionTextInput>>,
@@ -745,6 +753,9 @@ impl ManisApp {
             routing_mode,
             error: source_store_error,
         } = StoredWorkspace::load(subscription_store_dir.as_ref());
+        let default_rule_target = managed_policy_groups
+            .first()
+            .map_or_else(|| "DIRECT".to_owned(), |group| group.name.clone());
         if let Some(directory) = subscription_store_dir.as_ref()
             && (!imported_subscriptions.is_empty()
                 || !saved_vless_nodes.is_empty()
@@ -797,7 +808,7 @@ impl ManisApp {
             saved_vless_nodes,
             qx_rule_sources,
             qx_rule_feedback: QxRuleImportFeedback::Idle,
-            qx_rule_target_policy: "Proxy".to_owned(),
+            qx_rule_target_policy: default_rule_target.clone(),
             qx_rule_import_generation: 0,
             qx_rule_source_refreshes: BTreeMap::new(),
             source_refresh_retry_not_before: BTreeMap::new(),
@@ -844,7 +855,8 @@ impl ManisApp {
             manual_rule_second_input: None,
             manual_rule_second_kind: crate::manual_rule::ManualRuleKind::DstPort,
             manual_rule_second_enabled: false,
-            manual_rule_target: "Proxy".to_owned(),
+            manual_rule_target: default_rule_target,
+            manual_rule_editor_state: ManualRuleEditorState::Closed,
             manual_rule_popover: None,
             manual_rule_error: None,
             policy_group_name_input: None,
@@ -1650,6 +1662,10 @@ impl ManisApp {
             .map(|catalog| catalog.select(self.workspace.selected_group.as_ref()))
     }
 
+    fn policy_group_benchmarkable(group: &PolicyGroup) -> bool {
+        !group.nodes.is_empty()
+    }
+
     fn source_group_benchmark_key(id: &str) -> String {
         format!("source:{id}")
     }
@@ -1841,7 +1857,7 @@ impl ManisApp {
         id: &str,
         icon: ManagedPolicyIcon,
         policy_name: &str,
-        automatic: bool,
+        benchmarkable: bool,
         running: bool,
         theme: Theme,
         listener: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
@@ -1851,19 +1867,19 @@ impl ManisApp {
             .size(px(38.0))
             .flex_shrink_0()
             .rounded_full()
-            .when(automatic, |avatar| {
+            .when(benchmarkable, |avatar| {
                 avatar
                     .role(Role::Button)
                     .aria_label(if running {
                         "策略组测速中"
                     } else {
-                        "测试自动策略组并选择最优节点"
+                        "测试策略组候选项延迟"
                     })
                     .tab_stop(!running)
                     .focusable()
                     .on_click(listener)
             })
-            .when(automatic && !running, gpui::Styled::cursor_pointer)
+            .when(benchmarkable && !running, gpui::Styled::cursor_pointer)
             .when(running, |avatar| {
                 avatar
                     .bg(theme.action_soft)
@@ -4127,7 +4143,7 @@ impl ManisApp {
                 let expanded = self.expanded_policy_group.as_ref() == Some(&policy_group_id);
                 let candidates = self.managed_policy_candidate_names(&policy);
                 let candidate_count = candidates.len();
-                let automatic = policy.strategy == ManagedPolicyStrategy::LowestLatency;
+                let benchmarkable = candidate_count > 0;
                 let benchmarking =
                     self.pending_policy_benchmark_name.as_deref() == Some(policy.name.as_str());
                 let selected_name = self
@@ -4169,7 +4185,7 @@ impl ManisApp {
                         &format!("saved-{}", policy.id),
                         benchmark_icon,
                         &benchmark_policy_name,
-                        automatic,
+                        benchmarkable,
                         benchmarking,
                         theme,
                         cx.listener(move |this, _, _, cx| {
@@ -4396,7 +4412,7 @@ impl ManisApp {
         for item in self.policy_groups().cloned() {
             let selected = self.workspace.selected_group.as_ref() == Some(&item.id);
             let expanded = self.expanded_policy_group.as_ref() == Some(&item.id);
-            let automatic = item.kind.is_automatic();
+            let benchmarkable = Self::policy_group_benchmarkable(&item);
             let policy_icon = self
                 .managed_policy_groups
                 .iter()
@@ -4455,12 +4471,12 @@ impl ManisApp {
                     &benchmark_key,
                     policy_icon,
                     &item.name,
-                    automatic,
+                    benchmarkable,
                     benchmarking,
                     theme,
                     cx.listener(move |this, _, _, cx| {
                         cx.stop_propagation();
-                        if automatic && !benchmarking {
+                        if benchmarkable && !benchmarking {
                             this.start_policy_group_benchmark(&benchmark_id, cx);
                         }
                     }),
@@ -5058,6 +5074,7 @@ impl ManisApp {
         };
         let manually_selectable = selected_policy.kind.allows_manual_selection();
         let benchmark_id = selected_policy.id.clone();
+        let benchmarkable = Self::policy_group_benchmarkable(&selected_policy);
         let benchmark_key = Self::policy_group_benchmark_key(&selected_policy.id);
         let benchmarking = self
             .group_benchmarks
@@ -5360,11 +5377,11 @@ impl ManisApp {
                                 &benchmark_key,
                                 display_icon,
                                 &selected_policy.name,
-                                selected_policy.kind.is_automatic(),
+                                benchmarkable,
                                 benchmarking,
                                 theme,
                                 cx.listener(move |this, _, _, cx| {
-                                    if !benchmarking {
+                                    if benchmarkable && !benchmarking {
                                         this.start_policy_group_benchmark(&benchmark_id, cx);
                                     }
                                 }),
@@ -6348,6 +6365,7 @@ impl Render for ManisApp {
         let logs_active = self.primary_workspace == PrimaryWorkspace::Logs;
 
         div()
+            .relative()
             .size_full()
             .flex()
             .flex_col()
@@ -6433,6 +6451,11 @@ impl Render for ManisApp {
                     ),
             )
             .child(self.status_bar(theme))
+            .when(
+                routing_rules_active
+                    && self.manual_rule_editor_state == ManualRuleEditorState::Open,
+                |app| app.child(self.manual_rule_editor_modal(theme, self.language(), compact, cx)),
+            )
     }
 }
 
@@ -6552,6 +6575,35 @@ mod tests {
         assert!(app.catalog.is_none());
         assert_eq!(app.workspace.selected_group, None);
         assert_eq!(app.workspace.selected_node, None);
+    }
+
+    #[test]
+    fn manual_selector_with_candidates_is_benchmarkable() {
+        let selector = PolicyGroup {
+            id: PolicyGroupId::new("Manual Route"),
+            name: "Manual Route".to_owned(),
+            kind: PolicyGroupKind::Selector,
+            target: "Hong Kong".to_owned(),
+            nodes: vec![PolicyNode {
+                id: ProxyId::new("Hong Kong"),
+                name: "Hong Kong".to_owned(),
+                kind: PolicyCandidateKind::Node,
+                provider: Some("Fixture".to_owned()),
+                detail: "VLESS".to_owned(),
+                latency_ms: None,
+                alive: None,
+            }],
+            rules_total: 0,
+            rules: Vec::new(),
+        };
+
+        assert!(ManisApp::policy_group_benchmarkable(&selector));
+
+        let empty_selector = PolicyGroup {
+            nodes: Vec::new(),
+            ..selector
+        };
+        assert!(!ManisApp::policy_group_benchmarkable(&empty_selector));
     }
 
     #[test]

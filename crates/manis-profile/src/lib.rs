@@ -148,68 +148,12 @@ pub struct Profile {
 }
 
 impl Profile {
-    /// Builds the first QX-style preset with manual and automatic policy groups.
+    /// Builds a minimal QX-style profile with one hidden global-exit selector.
     ///
     /// # Errors
     /// Returns a redacted validation error if the preset is inconsistent.
     pub fn qx_default(subscription: SecretUrl) -> Result<Self, ProfileError> {
-        let provider_name = Name::parse("subscription")?;
-        let automatic_name = Name::parse("Auto")?;
-        let proxy_name = Name::parse("Proxy")?;
-        let profile = Self {
-            mode: ProfileMode::Rule,
-            mixed_port: 7890,
-            log_level: LogLevel::Info,
-            store_selected: true,
-            proxy_server_nameservers: default_proxy_dns_servers(),
-            proxies: Vec::new(),
-            providers: vec![ProxyProvider {
-                name: provider_name.clone(),
-                url: subscription,
-                interval_secs: 86_400,
-                path: "./proxy_providers/subscription.yaml".to_owned(),
-                health_check: HealthCheck {
-                    enabled: true,
-                    interval_secs: 600,
-                    url: "https://www.gstatic.com/generate_204".to_owned(),
-                },
-            }],
-            groups: vec![
-                PolicyGroup {
-                    name: automatic_name.clone(),
-                    icon: None,
-                    kind: PolicyGroupKind::UrlTest {
-                        proxies: Vec::new(),
-                        use_providers: vec![provider_name.clone()],
-                        filter: None,
-                        url: GROUP_TEST_URL.to_owned(),
-                        interval_secs: 600,
-                        tolerance: None,
-                    },
-                },
-                PolicyGroup {
-                    name: proxy_name.clone(),
-                    icon: None,
-                    kind: PolicyGroupKind::Select {
-                        proxies: vec![PolicyRef::Group(automatic_name), PolicyRef::Direct],
-                        use_providers: vec![provider_name],
-                        filter: None,
-                    },
-                },
-            ],
-            rules: vec![
-                Rule::GeoIp {
-                    country: "CN".to_owned(),
-                    policy: PolicyRef::Direct,
-                    no_resolve: true,
-                },
-                Rule::Match {
-                    policy: PolicyRef::Group(proxy_name),
-                },
-            ],
-        };
-        profile.validate()?;
-        Ok(profile)
+        Self::qx_sources(vec![subscription], Vec::new(), 7890)
     }
 
     pub fn set_mode(&mut self, mode: ProfileMode) {
@@ -240,8 +184,8 @@ impl Profile {
 
     /// Builds a QX-style policy profile from persisted sources and user-defined policy groups.
     ///
-    /// User groups are compiled before the generated `Auto` and `Proxy` groups. The final `Proxy`
-    /// group references every user group so rule matching can route into those policies.
+    /// User groups are compiled as-is. Manis adds only the hidden global-exit selector required by
+    /// global routing mode; it does not create visible policy groups on the user's behalf.
     ///
     /// # Errors
     /// Returns a redacted validation error if a source set is empty, names collide, or a user
@@ -256,8 +200,6 @@ impl Profile {
         if subscriptions.is_empty() && vless_nodes.is_empty() {
             return Err(ProfileError::InvalidValue("profile sources"));
         }
-        let automatic_name = Name::parse("Auto")?;
-        let proxy_name = Name::parse("Proxy")?;
         let global_exit_name = Name::parse(MANIS_GLOBAL_GROUP_NAME)?;
         let providers = subscriptions
             .into_iter()
@@ -291,47 +233,17 @@ impl Profile {
             .collect::<HashSet<_>>();
         let mut compiled_user_groups =
             compile_user_groups(user_groups, &provider_names, &proxy_names, GROUP_TEST_URL)?;
-        let mut select_refs = compiled_user_groups
-            .iter()
-            .map(|group| PolicyRef::Group(group.name.clone()))
-            .collect::<Vec<_>>();
-        select_refs.push(PolicyRef::Group(automatic_name.clone()));
-        select_refs.push(PolicyRef::Direct);
-        select_refs.extend(direct_refs.iter().cloned());
-        let mut groups = Vec::with_capacity(compiled_user_groups.len() + 3);
+        let mut groups = Vec::with_capacity(compiled_user_groups.len() + 1);
         groups.append(&mut compiled_user_groups);
-        groups.extend([
-            PolicyGroup {
-                name: global_exit_name,
-                icon: None,
-                kind: PolicyGroupKind::Select {
-                    proxies: direct_refs.clone(),
-                    use_providers: provider_names.clone(),
-                    filter: None,
-                },
+        groups.push(PolicyGroup {
+            name: global_exit_name.clone(),
+            icon: None,
+            kind: PolicyGroupKind::Select {
+                proxies: direct_refs,
+                use_providers: provider_names,
+                filter: None,
             },
-            PolicyGroup {
-                name: automatic_name.clone(),
-                icon: None,
-                kind: PolicyGroupKind::UrlTest {
-                    proxies: direct_refs,
-                    use_providers: provider_names.clone(),
-                    filter: None,
-                    url: GROUP_TEST_URL.to_owned(),
-                    interval_secs: 600,
-                    tolerance: None,
-                },
-            },
-            PolicyGroup {
-                name: proxy_name.clone(),
-                icon: None,
-                kind: PolicyGroupKind::Select {
-                    proxies: select_refs,
-                    use_providers: provider_names,
-                    filter: None,
-                },
-            },
-        ]);
+        });
         let profile = Self {
             mode: ProfileMode::Rule,
             mixed_port,
@@ -348,7 +260,7 @@ impl Profile {
                     no_resolve: true,
                 },
                 Rule::Match {
-                    policy: PolicyRef::Group(proxy_name),
+                    policy: PolicyRef::Group(global_exit_name),
                 },
             ],
         };

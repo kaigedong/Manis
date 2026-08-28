@@ -21,6 +21,7 @@ const MANUAL_RULES_VERSION_V2: &str = "manis.manual-routing-rules.v2";
 const MAX_MANUAL_RULES_FILE_BYTES: u64 = 256 * 1024;
 const MAX_PARAMETER_BYTES: usize = 1_024;
 const MAX_CONDITIONS: usize = 4;
+const LEGACY_GENERATED_PROXY_GROUP_NAME: &str = "Proxy";
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) enum ManualRuleKind {
@@ -227,10 +228,16 @@ impl ManualRule {
         self.target.as_str()
     }
 
-    fn to_profile_rule(&self) -> Result<Rule, ManualRuleCompileError> {
+    fn to_profile_rule(
+        &self,
+        legacy_proxy_target: Option<&PolicyRef>,
+    ) -> Result<Rule, ManualRuleCompileError> {
         let policy = match self.target.as_str() {
             "DIRECT" => PolicyRef::Direct,
             "REJECT" => PolicyRef::Reject,
+            LEGACY_GENERATED_PROXY_GROUP_NAME => legacy_proxy_target
+                .cloned()
+                .unwrap_or_else(|| PolicyRef::Group(self.target.clone())),
             _ => PolicyRef::Group(self.target.clone()),
         };
         if self.conditions.len() > 1 {
@@ -451,9 +458,23 @@ pub(crate) fn prepend_manual_rules(
             return Err(ManualRuleCompileError::UnsupportedType(condition.kind));
         }
     }
+    let has_user_named_proxy = profile
+        .groups
+        .iter()
+        .any(|group| group.name.as_str() == LEGACY_GENERATED_PROXY_GROUP_NAME);
+    let legacy_proxy_target = (!has_user_named_proxy)
+        .then(|| {
+            profile
+                .groups
+                .iter()
+                .find(|group| group.name.as_str() != manis_profile::MANIS_GLOBAL_GROUP_NAME)
+                .or_else(|| profile.groups.first())
+                .map(|group| PolicyRef::Group(group.name.clone()))
+        })
+        .flatten();
     let compiled = rules
         .iter()
-        .map(ManualRule::to_profile_rule)
+        .map(|rule| rule.to_profile_rule(legacy_proxy_target.as_ref()))
         .collect::<Result<Vec<_>, _>>()?;
     profile.rules.splice(0..0, compiled);
     Ok(())
@@ -746,8 +767,10 @@ mod tests {
         prepend_manual_rules(&mut profile, &rules, manis_core::KernelKind::Mihomo)
             .expect("supported rules");
         let yaml = manis_profile::render_mihomo_yaml(&profile).expect("rendered profile");
-        assert!(yaml.find("DOMAIN,example.com,DIRECT") < yaml.find("IP-ASN,13335,Proxy"));
-        assert!(yaml.find("IP-ASN,13335,Proxy") < yaml.find("GEOIP,CN,DIRECT"));
+        assert!(
+            yaml.find("DOMAIN,example.com,DIRECT") < yaml.find("IP-ASN,13335,__MANIS_GLOBAL__")
+        );
+        assert!(yaml.find("IP-ASN,13335,__MANIS_GLOBAL__") < yaml.find("GEOIP,CN,DIRECT"));
     }
 
     #[test]

@@ -64,6 +64,7 @@ const LEGACY_MANIS_STORED_SUBSCRIPTION_VERSION: &str = "manis-subscription-sourc
 const LEGACY_RELAY_STORED_SUBSCRIPTION_VERSION: &str = "relay-subscription-source-v1";
 const MAX_SUBSCRIPTION_DOCUMENT_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_SUBSCRIPTION_PROXY_DNS_SERVERS: usize = 8;
+const LEGACY_GENERATED_PROXY_GROUP_NAME: &str = "Proxy";
 const SUBSCRIPTION_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(15);
 const SUBSCRIPTION_MAX_REDIRECTS: u32 = 5;
 const SAVED_VLESS_PREFIX: &str = "saved-";
@@ -2386,9 +2387,24 @@ fn apply_qx_rule_sources(
     profile: &mut Profile,
     sources: &[StoredQxRuleSource],
 ) -> Result<(), LoadError> {
+    let has_user_named_proxy = profile
+        .groups
+        .iter()
+        .any(|group| group.name.as_str() == LEGACY_GENERATED_PROXY_GROUP_NAME);
+    let legacy_proxy_target = (!has_user_named_proxy)
+        .then(|| {
+            profile
+                .groups
+                .iter()
+                .find(|group| group.name.as_str() != MANIS_GLOBAL_GROUP_NAME)
+                .or_else(|| profile.groups.first())
+                .map(|group| PolicyRef::Group(group.name.clone()))
+        })
+        .flatten();
     let mut imported_rules = Vec::new();
     for source in sources {
-        let target_policy = qx_rule_target_policy(&source.target_policy);
+        let target_policy =
+            qx_rule_target_policy(&source.target_policy, legacy_proxy_target.as_ref());
         let parsed = QxRuleList::parse(&source.content);
         if parsed.rules.is_empty() {
             return Err(LoadError::Runtime(
@@ -2414,10 +2430,16 @@ fn apply_qx_rule_sources(
         .map_err(|error| LoadError::Runtime(error.to_string()))
 }
 
-fn qx_rule_target_policy(target_policy: &Name) -> PolicyRef {
+fn qx_rule_target_policy(
+    target_policy: &Name,
+    legacy_proxy_target: Option<&PolicyRef>,
+) -> PolicyRef {
     match target_policy.as_str() {
         "DIRECT" => PolicyRef::Direct,
         "REJECT" => PolicyRef::Reject,
+        LEGACY_GENERATED_PROXY_GROUP_NAME => legacy_proxy_target
+            .cloned()
+            .unwrap_or_else(|| PolicyRef::Group(target_policy.clone())),
         _ => PolicyRef::Group(target_policy.clone()),
     }
 }
@@ -6012,13 +6034,56 @@ IP-CIDR,192.0.2.0/24,DIRECT
         let yaml = manis_profile::render_mihomo_yaml(&profile)?;
 
         assert!(
-            yaml.find("- \"DOMAIN-KEYWORD,google,Proxy\"")
+            yaml.find("- \"DOMAIN-KEYWORD,google,__MANIS_GLOBAL__\"")
                 < yaml.find("- \"GEOIP,CN,DIRECT,no-resolve\"")
         );
         assert!(
-            yaml.find("- \"DOMAIN-SUFFIX,githubusercontent.com,Proxy\"")
-                < yaml.find("- \"MATCH,Proxy\"")
+            yaml.find("- \"DOMAIN-SUFFIX,githubusercontent.com,__MANIS_GLOBAL__\"")
+                < yaml.find("- \"MATCH,__MANIS_GLOBAL__\"")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn legacy_proxy_rule_targets_resolve_to_the_first_user_policy_group()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let source = super::StoredQxRuleSource {
+            id: "qx-rule-fixture-legacy-target".to_owned(),
+            source: manis_profile::SecretUrl::parse_https(
+                "https://rules.example.invalid/legacy.list",
+            )?,
+            target_policy: manis_profile::Name::parse("Proxy")?,
+            content: "DOMAIN-SUFFIX,google.com,PROXY\n".to_owned(),
+            rule_count: 1,
+            diagnostic_count: 0,
+            refresh_interval: super::RemoteSourceRefreshInterval::Manual,
+            last_successful_update_unix_secs: 0,
+        };
+        let group = manis_profile::UserPolicyGroup {
+            name: manis_profile::Name::parse("香港")?,
+            icon: None,
+            kind: manis_profile::UserPolicyGroupKind::UrlTest {
+                tolerance: 50,
+                interval_secs: 300,
+            },
+            provider_indexes: vec![0],
+            direct_proxies: Vec::new(),
+            filter: None,
+        };
+        let mut profile = manis_profile::Profile::qx_sources_with_groups(
+            vec![manis_profile::SecretUrl::parse_https(
+                "https://subscription.example.invalid/client",
+            )?],
+            Vec::new(),
+            vec![group],
+            17_890,
+        )?;
+
+        super::apply_qx_rule_sources(&mut profile, &[source])?;
+        let yaml = manis_profile::render_mihomo_yaml(&profile)?;
+
+        assert!(yaml.contains("- \"DOMAIN-SUFFIX,google.com,香港\""));
+        assert!(!yaml.contains("name: \"Proxy\""));
         Ok(())
     }
 

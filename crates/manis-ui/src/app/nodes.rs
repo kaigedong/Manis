@@ -1667,11 +1667,14 @@ impl ManisApp {
             cx.notify();
             return;
         }
-        if matches!(name.as_str(), "Auto" | "Proxy") {
+        if matches!(
+            name.as_str(),
+            manis_profile::MANIS_GLOBAL_GROUP_NAME | "GLOBAL" | "DIRECT" | "REJECT"
+        ) {
             language
                 .text(
-                    "\"Auto\" and \"Proxy\" are Manis-reserved policy group names",
-                    "“Auto”和“Proxy”是 Manis 保留的策略组名称",
+                    "This name is reserved by the proxy kernel",
+                    "该名称由代理内核保留",
                 )
                 .clone_into(&mut self.status);
             cx.notify();
