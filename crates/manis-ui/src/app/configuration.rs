@@ -8,13 +8,13 @@ use gpui_component::{
     button::{Button, ButtonVariant, ButtonVariants},
     dialog::Dialog,
 };
-use manis_core::{KernelKind, WindowSizeClass};
+use manis_core::{KernelKind, ProxyMode, WindowSizeClass};
 use manis_profile::{QxRuleKind, SecretUrl};
 
 use super::{
     ImportQxRuleError, ImportQxRuleSuccess, ImportedSubscriptionState, ManisApp, ManualRulePopover,
-    QxRuleImportFeedback, QxRuleList, QxRuleSourceRefreshState, SourceRuntimeApply,
-    SubscriptionFeedback,
+    MihomoCoreUpdateState, QxRuleImportFeedback, QxRuleList, QxRuleSourceRefreshState,
+    SourceRuntimeApply, SubscriptionFeedback,
 };
 use crate::{
     diagnostics::{LogLevel, UiEvent, begin_operation, record_event, record_operation, trace_ui},
@@ -529,6 +529,20 @@ impl ManisApp {
             && sing_box_has_sources
             && !self.kernel_switch_state.is_busy()
             && active != KernelKind::SingBox;
+        let core_updating = self.mihomo_core_update_state.is_busy();
+        let core_update_enabled = !core_updating && self.proxy_mode == ProxyMode::Off;
+        let core_version = match &self.mihomo_core_update_state {
+            MihomoCoreUpdateState::Ready(version) if version.is_empty() => {
+                language.text("Installed", "已安装")
+            }
+            MihomoCoreUpdateState::Ready(version) => version.as_str(),
+            MihomoCoreUpdateState::Missing => language.text("Not installed", "尚未安装"),
+            MihomoCoreUpdateState::Updating => language.text("Updating…", "正在更新…"),
+        };
+        let core_missing = matches!(
+            self.mihomo_core_update_state,
+            MihomoCoreUpdateState::Missing
+        );
 
         div()
             .id("configuration-kernel")
@@ -592,6 +606,48 @@ impl ManisApp {
                 theme,
                 cx,
             ))
+            .child(
+                div()
+                    .mt_2()
+                    .ml_3()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_3()
+                    .child(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(theme.text_secondary)
+                            .child(if language == Language::English {
+                                format!("Manis-managed stable core · {core_version}")
+                            } else {
+                                format!("Manis 托管稳定版内核 · {core_version}")
+                            }),
+                    )
+                    .child(
+                        Button::new("mihomo-core-update")
+                            .accessibility_label(language.text(
+                                "Download or update the Manis-managed Mihomo core",
+                                "下载或更新 Manis 托管的 Mihomo 内核",
+                            ))
+                            .label(if core_updating {
+                                language.text("Updating…", "更新中…")
+                            } else if core_missing {
+                                language.text("Download stable", "下载稳定版")
+                            } else {
+                                language.text("Check for update", "检查更新")
+                            })
+                            .icon(IconName::Redo2)
+                            .loading(core_updating)
+                            .disabled(!core_update_enabled)
+                            .tab_stop(core_update_enabled)
+                            .with_variant(ButtonVariant::Text)
+                            .when(core_update_enabled, gpui::Styled::cursor_pointer)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.update_mihomo_core(cx);
+                            })),
+                    ),
+            )
             .child(Self::kernel_option_row(
                 KernelKind::SingBox,
                 sing_box_reason,

@@ -55,7 +55,11 @@ pub fn to_policy_catalog(snapshot: &MihomoSnapshot) -> Result<PolicyCatalog, Emp
 
     let groups = runtime_groups
         .into_iter()
-        .filter(|group| group.hidden != Some(true) && group.name != MANIS_GLOBAL_GROUP_NAME)
+        .filter(|group| {
+            group.hidden != Some(true)
+                && group.name != "GLOBAL"
+                && group.name != MANIS_GLOBAL_GROUP_NAME
+        })
         .map(|group| {
             let nodes = group
                 .nodes

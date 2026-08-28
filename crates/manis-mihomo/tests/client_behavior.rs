@@ -682,7 +682,12 @@ fn maps_snapshot_to_owned_policy_catalog() -> Result<(), Box<dyn std::error::Err
     let catalog = to_policy_catalog(&snapshot)?;
     let groups: Vec<_> = catalog.iter().collect();
 
-    assert_eq!(groups.len(), 3);
+    assert_eq!(groups.len(), 2);
+    assert!(
+        groups
+            .iter()
+            .all(|group| group.name != "GLOBAL" && group.name != "__MANIS_GLOBAL__")
+    );
     assert_eq!(groups[0].name, "Proxy");
     assert_eq!(groups[0].kind, PolicyGroupKind::Selector);
     assert_eq!(groups[0].target, "Japan 01");

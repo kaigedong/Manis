@@ -9,6 +9,15 @@ private let plistName = "dev.manis.app.helper.plist"
 private let parentRequirementKey = "ManisParentCodeSigningRequirement"
 private let insecureLocalKey = "ManisAllowInsecureLocalHelper"
 private let localInstallerName = "manis-local-helper-install"
+private let maximumCoreBytes: UInt64 = 128 * 1024 * 1024
+private let maximumReleaseMetadataBytes = 1024 * 1024
+private let maximumReleaseAssetBytes = 64 * 1024 * 1024
+private let latestMihomoRelease = URL(
+    string: "https://api.github.com/repos/MetaCubeX/mihomo/releases/latest"
+)!
+private let installedMihomo = URL(
+    fileURLWithPath: "/Library/Application Support/Manis/bin/mihomo"
+)
 
 @objc(ManisPrivilegedHelperProtocol)
 protocol ManisPrivilegedHelperProtocol {
@@ -20,6 +29,11 @@ protocol ManisPrivilegedHelperProtocol {
         withReply reply: @escaping (String, Int32) -> Void
     )
     func stop(withReply reply: @escaping (String, Int32) -> Void)
+    func stageCore(
+        contents: Data,
+        sha256: String,
+        withReply reply: @escaping (String, Int32) -> Void
+    )
 }
 
 private enum CliError: Error, CustomStringConvertible {
@@ -36,6 +50,7 @@ private enum CliError: Error, CustomStringConvertible {
                   manis-helperctl register
                   manis-helperctl reinstall
                   manis-helperctl status
+                  manis-helperctl stage-core
                   manis-helperctl start --data-dir PATH --config PATH --controller PATH
                   manis-helperctl stop
                 """
@@ -62,6 +77,7 @@ private enum Command {
     case register
     case reinstall
     case status
+    case stageCore
     case start(dataDir: String, config: String, controller: String)
     case stop
 }
@@ -80,6 +96,9 @@ private func parseCommand(_ arguments: [String]) throws -> Command {
     case "status":
         guard arguments.count == 1 else { throw CliError.usage }
         return .status
+    case "stage-core":
+        guard arguments.count == 1 else { throw CliError.usage }
+        return .stageCore
     case "stop":
         guard arguments.count == 1 else { throw CliError.usage }
         return .stop
@@ -155,6 +174,191 @@ private func sha256(_ url: URL) throws -> String {
     var hasher = SHA256()
     while let data = try handle.read(upToCount: 1024 * 1024), !data.isEmpty {
         hasher.update(data: data)
+    }
+    return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+}
+
+private func managedCore() throws -> (Data, String) {
+    let core = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library")
+        .appendingPathComponent("Application Support")
+        .appendingPathComponent("Manis")
+        .appendingPathComponent("core")
+        .appendingPathComponent("mihomo")
+        .standardizedFileURL
+    var metadata = stat()
+    guard lstat(core.path, &metadata) == 0,
+        metadata.st_mode & S_IFMT == S_IFREG,
+        metadata.st_uid == getuid(),
+        metadata.st_mode & 0o022 == 0,
+        metadata.st_size > 0,
+        UInt64(metadata.st_size) <= maximumCoreBytes,
+        FileManager.default.isExecutableFile(atPath: core.path)
+    else {
+        throw CliError.helper("Manis-managed Mihomo is unavailable or unsafe")
+    }
+    let contents = try Data(contentsOf: core, options: [.mappedIfSafe])
+    guard contents.count == metadata.st_size else {
+        throw CliError.helper("Manis-managed Mihomo changed while it was read")
+    }
+    let digest = SHA256.hash(data: contents)
+        .map { String(format: "%02x", $0) }
+        .joined()
+    guard try coreDigestIsTrusted(digest) else {
+        throw CliError.helper(
+            "Manis-managed Mihomo does not match the sealed seed, installed TUN core, or official latest release"
+        )
+    }
+    return (contents, digest)
+}
+
+private func coreDigestIsTrusted(_ digest: String) throws -> Bool {
+    let bundled = Bundle.main.bundleURL
+        .appendingPathComponent("Contents")
+        .appendingPathComponent("Resources")
+        .appendingPathComponent("mihomo")
+        .appendingPathComponent("mihomo")
+        .standardizedFileURL
+    if FileManager.default.isExecutableFile(atPath: bundled.path), try sha256(bundled) == digest {
+        return true
+    }
+    var installedMetadata = stat()
+    if lstat(installedMihomo.path, &installedMetadata) == 0,
+        installedMetadata.st_mode & S_IFMT == S_IFREG,
+        installedMetadata.st_uid == 0,
+        installedMetadata.st_mode & 0o022 == 0,
+        try sha256(installedMihomo) == digest
+    {
+        return true
+    }
+    return try latestStableReleaseDigest() == digest
+}
+
+private func latestStableReleaseDigest() throws -> String {
+    let data = try downloadHTTPS(latestMihomoRelease, maximumBytes: maximumReleaseMetadataBytes)
+    guard
+        let release = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+        release["prerelease"] as? Bool == false,
+        let tag = release["tag_name"] as? String,
+        !tag.isEmpty,
+        let assets = release["assets"] as? [[String: Any]]
+    else {
+        throw CliError.helper("could not verify the official latest Mihomo release")
+    }
+    let expectedNames: [String]
+    #if arch(arm64)
+        expectedNames = [
+            "mihomo-darwin-arm64-go122-\(tag).gz",
+            "mihomo-darwin-arm64-\(tag).gz",
+        ]
+    #elseif arch(x86_64)
+        expectedNames = [
+            "mihomo-darwin-amd64-v2-go122-\(tag).gz",
+            "mihomo-darwin-amd64-v2-\(tag).gz",
+        ]
+    #else
+        throw CliError.helper("unsupported macOS architecture for Mihomo")
+    #endif
+    for name in expectedNames {
+        guard let asset = assets.first(where: { $0["name"] as? String == name }),
+            let value = asset["digest"] as? String,
+            value.hasPrefix("sha256:"),
+            let downloadValue = asset["browser_download_url"] as? String,
+            let downloadURL = URL(string: downloadValue),
+            downloadURL.scheme == "https"
+        else {
+            continue
+        }
+        let packageDigest = String(value.dropFirst("sha256:".count)).lowercased()
+        guard packageDigest.count == 64, packageDigest.allSatisfy(\.isHexDigit) else {
+            continue
+        }
+        let archive = try downloadHTTPS(downloadURL, maximumBytes: maximumReleaseAssetBytes)
+        let actualPackageDigest = SHA256.hash(data: archive)
+            .map { String(format: "%02x", $0) }
+            .joined()
+        guard actualPackageDigest == packageDigest else {
+            throw CliError.helper("official Mihomo release asset digest does not match")
+        }
+        return try unpackedGzipSha256(archive)
+    }
+    throw CliError.helper("official Mihomo release has no trusted digest for this Mac")
+}
+
+private func downloadHTTPS(_ url: URL, maximumBytes: Int) throws -> Data {
+    guard url.scheme == "https" else {
+        throw CliError.helper("trusted Mihomo release URL must use HTTPS")
+    }
+    let process = Process()
+    let output = Pipe()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
+    process.arguments = [
+        "--fail",
+        "--silent",
+        "--show-error",
+        "--location",
+        "--proto", "=https",
+        "--proto-redir", "=https",
+        "--max-redirs", "5",
+        "--connect-timeout", "15",
+        "--max-time", "120",
+        "--max-filesize", String(maximumBytes),
+        "--header", "Accept: application/vnd.github+json",
+        "--user-agent", "Manis-mihomo-helper",
+        url.absoluteString,
+    ]
+    process.environment = [:]
+    process.standardInput = FileHandle.nullDevice
+    process.standardOutput = output
+    process.standardError = FileHandle.nullDevice
+    try process.run()
+    var data = Data()
+    var exceededLimit = false
+    while let chunk = try output.fileHandleForReading.read(upToCount: 1024 * 1024), !chunk.isEmpty {
+        if data.count > maximumBytes - chunk.count {
+            exceededLimit = true
+            process.terminate()
+        } else if !exceededLimit {
+            data.append(chunk)
+        }
+    }
+    process.waitUntilExit()
+    guard process.terminationStatus == 0, !data.isEmpty, !exceededLimit else {
+        throw CliError.helper("could not download trusted Mihomo release data")
+    }
+    return data
+}
+
+private func unpackedGzipSha256(_ archive: Data) throws -> String {
+    let process = Process()
+    let input = Pipe()
+    let output = Pipe()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/gzip")
+    process.arguments = ["-dc"]
+    process.environment = [:]
+    process.standardInput = input
+    process.standardOutput = output
+    process.standardError = FileHandle.nullDevice
+    try process.run()
+    DispatchQueue.global(qos: .utility).async {
+        try? input.fileHandleForWriting.write(contentsOf: archive)
+        try? input.fileHandleForWriting.close()
+    }
+    var hasher = SHA256()
+    var count = 0
+    var exceededLimit = false
+    while let chunk = try output.fileHandleForReading.read(upToCount: 1024 * 1024), !chunk.isEmpty {
+        count += chunk.count
+        if count > maximumCoreBytes {
+            exceededLimit = true
+            process.terminate()
+        } else if !exceededLimit {
+            hasher.update(data: chunk)
+        }
+    }
+    process.waitUntilExit()
+    guard process.terminationStatus == 0, count > 0, !exceededLimit else {
+        throw CliError.helper("official Mihomo release archive is invalid")
     }
     return hasher.finalize().map { String(format: "%02x", $0) }.joined()
 }
@@ -328,6 +532,11 @@ do {
         try reinstallService()
     case .status:
         try callHelper(timeout: .seconds(2)) { helper, reply in helper.status(withReply: reply) }
+    case .stageCore:
+        let (contents, digest) = try managedCore()
+        try callHelper(timeout: .seconds(30)) { helper, reply in
+            helper.stageCore(contents: contents, sha256: digest, withReply: reply)
+        }
     case .stop:
         try callHelper { helper, reply in helper.stop(withReply: reply) }
     case .start(let dataDir, let config, let controller):

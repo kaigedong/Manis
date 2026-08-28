@@ -224,12 +224,6 @@ impl ManisApp {
 
     fn source_runtime_apply_suffix(apply: &SourceRuntimeApply, language: Language) -> String {
         match apply {
-            SourceRuntimeApply::Applied(mihomo::GeneratedProfileApply::NotManaged) => language
-                .text(
-                    " · external/existing config is active, so config was not rewritten",
-                    " · 当前为外部/已有配置，未改写其配置",
-                )
-                .to_owned(),
             SourceRuntimeApply::Applied(mihomo::GeneratedProfileApply::Updated) => language
                 .text(
                     " · written to Manis-managed config",

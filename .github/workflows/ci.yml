@@ -30,6 +30,8 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Check all targets
         run: cargo check --workspace --all-targets --locked
+      - name: Check snapshot fixture harness
+        run: cargo check -p manis-ui --example snapshot --features snapshot-fixtures --locked
       - name: Run tests
         # Keep successful runs readable while preserving libtest's failure details.
         run: cargo test --workspace --all-targets --locked --quiet

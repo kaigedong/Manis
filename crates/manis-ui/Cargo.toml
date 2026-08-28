@@ -10,6 +10,13 @@ readme.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[features]
+snapshot-fixtures = []
+
+[[example]]
+name = "snapshot"
+required-features = ["snapshot-fixtures"]
+
 [dependencies]
 gpui = { git = "https://github.com/zed-industries/zed", package = "gpui", default-features = false }
 gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "aa7def675aa17b31ca7b79542c8e7a779ed3e56b" }
@@ -20,8 +27,13 @@ manis-mihomo = { path = "../manis-mihomo" }
 manis-profile = { path = "../manis-profile" }
 # Already in the dependency graph via gpui; declaring it here adds no build cost.
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+flate2 = "1.1.9"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+sha2 = "0.10.9"
 tray-icon = "=0.24.2"
 ureq = { version = "=3.4.0", default-features = false, features = ["rustls"] }
+zip = { version = "3.0.0", default-features = false, features = ["deflate"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 gpui_platform = { git = "https://github.com/zed-industries/zed", package = "gpui_platform", features = ["font-kit"] }

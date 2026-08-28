@@ -11,7 +11,7 @@ use manis_engine::{CommandSpec, ManagedChild, ProcessExit, ProcessSpawner, StdPr
 use crate::diagnostics::{LogLevel, record_event};
 
 const HELPER_CONTROL_NAME: &str = "manis-helperctl";
-const HELPER_PROTOCOL_VERSION: &str = "v5";
+const HELPER_PROTOCOL_VERSION: &str = "v6";
 const HELPER_REGISTRATION_ATTEMPTS: usize = 2;
 const LOCAL_INSTALLER_FAILURE_EXIT: i32 = 2;
 const HELPER_READY_ATTEMPTS: usize = 6;
@@ -64,6 +64,7 @@ impl MacosPrivilegedProcessSpawner {
         let control = helper_control_path()?;
         let status = run_control(&control, [OsStr::new("status")])?;
         if status.status.success() && is_current_status(&status.stdout) {
+            stage_managed_core(&control)?;
             record_event(
                 LogLevel::Info,
                 "helper.prepare.succeeded",
@@ -104,6 +105,7 @@ impl MacosPrivilegedProcessSpawner {
 
             match wait_for_current_helper(&control) {
                 Ok(status) => {
+                    stage_managed_core(&control)?;
                     record_event(
                         LogLevel::Info,
                         "helper.prepare.reinstall_succeeded",
@@ -118,6 +120,24 @@ impl MacosPrivilegedProcessSpawner {
             }
         }
         Err(last_error)
+    }
+
+    /// Synchronizes the user-owned, digest-verified core into the fixed root-owned TUN location.
+    ///
+    /// An unavailable or outdated helper is not an update failure: the next TUN enable action will
+    /// register the current helper and stage the same Manis-managed core before it starts.
+    pub(crate) fn sync_managed_core_if_available() -> io::Result<bool> {
+        let control = match helper_control_path() {
+            Ok(control) => control,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(error),
+        };
+        let status = run_control(&control, [OsStr::new("status")])?;
+        if !status.status.success() || !is_current_status(&status.stdout) {
+            return Ok(false);
+        }
+        stage_managed_core(&control)?;
+        Ok(true)
     }
 
     /// Stops an unprivileged Manis core left behind by an earlier UI process.
@@ -497,6 +517,22 @@ fn run_control<'a>(
         .output()
 }
 
+fn stage_managed_core(control: &Path) -> io::Result<()> {
+    let output = run_control(control, [OsStr::new("stage-core")])?;
+    if !output.status.success() {
+        return Err(control_error(
+            "stage the Manis-managed Mihomo core",
+            &output,
+        ));
+    }
+    record_event(
+        LogLevel::Info,
+        "helper.core.staged",
+        String::from_utf8_lossy(&output.stdout).trim(),
+    );
+    Ok(())
+}
+
 fn parse_pid(bytes: &[u8], prefix: &str) -> io::Result<u32> {
     let output = String::from_utf8_lossy(bytes);
     let mut fields = output.split_whitespace();
@@ -639,14 +675,15 @@ mod tests {
         assert!(!is_current_status(b"stopped v2\n"));
         assert!(!is_current_status(b"stopped v3 not-started\n"));
         assert!(!is_current_status(b"stopped v4 not-started\n"));
-        assert!(is_current_status(b"stopped v5 not-started\n"));
-        assert!(is_current_status(b"running 42 v5\n"));
+        assert!(!is_current_status(b"stopped v5 not-started\n"));
+        assert!(is_current_status(b"stopped v6 not-started\n"));
+        assert!(is_current_status(b"running 42 v6\n"));
         assert_eq!(
-            parse_helper_status(b"running 42 v5\n").unwrap(),
+            parse_helper_status(b"running 42 v6\n").unwrap(),
             HelperStatus::Running { pid: 42 }
         );
         assert_eq!(
-            parse_helper_status(b"stopped v5 unexpected-signal-9\n").unwrap(),
+            parse_helper_status(b"stopped v6 unexpected-signal-9\n").unwrap(),
             HelperStatus::Stopped {
                 reason: "unexpected-signal-9".to_owned()
             }
@@ -706,13 +743,13 @@ mod tests {
     fn recognizes_only_the_exact_manis_ordinary_process() {
         let root = PathBuf::from("/Users/example/Library/Application Support/Manis/mihomo");
         let launch = ManagedEngineConfig::new(
-            PathBuf::from("/Applications/Clash Verge.app/Contents/MacOS/verge-mihomo"),
+            PathBuf::from("/Applications/Manis.app/Contents/Resources/mihomo/mihomo"),
             root.join("manis-generated.yaml"),
             root.clone(),
             ControllerEndpoint::UnixSocket(root.join("controller.sock")),
         )
         .launch_command();
-        let manis = "/Applications/Clash Verge.app/Contents/MacOS/verge-mihomo -d /Users/example/Library/Application Support/Manis/mihomo -f /Users/example/Library/Application Support/Manis/mihomo/manis-generated.yaml -ext-ctl-unix /Users/example/Library/Application Support/Manis/mihomo/controller.sock";
+        let manis = "/Applications/Manis.app/Contents/Resources/mihomo/mihomo -d /Users/example/Library/Application Support/Manis/mihomo -f /Users/example/Library/Application Support/Manis/mihomo/manis-generated.yaml -ext-ctl-unix /Users/example/Library/Application Support/Manis/mihomo/controller.sock";
         let clash_verge = "/Applications/Clash Verge.app/Contents/MacOS/verge-mihomo -d /Users/example/Library/Application Support/io.github.clash-verge-rev.clash-verge-rev -f /Users/example/Library/Application Support/io.github.clash-verge-rev.clash-verge-rev/clash-verge.yaml -ext-ctl-unix /tmp/verge/verge-mihomo.sock";
 
         assert!(is_expected_ordinary_process(manis, &launch));

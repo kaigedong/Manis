@@ -24,7 +24,7 @@ use manis_mihomo::{Connection, ObservedRouteEvidence, RuntimeConfig};
 use manis_profile::{QxRuleList, SecretUrl};
 
 use crate::{
-    assets, brand,
+    assets, brand, core_update,
     diagnostics::{
         self, LogLevel, UiEvent, begin_operation, record_event, record_operation, trace_ui,
     },
@@ -99,12 +99,6 @@ impl SourceRuntimeApply {
 
     fn status_suffix(&self, language: Language) -> String {
         match self {
-            Self::Applied(GeneratedProfileApply::NotManaged) => language
-                .text(
-                    " · external/existing configuration left unchanged",
-                    " · 当前为外部/已有配置，未改写其配置",
-                )
-                .to_owned(),
             Self::Applied(GeneratedProfileApply::Updated) => language
                 .text(
                     " · written to the Manis-managed configuration",
@@ -132,6 +126,64 @@ impl SourceRuntimeApply {
                 )
             ),
         }
+    }
+}
+
+enum MihomoCoreUpdateOutcome {
+    Installed {
+        version: String,
+        runtime: KernelRuntime,
+        snapshot: Option<mihomo::RuntimeSnapshot>,
+    },
+    Failed {
+        message: String,
+        recovered: Option<mihomo::RuntimeSnapshot>,
+    },
+}
+
+fn perform_mihomo_core_update(
+    previous: &KernelRuntime,
+    store_dir: &std::path::Path,
+    language: Language,
+    reconnect: bool,
+) -> MihomoCoreUpdateOutcome {
+    if let Err(message) = previous.stop_managed() {
+        return MihomoCoreUpdateOutcome::Failed {
+            message,
+            recovered: None,
+        };
+    }
+
+    let mut prepared = None;
+    let install = core_update::install_latest_core_update(|| {
+        let runtime =
+            KernelRuntime::prepare_with_language(KernelKind::Mihomo, Some(store_dir), language)
+                .map_err(|_message| core_update::CoreUpdateError::PublishFailed)?;
+        let snapshot = reconnect
+            .then(|| runtime.connect())
+            .transpose()
+            .map_err(|_error| core_update::CoreUpdateError::PublishFailed)?;
+        #[cfg(target_os = "macos")]
+        crate::macos_privileged::MacosPrivilegedProcessSpawner::sync_managed_core_if_available()
+            .map_err(|_error| core_update::CoreUpdateError::PublishFailed)?;
+        prepared = Some((runtime, snapshot));
+        Ok(())
+    });
+
+    match (install, prepared) {
+        (Ok(installed), Some((runtime, snapshot))) => MihomoCoreUpdateOutcome::Installed {
+            version: installed.version,
+            runtime,
+            snapshot,
+        },
+        (Ok(_installed), None) => MihomoCoreUpdateOutcome::Failed {
+            message: core_update::CoreUpdateError::PublishFailed.to_string(),
+            recovered: reconnect.then(|| previous.connect()).and_then(Result::ok),
+        },
+        (Err(error), _) => MihomoCoreUpdateOutcome::Failed {
+            message: error.to_string(),
+            recovered: reconnect.then(|| previous.connect()).and_then(Result::ok),
+        },
     }
 }
 
@@ -260,6 +312,20 @@ enum KernelSwitchState {
     #[default]
     Idle,
     Preparing,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+enum MihomoCoreUpdateState {
+    #[default]
+    Missing,
+    Ready(String),
+    Updating,
+}
+
+impl MihomoCoreUpdateState {
+    const fn is_busy(&self) -> bool {
+        matches!(self, Self::Updating)
+    }
 }
 
 impl KernelSwitchState {
@@ -578,6 +644,7 @@ pub struct ManisApp {
     catalog: Option<PolicyCatalog>,
     runtime: KernelRuntime,
     kernel_switch_state: KernelSwitchState,
+    mihomo_core_update_state: MihomoCoreUpdateState,
     controller: ControllerState,
     observed_routes: Vec<ObservedRouteEvidence>,
     source_providers: Vec<LoadedProvider>,
@@ -738,6 +805,19 @@ impl ManisApp {
         let store = mihomo::imported_subscription_store_dir();
         let store = store.ok();
         diagnostics::initialize(store.as_deref().and_then(std::path::Path::parent));
+        #[cfg(not(test))]
+        match core_update::install_bundled_seed_if_missing() {
+            Ok(core_update::SeedInstallOutcome::Installed(path)) => record_event(
+                LogLevel::Info,
+                "core.seed.installed",
+                format!("path={}", path.display()),
+            ),
+            Ok(
+                core_update::SeedInstallOutcome::AlreadyPresent(_)
+                | core_update::SeedInstallOutcome::MissingSeed { .. },
+            ) => {}
+            Err(error) => record_event(LogLevel::Warn, "core.seed.failed", error.to_string()),
+        }
         let language = Localizer::load(store.as_deref()).language();
         let runtime = KernelRuntime::configured(store.as_deref(), language);
         diagnostics::record_event(
@@ -748,8 +828,8 @@ impl ManisApp {
                 runtime.kind().display_name(),
                 if matches!(&*runtime, ControllerRuntime::Managed { .. }) {
                     "managed"
-                } else if matches!(&*runtime, ControllerRuntime::External { .. }) {
-                    "external"
+                } else if runtime.is_fixture() {
+                    "fixture"
                 } else {
                     "invalid"
                 },
@@ -771,30 +851,34 @@ impl ManisApp {
         let mut app = Self::new();
         app.app_lifecycle_events = Some(cx.on_app_quit(Self::shutdown_for_quit));
         app.restore_imported_subscriptions(cx);
+        if matches!(app.mihomo_core_update_state, MihomoCoreUpdateState::Missing) {
+            app.update_mihomo_core(cx);
+        }
         app
     }
 
     #[must_use]
-    pub fn with_controller(endpoint: impl Into<String>) -> Self {
+    #[cfg(any(test, feature = "snapshot-fixtures"))]
+    #[doc(hidden)]
+    pub fn with_fixture_controller(endpoint: impl Into<String>) -> Self {
         Self::with_runtime_and_store(
-            KernelRuntime::mihomo(ControllerRuntime::External {
+            KernelRuntime::mihomo(ControllerRuntime::Fixture {
                 endpoint: endpoint.into(),
             }),
             None,
         )
     }
 
-    /// Creates a deterministic app instance backed by an explicit subscription store.
-    ///
-    /// This is primarily useful for native visual tests and embedders that manage their own
-    /// application-data root.
+    /// Creates a deterministic fixture backed by an explicit subscription store.
     #[must_use]
-    pub fn with_controller_and_subscription_store(
+    #[cfg(any(test, feature = "snapshot-fixtures"))]
+    #[doc(hidden)]
+    pub fn with_fixture_controller_and_subscription_store(
         endpoint: impl Into<String>,
         subscription_store_dir: PathBuf,
     ) -> Self {
         Self::with_runtime_and_store(
-            KernelRuntime::mihomo(ControllerRuntime::External {
+            KernelRuntime::mihomo(ControllerRuntime::Fixture {
                 endpoint: endpoint.into(),
             }),
             Some(subscription_store_dir),
@@ -843,7 +927,6 @@ impl ManisApp {
                         "已将保存来源应用到 Manis 托管内核",
                     )
                     .to_owned(),
-                Ok(GeneratedProfileApply::NotManaged) => status,
                 Err(error) => format!(
                     "{}{error}",
                     language.text(
@@ -865,6 +948,19 @@ impl ManisApp {
             catalog: None,
             runtime,
             kernel_switch_state: KernelSwitchState::Idle,
+            mihomo_core_update_state: {
+                #[cfg(test)]
+                {
+                    MihomoCoreUpdateState::Missing
+                }
+                #[cfg(not(test))]
+                {
+                    core_update::managed_core_binary_path()
+                        .map_or(MihomoCoreUpdateState::Missing, |_path| {
+                            MihomoCoreUpdateState::Ready(String::new())
+                        })
+                }
+            },
             controller: ControllerState::Disconnected,
             observed_routes: Vec::new(),
             source_providers: Vec::new(),
@@ -2347,6 +2443,114 @@ impl ManisApp {
         cx.notify();
     }
 
+    fn update_mihomo_core(&mut self, cx: &mut Context<Self>) {
+        if self.mihomo_core_update_state.is_busy() {
+            return;
+        }
+        if self.proxy_mode != ProxyMode::Off {
+            self.language()
+                .text(
+                    "Turn off the active proxy mode before updating Mihomo",
+                    "请先关闭当前代理模式，再更新 Mihomo",
+                )
+                .clone_into(&mut self.status);
+            cx.notify();
+            return;
+        }
+        let Some(store_dir) = self.subscription_store_dir.clone() else {
+            self.language()
+                .text(
+                    "The Manis data directory is unavailable; Mihomo cannot be updated",
+                    "无法确定 Manis 数据目录，不能更新 Mihomo",
+                )
+                .clone_into(&mut self.status);
+            cx.notify();
+            return;
+        };
+
+        let language = self.language();
+        let reconnect = matches!(self.controller, ControllerState::Connected { .. });
+        let previous = self.runtime.clone();
+        self.mihomo_core_update_state = MihomoCoreUpdateState::Updating;
+        self.live_generation = self.live_generation.wrapping_add(1);
+        self.live_runtime = None;
+        self.controller = ControllerState::Disconnected;
+        language
+            .text(
+                "Downloading and verifying the stable Mihomo release…",
+                "正在下载并校验 Mihomo 稳定版…",
+            )
+            .clone_into(&mut self.status);
+
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let outcome = executor
+                .spawn(async move {
+                    perform_mihomo_core_update(&previous, &store_dir, language, reconnect)
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                this.apply_mihomo_core_update_outcome(outcome, cx);
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn apply_mihomo_core_update_outcome(
+        &mut self,
+        outcome: MihomoCoreUpdateOutcome,
+        cx: &mut Context<Self>,
+    ) {
+        let language = self.language();
+        match outcome {
+            MihomoCoreUpdateOutcome::Installed {
+                version,
+                runtime,
+                snapshot,
+            } => {
+                self.runtime = runtime;
+                self.mihomo_core_update_state = MihomoCoreUpdateState::Ready(version.clone());
+                self.apply_core_update_snapshot(snapshot, cx);
+                self.status = if language == Language::English {
+                    format!("Mihomo {version} installed and verified")
+                } else {
+                    format!("Mihomo {version} 已安装并校验")
+                };
+            }
+            MihomoCoreUpdateOutcome::Failed { message, recovered } => {
+                self.mihomo_core_update_state = core_update::managed_core_binary_path()
+                    .map_or(MihomoCoreUpdateState::Missing, |_path| {
+                        MihomoCoreUpdateState::Ready(String::new())
+                    });
+                self.apply_core_update_snapshot(recovered, cx);
+                self.status = format!(
+                    "{}{message}",
+                    language.text(
+                        "Mihomo update failed; the previous core was restored: ",
+                        "Mihomo 更新失败，已恢复原内核：",
+                    )
+                );
+            }
+        }
+        cx.notify();
+    }
+
+    fn apply_core_update_snapshot(
+        &mut self,
+        result: Option<mihomo::RuntimeSnapshot>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(result) = result else {
+            return;
+        };
+        let controller_endpoint = result.controller_endpoint.clone();
+        let controller_secret = result.controller_secret.clone();
+        self.apply_mihomo_snapshot(result.endpoint, result.snapshot);
+        self.start_live_runtime(&controller_endpoint, controller_secret.as_deref(), cx);
+    }
+
     fn connect_mihomo(&mut self, cx: &mut Context<Self>) {
         if matches!(self.controller, ControllerState::Connecting { .. }) {
             return;
@@ -2464,25 +2668,30 @@ impl ManisApp {
     fn apply_mihomo_snapshot(&mut self, endpoint: String, snapshot: LoadedSnapshot) {
         trace_ui(UiEvent::MihomoConnectSucceeded);
         let mut catalog = snapshot.catalog;
-        if let Some(global) = self.node_selection_preferences.global() {
-            let _ = catalog.apply_selector_target("GLOBAL", &global.node_name);
-        }
         for (group, target) in self.node_selection_preferences.iter_policy_targets() {
-            let _ = catalog.apply_selector_target(group, target);
+            if let Some(catalog) = catalog.as_mut() {
+                let _ = catalog.apply_selector_target(group, target);
+            }
         }
-        let primary = catalog.select(None);
-        let group = primary.id.clone();
-        let selected_node = primary
-            .nodes
-            .iter()
-            .find(|node| node.name == primary.target)
-            .or_else(|| primary.nodes.first())
-            .map(|node| node.id.clone());
-        let policy_group_count = catalog.iter().count();
-        self.catalog = Some(catalog);
+        let selection = catalog.as_ref().map(|catalog| {
+            let primary = catalog.select(None);
+            let selected_node = primary
+                .nodes
+                .iter()
+                .find(|node| node.name == primary.target)
+                .or_else(|| primary.nodes.first())
+                .map(|node| node.id.clone());
+            (primary.id.clone(), selected_node)
+        });
+        let policy_group_count = catalog.as_ref().map_or(0, |catalog| catalog.iter().count());
+        self.catalog = catalog;
         self.route_prediction = RouteInspectorPrediction::Idle;
-        self.workspace
-            .replace_source_selection(group, selected_node);
+        if let Some((group, selected_node)) = selection {
+            self.workspace
+                .replace_source_selection(group, selected_node);
+        } else {
+            self.workspace.clear_source_selection();
+        }
         self.source_providers = snapshot.providers;
         self.observed_routes = snapshot.observed_routes;
         self.active_connections = snapshot.connections;
@@ -2845,7 +3054,9 @@ impl ManisApp {
 
     fn fail_safe_stopped_managed_kernel(&mut self, cx: &mut Context<Self>) -> bool {
         let failure = match self.runtime.managed_health() {
-            Ok(ManagedRuntimeHealth::NotManaged | ManagedRuntimeHealth::Running) => return false,
+            #[cfg(any(test, feature = "snapshot-fixtures"))]
+            Ok(ManagedRuntimeHealth::NotManaged) => return false,
+            Ok(ManagedRuntimeHealth::Running) => return false,
             Ok(ManagedRuntimeHealth::Stopped) => self
                 .language()
                 .text(
@@ -2950,8 +3161,8 @@ impl ManisApp {
             } else {
                 ControllerReadiness::Disconnected
             },
-            if matches!(&*self.runtime, ControllerRuntime::External { .. }) {
-                TunSupport::ExternalControllerReadOnly
+            if self.runtime.is_fixture() {
+                TunSupport::FixtureReadOnly
             } else if self.runtime.capabilities().tun {
                 TunSupport::Supported
             } else {
@@ -3030,20 +3241,18 @@ impl ManisApp {
             cx.notify();
             return;
         }
-        if requested == ProxyMode::Tun
-            && matches!(&*self.runtime, ControllerRuntime::External { .. })
-        {
+        if requested == ProxyMode::Tun && self.runtime.is_fixture() {
             record_operation(
                 operation,
                 LogLevel::Error,
                 "proxy.mode.rejected",
-                "reason=external_controller_read_only",
+                "reason=fixture_read_only",
             );
             trace_ui(UiEvent::ProxyModeFailed);
             language
                 .text(
-                    "External controllers are read-only; use a Manis-managed kernel to enable TUN",
-                    "外部控制器保持只读；请使用 Manis 托管内核启用 TUN 模式",
+                    "Test fixtures cannot enable TUN",
+                    "测试快照不能启用 TUN 模式",
                 )
                 .clone_into(&mut self.status);
             cx.notify();
@@ -3227,18 +3436,20 @@ impl ManisApp {
             cx.notify();
             return;
         }
-        if matches!(&*self.runtime, ControllerRuntime::External { .. }) {
+        if self.runtime.is_fixture() {
             record_operation(
                 operation,
                 LogLevel::Error,
                 "routing.mode.rejected",
-                "reason=external_controller_read_only",
+                "reason=fixture_read_only",
             );
             trace_ui(UiEvent::RoutingModeFailed);
-            language.text(
-                "External controllers are read-only; use a Manis-managed kernel to change routing mode",
-                "外部控制器保持只读；请使用 Manis 托管内核切换路由模式",
-            ).clone_into(&mut self.status);
+            language
+                .text(
+                    "Test fixtures cannot change routing mode",
+                    "测试快照不能切换路由模式",
+                )
+                .clone_into(&mut self.status);
             cx.notify();
             return;
         }
@@ -3372,9 +3583,6 @@ impl ManisApp {
             cx.notify();
             return;
         }
-        if let Some(catalog) = self.catalog.as_mut() {
-            let _ = catalog.apply_selector_target("GLOBAL", &selected_name);
-        }
         record_operation(
             operation,
             LogLevel::Info,
@@ -3428,9 +3636,6 @@ impl ManisApp {
                             "global selector confirmed target",
                         );
                         let current = snapshot.current.as_deref().unwrap_or(&selected_name);
-                        if let Some(catalog) = this.catalog.as_mut() {
-                            let _ = catalog.apply_selector_target("GLOBAL", current);
-                        }
                         trace_ui(UiEvent::GlobalNodeSelected);
                         this.status = if language == Language::English {
                             if this.routing_mode == RoutingMode::Global {
@@ -6397,7 +6602,7 @@ pub(crate) enum ControllerReadiness {
 pub(crate) enum TunSupport {
     Supported,
     KernelUnsupported,
-    ExternalControllerReadOnly,
+    FixtureReadOnly,
 }
 
 /// The reason a proxy mode cannot be applied.
@@ -6406,7 +6611,7 @@ pub(crate) enum ProxyModeBlock {
     Busy,
     ControllerNotConnected,
     KernelHasNoTun,
-    ExternalControllerReadOnly,
+    FixtureReadOnly,
 }
 
 impl ProxyModeBlock {
@@ -6416,9 +6621,7 @@ impl ProxyModeBlock {
             Self::Busy => language.text("switching", "切换中"),
             Self::ControllerNotConnected => language.text("connect first", "需先连接"),
             Self::KernelHasNoTun => language.text("kernel has no TUN", "当前内核无 TUN"),
-            Self::ExternalControllerReadOnly => {
-                language.text("external controller is read-only", "外部控制器只读")
-            }
+            Self::FixtureReadOnly => language.text("test fixture is read-only", "测试快照只读"),
         }
     }
 }
@@ -6445,7 +6648,7 @@ const fn proxy_mode_block(
     match tun {
         TunSupport::Supported => None,
         TunSupport::KernelUnsupported => Some(ProxyModeBlock::KernelHasNoTun),
-        TunSupport::ExternalControllerReadOnly => Some(ProxyModeBlock::ExternalControllerReadOnly),
+        TunSupport::FixtureReadOnly => Some(ProxyModeBlock::FixtureReadOnly),
     }
 }
 
@@ -6668,7 +6871,10 @@ mod tests {
         proxy_mode_block,
     };
     use crate::subscription::SourceKind;
-    use crate::{localization::Language, mihomo};
+    use crate::{
+        localization::Language,
+        mihomo::{self, ControllerState},
+    };
 
     #[test]
     fn policy_detail_tabs_round_trip_through_component_indices() {
@@ -6694,7 +6900,10 @@ mod tests {
         )
         .expect("save fixture subscription");
 
-        let app = ManisApp::with_controller_and_subscription_store("http://127.0.0.1:9090", store);
+        let app = ManisApp::with_fixture_controller_and_subscription_store(
+            "http://127.0.0.1:9090",
+            store,
+        );
 
         assert_eq!(app.imported_subscriptions.len(), 1);
         assert_eq!(
@@ -6714,7 +6923,7 @@ mod tests {
 
     #[test]
     fn policy_node_source_uses_the_imported_subscription_name() {
-        let mut app = ManisApp::with_controller("http://127.0.0.1:9090");
+        let mut app = ManisApp::with_fixture_controller("http://127.0.0.1:9090");
         app.imported_subscriptions.push(ImportedSubscription {
             id: "subscription:fixture".to_owned(),
             source: manis_profile::SecretUrl::parse_subscription(
@@ -6804,7 +7013,7 @@ mod tests {
 
     #[test]
     fn disconnected_app_starts_without_mock_policy_groups() {
-        let app = ManisApp::with_controller("http://127.0.0.1:9090");
+        let app = ManisApp::with_fixture_controller("http://127.0.0.1:9090");
 
         assert!(app.catalog.is_none());
         assert_eq!(app.workspace.selected_group, None);
@@ -6842,7 +7051,7 @@ mod tests {
 
     #[test]
     fn policy_settings_only_match_a_saved_manis_group_by_exact_name() {
-        let mut app = ManisApp::with_controller("http://127.0.0.1:9090");
+        let mut app = ManisApp::with_fixture_controller("http://127.0.0.1:9090");
         app.managed_policy_groups.push(
             ManagedPolicyGroup::new("group-deadbeef", "Hong Kong")
                 .expect("valid managed policy group"),
@@ -6858,7 +7067,7 @@ mod tests {
 
     #[test]
     fn runtime_snapshot_populates_real_policy_groups() {
-        let mut app = ManisApp::with_controller("http://127.0.0.1:9090");
+        let mut app = ManisApp::with_fixture_controller("http://127.0.0.1:9090");
         let policy_id = PolicyGroupId::new("runtime-policy");
         let node_id = ProxyId::new("runtime-node");
         let catalog = PolicyCatalog::try_new(vec![PolicyGroup {
@@ -6883,7 +7092,7 @@ mod tests {
         app.apply_mihomo_snapshot(
             "http://127.0.0.1:9090".to_owned(),
             mihomo::LoadedSnapshot {
-                catalog,
+                catalog: Some(catalog),
                 providers: Vec::new(),
                 version: "fixture".to_owned(),
                 active_connections: 0,
@@ -6901,8 +7110,37 @@ mod tests {
     }
 
     #[test]
+    fn runtime_snapshot_without_user_policy_groups_still_connects_cleanly() {
+        let mut app = ManisApp::with_fixture_controller("http://127.0.0.1:9090");
+        app.workspace.replace_source_selection(
+            PolicyGroupId::new("stale-policy"),
+            Some(ProxyId::new("stale-node")),
+        );
+
+        app.apply_mihomo_snapshot(
+            "http://127.0.0.1:9090".to_owned(),
+            mihomo::LoadedSnapshot {
+                catalog: None,
+                providers: Vec::new(),
+                version: "fixture".to_owned(),
+                active_connections: 0,
+                download_total: 0,
+                upload_total: 0,
+                observed_routes: Vec::new(),
+                connections: Vec::new(),
+                runtime: manis_mihomo::RuntimeConfig::default(),
+            },
+        );
+
+        assert!(app.catalog.is_none());
+        assert_eq!(app.workspace.selected_group, None);
+        assert_eq!(app.workspace.selected_node, None);
+        assert!(matches!(app.controller, ControllerState::Connected { .. }));
+    }
+
+    #[test]
     fn saved_global_node_overrides_runtime_target_without_losing_runtime_state() {
-        let mut app = ManisApp::with_controller("http://127.0.0.1:9090");
+        let mut app = ManisApp::with_fixture_controller("http://127.0.0.1:9090");
         app.catalog = Some(
             PolicyCatalog::try_new(vec![PolicyGroup {
                 id: PolicyGroupId::new("GLOBAL"),
@@ -6955,7 +7193,10 @@ mod tests {
         mihomo::save_node_selection_preferences_in(&store, &preferences)
             .expect("save node selections");
 
-        let app = ManisApp::with_controller_and_subscription_store("http://127.0.0.1:9090", store);
+        let app = ManisApp::with_fixture_controller_and_subscription_store(
+            "http://127.0.0.1:9090",
+            store,
+        );
 
         assert_eq!(
             app.global_target_identity()
@@ -6971,7 +7212,7 @@ mod tests {
 
     #[test]
     fn manual_policy_detail_falls_back_to_the_catalog_target() {
-        let mut app = ManisApp::with_controller("http://127.0.0.1:9090");
+        let mut app = ManisApp::with_fixture_controller("http://127.0.0.1:9090");
         let policy_id = PolicyGroupId::new("manual-video");
         app.catalog = Some(
             PolicyCatalog::try_new(vec![PolicyGroup {
@@ -7049,7 +7290,10 @@ mod tests {
         )
         .expect("save QX rule fixture");
 
-        let app = ManisApp::with_controller_and_subscription_store("http://127.0.0.1:9090", store);
+        let app = ManisApp::with_fixture_controller_and_subscription_store(
+            "http://127.0.0.1:9090",
+            store,
+        );
 
         assert_eq!(app.qx_rule_sources.len(), 1);
         assert_eq!(app.qx_rule_sources[0].rule_count, 1);
@@ -7082,9 +7326,9 @@ mod tests {
                 ProxyMode::Tun,
                 None,
                 ControllerReadiness::Connected,
-                TunSupport::ExternalControllerReadOnly
+                TunSupport::FixtureReadOnly
             ),
-            Some(ProxyModeBlock::ExternalControllerReadOnly)
+            Some(ProxyModeBlock::FixtureReadOnly)
         );
         assert_eq!(
             proxy_mode_block(
@@ -7113,7 +7357,7 @@ mod tests {
                 ProxyMode::System,
                 None,
                 ControllerReadiness::Connected,
-                TunSupport::ExternalControllerReadOnly
+                TunSupport::FixtureReadOnly
             ),
             None
         );

@@ -20,16 +20,17 @@ The Apache-2.0 license of Manis source does not override the licenses of linked 
 
 ## Mihomo
 
-Manis can supervise a separately built Mihomo executable. The repository does not contain a Mihomo
-binary.
+Manis downloads and supervises an official stable Mihomo executable. The source repository does not
+commit a Mihomo binary; release packaging downloads the target asset and verifies the digest
+published by GitHub Releases.
 
 - Upstream: <https://github.com/MetaCubeX/mihomo>
 - License: GPL-3.0
 
-The macOS packaging script can copy a maintainer-supplied Mihomo executable into an app bundle.
-Anyone distributing such a bundle is responsible for including Mihomo's license, corresponding
-source offer or source location, copyright notices, and any other material required by the exact
-Mihomo build.
+Release packages include a first-launch seed and the application updater can replace the private
+managed copy. Anyone distributing such a bundle is responsible for including Mihomo's license,
+corresponding source offer or source location, copyright notices, and any other material required by
+the exact Mihomo build.
 
 ## sing-box
 

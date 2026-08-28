@@ -100,7 +100,7 @@ fn capture_managed_policy_settings(
     let wide_endpoint = endpoint.clone();
     let window = cx.open_offscreen_window(size(px(1420.0), px(900.0)), |window, cx| {
         manis_root(window, cx, |_| {
-            ManisApp::with_controller_and_subscription_store(wide_endpoint, window_store)
+            ManisApp::with_fixture_controller_and_subscription_store(wide_endpoint, window_store)
         })
     })?;
     let window: AnyWindowHandle = window.into();
@@ -140,7 +140,7 @@ fn capture_managed_policy_settings(
     let compact_store = store.clone();
     let compact_window = cx.open_offscreen_window(size(px(720.0), px(720.0)), |window, cx| {
         manis_root(window, cx, |_| {
-            ManisApp::with_controller_and_subscription_store(endpoint, compact_store)
+            ManisApp::with_fixture_controller_and_subscription_store(endpoint, compact_store)
         })
     })?;
     let compact_window: AnyWindowHandle = compact_window.into();
@@ -179,7 +179,7 @@ fn capture_automatic_policy(
 
     let (endpoint, server) = spawn_mihomo_fixture()?;
     let window = cx.open_offscreen_window(size(px(1420.0), px(900.0)), |window, cx| {
-        manis_root(window, cx, |_| ManisApp::with_controller(endpoint))
+        manis_root(window, cx, |_| ManisApp::with_fixture_controller(endpoint))
     })?;
     let window: AnyWindowHandle = window.into();
 
@@ -270,7 +270,10 @@ fn capture_remote_subscription_preview(
 
     let window = cx.open_offscreen_window(size(px(1420.0), px(900.0)), |window, cx| {
         manis_root(window, cx, |_| {
-            ManisApp::with_controller_and_subscription_store("http://127.0.0.1:9090", initial_store)
+            ManisApp::with_fixture_controller_and_subscription_store(
+                "http://127.0.0.1:9090",
+                initial_store,
+            )
         })
     })?;
     let window: AnyWindowHandle = window.into();
@@ -370,7 +373,7 @@ fn capture_restored_subscription_views(
         let window_store = store.to_owned();
         let window = cx.open_offscreen_window(size(px(width), px(height)), |window, cx| {
             manis_root(window, cx, |_| {
-                ManisApp::with_controller_and_subscription_store(
+                ManisApp::with_fixture_controller_and_subscription_store(
                     "http://127.0.0.1:9090",
                     window_store,
                 )
@@ -419,7 +422,7 @@ fn capture_configuration(
 
     let window = cx.open_offscreen_window(size(px(width), px(height)), |window, cx| {
         manis_root(window, cx, |_| {
-            ManisApp::with_controller("http://127.0.0.1:9090")
+            ManisApp::with_fixture_controller("http://127.0.0.1:9090")
         })
     })?;
     let window: AnyWindowHandle = window.into();
@@ -493,7 +496,7 @@ fn capture_localization(
     let store = fixture_root.clone();
     let window = cx.open_offscreen_window(size(px(width), px(height)), |window, cx| {
         manis_root(window, cx, |_| {
-            ManisApp::with_controller_and_subscription_store("http://127.0.0.1:9090", store)
+            ManisApp::with_fixture_controller_and_subscription_store("http://127.0.0.1:9090", store)
         })
     })?;
     let window: AnyWindowHandle = window.into();
@@ -585,7 +588,7 @@ fn capture_routing_rules(
         let window_store = store.clone();
         let window = cx.open_offscreen_window(size(px(width), px(height)), |window, cx| {
             manis_root(window, cx, |_| {
-                ManisApp::with_controller_and_subscription_store(
+                ManisApp::with_fixture_controller_and_subscription_store(
                     "http://127.0.0.1:9090",
                     window_store,
                 )
@@ -687,7 +690,7 @@ fn capture(
 
     let window = cx.open_offscreen_window(size(px(width), px(height)), |window, cx| {
         manis_root(window, cx, |_| {
-            ManisApp::with_controller("http://127.0.0.1:9090")
+            ManisApp::with_fixture_controller("http://127.0.0.1:9090")
         })
     })?;
     let window: AnyWindowHandle = window.into();
@@ -706,7 +709,7 @@ fn capture_compact_flow(
 
     let (endpoint, server) = spawn_mihomo_fixture()?;
     let window = cx.open_offscreen_window(size(px(720.0), px(720.0)), |window, cx| {
-        manis_root(window, cx, |_| ManisApp::with_controller(endpoint))
+        manis_root(window, cx, |_| ManisApp::with_fixture_controller(endpoint))
     })?;
     let window: AnyWindowHandle = window.into();
 
@@ -740,7 +743,7 @@ fn capture_medium_sheet(
 
     let (endpoint, server) = spawn_mihomo_fixture()?;
     let window = cx.open_offscreen_window(size(px(1060.0), px(800.0)), |window, cx| {
-        manis_root(window, cx, |_| ManisApp::with_controller(endpoint))
+        manis_root(window, cx, |_| ManisApp::with_fixture_controller(endpoint))
     })?;
     let window: AnyWindowHandle = window.into();
 
@@ -778,7 +781,7 @@ fn capture_connected(
 
     let (endpoint, server) = spawn_mihomo_fixture()?;
     let window = cx.open_offscreen_window(size(px(1420.0), px(900.0)), |window, cx| {
-        manis_root(window, cx, |_| ManisApp::with_controller(endpoint))
+        manis_root(window, cx, |_| ManisApp::with_fixture_controller(endpoint))
     })?;
     let window: AnyWindowHandle = window.into();
 
@@ -834,7 +837,7 @@ fn capture_route_prediction(
 
     let (endpoint, server) = spawn_mihomo_fixture()?;
     let window = cx.open_offscreen_window(size(px(1420.0), px(900.0)), |window, cx| {
-        manis_root(window, cx, |_| ManisApp::with_controller(endpoint))
+        manis_root(window, cx, |_| ManisApp::with_fixture_controller(endpoint))
     })?;
     let window: AnyWindowHandle = window.into();
 
@@ -874,7 +877,7 @@ fn capture_live_when_configured(
     validate_live_output(&output)?;
 
     let window = cx.open_offscreen_window(size(px(1420.0), px(900.0)), |window, cx| {
-        manis_root(window, cx, |_| ManisApp::with_controller(endpoint))
+        manis_root(window, cx, |_| ManisApp::with_fixture_controller(endpoint))
     })?;
     let window: AnyWindowHandle = window.into();
 

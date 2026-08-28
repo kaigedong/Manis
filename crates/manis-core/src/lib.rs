@@ -1002,6 +1002,13 @@ impl PolicyWorkspaceState {
         self.compact_navigation = CompactNavigation::GroupList;
     }
 
+    pub fn clear_source_selection(&mut self) {
+        self.selections.clear();
+        self.selected_group = None;
+        self.selected_node = None;
+        self.compact_navigation = CompactNavigation::GroupList;
+    }
+
     #[must_use]
     pub fn predict(&self, domain: &str) -> RouteEvidence {
         if domain == "process-dependent.example" {
