@@ -99,12 +99,6 @@ impl SourceRuntimeApply {
 
     fn status_suffix(&self, language: Language) -> String {
         match self {
-            Self::Applied(GeneratedProfileApply::NotManaged) => language
-                .text(
-                    " · external/existing configuration left unchanged",
-                    " · 当前为外部/已有配置，未改写其配置",
-                )
-                .to_owned(),
             Self::Applied(GeneratedProfileApply::Updated) => language
                 .text(
                     " · written to the Manis-managed configuration",
@@ -748,8 +742,8 @@ impl ManisApp {
                 runtime.kind().display_name(),
                 if matches!(&*runtime, ControllerRuntime::Managed { .. }) {
                     "managed"
-                } else if matches!(&*runtime, ControllerRuntime::External { .. }) {
-                    "external"
+                } else if runtime.is_fixture() {
+                    "fixture"
                 } else {
                     "invalid"
                 },
@@ -775,26 +769,27 @@ impl ManisApp {
     }
 
     #[must_use]
-    pub fn with_controller(endpoint: impl Into<String>) -> Self {
+    #[cfg(any(test, feature = "snapshot-fixtures"))]
+    #[doc(hidden)]
+    pub fn with_fixture_controller(endpoint: impl Into<String>) -> Self {
         Self::with_runtime_and_store(
-            KernelRuntime::mihomo(ControllerRuntime::External {
+            KernelRuntime::mihomo(ControllerRuntime::Fixture {
                 endpoint: endpoint.into(),
             }),
             None,
         )
     }
 
-    /// Creates a deterministic app instance backed by an explicit subscription store.
-    ///
-    /// This is primarily useful for native visual tests and embedders that manage their own
-    /// application-data root.
+    /// Creates a deterministic fixture backed by an explicit subscription store.
     #[must_use]
-    pub fn with_controller_and_subscription_store(
+    #[cfg(any(test, feature = "snapshot-fixtures"))]
+    #[doc(hidden)]
+    pub fn with_fixture_controller_and_subscription_store(
         endpoint: impl Into<String>,
         subscription_store_dir: PathBuf,
     ) -> Self {
         Self::with_runtime_and_store(
-            KernelRuntime::mihomo(ControllerRuntime::External {
+            KernelRuntime::mihomo(ControllerRuntime::Fixture {
                 endpoint: endpoint.into(),
             }),
             Some(subscription_store_dir),
@@ -843,7 +838,6 @@ impl ManisApp {
                         "已将保存来源应用到 Manis 托管内核",
                     )
                     .to_owned(),
-                Ok(GeneratedProfileApply::NotManaged) => status,
                 Err(error) => format!(
                     "{}{error}",
                     language.text(
@@ -2464,25 +2458,30 @@ impl ManisApp {
     fn apply_mihomo_snapshot(&mut self, endpoint: String, snapshot: LoadedSnapshot) {
         trace_ui(UiEvent::MihomoConnectSucceeded);
         let mut catalog = snapshot.catalog;
-        if let Some(global) = self.node_selection_preferences.global() {
-            let _ = catalog.apply_selector_target("GLOBAL", &global.node_name);
-        }
         for (group, target) in self.node_selection_preferences.iter_policy_targets() {
-            let _ = catalog.apply_selector_target(group, target);
+            if let Some(catalog) = catalog.as_mut() {
+                let _ = catalog.apply_selector_target(group, target);
+            }
         }
-        let primary = catalog.select(None);
-        let group = primary.id.clone();
-        let selected_node = primary
-            .nodes
-            .iter()
-            .find(|node| node.name == primary.target)
-            .or_else(|| primary.nodes.first())
-            .map(|node| node.id.clone());
-        let policy_group_count = catalog.iter().count();
-        self.catalog = Some(catalog);
+        let selection = catalog.as_ref().map(|catalog| {
+            let primary = catalog.select(None);
+            let selected_node = primary
+                .nodes
+                .iter()
+                .find(|node| node.name == primary.target)
+                .or_else(|| primary.nodes.first())
+                .map(|node| node.id.clone());
+            (primary.id.clone(), selected_node)
+        });
+        let policy_group_count = catalog.as_ref().map_or(0, |catalog| catalog.iter().count());
+        self.catalog = catalog;
         self.route_prediction = RouteInspectorPrediction::Idle;
-        self.workspace
-            .replace_source_selection(group, selected_node);
+        if let Some((group, selected_node)) = selection {
+            self.workspace
+                .replace_source_selection(group, selected_node);
+        } else {
+            self.workspace.clear_source_selection();
+        }
         self.source_providers = snapshot.providers;
         self.observed_routes = snapshot.observed_routes;
         self.active_connections = snapshot.connections;
@@ -2845,7 +2844,9 @@ impl ManisApp {
 
     fn fail_safe_stopped_managed_kernel(&mut self, cx: &mut Context<Self>) -> bool {
         let failure = match self.runtime.managed_health() {
-            Ok(ManagedRuntimeHealth::NotManaged | ManagedRuntimeHealth::Running) => return false,
+            #[cfg(any(test, feature = "snapshot-fixtures"))]
+            Ok(ManagedRuntimeHealth::NotManaged) => return false,
+            Ok(ManagedRuntimeHealth::Running) => return false,
             Ok(ManagedRuntimeHealth::Stopped) => self
                 .language()
                 .text(
@@ -2950,8 +2951,8 @@ impl ManisApp {
             } else {
                 ControllerReadiness::Disconnected
             },
-            if matches!(&*self.runtime, ControllerRuntime::External { .. }) {
-                TunSupport::ExternalControllerReadOnly
+            if self.runtime.is_fixture() {
+                TunSupport::FixtureReadOnly
             } else if self.runtime.capabilities().tun {
                 TunSupport::Supported
             } else {
@@ -3030,20 +3031,18 @@ impl ManisApp {
             cx.notify();
             return;
         }
-        if requested == ProxyMode::Tun
-            && matches!(&*self.runtime, ControllerRuntime::External { .. })
-        {
+        if requested == ProxyMode::Tun && self.runtime.is_fixture() {
             record_operation(
                 operation,
                 LogLevel::Error,
                 "proxy.mode.rejected",
-                "reason=external_controller_read_only",
+                "reason=fixture_read_only",
             );
             trace_ui(UiEvent::ProxyModeFailed);
             language
                 .text(
-                    "External controllers are read-only; use a Manis-managed kernel to enable TUN",
-                    "外部控制器保持只读；请使用 Manis 托管内核启用 TUN 模式",
+                    "Test fixtures cannot enable TUN",
+                    "测试快照不能启用 TUN 模式",
                 )
                 .clone_into(&mut self.status);
             cx.notify();
@@ -3227,18 +3226,20 @@ impl ManisApp {
             cx.notify();
             return;
         }
-        if matches!(&*self.runtime, ControllerRuntime::External { .. }) {
+        if self.runtime.is_fixture() {
             record_operation(
                 operation,
                 LogLevel::Error,
                 "routing.mode.rejected",
-                "reason=external_controller_read_only",
+                "reason=fixture_read_only",
             );
             trace_ui(UiEvent::RoutingModeFailed);
-            language.text(
-                "External controllers are read-only; use a Manis-managed kernel to change routing mode",
-                "外部控制器保持只读；请使用 Manis 托管内核切换路由模式",
-            ).clone_into(&mut self.status);
+            language
+                .text(
+                    "Test fixtures cannot change routing mode",
+                    "测试快照不能切换路由模式",
+                )
+                .clone_into(&mut self.status);
             cx.notify();
             return;
         }
@@ -3372,9 +3373,6 @@ impl ManisApp {
             cx.notify();
             return;
         }
-        if let Some(catalog) = self.catalog.as_mut() {
-            let _ = catalog.apply_selector_target("GLOBAL", &selected_name);
-        }
         record_operation(
             operation,
             LogLevel::Info,
@@ -3428,9 +3426,6 @@ impl ManisApp {
                             "global selector confirmed target",
                         );
                         let current = snapshot.current.as_deref().unwrap_or(&selected_name);
-                        if let Some(catalog) = this.catalog.as_mut() {
-                            let _ = catalog.apply_selector_target("GLOBAL", current);
-                        }
                         trace_ui(UiEvent::GlobalNodeSelected);
                         this.status = if language == Language::English {
                             if this.routing_mode == RoutingMode::Global {
@@ -6397,7 +6392,7 @@ pub(crate) enum ControllerReadiness {
 pub(crate) enum TunSupport {
     Supported,
     KernelUnsupported,
-    ExternalControllerReadOnly,
+    FixtureReadOnly,
 }
 
 /// The reason a proxy mode cannot be applied.
@@ -6406,7 +6401,7 @@ pub(crate) enum ProxyModeBlock {
     Busy,
     ControllerNotConnected,
     KernelHasNoTun,
-    ExternalControllerReadOnly,
+    FixtureReadOnly,
 }
 
 impl ProxyModeBlock {
@@ -6416,9 +6411,7 @@ impl ProxyModeBlock {
             Self::Busy => language.text("switching", "切换中"),
             Self::ControllerNotConnected => language.text("connect first", "需先连接"),
             Self::KernelHasNoTun => language.text("kernel has no TUN", "当前内核无 TUN"),
-            Self::ExternalControllerReadOnly => {
-                language.text("external controller is read-only", "外部控制器只读")
-            }
+            Self::FixtureReadOnly => language.text("test fixture is read-only", "测试快照只读"),
         }
     }
 }
@@ -6445,7 +6438,7 @@ const fn proxy_mode_block(
     match tun {
         TunSupport::Supported => None,
         TunSupport::KernelUnsupported => Some(ProxyModeBlock::KernelHasNoTun),
-        TunSupport::ExternalControllerReadOnly => Some(ProxyModeBlock::ExternalControllerReadOnly),
+        TunSupport::FixtureReadOnly => Some(ProxyModeBlock::FixtureReadOnly),
     }
 }
 
@@ -6668,7 +6661,10 @@ mod tests {
         proxy_mode_block,
     };
     use crate::subscription::SourceKind;
-    use crate::{localization::Language, mihomo};
+    use crate::{
+        localization::Language,
+        mihomo::{self, ControllerState},
+    };
 
     #[test]
     fn policy_detail_tabs_round_trip_through_component_indices() {
@@ -6694,7 +6690,10 @@ mod tests {
         )
         .expect("save fixture subscription");
 
-        let app = ManisApp::with_controller_and_subscription_store("http://127.0.0.1:9090", store);
+        let app = ManisApp::with_fixture_controller_and_subscription_store(
+            "http://127.0.0.1:9090",
+            store,
+        );
 
         assert_eq!(app.imported_subscriptions.len(), 1);
         assert_eq!(
@@ -6714,7 +6713,7 @@ mod tests {
 
     #[test]
     fn policy_node_source_uses_the_imported_subscription_name() {
-        let mut app = ManisApp::with_controller("http://127.0.0.1:9090");
+        let mut app = ManisApp::with_fixture_controller("http://127.0.0.1:9090");
         app.imported_subscriptions.push(ImportedSubscription {
             id: "subscription:fixture".to_owned(),
             source: manis_profile::SecretUrl::parse_subscription(
@@ -6804,7 +6803,7 @@ mod tests {
 
     #[test]
     fn disconnected_app_starts_without_mock_policy_groups() {
-        let app = ManisApp::with_controller("http://127.0.0.1:9090");
+        let app = ManisApp::with_fixture_controller("http://127.0.0.1:9090");
 
         assert!(app.catalog.is_none());
         assert_eq!(app.workspace.selected_group, None);
@@ -6842,7 +6841,7 @@ mod tests {
 
     #[test]
     fn policy_settings_only_match_a_saved_manis_group_by_exact_name() {
-        let mut app = ManisApp::with_controller("http://127.0.0.1:9090");
+        let mut app = ManisApp::with_fixture_controller("http://127.0.0.1:9090");
         app.managed_policy_groups.push(
             ManagedPolicyGroup::new("group-deadbeef", "Hong Kong")
                 .expect("valid managed policy group"),
@@ -6858,7 +6857,7 @@ mod tests {
 
     #[test]
     fn runtime_snapshot_populates_real_policy_groups() {
-        let mut app = ManisApp::with_controller("http://127.0.0.1:9090");
+        let mut app = ManisApp::with_fixture_controller("http://127.0.0.1:9090");
         let policy_id = PolicyGroupId::new("runtime-policy");
         let node_id = ProxyId::new("runtime-node");
         let catalog = PolicyCatalog::try_new(vec![PolicyGroup {
@@ -6883,7 +6882,7 @@ mod tests {
         app.apply_mihomo_snapshot(
             "http://127.0.0.1:9090".to_owned(),
             mihomo::LoadedSnapshot {
-                catalog,
+                catalog: Some(catalog),
                 providers: Vec::new(),
                 version: "fixture".to_owned(),
                 active_connections: 0,
@@ -6901,8 +6900,37 @@ mod tests {
     }
 
     #[test]
+    fn runtime_snapshot_without_user_policy_groups_still_connects_cleanly() {
+        let mut app = ManisApp::with_fixture_controller("http://127.0.0.1:9090");
+        app.workspace.replace_source_selection(
+            PolicyGroupId::new("stale-policy"),
+            Some(ProxyId::new("stale-node")),
+        );
+
+        app.apply_mihomo_snapshot(
+            "http://127.0.0.1:9090".to_owned(),
+            mihomo::LoadedSnapshot {
+                catalog: None,
+                providers: Vec::new(),
+                version: "fixture".to_owned(),
+                active_connections: 0,
+                download_total: 0,
+                upload_total: 0,
+                observed_routes: Vec::new(),
+                connections: Vec::new(),
+                runtime: manis_mihomo::RuntimeConfig::default(),
+            },
+        );
+
+        assert!(app.catalog.is_none());
+        assert_eq!(app.workspace.selected_group, None);
+        assert_eq!(app.workspace.selected_node, None);
+        assert!(matches!(app.controller, ControllerState::Connected { .. }));
+    }
+
+    #[test]
     fn saved_global_node_overrides_runtime_target_without_losing_runtime_state() {
-        let mut app = ManisApp::with_controller("http://127.0.0.1:9090");
+        let mut app = ManisApp::with_fixture_controller("http://127.0.0.1:9090");
         app.catalog = Some(
             PolicyCatalog::try_new(vec![PolicyGroup {
                 id: PolicyGroupId::new("GLOBAL"),
@@ -6955,7 +6983,10 @@ mod tests {
         mihomo::save_node_selection_preferences_in(&store, &preferences)
             .expect("save node selections");
 
-        let app = ManisApp::with_controller_and_subscription_store("http://127.0.0.1:9090", store);
+        let app = ManisApp::with_fixture_controller_and_subscription_store(
+            "http://127.0.0.1:9090",
+            store,
+        );
 
         assert_eq!(
             app.global_target_identity()
@@ -6971,7 +7002,7 @@ mod tests {
 
     #[test]
     fn manual_policy_detail_falls_back_to_the_catalog_target() {
-        let mut app = ManisApp::with_controller("http://127.0.0.1:9090");
+        let mut app = ManisApp::with_fixture_controller("http://127.0.0.1:9090");
         let policy_id = PolicyGroupId::new("manual-video");
         app.catalog = Some(
             PolicyCatalog::try_new(vec![PolicyGroup {
@@ -7049,7 +7080,10 @@ mod tests {
         )
         .expect("save QX rule fixture");
 
-        let app = ManisApp::with_controller_and_subscription_store("http://127.0.0.1:9090", store);
+        let app = ManisApp::with_fixture_controller_and_subscription_store(
+            "http://127.0.0.1:9090",
+            store,
+        );
 
         assert_eq!(app.qx_rule_sources.len(), 1);
         assert_eq!(app.qx_rule_sources[0].rule_count, 1);
@@ -7082,9 +7116,9 @@ mod tests {
                 ProxyMode::Tun,
                 None,
                 ControllerReadiness::Connected,
-                TunSupport::ExternalControllerReadOnly
+                TunSupport::FixtureReadOnly
             ),
-            Some(ProxyModeBlock::ExternalControllerReadOnly)
+            Some(ProxyModeBlock::FixtureReadOnly)
         );
         assert_eq!(
             proxy_mode_block(
@@ -7113,7 +7147,7 @@ mod tests {
                 ProxyMode::System,
                 None,
                 ControllerReadiness::Connected,
-                TunSupport::ExternalControllerReadOnly
+                TunSupport::FixtureReadOnly
             ),
             None
         );

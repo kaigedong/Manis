@@ -706,13 +706,13 @@ mod tests {
     fn recognizes_only_the_exact_manis_ordinary_process() {
         let root = PathBuf::from("/Users/example/Library/Application Support/Manis/mihomo");
         let launch = ManagedEngineConfig::new(
-            PathBuf::from("/Applications/Clash Verge.app/Contents/MacOS/verge-mihomo"),
+            PathBuf::from("/Applications/Manis.app/Contents/Resources/mihomo/mihomo"),
             root.join("manis-generated.yaml"),
             root.clone(),
             ControllerEndpoint::UnixSocket(root.join("controller.sock")),
         )
         .launch_command();
-        let manis = "/Applications/Clash Verge.app/Contents/MacOS/verge-mihomo -d /Users/example/Library/Application Support/Manis/mihomo -f /Users/example/Library/Application Support/Manis/mihomo/manis-generated.yaml -ext-ctl-unix /Users/example/Library/Application Support/Manis/mihomo/controller.sock";
+        let manis = "/Applications/Manis.app/Contents/Resources/mihomo/mihomo -d /Users/example/Library/Application Support/Manis/mihomo -f /Users/example/Library/Application Support/Manis/mihomo/manis-generated.yaml -ext-ctl-unix /Users/example/Library/Application Support/Manis/mihomo/controller.sock";
         let clash_verge = "/Applications/Clash Verge.app/Contents/MacOS/verge-mihomo -d /Users/example/Library/Application Support/io.github.clash-verge-rev.clash-verge-rev -f /Users/example/Library/Application Support/io.github.clash-verge-rev.clash-verge-rev/clash-verge.yaml -ext-ctl-unix /tmp/verge/verge-mihomo.sock";
 
         assert!(is_expected_ordinary_process(manis, &launch));

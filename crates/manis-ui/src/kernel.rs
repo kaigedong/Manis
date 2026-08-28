@@ -21,6 +21,7 @@ pub(crate) struct KernelRuntime {
 
 impl KernelRuntime {
     #[must_use]
+    #[cfg(any(test, feature = "snapshot-fixtures"))]
     pub(crate) fn mihomo(controller: ControllerRuntime) -> Self {
         Self {
             kind: KernelKind::Mihomo,
@@ -90,7 +91,8 @@ impl KernelRuntime {
     #[must_use]
     pub(crate) fn initial_status_in(&self, language: Language) -> String {
         match &self.controller {
-            ControllerRuntime::External { .. } => format!(
+            #[cfg(any(test, feature = "snapshot-fixtures"))]
+            ControllerRuntime::Fixture { .. } => format!(
                 "{} {}",
                 language.text("Not connected to", "尚未连接"),
                 self.kind.display_name()

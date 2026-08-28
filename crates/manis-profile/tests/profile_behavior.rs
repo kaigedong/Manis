@@ -600,6 +600,18 @@ fn qx_sources_with_groups_rejects_bad_user_group_references_and_names() {
         .is_err()
     );
 
+    let mut reserved = valid.clone();
+    reserved.name = Name::parse("GLOBAL").expect("valid reserved name");
+    assert!(
+        Profile::qx_sources_with_groups(
+            vec![subscription.clone()],
+            vec![saved.clone()],
+            vec![reserved],
+            17_890,
+        )
+        .is_err()
+    );
+
     let duplicate = valid.clone();
     assert!(
         Profile::qx_sources_with_groups(
@@ -609,6 +621,19 @@ fn qx_sources_with_groups_rejects_bad_user_group_references_and_names() {
             17_890,
         )
         .is_err()
+    );
+}
+
+#[test]
+fn managed_profile_rejects_manual_nodes_named_like_system_groups() {
+    let reserved = VlessProxy::parse_share_link(
+        "vless://00000000-0000-4000-8000-000000000000@198.51.100.7:443?encryption=none&security=reality&type=tcp&sni=cdn.example.invalid&pbk=fixture-key#GLOBAL",
+    )
+    .expect("reserved-name fixture should parse before profile validation");
+
+    assert_eq!(
+        Profile::qx_sources(Vec::new(), vec![reserved], 17_890),
+        Err(ProfileError::InvalidValue("reserved proxy name"))
     );
 }
 
@@ -980,6 +1005,17 @@ fn atomic_writer_rejects_symlink_runtime_and_final_file() {
     assert!(write_private_atomic(&target, "../escape.yaml", b"data").is_err());
 
     fs::remove_dir_all(temp).expect("cleanup temp");
+}
+
+#[test]
+fn empty_managed_profile_is_a_direct_only_bootstrap_config() {
+    let profile = Profile::managed_empty(17_890).expect("empty managed profile should build");
+    let yaml = render_mihomo_yaml(&profile).expect("empty managed profile should render");
+
+    assert!(yaml.contains("mixed-port: 17890"));
+    assert!(yaml.contains("proxies:\nproxy-providers:\nproxy-groups:\n"));
+    assert!(yaml.contains("rules:\n  - \"MATCH,DIRECT\""));
+    assert!(!yaml.contains("__MANIS_GLOBAL__"));
 }
 
 fn test_temp_dir(name: &str) -> std::path::PathBuf {

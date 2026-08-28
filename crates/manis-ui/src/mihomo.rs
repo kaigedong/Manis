@@ -10,8 +10,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{env, error::Error, fmt};
 
 use manis_core::{
-    EmptyPolicyCatalog, KernelKind, ManagedPolicyGroup, ManagedPolicyIcon, ManagedPolicyStrategy,
-    NodeIdentity, PolicyCandidateMatcher, PolicyCatalog, RoutingMode,
+    KernelKind, ManagedPolicyGroup, ManagedPolicyIcon, ManagedPolicyStrategy, NodeIdentity,
+    PolicyCandidateMatcher, PolicyCatalog, RoutingMode,
 };
 use manis_engine::{
     ControllerEndpoint, EngineError, EngineManager, ManagedEngineConfig, ProbeStatus,
@@ -37,8 +37,8 @@ use crate::subscription::VlessSource;
 
 const CONTROLLER_ENV: &str = "MANIS_MIHOMO_CONTROLLER";
 const LEGACY_RELAY_CONTROLLER_ENV: &str = "RELAY_MIHOMO_CONTROLLER";
-const SECRET_ENV: &str = "MANIS_MIHOMO_SECRET";
-const LEGACY_RELAY_SECRET_ENV: &str = "RELAY_MIHOMO_SECRET";
+const CONTROLLER_SECRET_ENV: &str = "MANIS_MIHOMO_SECRET";
+const LEGACY_RELAY_CONTROLLER_SECRET_ENV: &str = "RELAY_MIHOMO_SECRET";
 const BINARY_ENV: &str = "MANIS_MIHOMO_BINARY";
 const LEGACY_RELAY_BINARY_ENV: &str = "RELAY_MIHOMO_BINARY";
 const CONFIG_ENV: &str = "MANIS_MIHOMO_CONFIG";
@@ -49,8 +49,6 @@ const SUBSCRIPTION_FILE_ENV: &str = "MANIS_MIHOMO_SUBSCRIPTION_FILE";
 const LEGACY_RELAY_SUBSCRIPTION_FILE_ENV: &str = "RELAY_MIHOMO_SUBSCRIPTION_FILE";
 const MIXED_PORT_ENV: &str = "MANIS_MIHOMO_MIXED_PORT";
 const LEGACY_RELAY_MIXED_PORT_ENV: &str = "RELAY_MIHOMO_MIXED_PORT";
-const PREVIEW_BINARY_ENV: &str = "MANIS_MIHOMO_PREVIEW_BINARY";
-const LEGACY_RELAY_PREVIEW_BINARY_ENV: &str = "RELAY_MIHOMO_PREVIEW_BINARY";
 const SING_BOX_BINARY_ENV: &str = "MANIS_SING_BOX_BINARY";
 const LEGACY_RELAY_SING_BOX_BINARY_ENV: &str = "RELAY_SING_BOX_BINARY";
 const DEFAULT_MANAGED_MIXED_PORT: u16 = 17_890;
@@ -113,6 +111,17 @@ const CONFIG_RELOAD_CONFIRM_READS: usize = 3;
 static NEXT_PREVIEW_WORKSPACE: AtomicU64 = AtomicU64::new(0);
 static NEXT_STORED_SOURCE: AtomicU64 = AtomicU64::new(0);
 
+const UNSUPPORTED_MIHOMO_RUNTIME_ENV: [&str; 8] = [
+    CONTROLLER_ENV,
+    LEGACY_RELAY_CONTROLLER_ENV,
+    CONTROLLER_SECRET_ENV,
+    LEGACY_RELAY_CONTROLLER_SECRET_ENV,
+    CONFIG_ENV,
+    LEGACY_RELAY_CONFIG_ENV,
+    SUBSCRIPTION_FILE_ENV,
+    LEGACY_RELAY_SUBSCRIPTION_FILE_ENV,
+];
+
 #[derive(Clone, Debug)]
 pub(crate) enum ControllerState {
     Disconnected,
@@ -145,7 +154,8 @@ impl ControllerState {
 
 #[derive(Clone)]
 pub(crate) enum ControllerRuntime {
-    External {
+    #[cfg(any(test, feature = "snapshot-fixtures"))]
+    Fixture {
         endpoint: String,
     },
     Managed {
@@ -168,7 +178,6 @@ pub(crate) struct ManagedGeneratedProfile {
     controller: ControllerEndpoint,
     expected_mixed_port: Option<u16>,
     profile_store_dir: Option<PathBuf>,
-    subscription_file: Option<PathBuf>,
     controller_secret: Option<String>,
 }
 
@@ -186,13 +195,13 @@ pub(crate) struct PolicyGroupBenchmarkSnapshot {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum GeneratedProfileApply {
-    NotManaged,
     Updated,
     Restarted,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ManagedRuntimeHealth {
+    #[cfg(any(test, feature = "snapshot-fixtures"))]
     NotManaged,
     Running,
     Stopped,
@@ -200,9 +209,8 @@ pub(crate) enum ManagedRuntimeHealth {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RuntimeProfileSource {
-    ExternalController,
-    ExistingConfig,
-    PrivateSubscription,
+    #[cfg(any(test, feature = "snapshot-fixtures"))]
+    FixtureController,
     SavedSources,
     Invalid,
 }
@@ -210,9 +218,8 @@ pub(crate) enum RuntimeProfileSource {
 impl RuntimeProfileSource {
     pub(crate) fn label(self) -> &'static str {
         match self {
-            Self::ExternalController => "外部控制器",
-            Self::ExistingConfig => "已有 Mihomo 配置",
-            Self::PrivateSubscription => "私有 HTTPS 订阅",
+            #[cfg(any(test, feature = "snapshot-fixtures"))]
+            Self::FixtureController => "测试快照",
             Self::SavedSources => "Manis 已保存来源",
             Self::Invalid => "配置不可用",
         }
@@ -220,9 +227,8 @@ impl RuntimeProfileSource {
 
     pub(crate) fn detail(self) -> &'static str {
         match self {
-            Self::ExternalController => "外部控制器保持只读",
-            Self::ExistingConfig => "使用已有 Mihomo 配置",
-            Self::PrivateSubscription => "链接已隐藏 · 已写入 Manis 托管配置",
+            #[cfg(any(test, feature = "snapshot-fixtures"))]
+            Self::FixtureController => "仅用于测试快照",
             Self::SavedSources => "从本机私有来源编译",
             Self::Invalid => "请检查本机启动参数",
         }
@@ -230,13 +236,23 @@ impl RuntimeProfileSource {
 }
 
 impl ControllerRuntime {
+    pub(crate) fn is_fixture(&self) -> bool {
+        match self {
+            #[cfg(any(test, feature = "snapshot-fixtures"))]
+            Self::Fixture { .. } => true,
+            _ => false,
+        }
+    }
+
     fn controller_secret(&self) -> Option<String> {
         match self {
             Self::Managed {
                 generated_profile: Some(spec),
                 ..
             } => spec.controller_secret.clone(),
-            Self::External { .. } | Self::Managed { .. } | Self::Invalid { .. } => None,
+            #[cfg(any(test, feature = "snapshot-fixtures"))]
+            Self::Fixture { .. } => None,
+            Self::Managed { .. } | Self::Invalid { .. } => None,
         }
     }
 
@@ -252,7 +268,8 @@ impl ControllerRuntime {
 
     pub(crate) fn managed_health(&self) -> Result<ManagedRuntimeHealth, LoadError> {
         match self {
-            Self::External { .. } => Ok(ManagedRuntimeHealth::NotManaged),
+            #[cfg(any(test, feature = "snapshot-fixtures"))]
+            Self::Fixture { .. } => Ok(ManagedRuntimeHealth::NotManaged),
             Self::Invalid { message } => Err(LoadError::Runtime(message.clone())),
             Self::Managed { manager, .. } => manager
                 .lock()
@@ -271,7 +288,8 @@ impl ControllerRuntime {
 
     pub(crate) fn profile_source(&self) -> RuntimeProfileSource {
         match self {
-            Self::External { .. } => RuntimeProfileSource::ExternalController,
+            #[cfg(any(test, feature = "snapshot-fixtures"))]
+            Self::Fixture { .. } => RuntimeProfileSource::FixtureController,
             Self::Managed { profile_source, .. } => *profile_source,
             Self::Invalid { .. } => RuntimeProfileSource::Invalid,
         }
@@ -279,7 +297,8 @@ impl ControllerRuntime {
 
     pub(crate) fn endpoint_label(&self) -> String {
         match self {
-            Self::External { endpoint } => endpoint.clone(),
+            #[cfg(any(test, feature = "snapshot-fixtures"))]
+            Self::Fixture { endpoint } => endpoint.clone(),
             Self::Managed { endpoint, .. } => format!("Manis 托管 · {endpoint}"),
             Self::Invalid { .. } => "Manis 托管配置".to_owned(),
         }
@@ -287,7 +306,8 @@ impl ControllerRuntime {
 
     pub(crate) fn connect(&self) -> Result<RuntimeSnapshot, LoadError> {
         match self {
-            Self::External { endpoint } => Ok(RuntimeSnapshot {
+            #[cfg(any(test, feature = "snapshot-fixtures"))]
+            Self::Fixture { endpoint } => Ok(RuntimeSnapshot {
                 endpoint: endpoint.clone(),
                 controller_endpoint: endpoint.clone(),
                 controller_secret: None,
@@ -369,7 +389,8 @@ impl ControllerRuntime {
 
     pub(crate) fn connect_sing_box(&self) -> Result<RuntimeSnapshot, LoadError> {
         match self {
-            Self::External { endpoint } => Ok(RuntimeSnapshot {
+            #[cfg(any(test, feature = "snapshot-fixtures"))]
+            Self::Fixture { endpoint } => Ok(RuntimeSnapshot {
                 endpoint: endpoint.clone(),
                 controller_endpoint: endpoint.clone(),
                 controller_secret: None,
@@ -412,8 +433,8 @@ impl ControllerRuntime {
                 "enabled={enabled} ownership={}",
                 if matches!(self, Self::Managed { .. }) {
                     "managed"
-                } else if matches!(self, Self::External { .. }) {
-                    "external"
+                } else if self.is_fixture() {
+                    "fixture"
                 } else {
                     "invalid"
                 }
@@ -514,9 +535,8 @@ impl ControllerRuntime {
         } = self
         else {
             return Err(LoadError::Runtime(match self {
-                Self::External { .. } => {
-                    "外部控制器保持只读；TUN 模式仅支持 Manis 托管内核".to_owned()
-                }
+                #[cfg(any(test, feature = "snapshot-fixtures"))]
+                Self::Fixture { .. } => "测试快照不能启用 TUN 模式".to_owned(),
                 Self::Invalid { message } => message.clone(),
                 Self::Managed { .. } => {
                     "TUN 模式仅支持由 Manis 已保存来源生成的 Mihomo 配置".to_owned()
@@ -693,10 +713,9 @@ impl ControllerRuntime {
                     .ok_or_else(|| LoadError::Runtime("Mihomo 尚未运行，请先连接内核".to_owned()))?
                     .uri()
             }
-            Self::External { .. } => {
-                return Err(LoadError::Runtime(
-                    "外部控制器保持只读；路由模式仅支持 Manis 托管内核".to_owned(),
-                ));
+            #[cfg(any(test, feature = "snapshot-fixtures"))]
+            Self::Fixture { .. } => {
+                return Err(LoadError::Runtime("测试快照不能修改路由模式".to_owned()));
             }
             Self::Invalid { message } => return Err(LoadError::Runtime(message.clone())),
         };
@@ -753,7 +772,8 @@ impl ControllerRuntime {
         }
         let controller_secret = self.controller_secret();
         let (endpoint, managed) = match self {
-            Self::External { endpoint } => (endpoint.clone(), false),
+            #[cfg(any(test, feature = "snapshot-fixtures"))]
+            Self::Fixture { endpoint } => (endpoint.clone(), false),
             Self::Managed { manager, .. } => {
                 let endpoint = {
                     let mut manager = manager.lock().map_err(|_poisoned| {
@@ -798,7 +818,8 @@ impl ControllerRuntime {
         }
         let controller_secret = self.controller_secret();
         let endpoint = match self {
-            Self::External { endpoint } => endpoint.clone(),
+            #[cfg(any(test, feature = "snapshot-fixtures"))]
+            Self::Fixture { endpoint } => endpoint.clone(),
             Self::Managed { manager, .. } => {
                 let endpoint = {
                     let mut manager = manager.lock().map_err(|_poisoned| {
@@ -829,7 +850,8 @@ impl ControllerRuntime {
     ) -> Result<PolicyGroupBenchmarkSnapshot, LoadError> {
         let controller_secret = self.controller_secret();
         let endpoint = match self {
-            Self::External { endpoint } => endpoint.clone(),
+            #[cfg(any(test, feature = "snapshot-fixtures"))]
+            Self::Fixture { endpoint } => endpoint.clone(),
             Self::Managed { manager, .. } => {
                 let endpoint = {
                     let mut manager = manager.lock().map_err(|_poisoned| {
@@ -918,15 +940,14 @@ impl ControllerRuntime {
             ..
         } = self
         else {
-            return Ok(GeneratedProfileApply::NotManaged);
+            return Err(LoadError::Runtime(match self {
+                #[cfg(any(test, feature = "snapshot-fixtures"))]
+                Self::Fixture { .. } => "测试快照不能写入运行配置".to_owned(),
+                Self::Invalid { message } => message.clone(),
+                Self::Managed { .. } => "托管内核缺少 Manis 生成配置".to_owned(),
+            }));
         };
-        let base_subscription = spec
-            .subscription_file
-            .as_deref()
-            .map(read_private_subscription)
-            .transpose()
-            .map_err(LoadError::Runtime)?;
-        let profile = compile_saved_profile(store_dir, base_subscription, spec.kernel)?;
+        let profile = compile_saved_profile(store_dir, None, spec.kernel)?;
         let rendered = render_generated_profile(spec, &profile)?;
         let (candidate_name, final_name) = generated_profile_names(spec.kernel);
         let candidate_path =
@@ -1146,9 +1167,19 @@ fn compile_saved_profile(
         &vless_nodes,
         subscriptions.len(),
     )?;
-    let mut profile =
+    let bootstrap = subscriptions.is_empty() && vless_nodes.is_empty();
+    let mut profile = if bootstrap {
+        if !user_groups.is_empty() {
+            return Err(LoadError::Runtime(
+                "没有节点来源时不能生成策略组".to_owned(),
+            ));
+        }
+        Profile::managed_empty(mixed_port)
+    } else {
         Profile::qx_sources_with_groups(subscriptions, vless_nodes, user_groups, mixed_port)
-            .map_err(|error| LoadError::Runtime(error.to_string()))?;
+    }
+    .map_err(|error| LoadError::Runtime(error.to_string()))?;
+    let bootstrap_fallback = if bootstrap { profile.rules.pop() } else { None };
     if !proxy_server_nameservers.is_empty() {
         profile.set_proxy_server_nameservers(proxy_server_nameservers);
     }
@@ -1173,6 +1204,9 @@ fn compile_saved_profile(
         } else if let Some(source) = qx_rule_sources.iter().find(|source| source.id == group_id) {
             apply_qx_rule_sources(&mut profile, std::slice::from_ref(source))?;
         }
+    }
+    if let Some(fallback) = bootstrap_fallback {
+        profile.rules.push(fallback);
     }
     Ok(profile)
 }
@@ -1209,24 +1243,11 @@ fn render_generated_profile_with_tun(
 }
 
 fn compile_managed_generated_profile(spec: &ManagedGeneratedProfile) -> Result<Profile, LoadError> {
-    if let Some(store_dir) = spec.profile_store_dir.as_deref() {
-        let base_subscription = spec
-            .subscription_file
-            .as_deref()
-            .map(read_private_subscription)
-            .transpose()
-            .map_err(LoadError::Runtime)?;
-        return compile_saved_profile(store_dir, base_subscription, spec.kernel);
-    }
-    let subscription_file = spec
-        .subscription_file
+    let store_dir = spec
+        .profile_store_dir
         .as_deref()
-        .ok_or_else(|| LoadError::Runtime("托管 Mihomo 缺少可重建的配置来源".to_owned()))?;
-    let subscription = read_private_subscription(subscription_file).map_err(LoadError::Runtime)?;
-    let mut profile =
-        Profile::qx_default(subscription).map_err(|error| LoadError::Runtime(error.to_string()))?;
-    profile.mixed_port = configured_mixed_port().map_err(LoadError::Runtime)?;
-    Ok(profile)
+        .ok_or_else(|| LoadError::Runtime("托管内核缺少 Manis 来源目录".to_owned()))?;
+    compile_saved_profile(store_dir, None, spec.kernel)
 }
 
 fn managed_engine_config(
@@ -1350,7 +1371,7 @@ impl Drop for LiveRuntimeSession {
 }
 
 pub(crate) struct LoadedSnapshot {
-    pub catalog: PolicyCatalog,
+    pub catalog: Option<PolicyCatalog>,
     pub providers: Vec<LoadedProvider>,
     pub version: String,
     pub active_connections: usize,
@@ -3860,7 +3881,7 @@ fn require_clean_absolute_store(directory: &Path) -> Result<(), SubscriptionStor
 }
 
 fn discover_preview_binary() -> Result<PathBuf, SubscriptionPreviewError> {
-    if let Some(explicit) = brand::env_var_os(PREVIEW_BINARY_ENV, LEGACY_RELAY_PREVIEW_BINARY_ENV) {
+    if let Some(explicit) = brand::env_var_os(BINARY_ENV, LEGACY_RELAY_BINARY_ENV) {
         return canonical_binary(Path::new(&explicit));
     }
 
@@ -3869,23 +3890,7 @@ fn discover_preview_binary() -> Result<PathBuf, SubscriptionPreviewError> {
     } else {
         "mihomo"
     };
-    let mut candidates = Vec::new();
-    if let Ok(current_exe) = env::current_exe()
-        && let Some(directory) = current_exe.parent()
-    {
-        candidates.push(directory.join(executable_name));
-    }
-    if let Some(path) = env::var_os("PATH") {
-        candidates.extend(env::split_paths(&path).map(|directory| directory.join(executable_name)));
-    }
-    #[cfg(target_os = "macos")]
-    candidates.push(PathBuf::from(
-        "/Applications/Clash Verge.app/Contents/MacOS/verge-mihomo",
-    ));
-
-    candidates
-        .into_iter()
-        .find_map(|candidate| canonical_binary(&candidate).ok())
+    first_existing_binary(mihomo_binary_candidates(executable_name))
         .ok_or(SubscriptionPreviewError::BinaryUnavailable)
 }
 
@@ -3957,7 +3962,6 @@ fn load_subscription_provider(providers: &[manis_mihomo::ProxyProvider]) -> Vec<
 #[derive(Debug)]
 pub(crate) enum LoadError {
     Mihomo(MihomoError),
-    EmptyCatalog(EmptyPolicyCatalog),
     Engine(EngineError),
     Runtime(String),
     ProxyModeLost(String),
@@ -3967,7 +3971,6 @@ impl fmt::Display for LoadError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Mihomo(error) => error.fmt(formatter),
-            Self::EmptyCatalog(error) => error.fmt(formatter),
             Self::Engine(error) => error.fmt(formatter),
             Self::Runtime(message) | Self::ProxyModeLost(message) => formatter.write_str(message),
         }
@@ -3978,7 +3981,6 @@ impl Error for LoadError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Mihomo(error) => Some(error),
-            Self::EmptyCatalog(error) => Some(error),
             Self::Engine(error) => Some(error),
             Self::Runtime(_) | Self::ProxyModeLost(_) => None,
         }
@@ -3988,12 +3990,6 @@ impl Error for LoadError {
 impl From<MihomoError> for LoadError {
     fn from(error: MihomoError) -> Self {
         Self::Mihomo(error)
-    }
-}
-
-impl From<EmptyPolicyCatalog> for LoadError {
-    fn from(error: EmptyPolicyCatalog) -> Self {
-        Self::EmptyCatalog(error)
     }
 }
 
@@ -4023,90 +4019,34 @@ impl ReadinessProbe for SingBoxReadinessProbe {
 }
 
 pub(crate) fn configured_runtime(store_dir: Option<&Path>) -> ControllerRuntime {
-    let binary = brand::env_var_os(BINARY_ENV, LEGACY_RELAY_BINARY_ENV);
-    let config_file = brand::env_var_os(CONFIG_ENV, LEGACY_RELAY_CONFIG_ENV);
-    let subscription_file =
-        brand::env_var_os(SUBSCRIPTION_FILE_ENV, LEGACY_RELAY_SUBSCRIPTION_FILE_ENV);
-    if config_file.is_none() && subscription_file.is_none() {
-        if brand::env_var_os(CONTROLLER_ENV, LEGACY_RELAY_CONTROLLER_ENV).is_some() {
-            record_event(
-                LogLevel::Info,
-                "runtime.classified.external",
-                "reason=controller_environment_override",
-            );
-            return ControllerRuntime::External {
-                endpoint: configured_endpoint(),
-            };
-        }
-        if let Some(binary) = binary.as_ref() {
-            return match store_dir.filter(|directory| saved_profile_inputs_exist(directory)) {
-                Some(store_dir) => canonical_binary(Path::new(binary))
-                    .map_err(|_error| format!("{BINARY_ENV} 不是可执行文件"))
-                    .and_then(|binary| {
-                        build_saved_sources_mihomo_runtime_with_binary(store_dir, &binary)
-                    })
-                    .unwrap_or_else(|message| ControllerRuntime::Invalid { message }),
-                None => ControllerRuntime::Invalid {
-                    message: format!("{BINARY_ENV} 单独使用时需要至少一个已保存的订阅或节点来源"),
-                },
-            };
-        }
-    }
-    match select_runtime_input(binary, config_file, subscription_file) {
-        Ok(RuntimeInput::External) => configured_default_mihomo_runtime(store_dir),
-        Ok(RuntimeInput::ExistingConfig {
-            binary,
-            config_file,
-        }) => build_managed_runtime(PathBuf::from(binary), PathBuf::from(config_file))
-            .unwrap_or_else(|message| ControllerRuntime::Invalid { message }),
-        Ok(RuntimeInput::SubscriptionFile {
-            binary,
-            subscription_file,
-        }) => build_subscription_runtime(PathBuf::from(binary), &PathBuf::from(subscription_file))
-            .unwrap_or_else(|message| ControllerRuntime::Invalid { message }),
-        Err(message) => ControllerRuntime::Invalid { message },
-    }
-}
-
-fn configured_default_mihomo_runtime(store_dir: Option<&Path>) -> ControllerRuntime {
-    if brand::env_var_os(CONTROLLER_ENV, LEGACY_RELAY_CONTROLLER_ENV).is_some() {
-        record_event(
-            LogLevel::Info,
-            "runtime.classified.external",
-            "reason=controller_environment_override",
-        );
-        return ControllerRuntime::External {
-            endpoint: configured_endpoint(),
+    if let Some(variable) = first_unsupported_runtime_override(|name| env::var_os(name).is_some()) {
+        return ControllerRuntime::Invalid {
+            message: format!("{variable} 已不再支持；Mihomo 配置和 controller 只能由 Manis 管理"),
         };
     }
-    if let Some(store_dir) = store_dir
-        && saved_profile_inputs_exist(store_dir)
-    {
-        record_event(
-            LogLevel::Info,
-            "runtime.classified.managed",
-            "reason=saved_proxy_sources_present",
-        );
-        return build_saved_sources_mihomo_runtime(store_dir)
-            .unwrap_or_else(|message| ControllerRuntime::Invalid { message });
-    }
-    record_event(
-        LogLevel::Info,
-        "runtime.classified.external",
-        "reason=no_saved_proxy_sources",
-    );
-    ControllerRuntime::External {
-        endpoint: configured_endpoint(),
-    }
+    let Some(store_dir) = store_dir else {
+        return ControllerRuntime::Invalid {
+            message: "无法确定 Manis 来源目录".to_owned(),
+        };
+    };
+    let binary = match brand::env_var_os(BINARY_ENV, LEGACY_RELAY_BINARY_ENV) {
+        Some(binary) => canonical_binary(Path::new(&binary))
+            .map_err(|_error| format!("{BINARY_ENV} 不是可执行文件")),
+        None => discover_mihomo_binary(),
+    };
+    binary
+        .and_then(|binary| build_saved_sources_mihomo_runtime_with_binary(store_dir, &binary))
+        .unwrap_or_else(|message| ControllerRuntime::Invalid { message })
+}
+
+fn first_unsupported_runtime_override(is_set: impl Fn(&str) -> bool) -> Option<&'static str> {
+    UNSUPPORTED_MIHOMO_RUNTIME_ENV
+        .into_iter()
+        .find(|name| is_set(name))
 }
 
 pub(crate) fn configured_sing_box_runtime(store_dir: &Path) -> Result<ControllerRuntime, String> {
     build_sing_box_runtime(store_dir)
-}
-
-fn build_saved_sources_mihomo_runtime(store_dir: &Path) -> Result<ControllerRuntime, String> {
-    let binary = discover_mihomo_binary()?;
-    build_saved_sources_mihomo_runtime_with_binary(store_dir, &binary)
 }
 
 fn build_saved_sources_mihomo_runtime_with_binary(
@@ -4133,7 +4073,6 @@ fn build_saved_sources_mihomo_runtime_in(
         controller: controller.clone(),
         expected_mixed_port: Some(profile.mixed_port),
         profile_store_dir: Some(store_dir.to_path_buf()),
-        subscription_file: None,
         controller_secret: None,
     };
     let rendered = render_generated_profile(&spec, &profile).map_err(|error| error.to_string())?;
@@ -4150,11 +4089,6 @@ fn build_saved_sources_mihomo_runtime_in(
         generated_profile: Some(spec),
         privileged: Arc::new(AtomicBool::new(false)),
     })
-}
-
-fn saved_profile_inputs_exist(store_dir: &Path) -> bool {
-    load_subscription_sources_in(store_dir).is_ok_and(|sources| !sources.is_empty())
-        || load_vless_sources_in(store_dir).is_ok_and(|sources| !sources.is_empty())
 }
 
 fn build_sing_box_runtime(store_dir: &Path) -> Result<ControllerRuntime, String> {
@@ -4181,7 +4115,6 @@ fn build_sing_box_runtime(store_dir: &Path) -> Result<ControllerRuntime, String>
         controller: controller.clone(),
         expected_mixed_port: None,
         profile_store_dir: Some(store_dir.to_path_buf()),
-        subscription_file: None,
         controller_secret: Some(controller_secret.clone()),
     };
     let rendered = render_generated_profile(&spec, &profile).map_err(|error| error.to_string())?;
@@ -4242,7 +4175,7 @@ fn discover_mihomo_binary() -> Result<PathBuf, String> {
         "mihomo"
     };
     first_existing_binary(mihomo_binary_candidates(executable_name))
-        .ok_or_else(|| format!("未找到 Mihomo；请先安装内核或设置 {BINARY_ENV} 与配置文件"))
+        .ok_or_else(|| format!("未找到 Mihomo；请安装官方内核或设置 {BINARY_ENV}"))
 }
 
 fn mihomo_binary_candidates(executable_name: &str) -> Vec<PathBuf> {
@@ -4259,7 +4192,6 @@ fn mihomo_binary_candidates(executable_name: &str) -> Vec<PathBuf> {
     candidates.extend([
         PathBuf::from("/opt/homebrew/bin/mihomo"),
         PathBuf::from("/usr/local/bin/mihomo"),
-        PathBuf::from("/Applications/Clash Verge.app/Contents/MacOS/verge-mihomo"),
     ]);
     candidates
 }
@@ -4308,117 +4240,6 @@ fn generate_controller_secret() -> Result<String, String> {
     Ok(secret.to_owned())
 }
 
-#[derive(Debug, PartialEq, Eq)]
-enum RuntimeInput {
-    External,
-    ExistingConfig {
-        binary: std::ffi::OsString,
-        config_file: std::ffi::OsString,
-    },
-    SubscriptionFile {
-        binary: std::ffi::OsString,
-        subscription_file: std::ffi::OsString,
-    },
-}
-
-fn select_runtime_input(
-    binary: Option<std::ffi::OsString>,
-    config_file: Option<std::ffi::OsString>,
-    subscription_file: Option<std::ffi::OsString>,
-) -> Result<RuntimeInput, String> {
-    match (binary, config_file, subscription_file) {
-        (None, None, None) => Ok(RuntimeInput::External),
-        (Some(binary), Some(config_file), None) => Ok(RuntimeInput::ExistingConfig {
-            binary,
-            config_file,
-        }),
-        (Some(binary), None, Some(subscription_file)) => Ok(RuntimeInput::SubscriptionFile {
-            binary,
-            subscription_file,
-        }),
-        (_, Some(_), Some(_)) => Err(format!(
-            "{CONFIG_ENV} 与 {SUBSCRIPTION_FILE_ENV} 不能同时设置"
-        )),
-        _ => Err(format!(
-            "{BINARY_ENV} 必须与 {CONFIG_ENV} 或 {SUBSCRIPTION_FILE_ENV} 之一同时设置"
-        )),
-    }
-}
-
-fn build_subscription_runtime(
-    binary: PathBuf,
-    subscription_file: &Path,
-) -> Result<ControllerRuntime, String> {
-    let data_dir = configured_data_dir()?;
-    let controller = configured_managed_controller(&data_dir)?;
-    let subscription = read_private_subscription(subscription_file)?;
-    let mut profile = Profile::qx_default(subscription).map_err(|error| error.to_string())?;
-    profile.mixed_port = configured_mixed_port()?;
-    let yaml = render_mihomo_yaml(&profile).map_err(|error| error.to_string())?;
-    let config_file = write_private_atomic(&data_dir, GENERATED_PROFILE_FILE, yaml.as_bytes())
-        .map_err(|error| error.to_string())?;
-    let generated_profile = ManagedGeneratedProfile {
-        kernel: KernelKind::Mihomo,
-        binary: binary.clone(),
-        data_dir: data_dir.clone(),
-        controller: controller.clone(),
-        expected_mixed_port: Some(profile.mixed_port),
-        profile_store_dir: None,
-        subscription_file: Some(subscription_file.to_owned()),
-        controller_secret: None,
-    };
-    Ok(build_managed_runtime_with_controller(
-        binary,
-        config_file,
-        data_dir,
-        controller,
-        RuntimeProfileSource::PrivateSubscription,
-        Some(generated_profile),
-    ))
-}
-
-fn read_private_subscription(path: &Path) -> Result<SecretUrl, String> {
-    if !path.is_absolute() || !has_only_clean_components(path) {
-        return Err(format!("{SUBSCRIPTION_FILE_ENV} 必须是无跳转段的绝对路径"));
-    }
-    let metadata =
-        fs::symlink_metadata(path).map_err(|_source| "无法读取私有订阅文件元数据".to_owned())?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return Err("私有订阅来源必须是普通文件，不能是符号链接".to_owned());
-    }
-    let file = fs::File::open(path).map_err(|_source| "无法打开私有订阅文件".to_owned())?;
-    let opened_metadata = file
-        .metadata()
-        .map_err(|_source| "无法读取已打开订阅文件的元数据".to_owned())?;
-    if opened_metadata.len() > MAX_SUBSCRIPTION_FILE_BYTES {
-        return Err("私有订阅文件超过 16 KiB 限制".to_owned());
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::{MetadataExt, PermissionsExt};
-
-        if metadata.dev() != opened_metadata.dev() || metadata.ino() != opened_metadata.ino() {
-            return Err("私有订阅文件在读取期间发生变化".to_owned());
-        }
-        if opened_metadata.permissions().mode() & 0o077 != 0 {
-            return Err("私有订阅文件权限必须为 0600 或更严格".to_owned());
-        }
-    }
-    let mut contents = String::new();
-    file.take(MAX_SUBSCRIPTION_FILE_BYTES + 1)
-        .read_to_string(&mut contents)
-        .map_err(|_source| "私有订阅文件必须是有效 UTF-8 文本".to_owned())?;
-    if contents.len() as u64 > MAX_SUBSCRIPTION_FILE_BYTES {
-        return Err("私有订阅文件超过 16 KiB 限制".to_owned());
-    }
-    let value = contents.trim_end_matches(['\r', '\n']);
-    if value.is_empty() || value.lines().count() != 1 || value.trim() != value {
-        return Err("私有订阅文件必须只包含一行 HTTPS URL".to_owned());
-    }
-    SecretUrl::parse_https(value)
-        .map_err(|_error| "私有订阅文件必须只包含一个有效 HTTPS URL".to_owned())
-}
-
 fn has_only_clean_components(path: &Path) -> bool {
     path.components().all(|component| {
         matches!(
@@ -4441,14 +4262,6 @@ fn configured_mixed_port() -> Result<u16, String> {
     }
 }
 
-fn build_managed_runtime(
-    binary: PathBuf,
-    config_file: PathBuf,
-) -> Result<ControllerRuntime, String> {
-    let data_dir = configured_data_dir()?;
-    build_managed_runtime_in(binary, config_file, data_dir)
-}
-
 fn configured_data_dir() -> Result<PathBuf, String> {
     brand::env_var_os(DATA_DIR_ENV, LEGACY_RELAY_DATA_DIR_ENV)
         .map(PathBuf::from)
@@ -4456,67 +4269,8 @@ fn configured_data_dir() -> Result<PathBuf, String> {
         .ok_or_else(|| format!("无法确定数据目录，请设置 {DATA_DIR_ENV}"))
 }
 
-fn build_managed_runtime_in(
-    binary: PathBuf,
-    config_file: PathBuf,
-    data_dir: PathBuf,
-) -> Result<ControllerRuntime, String> {
-    let controller = configured_managed_controller(&data_dir)?;
-    Ok(build_managed_runtime_with_controller(
-        binary,
-        config_file,
-        data_dir,
-        controller,
-        RuntimeProfileSource::ExistingConfig,
-        None,
-    ))
-}
-
 fn configured_managed_controller(data_dir: &Path) -> Result<ControllerEndpoint, String> {
-    let controller = match brand::env_var_os(CONTROLLER_ENV, LEGACY_RELAY_CONTROLLER_ENV) {
-        Some(endpoint) => parse_managed_endpoint(
-            endpoint
-                .to_str()
-                .ok_or_else(|| format!("{CONTROLLER_ENV} 必须是有效 Unicode"))?,
-        )?,
-        None => default_managed_endpoint(data_dir)?,
-    };
-    Ok(controller)
-}
-
-fn build_managed_runtime_with_controller(
-    binary: PathBuf,
-    config_file: PathBuf,
-    data_dir: PathBuf,
-    controller: ControllerEndpoint,
-    profile_source: RuntimeProfileSource,
-    generated_profile: Option<ManagedGeneratedProfile>,
-) -> ControllerRuntime {
-    let endpoint = controller.uri();
-    let config = ManagedEngineConfig::new(binary, config_file, data_dir, controller);
-    let manager = EngineManager::new(
-        config,
-        ReadinessPolicy::default(),
-        Box::new(MihomoReadinessProbe),
-    );
-    ControllerRuntime::Managed {
-        endpoint,
-        manager: Arc::new(Mutex::new(manager)),
-        profile_source,
-        generated_profile,
-        privileged: Arc::new(AtomicBool::new(false)),
-    }
-}
-
-fn parse_managed_endpoint(endpoint: &str) -> Result<ControllerEndpoint, String> {
-    if let Some(path) = endpoint.strip_prefix("unix://") {
-        return Ok(ControllerEndpoint::UnixSocket(PathBuf::from(path)));
-    }
-    if endpoint.starts_with("pipe://") {
-        return Err("托管 Windows pipe 尚未开放；请先使用外部 loopback controller".to_owned());
-    }
-    ControllerConfig::new(endpoint).map_err(|error| error.to_string())?;
-    Err("托管 TCP 暂未开放；请使用 Unix socket 或外部 loopback controller".to_owned())
+    default_managed_endpoint(data_dir)
 }
 
 #[cfg(unix)]
@@ -4529,7 +4283,7 @@ fn default_managed_endpoint(data_dir: &Path) -> Result<ControllerEndpoint, Strin
 
 #[cfg(windows)]
 fn default_managed_endpoint(_data_dir: &Path) -> Result<ControllerEndpoint, String> {
-    Err("托管 Windows pipe transport 尚未完成；当前请使用外部 loopback controller".to_owned())
+    Err("Windows 托管 Mihomo controller transport 尚未完成".to_owned())
 }
 
 #[cfg(not(any(unix, windows)))]
@@ -4541,27 +4295,28 @@ fn default_data_dir() -> Option<PathBuf> {
     brand::data_dir().map(|directory| directory.join("mihomo"))
 }
 
-pub(crate) fn configured_endpoint() -> String {
-    brand::env_var(CONTROLLER_ENV, LEGACY_RELAY_CONTROLLER_ENV)
-        .unwrap_or_else(|| ControllerConfig::default().base_url().to_owned())
-}
-
 pub(crate) fn load(
     endpoint: &str,
     controller_secret: Option<&str>,
 ) -> Result<LoadedSnapshot, LoadError> {
-    loaded_snapshot(&fetch_snapshot(endpoint, controller_secret)?)
+    Ok(loaded_snapshot(&fetch_snapshot(
+        endpoint,
+        controller_secret,
+    )?))
 }
 
 pub(crate) fn load_sing_box(
     endpoint: &str,
     controller_secret: Option<&str>,
 ) -> Result<LoadedSnapshot, LoadError> {
-    loaded_snapshot(&fetch_sing_box_snapshot(endpoint, controller_secret)?)
+    Ok(loaded_snapshot(&fetch_sing_box_snapshot(
+        endpoint,
+        controller_secret,
+    )?))
 }
 
-fn loaded_snapshot(snapshot: &MihomoSnapshot) -> Result<LoadedSnapshot, LoadError> {
-    let catalog = to_policy_catalog(snapshot)?;
+fn loaded_snapshot(snapshot: &MihomoSnapshot) -> LoadedSnapshot {
+    let catalog = to_policy_catalog(snapshot).ok();
     let providers = load_providers(&snapshot.providers);
     let version = snapshot
         .version
@@ -4575,7 +4330,7 @@ fn loaded_snapshot(snapshot: &MihomoSnapshot) -> Result<LoadedSnapshot, LoadErro
     let connections = snapshot.connections.connections.clone();
     let runtime = snapshot.runtime.clone();
 
-    Ok(LoadedSnapshot {
+    LoadedSnapshot {
         catalog,
         providers,
         version,
@@ -4585,7 +4340,7 @@ fn loaded_snapshot(snapshot: &MihomoSnapshot) -> Result<LoadedSnapshot, LoadErro
         observed_routes,
         connections,
         runtime,
-    })
+    }
 }
 
 fn validate_managed_runtime(
@@ -5380,8 +5135,6 @@ fn with_controller_secret(
 ) -> ControllerConfig {
     if let Some(secret) = controller_secret {
         config = config.with_secret(secret.to_owned());
-    } else if let Some(secret) = brand::env_var(SECRET_ENV, LEGACY_RELAY_SECRET_ENV) {
-        config = config.with_secret(secret);
     }
     config
 }
@@ -5404,7 +5157,6 @@ fn unix_socket_path(endpoint: &str) -> Result<Option<PathBuf>, MihomoError> {
 #[cfg(all(test, unix))]
 mod tests {
     use std::collections::BTreeSet;
-    use std::ffi::OsString;
     use std::fs;
     use std::io::{BufRead, BufReader, Write};
     use std::net::TcpListener;
@@ -5427,7 +5179,6 @@ mod tests {
             )),
             expected_mixed_port: Some(17_890),
             profile_store_dir: None,
-            subscription_file: None,
             controller_secret: None,
         };
         let failed = manis_mihomo::RuntimeConfig {
@@ -5486,7 +5237,6 @@ mod tests {
             controller: controller.clone(),
             expected_mixed_port: None,
             profile_store_dir: None,
-            subscription_file: None,
             controller_secret: Some(secret.clone()),
         };
         let rendered = super::render_generated_profile(&spec, &profile)?;
@@ -5555,26 +5305,6 @@ mod tests {
         assert_eq!(
             uppercase, "provider <redacted-url> failed",
             "URI schemes are case-insensitive"
-        );
-    }
-
-    #[test]
-    fn runtime_profile_source_exposes_only_safe_copy() {
-        use super::RuntimeProfileSource;
-
-        assert_eq!(
-            RuntimeProfileSource::PrivateSubscription.label(),
-            "私有 HTTPS 订阅"
-        );
-        assert!(
-            RuntimeProfileSource::PrivateSubscription
-                .detail()
-                .contains("链接已隐藏")
-        );
-        assert!(
-            !RuntimeProfileSource::PrivateSubscription
-                .detail()
-                .contains("token")
         );
     }
 
@@ -6317,14 +6047,6 @@ IP-CIDR,192.0.2.0/24,DIRECT
     #[test]
     fn qx_rule_sources_compile_in_source_order_without_generated_fallbacks()
     -> Result<(), Box<dyn std::error::Error>> {
-        let runtime = super::ControllerRuntime::External {
-            endpoint: "http://127.0.0.1:9".to_owned(),
-        };
-        assert_eq!(
-            runtime.apply_saved_sources(Path::new("/tmp/manis-qx-rules"))?,
-            super::GeneratedProfileApply::NotManaged
-        );
-
         let source = super::StoredQxRuleSource {
             id: "qx-rule-fixture-1".to_owned(),
             source: manis_profile::SecretUrl::parse_https(
@@ -6640,54 +6362,6 @@ IP-CIDR,192.0.2.0/24,DIRECT
     }
 
     #[test]
-    fn selects_external_existing_and_subscription_runtime_inputs() -> Result<(), String> {
-        assert_eq!(
-            super::select_runtime_input(None, None, None)?,
-            super::RuntimeInput::External
-        );
-        assert_eq!(
-            super::select_runtime_input(
-                Some(OsString::from("mihomo")),
-                Some(OsString::from("config.yaml")),
-                None,
-            )?,
-            super::RuntimeInput::ExistingConfig {
-                binary: OsString::from("mihomo"),
-                config_file: OsString::from("config.yaml"),
-            }
-        );
-        assert_eq!(
-            super::select_runtime_input(
-                Some(OsString::from("mihomo")),
-                None,
-                Some(OsString::from("manis.subscription.secret")),
-            )?,
-            super::RuntimeInput::SubscriptionFile {
-                binary: OsString::from("mihomo"),
-                subscription_file: OsString::from("manis.subscription.secret"),
-            }
-        );
-        assert!(
-            super::select_runtime_input(
-                Some(OsString::from("mihomo")),
-                Some(OsString::from("config.yaml")),
-                Some(OsString::from("manis.subscription.secret")),
-            )
-            .is_err()
-        );
-        assert!(super::select_runtime_input(Some(OsString::from("mihomo")), None, None).is_err());
-        assert!(
-            super::select_runtime_input(
-                None,
-                None,
-                Some(OsString::from("manis.subscription.secret")),
-            )
-            .is_err()
-        );
-        Ok(())
-    }
-
-    #[test]
     fn first_existing_binary_prefers_canonical_candidate() -> Result<(), Box<dyn std::error::Error>>
     {
         let root = test_temp_dir("manis-mihomo-discovery");
@@ -6703,6 +6377,30 @@ IP-CIDR,192.0.2.0/24,DIRECT
 
         fs::remove_dir_all(root)?;
         Ok(())
+    }
+
+    #[test]
+    fn external_controller_and_custom_config_overrides_are_not_runtime_inputs() {
+        assert_eq!(
+            super::first_unsupported_runtime_override(|name| name == super::CONTROLLER_ENV),
+            Some(super::CONTROLLER_ENV)
+        );
+        assert_eq!(
+            super::first_unsupported_runtime_override(|name| name == super::CONFIG_ENV),
+            Some(super::CONFIG_ENV)
+        );
+        assert_eq!(
+            super::first_unsupported_runtime_override(|name| name == super::CONTROLLER_SECRET_ENV),
+            Some(super::CONTROLLER_SECRET_ENV)
+        );
+        assert_eq!(
+            super::first_unsupported_runtime_override(|name| name == super::SUBSCRIPTION_FILE_ENV),
+            Some(super::SUBSCRIPTION_FILE_ENV)
+        );
+        assert_eq!(
+            super::first_unsupported_runtime_override(|name| name == super::BINARY_ENV),
+            None
+        );
     }
 
     #[test]
@@ -6759,47 +6457,29 @@ IP-CIDR,192.0.2.0/24,DIRECT
     }
 
     #[test]
-    fn reads_only_private_single_line_https_subscription_files()
+    fn empty_workspace_builds_a_managed_direct_only_mihomo_runtime()
     -> Result<(), Box<dyn std::error::Error>> {
-        let root = test_temp_dir("manis-ui-subscription");
-        let source = root.join("manis.subscription.secret");
-        fs::write(
-            &source,
-            "https://subscription.example.invalid/client?token=fixture-secret\n",
+        let root = test_temp_dir("manis-managed-mihomo-empty-workspace");
+        let store = root.join("subscriptions");
+        let data_dir = root.join("runtime");
+        let binary = root.join("mihomo");
+        fs::create_dir_all(&store)?;
+        fs::set_permissions(&store, fs::Permissions::from_mode(0o700))?;
+        fs::write(&binary, "#!/bin/sh\nexit 0\n")?;
+        fs::set_permissions(&binary, fs::Permissions::from_mode(0o700))?;
+
+        let runtime = super::build_saved_sources_mihomo_runtime_in(
+            &store,
+            &binary.canonicalize()?,
+            &data_dir,
+            &ControllerEndpoint::UnixSocket(data_dir.join("controller.sock")),
         )?;
-        fs::set_permissions(&source, fs::Permissions::from_mode(0o600))?;
 
-        let secret = super::read_private_subscription(&source)?;
-        assert_eq!(format!("{secret:?}"), "SecretUrl(<redacted>)");
-        assert!(!format!("{secret:?}").contains("fixture-secret"));
-
-        fs::write(
-            &source,
-            "http://subscription.example.invalid/fixture-secret",
-        )?;
-        let message = super::read_private_subscription(&source).expect_err("http must fail");
-        assert!(!message.contains("fixture-secret"));
-        assert!(!message.contains("subscription.example.invalid"));
-
-        fs::remove_dir_all(root)?;
-        Ok(())
-    }
-
-    #[test]
-    fn rejects_public_or_symlink_subscription_files() -> Result<(), Box<dyn std::error::Error>> {
-        let root = test_temp_dir("manis-ui-subscription-safety");
-        let source = root.join("manis.subscription.secret");
-        fs::write(
-            &source,
-            "https://subscription.example.invalid/fixture-secret",
-        )?;
-        fs::set_permissions(&source, fs::Permissions::from_mode(0o644))?;
-        assert!(super::read_private_subscription(&source).is_err());
-
-        fs::set_permissions(&source, fs::Permissions::from_mode(0o600))?;
-        let link = root.join("link.subscription.secret");
-        std::os::unix::fs::symlink(&source, &link)?;
-        assert!(super::read_private_subscription(&link).is_err());
+        assert!(matches!(runtime, super::ControllerRuntime::Managed { .. }));
+        let generated = fs::read_to_string(data_dir.join(super::GENERATED_PROFILE_FILE))?;
+        assert!(generated.contains("rules:\n"));
+        assert!(generated.ends_with("  - \"MATCH,DIRECT\"\n"));
+        assert!(!generated.contains("__MANIS_GLOBAL__"));
 
         fs::remove_dir_all(root)?;
         Ok(())
@@ -6839,7 +6519,7 @@ IP-CIDR,192.0.2.0/24,DIRECT
     }
 
     #[test]
-    fn external_group_benchmark_keeps_partial_proxy_results()
+    fn fixture_group_benchmark_keeps_partial_proxy_results()
     -> Result<(), Box<dyn std::error::Error>> {
         let listener = TcpListener::bind("127.0.0.1:0")?;
         let endpoint = format!("http://{}", listener.local_addr()?);
@@ -6857,7 +6537,7 @@ IP-CIDR,192.0.2.0/24,DIRECT
             }
             Ok(())
         });
-        let runtime = super::ControllerRuntime::External { endpoint };
+        let runtime = super::ControllerRuntime::Fixture { endpoint };
         let delays = runtime.test_proxy_candidates_delay(
             "Local Group",
             &["Working Node".to_owned(), "Offline Node".to_owned()],
@@ -6869,7 +6549,7 @@ IP-CIDR,192.0.2.0/24,DIRECT
     }
 
     #[test]
-    fn external_proxy_benchmark_reports_fast_nodes_before_slow_nodes_finish()
+    fn fixture_proxy_benchmark_reports_fast_nodes_before_slow_nodes_finish()
     -> Result<(), Box<dyn std::error::Error>> {
         let listener = TcpListener::bind("127.0.0.1:0")?;
         let endpoint = format!("http://{}", listener.local_addr()?);
@@ -6916,7 +6596,7 @@ IP-CIDR,192.0.2.0/24,DIRECT
             Ok(())
         });
 
-        let runtime = super::ControllerRuntime::External { endpoint };
+        let runtime = super::ControllerRuntime::Fixture { endpoint };
         let mut updates = Vec::new();
         let callback_gate = slow_gate.clone();
         let delays = runtime.test_proxy_delay_targets_with_progress(
@@ -6966,7 +6646,7 @@ IP-CIDR,192.0.2.0/24,DIRECT
             Ok(request_line)
         });
 
-        let runtime = super::ControllerRuntime::External { endpoint };
+        let runtime = super::ControllerRuntime::Fixture { endpoint };
         let delays = runtime.test_proxy_delay_targets_with_progress(
             &[super::ProxyDelayTarget::provider("Subscription 1", "HK 01")],
             |_name, _delay| {},
@@ -7006,7 +6686,7 @@ IP-CIDR,192.0.2.0/24,DIRECT
             }
             Ok(requests)
         });
-        let runtime = super::ControllerRuntime::External { endpoint };
+        let runtime = super::ControllerRuntime::Fixture { endpoint };
 
         let result = runtime
             .test_policy_group_delay("Auto HK", &["HK-01".to_owned(), "HK-02".to_owned()])?;
@@ -7049,7 +6729,7 @@ IP-CIDR,192.0.2.0/24,DIRECT
             }
             Ok(())
         });
-        let runtime = super::ControllerRuntime::External { endpoint };
+        let runtime = super::ControllerRuntime::Fixture { endpoint };
 
         let result = runtime
             .test_policy_group_delay("Auto HK", &["HK-01".to_owned(), "HK-02".to_owned()])?;
@@ -7062,10 +6742,10 @@ IP-CIDR,192.0.2.0/24,DIRECT
     }
 
     #[test]
-    fn external_runtime_rejects_managed_policy_changes() {
+    fn fixture_runtime_rejects_managed_policy_changes() {
         use manis_core::RoutingMode;
 
-        let runtime = super::ControllerRuntime::External {
+        let runtime = super::ControllerRuntime::Fixture {
             endpoint: "http://127.0.0.1:9".to_owned(),
         };
 
@@ -7187,36 +6867,6 @@ IP-CIDR,192.0.2.0/24,DIRECT
                 "GET /proxies/GLOBAL HTTP/1.1",
             ]
         );
-        Ok(())
-    }
-
-    #[test]
-    fn parses_only_private_managed_controller_endpoints() -> Result<(), String> {
-        assert_eq!(
-            super::parse_managed_endpoint("unix:///tmp/manis/controller.sock")?,
-            ControllerEndpoint::UnixSocket("/tmp/manis/controller.sock".into())
-        );
-        assert!(super::parse_managed_endpoint("http://127.0.0.1:19090").is_err());
-        assert!(super::parse_managed_endpoint("http://[::1]:19090").is_err());
-        assert!(super::parse_managed_endpoint("http://localhost:19090").is_err());
-        assert!(super::parse_managed_endpoint("http://192.0.2.10:19090").is_err());
-        assert!(super::parse_managed_endpoint(r"pipe://\\.\pipe\manis-mihomo").is_err());
-        Ok(())
-    }
-
-    #[test]
-    #[ignore = "requires MANIS_MIHOMO_CONTROLLER and a running controller"]
-    fn reads_a_live_controller_snapshot() -> Result<(), Box<dyn std::error::Error>> {
-        let endpoint = std::env::var(super::CONTROLLER_ENV)?;
-        let snapshot = super::load(&endpoint, None)?;
-        assert!(snapshot.catalog.iter().count() > 0);
-        assert!(
-            snapshot
-                .providers
-                .iter()
-                .any(|provider| !provider.nodes.is_empty())
-        );
-        assert!(!snapshot.version.is_empty());
         Ok(())
     }
 }

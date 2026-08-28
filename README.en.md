@@ -58,7 +58,7 @@ the user and only manages child processes it starts.
 | Platform | Build target | Runtime status |
 | --- | --- | --- |
 | macOS 13+ | Maintained | Primary development platform; system proxy and TUN tested manually |
-| Windows | Maintained | Experimental; external loopback controller path only |
+| Windows | Maintained | Experimental; managed controller transport is not implemented yet |
 | Linux | Maintained | Experimental; native packages and desktop environments need broader testing |
 
 The CI configuration checks all three platforms. A green compile check is not a claim that every
@@ -83,34 +83,30 @@ cd Manis
 cargo run -p manis-ui
 ```
 
-Without saved sources or an explicitly configured controller, Manis attempts a local Mihomo
-controller at `http://127.0.0.1:9090`. To use a different local controller:
+Manis only starts Mihomo processes it owns and only runs configuration generated from data managed
+through the application. It does not attach to another application's controller or run a supplied
+Mihomo YAML file. An official Mihomo executable can be selected explicitly:
 
 ```bash
-MANIS_MIHOMO_CONTROLLER=http://127.0.0.1:9090 \
-MANIS_MIHOMO_SECRET='controller-secret' \
-cargo run -p manis-ui
+MANIS_MIHOMO_BINARY=/absolute/path/to/mihomo cargo run -p manis-ui
 ```
 
-On macOS and Linux, a Unix socket can be used instead:
-
-```bash
-MANIS_MIHOMO_CONTROLLER=unix:///path/to/mihomo.sock cargo run -p manis-ui
-```
-
-Controller TCP endpoints are restricted to loopback addresses. Unix socket paths are checked before
-use, and the application does not forward a TCP bearer secret to a Unix socket.
+Before the first node is added, Manis prepares a direct-only bootstrap configuration. After a
+subscription or individual node is added, Manis validates and writes the generated configuration to
+its private runtime directory. The controller endpoint is also assigned by Manis, not configured by
+the user.
 
 ## Development checks
 
 ```bash
 cargo fmt --all -- --check
 cargo check --workspace --all-targets --locked
+cargo check -p manis-ui --example snapshot --features snapshot-fixtures --locked
 cargo test --workspace --all-targets --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
 ```
 
-Real-core and live-controller tests are ignored by default. They must be enabled explicitly and use
+Real-core tests are ignored by default. They must be enabled explicitly and use
 synthetic fixtures; a private subscription must never be committed or used in public test output.
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full workflow.
 

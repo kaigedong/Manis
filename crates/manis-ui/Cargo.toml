@@ -10,6 +10,13 @@ readme.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[features]
+snapshot-fixtures = []
+
+[[example]]
+name = "snapshot"
+required-features = ["snapshot-fixtures"]
+
 [dependencies]
 gpui = { git = "https://github.com/zed-industries/zed", package = "gpui", default-features = false }
 gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "aa7def675aa17b31ca7b79542c8e7a779ed3e56b" }

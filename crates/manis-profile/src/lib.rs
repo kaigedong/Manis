@@ -148,6 +148,28 @@ pub struct Profile {
 }
 
 impl Profile {
+    /// Builds the direct-only bootstrap profile used before the first node source is added.
+    ///
+    /// # Errors
+    /// Returns a redacted validation error when the managed listener configuration is invalid.
+    pub fn managed_empty(mixed_port: u16) -> Result<Self, ProfileError> {
+        let profile = Self {
+            mode: ProfileMode::Rule,
+            mixed_port,
+            log_level: LogLevel::Info,
+            store_selected: true,
+            proxy_server_nameservers: default_proxy_dns_servers(),
+            proxies: Vec::new(),
+            providers: Vec::new(),
+            groups: Vec::new(),
+            rules: vec![Rule::Match {
+                policy: PolicyRef::Direct,
+            }],
+        };
+        profile.validate()?;
+        Ok(profile)
+    }
+
     /// Builds a minimal QX-style profile with one hidden global-exit selector.
     ///
     /// # Errors
@@ -199,6 +221,12 @@ impl Profile {
     ) -> Result<Self, ProfileError> {
         if subscriptions.is_empty() && vless_nodes.is_empty() {
             return Err(ProfileError::InvalidValue("profile sources"));
+        }
+        if vless_nodes.iter().any(|proxy| {
+            proxy.name().as_str().eq_ignore_ascii_case("GLOBAL")
+                || proxy.name().as_str() == MANIS_GLOBAL_GROUP_NAME
+        }) {
+            return Err(ProfileError::InvalidValue("reserved proxy name"));
         }
         let global_exit_name = Name::parse(MANIS_GLOBAL_GROUP_NAME)?;
         let providers = subscriptions
@@ -1301,6 +1329,11 @@ fn compile_user_groups(
     user_groups
         .into_iter()
         .map(|group| {
+            if group.name.as_str().eq_ignore_ascii_case("GLOBAL")
+                || group.name.as_str() == MANIS_GLOBAL_GROUP_NAME
+            {
+                return Err(ProfileError::InvalidValue("reserved proxy group name"));
+            }
             if !group_names.insert(group.name.clone()) {
                 return Err(ProfileError::DuplicateName);
             }

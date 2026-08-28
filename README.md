@@ -55,7 +55,7 @@ Manis 仓库不包含、也不会自动下载代理内核。应用只寻找用�
 | 平台 | 编译目标 | 运行状态 |
 | --- | --- | --- |
 | macOS 13+ | 持续维护 | 主要开发平台；系统代理和 TUN 已进行人工测试 |
-| Windows | 持续维护 | 实验性；当前主要使用外部本机回环控制器 |
+| Windows | 持续维护 | 实验性；托管 controller transport 尚未完成，暂不能启动 Mihomo |
 | Linux | 持续维护 | 实验性；仍需覆盖更多发行版与桌面环境 |
 
 CI 会检查三个平台，但“能够编译”不代表该平台上的所有网络集成都已经完成真实验证。
@@ -77,34 +77,28 @@ cd Manis
 cargo run -p manis-ui
 ```
 
-如果没有保存任何来源，也没有显式配置 controller，Manis 会尝试连接
-`http://127.0.0.1:9090`。使用其他本机 controller：
+Manis 只启动自己管理的 Mihomo 进程，并且只使用自己从界面数据生成的配置。它不会连接
+其他程序启动的 controller，也不会运行用户提供的 Mihomo YAML。可以显式指定官方
+Mihomo 可执行文件：
 
 ```bash
-MANIS_MIHOMO_CONTROLLER=http://127.0.0.1:9090 \
-MANIS_MIHOMO_SECRET='controller-secret' \
-cargo run -p manis-ui
+MANIS_MIHOMO_BINARY=/absolute/path/to/mihomo cargo run -p manis-ui
 ```
 
-macOS 与 Linux 也可以使用 Unix socket：
-
-```bash
-MANIS_MIHOMO_CONTROLLER=unix:///path/to/mihomo.sock cargo run -p manis-ui
-```
-
-TCP controller 只允许回环地址；Unix socket 在连接前会检查类型与符号链接，TCP bearer
-secret 不会被转发到 Unix socket。
+未添加节点时，Manis 会准备一个只含 `DIRECT` 兜底的空配置；添加订阅或单独节点后，配置由
+Manis 校验并写入私有运行目录。controller endpoint 也由 Manis 分配，不作为用户配置项。
 
 ## 开发验证
 
 ```bash
 cargo fmt --all -- --check
 cargo check --workspace --all-targets --locked
+cargo check -p manis-ui --example snapshot --features snapshot-fixtures --locked
 cargo test --workspace --all-targets --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
 ```
 
-真实内核和在线 controller 测试默认忽略，必须通过环境变量显式开启，并使用合成测试数据。
+真实内核测试默认忽略，必须通过环境变量显式开启，并使用合成测试数据。
 私人订阅不能进入 Git 或公开测试输出。完整贡献流程见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ## 安全与隐私
