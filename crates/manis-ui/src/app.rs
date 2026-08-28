@@ -5475,50 +5475,97 @@ impl ManisApp {
 
         if self.policy_detail_tab == PolicyDetailTab::Settings {
             if let Some(group_id) = editable_group_id.as_deref() {
-                let edit_id = group_id.to_owned();
-                let remove_id = group_id.to_owned();
-                body = body
-                    .child(section_heading(
-                        language.text("Managed policy settings", "托管策略组设置"),
-                        language.text(
-                            "Saved in Manis and applied to the managed Mihomo configuration.",
-                            "保存在 Manis 中，并会应用到 Manis 托管的 Mihomo 配置。",
-                        ),
-                        None,
-                        theme,
-                    ))
-                    .child(
-                        div()
-                            .mt(Space::Sm.px())
-                            .flex()
-                            .gap(Space::Sm.px())
-                            .child(
-                                action_button(
-                                    "edit-managed-policy",
-                                    language.text("Edit policy group", "编辑策略组"),
-                                    ActionRole::Secondary,
-                                    ControlSize::Compact,
-                                )
-                                .on_click(cx.listener(
-                                    move |this, _, _, cx| {
-                                        this.start_managed_policy_edit(&edit_id, cx);
-                                    },
-                                )),
+                let active_draft = self
+                    .managed_policy_draft
+                    .as_ref()
+                    .filter(|draft| draft.editing_id.as_deref() == Some(group_id));
+                if let Some(draft) = active_draft {
+                    let actions = div()
+                        .flex()
+                        .items_center()
+                        .gap(Space::Sm.px())
+                        .child(
+                            action_button(
+                                "cancel-managed-policy-edit",
+                                language.message(Message::Cancel),
+                                ActionRole::Quiet,
+                                ControlSize::Compact,
                             )
-                            .child(
-                                action_button(
-                                    "remove-managed-policy",
-                                    language.text("Delete policy group", "删除策略组"),
-                                    ActionRole::Danger,
-                                    ControlSize::Compact,
-                                )
-                                .on_click(cx.listener(
-                                    move |this, _, _, cx| {
-                                        this.remove_managed_policy(&remove_id, cx);
-                                    },
-                                )),
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.managed_policy_draft = None;
+                                this.managed_policy_editor_popover = None;
+                                cx.notify();
+                            })),
+                        )
+                        .child(
+                            action_button(
+                                "save-managed-policy-edit",
+                                language.message(Message::SaveChanges),
+                                ActionRole::Primary,
+                                ControlSize::Compact,
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.save_managed_policy(cx);
+                            })),
+                        )
+                        .into_any_element();
+                    body = body
+                        .child(section_heading(
+                            language.text("Managed policy settings", "托管策略组设置"),
+                            language.text(
+                                "Saved in Manis and applied to the managed Mihomo configuration.",
+                                "保存在 Manis 中，并会应用到 Manis 托管的 Mihomo 配置。",
                             ),
-                    );
+                            Some(actions),
+                            theme,
+                        ))
+                        .child(self.policy_editor_form(draft, compact, true, language, theme, cx));
+                } else {
+                    let edit_id = group_id.to_owned();
+                    let remove_id = group_id.to_owned();
+                    body = body
+                        .child(section_heading(
+                            language.text("Managed policy settings", "托管策略组设置"),
+                            language.text(
+                                "Saved in Manis and applied to the managed Mihomo configuration.",
+                                "保存在 Manis 中，并会应用到 Manis 托管的 Mihomo 配置。",
+                            ),
+                            None,
+                            theme,
+                        ))
+                        .child(
+                            div()
+                                .mt(Space::Sm.px())
+                                .flex()
+                                .gap(Space::Sm.px())
+                                .child(
+                                    action_button(
+                                        "edit-managed-policy",
+                                        language.text("Edit policy group", "编辑策略组"),
+                                        ActionRole::Secondary,
+                                        ControlSize::Compact,
+                                    )
+                                    .on_click(cx.listener(
+                                        move |this, _, _, cx| {
+                                            this.start_managed_policy_edit(&edit_id, cx);
+                                        },
+                                    )),
+                                )
+                                .child(
+                                    action_button(
+                                        "remove-managed-policy",
+                                        language.text("Delete policy group", "删除策略组"),
+                                        ActionRole::Danger,
+                                        ControlSize::Compact,
+                                    )
+                                    .on_click(cx.listener(
+                                        move |this, _, _, cx| {
+                                            this.remove_managed_policy(&remove_id, cx);
+                                        },
+                                    )),
+                                ),
+                        );
+                }
             } else {
                 body = body
                     .child(section_heading(
@@ -6770,7 +6817,13 @@ impl Render for ManisApp {
         }
         let show_inspector = size_class == WindowSizeClass::Wide;
         let policies_active = self.primary_workspace == PrimaryWorkspace::Policies;
-        let policy_editor_active = policies_active && self.managed_policy_draft.is_some();
+        // Creating a group has no existing detail context, so it keeps the standalone editor.
+        // Editing an existing group stays inside its Settings tab and preserves the policy header.
+        let policy_editor_active = policies_active
+            && self
+                .managed_policy_draft
+                .as_ref()
+                .is_some_and(|draft| draft.editing_id.is_none());
         let has_policy_catalog = self.catalog.is_some();
         let nodes_active = self.primary_workspace == PrimaryWorkspace::Nodes;
         let routing_rules_active = self.primary_workspace == PrimaryWorkspace::RoutingRules;

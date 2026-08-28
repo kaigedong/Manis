@@ -558,7 +558,7 @@ impl ManisApp {
             .flex_col()
             .bg(theme.surface_low)
             .child(Self::policy_editor_header(draft, language, theme, cx))
-            .child(self.policy_editor_form(draft, compact, language, theme, cx))
+            .child(self.policy_editor_form(draft, compact, false, language, theme, cx))
     }
 
     fn policy_editor_header(
@@ -637,10 +637,11 @@ impl ManisApp {
     }
 
     #[allow(clippy::too_many_lines)]
-    fn policy_editor_form(
+    pub(super) fn policy_editor_form(
         &self,
         draft: &ManagedPolicyDraft,
         compact: bool,
+        embedded: bool,
         language: Language,
         theme: Theme,
         cx: &mut Context<Self>,
@@ -799,10 +800,15 @@ impl ManisApp {
 
         div()
             .id("policy-editor-scroll")
-            .flex_1()
-            .overflow_y_scroll()
-            .px(if compact { px(16.0) } else { px(28.0) })
-            .py_6()
+            .when(!embedded, |form| form.flex_1().overflow_y_scroll())
+            .px(if embedded {
+                px(0.0)
+            } else if compact {
+                px(16.0)
+            } else {
+                px(28.0)
+            })
+            .py(if embedded { px(0.0) } else { px(24.0) })
             .child(
                 div()
                     .w_full()
@@ -1499,7 +1505,7 @@ impl ManisApp {
     }
 
     #[allow(clippy::too_many_lines)]
-    fn save_managed_policy(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn save_managed_policy(&mut self, cx: &mut Context<Self>) {
         let Some(draft) = self.managed_policy_draft.clone() else {
             return;
         };
