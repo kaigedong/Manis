@@ -171,7 +171,9 @@ impl ManualRuleCondition {
             }
             ManualRuleKind::GeoIp => manis_profile::RuleCondition::GeoIp {
                 country: self.parameter.clone(),
-                no_resolve: true,
+                // System-proxy connections can reach Mihomo with only a hostname. GEOIP must be
+                // allowed to resolve it; otherwise the rule is skipped and FINAL wins.
+                no_resolve: false,
             },
             ManualRuleKind::IpAsn => manis_profile::RuleCondition::IpAsn {
                 asn: self
@@ -1036,6 +1038,23 @@ mod tests {
         );
         assert!(!yaml.contains("GEOIP,CN,DIRECT"));
         assert!(!yaml.contains("MATCH,__MANIS_GLOBAL__"));
+    }
+
+    #[test]
+    fn geoip_rules_resolve_domain_only_connections() {
+        let mut profile = manis_profile::Profile::qx_default(
+            manis_profile::SecretUrl::parse_https("https://example.invalid/subscription")
+                .expect("fixture URL"),
+        )
+        .expect("fixture profile");
+        let rule = ManualRule::parse(ManualRuleKind::GeoIp, "CN", "DIRECT").expect("rule");
+
+        append_manual_rules(&mut profile, &[rule], manis_core::KernelKind::Mihomo)
+            .expect("supported rule");
+        let yaml = manis_profile::render_mihomo_yaml(&profile).expect("rendered profile");
+
+        assert!(yaml.contains("GEOIP,CN,DIRECT"));
+        assert!(!yaml.contains("GEOIP,CN,DIRECT,no-resolve"));
     }
 
     #[test]
