@@ -1,5 +1,213 @@
-use gpui::{ElementId, IntoElement, ParentElement, Styled, prelude::*, px};
-use gpui_component::{button::Button, popover::Popover};
+use gpui::{
+    AnyElement, Div, ElementId, IntoElement, ParentElement, SharedString, Styled, div, prelude::*,
+    px,
+};
+use gpui_component::{
+    Sizable as _,
+    button::{Button, ButtonVariant, ButtonVariants as _},
+    popover::Popover,
+};
+
+use crate::theme::{ControlSize, Radius, Space, TextRole, Theme};
+
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ActionRole {
+    Primary,
+    Secondary,
+    Quiet,
+    Danger,
+}
+
+#[allow(dead_code)]
+impl ActionRole {
+    pub(crate) fn variant(self) -> ButtonVariant {
+        match self {
+            Self::Primary => ButtonVariant::Primary,
+            Self::Secondary => ButtonVariant::Secondary,
+            Self::Quiet => ButtonVariant::Ghost,
+            Self::Danger => ButtonVariant::Danger,
+        }
+    }
+}
+
+#[allow(dead_code)]
+pub(crate) fn action_button(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    role: ActionRole,
+    size: ControlSize,
+) -> Button {
+    style_action_button(Button::new(id).label(label), role, size)
+}
+
+#[allow(dead_code)]
+pub(crate) fn style_action_button(button: Button, role: ActionRole, size: ControlSize) -> Button {
+    let component_size = match size {
+        ControlSize::Compact | ControlSize::Icon => gpui_component::Size::Small,
+        ControlSize::Standard => gpui_component::Size::Medium,
+    };
+    button
+        .with_variant(role.variant())
+        .with_size(component_size)
+        .h(size.height())
+        .rounded(Radius::Control.px())
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum StatusTone {
+    Neutral,
+    Success,
+    Warning,
+    Error,
+    Route,
+}
+
+#[allow(dead_code)]
+impl StatusTone {
+    fn colors(self, theme: Theme) -> (gpui::Rgba, gpui::Rgba) {
+        match self {
+            Self::Neutral => (theme.text_secondary, theme.surface_low),
+            Self::Success => (theme.status_success, theme.surface_low),
+            Self::Warning => (theme.status_warning, theme.surface_low),
+            Self::Error => (theme.status_error, theme.surface_low),
+            Self::Route => (theme.route_trace, theme.route_soft),
+        }
+    }
+}
+
+#[allow(dead_code)]
+pub(crate) fn status_badge(label: impl Into<SharedString>, tone: StatusTone, theme: Theme) -> Div {
+    let (foreground, background) = tone.colors(theme);
+    div()
+        .flex()
+        .items_center()
+        .h(TextRole::Label.line_height() + Space::Sm.px())
+        .px(Space::Sm.px())
+        .rounded(Radius::Control.px())
+        .border_1()
+        .border_color(theme.outline_subtle)
+        .bg(background)
+        .text_color(foreground)
+        .text_size(TextRole::Label.size())
+        .line_height(TextRole::Label.line_height())
+        .font_weight(TextRole::Label.weight())
+        .child(label.into())
+}
+
+#[allow(dead_code)]
+pub(crate) fn page_heading(
+    title: impl Into<SharedString>,
+    detail: impl Into<SharedString>,
+    action: Option<AnyElement>,
+    theme: Theme,
+) -> Div {
+    heading(
+        title,
+        detail,
+        action,
+        theme,
+        TextRole::PageTitle,
+        TextRole::Body,
+    )
+}
+
+#[allow(dead_code)]
+pub(crate) fn section_heading(
+    title: impl Into<SharedString>,
+    detail: impl Into<SharedString>,
+    action: Option<AnyElement>,
+    theme: Theme,
+) -> Div {
+    heading(
+        title,
+        detail,
+        action,
+        theme,
+        TextRole::SectionTitle,
+        TextRole::Metadata,
+    )
+}
+
+#[allow(dead_code)]
+fn heading(
+    title: impl Into<SharedString>,
+    detail: impl Into<SharedString>,
+    action: Option<AnyElement>,
+    theme: Theme,
+    title_role: TextRole,
+    detail_role: TextRole,
+) -> Div {
+    let detail = detail.into();
+    div()
+        .flex()
+        .w_full()
+        .items_start()
+        .justify_between()
+        .gap(Space::Lg.px())
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .child(
+                    div()
+                        .text_color(theme.text_primary)
+                        .text_size(title_role.size())
+                        .line_height(title_role.line_height())
+                        .font_weight(title_role.weight())
+                        .child(title.into()),
+                )
+                .when(!detail.as_ref().is_empty(), |this| {
+                    this.child(
+                        div()
+                            .mt(Space::Xs.px())
+                            .text_color(theme.text_secondary)
+                            .text_size(detail_role.size())
+                            .line_height(detail_role.line_height())
+                            .child(detail),
+                    )
+                }),
+        )
+        .when_some(action, |this, action| this.flex_none().child(action))
+}
+
+#[allow(dead_code)]
+pub(crate) fn empty_state(
+    title: impl Into<SharedString>,
+    detail: impl Into<SharedString>,
+    action: Option<AnyElement>,
+    theme: Theme,
+) -> Div {
+    let detail = detail.into();
+    div()
+        .w_full()
+        .p(Space::Xl.px())
+        .rounded(Radius::Pane.px())
+        .bg(theme.surface_low)
+        .child(
+            div()
+                .text_color(theme.text_primary)
+                .text_size(TextRole::SectionTitle.size())
+                .line_height(TextRole::SectionTitle.line_height())
+                .font_weight(TextRole::SectionTitle.weight())
+                .child(title.into()),
+        )
+        .when(!detail.as_ref().is_empty(), |this| {
+            this.child(
+                div()
+                    .mt(Space::Sm.px())
+                    .max_w(px(520.0))
+                    .text_color(theme.text_secondary)
+                    .text_size(TextRole::Body.size())
+                    .line_height(TextRole::Body.line_height())
+                    .child(detail),
+            )
+        })
+        .when_some(action, |this, action| {
+            this.child(div().mt(Space::Lg.px()).flex().items_center().child(action))
+        })
+}
 
 /// Builds a dropdown whose position is measured from its trigger bounds.
 ///
@@ -29,12 +237,24 @@ mod tests {
     use std::time::Duration;
 
     use gpui::{
-        Context, InteractiveElement as _, Modifiers, ParentElement as _, Render, Styled as _,
-        Window, div, px,
+        Context, InteractiveElement as _, IntoElement as _, Modifiers, ParentElement as _, Render,
+        Styled as _, Window, div, px,
     };
-    use gpui_component::button::Button;
+    use gpui_component::button::{Button, ButtonVariant};
 
-    use super::anchored_popover;
+    use super::{
+        ActionRole, StatusTone, action_button, anchored_popover, empty_state, page_heading,
+        status_badge,
+    };
+    use crate::theme::{ControlSize, Theme};
+
+    #[test]
+    fn action_roles_map_to_component_button_variants() {
+        assert_eq!(ActionRole::Primary.variant(), ButtonVariant::Primary);
+        assert_eq!(ActionRole::Secondary.variant(), ButtonVariant::Secondary);
+        assert_eq!(ActionRole::Quiet.variant(), ButtonVariant::Ghost);
+        assert_eq!(ActionRole::Danger.variant(), ButtonVariant::Danger);
+    }
 
     struct PopoverHarness;
 
@@ -84,5 +304,50 @@ mod tests {
             horizontal_drift.abs() <= px(1.),
             "popover should align with its trigger, drifted by {horizontal_drift:?}",
         );
+    }
+
+    struct FoundationHarness;
+
+    impl Render for FoundationHarness {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl gpui::IntoElement {
+            let theme = Theme::light();
+            div()
+                .size_full()
+                .p(px(40.0))
+                .child(page_heading(
+                    "Rules",
+                    "Route traffic into policy groups.",
+                    Some(
+                        action_button(
+                            "heading-action",
+                            "Add",
+                            ActionRole::Primary,
+                            ControlSize::Standard,
+                        )
+                        .debug_selector(|| "heading-action".into())
+                        .into_any_element(),
+                    ),
+                    theme,
+                ))
+                .child(
+                    status_badge("Observed", StatusTone::Route, theme)
+                        .debug_selector(|| "route-badge".into()),
+                )
+                .child(
+                    empty_state("No traffic yet", "Connections appear here.", None, theme)
+                        .debug_selector(|| "empty-state".into()),
+                )
+        }
+    }
+
+    #[gpui::test]
+    fn shared_foundation_components_render_their_required_parts(cx: &mut gpui::TestAppContext) {
+        cx.update(gpui_component::init);
+        let (_, cx) = cx.add_window_view(|_, _| FoundationHarness);
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+
+        assert!(cx.debug_bounds("heading-action").is_some());
+        assert!(cx.debug_bounds("route-badge").is_some());
+        assert!(cx.debug_bounds("empty-state").is_some());
     }
 }

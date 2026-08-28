@@ -21,11 +21,12 @@ use super::{
     ManisApp, PolicyCandidateMatcherKind, PolicyEditorPopover, SourceRuntimeApply,
 };
 use crate::{
+    components::{ActionRole, action_button, empty_state, section_heading},
     diagnostics::{UiEvent, trace_ui},
-    localization::Language,
+    localization::{CountNoun, Language, Message},
     mihomo::{self, LoadedProvider, LoadedProviderNode, ProxyDelayTarget},
     subscription::SourceNodePreview,
-    theme::Theme,
+    theme::{ControlSize, Radius, Space, TextRole, Theme},
 };
 
 struct NodeSourceGroup<'a> {
@@ -188,17 +189,11 @@ impl ManisApp {
     }
 
     fn source_count_label(count: usize, language: Language) -> String {
-        match language {
-            Language::English => format!("{count} sources"),
-            Language::SimplifiedChinese => format!("{count} 个来源"),
-        }
+        language.count(CountNoun::Source, count)
     }
 
     fn node_count_label(count: usize, language: Language) -> String {
-        match language {
-            Language::English => format!("{count} nodes"),
-            Language::SimplifiedChinese => format!("{count} 个节点"),
-        }
+        language.count(CountNoun::Node, count)
     }
 
     fn success_fraction_label(succeeded: usize, total: usize, language: Language) -> String {
@@ -445,57 +440,43 @@ impl ManisApp {
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Div {
+        let actions = div()
+            .flex()
+            .items_center()
+            .gap(Space::Sm.px())
+            .child(Self::node_refresh_button(refreshing, language, theme, cx))
+            .child(Self::node_configuration_link(language, cx))
+            .into_any_element();
+        let detail = format!(
+            "{origin} · {} · {}",
+            Self::source_count_label(source_count, language),
+            language.text(
+                "Review exit health and global selections here",
+                "在这里查看出口健康状态",
+            )
+        );
+
         div()
-            .px(if compact { px(16.0) } else { px(24.0) })
-            .pt(if compact { px(16.0) } else { px(22.0) })
-            .pb_4()
+            .px(if compact {
+                Space::Lg.px()
+            } else {
+                Space::Xl.px()
+            })
+            .pt(if compact {
+                Space::Lg.px()
+            } else {
+                Space::Xl.px()
+            })
+            .pb(Space::Lg.px())
             .border_b_1()
             .border_color(theme.outline_subtle)
             .bg(theme.surface_high)
-            .child(
-                div()
-                    .flex()
-                    .items_start()
-                    .justify_between()
-                    .gap_3()
-                    .child(
-                        div()
-                            .min_w(px(0.0))
-                            .child(
-                                div()
-                                    .text_size(if compact { px(20.0) } else { px(24.0) })
-                                    .font_weight(FontWeight::BOLD)
-                                    .child(format!(
-                                        "{} · {}",
-                                        language.text("Nodes", "节点"),
-                                        counts.total
-                                    )),
-                            )
-                            .child(
-                                div()
-                                    .mt_1()
-                                    .text_size(px(12.0))
-                                    .text_color(theme.text_secondary)
-                                    .child(format!(
-                                        "{origin} · {} · {}",
-                                        Self::source_count_label(source_count, language),
-                                        language.text(
-                                            "Review exit health and global selections here",
-                                            "在这里查看出口健康状态"
-                                        )
-                                    )),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .flex_shrink_0()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(Self::node_refresh_button(refreshing, language, theme, cx))
-                            .child(Self::node_configuration_link(language, theme, cx)),
-                    ),
-            )
+            .child(crate::components::page_heading(
+                format!("{} · {}", language.message(Message::Nodes), counts.total),
+                detail,
+                Some(actions),
+                theme,
+            ))
             .child(Self::node_health_summary(counts, compact, language, theme))
             .child(Self::node_filter_bar(
                 counts, filter, compact, language, theme, cx,
@@ -558,21 +539,7 @@ impl ManisApp {
     }
 
     fn node_section_heading(title: &'static str, detail: &'static str, theme: Theme) -> Div {
-        div()
-            .mb_3()
-            .child(
-                div()
-                    .text_size(px(16.0))
-                    .font_weight(FontWeight::BOLD)
-                    .child(title),
-            )
-            .child(
-                div()
-                    .mt_1()
-                    .text_size(px(11.0))
-                    .text_color(theme.text_secondary)
-                    .child(detail),
-            )
+        section_heading(title, detail, None, theme).mb(Space::Md.px())
     }
 
     pub(super) fn managed_policy_editor_workspace(
@@ -601,15 +568,14 @@ impl ManisApp {
         cx: &mut Context<Self>,
     ) -> Div {
         let title = if draft.editing_id.is_some() {
-            language.text("Edit Policy", "编辑策略")
+            language.text("Edit policy group", "编辑策略组")
         } else {
-            language.text("New Policy", "新建策略")
+            language.text("New policy group", "新建策略组")
         };
         let left = Self::policy_editor_header_button(
             "policy-editor-back",
-            language.text("Cancel", "取消"),
+            language.message(Message::Cancel),
             false,
-            theme,
             cx.listener(|this, _, _, cx| {
                 this.managed_policy_draft = None;
                 this.managed_policy_editor_popover = None;
@@ -621,9 +587,8 @@ impl ManisApp {
         );
         let right = Self::policy_editor_header_button(
             "policy-group-save",
-            language.text("Save", "保存"),
+            language.message(Message::SaveChanges),
             true,
-            theme,
             cx.listener(|this, _, _, cx| this.save_managed_policy(cx)),
         );
 
@@ -652,32 +617,23 @@ impl ManisApp {
         id: &'static str,
         label: &'static str,
         primary: bool,
-        theme: Theme,
         listener: impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
     ) -> Button {
-        Button::new(id)
-            .accessibility_label(label)
-            .label(label)
-            .with_size(px(36.0))
-            .h(px(36.0))
-            .px_3()
-            .cursor_pointer()
-            .when(primary, |button| {
-                button
-                    .primary()
-                    .bg(theme.action_primary)
-                    .text_color(theme.action_on_primary)
-            })
-            .when(!primary, |button| {
-                button
-                    .with_variant(ButtonVariant::Default)
-                    .border_1()
-                    .border_color(theme.outline_subtle)
-                    .bg(theme.surface_high)
-                    .text_color(theme.text_secondary)
-            })
-            .font_weight(FontWeight::SEMIBOLD)
-            .on_click(listener)
+        action_button(
+            id,
+            label,
+            if primary {
+                ActionRole::Primary
+            } else {
+                ActionRole::Quiet
+            },
+            ControlSize::Compact,
+        )
+        .accessibility_label(label)
+        .px_3()
+        .cursor_pointer()
+        .font_weight(FontWeight::SEMIBOLD)
+        .on_click(listener)
     }
 
     #[allow(clippy::too_many_lines)]
@@ -724,7 +680,7 @@ impl ManisApp {
         let strategy_menu = Self::policy_strategy_menu(draft, language, theme, cx);
         let icon_menu = Self::policy_icon_menu(draft, language, theme, cx);
         let basics = div()
-            .rounded_md()
+            .rounded(Radius::Pane.px())
             .border_1()
             .border_color(theme.outline_subtle)
             .bg(theme.surface_high)
@@ -744,7 +700,7 @@ impl ManisApp {
                 cx,
             ))
             .child(Self::policy_editor_input_row(
-                language.text("Policy name", "策略名"),
+                language.text("Policy group name", "策略组名称"),
                 true,
                 name_input,
                 theme,
@@ -772,7 +728,7 @@ impl ManisApp {
 
         let candidate_mode_menu = Self::policy_candidate_mode_menu(draft, language, theme, cx);
         let mut nodes = div()
-            .rounded_md()
+            .rounded(Radius::Pane.px())
             .border_1()
             .border_color(theme.outline_subtle)
             .bg(theme.surface_high)
@@ -869,8 +825,8 @@ impl ManisApp {
                         div()
                             .mt_3()
                             .px_2()
-                            .text_size(px(11.0))
-                            .line_height(px(18.0))
+                            .text_size(TextRole::Body.size())
+                            .line_height(TextRole::Body.line_height())
                             .text_color(theme.text_tertiary)
                             .child(language.text(
                                 "Routing rules point to this policy; the policy chooses one exit from this node scope.",
@@ -884,8 +840,9 @@ impl ManisApp {
         div()
             .mb_2()
             .px_2()
-            .text_size(px(11.0))
-            .font_weight(FontWeight::SEMIBOLD)
+            .text_size(TextRole::Label.size())
+            .line_height(TextRole::Label.line_height())
+            .font_weight(TextRole::Label.weight())
             .text_color(theme.text_secondary)
             .child(label)
     }
@@ -911,8 +868,8 @@ impl ManisApp {
             .accessibility_label(format!("{label}: {value}"))
             .dropdown_caret(true)
             .with_variant(ButtonVariant::Default)
-            .with_size(px(38.0))
-            .h(px(38.0))
+            .with_size(ControlSize::Standard.height())
+            .h(ControlSize::Standard.height())
             .w_full()
             .border_color(theme.outline_subtle)
             .bg(theme.surface_low)
@@ -1211,7 +1168,8 @@ impl ManisApp {
                 .child(
                     div().flex().items_center().gap_3().child(
                         div()
-                            .text_size(px(10.0))
+                            .text_size(TextRole::Metadata.size())
+                            .line_height(TextRole::Metadata.line_height())
                             .text_color(theme.text_tertiary)
                             .child(member.source_id),
                     ),
@@ -1254,21 +1212,20 @@ impl ManisApp {
                     }),
             )
             .child(
-                Button::new("policy-editor-node-menu-done")
-                    .accessibility_label(language.text("Finish selecting nodes", "完成选择节点"))
-                    .label(language.text("Done", "完成"))
-                    .primary()
-                    .with_size(px(30.0))
-                    .h(px(30.0))
-                    .px_3()
-                    .cursor_pointer()
-                    .bg(theme.action_primary)
-                    .text_color(theme.action_on_primary)
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.managed_policy_editor_popover = None;
-                        cx.notify();
-                    })),
+                action_button(
+                    "policy-editor-node-menu-done",
+                    language.text("Done", "完成"),
+                    ActionRole::Primary,
+                    ControlSize::Icon,
+                )
+                .accessibility_label(language.text("Finish selecting nodes", "完成选择节点"))
+                .px_3()
+                .cursor_pointer()
+                .font_weight(FontWeight::SEMIBOLD)
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.managed_policy_editor_popover = None;
+                    cx.notify();
+                })),
             )
     }
 
@@ -1769,28 +1726,26 @@ impl ManisApp {
         cx.notify();
     }
 
-    fn node_configuration_link(language: Language, theme: Theme, cx: &mut Context<Self>) -> Button {
-        Button::new("nodes-open-configuration")
-            .accessibility_label(language.text("Manage subscription sources", "管理订阅来源"))
-            .label(language.text("Manage Sources", "管理来源"))
-            .with_variant(ButtonVariant::Default)
-            .with_size(px(34.0))
-            .h(px(34.0))
-            .px_3()
-            .cursor_pointer()
-            .border_color(theme.outline_subtle)
-            .bg(theme.surface_low)
-            .text_color(theme.text_primary)
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.primary_workspace = PrimaryWorkspace::Configuration;
-                this.language()
-                    .text(
-                        "Subscription source configuration opened",
-                        "已打开订阅来源配置",
-                    )
-                    .clone_into(&mut this.status);
-                cx.notify();
-            }))
+    fn node_configuration_link(language: Language, cx: &mut Context<Self>) -> Button {
+        action_button(
+            "nodes-open-configuration",
+            language.message(Message::ManageSources),
+            ActionRole::Quiet,
+            ControlSize::Compact,
+        )
+        .accessibility_label(language.text("Manage subscription sources", "管理订阅来源"))
+        .px_3()
+        .cursor_pointer()
+        .on_click(cx.listener(|this, _, _, cx| {
+            this.primary_workspace = PrimaryWorkspace::Configuration;
+            this.language()
+                .text(
+                    "Subscription source configuration opened",
+                    "已打开订阅来源配置",
+                )
+                .clone_into(&mut this.status);
+            cx.notify();
+        }))
     }
 
     fn node_refresh_button(
@@ -1799,56 +1754,47 @@ impl ManisApp {
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Button {
-        Button::new("nodes-refresh")
-            .accessibility_label(language.text("Refresh node health", "刷新节点健康状态"))
-            .label(if refreshing {
-                language.text("Loading...", "读取中…")
+        action_button(
+            "nodes-refresh",
+            if refreshing {
+                language.text("Loading…", "读取中…")
             } else {
-                language.text("Refresh Nodes", "刷新节点")
-            })
-            .tab_stop(!refreshing)
-            .with_variant(ButtonVariant::Default)
-            .with_size(px(34.0))
-            .h(px(34.0))
-            .px_3()
-            .cursor_pointer()
-            .border_color(if refreshing {
-                theme.outline_subtle
-            } else {
-                theme.action_primary
-            })
-            .bg(if refreshing {
-                theme.surface_low
-            } else {
-                theme.action_soft
-            })
-            .text_color(if refreshing {
-                theme.text_tertiary
-            } else {
-                theme.action_primary
-            })
-            .on_click(cx.listener(move |this, _, _, cx| {
-                if refreshing {
-                    return;
+                language.message(Message::RefreshNodes)
+            },
+            ActionRole::Secondary,
+            ControlSize::Compact,
+        )
+        .accessibility_label(language.text("Refresh node health", "刷新节点健康状态"))
+        .tab_stop(!refreshing)
+        .px_3()
+        .cursor_pointer()
+        .text_color(if refreshing {
+            theme.text_tertiary
+        } else {
+            theme.action_primary
+        })
+        .on_click(cx.listener(move |this, _, _, cx| {
+            if refreshing {
+                return;
+            }
+            if !this.imported_subscriptions.is_empty() {
+                for subscription in &mut this.imported_subscriptions {
+                    let kind = super::source_kind(&subscription.source);
+                    subscription.state = ImportedSubscriptionState::Pending(kind);
                 }
-                if !this.imported_subscriptions.is_empty() {
-                    for subscription in &mut this.imported_subscriptions {
-                        let kind = super::source_kind(&subscription.source);
-                        subscription.state = ImportedSubscriptionState::Pending(kind);
-                    }
-                    this.restore_imported_subscriptions(cx);
-                } else if !this.saved_vless_nodes.is_empty() {
-                    this.language()
-                        .text(
-                            "Saved nodes do not need to be downloaded again",
-                            "已保存节点不需要重新下载",
-                        )
-                        .clone_into(&mut this.status);
-                    cx.notify();
-                } else {
-                    this.connect_mihomo(cx);
-                }
-            }))
+                this.restore_imported_subscriptions(cx);
+            } else if !this.saved_vless_nodes.is_empty() {
+                this.language()
+                    .text(
+                        "Saved nodes do not need to be downloaded again",
+                        "已保存节点不需要重新下载",
+                    )
+                    .clone_into(&mut this.status);
+                cx.notify();
+            } else {
+                this.connect_mihomo(cx);
+            }
+        }))
     }
 
     fn node_health_summary(
@@ -1858,14 +1804,14 @@ impl ManisApp {
         theme: Theme,
     ) -> Div {
         div()
-            .mt_4()
-            .py_3()
-            .px(if compact { px(12.0) } else { px(16.0) })
-            .rounded_md()
-            .bg(theme.surface_low)
+            .mt(Space::Lg.px())
             .flex()
             .items_center()
-            .gap(if compact { px(12.0) } else { px(24.0) })
+            .gap(if compact {
+                Space::Md.px()
+            } else {
+                Space::Xl.px()
+            })
             .child(Self::node_health_value(
                 language.text("Available", "可用"),
                 counts.available,
@@ -1898,14 +1844,16 @@ impl ManisApp {
             .gap_1()
             .child(
                 div()
-                    .text_size(px(16.0))
-                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_size(TextRole::SectionTitle.size())
+                    .line_height(TextRole::SectionTitle.line_height())
+                    .font_weight(TextRole::SectionTitle.weight())
                     .text_color(color)
                     .child(count.to_string()),
             )
             .child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(TextRole::Metadata.size())
+                    .line_height(TextRole::Metadata.line_height())
                     .text_color(theme.text_secondary)
                     .child(label),
             )
@@ -1945,9 +1893,9 @@ impl ManisApp {
                     .tab_stop(true)
                     .focusable()
                     .cursor_pointer()
-                    .h(px(32.0))
+                    .h(ControlSize::Icon.min_pointer_target())
                     .px_3()
-                    .rounded_md()
+                    .rounded(Radius::Control.px())
                     .border_1()
                     .border_color(if active {
                         theme.action_primary
@@ -2085,8 +2033,9 @@ impl ManisApp {
                             )
                             .child(
                                 div()
-                                    .mt_1()
-                                    .text_size(px(10.0))
+                                    .mt(Space::Xs.px())
+                                    .text_size(TextRole::Metadata.size())
+                                    .line_height(TextRole::Metadata.line_height())
                                     .text_color(theme.text_tertiary)
                                     .child(detail),
                             ),
@@ -2099,7 +2048,8 @@ impl ManisApp {
                             .gap_3()
                             .child(
                                 div()
-                                    .text_size(px(10.0))
+                                    .text_size(TextRole::Metadata.size())
+                                    .line_height(TextRole::Metadata.line_height())
                                     .text_color(theme.text_secondary)
                                     .child(Self::node_count_label(counts.total, language)),
                             )
@@ -2156,7 +2106,8 @@ impl ManisApp {
                 .py_3()
                 .border_t_1()
                 .border_color(theme.outline_subtle)
-                .text_size(px(11.0))
+                .text_size(TextRole::Body.size())
+                .line_height(TextRole::Body.line_height())
                 .text_color(theme.text_secondary)
                 .child(language.text(
                     "No nodes from this source match the current filter.",
@@ -2169,7 +2120,7 @@ impl ManisApp {
         };
 
         div()
-            .rounded_md()
+            .rounded(Radius::Pane.px())
             .border_1()
             .border_color(theme.outline_subtle)
             .bg(theme.surface_high)
@@ -2245,14 +2196,15 @@ impl ManisApp {
 
     fn node_table_header(language: Language, theme: Theme) -> Div {
         div()
-            .h(px(36.0))
+            .h(ControlSize::Compact.height())
             .px_4()
             .flex()
             .items_center()
             .gap_3()
             .bg(theme.surface_low)
-            .text_size(px(10.0))
-            .font_weight(FontWeight::SEMIBOLD)
+            .text_size(TextRole::Metadata.size())
+            .line_height(TextRole::Metadata.line_height())
+            .font_weight(TextRole::Metadata.weight())
             .text_color(theme.text_tertiary)
             .child(div().flex_1().child(language.text("Node", "节点")))
             .child(div().w(px(100.0)).child(language.text("Protocol", "协议")))
@@ -2365,7 +2317,8 @@ impl ManisApp {
                     .child(
                         div()
                             .mt_1()
-                            .text_size(px(10.0))
+                            .text_size(TextRole::Metadata.size())
+                            .line_height(TextRole::Metadata.line_height())
                             .text_color(theme.text_tertiary)
                             .child(node.protocol.clone()),
                     ),
@@ -2415,7 +2368,8 @@ impl ManisApp {
             .child(
                 div()
                     .w(px(100.0))
-                    .text_size(px(11.0))
+                    .text_size(TextRole::Metadata.size())
+                    .line_height(TextRole::Metadata.line_height())
                     .text_color(theme.text_tertiary)
                     .child(node.protocol.clone()),
             )
@@ -2441,67 +2395,51 @@ impl ManisApp {
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Div {
+        let action = action_button(
+            "nodes-empty-import",
+            language.message(Message::ImportSubscription),
+            ActionRole::Primary,
+            ControlSize::Standard,
+        )
+        .accessibility_label(language.text(
+            "Go to Configuration to import a subscription",
+            "前往配置导入订阅",
+        ))
+        .cursor_pointer()
+        .w(px(180.0))
+        .px_4()
+        .bg(theme.action_primary)
+        .text_color(theme.action_on_primary)
+        .border_color(theme.action_primary)
+        .on_click(cx.listener(|this, _, _, cx| {
+            this.primary_workspace = PrimaryWorkspace::Configuration;
+            this.language()
+                .text(
+                    "Subscription source configuration opened",
+                    "已打开订阅来源配置",
+                )
+                .clone_into(&mut this.status);
+            cx.notify();
+        }))
+        .into_any_element();
+
         div()
             .min_h(px(if compact { 260.0 } else { 320.0 }))
             .flex()
-            .flex_col()
             .items_center()
-            .justify_center()
-            .text_align(gpui::TextAlign::Center)
-            .child(
-                div()
-                    .text_size(px(18.0))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(language.text("No manageable nodes yet", "还没有可管理的节点")),
-            )
-            .child(
-                div()
-                    .mt_2()
-                    .max_w(px(420.0))
-                    .text_color(theme.text_secondary)
-                    .child(language.text(
-                        "Import an HTTP/HTTPS subscription first, and nodes will appear here automatically.",
-                        "先导入一个 HTTP/HTTPS 订阅，节点会自动出现在这个工作区。",
-                    )),
-            )
-            .child(
-                Button::new("nodes-empty-import")
-                    .accessibility_label(language.text(
-                        "Go to Configuration to import a subscription",
-                        "前往配置导入订阅",
-                    ))
-                    .label(language.text("Import in Configuration", "前往配置导入"))
-                    .with_variant(ButtonVariant::Primary)
-                    .with_size(px(36.0))
-                    .cursor_pointer()
-                    .mt_4()
-                    .h(px(36.0))
-                    .px_4()
-                    .bg(theme.action_primary)
-                    .text_color(theme.action_on_primary)
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.primary_workspace = PrimaryWorkspace::Configuration;
-                        this.language()
-                            .text(
-                                "Subscription source configuration opened",
-                                "已打开订阅来源配置",
-                            )
-                            .clone_into(&mut this.status);
-                        cx.notify();
-                    })),
-            )
+            .child(empty_state(
+                language.message(Message::NoNodes),
+                language.text(
+                    "Import a subscription or add a VLESS node; nodes will then appear here automatically.",
+                    "导入订阅或添加 VLESS 节点后，节点会自动出现在这里。",
+                ),
+                Some(action),
+                theme,
+            ))
     }
 
     fn node_message_panel(title: &'static str, copy: &'static str, theme: Theme) -> Div {
-        div()
-            .p_4()
-            .rounded_md()
-            .border_1()
-            .border_color(theme.outline_subtle)
-            .bg(theme.surface_high)
-            .child(div().font_weight(FontWeight::SEMIBOLD).child(title))
-            .child(div().mt_1().text_color(theme.text_secondary).child(copy))
+        empty_state(title, copy, None, theme)
     }
 }
 

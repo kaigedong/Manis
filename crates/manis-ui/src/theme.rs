@@ -1,6 +1,6 @@
 #![allow(clippy::unreadable_literal)]
 
-use gpui::{Rgba, rgb};
+use gpui::{FontWeight, Pixels, Rgba, px, rgb};
 use gpui_component::{Theme as ComponentTheme, ThemeMode};
 
 #[derive(Clone, Copy)]
@@ -70,6 +70,162 @@ impl Theme {
     }
 }
 
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum TextRole {
+    PageTitle,
+    SectionTitle,
+    Body,
+    Label,
+    Metadata,
+    Data,
+}
+
+#[allow(dead_code)]
+impl TextRole {
+    pub(crate) fn size(self) -> Pixels {
+        match self {
+            Self::PageTitle => px(20.0),
+            Self::SectionTitle => px(16.0),
+            Self::Body => px(13.0),
+            Self::Label | Self::Data => px(12.0),
+            Self::Metadata => px(11.0),
+        }
+    }
+
+    pub(crate) fn line_height(self) -> Pixels {
+        match self {
+            Self::PageTitle => px(26.0),
+            Self::SectionTitle => px(22.0),
+            Self::Body => px(20.0),
+            Self::Label | Self::Metadata => px(16.0),
+            Self::Data => px(18.0),
+        }
+    }
+
+    pub(crate) fn weight(self) -> FontWeight {
+        match self {
+            Self::PageTitle => FontWeight::BOLD,
+            Self::SectionTitle | Self::Label | Self::Data => FontWeight::SEMIBOLD,
+            Self::Body | Self::Metadata => FontWeight::NORMAL,
+        }
+    }
+
+    pub(crate) fn uses_monospace(self) -> bool {
+        matches!(self, Self::Data)
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Space {
+    None,
+    Xs,
+    Sm,
+    Md,
+    Lg,
+    Xl,
+    Xxl,
+}
+
+#[allow(dead_code)]
+impl Space {
+    pub(crate) fn px(self) -> Pixels {
+        match self {
+            Self::None => px(0.0),
+            Self::Xs => px(4.0),
+            Self::Sm => px(8.0),
+            Self::Md => px(12.0),
+            Self::Lg => px(16.0),
+            Self::Xl => px(24.0),
+            Self::Xxl => px(32.0),
+        }
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Radius {
+    Control,
+    Row,
+    Pane,
+    Window,
+}
+
+#[allow(dead_code)]
+impl Radius {
+    pub(crate) fn px(self) -> Pixels {
+        match self {
+            Self::Control | Self::Row => px(8.0),
+            Self::Pane => px(12.0),
+            Self::Window => px(18.0),
+        }
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ControlSize {
+    Compact,
+    Standard,
+    Icon,
+}
+
+#[allow(dead_code)]
+impl ControlSize {
+    pub(crate) fn height(self) -> Pixels {
+        match self {
+            Self::Compact => px(34.0),
+            Self::Standard => px(38.0),
+            Self::Icon => px(32.0),
+        }
+    }
+
+    pub(crate) fn icon(self) -> Pixels {
+        match self {
+            Self::Compact | Self::Icon => px(16.0),
+            Self::Standard => px(18.0),
+        }
+    }
+
+    pub(crate) fn min_pointer_target(self) -> Pixels {
+        match self {
+            Self::Icon => px(32.0),
+            Self::Compact => px(34.0),
+            Self::Standard => px(38.0),
+        }
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum LayoutMetric {
+    MinWindowWidth,
+    MinWindowHeight,
+    WideNavigation,
+    MediumNavigation,
+    CompactNavigation,
+    WidePolicyList,
+    MediumPolicyList,
+    RouteInspector,
+}
+
+#[allow(dead_code)]
+impl LayoutMetric {
+    pub(crate) fn px(self) -> Pixels {
+        match self {
+            Self::MinWindowWidth => px(640.0),
+            Self::MinWindowHeight => px(560.0),
+            Self::WideNavigation => px(220.0),
+            Self::MediumNavigation => px(66.0),
+            Self::CompactNavigation => px(56.0),
+            Self::WidePolicyList => px(326.0),
+            Self::MediumPolicyList => px(292.0),
+            Self::RouteInspector => px(340.0),
+        }
+    }
+}
+
 /// Projects the Manis palette into gpui-component's semantic theme.
 ///
 /// Component behavior and layout stay upstream-owned, while the controls still
@@ -113,4 +269,55 @@ pub(crate) fn sync_component_theme(
     component.danger = theme.status_error.into();
     component.danger_foreground = theme.action_on_primary.into();
     ComponentTheme::sync_base(cx);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ControlSize, LayoutMetric, Radius, Space, TextRole};
+
+    fn assert_px(value: gpui::Pixels, expected: f32) {
+        assert!((value.as_f32() - expected).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn typography_roles_form_a_stable_reading_scale() {
+        assert!(TextRole::PageTitle.size().as_f32() > TextRole::SectionTitle.size().as_f32());
+        assert!(TextRole::SectionTitle.size().as_f32() > TextRole::Body.size().as_f32());
+        assert!(TextRole::Body.size().as_f32() > TextRole::Metadata.size().as_f32());
+        assert!(TextRole::PageTitle.line_height().as_f32() > TextRole::PageTitle.size().as_f32());
+        assert!(TextRole::Data.uses_monospace());
+        assert!(!TextRole::Body.uses_monospace());
+    }
+
+    #[test]
+    fn spacing_radius_and_control_tokens_match_the_design_system() {
+        assert_px(Space::None.px(), 0.0);
+        assert_px(Space::Xs.px(), 4.0);
+        assert_px(Space::Sm.px(), 8.0);
+        assert_px(Space::Md.px(), 12.0);
+        assert_px(Space::Lg.px(), 16.0);
+        assert_px(Space::Xl.px(), 24.0);
+        assert_px(Space::Xxl.px(), 32.0);
+
+        assert_px(Radius::Control.px(), 8.0);
+        assert_px(Radius::Row.px(), 8.0);
+        assert_px(Radius::Pane.px(), 12.0);
+        assert_px(Radius::Window.px(), 18.0);
+
+        assert_px(ControlSize::Compact.height(), 34.0);
+        assert_px(ControlSize::Standard.height(), 38.0);
+        assert_px(ControlSize::Icon.min_pointer_target(), 32.0);
+    }
+
+    #[test]
+    fn layout_metrics_preserve_the_adaptive_breakpoints() {
+        assert_px(LayoutMetric::MinWindowWidth.px(), 640.0);
+        assert_px(LayoutMetric::MinWindowHeight.px(), 560.0);
+        assert_px(LayoutMetric::WideNavigation.px(), 220.0);
+        assert_px(LayoutMetric::MediumNavigation.px(), 66.0);
+        assert_px(LayoutMetric::CompactNavigation.px(), 56.0);
+        assert_px(LayoutMetric::WidePolicyList.px(), 326.0);
+        assert_px(LayoutMetric::MediumPolicyList.px(), 292.0);
+        assert_px(LayoutMetric::RouteInspector.px(), 340.0);
+    }
 }

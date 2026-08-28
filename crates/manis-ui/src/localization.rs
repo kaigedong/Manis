@@ -8,6 +8,52 @@ use manis_profile::write_private_atomic;
 const LANGUAGE_PREFERENCE_FILE: &str = "language.preference";
 const MAX_LANGUAGE_PREFERENCE_BYTES: u64 = 32;
 
+/// Stable product vocabulary shared by navigation, page headings, and actions.
+///
+/// Protocol names and user-provided values intentionally stay outside this
+/// enum; they are rendered verbatim inside otherwise localized messages.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Message {
+    Nodes,
+    PolicyGroup,
+    PolicyGroups,
+    RoutingRules,
+    NetworkActivity,
+    Logs,
+    Configuration,
+    Settings,
+    AddPolicyGroup,
+    RefreshData,
+    RefreshNodes,
+    AddRule,
+    TestRules,
+    ManageSources,
+    ImportSubscription,
+    Clear,
+    SaveChanges,
+    Cancel,
+    Delete,
+    Enable,
+    Disable,
+    Retry,
+    ConnectMihomo,
+    NoPolicyGroups,
+    NoNodes,
+    NoActiveConnections,
+    NoLogs,
+    NoFilterMatches,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CountNoun {
+    Node,
+    PolicyGroup,
+    Rule,
+    Source,
+    Connection,
+    Log,
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) enum LanguagePreference {
     #[default]
@@ -76,6 +122,69 @@ impl Language {
         match self {
             Self::English => english,
             Self::SimplifiedChinese => chinese,
+        }
+    }
+
+    #[must_use]
+    pub(crate) const fn message(self, message: Message) -> &'static str {
+        let (english, chinese) = match message {
+            Message::Nodes => ("Nodes", "节点"),
+            Message::PolicyGroup => ("Policy group", "策略组"),
+            Message::PolicyGroups => ("Policy groups", "策略组"),
+            Message::RoutingRules => ("Routing rules", "分流规则"),
+            Message::NetworkActivity => ("Network activity", "网络活动"),
+            Message::Logs => ("Logs", "日志"),
+            Message::Configuration => ("Configuration", "配置"),
+            Message::Settings => ("Settings", "设置"),
+            Message::AddPolicyGroup => ("Add policy group", "添加策略组"),
+            Message::RefreshData => ("Refresh", "刷新"),
+            Message::RefreshNodes => ("Refresh nodes", "刷新节点"),
+            Message::AddRule => ("Add rule", "添加规则"),
+            Message::TestRules => ("Test rules", "测试规则"),
+            Message::ManageSources => ("Manage sources", "管理来源"),
+            Message::ImportSubscription => ("Import subscription", "导入订阅"),
+            Message::Clear => ("Clear", "清除"),
+            Message::SaveChanges => ("Save changes", "保存修改"),
+            Message::Cancel => ("Cancel", "取消"),
+            Message::Delete => ("Delete", "删除"),
+            Message::Enable => ("Enable", "启用"),
+            Message::Disable => ("Disable", "禁用"),
+            Message::Retry => ("Try again", "重试"),
+            Message::ConnectMihomo => ("Connect Mihomo", "连接 Mihomo"),
+            Message::NoPolicyGroups => ("No policy groups yet", "暂无策略组"),
+            Message::NoNodes => ("No nodes yet", "暂无节点"),
+            Message::NoActiveConnections => ("No active connections", "暂无活动连接"),
+            Message::NoLogs => ("No logs yet", "暂无日志"),
+            Message::NoFilterMatches => ("No results match this filter", "没有符合当前筛选的结果"),
+        };
+        self.text(english, chinese)
+    }
+
+    #[must_use]
+    pub(crate) fn count(self, noun: CountNoun, count: usize) -> String {
+        match self {
+            Self::English => {
+                let (singular, plural) = match noun {
+                    CountNoun::Node => ("node", "nodes"),
+                    CountNoun::PolicyGroup => ("policy group", "policy groups"),
+                    CountNoun::Rule => ("rule", "rules"),
+                    CountNoun::Source => ("source", "sources"),
+                    CountNoun::Connection => ("active connection", "active connections"),
+                    CountNoun::Log => ("log", "logs"),
+                };
+                format!("{count} {}", if count == 1 { singular } else { plural })
+            }
+            Self::SimplifiedChinese => {
+                let noun = match noun {
+                    CountNoun::Node => "个节点",
+                    CountNoun::PolicyGroup => "个策略组",
+                    CountNoun::Rule => "条规则",
+                    CountNoun::Source => "个来源",
+                    CountNoun::Connection => "条活动连接",
+                    CountNoun::Log => "条日志",
+                };
+                format!("{count} {noun}")
+            }
         }
     }
 
@@ -253,8 +362,90 @@ mod tests {
     use std::fs;
 
     use super::{
-        Language, LanguagePreference, load_language_preference_in, save_language_preference_in,
+        CountNoun, Language, LanguagePreference, Message, load_language_preference_in,
+        save_language_preference_in,
     };
+
+    #[test]
+    fn core_product_terms_are_consistent_between_navigation_and_object_settings() {
+        assert_eq!(
+            Language::English.message(Message::Configuration),
+            "Configuration"
+        );
+        assert_eq!(
+            Language::SimplifiedChinese.message(Message::Configuration),
+            "配置"
+        );
+        assert_eq!(Language::English.message(Message::Settings), "Settings");
+        assert_eq!(
+            Language::SimplifiedChinese.message(Message::Settings),
+            "设置"
+        );
+        assert_eq!(
+            Language::English.message(Message::PolicyGroups),
+            "Policy groups"
+        );
+        assert_eq!(
+            Language::English.message(Message::PolicyGroup),
+            "Policy group"
+        );
+        assert_eq!(
+            Language::SimplifiedChinese.message(Message::PolicyGroups),
+            "策略组"
+        );
+        assert_eq!(
+            Language::SimplifiedChinese.message(Message::PolicyGroup),
+            "策略组"
+        );
+        assert_eq!(
+            Language::English.message(Message::RoutingRules),
+            "Routing rules"
+        );
+        assert_eq!(
+            Language::SimplifiedChinese.message(Message::RoutingRules),
+            "分流规则"
+        );
+    }
+
+    #[test]
+    fn count_messages_handle_english_pluralization_and_chinese_measure_words() {
+        for (noun, singular, plural) in [
+            (CountNoun::Node, "node", "nodes"),
+            (CountNoun::PolicyGroup, "policy group", "policy groups"),
+            (CountNoun::Rule, "rule", "rules"),
+            (CountNoun::Source, "source", "sources"),
+            (
+                CountNoun::Connection,
+                "active connection",
+                "active connections",
+            ),
+            (CountNoun::Log, "log", "logs"),
+        ] {
+            assert_eq!(Language::English.count(noun, 0), format!("0 {plural}"));
+            assert_eq!(Language::English.count(noun, 1), format!("1 {singular}"));
+            assert_eq!(Language::English.count(noun, 2), format!("2 {plural}"));
+            assert_eq!(
+                Language::English.count(noun, 10_000),
+                format!("10000 {plural}")
+            );
+        }
+        assert_eq!(
+            Language::English.count(CountNoun::Connection, 1),
+            "1 active connection"
+        );
+        assert_eq!(
+            Language::English.count(CountNoun::Connection, 2),
+            "2 active connections"
+        );
+        assert_eq!(
+            Language::SimplifiedChinese.count(CountNoun::Node, 2),
+            "2 个节点"
+        );
+        assert_eq!(
+            Language::SimplifiedChinese.count(CountNoun::Connection, 2),
+            "2 条活动连接"
+        );
+    }
 
     #[test]
     fn follow_system_uses_chinese_only_for_chinese_locales() {

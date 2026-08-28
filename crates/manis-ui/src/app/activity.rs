@@ -1,15 +1,14 @@
-use gpui::{Div, FontWeight, ParentElement, Styled, div, prelude::*, px};
-use gpui_component::{
-    Sizable,
-    button::{Button, ButtonVariant, ButtonVariants},
-};
+use gpui::{AnyElement, Div, FontWeight, ParentElement, Styled, div, prelude::*, px};
 use manis_core::WindowSizeClass;
 use manis_mihomo::Connection;
 use manis_profile::MANIS_GLOBAL_GROUP_NAME;
 
 use super::{ManisApp, format_bytes};
-use crate::localization::Language;
-use crate::theme::Theme;
+use crate::{
+    components::{ActionRole, StatusTone, action_button, empty_state, page_heading, status_badge},
+    localization::{CountNoun, Language, Message},
+    theme::{ControlSize, Space, TextRole, Theme},
+};
 
 impl ManisApp {
     #[allow(clippy::too_many_lines)]
@@ -33,6 +32,31 @@ impl ManisApp {
         let total_upload: u64 = visible_connections.iter().map(|item| item.upload).sum();
         let total_download: u64 = visible_connections.iter().map(|item| item.download).sum();
         let language = self.language();
+        let visible_count = visible_connections.len();
+        let total_count = self.active_connections.len();
+        let summary = activity_summary(
+            language,
+            query.is_empty(),
+            visible_count,
+            total_count,
+            total_download,
+            total_upload,
+        );
+        let reconnect: AnyElement = action_button(
+            "refresh-activity",
+            language.message(Message::RefreshData),
+            ActionRole::Secondary,
+            ControlSize::Compact,
+        )
+        .accessibility_label(language.text(
+            "Refresh activity data by reconnecting the kernel",
+            "重新连接内核并刷新网络活动数据",
+        ))
+        .border_color(theme.outline_subtle)
+        .bg(theme.surface_high)
+        .text_color(theme.text_primary)
+        .on_click(cx.listener(|this, _, _, cx| this.connect_mihomo(cx)))
+        .into_any_element();
         let mut rows = div()
             .id("activity-scroll")
             .flex_1()
@@ -40,25 +64,43 @@ impl ManisApp {
             .flex()
             .flex_col();
         if visible_connections.is_empty() {
-            rows = rows.child(
-                div()
-                    .flex_1()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .text_color(theme.text_tertiary)
-                    .child(if query.is_empty() {
-                        language.text(
-                            "No active connections. Live traffic appears after a new connection starts.",
-                            "当前没有活动连接；实时流会在新连接建立后自动显示",
+            rows = rows.child(div().flex_1().p(Space::Xl.px()).child(if query.is_empty() {
+                empty_state(
+                    language.message(Message::NoActiveConnections),
+                    language.text(
+                        "Live traffic appears here as soon as the kernel reports a connection.",
+                        "内核上报新连接后，实时流量会显示在这里。",
+                    ),
+                    Some(
+                        action_button(
+                            "refresh-activity-empty",
+                            language.message(Message::RefreshData),
+                            ActionRole::Secondary,
+                            ControlSize::Compact,
                         )
-                    } else {
-                        language.text(
-                            "No active connection matches this filter.",
-                            "没有符合当前筛选的活动连接",
-                        )
-                    }),
-            );
+                        .accessibility_label(language.text(
+                            "Refresh activity data by reconnecting the kernel",
+                            "重新连接内核并刷新网络活动数据",
+                        ))
+                        .border_color(theme.outline_subtle)
+                        .bg(theme.surface_high)
+                        .text_color(theme.text_primary)
+                        .on_click(cx.listener(|this, _, _, cx| this.connect_mihomo(cx)))
+                        .into_any_element(),
+                    ),
+                    theme,
+                )
+            } else {
+                empty_state(
+                    language.message(Message::NoFilterMatches),
+                    language.text(
+                        "Try a target host, process name, rule, or route stage.",
+                        "可以尝试输入目标域名、进程名、规则或路径节点。",
+                    ),
+                    None,
+                    theme,
+                )
+            }));
         } else {
             for connection in visible_connections.iter().copied() {
                 rows = rows.child(activity_row(connection, theme, compact, language));
@@ -74,71 +116,70 @@ impl ManisApp {
             .bg(theme.surface_base)
             .child(
                 div()
-                    .h(px(72.0))
                     .flex_shrink_0()
-                    .px_5()
+                    .px(Space::Xl.px())
+                    .py(Space::Lg.px())
                     .flex()
                     .items_center()
-                    .gap_5()
+                    .gap(Space::Lg.px())
+                    .when(compact, |header| header.flex_col().items_start())
                     .border_b_1()
                     .border_color(theme.outline_subtle)
+                    .child(div().flex_1().min_w_0().child(page_heading(
+                        language.message(Message::NetworkActivity),
+                        summary,
+                        None,
+                        theme,
+                    )))
                     .child(
                         div()
+                            .flex_shrink_0()
                             .flex()
-                            .flex_col()
-                            .gap_1()
-                            .child(
-                                div()
-                                    .text_size(px(18.0))
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .child(language.text("Network Activity", "网络活动")),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(11.0))
-                                    .text_color(theme.text_tertiary)
-                                    .child(format!(
-                                        "{} {} · ↓ {} · ↑ {} · {}",
-                                        if query.is_empty() {
-                                            self.active_connections.len().to_string()
-                                        } else {
-                                            format!(
-                                                "{}/{}",
-                                                visible_connections.len(),
-                                                self.active_connections.len()
-                                            )
-                                        },
-                                        language.text("active connections", "条活动连接"),
-                                        format_bytes(total_download),
-                                        format_bytes(total_upload),
-                                        self.live_status.activity
-                                    )),
-                            ),
-                    )
-                    .child(div().flex_1())
-                    .when_some(self.activity_search_input.clone(), |header, input| {
-                        header.child(
-                            div()
-                                .w(if compact { px(210.0) } else { px(320.0) })
-                                .child(input),
-                        )
-                    })
-                    .child(
-                        Button::new("refresh-activity")
-                            .accessibility_label(language.text("Reconnect", "重新连接"))
-                            .label(language.text("Reconnect", "重新连接"))
-                            .with_variant(ButtonVariant::Default)
-                            .with_size(px(34.0))
-                            .cursor_pointer()
-                            .h(px(34.0))
-                            .px_3()
-                            .border_color(theme.outline_subtle)
-                            .bg(theme.surface_high)
-                            .on_click(cx.listener(|this, _, _, cx| this.connect_mihomo(cx))),
+                            .items_center()
+                            .gap(Space::Sm.px())
+                            .when(compact, gpui::Styled::w_full)
+                            .child(status_badge(
+                                self.live_status.activity.clone(),
+                                StatusTone::Neutral,
+                                theme,
+                            ))
+                            .when_some(self.activity_search_input.clone(), |tools, input| {
+                                tools.child(
+                                    div()
+                                        .w(if compact { px(210.0) } else { px(320.0) })
+                                        .child(input),
+                                )
+                            })
+                            .child(reconnect),
                     ),
             )
             .child(rows)
     }
+}
+
+fn activity_summary(
+    language: Language,
+    unfiltered: bool,
+    visible_count: usize,
+    total_count: usize,
+    total_download: u64,
+    total_upload: u64,
+) -> String {
+    let count = if unfiltered {
+        language.count(CountNoun::Connection, total_count)
+    } else {
+        format!(
+            "{}/{} {}",
+            visible_count,
+            total_count,
+            language.text("connections", "条连接")
+        )
+    };
+    format!(
+        "{count} · ↓ {} · ↑ {}",
+        format_bytes(total_download),
+        format_bytes(total_upload)
+    )
 }
 
 fn connection_matches_query(connection: &Connection, query: &str) -> bool {
@@ -171,11 +212,11 @@ fn activity_row(connection: &Connection, theme: Theme, compact: bool, language: 
 
     div()
         .min_h(px(if compact { 78.0 } else { 60.0 }))
-        .px_5()
-        .py_3()
+        .px(Space::Xl.px())
+        .py(Space::Md.px())
         .flex()
         .items_center()
-        .gap_4()
+        .gap(Space::Lg.px())
         .border_b_1()
         .border_color(theme.outline_subtle)
         .child(
@@ -189,6 +230,8 @@ fn activity_row(connection: &Connection, theme: Theme, compact: bool, language: 
                     div()
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(theme.text_primary)
+                        .text_size(TextRole::Body.size())
+                        .line_height(TextRole::Body.line_height())
                         .overflow_hidden()
                         .whitespace_nowrap()
                         .text_ellipsis()
@@ -196,7 +239,8 @@ fn activity_row(connection: &Connection, theme: Theme, compact: bool, language: 
                 )
                 .child(
                     div()
-                        .text_size(px(11.0))
+                        .text_size(TextRole::Metadata.size())
+                        .line_height(TextRole::Metadata.line_height())
                         .text_color(theme.text_tertiary)
                         .overflow_hidden()
                         .whitespace_nowrap()
@@ -206,7 +250,8 @@ fn activity_row(connection: &Connection, theme: Theme, compact: bool, language: 
                 .when(compact, |column| {
                     column.child(
                         div()
-                            .text_size(px(11.0))
+                            .text_size(TextRole::Data.size())
+                            .line_height(TextRole::Data.line_height())
                             .text_color(theme.action_primary)
                             .child(chain.clone()),
                     )
@@ -216,7 +261,8 @@ fn activity_row(connection: &Connection, theme: Theme, compact: bool, language: 
             row.child(
                 div()
                     .w(px(250.0))
-                    .text_size(px(11.0))
+                    .text_size(TextRole::Data.size())
+                    .line_height(TextRole::Data.line_height())
                     .text_color(theme.action_primary)
                     .overflow_hidden()
                     .child(chain),
@@ -228,7 +274,8 @@ fn activity_row(connection: &Connection, theme: Theme, compact: bool, language: 
                 .flex_shrink_0()
                 .flex()
                 .justify_end()
-                .text_size(px(11.0))
+                .text_size(TextRole::Data.size())
+                .line_height(TextRole::Data.line_height())
                 .text_color(theme.text_secondary)
                 .child(format!(
                     "↓ {}  ↑ {}",
