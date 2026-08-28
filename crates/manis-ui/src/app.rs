@@ -451,7 +451,6 @@ impl ManualRuleEditorState {
 enum PolicyDetailTab {
     #[default]
     Nodes,
-    Rules,
     Settings,
 }
 
@@ -459,15 +458,13 @@ impl PolicyDetailTab {
     const fn index(self) -> usize {
         match self {
             Self::Nodes => 0,
-            Self::Rules => 1,
-            Self::Settings => 2,
+            Self::Settings => 1,
         }
     }
 
     const fn from_index(index: usize) -> Self {
         match index {
-            1 => Self::Rules,
-            2 => Self::Settings,
+            1 => Self::Settings,
             _ => Self::Nodes,
         }
     }
@@ -5315,11 +5312,6 @@ impl ManisApp {
             )
             .child(
                 Tab::new()
-                    .label(language.text("Rules", "规则"))
-                    .aria_label(language.text("Rules", "规则")),
-            )
-            .child(
-                Tab::new()
                     .label(language.message(Message::Settings))
                     .aria_label(language.message(Message::Settings)),
             )
@@ -5481,65 +5473,6 @@ impl ManisApp {
             }
         }
 
-        if self.policy_detail_tab == PolicyDetailTab::Rules {
-            body = body.child(section_heading(
-                language.text("Rules using this policy", "命中此策略的规则"),
-                format!(
-                    "{} · {}",
-                    language.count(CountNoun::Rule, selected_policy.rules_count()),
-                    language.text("matched in order", "按顺序匹配")
-                ),
-                None,
-                theme,
-            ));
-            if selected_policy.rules.is_empty() {
-                body = body.child(empty_state(
-                    language.text("No rule preview", "暂无规则预览"),
-                    language.text(
-                        "No routing rule currently targets this policy group.",
-                        "当前没有分流规则指向这个策略组。",
-                    ),
-                    None,
-                    theme,
-                ));
-            }
-            for rule in &selected_policy.rules {
-                body = body.child(
-                    div()
-                        .min_h(px(50.0))
-                        .flex()
-                        .items_center()
-                        .gap(Space::Md.px())
-                        .border_t_1()
-                        .border_color(theme.outline_subtle)
-                        .child(
-                            div()
-                                .w(px(36.0))
-                                .text_size(TextRole::Metadata.size())
-                                .line_height(TextRole::Metadata.line_height())
-                                .text_color(theme.text_tertiary)
-                                .child(format!("#{}", rule.index)),
-                        )
-                        .child(
-                            div()
-                                .min_w(px(0.0))
-                                .flex_1()
-                                .overflow_x_hidden()
-                                .whitespace_nowrap()
-                                .text_ellipsis()
-                                .text_size(TextRole::Body.size())
-                                .line_height(TextRole::Body.line_height())
-                                .child(format!("{}, {}", rule.kind, rule.payload)),
-                        )
-                        .child(status_badge(
-                            language.text("Match", "命中"),
-                            StatusTone::Success,
-                            theme,
-                        )),
-                );
-            }
-        }
-
         if self.policy_detail_tab == PolicyDetailTab::Settings {
             if let Some(group_id) = editable_group_id.as_deref() {
                 let edit_id = group_id.to_owned();
@@ -5687,15 +5620,11 @@ impl ManisApp {
                                             .line_height(TextRole::Metadata.line_height())
                                             .text_color(theme.text_secondary)
                                             .child(format!(
-                                                "{} · {} · {}",
+                                                "{} · {}",
                                                 policy_kind_label(language, selected_policy.kind),
                                                 language.count(
                                                     CountNoun::Node,
                                                     selected_policy.nodes.len()
-                                                ),
-                                                language.count(
-                                                    CountNoun::Rule,
-                                                    selected_policy.rules_count()
                                                 )
                                             )),
                                     ),
@@ -6961,11 +6890,10 @@ mod tests {
     #[test]
     fn policy_detail_tabs_round_trip_through_component_indices() {
         assert_eq!(PolicyDetailTab::Nodes.index(), 0);
-        assert_eq!(PolicyDetailTab::Rules.index(), 1);
-        assert_eq!(PolicyDetailTab::Settings.index(), 2);
+        assert_eq!(PolicyDetailTab::Settings.index(), 1);
         assert_eq!(PolicyDetailTab::from_index(0), PolicyDetailTab::Nodes);
-        assert_eq!(PolicyDetailTab::from_index(1), PolicyDetailTab::Rules);
-        assert_eq!(PolicyDetailTab::from_index(2), PolicyDetailTab::Settings);
+        assert_eq!(PolicyDetailTab::from_index(1), PolicyDetailTab::Settings);
+        assert_eq!(PolicyDetailTab::from_index(2), PolicyDetailTab::Nodes);
         assert_eq!(PolicyDetailTab::from_index(99), PolicyDetailTab::Nodes);
     }
 
