@@ -694,6 +694,11 @@ fn maps_snapshot_to_owned_policy_catalog() -> Result<(), Box<dyn std::error::Err
     assert_eq!(groups[0].rules_count(), 1);
     assert_eq!(groups[0].rules[0].hit_count, Some(12));
     assert_eq!(groups[1].kind, PolicyGroupKind::UrlTest);
+    let routing_rules: Vec<_> = catalog.routing_rules().collect();
+    assert_eq!(routing_rules.len(), 2);
+    assert_eq!(routing_rules[0].target, "Proxy");
+    assert_eq!(routing_rules[1].target, "DIRECT");
+    assert!(routing_rules[1].disabled);
     Ok(())
 }
 

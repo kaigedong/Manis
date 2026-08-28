@@ -5,6 +5,13 @@ use std::{
     sync::Arc,
 };
 
+mod route_prediction;
+
+pub use route_prediction::{
+    DomainRoutePrediction, RouteDomain, RouteDomainError, RoutePredictionReason, RouteTarget,
+    RoutingRule,
+};
+
 /// A proxy core supported by Manis's kernel-neutral configuration boundary.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub enum KernelKind {
@@ -251,12 +258,17 @@ impl Error for EmptyPolicyCatalog {}
 pub struct PolicyCatalog {
     primary: PolicyGroup,
     remaining: Vec<PolicyGroup>,
+    routing_rules: Vec<RoutingRule>,
 }
 
 impl PolicyCatalog {
     #[must_use]
     pub fn from_primary(primary: PolicyGroup, remaining: Vec<PolicyGroup>) -> Self {
-        Self { primary, remaining }
+        Self {
+            primary,
+            remaining,
+            routing_rules: Vec::new(),
+        }
     }
 
     /// Builds a catalog while preserving the source order.
@@ -265,13 +277,39 @@ impl PolicyCatalog {
     ///
     /// Returns [`EmptyPolicyCatalog`] when `groups` is empty.
     pub fn try_new(groups: Vec<PolicyGroup>) -> Result<Self, EmptyPolicyCatalog> {
+        Self::try_new_with_rules(groups, Vec::new())
+    }
+
+    /// Builds a catalog with the complete ordered routing rule list.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EmptyPolicyCatalog`] when `groups` is empty.
+    pub fn try_new_with_rules(
+        groups: Vec<PolicyGroup>,
+        mut routing_rules: Vec<RoutingRule>,
+    ) -> Result<Self, EmptyPolicyCatalog> {
         let mut groups = groups.into_iter();
         let primary = groups.next().ok_or(EmptyPolicyCatalog)?;
-        Ok(Self::from_primary(primary, groups.collect()))
+        routing_rules.sort_by_key(|rule| rule.index);
+        Ok(Self {
+            primary,
+            remaining: groups.collect(),
+            routing_rules,
+        })
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &PolicyGroup> {
         std::iter::once(&self.primary).chain(&self.remaining)
+    }
+
+    pub fn routing_rules(&self) -> impl Iterator<Item = &RoutingRule> {
+        self.routing_rules.iter()
+    }
+
+    #[must_use]
+    pub fn group(&self, id: &PolicyGroupId) -> Option<&PolicyGroup> {
+        self.iter().find(|group| group.id == *id)
     }
 
     #[must_use]
@@ -943,6 +981,11 @@ impl PolicyWorkspaceState {
             self.selections.insert(group.clone(), proxy.clone());
             self.selected_node = Some(proxy);
         }
+    }
+
+    #[must_use]
+    pub fn selection_for(&self, group: &PolicyGroupId) -> Option<&ProxyId> {
+        self.selections.get(group)
     }
 
     pub fn navigate_back(&mut self) {
