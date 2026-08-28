@@ -2353,6 +2353,35 @@ pub(crate) fn update_qx_rule_source_refresh_interval_in(
 
 #[cfg(not(windows))]
 #[allow(dead_code)]
+pub(crate) fn update_qx_rule_source_target_in(
+    directory: &Path,
+    id: &str,
+    target_policy: &str,
+) -> Result<StoredQxRuleSource, SubscriptionStoreError> {
+    let decoded = read_qx_rule_source_by_id_in(directory, id)?;
+    write_qx_rule_source_in(
+        directory,
+        id,
+        &decoded.url_input,
+        target_policy,
+        &decoded.stored.content,
+        decoded.stored.refresh_interval,
+        decoded.stored.last_successful_update_unix_secs,
+    )
+}
+
+#[cfg(windows)]
+#[allow(dead_code)]
+pub(crate) fn update_qx_rule_source_target_in(
+    _directory: &Path,
+    _id: &str,
+    _target_policy: &str,
+) -> Result<StoredQxRuleSource, SubscriptionStoreError> {
+    Err(SubscriptionStoreError::StoreUnavailable)
+}
+
+#[cfg(not(windows))]
+#[allow(dead_code)]
 pub(crate) fn replace_qx_rule_source_content_in(
     directory: &Path,
     id: &str,
@@ -5889,6 +5918,41 @@ IP-CIDR,192.0.2.0/24,DIRECT
         );
         let after_failed_refresh = super::load_qx_rule_sources_in(&store)?;
         assert_eq!(after_failed_refresh, vec![refreshed]);
+
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn qx_rule_source_target_update_preserves_source_and_refresh_metadata()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = test_temp_dir("manis-qx-rule-target");
+        let store = root.join("subscriptions");
+        let url = "https://rules.example.invalid/airports.list?token=fixture-secret";
+        let content = "DOMAIN-KEYWORD,google,PROXY\nDOMAIN-SUFFIX,youtube.com,PROXY\n";
+        let stored =
+            super::save_qx_rule_source_in(&store, url, "Old policy", content)?.into_source();
+        let with_interval = super::update_qx_rule_source_refresh_interval_in(
+            &store,
+            &stored.id,
+            super::RemoteSourceRefreshInterval::Daily,
+        )?;
+
+        let updated = super::update_qx_rule_source_target_in(&store, &stored.id, "Streaming")?;
+
+        assert_eq!(updated.id, stored.id);
+        assert_eq!(updated.source, stored.source);
+        assert_eq!(updated.target_policy.as_str(), "Streaming");
+        assert_eq!(updated.content, content);
+        assert_eq!(updated.rule_count, stored.rule_count);
+        assert_eq!(updated.diagnostic_count, stored.diagnostic_count);
+        assert_eq!(updated.refresh_interval, with_interval.refresh_interval);
+        assert_eq!(
+            updated.last_successful_update_unix_secs,
+            stored.last_successful_update_unix_secs
+        );
+        assert_eq!(super::load_qx_rule_sources_in(&store)?, vec![updated]);
 
         fs::remove_dir_all(root)?;
         Ok(())

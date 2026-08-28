@@ -3,7 +3,7 @@ use gpui::{
     StyleRefinement, Styled, Window, div, prelude::*, px,
 };
 use gpui_component::{
-    Disableable, IconName, Sizable, Size, WindowExt as _,
+    Disableable, IconName, Selectable, Sizable, Size, WindowExt as _,
     accordion::Accordion,
     button::{Button, ButtonVariant, ButtonVariants},
     dialog::Dialog,
@@ -2068,6 +2068,7 @@ impl ManisApp {
                     .flex_wrap()
                     .items_center()
                     .gap_2()
+                    .child(self.qx_rule_source_target_select(source, controls_enabled, theme, cx))
                     .child(
                         div()
                             .id(format!("qx-rule-interval-{interval_id}"))
@@ -2165,16 +2166,169 @@ impl ManisApp {
             )
     }
 
+    fn qx_rule_source_target_menu(
+        &self,
+        source_id: &str,
+        selected_target: &str,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let mut choices = div();
+        for target in self.qx_rule_targets() {
+            let selected = target == selected_target;
+            let target_id = target.clone();
+            let source_id = source_id.to_owned();
+            choices = choices.child(
+                Button::new(format!("qx-rule-source-target-{source_id}-{target_id}"))
+                    .accessibility_label(format!("Target {target}"))
+                    .label(target)
+                    .selected(selected)
+                    .with_variant(ButtonVariant::Text)
+                    .w_full()
+                    .min_h(px(40.0))
+                    .px_3()
+                    .py_2()
+                    .border_b_1()
+                    .border_color(theme.outline_subtle)
+                    .bg(if selected {
+                        theme.action_soft
+                    } else {
+                        theme.surface_high
+                    })
+                    .text_size(px(11.0))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(if selected {
+                        theme.action_primary
+                    } else {
+                        theme.text_primary
+                    })
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.update_qx_rule_source_target(source_id.clone(), target_id.clone(), cx);
+                    })),
+            );
+        }
+        choices
+    }
+
+    fn qx_rule_source_target_select(
+        &self,
+        source: &crate::mihomo::StoredQxRuleSource,
+        enabled: bool,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let language = self.language();
+        let source_id = source.id.clone();
+        let selected_target = self.effective_rule_target(source.target_policy.as_str(), language);
+        let open = self.qx_rule_target_popover.as_deref() == Some(source.id.as_str());
+        let updating = self.qx_rule_source_target_updates.contains_key(&source.id);
+        let menu = self.qx_rule_source_target_menu(&source.id, &selected_target, theme, cx);
+        let trigger = Button::new(format!("qx-rule-target-select-{}", source.id))
+            .accessibility_label(language.text(
+                "Change target policy for this rule source",
+                "修改这个规则源的目标策略",
+            ))
+            .label(if updating {
+                language.text("Saving…", "保存中…").to_owned()
+            } else {
+                format!("{} · {selected_target}", language.text("Policy", "策略"))
+            })
+            .dropdown_caret(true)
+            .with_variant(ButtonVariant::Default)
+            .with_size(px(34.0))
+            .h(px(34.0))
+            .text_size(px(10.0))
+            .font_weight(FontWeight::SEMIBOLD)
+            .disabled(!enabled);
+        let app = cx.entity();
+        crate::components::anchored_popover(
+            format!("qx-rule-target-popover-{}", source.id),
+            trigger,
+            menu,
+            240.0,
+            320.0,
+        )
+        .open(open)
+        .on_open_change(move |open, _, cx| {
+            app.update(cx, |this, cx| {
+                this.qx_rule_target_popover = open.then(|| source_id.clone());
+                cx.notify();
+            });
+        })
+        .into_any_element()
+    }
+
     fn open_manual_rule_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.manual_rule_editor_state == super::ManualRuleEditorState::Open {
-            if let Some(input) = self.manual_rule_input.as_ref() {
+        if self.manual_rule_editor_state.is_open() {
+            if let Some(input) = self.manual_rule_inputs.first() {
                 input.focus_handle(cx).focus(window, cx);
             }
             return;
         }
-        self.manual_rule_editor_state = super::ManualRuleEditorState::Open;
+        self.manual_rule_editor_state = super::ManualRuleEditorState::Creating;
         self.manual_rule_popover = None;
         self.manual_rule_error = None;
+        self.manual_rule_condition_count = 1;
+        for input in &self.manual_rule_inputs {
+            input.update(cx, SubscriptionTextInput::clear_without_event);
+        }
+        for (index, kind) in self.manual_rule_kinds.iter_mut().enumerate() {
+            *kind = if index == 1 {
+                crate::manual_rule::ManualRuleKind::DstPort
+            } else {
+                crate::manual_rule::ManualRuleKind::default()
+            };
+        }
+        if let Some(target) = self.manual_rule_targets().first() {
+            self.manual_rule_target.clone_from(target);
+        }
+        self.open_manual_rule_dialog(window, cx);
+    }
+
+    fn open_manual_rule_editor_for_edit(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.manual_rule_editor_state.is_open() {
+            return;
+        }
+        let Some(rule) = self.manual_rules.get(index).cloned() else {
+            return;
+        };
+        self.manual_rule_editor_state = super::ManualRuleEditorState::Editing(index);
+        self.manual_rule_popover = None;
+        self.manual_rule_error = None;
+        self.manual_rule_condition_count = rule.conditions().len();
+        for (condition_index, input) in self.manual_rule_inputs.iter().enumerate() {
+            if let Some(condition) = rule.conditions().get(condition_index) {
+                self.manual_rule_kinds[condition_index] = condition.kind();
+                input.update(cx, |input, cx| {
+                    input.set_value_without_event(condition.parameter().to_owned(), cx);
+                });
+            } else {
+                input.update(cx, SubscriptionTextInput::clear_without_event);
+            }
+        }
+        let targets = self.manual_rule_targets();
+        self.manual_rule_target = if targets.iter().any(|target| target == rule.target()) {
+            rule.target().to_owned()
+        } else if rule.target() == "Proxy" {
+            self.managed_policy_groups
+                .first()
+                .map_or_else(|| "DIRECT".to_owned(), |group| group.name.clone())
+        } else {
+            targets
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "DIRECT".to_owned())
+        };
+        self.open_manual_rule_dialog(window, cx);
+    }
+
+    fn open_manual_rule_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let app = cx.entity();
         window.open_dialog(cx, move |dialog, window, cx| {
             app.update(cx, |this, cx| {
@@ -2192,7 +2346,7 @@ impl ManisApp {
                 )
             })
         });
-        if let Some(input) = self.manual_rule_input.as_ref() {
+        if let Some(input) = self.manual_rule_inputs.first() {
             input.focus_handle(cx).focus(window, cx);
         }
         cx.notify();
@@ -2221,44 +2375,49 @@ impl ManisApp {
         {
             self.manual_rule_target = self.manual_rule_targets().remove(0);
         }
-        let placeholder = manual_rule_placeholder(self.manual_rule_kind, self.language());
-        let second_placeholder =
-            manual_rule_placeholder(self.manual_rule_second_kind, self.language());
-        if let Some(input) = self.manual_rule_input.as_ref() {
-            input.update(cx, |input, cx| {
-                input.set_theme(theme, self.dark, cx);
-                input.set_placeholder(placeholder, cx);
-            });
-            if let Some(second_input) = self.manual_rule_second_input.as_ref() {
-                second_input.update(cx, |input, cx| {
+        if !self.manual_rule_inputs.is_empty() {
+            for (input, kind) in self
+                .manual_rule_inputs
+                .iter()
+                .zip(self.manual_rule_kinds.iter().copied())
+            {
+                let placeholder = manual_rule_placeholder(kind, self.language());
+                input.update(cx, |input, cx| {
                     input.set_theme(theme, self.dark, cx);
-                    input.set_placeholder(second_placeholder, cx);
+                    input.set_placeholder(placeholder, cx);
                 });
             }
             return;
         }
-        self.manual_rule_input = Some(cx.new(|cx| {
-            SubscriptionTextInput::new_field(
-                "manual-rule-parameter",
-                placeholder,
-                MAX_MANUAL_RULE_INPUT_BYTES,
-                theme,
-                self.dark,
-                window,
-                cx,
-            )
-        }));
-        self.manual_rule_second_input = Some(cx.new(|cx| {
-            SubscriptionTextInput::new_field(
-                "manual-rule-second-parameter",
-                second_placeholder,
-                MAX_MANUAL_RULE_INPUT_BYTES,
-                theme,
-                self.dark,
-                window,
-                cx,
-            )
-        }));
+        self.manual_rule_kinds = (0..crate::manual_rule::MAX_CONDITIONS)
+            .map(|index| {
+                if index == 1 {
+                    crate::manual_rule::ManualRuleKind::DstPort
+                } else {
+                    crate::manual_rule::ManualRuleKind::default()
+                }
+            })
+            .collect();
+        self.manual_rule_inputs = self
+            .manual_rule_kinds
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(index, kind)| {
+                let placeholder = manual_rule_placeholder(kind, self.language());
+                cx.new(|cx| {
+                    SubscriptionTextInput::new_field(
+                        format!("manual-rule-parameter-{index}"),
+                        placeholder,
+                        MAX_MANUAL_RULE_INPUT_BYTES,
+                        theme,
+                        self.dark,
+                        window,
+                        cx,
+                    )
+                })
+            })
+            .collect();
         let Some(store_dir) = self.subscription_store_dir.as_ref() else {
             return;
         };
@@ -2297,54 +2456,76 @@ impl ManisApp {
             cx.notify();
             return;
         }
-        if condition_index == 0 {
-            self.manual_rule_kind = kind;
-        } else {
-            self.manual_rule_second_kind = kind;
-        }
+        let Some(selected_kind) = self.manual_rule_kinds.get_mut(condition_index) else {
+            return;
+        };
+        *selected_kind = kind;
         self.manual_rule_error = None;
         self.manual_rule_popover = None;
         let placeholder = manual_rule_placeholder(kind, self.language());
-        let input = if condition_index == 0 {
-            self.manual_rule_input.as_ref()
-        } else {
-            self.manual_rule_second_input.as_ref()
-        };
-        if let Some(input) = input {
+        if let Some(input) = self.manual_rule_inputs.get(condition_index) {
             input.update(cx, |input, cx| input.set_placeholder(placeholder, cx));
         }
         cx.notify();
     }
 
-    fn set_second_manual_rule_condition_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
-        self.manual_rule_second_enabled = enabled;
+    fn add_manual_rule_condition(&mut self, cx: &mut Context<Self>) {
+        if self.manual_rule_condition_count >= crate::manual_rule::MAX_CONDITIONS {
+            return;
+        }
+        let index = self.manual_rule_condition_count;
+        self.manual_rule_condition_count += 1;
         self.manual_rule_popover = None;
         self.manual_rule_error = None;
-        if !enabled && let Some(input) = self.manual_rule_second_input.as_ref() {
+        if let Some(input) = self.manual_rule_inputs.get(index) {
             input.update(cx, SubscriptionTextInput::clear_without_event);
         }
         cx.notify();
     }
 
-    fn add_manual_rule(&mut self, cx: &mut Context<Self>) -> bool {
-        let Some(input) = self.manual_rule_input.clone() else {
+    fn remove_manual_rule_condition(&mut self, index: usize, cx: &mut Context<Self>) {
+        if index == 0 || index >= self.manual_rule_condition_count {
+            return;
+        }
+        for current in index..self.manual_rule_condition_count - 1 {
+            self.manual_rule_kinds[current] = self.manual_rule_kinds[current + 1];
+            let value = self.manual_rule_inputs[current + 1]
+                .read(cx)
+                .value()
+                .to_owned();
+            self.manual_rule_inputs[current]
+                .update(cx, |input, cx| input.set_value_without_event(value, cx));
+        }
+        self.manual_rule_condition_count -= 1;
+        if let Some(input) = self
+            .manual_rule_inputs
+            .get(self.manual_rule_condition_count)
+        {
+            input.update(cx, SubscriptionTextInput::clear_without_event);
+        }
+        self.manual_rule_popover = None;
+        self.manual_rule_error = None;
+        cx.notify();
+    }
+
+    fn submit_manual_rule(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.manual_rule_editor_state == super::ManualRuleEditorState::Closed {
             return false;
-        };
-        let second_kind = self.manual_rule_second_kind;
-        if !self.manual_rule_kind.supported_by(self.runtime.kind())
-            || (self.manual_rule_second_enabled && !second_kind.supported_by(self.runtime.kind()))
+        }
+        if self.manual_rule_kinds[..self.manual_rule_condition_count]
+            .iter()
+            .any(|kind| !kind.supported_by(self.runtime.kind()))
         {
             self.manual_rule_error = Some(crate::manual_rule::ManualRuleError::UnsupportedByKernel);
             cx.notify();
             return false;
         }
-        let mut conditions = vec![(self.manual_rule_kind, input.read(cx).value().to_owned())];
-        if self.manual_rule_second_enabled {
-            let Some(second_input) = self.manual_rule_second_input.clone() else {
-                return false;
-            };
-            conditions.push((second_kind, second_input.read(cx).value().to_owned()));
-        }
+        let conditions = self.manual_rule_kinds[..self.manual_rule_condition_count]
+            .iter()
+            .copied()
+            .zip(self.manual_rule_inputs[..self.manual_rule_condition_count].iter())
+            .map(|(kind, input)| (kind, input.read(cx).value().to_owned()))
+            .collect::<Vec<_>>();
         let condition_count = conditions.len();
         let rule = match crate::manual_rule::ManualRule::parse_conditions(
             conditions,
@@ -2357,26 +2538,53 @@ impl ManisApp {
                 return false;
             }
         };
-        if self.manual_rules.contains(&rule) {
-            self.manual_rule_error = Some(crate::manual_rule::ManualRuleError::Duplicate);
-            cx.notify();
-            return false;
-        }
-        self.manual_rules.push(rule);
+        let editing_index = self.manual_rule_editor_state.editing_index();
+        let previous = if let Some(index) = editing_index {
+            match crate::manual_rule::replace_manual_rule(&mut self.manual_rules, index, rule) {
+                Ok(previous) => Some(previous),
+                Err(crate::manual_rule::ManualRuleEditError::Duplicate) => {
+                    self.manual_rule_error = Some(crate::manual_rule::ManualRuleError::Duplicate);
+                    cx.notify();
+                    return false;
+                }
+                Err(crate::manual_rule::ManualRuleEditError::Missing) => {
+                    self.reset_manual_rule_editor_state();
+                    cx.notify();
+                    return false;
+                }
+            }
+        } else {
+            if self.manual_rules.contains(&rule) {
+                self.manual_rule_error = Some(crate::manual_rule::ManualRuleError::Duplicate);
+                cx.notify();
+                return false;
+            }
+            self.manual_rules.push(rule);
+            None
+        };
         if !self.persist_manual_rules(cx) {
-            self.manual_rules.pop();
+            if let Some(index) = editing_index {
+                if let Some(previous) = previous {
+                    let _ = crate::manual_rule::replace_manual_rule(
+                        &mut self.manual_rules,
+                        index,
+                        previous,
+                    );
+                }
+            } else {
+                self.manual_rules.pop();
+            }
             return false;
         }
         self.manual_rule_error = None;
-        input.update(cx, SubscriptionTextInput::clear_without_event);
-        if let Some(second_input) = self.manual_rule_second_input.as_ref() {
-            second_input.update(cx, SubscriptionTextInput::clear_without_event);
-        }
-        self.manual_rule_second_enabled = false;
         self.reset_manual_rule_editor_state();
         record_event(
             LogLevel::Info,
-            "routing.manual_rule.added",
+            if editing_index.is_some() {
+                "routing.manual_rule.updated"
+            } else {
+                "routing.manual_rule.added"
+            },
             format!(
                 "conditions={} target={} total={}",
                 condition_count,
@@ -2553,7 +2761,7 @@ impl ManisApp {
     }
 
     fn manual_rule_select(
-        id: &'static str,
+        id: &str,
         label: &'static str,
         value: String,
         menu: impl gpui::IntoElement,
@@ -2561,7 +2769,7 @@ impl ManisApp {
         width: f32,
         on_open_change: impl Fn(&bool, &mut gpui::Window, &mut gpui::App) + 'static,
     ) -> AnyElement {
-        let trigger = Button::new(id)
+        let trigger = Button::new(id.to_owned())
             .accessibility_label(label)
             .label(value)
             .dropdown_caret(true)
@@ -2587,31 +2795,20 @@ impl ManisApp {
         compact: bool,
         cx: &mut Context<Self>,
     ) -> Div {
-        let input = if condition_index == 0 {
-            self.manual_rule_input.as_ref()
-        } else {
-            self.manual_rule_second_input.as_ref()
-        }
-        .expect("manual rule condition input is initialized")
-        .clone();
+        let input = self
+            .manual_rule_inputs
+            .get(condition_index)
+            .expect("manual rule condition input is initialized")
+            .clone();
         let kind_width = if compact { 260.0 } else { 240.0 };
         let kind_popover = ManualRulePopover::Kind(condition_index);
         let kind_open = self.manual_rule_popover == Some(kind_popover);
         let kind_menu = self.manual_rule_kind_menu(condition_index, kind, theme, language, cx);
-        let (select_id, label) = if condition_index == 0 {
-            (
-                "manual-rule-kind-select",
-                language.text("Choose first condition type", "选择第一个条件类型"),
-            )
-        } else {
-            (
-                "manual-rule-second-kind-select",
-                language.text("Choose second condition type", "选择第二个条件类型"),
-            )
-        };
+        let select_id = format!("manual-rule-kind-select-{condition_index}");
+        let label = language.text("Choose condition type", "选择条件类型");
         let app = cx.entity();
         let kind_select = Self::manual_rule_select(
-            select_id,
+            &select_id,
             label,
             kind.display_label().to_owned(),
             kind_menu,
@@ -2633,9 +2830,11 @@ impl ManisApp {
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(theme.text_secondary)
                     .child(if condition_index == 0 {
-                        language.text("Condition 1", "条件 1")
+                        language.text("Condition 1", "条件 1").to_owned()
+                    } else if language == Language::English {
+                        format!("AND · Condition {}", condition_index + 1)
                     } else {
-                        language.text("AND · Condition 2", "并且 · 条件 2")
+                        format!("并且 · 条件 {}", condition_index + 1)
                     }),
             )
             .child(
@@ -2655,8 +2854,8 @@ impl ManisApp {
             );
         if condition_index > 0 {
             row = row.child(
-                Button::new("remove-manual-rule-condition")
-                    .accessibility_label(language.text("Remove second condition", "移除第二个条件"))
+                Button::new(format!("remove-manual-rule-condition-{condition_index}"))
+                    .accessibility_label(language.text("Remove this condition", "移除这个条件"))
                     .label(language.text("Remove condition", "移除条件"))
                     .text()
                     .with_size(px(30.0))
@@ -2664,8 +2863,8 @@ impl ManisApp {
                     .cursor_pointer()
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(theme.status_error)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.set_second_manual_rule_condition_enabled(false, cx);
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.remove_manual_rule_condition(condition_index, cx);
                     })),
             );
         }
@@ -2701,24 +2900,19 @@ impl ManisApp {
             },
         );
 
-        let mut conditions = div().child(self.manual_rule_condition_editor(
-            0,
-            self.manual_rule_kind,
-            theme,
-            language,
-            compact,
-            cx,
-        ));
-        if self.manual_rule_second_enabled {
+        let editing = self.manual_rule_editor_state.editing_index().is_some();
+        let mut conditions = div();
+        for condition_index in 0..self.manual_rule_condition_count {
             conditions = conditions.child(self.manual_rule_condition_editor(
-                1,
-                self.manual_rule_second_kind,
+                condition_index,
+                self.manual_rule_kinds[condition_index],
                 theme,
                 language,
                 compact,
                 cx,
             ));
-        } else {
+        }
+        if self.manual_rule_condition_count < crate::manual_rule::MAX_CONDITIONS {
             conditions = conditions.child(
                 Button::new("add-manual-rule-condition")
                     .accessibility_label(language.text("Add an AND condition", "添加并且条件"))
@@ -2733,7 +2927,7 @@ impl ManisApp {
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(theme.action_primary)
                     .on_click(cx.listener(|this, _, _, cx| {
-                        this.set_second_manual_rule_condition_enabled(true, cx);
+                        this.add_manual_rule_condition(cx);
                     })),
             );
         }
@@ -2762,7 +2956,7 @@ impl ManisApp {
             .gap_2()
             .child(
                 Button::new("cancel-manual-rule")
-                    .accessibility_label(language.text("Cancel adding rule", "取消添加规则"))
+                    .accessibility_label(language.text("Cancel editing rule", "取消编辑规则"))
                     .label(language.text("Cancel", "取消"))
                     .with_variant(ButtonVariant::Default)
                     .with_size(px(38.0))
@@ -2779,9 +2973,17 @@ impl ManisApp {
                     })),
             )
             .child(
-                Button::new("add-manual-rule")
-                    .accessibility_label(language.text("Add manual rule", "添加手动规则"))
-                    .label(language.text("Add rule", "添加规则"))
+                Button::new("save-manual-rule")
+                    .accessibility_label(if editing {
+                        language.text("Save manual rule changes", "保存手动规则修改")
+                    } else {
+                        language.text("Add manual rule", "添加手动规则")
+                    })
+                    .label(if editing {
+                        language.text("Save changes", "保存修改")
+                    } else {
+                        language.text("Add rule", "添加规则")
+                    })
                     .primary()
                     .with_size(px(38.0))
                     .h(px(38.0))
@@ -2791,7 +2993,7 @@ impl ManisApp {
                     .text_color(theme.action_on_primary)
                     .font_weight(FontWeight::SEMIBOLD)
                     .on_click(cx.listener(|this, _, window, cx| {
-                        if this.add_manual_rule(cx) {
+                        if this.submit_manual_rule(cx) {
                             window.close_dialog(cx);
                         }
                     })),
@@ -2799,7 +3001,16 @@ impl ManisApp {
 
         let viewport = window.viewport_size();
         let dialog_width = (viewport.width.as_f32() - 32.0).clamp(280.0, 720.0);
-        let estimated_height = if compact { 520.0 } else { 368.0 };
+        let estimated_height = if compact {
+            520.0
+        } else {
+            match self.manual_rule_condition_count {
+                0 | 1 => 368.0,
+                2 => 458.0,
+                3 => 548.0,
+                _ => 638.0,
+            }
+        };
         let margin_top = ((viewport.height.as_f32() - estimated_height) / 2.0).max(16.0);
         let app = cx.entity();
 
@@ -2827,7 +3038,11 @@ impl ManisApp {
                         div()
                             .text_size(px(17.0))
                             .font_weight(FontWeight::BOLD)
-                            .child(language.text("Add routing rule", "添加分流规则")),
+                            .child(if editing {
+                                language.text("Edit routing rule", "编辑分流规则")
+                            } else {
+                                language.text("Add routing rule", "添加分流规则")
+                            }),
                     )
                     .child(
                         div()
@@ -2868,6 +3083,50 @@ impl ManisApp {
             .on_close(move |_, _, cx| {
                 app.update(cx, ManisApp::close_manual_rule_editor);
             })
+    }
+
+    fn manual_rule_actions(
+        index: usize,
+        theme: Theme,
+        language: Language,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        div()
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .gap_1()
+            .child(
+                Button::new(format!("edit-manual-rule-{index}"))
+                    .accessibility_label(language.text("Edit this manual rule", "编辑这条手动规则"))
+                    .label(language.text("Edit", "编辑"))
+                    .text()
+                    .with_size(px(30.0))
+                    .px_2()
+                    .py_1()
+                    .cursor_pointer()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(theme.action_primary)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.open_manual_rule_editor_for_edit(index, window, cx);
+                    })),
+            )
+            .child(
+                Button::new(format!("remove-manual-rule-{index}"))
+                    .accessibility_label(
+                        language.text("Remove this manual rule", "移除这条手动规则"),
+                    )
+                    .label(language.text("Remove", "移除"))
+                    .text()
+                    .with_size(px(30.0))
+                    .px_2()
+                    .py_1()
+                    .cursor_pointer()
+                    .text_color(theme.status_error)
+                    .on_click(
+                        cx.listener(move |this, _, _, cx| this.remove_manual_rule(index, cx)),
+                    ),
+            )
     }
 
     fn manual_routing_rule_row(
@@ -2949,22 +3208,7 @@ impl ManisApp {
                     .text_color(theme.action_primary)
                     .child(target),
             )
-            .child(
-                Button::new(format!("remove-manual-rule-{index}"))
-                    .accessibility_label(
-                        language.text("Remove this manual rule", "移除这条手动规则"),
-                    )
-                    .label(language.text("Remove", "移除"))
-                    .text()
-                    .with_size(px(30.0))
-                    .px_2()
-                    .py_1()
-                    .cursor_pointer()
-                    .text_color(theme.status_error)
-                    .on_click(
-                        cx.listener(move |this, _, _, cx| this.remove_manual_rule(index, cx)),
-                    ),
-            )
+            .child(Self::manual_rule_actions(index, theme, language, cx))
     }
 
     #[allow(clippy::too_many_lines)]
@@ -3164,7 +3408,7 @@ impl ManisApp {
                 format!("{rule_count} 条规则 · 目标 {target_policy} · {update}")
             };
             let toggle_key = expansion_key.clone();
-            let title = div()
+            let title_detail = div()
                 .flex_1()
                 .min_w(px(0.0))
                 .child(
@@ -3185,6 +3429,19 @@ impl ManisApp {
                         .text_color(theme.text_tertiary)
                         .child(detail),
                 );
+            let title = div()
+                .w_full()
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap_2()
+                .child(title_detail)
+                .child(self.qx_rule_source_target_select(
+                    source,
+                    !self.source_refresh_busy(),
+                    theme,
+                    cx,
+                ));
             let mut rules = div()
                 .px(if compact { px(8.0) } else { px(12.0) })
                 .pb_3()
@@ -3903,6 +4160,96 @@ impl ManisApp {
                                 "Failed to save rule update interval",
                                 "规则更新间隔保存失败"
                             )
+                        );
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn update_qx_rule_source_target(&mut self, id: String, target: String, cx: &mut Context<Self>) {
+        if self.source_refresh_busy() || !self.qx_rule_targets().contains(&target) {
+            return;
+        }
+        let Some(store_dir) = self.subscription_store_dir.clone() else {
+            self.language()
+                .text(
+                    "Could not determine where to save the rule source",
+                    "无法确定规则源的保存位置",
+                )
+                .clone_into(&mut self.status);
+            cx.notify();
+            return;
+        };
+        let Some(source) = self.qx_rule_sources.iter().find(|source| source.id == id) else {
+            return;
+        };
+        if self.effective_rule_target(source.target_policy.as_str(), self.language()) == target {
+            self.qx_rule_target_popover = None;
+            cx.notify();
+            return;
+        }
+
+        self.qx_rule_import_generation = self.qx_rule_import_generation.wrapping_add(1);
+        let generation = self.qx_rule_import_generation;
+        self.qx_rule_source_target_updates
+            .insert(id.clone(), generation);
+        self.qx_rule_target_popover = None;
+        self.status = format!(
+            "{} {target}",
+            self.language()
+                .text("Saving rule source policy", "正在保存规则源策略")
+        );
+        let runtime = self.runtime.clone();
+        let executor = cx.background_executor().clone();
+        let task_id = id.clone();
+        cx.spawn(async move |this, cx| {
+            let result = executor
+                .spawn(async move {
+                    let stored =
+                        mihomo::update_qx_rule_source_target_in(&store_dir, &task_id, &target)?;
+                    let apply =
+                        SourceRuntimeApply::from_result(runtime.apply_saved_sources(&store_dir));
+                    Ok::<_, SubscriptionStoreError>((stored, apply))
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                if this.qx_rule_source_target_updates.get(&id) != Some(&generation) {
+                    return;
+                }
+                this.qx_rule_source_target_updates.remove(&id);
+                match result {
+                    Ok((stored, apply)) => {
+                        let language = this.language();
+                        let target = stored.target_policy.as_str().to_owned();
+                        if let Some(source) = this
+                            .qx_rule_sources
+                            .iter_mut()
+                            .find(|source| source.id == id)
+                        {
+                            *source = stored;
+                        }
+                        apply.reconcile_proxy_mode(&mut this.proxy_mode);
+                        this.status = format!(
+                            "{} {target}{}",
+                            language.text("Rule source policy set to", "规则源策略已设为"),
+                            apply.status_suffix(language)
+                        );
+                        record_event(
+                            LogLevel::Info,
+                            "routing.rule_source.target.updated",
+                            format!("source_id={id} target={target}"),
+                        );
+                    }
+                    Err(error) => {
+                        this.status = format!(
+                            "{}: {error}",
+                            this.language()
+                                .text("Failed to save rule source policy", "规则源策略保存失败")
                         );
                     }
                 }
