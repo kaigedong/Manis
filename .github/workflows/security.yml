@@ -2,6 +2,7 @@ name: Security
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, closed]
     paths:
       - "**/Cargo.toml"
       - Cargo.lock
@@ -21,8 +22,13 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: security-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   dependency-policy:
+    if: github.event_name != 'pull_request' || github.event.action != 'closed'
     name: Dependency policy
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -33,6 +39,7 @@ jobs:
           command: check
 
   vulnerability-audit:
+    if: github.event_name != 'pull_request' || github.event.action != 'closed'
     name: RustSec audit
     runs-on: ubuntu-latest
     timeout-minutes: 30
