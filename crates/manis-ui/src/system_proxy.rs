@@ -274,7 +274,7 @@ fn tun_dns_recovery_snapshot_path(language: Language) -> Result<PathBuf, SystemP
         })
 }
 
-#[cfg(not(test))]
+#[cfg(all(target_os = "macos", not(test)))]
 fn read_tun_dns_recovery_snapshot(language: Language) -> Result<Option<String>, SystemProxyError> {
     let path = tun_dns_recovery_snapshot_path(language)?;
     read_recovery_snapshot_at(&path, language)
@@ -293,7 +293,11 @@ fn delete_tun_dns_recovery_snapshot(language: Language) -> Result<(), SystemProx
     delete_recovery_snapshot_at(&path, language)
 }
 
-#[cfg(not(test))]
+#[cfg(any(
+    target_os = "linux",
+    target_os = "windows",
+    all(target_os = "macos", not(test))
+))]
 fn read_recovery_snapshot(language: Language) -> Result<Option<String>, SystemProxyError> {
     let path = recovery_snapshot_path(language)?;
     read_recovery_snapshot_at(&path, language)

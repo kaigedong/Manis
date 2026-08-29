@@ -3,10 +3,9 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
-use super::{
-    SubscriptionStoreError, private_store_entries, require_clean_absolute_store,
-    write_private_atomic,
-};
+use super::SubscriptionStoreError;
+#[cfg(not(windows))]
+use super::{private_store_entries, require_clean_absolute_store, write_private_atomic};
 
 const MAX_SNAPSHOT_BYTES: u64 = 64 * 1024 * 1024;
 

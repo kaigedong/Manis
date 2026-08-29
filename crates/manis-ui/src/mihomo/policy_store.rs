@@ -8,10 +8,14 @@ use super::{
     MAX_NODE_SELECTION_FILE_BYTES, MAX_NODE_SELECTION_POLICY_TARGETS, MAX_SUBSCRIPTION_FILE_BYTES,
     NODE_SELECTION_PREFERENCES_FILE, NODE_SELECTION_PREFERENCES_VERSION, Name, NodeIdentity, Path,
     PolicyCandidateMatcher, PolicyRef, StoredSingleNode, SubscriptionStoreError, UserPolicyGroup,
-    UserPolicyGroupKind, VlessProxy, decode_hex, encode_hex, fs, next_stored_source_id,
-    private_store_entries, read_private_source_allow_empty, read_private_source_allow_empty_max,
-    remove_private_source, require_clean_absolute_store, storage_version_supported,
-    valid_stored_id, write_private_atomic,
+    UserPolicyGroupKind, VlessProxy, decode_hex, encode_hex, next_stored_source_id,
+    storage_version_supported, valid_stored_id,
+};
+#[cfg(not(windows))]
+use super::{
+    fs, private_store_entries, read_private_source_allow_empty,
+    read_private_source_allow_empty_max, remove_private_source, require_clean_absolute_store,
+    write_private_atomic,
 };
 
 pub(crate) fn new_managed_policy_id() -> String {

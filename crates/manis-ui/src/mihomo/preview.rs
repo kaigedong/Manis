@@ -334,6 +334,7 @@ fn reserve_preview_port() -> Result<u16, SubscriptionPreviewError> {
         .map_err(|_error| SubscriptionPreviewError::WorkspaceUnavailable)
 }
 
+#[cfg(unix)]
 fn wait_for_preview_providers(
     endpoint: &ControllerEndpoint,
 ) -> Result<Vec<LoadedProvider>, SubscriptionPreviewError> {

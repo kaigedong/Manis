@@ -6,8 +6,11 @@ use std::path::Path;
 use super::{
     MANUAL_ROUTING_RULE_GROUP_ID, MAX_ROUTING_RULE_GROUP_ORDER_FILE_BYTES, MAX_ROUTING_RULE_GROUPS,
     QX_RULE_SOURCE_PREFIX, ROUTING_RULE_GROUP_ORDER_FILE, ROUTING_RULE_GROUP_ORDER_VERSION,
-    StoredQxRuleSource, SubscriptionStoreError, read_private_source_allow_empty_max,
-    require_clean_absolute_store, valid_stored_id, write_private_atomic,
+    StoredQxRuleSource, SubscriptionStoreError, valid_stored_id,
+};
+#[cfg(not(windows))]
+use super::{
+    read_private_source_allow_empty_max, require_clean_absolute_store, write_private_atomic,
 };
 
 pub(crate) fn normalized_routing_rule_group_order(
