@@ -4374,6 +4374,9 @@ fn build_saved_sources_mihomo_runtime_with_binary(
     binary: &Path,
 ) -> Result<ControllerRuntime, String> {
     let data_dir = configured_data_dir()?;
+    #[cfg(unix)]
+    let controller = configured_managed_controller(&data_dir);
+    #[cfg(not(unix))]
     let controller = configured_managed_controller(&data_dir)?;
     build_saved_sources_mihomo_runtime_in(store_dir, binary, &data_dir, &controller)
 }
@@ -4564,16 +4567,19 @@ fn configured_data_dir() -> Result<PathBuf, String> {
         .ok_or_else(|| format!("无法确定数据目录，请设置 {DATA_DIR_ENV}"))
 }
 
+#[cfg(unix)]
+fn configured_managed_controller(data_dir: &Path) -> ControllerEndpoint {
+    default_managed_endpoint(data_dir)
+}
+
+#[cfg(not(unix))]
 fn configured_managed_controller(data_dir: &Path) -> Result<ControllerEndpoint, String> {
     default_managed_endpoint(data_dir)
 }
 
 #[cfg(unix)]
-#[allow(clippy::unnecessary_wraps)]
-fn default_managed_endpoint(data_dir: &Path) -> Result<ControllerEndpoint, String> {
-    Ok(ControllerEndpoint::UnixSocket(
-        data_dir.join("controller.sock"),
-    ))
+fn default_managed_endpoint(data_dir: &Path) -> ControllerEndpoint {
+    ControllerEndpoint::UnixSocket(data_dir.join("controller.sock"))
 }
 
 #[cfg(windows)]
