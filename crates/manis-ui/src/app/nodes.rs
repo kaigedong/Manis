@@ -687,7 +687,6 @@ impl ManisApp {
         .on_click(listener)
     }
 
-    #[allow(clippy::too_many_lines)]
     pub(super) fn policy_editor_form(
         &self,
         draft: &ManagedPolicyDraft,
@@ -697,167 +696,9 @@ impl ManisApp {
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let strategy = match draft.strategy {
-            ManagedPolicyStrategy::Manual => "static".to_owned(),
-            ManagedPolicyStrategy::LowestLatency => "url-latency-benchmark".to_owned(),
-        };
-        let matcher = match draft.matcher_kind {
-            PolicyCandidateMatcherKind::All => language.text("All nodes", "全部节点").to_owned(),
-            PolicyCandidateMatcherKind::NameContains => {
-                language.text("Name contains", "名称包含").to_owned()
-            }
-            PolicyCandidateMatcherKind::Explicit => language
-                .text("Select nodes or groups", "选择节点或策略组")
-                .to_owned(),
-        };
-        let interval = match (draft.test_interval_secs, language) {
-            (60, Language::English) => "1 min".to_owned(),
-            (60, Language::SimplifiedChinese) => "1 分钟".to_owned(),
-            (300, Language::English) => "5 min".to_owned(),
-            (300, Language::SimplifiedChinese) => "5 分钟".to_owned(),
-            (600, Language::English) => "10 min".to_owned(),
-            (600, Language::SimplifiedChinese) => "10 分钟".to_owned(),
-            (1_800, Language::English) => "30 min".to_owned(),
-            (1_800, Language::SimplifiedChinese) => "30 分钟".to_owned(),
-            (seconds, Language::English) => format!("{seconds} sec"),
-            (seconds, Language::SimplifiedChinese) => format!("{seconds} 秒"),
-        };
-        let name_input = self.policy_group_name_input.clone();
-        let filter_input = self.policy_group_filter_input.clone();
-        let policy_name = self
-            .policy_group_name_input
-            .as_ref()
-            .map_or_else(String::new, |input| input.read(cx).value().to_owned());
         let popover_width = if compact { 280.0 } else { 300.0 };
-        let strategy_menu = Self::policy_strategy_menu(draft, language, theme, cx);
-        let icon_menu = Self::policy_icon_menu(draft, language, theme, cx);
-        let basics = div()
-            .rounded(Radius::Pane.px())
-            .overflow_hidden()
-            .border_1()
-            .border_color(theme.outline_subtle)
-            .bg(theme.surface_high)
-            .child(Self::policy_editor_popup_row(
-                "policy-editor-type",
-                language.text("Type", "类型"),
-                strategy,
-                None,
-                theme,
-                PolicyEditorPopup::new(
-                    PolicyEditorPopover::Strategy,
-                    self.managed_policy_editor_popover == Some(PolicyEditorPopover::Strategy),
-                    strategy_menu,
-                    popover_width,
-                    220.0,
-                ),
-                cx,
-            ))
-            .child(Self::policy_editor_input_row(
-                language.text("Policy group name", "策略组名称"),
-                true,
-                name_input,
-                true,
-                theme,
-            ))
-            .child(Self::policy_editor_popup_row(
-                "policy-editor-icon",
-                language.text("Icon", "图标"),
-                Self::managed_policy_icon_label(draft.icon, language).to_owned(),
-                Some(Self::policy_icon_visual(
-                    draft.icon,
-                    &policy_name,
-                    28.0,
-                    theme,
-                )),
-                theme,
-                PolicyEditorPopup::new(
-                    PolicyEditorPopover::Icon,
-                    self.managed_policy_editor_popover == Some(PolicyEditorPopover::Icon),
-                    icon_menu,
-                    popover_width,
-                    320.0,
-                )
-                .with_divider(false),
-                cx,
-            ));
-
-        let candidate_mode_menu = Self::policy_candidate_mode_menu(draft, language, theme, cx);
-        let has_candidate_details = draft.matcher_kind != PolicyCandidateMatcherKind::All
-            || draft.strategy == ManagedPolicyStrategy::LowestLatency;
-        let mut nodes = div()
-            .rounded(Radius::Pane.px())
-            .overflow_hidden()
-            .border_1()
-            .border_color(theme.outline_subtle)
-            .bg(theme.surface_high)
-            .child(Self::policy_editor_popup_row(
-                "policy-editor-candidate-mode",
-                language.text("Node scope", "节点范围"),
-                matcher,
-                None,
-                theme,
-                PolicyEditorPopup::new(
-                    PolicyEditorPopover::CandidateMode,
-                    self.managed_policy_editor_popover == Some(PolicyEditorPopover::CandidateMode),
-                    candidate_mode_menu,
-                    popover_width,
-                    280.0,
-                )
-                .with_divider(has_candidate_details),
-                cx,
-            ));
-        if draft.matcher_kind == PolicyCandidateMatcherKind::NameContains {
-            nodes = nodes.child(Self::policy_editor_input_row(
-                language.text("Node name contains", "节点名称包含"),
-                false,
-                filter_input,
-                draft.strategy == ManagedPolicyStrategy::LowestLatency,
-                theme,
-            ));
-        }
-        if draft.matcher_kind == PolicyCandidateMatcherKind::Explicit {
-            let candidate_menu = self.policy_candidate_menu(draft, language, theme, cx);
-            nodes = nodes.child(Self::policy_editor_popup_row(
-                "policy-editor-selected-nodes",
-                language.text("Selected candidates", "已选候选项"),
-                match language {
-                    Language::English => format!("{} selected", draft.explicit_members.len()),
-                    Language::SimplifiedChinese => {
-                        format!("已选 {} 项", draft.explicit_members.len())
-                    }
-                },
-                None,
-                theme,
-                PolicyEditorPopup::new(
-                    PolicyEditorPopover::CandidateNodes,
-                    self.managed_policy_editor_popover == Some(PolicyEditorPopover::CandidateNodes),
-                    candidate_menu,
-                    popover_width.max(480.0),
-                    420.0,
-                )
-                .with_divider(draft.strategy == ManagedPolicyStrategy::LowestLatency),
-                cx,
-            ));
-        }
-        if draft.strategy == ManagedPolicyStrategy::LowestLatency {
-            let interval_menu = Self::policy_interval_menu(draft, language, theme, cx);
-            nodes = nodes.child(Self::policy_editor_popup_row(
-                "policy-editor-interval",
-                language.text("Retest interval", "重测间隔"),
-                interval,
-                None,
-                theme,
-                PolicyEditorPopup::new(
-                    PolicyEditorPopover::Interval,
-                    self.managed_policy_editor_popover == Some(PolicyEditorPopover::Interval),
-                    interval_menu,
-                    popover_width,
-                    320.0,
-                )
-                .with_divider(false),
-                cx,
-            ));
-        }
+        let basics = self.policy_editor_basics(draft, language, theme, popover_width, cx);
+        let nodes = self.policy_editor_candidates(draft, language, theme, popover_width, cx);
 
         div()
             .id("policy-editor-scroll")
@@ -901,6 +742,212 @@ impl ManisApp {
                             )),
                     ),
             )
+    }
+
+    fn policy_editor_basics(
+        &self,
+        draft: &ManagedPolicyDraft,
+        language: Language,
+        theme: Theme,
+        popover_width: f32,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let strategy = match draft.strategy {
+            ManagedPolicyStrategy::Manual => "static".to_owned(),
+            ManagedPolicyStrategy::LowestLatency => "url-latency-benchmark".to_owned(),
+        };
+        let policy_name = self
+            .policy_group_name_input
+            .as_ref()
+            .map_or_else(String::new, |input| input.read(cx).value().to_owned());
+        div()
+            .rounded(Radius::Pane.px())
+            .overflow_hidden()
+            .border_1()
+            .border_color(theme.outline_subtle)
+            .bg(theme.surface_high)
+            .child(Self::policy_editor_popup_row(
+                "policy-editor-type",
+                language.text("Type", "类型"),
+                strategy,
+                None,
+                theme,
+                PolicyEditorPopup::new(
+                    PolicyEditorPopover::Strategy,
+                    self.managed_policy_editor_popover == Some(PolicyEditorPopover::Strategy),
+                    Self::policy_strategy_menu(draft, language, theme, cx),
+                    popover_width,
+                    220.0,
+                ),
+                cx,
+            ))
+            .child(Self::policy_editor_input_row(
+                language.text("Policy group name", "策略组名称"),
+                true,
+                self.policy_group_name_input.clone(),
+                true,
+                theme,
+            ))
+            .child(Self::policy_editor_popup_row(
+                "policy-editor-icon",
+                language.text("Icon", "图标"),
+                Self::managed_policy_icon_label(draft.icon, language).to_owned(),
+                Some(Self::policy_icon_visual(
+                    draft.icon,
+                    &policy_name,
+                    28.0,
+                    theme,
+                )),
+                theme,
+                PolicyEditorPopup::new(
+                    PolicyEditorPopover::Icon,
+                    self.managed_policy_editor_popover == Some(PolicyEditorPopover::Icon),
+                    Self::policy_icon_menu(draft, language, theme, cx),
+                    popover_width,
+                    320.0,
+                )
+                .with_divider(false),
+                cx,
+            ))
+    }
+
+    fn policy_editor_candidates(
+        &self,
+        draft: &ManagedPolicyDraft,
+        language: Language,
+        theme: Theme,
+        popover_width: f32,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let matcher = match draft.matcher_kind {
+            PolicyCandidateMatcherKind::All => language.text("All nodes", "全部节点").to_owned(),
+            PolicyCandidateMatcherKind::NameContains => {
+                language.text("Name contains", "名称包含").to_owned()
+            }
+            PolicyCandidateMatcherKind::Explicit => language
+                .text("Select nodes or groups", "选择节点或策略组")
+                .to_owned(),
+        };
+        let has_details = draft.matcher_kind != PolicyCandidateMatcherKind::All
+            || draft.strategy == ManagedPolicyStrategy::LowestLatency;
+        let mut nodes = div()
+            .rounded(Radius::Pane.px())
+            .overflow_hidden()
+            .border_1()
+            .border_color(theme.outline_subtle)
+            .bg(theme.surface_high)
+            .child(Self::policy_editor_popup_row(
+                "policy-editor-candidate-mode",
+                language.text("Node scope", "节点范围"),
+                matcher,
+                None,
+                theme,
+                PolicyEditorPopup::new(
+                    PolicyEditorPopover::CandidateMode,
+                    self.managed_policy_editor_popover == Some(PolicyEditorPopover::CandidateMode),
+                    Self::policy_candidate_mode_menu(draft, language, theme, cx),
+                    popover_width,
+                    280.0,
+                )
+                .with_divider(has_details),
+                cx,
+            ));
+        if draft.matcher_kind == PolicyCandidateMatcherKind::NameContains {
+            nodes = nodes.child(Self::policy_editor_input_row(
+                language.text("Node name contains", "节点名称包含"),
+                false,
+                self.policy_group_filter_input.clone(),
+                draft.strategy == ManagedPolicyStrategy::LowestLatency,
+                theme,
+            ));
+        }
+        if draft.matcher_kind == PolicyCandidateMatcherKind::Explicit {
+            nodes = nodes.child(self.policy_editor_selected_candidates(
+                draft,
+                language,
+                theme,
+                popover_width,
+                cx,
+            ));
+        }
+        if draft.strategy == ManagedPolicyStrategy::LowestLatency {
+            nodes = nodes.child(self.policy_editor_interval_row(
+                draft,
+                language,
+                theme,
+                popover_width,
+                cx,
+            ));
+        }
+        nodes
+    }
+
+    fn policy_editor_selected_candidates(
+        &self,
+        draft: &ManagedPolicyDraft,
+        language: Language,
+        theme: Theme,
+        popover_width: f32,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let selected = match language {
+            Language::English => format!("{} selected", draft.explicit_members.len()),
+            Language::SimplifiedChinese => format!("已选 {} 项", draft.explicit_members.len()),
+        };
+        Self::policy_editor_popup_row(
+            "policy-editor-selected-nodes",
+            language.text("Selected candidates", "已选候选项"),
+            selected,
+            None,
+            theme,
+            PolicyEditorPopup::new(
+                PolicyEditorPopover::CandidateNodes,
+                self.managed_policy_editor_popover == Some(PolicyEditorPopover::CandidateNodes),
+                self.policy_candidate_menu(draft, language, theme, cx),
+                popover_width.max(480.0),
+                420.0,
+            )
+            .with_divider(draft.strategy == ManagedPolicyStrategy::LowestLatency),
+            cx,
+        )
+    }
+
+    fn policy_editor_interval_row(
+        &self,
+        draft: &ManagedPolicyDraft,
+        language: Language,
+        theme: Theme,
+        popover_width: f32,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let interval = match (draft.test_interval_secs, language) {
+            (60, Language::English) => "1 min".to_owned(),
+            (60, Language::SimplifiedChinese) => "1 分钟".to_owned(),
+            (300, Language::English) => "5 min".to_owned(),
+            (300, Language::SimplifiedChinese) => "5 分钟".to_owned(),
+            (600, Language::English) => "10 min".to_owned(),
+            (600, Language::SimplifiedChinese) => "10 分钟".to_owned(),
+            (1_800, Language::English) => "30 min".to_owned(),
+            (1_800, Language::SimplifiedChinese) => "30 分钟".to_owned(),
+            (seconds, Language::English) => format!("{seconds} sec"),
+            (seconds, Language::SimplifiedChinese) => format!("{seconds} 秒"),
+        };
+        Self::policy_editor_popup_row(
+            "policy-editor-interval",
+            language.text("Retest interval", "重测间隔"),
+            interval,
+            None,
+            theme,
+            PolicyEditorPopup::new(
+                PolicyEditorPopover::Interval,
+                self.managed_policy_editor_popover == Some(PolicyEditorPopover::Interval),
+                Self::policy_interval_menu(draft, language, theme, cx),
+                popover_width,
+                320.0,
+            )
+            .with_divider(false),
+            cx,
+        )
     }
 
     fn policy_editor_section_label(label: &'static str, theme: Theme) -> Div {
