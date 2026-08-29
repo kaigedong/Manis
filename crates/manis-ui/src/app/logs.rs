@@ -134,16 +134,16 @@ fn logs_empty_state(language: Language, no_query: bool, theme: Theme) -> Div {
         (
             language.message(Message::NoLogs),
             language.text(
-                "Kernel output and Manis UI events will appear here after a connection attempt.",
-                "连接或刷新之后，内核输出和 Manis UI 事件会显示在这里。",
+                "Logs will appear here after Mihomo starts or Manis performs an operation.",
+                "启动 Mihomo 或执行操作后，相关日志会显示在这里。",
             ),
         )
     } else {
         (
             language.message(Message::NoFilterMatches),
             language.text(
-                "Clear the log filter or search for an event name, OP ID, level, or detail.",
-                "清除筛选，或按事件名、OP 编号、级别、详情继续搜索。",
+                "Clear the filter or search by operation, error message, or log level.",
+                "清除筛选，或尝试搜索操作、错误内容或日志级别。",
             ),
         )
     };
@@ -281,12 +281,19 @@ fn kernel_log_matches_query(entry: &KernelLogEntry, query: &str) -> bool {
 fn logs_summary(language: Language, count: usize, live_status: &str, dropped: u64) -> String {
     let count = language.count(CountNoun::Log, count);
     match language {
-        Language::English => format!(
-            "{count} · OP IDs preserved · Mihomo {live_status} · dropped {dropped} overloaded logs · URLs/tokens redacted"
-        ),
+        Language::English => {
+            let dropped = if dropped == 1 {
+                "1 log".to_owned()
+            } else {
+                format!("{dropped} logs")
+            };
+            format!(
+                "{count} · Mihomo {live_status} · {dropped} dropped under load · sensitive data hidden"
+            )
+        }
         Language::SimplifiedChinese => {
             format!(
-                "{count} · OP 编号已持久化 · Mihomo {live_status} · 已丢弃 {dropped} 条过载日志 · URL/令牌已脱敏"
+                "{count} · Mihomo {live_status} · 高负载时丢弃 {dropped} 条日志 · 敏感信息已隐藏"
             )
         }
     }
@@ -391,7 +398,7 @@ mod tests {
     fn log_summary_uses_selected_language() {
         assert_eq!(
             super::logs_summary(crate::localization::Language::English, 2, "connected", 1),
-            "2 logs · OP IDs preserved · Mihomo connected · dropped 1 overloaded logs · URLs/tokens redacted"
+            "2 logs · Mihomo connected · 1 log dropped under load · sensitive data hidden"
         );
         assert_eq!(
             super::logs_summary(
@@ -400,7 +407,7 @@ mod tests {
                 "已连接",
                 1
             ),
-            "2 条日志 · OP 编号已持久化 · Mihomo 已连接 · 已丢弃 1 条过载日志 · URL/令牌已脱敏"
+            "2 条日志 · Mihomo 已连接 · 高负载时丢弃 1 条日志 · 敏感信息已隐藏"
         );
     }
 

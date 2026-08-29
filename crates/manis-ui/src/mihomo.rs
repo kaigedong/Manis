@@ -166,7 +166,6 @@ pub(crate) enum ControllerRuntime {
         endpoint: String,
     },
     Managed {
-        endpoint: String,
         manager: Arc<Mutex<EngineManager>>,
         profile_source: RuntimeProfileSource,
         generated_profile: Option<ManagedGeneratedProfile>,
@@ -228,7 +227,7 @@ impl RuntimeProfileSource {
             #[cfg(any(test, feature = "snapshot-fixtures"))]
             Self::FixtureController => "测试快照",
             Self::SavedSources => "Manis 已保存来源",
-            Self::Invalid => "配置不可用",
+            Self::Invalid => "尚未准备好",
         }
     }
 
@@ -237,7 +236,7 @@ impl RuntimeProfileSource {
             #[cfg(any(test, feature = "snapshot-fixtures"))]
             Self::FixtureController => "仅用于测试快照",
             Self::SavedSources => "从本机私有来源编译",
-            Self::Invalid => "请检查本机启动参数",
+            Self::Invalid => "请检查来源设置",
         }
     }
 }
@@ -306,8 +305,8 @@ impl ControllerRuntime {
         match self {
             #[cfg(any(test, feature = "snapshot-fixtures"))]
             Self::Fixture { endpoint } => endpoint.clone(),
-            Self::Managed { endpoint, .. } => format!("Manis 托管 · {endpoint}"),
-            Self::Invalid { .. } => "Manis 托管配置".to_owned(),
+            Self::Managed { .. } => "Manis 托管".to_owned(),
+            Self::Invalid { .. } => "尚未连接".to_owned(),
         }
     }
 
@@ -384,7 +383,7 @@ impl ControllerRuntime {
                     return Err(error);
                 }
                 Ok(RuntimeSnapshot {
-                    endpoint: format!("Manis 托管 · {endpoint}"),
+                    endpoint: "Manis 托管".to_owned(),
                     controller_endpoint: endpoint.clone(),
                     controller_secret: secret.clone(),
                     snapshot,
@@ -422,7 +421,7 @@ impl ControllerRuntime {
                 };
                 let endpoint = endpoint.uri();
                 Ok(RuntimeSnapshot {
-                    endpoint: format!("Manis 托管 · {endpoint}"),
+                    endpoint: "Manis 托管".to_owned(),
                     controller_endpoint: endpoint.clone(),
                     controller_secret: secret.clone(),
                     snapshot: load_sing_box(&endpoint, secret.as_deref())?,
@@ -4746,10 +4745,8 @@ fn build_saved_sources_mihomo_runtime_in(
         .map_err(|_error| "无法写入 Mihomo 私有配置".to_owned())?;
     let config = managed_engine_config(&spec, config_file);
     validate_managed_config(&config).map_err(|error| error.to_string())?;
-    let endpoint = controller.uri();
     let manager = EngineManager::new(config, ReadinessPolicy::default(), readiness_probe(&spec));
     Ok(ControllerRuntime::Managed {
-        endpoint,
         manager: Arc::new(Mutex::new(manager)),
         profile_source: RuntimeProfileSource::SavedSources,
         generated_profile: Some(spec),
@@ -4788,10 +4785,8 @@ fn build_sing_box_runtime(store_dir: &Path) -> Result<ControllerRuntime, String>
         .map_err(|_error| "无法写入 sing-box 私有配置".to_owned())?;
     let config = managed_engine_config(&spec, config_file);
     validate_managed_config(&config).map_err(|error| error.to_string())?;
-    let endpoint = controller.uri();
     let manager = EngineManager::new(config, ReadinessPolicy::default(), readiness_probe(&spec));
     Ok(ControllerRuntime::Managed {
-        endpoint,
         manager: Arc::new(Mutex::new(manager)),
         profile_source: RuntimeProfileSource::SavedSources,
         generated_profile: Some(spec),
@@ -7207,14 +7202,9 @@ IP-CIDR,192.0.2.0/24,DIRECT
             super::ControllerRuntime::Managed {
                 profile_source,
                 generated_profile,
-                endpoint,
                 ..
             } => {
                 assert_eq!(profile_source, super::RuntimeProfileSource::SavedSources);
-                assert_eq!(
-                    endpoint,
-                    format!("unix://{}", data_dir.join("controller.sock").display())
-                );
                 assert_eq!(
                     generated_profile.expect("generated profile").kernel,
                     manis_core::KernelKind::Mihomo
