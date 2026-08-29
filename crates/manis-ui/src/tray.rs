@@ -14,6 +14,7 @@ use crate::{
     app::ProxyModeBlock,
     localization::{Language, Localizer},
     mihomo,
+    theme::LayoutMetric,
 };
 
 const SHOW_MENU_ID: &str = "manis.tray.show";
@@ -88,7 +89,10 @@ pub fn open_window(cx: &mut App) -> gpui::Result<()> {
     cx.open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
-            window_min_size: Some(size(px(640.0), px(560.0))),
+            window_min_size: Some(size(
+                LayoutMetric::MinWindowWidth.px(),
+                LayoutMetric::MinWindowHeight.px(),
+            )),
             is_resizable: true,
             focus: true,
             ..Default::default()

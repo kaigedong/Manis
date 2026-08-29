@@ -35,6 +35,16 @@ use crate::diagnostics::{LogLevel, record_event};
 use crate::subscription::SingleNodeSource;
 use crate::{brand, core_update};
 
+mod managed_apply;
+mod routing_order;
+mod store_snapshot;
+
+pub(crate) use routing_order::{
+    load_routing_rule_group_order_in, move_routing_rule_group, normalized_routing_rule_group_order,
+    save_routing_rule_group_order_in,
+};
+pub(crate) use store_snapshot::SubscriptionStoreSnapshot;
+
 const CONTROLLER_ENV: &str = "MANIS_MIHOMO_CONTROLLER";
 const LEGACY_RELAY_CONTROLLER_ENV: &str = "RELAY_MIHOMO_CONTROLLER";
 const CONTROLLER_SECRET_ENV: &str = "MANIS_MIHOMO_SECRET";
@@ -935,163 +945,11 @@ impl ControllerRuntime {
         )
     }
 
-    #[allow(clippy::too_many_lines)]
     pub(crate) fn apply_saved_sources(
         &self,
         store_dir: &Path,
     ) -> Result<GeneratedProfileApply, LoadError> {
-        let Self::Managed {
-            manager,
-            apply_lock,
-            generated_profile: Some(spec),
-            privileged,
-            ..
-        } = self
-        else {
-            return Err(LoadError::Runtime(match self {
-                #[cfg(any(test, feature = "snapshot-fixtures"))]
-                Self::Fixture { .. } => "测试快照不能写入运行配置".to_owned(),
-                Self::Invalid { message } => message.clone(),
-                Self::Managed { .. } => "托管内核缺少 Manis 生成配置".to_owned(),
-            }));
-        };
-        let _apply_guard = apply_lock
-            .lock()
-            .map_err(|_poisoned| LoadError::Runtime("配置应用锁已损坏".to_owned()))?;
-        if spec.kernel == KernelKind::Mihomo {
-            sync_single_node_provider_files(store_dir, &spec.data_dir)?;
-        }
-        let profile = compile_saved_profile(store_dir, None, spec.kernel)?;
-        let rendered = render_generated_profile(spec, &profile)?;
-        let (candidate_name, final_name) = generated_profile_names(spec.kernel);
-        let candidate_path =
-            write_private_atomic(&spec.data_dir, candidate_name, rendered.as_bytes())
-                .map_err(|_error| LoadError::Runtime("无法写入候选托管配置".to_owned()))?;
-        let candidate_config = managed_engine_config(spec, candidate_path.clone());
-        let validation = validate_managed_config(&candidate_config);
-        let _ = fs::remove_file(&candidate_path);
-        validation?;
-
-        let final_path = spec.data_dir.join(final_name);
-        let previous_config = fs::read(&final_path).ok();
-        write_private_atomic(&spec.data_dir, final_name, rendered.as_bytes())
-            .map_err(|_error| LoadError::Runtime("无法替换托管配置".to_owned()))?;
-        let final_config = managed_engine_config(spec, final_path);
-        let mut manager = manager
-            .lock()
-            .map_err(|_poisoned| LoadError::Runtime("托管内核状态锁已损坏".to_owned()))?;
-        let running_endpoint = manager.running_endpoint()?;
-        let was_running = running_endpoint.is_some();
-        let restore_tun = if spec.kernel == KernelKind::Mihomo {
-            running_endpoint
-                .as_ref()
-                .map(|endpoint| {
-                    fetch_runtime_config(&endpoint.uri(), spec.controller_secret.as_deref())
-                        .map(|runtime| runtime.tun.enable)
-                        .map_err(LoadError::from)
-                })
-                .transpose()?
-                .unwrap_or(false)
-        } else {
-            false
-        };
-        let was_privileged = privileged.load(Ordering::Acquire);
-        if was_running {
-            manager.stop()?;
-            #[cfg(target_os = "macos")]
-            if restore_tun
-                && !crate::macos_privileged::wait_for_tun_route_release().map_err(|error| {
-                    LoadError::ProxyModeLost(format!(
-                        "重载托管配置前无法确认 macOS TUN 路由已释放：{error}"
-                    ))
-                })?
-            {
-                return Err(LoadError::ProxyModeLost(
-                    "重载托管配置前 macOS TUN 路由未释放".to_owned(),
-                ));
-            }
-        }
-        *manager = match generated_engine_manager(spec, final_config, was_privileged) {
-            Ok(manager) => manager,
-            Err(error) if restore_tun => {
-                return Err(LoadError::ProxyModeLost(format!(
-                    "TUN 已停止，但无法创建新托管内核：{error}"
-                )));
-            }
-            Err(error) => return Err(error),
-        };
-        if was_running && let Err(error) = manager.start() {
-            let restart_error = error.to_string();
-            let mut rollback_running = false;
-            if let Some(previous_config) = previous_config {
-                let _ = write_private_atomic(&spec.data_dir, final_name, &previous_config);
-                let rollback_config = managed_engine_config(spec, spec.data_dir.join(final_name));
-                *manager = match generated_engine_manager(spec, rollback_config, was_privileged) {
-                    Ok(manager) => manager,
-                    Err(rollback_error) if restore_tun => {
-                        return Err(LoadError::ProxyModeLost(format!(
-                            "新配置启动失败（{restart_error}），旧配置管理器恢复也失败：{rollback_error}"
-                        )));
-                    }
-                    Err(rollback_error) => return Err(rollback_error),
-                };
-                rollback_running = manager.start().is_ok();
-            }
-            drop(manager);
-            if restore_tun && rollback_running {
-                record_event(
-                    LogLevel::Info,
-                    "proxy.mode.restore.requested",
-                    "mode=tun reason=managed_config_rollback",
-                );
-                if let Err(restore_error) = self.set_tun_enabled(true) {
-                    record_event(
-                        LogLevel::Error,
-                        "proxy.mode.restore.failed",
-                        format!("mode=tun reason=managed_config_rollback error={restore_error}"),
-                    );
-                    return Err(LoadError::ProxyModeLost(format!(
-                        "新配置启动失败（{restart_error}），旧配置已恢复，但 TUN 重新启用失败：{restore_error}"
-                    )));
-                }
-                record_event(
-                    LogLevel::Info,
-                    "proxy.mode.restore.succeeded",
-                    "mode=tun reason=managed_config_rollback",
-                );
-            } else if restore_tun {
-                return Err(LoadError::ProxyModeLost(format!(
-                    "新配置启动失败（{restart_error}），且旧配置未能重新启动"
-                )));
-            }
-            return Err(LoadError::Engine(error));
-        }
-        drop(manager);
-        if restore_tun {
-            record_event(
-                LogLevel::Info,
-                "proxy.mode.restore.requested",
-                "mode=tun reason=managed_config_restart",
-            );
-            if let Err(error) = self.set_tun_enabled(true) {
-                record_event(
-                    LogLevel::Error,
-                    "proxy.mode.restore.failed",
-                    format!("mode=tun reason=managed_config_restart error={error}"),
-                );
-                return Err(LoadError::ProxyModeLost(error.to_string()));
-            }
-            record_event(
-                LogLevel::Info,
-                "proxy.mode.restore.succeeded",
-                "mode=tun reason=managed_config_restart",
-            );
-        }
-        Ok(if was_running {
-            GeneratedProfileApply::Restarted
-        } else {
-            GeneratedProfileApply::Updated
-        })
+        managed_apply::apply_saved_sources(self, store_dir)
     }
 }
 
@@ -1534,17 +1392,6 @@ impl RemoteSourceRefreshInterval {
         }
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn next(self) -> Self {
-        match self {
-            Self::Manual => Self::Hourly,
-            Self::Hourly => Self::SixHours,
-            Self::SixHours => Self::TwelveHours,
-            Self::TwelveHours => Self::Daily,
-            Self::Daily => Self::Manual,
-        }
-    }
-
     pub(crate) fn is_due(self, last_successful_update_unix_secs: u64, now_unix_secs: u64) -> bool {
         let Some(interval_secs) = self.interval_secs() else {
             return false;
@@ -1719,11 +1566,6 @@ impl NodeSelectionPreferences {
         self.global = Some(global);
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn clear_global(&mut self) {
-        self.global = None;
-    }
-
     pub(crate) fn policy_target(&self, policy: &str) -> Option<&str> {
         self.policy_targets.get(policy).map(String::as_str)
     }
@@ -1739,16 +1581,6 @@ impl NodeSelectionPreferences {
         validate_node_selection_target(target)?;
         self.policy_targets
             .insert(policy.to_owned(), target.to_owned());
-        Ok(())
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn clear_policy_target(
-        &mut self,
-        policy: &str,
-    ) -> Result<(), SubscriptionStoreError> {
-        validate_node_selection_policy(policy)?;
-        self.policy_targets.remove(policy);
         Ok(())
     }
 
@@ -2760,133 +2592,6 @@ pub(crate) fn load_qx_rule_sources_in(
     }
     sources.sort_by(|left, right| left.id.cmp(&right.id));
     Ok(sources)
-}
-
-pub(crate) fn normalized_routing_rule_group_order(
-    stored_order: &[String],
-    has_manual_rules: bool,
-    sources: &[StoredQxRuleSource],
-) -> Vec<String> {
-    let source_ids = sources
-        .iter()
-        .map(|source| source.id.as_str())
-        .collect::<BTreeSet<_>>();
-    let mut seen = BTreeSet::new();
-    let mut order = stored_order
-        .iter()
-        .filter(|id| {
-            (has_manual_rules && id.as_str() == MANUAL_ROUTING_RULE_GROUP_ID)
-                || source_ids.contains(id.as_str())
-        })
-        .filter(|id| seen.insert((*id).clone()))
-        .cloned()
-        .collect::<Vec<_>>();
-    if has_manual_rules && seen.insert(MANUAL_ROUTING_RULE_GROUP_ID.to_owned()) {
-        order.insert(0, MANUAL_ROUTING_RULE_GROUP_ID.to_owned());
-    }
-    for source in sources {
-        if seen.insert(source.id.clone()) {
-            order.push(source.id.clone());
-        }
-    }
-    order
-}
-
-pub(crate) fn move_routing_rule_group(order: &mut [String], group_id: &str, direction: i8) -> bool {
-    if !matches!(direction, -1 | 1) {
-        return false;
-    }
-    let Some(index) = order.iter().position(|id| id == group_id) else {
-        return false;
-    };
-    let target = if direction < 0 {
-        index.checked_sub(1)
-    } else {
-        index.checked_add(1).filter(|target| *target < order.len())
-    };
-    let Some(target) = target else {
-        return false;
-    };
-    order.swap(index, target);
-    true
-}
-
-fn valid_routing_rule_group_id(id: &str) -> bool {
-    id == MANUAL_ROUTING_RULE_GROUP_ID || valid_stored_id(id, QX_RULE_SOURCE_PREFIX)
-}
-
-#[cfg(not(windows))]
-pub(crate) fn save_routing_rule_group_order_in(
-    directory: &Path,
-    order: &[String],
-) -> Result<(), SubscriptionStoreError> {
-    if order.len() > MAX_ROUTING_RULE_GROUPS {
-        return Err(SubscriptionStoreError::StoreUnavailable);
-    }
-    let mut seen = BTreeSet::new();
-    if order
-        .iter()
-        .any(|id| !valid_routing_rule_group_id(id) || !seen.insert(id.as_str()))
-    {
-        return Err(SubscriptionStoreError::StoreUnavailable);
-    }
-    let mut contents = ROUTING_RULE_GROUP_ORDER_VERSION.to_owned();
-    for id in order {
-        contents.push('\n');
-        contents.push_str(id);
-    }
-    write_private_atomic(
-        directory,
-        ROUTING_RULE_GROUP_ORDER_FILE,
-        contents.as_bytes(),
-    )
-    .map(|_path| ())
-    .map_err(|_error| SubscriptionStoreError::StoreUnavailable)
-}
-
-#[cfg(windows)]
-pub(crate) fn save_routing_rule_group_order_in(
-    _directory: &Path,
-    _order: &[String],
-) -> Result<(), SubscriptionStoreError> {
-    Err(SubscriptionStoreError::StoreUnavailable)
-}
-
-#[cfg(not(windows))]
-pub(crate) fn load_routing_rule_group_order_in(
-    directory: &Path,
-) -> Result<Vec<String>, SubscriptionStoreError> {
-    require_clean_absolute_store(directory)?;
-    let path = directory.join(ROUTING_RULE_GROUP_ORDER_FILE);
-    let contents = match fs::symlink_metadata(&path) {
-        Ok(_) => {
-            read_private_source_allow_empty_max(&path, MAX_ROUTING_RULE_GROUP_ORDER_FILE_BYTES)?
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(_error) => return Err(SubscriptionStoreError::StoredSourceUnavailable),
-    };
-    let mut lines = contents.lines();
-    if lines.next() != Some(ROUTING_RULE_GROUP_ORDER_VERSION) {
-        return Err(SubscriptionStoreError::StoredSourceUnavailable);
-    }
-    let mut seen = BTreeSet::new();
-    lines
-        .map(str::to_owned)
-        .map(|id| {
-            if valid_routing_rule_group_id(&id) && seen.insert(id.clone()) {
-                Ok(id)
-            } else {
-                Err(SubscriptionStoreError::StoredSourceUnavailable)
-            }
-        })
-        .collect()
-}
-
-#[cfg(windows)]
-pub(crate) fn load_routing_rule_group_order_in(
-    _directory: &Path,
-) -> Result<Vec<String>, SubscriptionStoreError> {
-    Ok(Vec::new())
 }
 
 #[cfg(windows)]
@@ -5917,12 +5622,6 @@ mod tests {
     fn remote_source_refresh_intervals_cycle_and_respect_last_success() {
         use super::RemoteSourceRefreshInterval as Interval;
 
-        assert_eq!(Interval::Manual.next(), Interval::Hourly);
-        assert_eq!(Interval::Hourly.next(), Interval::SixHours);
-        assert_eq!(Interval::SixHours.next(), Interval::TwelveHours);
-        assert_eq!(Interval::TwelveHours.next(), Interval::Daily);
-        assert_eq!(Interval::Daily.next(), Interval::Manual);
-
         assert!(!Interval::Manual.is_due(0, u64::MAX));
         assert!(Interval::Hourly.is_due(0, 1));
         assert!(!Interval::Hourly.is_due(10_000, 13_599));
@@ -6061,15 +5760,12 @@ mod tests {
         let global = NodeIdentity::new("subscription:source-1", "Hong Kong Edge")?;
         let mut preferences = super::NodeSelectionPreferences::default();
         preferences.set_global(global.clone());
-        preferences.set_policy_target("Proxy", "Hong Kong Edge")?;
         preferences.set_policy_target("视频服务", "Tokyo Manual")?;
-        preferences.clear_policy_target("Proxy")?;
 
         super::save_node_selection_preferences_in(&store, &preferences)?;
         let loaded = super::load_node_selection_preferences_in(&store)?;
 
         assert_eq!(loaded.global(), Some(&global));
-        assert_eq!(loaded.policy_target("Proxy"), None);
         assert_eq!(loaded.policy_target("视频服务"), Some("Tokyo Manual"));
         assert_eq!(
             loaded.iter_policy_targets().collect::<Vec<_>>(),

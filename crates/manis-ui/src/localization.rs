@@ -28,8 +28,6 @@ pub(crate) enum Message {
     AddRule,
     ManageSources,
     ImportSubscription,
-    #[allow(dead_code)]
-    Clear,
     SaveChanges,
     Cancel,
     Delete,
@@ -42,6 +40,18 @@ pub(crate) enum Message {
     NoActiveConnections,
     NoLogs,
     NoFilterMatches,
+    ChangesApplied,
+    ChangesAppliedAndRestarted,
+    ChangesFailedAndRestored,
+    SavedChangesFailed,
+    TunRestoreFailed,
+    ApplyingChanges,
+    RoutingApplyBusy,
+    ManualRulesLocationUnavailable,
+    ManualRulesSaveFailed,
+    RuleGroupOrderSaveFailed,
+    StoreTransactionUnavailable,
+    StoreRollbackFailed,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -142,7 +152,6 @@ impl Language {
             Message::AddRule => ("Add rule", "添加规则"),
             Message::ManageSources => ("Manage sources", "管理来源"),
             Message::ImportSubscription => ("Import subscription", "导入订阅"),
-            Message::Clear => ("Clear", "清除"),
             Message::SaveChanges => ("Save changes", "保存修改"),
             Message::Cancel => ("Cancel", "取消"),
             Message::Delete => ("Delete", "删除"),
@@ -155,6 +164,47 @@ impl Language {
             Message::NoActiveConnections => ("No active connections", "暂无活动连接"),
             Message::NoLogs => ("No logs yet", "暂无日志"),
             Message::NoFilterMatches => ("No results match this filter", "没有符合当前筛选的结果"),
+            Message::ChangesApplied => (" · changes applied", " · 更改已生效"),
+            Message::ChangesAppliedAndRestarted => (
+                " · changes applied and Mihomo restarted",
+                " · 更改已生效，Mihomo 已重新启动",
+            ),
+            Message::ChangesFailedAndRestored => (
+                " · changes could not be applied; the previous rules were restored: ",
+                " · 更改未能生效，已恢复先前的规则：",
+            ),
+            Message::SavedChangesFailed => (
+                " · saved, but the changes could not be applied: ",
+                " · 已保存，但更改未能生效：",
+            ),
+            Message::TunRestoreFailed => (
+                " · kernel reloaded, but TUN could not be restored and was turned off: ",
+                " · 内核已重载，但 TUN 恢复失败，已回退为关闭：",
+            ),
+            Message::ApplyingChanges => ("applying changes…", "正在应用更改…"),
+            Message::RoutingApplyBusy => (
+                "Wait for the current routing changes to finish applying",
+                "请等待当前分流更改应用完成",
+            ),
+            Message::ManualRulesLocationUnavailable => (
+                "Could not determine where to save manual rules",
+                "无法确定手动分流规则的保存位置",
+            ),
+            Message::ManualRulesSaveFailed => {
+                ("Could not save manual rules: ", "无法保存手动分流规则：")
+            }
+            Message::RuleGroupOrderSaveFailed => (
+                "Could not save routing rule group order",
+                "无法保存分流规则分组顺序",
+            ),
+            Message::StoreTransactionUnavailable => (
+                "Could not prepare a safe configuration update",
+                "无法准备安全的配置更新",
+            ),
+            Message::StoreRollbackFailed => (
+                " · restoring the previous configuration also failed: ",
+                " · 恢复先前配置时也发生失败：",
+            ),
         };
         self.text(english, chinese)
     }

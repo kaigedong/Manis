@@ -114,12 +114,6 @@ impl SubscriptionTextInput {
         self.set_content_without_event(clamp_to_byte_limit(&value, self.max_bytes), cx);
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn clear(&mut self, cx: &mut Context<Self>) {
-        self.set_content_without_event(SharedString::default(), cx);
-        cx.emit(SubscriptionInputChanged);
-    }
-
     pub(crate) fn clear_without_event(&mut self, cx: &mut Context<Self>) {
         self.set_content_without_event(SharedString::default(), cx);
     }

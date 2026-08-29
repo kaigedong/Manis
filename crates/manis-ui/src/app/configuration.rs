@@ -1750,26 +1750,26 @@ impl ManisApp {
                     let result = executor
                         .spawn(async move {
                             let providers = mihomo::preview_single_node(&input_value)?;
-                            let stored = if let Some(id) = editing_id {
-                                mihomo::update_single_node_source_in(
-                                    &store_dir,
-                                    &id,
-                                    &input_value,
-                                    &name,
-                                    enabled,
-                                )?
-                            } else {
-                                mihomo::save_single_node_source_with_options_in(
-                                    &store_dir,
-                                    &input_value,
-                                    &name,
-                                    enabled,
-                                )?
-                            };
-                            let apply = SourceRuntimeApply::from_result(
-                                runtime.apply_saved_sources(&store_dir),
-                            );
-                            Ok::<_, SubscriptionStoreError>((stored, providers, apply))
+                            let transaction =
+                                super::mutate_saved_sources(&runtime, &store_dir, || {
+                                    if let Some(id) = editing_id {
+                                        mihomo::update_single_node_source_in(
+                                            &store_dir,
+                                            &id,
+                                            &input_value,
+                                            &name,
+                                            enabled,
+                                        )
+                                    } else {
+                                        mihomo::save_single_node_source_with_options_in(
+                                            &store_dir,
+                                            &input_value,
+                                            &name,
+                                            enabled,
+                                        )
+                                    }
+                                })?;
+                            Ok::<_, SubscriptionStoreError>((transaction, providers))
                         })
                         .await;
                     this.update(cx, |this, cx| {
@@ -1780,8 +1780,27 @@ impl ManisApp {
                             input.update(cx, |input, cx| input.set_enabled(true, cx));
                         }
                         match result {
-                            Ok((stored, providers, apply)) => {
+                            Ok((transaction, providers)) => {
                                 let language = this.language();
+                                transaction.apply.reconcile_proxy_mode(&mut this.proxy_mode);
+                                let Some(stored) = transaction.value else {
+                                    this.subscription_feedback = SubscriptionFeedback::StoreFailed(
+                                        SubscriptionStoreError::StoreUnavailable,
+                                    );
+                                    this.status = format!(
+                                        "{}{}",
+                                        language.text(
+                                            "Single-node source save failed",
+                                            "单节点来源保存失败"
+                                        ),
+                                        transaction
+                                            .apply
+                                            .status_suffix_after_source_rollback(language)
+                                    );
+                                    trace_ui(UiEvent::SourceImportFailed);
+                                    cx.notify();
+                                    return;
+                                };
                                 if let Some(existing) = this
                                     .saved_single_nodes
                                     .iter_mut()
@@ -1800,16 +1819,15 @@ impl ManisApp {
                                     input.update(cx, SubscriptionTextInput::clear_without_event);
                                 }
                                 this.configuration_add_section = None;
-                                apply.reconcile_proxy_mode(&mut this.proxy_mode);
                                 this.status = if language == Language::English {
                                     format!(
                                         "Single-node source saved · Added to Saved group{}",
-                                        apply.status_suffix(language)
+                                        transaction.apply.status_suffix(language)
                                     )
                                 } else {
                                     format!(
                                         "单节点来源已保存 · 已加入“已保存”分组{}",
-                                        apply.status_suffix(language)
+                                        transaction.apply.status_suffix(language)
                                     )
                                 };
                                 trace_ui(UiEvent::SourceImportSucceeded);
@@ -2732,27 +2750,39 @@ impl ManisApp {
         cx.spawn(async move |this, cx| {
             let result = executor
                 .spawn(async move {
-                    let stored =
-                        mihomo::update_single_node_source_enabled_in(&store_dir, &id, enabled)?;
-                    let apply =
-                        SourceRuntimeApply::from_result(runtime.apply_saved_sources(&store_dir));
-                    Ok::<_, SubscriptionStoreError>((stored, apply))
+                    super::mutate_saved_sources(&runtime, &store_dir, || {
+                        mihomo::update_single_node_source_enabled_in(&store_dir, &id, enabled)
+                    })
                 })
                 .await;
             this.update(cx, |this, cx| {
                 match result {
-                    Ok((stored, apply)) => {
-                        if let Some(existing) = this
-                            .saved_single_nodes
-                            .iter_mut()
-                            .find(|existing| existing.id == stored.id)
-                        {
-                            *existing = stored;
+                    Ok(transaction) => {
+                        let language = this.language();
+                        transaction.apply.reconcile_proxy_mode(&mut this.proxy_mode);
+                        if let Some(stored) = transaction.value {
+                            if let Some(existing) = this
+                                .saved_single_nodes
+                                .iter_mut()
+                                .find(|existing| existing.id == stored.id)
+                            {
+                                *existing = stored;
+                            }
+                            this.status = format!(
+                                "{}{}",
+                                language.text("Single-node source updated", "单节点来源已更新"),
+                                transaction.apply.status_suffix(language)
+                            );
+                        } else {
+                            this.status = format!(
+                                "{}{}",
+                                language.text("Could not update source", "无法更新来源"),
+                                transaction.apply.status_suffix_after_rollback_attempt(
+                                    language,
+                                    transaction.rollback_error.as_ref(),
+                                )
+                            );
                         }
-                        apply.reconcile_proxy_mode(&mut this.proxy_mode);
-                        this.language()
-                            .text("Single-node source updated", "单节点来源已更新")
-                            .clone_into(&mut this.status);
                     }
                     Err(error) => {
                         this.status = format!(
@@ -2778,20 +2808,33 @@ impl ManisApp {
         cx.spawn(async move |this, cx| {
             let result = executor
                 .spawn(async move {
-                    mihomo::remove_single_node_source_in(&store_dir, &id)?;
-                    let apply =
-                        SourceRuntimeApply::from_result(runtime.apply_saved_sources(&store_dir));
-                    Ok::<_, SubscriptionStoreError>((id, apply))
+                    super::mutate_saved_sources(&runtime, &store_dir, || {
+                        mihomo::remove_single_node_source_in(&store_dir, &id).map(|()| id.clone())
+                    })
                 })
                 .await;
             this.update(cx, |this, cx| {
                 match result {
-                    Ok((deleted_id, apply)) => {
-                        this.saved_single_nodes.retain(|node| node.id != deleted_id);
-                        apply.reconcile_proxy_mode(&mut this.proxy_mode);
-                        this.language()
-                            .text("Single-node source removed", "单节点来源已移除")
-                            .clone_into(&mut this.status);
+                    Ok(transaction) => {
+                        let language = this.language();
+                        transaction.apply.reconcile_proxy_mode(&mut this.proxy_mode);
+                        if let Some(deleted_id) = transaction.value {
+                            this.saved_single_nodes.retain(|node| node.id != deleted_id);
+                            this.status = format!(
+                                "{}{}",
+                                language.text("Single-node source removed", "单节点来源已移除"),
+                                transaction.apply.status_suffix(language)
+                            );
+                        } else {
+                            this.status = format!(
+                                "{}{}",
+                                language.text("Failed to remove source", "移除来源失败"),
+                                transaction.apply.status_suffix_after_rollback_attempt(
+                                    language,
+                                    transaction.rollback_error.as_ref(),
+                                )
+                            );
+                        }
                     }
                     Err(error) => {
                         this.status = format!(
@@ -2880,38 +2923,56 @@ impl ManisApp {
                                         cx.spawn(async move |this, cx| {
                                             let result = executor
                                                 .spawn(async move {
-                                                    mihomo::remove_single_node_source_in(
-                                                        &store_dir, &remove_id,
-                                                    )?;
-                                                    Ok::<_, SubscriptionStoreError>((
-                                                        remove_id,
-                                                        SourceRuntimeApply::from_result(
-                                                            runtime.apply_saved_sources(&store_dir),
-                                                        ),
-                                                    ))
+                                                    super::mutate_saved_sources(
+                                                        &runtime,
+                                                        &store_dir,
+                                                        || {
+                                                            mihomo::remove_single_node_source_in(
+                                                                &store_dir,
+                                                                &remove_id,
+                                                            )?;
+                                                            Ok(remove_id)
+                                                        },
+                                                    )
                                                 })
                                                 .await;
                                             this.update(cx, |this, cx| {
                                                 match result {
-                                                    Ok((deleted_id, apply)) => {
-                                                        this.saved_single_nodes
-                                                            .retain(|node| node.id != deleted_id);
+                                                    Ok(transaction) => {
                                                         let language = this.language();
-                                                        apply.reconcile_proxy_mode(
+                                                        transaction.apply.reconcile_proxy_mode(
                                                             &mut this.proxy_mode,
                                                         );
-                                                        this.status =
-                                                            if language == Language::English {
+                                                        if let Some(deleted_id) = transaction.value {
+                                                            this.saved_single_nodes.retain(|node| {
+                                                                node.id != deleted_id
+                                                            });
+                                                            this.status = if language
+                                                                == Language::English
+                                                            {
                                                                 format!(
                                                                     "Saved VLESS node removed{}",
-                                                                    apply.status_suffix(language)
+                                                                    transaction
+                                                                        .apply
+                                                                        .status_suffix(language)
                                                                 )
                                                             } else {
                                                                 format!(
                                                                     "已移除保存的 VLESS 节点{}",
-                                                                    apply.status_suffix(language)
+                                                                    transaction
+                                                                        .apply
+                                                                        .status_suffix(language)
                                                                 )
                                                             };
+                                                        } else {
+                                                            this.status = transaction.apply
+                                                                .status_suffix_after_rollback_attempt(
+                                                                    language,
+                                                                    transaction
+                                                                        .rollback_error
+                                                                        .as_ref(),
+                                                                );
+                                                        }
                                                     }
                                                     Err(error) => {
                                                         this.status = format!(
@@ -3764,8 +3825,8 @@ impl ManisApp {
 
     fn open_manual_rule_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.manual_rule_editor_state.is_open() {
-            if let Some(input) = self.manual_rule_inputs.first() {
-                input.focus_handle(cx).focus(window, cx);
+            if let Some(condition) = self.manual_rule_conditions.first() {
+                condition.input.focus_handle(cx).focus(window, cx);
             }
             return;
         }
@@ -3773,11 +3834,13 @@ impl ManisApp {
         self.manual_rule_popover = None;
         self.manual_rule_error = None;
         self.manual_rule_condition_count = 1;
-        for input in &self.manual_rule_inputs {
-            input.update(cx, SubscriptionTextInput::clear_without_event);
+        for condition in &self.manual_rule_conditions {
+            condition
+                .input
+                .update(cx, SubscriptionTextInput::clear_without_event);
         }
-        for (index, kind) in self.manual_rule_kinds.iter_mut().enumerate() {
-            *kind = if index == 1 {
+        for (index, condition) in self.manual_rule_conditions.iter_mut().enumerate() {
+            condition.kind = if index == 1 {
                 crate::manual_rule::ManualRuleKind::DstPort
             } else {
                 crate::manual_rule::ManualRuleKind::default()
@@ -3809,17 +3872,21 @@ impl ManisApp {
         } else {
             rule.conditions().len()
         };
-        for (condition_index, input) in self.manual_rule_inputs.iter().enumerate() {
+        for (condition_index, editor) in self.manual_rule_conditions.iter_mut().enumerate() {
             if rule.is_final() && condition_index == 0 {
-                self.manual_rule_kinds[condition_index] = crate::manual_rule::ManualRuleKind::Final;
-                input.update(cx, SubscriptionTextInput::clear_without_event);
+                editor.kind = crate::manual_rule::ManualRuleKind::Final;
+                editor
+                    .input
+                    .update(cx, SubscriptionTextInput::clear_without_event);
             } else if let Some(condition) = rule.conditions().get(condition_index) {
-                self.manual_rule_kinds[condition_index] = condition.kind();
-                input.update(cx, |input, cx| {
+                editor.kind = condition.kind();
+                editor.input.update(cx, |input, cx| {
                     input.set_value_without_event(condition.parameter().to_owned(), cx);
                 });
             } else {
-                input.update(cx, SubscriptionTextInput::clear_without_event);
+                editor
+                    .input
+                    .update(cx, SubscriptionTextInput::clear_without_event);
             }
         }
         let targets = self.manual_rule_targets();
@@ -3856,8 +3923,8 @@ impl ManisApp {
                 )
             })
         });
-        if let Some(input) = self.manual_rule_inputs.first() {
-            input.focus_handle(cx).focus(window, cx);
+        if let Some(condition) = self.manual_rule_conditions.first() {
+            condition.input.focus_handle(cx).focus(window, cx);
         }
         cx.notify();
     }
@@ -3885,37 +3952,25 @@ impl ManisApp {
         {
             self.manual_rule_target = self.manual_rule_targets().remove(0);
         }
-        if !self.manual_rule_inputs.is_empty() {
-            for (input, kind) in self
-                .manual_rule_inputs
-                .iter()
-                .zip(self.manual_rule_kinds.iter().copied())
-            {
-                let placeholder = manual_rule_placeholder(kind, self.language());
-                input.update(cx, |input, cx| {
+        if !self.manual_rule_conditions.is_empty() {
+            for condition in &self.manual_rule_conditions {
+                let placeholder = manual_rule_placeholder(condition.kind, self.language());
+                condition.input.update(cx, |input, cx| {
                     input.set_theme(theme, self.dark, cx);
                     input.set_placeholder(placeholder, cx);
                 });
             }
             return;
         }
-        self.manual_rule_kinds = (0..crate::manual_rule::MAX_CONDITIONS)
+        self.manual_rule_conditions = (0..crate::manual_rule::MAX_CONDITIONS)
             .map(|index| {
-                if index == 1 {
+                let kind = if index == 1 {
                     crate::manual_rule::ManualRuleKind::DstPort
                 } else {
                     crate::manual_rule::ManualRuleKind::default()
-                }
-            })
-            .collect();
-        self.manual_rule_inputs = self
-            .manual_rule_kinds
-            .iter()
-            .copied()
-            .enumerate()
-            .map(|(index, kind)| {
+                };
                 let placeholder = manual_rule_placeholder(kind, self.language());
-                cx.new(|cx| {
+                let input = cx.new(|cx| {
                     SubscriptionTextInput::new_field(
                         format!("manual-rule-parameter-{index}"),
                         placeholder,
@@ -3925,7 +3980,8 @@ impl ManisApp {
                         window,
                         cx,
                     )
-                })
+                });
+                super::ManualRuleConditionEditor { kind, input }
             })
             .collect();
         let Some(store_dir) = self.subscription_store_dir.as_ref() else {
@@ -3969,28 +4025,36 @@ impl ManisApp {
             cx.notify();
             return;
         }
-        let Some(selected_kind) = self.manual_rule_kinds.get_mut(condition_index) else {
+        let Some(condition) = self.manual_rule_conditions.get_mut(condition_index) else {
             return;
         };
-        *selected_kind = kind;
+        condition.kind = kind;
         if kind == crate::manual_rule::ManualRuleKind::Final {
             self.manual_rule_condition_count = 1;
-            for input in &self.manual_rule_inputs {
-                input.update(cx, SubscriptionTextInput::clear_without_event);
+            for condition in &self.manual_rule_conditions {
+                condition
+                    .input
+                    .update(cx, SubscriptionTextInput::clear_without_event);
             }
         }
         self.manual_rule_error = None;
         self.manual_rule_popover = None;
         let placeholder = manual_rule_placeholder(kind, self.language());
-        if let Some(input) = self.manual_rule_inputs.get(condition_index) {
-            input.update(cx, |input, cx| input.set_placeholder(placeholder, cx));
+        if let Some(condition) = self.manual_rule_conditions.get(condition_index) {
+            condition
+                .input
+                .update(cx, |input, cx| input.set_placeholder(placeholder, cx));
         }
         cx.notify();
     }
 
     fn add_manual_rule_condition(&mut self, cx: &mut Context<Self>) {
         if self.manual_rule_condition_count >= crate::manual_rule::MAX_CONDITIONS
-            || self.manual_rule_kinds.first() == Some(&crate::manual_rule::ManualRuleKind::Final)
+            || self
+                .manual_rule_conditions
+                .first()
+                .map(|condition| condition.kind)
+                == Some(crate::manual_rule::ManualRuleKind::Final)
         {
             return;
         }
@@ -3998,8 +4062,10 @@ impl ManisApp {
         self.manual_rule_condition_count += 1;
         self.manual_rule_popover = None;
         self.manual_rule_error = None;
-        if let Some(input) = self.manual_rule_inputs.get(index) {
-            input.update(cx, SubscriptionTextInput::clear_without_event);
+        if let Some(condition) = self.manual_rule_conditions.get(index) {
+            condition
+                .input
+                .update(cx, SubscriptionTextInput::clear_without_event);
         }
         cx.notify();
     }
@@ -4009,20 +4075,25 @@ impl ManisApp {
             return;
         }
         for current in index..self.manual_rule_condition_count - 1 {
-            self.manual_rule_kinds[current] = self.manual_rule_kinds[current + 1];
-            let value = self.manual_rule_inputs[current + 1]
+            let next_kind = self.manual_rule_conditions[current + 1].kind;
+            let value = self.manual_rule_conditions[current + 1]
+                .input
                 .read(cx)
                 .value()
                 .to_owned();
-            self.manual_rule_inputs[current]
+            self.manual_rule_conditions[current].kind = next_kind;
+            self.manual_rule_conditions[current]
+                .input
                 .update(cx, |input, cx| input.set_value_without_event(value, cx));
         }
         self.manual_rule_condition_count -= 1;
-        if let Some(input) = self
-            .manual_rule_inputs
+        if let Some(condition) = self
+            .manual_rule_conditions
             .get(self.manual_rule_condition_count)
         {
-            input.update(cx, SubscriptionTextInput::clear_without_event);
+            condition
+                .input
+                .update(cx, SubscriptionTextInput::clear_without_event);
         }
         self.manual_rule_popover = None;
         self.manual_rule_error = None;
@@ -4061,19 +4132,17 @@ impl ManisApp {
         if self.manual_rule_editor_state == super::ManualRuleEditorState::Closed {
             return false;
         }
-        if self.manual_rule_kinds[..self.manual_rule_condition_count]
+        if self.manual_rule_conditions[..self.manual_rule_condition_count]
             .iter()
-            .any(|kind| !kind.supported_by(self.runtime.kind()))
+            .any(|condition| !condition.kind.supported_by(self.runtime.kind()))
         {
             self.manual_rule_error = Some(crate::manual_rule::ManualRuleError::UnsupportedByKernel);
             cx.notify();
             return false;
         }
-        let conditions = self.manual_rule_kinds[..self.manual_rule_condition_count]
+        let conditions = self.manual_rule_conditions[..self.manual_rule_condition_count]
             .iter()
-            .copied()
-            .zip(self.manual_rule_inputs[..self.manual_rule_condition_count].iter())
-            .map(|(kind, input)| (kind, input.read(cx).value().to_owned()))
+            .map(|condition| (condition.kind, condition.input.read(cx).value().to_owned()))
             .collect::<Vec<_>>();
         let condition_count = conditions.len();
         let rule = match crate::manual_rule::ManualRule::parse_conditions(
@@ -4120,7 +4189,7 @@ impl ManisApp {
             .language()
             .text("Manual rules updated", "手动分流规则已更新")
             .to_owned();
-        if !self.persist_manual_rules(completion, cx) {
+        if !self.persist_manual_rules(completion, previous_rules.clone(), cx) {
             self.manual_rules = previous_rules;
             return false;
         }
@@ -4147,13 +4216,14 @@ impl ManisApp {
         if index >= self.manual_rules.len() {
             return;
         }
+        let previous_rules = self.manual_rules.clone();
         let removed = self.manual_rules.remove(index);
         let completion = self
             .language()
             .text("Manual rule removed", "手动规则已删除")
             .to_owned();
-        if !self.persist_manual_rules(completion, cx) {
-            self.manual_rules.insert(index, removed);
+        if !self.persist_manual_rules(completion, previous_rules.clone(), cx) {
+            self.manual_rules = previous_rules;
             return;
         }
         self.manual_rule_error = None;
@@ -4169,6 +4239,7 @@ impl ManisApp {
     }
 
     fn set_manual_rule_enabled(&mut self, index: usize, enabled: bool, cx: &mut Context<Self>) {
+        let previous_rules = self.manual_rules.clone();
         let Some(rule) = self.manual_rules.get_mut(index) else {
             return;
         };
@@ -4191,10 +4262,8 @@ impl ManisApp {
                 },
             )
             .to_owned();
-        if !self.persist_manual_rules(completion, cx) {
-            if let Some(rule) = self.manual_rules.get_mut(index) {
-                rule.set_enabled(!enabled);
-            }
+        if !self.persist_manual_rules(completion, previous_rules.clone(), cx) {
+            self.manual_rules = previous_rules;
             return;
         }
         record_event(
@@ -4209,51 +4278,70 @@ impl ManisApp {
         cx.notify();
     }
 
-    fn persist_manual_rules(&mut self, completion: String, cx: &mut Context<Self>) -> bool {
+    fn persist_manual_rules(
+        &mut self,
+        completion: String,
+        previous_rules: Vec<crate::manual_rule::ManualRule>,
+        cx: &mut Context<Self>,
+    ) -> bool {
         let language = self.language();
         if self.routing_apply_state.is_busy() {
             language
-                .text(
-                    "Wait for the current routing changes to finish applying",
-                    "请等待当前分流更改应用完成",
-                )
+                .message(Message::RoutingApplyBusy)
                 .clone_into(&mut self.status);
             cx.notify();
             return false;
         }
         let Some(store_dir) = self.subscription_store_dir.clone() else {
             language
-                .text(
-                    "Could not determine where to save manual rules",
-                    "无法确定手动分流规则的保存位置",
-                )
+                .message(Message::ManualRulesLocationUnavailable)
                 .clone_into(&mut self.status);
             cx.notify();
             return false;
         };
+        let store_snapshot = match mihomo::SubscriptionStoreSnapshot::capture(&store_dir) {
+            Ok(snapshot) => snapshot,
+            Err(_error) => {
+                language
+                    .message(Message::StoreTransactionUnavailable)
+                    .clone_into(&mut self.status);
+                cx.notify();
+                return false;
+            }
+        };
+        let previous_order = self.routing_rule_group_order.clone();
         self.sync_routing_rule_group_order();
         if mihomo::save_routing_rule_group_order_in(&store_dir, &self.routing_rule_group_order)
             .is_err()
         {
+            self.routing_rule_group_order = previous_order;
+            let _ = store_snapshot.restore(&store_dir);
             language
-                .text(
-                    "Could not save routing rule group order",
-                    "无法保存分流规则分组顺序",
-                )
+                .message(Message::RuleGroupOrderSaveFailed)
                 .clone_into(&mut self.status);
             cx.notify();
             return false;
         }
         if let Err(error) = crate::manual_rule::save_manual_rules_in(&store_dir, &self.manual_rules)
         {
+            let _ = store_snapshot.clone().restore(&store_dir);
             self.status = format!(
                 "{}{error}",
-                language.text("Could not save manual rules: ", "无法保存手动分流规则：")
+                language.message(Message::ManualRulesSaveFailed)
             );
             cx.notify();
             return false;
         }
-        self.start_routing_runtime_apply(store_dir, completion, cx);
+        self.start_routing_runtime_apply(
+            store_dir,
+            completion,
+            super::RoutingApplyRollback {
+                manual_rules: previous_rules,
+                group_order: previous_order,
+                store_snapshot,
+            },
+            cx,
+        );
         true
     }
 
@@ -4261,6 +4349,7 @@ impl ManisApp {
         &mut self,
         store_dir: std::path::PathBuf,
         completion: String,
+        rollback: super::RoutingApplyRollback,
         cx: &mut Context<Self>,
     ) {
         let started = self.routing_apply_state.begin();
@@ -4271,20 +4360,56 @@ impl ManisApp {
         self.status = format!(
             "{} · {}",
             completion,
-            self.language().text("applying changes…", "正在应用更改…")
+            self.language().message(Message::ApplyingChanges)
         );
         let runtime = self.runtime.clone();
         let executor = cx.background_executor().clone();
+        let disk_rollback = rollback.clone();
         cx.spawn(async move |this, cx| {
-            let apply = executor
+            let (apply, rollback_error) = executor
                 .spawn(async move {
-                    SourceRuntimeApply::from_result(runtime.apply_saved_sources(&store_dir))
+                    let apply =
+                        SourceRuntimeApply::from_result(runtime.apply_saved_sources(&store_dir));
+                    let rollback_error = if apply.requires_source_rollback() {
+                        disk_rollback
+                            .store_snapshot
+                            .restore(&store_dir)
+                            .map_err(|error| error.to_string())
+                            .err()
+                    } else {
+                        None
+                    };
+                    (apply, rollback_error)
                 })
                 .await;
             this.update(cx, |this, cx| {
                 this.routing_apply_state.finish();
+                if apply.requires_source_rollback() {
+                    this.manual_rules = rollback.manual_rules;
+                    this.routing_rule_group_order = rollback.group_order;
+                }
                 apply.reconcile_proxy_mode(&mut this.proxy_mode);
-                this.status = format!("{}{}", completion, apply.status_suffix(this.language()));
+                this.status = if let Some(rollback_error) = rollback_error {
+                    format!(
+                        "{}{} · {}{rollback_error}",
+                        completion,
+                        apply.status_suffix(this.language()),
+                        this.language().text(
+                            "could not restore the previous saved rules: ",
+                            "无法恢复先前保存的规则：",
+                        )
+                    )
+                } else {
+                    format!(
+                        "{}{}",
+                        completion,
+                        if apply.requires_source_rollback() {
+                            apply.status_suffix_after_source_rollback(this.language())
+                        } else {
+                            apply.status_suffix(this.language())
+                        }
+                    )
+                };
                 cx.notify();
             })
             .ok();
@@ -4304,10 +4429,7 @@ impl ManisApp {
     fn move_routing_rule_group(&mut self, group_id: &str, direction: i8, cx: &mut Context<Self>) {
         if self.routing_apply_state.is_busy() {
             self.language()
-                .text(
-                    "Wait for the current routing changes to finish applying",
-                    "请等待当前分流更改应用完成",
-                )
+                .message(Message::RoutingApplyBusy)
                 .clone_into(&mut self.status);
             cx.notify();
             return;
@@ -4322,15 +4444,23 @@ impl ManisApp {
             self.routing_rule_group_order = previous;
             return;
         };
+        let store_snapshot = match mihomo::SubscriptionStoreSnapshot::capture(&store_dir) {
+            Ok(snapshot) => snapshot,
+            Err(_error) => {
+                self.routing_rule_group_order = previous;
+                self.language()
+                    .message(Message::StoreTransactionUnavailable)
+                    .clone_into(&mut self.status);
+                cx.notify();
+                return;
+            }
+        };
         if mihomo::save_routing_rule_group_order_in(&store_dir, &self.routing_rule_group_order)
             .is_err()
         {
             self.routing_rule_group_order = previous;
             self.language()
-                .text(
-                    "Could not save routing rule group order",
-                    "无法保存分流规则分组顺序",
-                )
+                .message(Message::RuleGroupOrderSaveFailed)
                 .clone_into(&mut self.status);
             cx.notify();
             return;
@@ -4342,7 +4472,16 @@ impl ManisApp {
             language.text("Rule group moved down", "规则分组已下移")
         }
         .to_owned();
-        self.start_routing_runtime_apply(store_dir, completion, cx);
+        self.start_routing_runtime_apply(
+            store_dir,
+            completion,
+            super::RoutingApplyRollback {
+                manual_rules: self.manual_rules.clone(),
+                group_order: previous,
+                store_snapshot,
+            },
+            cx,
+        );
     }
 
     fn manual_rule_kind_menu(
@@ -4519,9 +4658,10 @@ impl ManisApp {
         cx: &mut Context<Self>,
     ) -> Div {
         let input = self
-            .manual_rule_inputs
+            .manual_rule_conditions
             .get(condition_index)
             .expect("manual rule condition input is initialized")
+            .input
             .clone();
         let kind_width = if compact { 260.0 } else { 240.0 };
         let kind_popover = ManualRulePopover::Kind(condition_index);
@@ -4645,13 +4785,16 @@ impl ManisApp {
         );
 
         let editing = self.manual_rule_editor_state.editing_index().is_some();
-        let final_selected =
-            self.manual_rule_kinds.first() == Some(&crate::manual_rule::ManualRuleKind::Final);
+        let final_selected = self
+            .manual_rule_conditions
+            .first()
+            .map(|condition| condition.kind)
+            == Some(crate::manual_rule::ManualRuleKind::Final);
         let mut conditions = div();
         for condition_index in 0..self.manual_rule_condition_count {
             conditions = conditions.child(self.manual_rule_condition_editor(
                 condition_index,
-                self.manual_rule_kinds[condition_index],
+                self.manual_rule_conditions[condition_index].kind,
                 theme,
                 language,
                 compact,
@@ -5775,49 +5918,76 @@ impl ManisApp {
                         return Err(ImportQxRuleError::InvalidDocument);
                     }
                     if let Some(editing_id) = editing_id {
-                        let stored = mihomo::replace_qx_rule_source_definition_in(
+                        let transaction = super::mutate_saved_sources(
+                            &runtime,
                             &store_dir,
-                            &editing_id,
-                            &url,
-                            &target,
-                            &content,
-                            refresh_interval,
-                            mihomo::current_unix_secs(),
+                            || {
+                                mihomo::replace_qx_rule_source_definition_in(
+                                    &store_dir,
+                                    &editing_id,
+                                    &url,
+                                    &target,
+                                    &content,
+                                    refresh_interval,
+                                    mihomo::current_unix_secs(),
+                                )
+                            },
                         )
                         .map_err(ImportQxRuleError::Store)?;
-                        let apply = SourceRuntimeApply::from_result(
-                            runtime.apply_saved_sources(&store_dir),
-                        );
-                        return Ok::<_, ImportQxRuleError>(ImportQxRuleSuccess::Imported {
-                            stored,
-                            apply,
+                        return Ok::<_, ImportQxRuleError>(match transaction.value {
+                            Some(stored) => ImportQxRuleSuccess::Imported {
+                                stored,
+                                apply: transaction.apply,
+                            },
+                            None => ImportQxRuleSuccess::RolledBack {
+                                apply: transaction.apply,
+                                rollback_error: transaction.rollback_error,
+                            },
                         });
                     }
-                    let saved = mihomo::save_qx_rule_source_in(
+                    let transaction = super::mutate_saved_sources(
+                        &runtime,
                         &store_dir,
-                        &url,
-                        &target,
-                        &content,
+                        || {
+                            match mihomo::save_qx_rule_source_in(
+                                &store_dir,
+                                &url,
+                                &target,
+                                &content,
+                            )? {
+                                mihomo::SaveQxRuleSourceOutcome::Created(mut stored) => {
+                                    if refresh_interval
+                                        != RemoteSourceRefreshInterval::Manual
+                                    {
+                                        stored = mihomo::update_qx_rule_source_refresh_interval_in(
+                                            &store_dir,
+                                            &stored.id,
+                                            refresh_interval,
+                                        )?;
+                                    }
+                                    Ok(mihomo::SaveQxRuleSourceOutcome::Created(stored))
+                                }
+                                mihomo::SaveQxRuleSourceOutcome::Existing(stored) => {
+                                    Ok(mihomo::SaveQxRuleSourceOutcome::Existing(stored))
+                                }
+                            }
+                        },
                     )
                     .map_err(ImportQxRuleError::Store)?;
-                    Ok::<_, ImportQxRuleError>(match saved {
-                        mihomo::SaveQxRuleSourceOutcome::Created(mut stored) => {
-                            if refresh_interval != RemoteSourceRefreshInterval::Manual {
-                                stored = mihomo::update_qx_rule_source_refresh_interval_in(
-                                    &store_dir,
-                                    &stored.id,
-                                    refresh_interval,
-                                )
-                                .map_err(ImportQxRuleError::Store)?;
+                    Ok::<_, ImportQxRuleError>(match transaction.value {
+                        Some(mihomo::SaveQxRuleSourceOutcome::Created(stored)) => {
+                            ImportQxRuleSuccess::Imported {
+                                stored,
+                                apply: transaction.apply,
                             }
-                            let apply = SourceRuntimeApply::from_result(
-                                runtime.apply_saved_sources(&store_dir),
-                            );
-                            ImportQxRuleSuccess::Imported { stored, apply }
                         }
-                        mihomo::SaveQxRuleSourceOutcome::Existing(stored) => {
+                        Some(mihomo::SaveQxRuleSourceOutcome::Existing(stored)) => {
                             ImportQxRuleSuccess::AlreadyExists { stored }
                         }
+                        None => ImportQxRuleSuccess::RolledBack {
+                            apply: transaction.apply,
+                            rollback_error: transaction.rollback_error,
+                        },
                     })
                 })
                 .await;
@@ -5920,6 +6090,17 @@ impl ManisApp {
                             ),
                         );
                     }
+                    Ok(ImportQxRuleSuccess::RolledBack {
+                        apply,
+                        rollback_error,
+                    }) => {
+                        let language = this.language();
+                        this.qx_rule_feedback = QxRuleImportFeedback::Idle;
+                        this.status = apply.status_suffix_after_rollback_attempt(
+                            language,
+                            rollback_error.as_ref(),
+                        );
+                    }
                     Err(ImportQxRuleError::Download(error)) => {
                         this.qx_rule_feedback = QxRuleImportFeedback::DownloadFailed(error);
                         this.status = format!(
@@ -5988,10 +6169,9 @@ impl ManisApp {
         cx.spawn(async move |this, cx| {
             let result = executor
                 .spawn(async move {
-                    mihomo::remove_qx_rule_source_in(&store_dir, &id)?;
-                    let apply =
-                        SourceRuntimeApply::from_result(runtime.apply_saved_sources(&store_dir));
-                    Ok::<_, SubscriptionStoreError>((id, apply))
+                    super::mutate_saved_sources(&runtime, &store_dir, || {
+                        mihomo::remove_qx_rule_source_in(&store_dir, &id).map(|()| id.clone())
+                    })
                 })
                 .await;
             this.update(cx, |this, cx| {
@@ -5999,7 +6179,8 @@ impl ManisApp {
                     return;
                 }
                 match result {
-                    Ok((id, apply)) => {
+                    Ok(transaction) if transaction.value.is_some() => {
+                        let id = transaction.value.expect("checked committed mutation");
                         this.qx_rule_sources.retain(|source| source.id != id);
                         this.sync_routing_rule_group_order();
                         if let Some(store_dir) = this.subscription_store_dir.as_ref() {
@@ -6013,12 +6194,31 @@ impl ManisApp {
                             .remove(&super::DueRemoteSource::QxRule(id.clone()).scheduler_key());
                         this.qx_rule_feedback = QxRuleImportFeedback::Idle;
                         let language = this.language();
-                        apply.reconcile_proxy_mode(&mut this.proxy_mode);
+                        transaction.apply.reconcile_proxy_mode(&mut this.proxy_mode);
                         this.status = if language == Language::English {
-                            format!("Remote QX rules removed{}", apply.status_suffix(language))
+                            format!(
+                                "Remote QX rules removed{}",
+                                transaction.apply.status_suffix(language)
+                            )
                         } else {
-                            format!("远程 QX 规则已移除{}", apply.status_suffix(language))
+                            format!(
+                                "远程 QX 规则已移除{}",
+                                transaction.apply.status_suffix(language)
+                            )
                         };
+                    }
+                    Ok(transaction) => {
+                        this.qx_rule_feedback = QxRuleImportFeedback::StoreFailed(
+                            SubscriptionStoreError::StoreUnavailable,
+                        );
+                        this.status = format!(
+                            "{}{}",
+                            this.language()
+                                .text("Remote QX rule removal failed", "远程 QX 规则移除失败"),
+                            transaction
+                                .apply
+                                .status_suffix_after_source_rollback(this.language())
+                        );
                     }
                     Err(error) => {
                         this.qx_rule_feedback = QxRuleImportFeedback::StoreFailed(error);
@@ -6067,12 +6267,9 @@ impl ManisApp {
         cx.spawn(async move |this, cx| {
             let result = executor
                 .spawn(async move {
-                    let stored = mihomo::update_subscription_source_enabled_in(
-                        &store_dir, &task_id, enabled,
-                    )?;
-                    let apply =
-                        SourceRuntimeApply::from_result(runtime.apply_saved_sources(&store_dir));
-                    Ok::<_, SubscriptionStoreError>((stored, apply))
+                    super::mutate_saved_sources(&runtime, &store_dir, || {
+                        mihomo::update_subscription_source_enabled_in(&store_dir, &task_id, enabled)
+                    })
                 })
                 .await;
             this.update(cx, |this, cx| {
@@ -6089,7 +6286,8 @@ impl ManisApp {
                     return;
                 }
                 match result {
-                    Ok((stored, apply)) => {
+                    Ok(transaction) if transaction.value.is_some() => {
+                        let stored = transaction.value.expect("checked committed mutation");
                         source.enabled = stored.enabled;
                         source.state = if stored.enabled {
                             refresh_after_enable = true;
@@ -6097,7 +6295,7 @@ impl ManisApp {
                         } else {
                             ImportedSubscriptionState::None
                         };
-                        apply.reconcile_proxy_mode(&mut this.proxy_mode);
+                        transaction.apply.reconcile_proxy_mode(&mut this.proxy_mode);
                         this.status = format!(
                             "{}{}",
                             if stored.enabled {
@@ -6105,7 +6303,19 @@ impl ManisApp {
                             } else {
                                 language.text("Subscription disabled", "订阅已停用")
                             },
-                            apply.status_suffix(language)
+                            transaction.apply.status_suffix(language)
+                        );
+                    }
+                    Ok(transaction) => {
+                        source.enabled = previous_enabled;
+                        source.state = previous_state;
+                        this.status = format!(
+                            "{}{}",
+                            language
+                                .text("Failed to change subscription state", "订阅状态修改失败"),
+                            transaction
+                                .apply
+                                .status_suffix_after_source_rollback(language)
                         );
                     }
                     Err(error) => {
@@ -6149,11 +6359,9 @@ impl ManisApp {
         cx.spawn(async move |this, cx| {
             let result = executor
                 .spawn(async move {
-                    let stored =
-                        mihomo::update_qx_rule_source_enabled_in(&store_dir, &task_id, enabled)?;
-                    let apply =
-                        SourceRuntimeApply::from_result(runtime.apply_saved_sources(&store_dir));
-                    Ok::<_, SubscriptionStoreError>((stored, apply))
+                    super::mutate_saved_sources(&runtime, &store_dir, || {
+                        mihomo::update_qx_rule_source_enabled_in(&store_dir, &task_id, enabled)
+                    })
                 })
                 .await;
             this.update(cx, |this, cx| {
@@ -6162,7 +6370,8 @@ impl ManisApp {
                 }
                 this.qx_rule_source_target_updates.remove(&id);
                 match result {
-                    Ok((stored, apply)) => {
+                    Ok(transaction) if transaction.value.is_some() => {
+                        let stored = transaction.value.expect("checked committed mutation");
                         let language = this.language();
                         let enabled = stored.enabled;
                         if let Some(source) = this
@@ -6172,7 +6381,7 @@ impl ManisApp {
                         {
                             *source = stored;
                         }
-                        apply.reconcile_proxy_mode(&mut this.proxy_mode);
+                        transaction.apply.reconcile_proxy_mode(&mut this.proxy_mode);
                         this.status = format!(
                             "{}{}",
                             if enabled {
@@ -6180,7 +6389,17 @@ impl ManisApp {
                             } else {
                                 language.text("Rule source disabled", "规则来源已停用")
                             },
-                            apply.status_suffix(language)
+                            transaction.apply.status_suffix(language)
+                        );
+                    }
+                    Ok(transaction) => {
+                        this.status = format!(
+                            "{}{}",
+                            this.language()
+                                .text("Failed to change rule source state", "规则来源状态修改失败"),
+                            transaction
+                                .apply
+                                .status_suffix_after_source_rollback(this.language())
                         );
                     }
                     Err(error) => {
@@ -6325,11 +6544,9 @@ impl ManisApp {
         cx.spawn(async move |this, cx| {
             let result = executor
                 .spawn(async move {
-                    let stored =
-                        mihomo::update_qx_rule_source_target_in(&store_dir, &task_id, &target)?;
-                    let apply =
-                        SourceRuntimeApply::from_result(runtime.apply_saved_sources(&store_dir));
-                    Ok::<_, SubscriptionStoreError>((stored, apply))
+                    super::mutate_saved_sources(&runtime, &store_dir, || {
+                        mihomo::update_qx_rule_source_target_in(&store_dir, &task_id, &target)
+                    })
                 })
                 .await;
             this.update(cx, |this, cx| {
@@ -6338,7 +6555,8 @@ impl ManisApp {
                 }
                 this.qx_rule_source_target_updates.remove(&id);
                 match result {
-                    Ok((stored, apply)) => {
+                    Ok(transaction) if transaction.value.is_some() => {
+                        let stored = transaction.value.expect("checked committed mutation");
                         let language = this.language();
                         let target = stored.target_policy.as_str().to_owned();
                         if let Some(source) = this
@@ -6348,16 +6566,26 @@ impl ManisApp {
                         {
                             *source = stored;
                         }
-                        apply.reconcile_proxy_mode(&mut this.proxy_mode);
+                        transaction.apply.reconcile_proxy_mode(&mut this.proxy_mode);
                         this.status = format!(
                             "{} {target}{}",
                             language.text("Rule source policy set to", "规则源策略已设为"),
-                            apply.status_suffix(language)
+                            transaction.apply.status_suffix(language)
                         );
                         record_event(
                             LogLevel::Info,
                             "routing.rule_source.target.updated",
                             format!("source_id={id} target={target}"),
+                        );
+                    }
+                    Ok(transaction) => {
+                        this.status = format!(
+                            "{}{}",
+                            this.language()
+                                .text("Failed to save rule source policy", "规则源策略保存失败"),
+                            transaction
+                                .apply
+                                .status_suffix_after_source_rollback(this.language())
                         );
                     }
                     Err(error) => {
@@ -6409,16 +6637,16 @@ impl ManisApp {
                     if parsed.rules.is_empty() {
                         return Err(ImportQxRuleError::InvalidDocument);
                     }
-                    let stored = mihomo::replace_qx_rule_source_content_in(
-                        &store_dir,
-                        &task_id,
-                        &content,
-                        mihomo::current_unix_secs(),
-                    )
+                    let transaction = super::mutate_saved_sources(&runtime, &store_dir, || {
+                        mihomo::replace_qx_rule_source_content_in(
+                            &store_dir,
+                            &task_id,
+                            &content,
+                            mihomo::current_unix_secs(),
+                        )
+                    })
                     .map_err(ImportQxRuleError::Store)?;
-                    let apply =
-                        SourceRuntimeApply::from_result(runtime.apply_saved_sources(&store_dir));
-                    Ok::<_, ImportQxRuleError>((stored, apply))
+                    Ok::<_, ImportQxRuleError>(transaction)
                 })
                 .await;
             this.update(cx, |this, cx| {
@@ -6430,7 +6658,8 @@ impl ManisApp {
                     return;
                 }
                 match result {
-                    Ok((stored, apply)) => {
+                    Ok(transaction) if transaction.value.is_some() => {
+                        let stored = transaction.value.expect("checked committed mutation");
                         let language = this.language();
                         let rule_count = stored.rule_count;
                         if let Some(source) = this
@@ -6443,16 +6672,16 @@ impl ManisApp {
                         this.qx_rule_source_refreshes.remove(&id);
                         this.source_refresh_retry_not_before
                             .remove(&super::DueRemoteSource::QxRule(id.clone()).scheduler_key());
-                        apply.reconcile_proxy_mode(&mut this.proxy_mode);
+                        transaction.apply.reconcile_proxy_mode(&mut this.proxy_mode);
                         this.status = if language == Language::English {
                             format!(
                                 "QX rules updated · {rule_count} active rules{}",
-                                apply.status_suffix(language)
+                                transaction.apply.status_suffix(language)
                             )
                         } else {
                             format!(
                                 "QX 规则更新完成 · {rule_count} 条生效{}",
-                                apply.status_suffix(language)
+                                transaction.apply.status_suffix(language)
                             )
                         };
                     }
@@ -6476,6 +6705,23 @@ impl ManisApp {
                             "{}: {message}",
                             this.language()
                                 .text("QX rule update failed", "QX 规则更新失败")
+                        );
+                    }
+                    Ok(transaction) => {
+                        this.qx_rule_source_refreshes.insert(
+                            id.clone(),
+                            QxRuleSourceRefreshState::Failed {
+                                generation,
+                                message: "runtime apply failed".to_owned(),
+                            },
+                        );
+                        this.status = format!(
+                            "{}{}",
+                            this.language()
+                                .text("Remote QX rule update failed", "远程 QX 规则更新失败"),
+                            transaction
+                                .apply
+                                .status_suffix_after_source_rollback(this.language())
                         );
                     }
                 }

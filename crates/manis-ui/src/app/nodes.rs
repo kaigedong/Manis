@@ -18,7 +18,7 @@ use manis_core::{
 
 use super::{
     GroupBenchmarkNodeState, GroupBenchmarkState, ImportedSubscriptionState, ManagedPolicyDraft,
-    ManisApp, PolicyCandidateMatcherKind, PolicyEditorPopover, SourceRuntimeApply,
+    ManisApp, PolicyCandidateMatcherKind, PolicyEditorPopover,
 };
 use crate::{
     components::{ActionRole, action_button, empty_state, section_heading},
@@ -221,38 +221,6 @@ impl ManisApp {
         match language {
             Language::English => format!("a single test supports up to {limit}"),
             Language::SimplifiedChinese => format!("单次最多测试 {limit} 个"),
-        }
-    }
-
-    fn source_runtime_apply_suffix(apply: &SourceRuntimeApply, language: Language) -> String {
-        match apply {
-            SourceRuntimeApply::Applied(mihomo::GeneratedProfileApply::Updated) => language
-                .text(" · changes applied", " · 更改已生效")
-                .to_owned(),
-            SourceRuntimeApply::Applied(mihomo::GeneratedProfileApply::Restarted) => language
-                .text(
-                    " · changes applied and Mihomo restarted",
-                    " · 更改已生效，Mihomo 已重新启动",
-                )
-                .to_owned(),
-            SourceRuntimeApply::Failed(message) => match language {
-                Language::English => {
-                    format!(" · saved, but the changes could not be applied: {message}")
-                }
-                Language::SimplifiedChinese => {
-                    format!(" · 已保存，但更改未能生效：{message}")
-                }
-            },
-            SourceRuntimeApply::ProxyModeLost(message) => match language {
-                Language::English => {
-                    format!(
-                        " · kernel reloaded, but TUN restore failed and was turned off: {message}"
-                    )
-                }
-                Language::SimplifiedChinese => {
-                    format!(" · 内核已重载，但 TUN 恢复失败，已回退为关闭：{message}")
-                }
-            },
         }
     }
 
@@ -1709,45 +1677,76 @@ impl ManisApp {
             cx.notify();
             return;
         };
-        if let Err(error) = mihomo::save_managed_policy_in(&store_dir, &group) {
-            self.status = format!(
-                "{}: {error}",
-                language.text("Failed to save policy group", "策略组保存失败")
-            );
-            cx.notify();
-            return;
-        }
-        if let Some(existing) = self
-            .managed_policy_groups
-            .iter_mut()
-            .find(|existing| existing.id == group.id)
-        {
-            existing.clone_from(&group);
-        } else {
-            self.managed_policy_groups.push(group.clone());
-            self.managed_policy_groups
-                .sort_by(|left, right| left.id.cmp(&right.id));
-        }
-        self.group_benchmarks
-            .remove(&Self::managed_policy_benchmark_key(&group.id));
-        self.managed_policy_runtime_states.remove(&group.id);
-        self.managed_policy_draft = None;
-        self.managed_policy_editor_popover = None;
+        let group_name = group.name.clone();
         self.status = format!(
             "{} “{}”; {}",
             language.text("Group saved", "分组已保存"),
-            group.name,
+            group_name,
             language.text("applying changes", "正在应用更改")
         );
-        self.apply_managed_policy_groups(
-            store_dir,
-            format!(
-                "{} “{}”",
-                language.text("Group saved", "分组已保存"),
-                group.name
-            ),
-            cx,
-        );
+        let runtime = self.runtime.clone();
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let result = executor
+                .spawn(async move {
+                    super::mutate_saved_sources(&runtime, &store_dir, || {
+                        mihomo::save_managed_policy_in(&store_dir, &group).map(|()| group)
+                    })
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                match result {
+                    Ok(transaction) => {
+                        let language = this.language();
+                        transaction.apply.reconcile_proxy_mode(&mut this.proxy_mode);
+                        if let Some(group) = transaction.value {
+                            if let Some(existing) = this
+                                .managed_policy_groups
+                                .iter_mut()
+                                .find(|existing| existing.id == group.id)
+                            {
+                                existing.clone_from(&group);
+                            } else {
+                                this.managed_policy_groups.push(group.clone());
+                                this.managed_policy_groups
+                                    .sort_by(|left, right| left.id.cmp(&right.id));
+                            }
+                            this.group_benchmarks
+                                .remove(&Self::managed_policy_benchmark_key(&group.id));
+                            this.managed_policy_runtime_states.remove(&group.id);
+                            this.managed_policy_draft = None;
+                            this.managed_policy_editor_popover = None;
+                            this.status = format!(
+                                "{} “{}”{}",
+                                language.text("Group saved", "分组已保存"),
+                                group.name,
+                                transaction.apply.status_suffix(language)
+                            );
+                        } else {
+                            this.status = format!(
+                                "{}{}",
+                                language.text("Failed to save policy group", "策略组保存失败"),
+                                transaction.apply.status_suffix_after_rollback_attempt(
+                                    language,
+                                    transaction.rollback_error.as_ref(),
+                                )
+                            );
+                        }
+                    }
+                    Err(error) => {
+                        this.status = format!(
+                            "{}: {error}",
+                            this.language()
+                                .text("Failed to save policy group", "策略组保存失败")
+                        );
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
     }
 
     pub(super) fn remove_managed_policy(&mut self, id: &str, cx: &mut Context<Self>) {
@@ -1779,64 +1778,70 @@ impl ManisApp {
             return;
         };
         let language = self.language();
-        if let Err(error) = mihomo::remove_managed_policy_in(&store_dir, id) {
-            self.status = format!(
-                "{}: {error}",
-                language.text("Failed to delete policy group", "策略组删除失败")
-            );
-            cx.notify();
-            return;
-        }
-        let group = self.managed_policy_groups.remove(index);
-        self.group_benchmarks
-            .remove(&Self::managed_policy_benchmark_key(id));
-        self.managed_policy_runtime_states.remove(id);
-        if self
-            .managed_policy_draft
-            .as_ref()
-            .and_then(|draft| draft.editing_id.as_deref())
-            == Some(id)
-        {
-            self.managed_policy_draft = None;
-            self.managed_policy_editor_popover = None;
-        }
+        let group = self.managed_policy_groups[index].clone();
+        let remove_id = id.to_owned();
         self.status = format!(
             "{} “{}”; {}",
             language.text("Group deleted", "分组已删除"),
             group.name,
             language.text("applying changes", "正在应用更改")
         );
-        self.apply_managed_policy_groups(
-            store_dir,
-            format!(
-                "{} “{}”",
-                language.text("Group deleted", "分组已删除"),
-                group.name
-            ),
-            cx,
-        );
-    }
-
-    fn apply_managed_policy_groups(
-        &mut self,
-        store_dir: std::path::PathBuf,
-        prefix: String,
-        cx: &mut Context<Self>,
-    ) {
         let runtime = self.runtime.clone();
         let executor = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
-            let apply = executor
+            let result = executor
                 .spawn(async move {
-                    SourceRuntimeApply::from_result(runtime.apply_saved_sources(&store_dir))
+                    super::mutate_saved_sources(&runtime, &store_dir, || {
+                        mihomo::remove_managed_policy_in(&store_dir, &remove_id)
+                            .map(|()| (remove_id, group))
+                    })
                 })
                 .await;
             this.update(cx, |this, cx| {
-                apply.reconcile_proxy_mode(&mut this.proxy_mode);
-                this.status = format!(
-                    "{prefix}{}",
-                    Self::source_runtime_apply_suffix(&apply, this.language())
-                );
+                match result {
+                    Ok(transaction) => {
+                        let language = this.language();
+                        transaction.apply.reconcile_proxy_mode(&mut this.proxy_mode);
+                        if let Some((deleted_id, group)) = transaction.value {
+                            this.managed_policy_groups
+                                .retain(|candidate| candidate.id != deleted_id);
+                            this.group_benchmarks
+                                .remove(&Self::managed_policy_benchmark_key(&deleted_id));
+                            this.managed_policy_runtime_states.remove(&deleted_id);
+                            if this
+                                .managed_policy_draft
+                                .as_ref()
+                                .and_then(|draft| draft.editing_id.as_deref())
+                                == Some(deleted_id.as_str())
+                            {
+                                this.managed_policy_draft = None;
+                                this.managed_policy_editor_popover = None;
+                            }
+                            this.status = format!(
+                                "{} “{}”{}",
+                                language.text("Group deleted", "分组已删除"),
+                                group.name,
+                                transaction.apply.status_suffix(language)
+                            );
+                        } else {
+                            this.status = format!(
+                                "{}{}",
+                                language.text("Failed to delete policy group", "策略组删除失败"),
+                                transaction.apply.status_suffix_after_rollback_attempt(
+                                    language,
+                                    transaction.rollback_error.as_ref(),
+                                )
+                            );
+                        }
+                    }
+                    Err(error) => {
+                        this.status = format!(
+                            "{}: {error}",
+                            this.language()
+                                .text("Failed to delete policy group", "策略组删除失败")
+                        );
+                    }
+                }
                 cx.notify();
             })
             .ok();

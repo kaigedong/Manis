@@ -51,6 +51,13 @@ mod activity;
 mod configuration;
 mod logs;
 mod nodes;
+mod routing_apply;
+mod stored_workspace;
+
+use routing_apply::{
+    RoutingApplyRollback, RoutingApplyState, SourceRuntimeApply, mutate_saved_sources,
+};
+use stored_workspace::StoredWorkspace;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum ConfigurationSection {
@@ -98,88 +105,6 @@ enum SubscriptionFeedback {
     InvalidInput(SubscriptionInputError),
     PreviewFailed(SubscriptionPreviewError),
     StoreFailed(SubscriptionStoreError),
-}
-
-enum SourceRuntimeApply {
-    Applied(GeneratedProfileApply),
-    Failed(String),
-    ProxyModeLost(String),
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-enum RoutingApplyState {
-    #[default]
-    Idle,
-    Applying,
-}
-
-impl RoutingApplyState {
-    const fn is_busy(self) -> bool {
-        matches!(self, Self::Applying)
-    }
-
-    fn begin(&mut self) -> bool {
-        if self.is_busy() {
-            return false;
-        }
-        *self = Self::Applying;
-        true
-    }
-
-    fn finish(&mut self) {
-        *self = Self::Idle;
-    }
-}
-
-impl SourceRuntimeApply {
-    fn from_result(result: Result<GeneratedProfileApply, mihomo::LoadError>) -> Self {
-        match result {
-            Ok(outcome) => Self::Applied(outcome),
-            Err(mihomo::LoadError::ProxyModeLost(message)) => Self::ProxyModeLost(message),
-            Err(error) => Self::Failed(error.to_string()),
-        }
-    }
-
-    fn reconcile_proxy_mode(&self, mode: &mut ProxyMode) -> bool {
-        if matches!(self, Self::ProxyModeLost(_)) && *mode == ProxyMode::Tun {
-            *mode = ProxyMode::Off;
-            record_event(
-                LogLevel::Error,
-                "proxy.mode.restore.ui_fallback",
-                "active=off reason=tun_restore_failed",
-            );
-            return true;
-        }
-        false
-    }
-
-    fn status_suffix(&self, language: Language) -> String {
-        match self {
-            Self::Applied(GeneratedProfileApply::Updated) => language
-                .text(" · changes applied", " · 更改已生效")
-                .to_owned(),
-            Self::Applied(GeneratedProfileApply::Restarted) => language
-                .text(
-                    " · changes applied and Mihomo restarted",
-                    " · 更改已生效，Mihomo 已重新启动",
-                )
-                .to_owned(),
-            Self::Failed(message) => format!(
-                "{}{message}",
-                language.text(
-                    " · saved, but the changes could not be applied: ",
-                    " · 已保存，但更改未能生效："
-                )
-            ),
-            Self::ProxyModeLost(message) => format!(
-                "{}{message}",
-                language.text(
-                    " · kernel reloaded, but TUN could not be restored and was turned off: ",
-                    " · 内核已重载，但 TUN 恢复失败，已回退为关闭："
-                )
-            ),
-        }
-    }
 }
 
 enum MihomoCoreUpdateOutcome {
@@ -334,6 +259,10 @@ enum ImportQxRuleSuccess {
     AlreadyExists {
         stored: StoredQxRuleSource,
     },
+    RolledBack {
+        apply: SourceRuntimeApply,
+        rollback_error: Option<SubscriptionStoreError>,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -483,6 +412,11 @@ enum PolicyEditorPopover {
 enum ManualRulePopover {
     Kind(usize),
     Target,
+}
+
+struct ManualRuleConditionEditor {
+    kind: crate::manual_rule::ManualRuleKind,
+    input: Entity<SubscriptionTextInput>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -777,8 +711,7 @@ pub struct ManisApp {
     qx_rule_input: Option<Entity<SubscriptionTextInput>>,
     qx_rule_input_events: Option<Subscription>,
     manual_rules: Vec<crate::manual_rule::ManualRule>,
-    manual_rule_inputs: Vec<Entity<SubscriptionTextInput>>,
-    manual_rule_kinds: Vec<crate::manual_rule::ManualRuleKind>,
+    manual_rule_conditions: Vec<ManualRuleConditionEditor>,
     manual_rule_condition_count: usize,
     manual_rule_target: String,
     manual_rule_editor_state: ManualRuleEditorState,
@@ -790,74 +723,8 @@ pub struct ManisApp {
     activity_search_events: Option<Subscription>,
     logs_search_input: Option<Entity<SubscriptionTextInput>>,
     logs_search_events: Option<Subscription>,
-    #[allow(dead_code)]
+    window_bounds_events: Option<Subscription>,
     app_lifecycle_events: Option<Subscription>,
-}
-
-struct StoredWorkspace {
-    imported_subscriptions: Vec<ImportedSubscription>,
-    saved_single_nodes: Vec<StoredSingleNode>,
-    qx_rule_sources: Vec<StoredQxRuleSource>,
-    routing_rule_group_order: Vec<String>,
-    collapsed_groups: Vec<String>,
-    managed_policy_groups: Vec<ManagedPolicyGroup>,
-    node_selection_preferences: mihomo::NodeSelectionPreferences,
-    routing_mode: RoutingMode,
-    error: Option<SubscriptionStoreError>,
-}
-
-impl StoredWorkspace {
-    fn load(directory: Option<&PathBuf>) -> Self {
-        let Some(directory) = directory else {
-            return Self {
-                imported_subscriptions: Vec::new(),
-                saved_single_nodes: Vec::new(),
-                qx_rule_sources: Vec::new(),
-                routing_rule_group_order: Vec::new(),
-                collapsed_groups: Vec::new(),
-                managed_policy_groups: Vec::new(),
-                node_selection_preferences: mihomo::NodeSelectionPreferences::default(),
-                routing_mode: RoutingMode::Rule,
-                error: None,
-            };
-        };
-        let subscriptions = mihomo::load_subscription_sources_in(directory);
-        let nodes = mihomo::load_single_node_sources_in(directory);
-        let qx_rule_sources = mihomo::load_qx_rule_sources_in(directory);
-        let routing_rule_group_order = mihomo::load_routing_rule_group_order_in(directory);
-        let collapsed = mihomo::load_collapsed_groups_in(directory);
-        let policy_groups = mihomo::load_managed_policy_groups_in(directory);
-        let node_selection_preferences = mihomo::load_node_selection_preferences_in(directory);
-        let routing_mode = mihomo::load_routing_mode_in(directory);
-        let error = [
-            subscriptions.is_err(),
-            nodes.is_err(),
-            qx_rule_sources.is_err(),
-            routing_rule_group_order.is_err(),
-            collapsed.is_err(),
-            policy_groups.is_err(),
-            node_selection_preferences.is_err(),
-            routing_mode.is_err(),
-        ]
-        .into_iter()
-        .any(std::convert::identity)
-        .then_some(SubscriptionStoreError::StoredSourceUnavailable);
-        Self {
-            imported_subscriptions: subscriptions
-                .unwrap_or_default()
-                .into_iter()
-                .map(ImportedSubscription::from_stored)
-                .collect(),
-            saved_single_nodes: nodes.unwrap_or_default(),
-            qx_rule_sources: qx_rule_sources.unwrap_or_default(),
-            routing_rule_group_order: routing_rule_group_order.unwrap_or_default(),
-            collapsed_groups: collapsed.unwrap_or_default(),
-            managed_policy_groups: policy_groups.unwrap_or_default(),
-            node_selection_preferences: node_selection_preferences.unwrap_or_default(),
-            routing_mode: routing_mode.unwrap_or_default(),
-            error,
-        }
-    }
 }
 
 impl ManisApp {
@@ -1087,8 +954,7 @@ impl ManisApp {
             qx_rule_input: None,
             qx_rule_input_events: None,
             manual_rules: Vec::new(),
-            manual_rule_inputs: Vec::new(),
-            manual_rule_kinds: Vec::new(),
+            manual_rule_conditions: Vec::new(),
             manual_rule_condition_count: 1,
             manual_rule_target: default_rule_target,
             manual_rule_editor_state: ManualRuleEditorState::Closed,
@@ -1100,8 +966,30 @@ impl ManisApp {
             activity_search_events: None,
             logs_search_input: None,
             logs_search_events: None,
+            window_bounds_events: None,
             app_lifecycle_events: None,
         }
+    }
+
+    pub(crate) fn attach_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.workspace.resize(window.viewport_size().width.as_f32());
+        self.sync_window_inputs(window, cx);
+        self.ensure_source_refresh_scheduler(cx);
+        let _previous = self.window_bounds_events.replace(cx.observe_window_bounds(
+            window,
+            |this, window, cx| {
+                this.workspace.resize(window.viewport_size().width.as_f32());
+                cx.notify();
+            },
+        ));
+    }
+
+    fn sync_window_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let theme = self.theme();
+        self.ensure_subscription_input(theme, window, cx);
+        self.ensure_qx_rule_input(theme, window, cx);
+        self.ensure_policy_group_inputs(theme, window, cx);
+        self.ensure_runtime_search_inputs(theme, window, cx);
     }
 
     fn shutdown_for_quit(&mut self, _cx: &mut Context<Self>) -> Task<()> {
@@ -1459,39 +1347,39 @@ impl ManisApp {
                 .spawn(async move {
                     let providers = mihomo::preview_subscription(&input)
                         .map_err(ImportSubscriptionError::Preview)?;
-                    let mut subscription = if let Some(id) = editing_id.as_deref() {
-                        mihomo::update_subscription_source_in(
-                            &store_dir,
-                            id,
-                            &input,
-                            &name,
-                            refresh_interval,
-                            enabled,
-                        )
-                    } else {
-                        mihomo::save_subscription_source_with_options_in(
-                            &store_dir,
-                            &input,
-                            &name,
-                            refresh_interval,
-                            enabled,
-                        )
-                    }
+                    let transaction = mutate_saved_sources(&runtime, &store_dir, || {
+                        let mut subscription = if let Some(id) = editing_id.as_deref() {
+                            mihomo::update_subscription_source_in(
+                                &store_dir,
+                                id,
+                                &input,
+                                &name,
+                                refresh_interval,
+                                enabled,
+                            )
+                        } else {
+                            mihomo::save_subscription_source_with_options_in(
+                                &store_dir,
+                                &input,
+                                &name,
+                                refresh_interval,
+                                enabled,
+                            )
+                        }?;
+                        let proxy_nameservers =
+                            mihomo::discover_subscription_proxy_nameservers(&subscription.source);
+                        if !proxy_nameservers.is_empty() {
+                            subscription =
+                                mihomo::update_subscription_source_proxy_nameservers_in(
+                                    &store_dir,
+                                    &subscription.id,
+                                    &proxy_nameservers,
+                                )?;
+                        }
+                        Ok(subscription)
+                    })
                     .map_err(ImportSubscriptionError::Store)?;
-                    let proxy_nameservers =
-                        mihomo::discover_subscription_proxy_nameservers(&subscription.source);
-                    if !proxy_nameservers.is_empty() {
-                        subscription = mihomo::update_subscription_source_proxy_nameservers_in(
-                            &store_dir,
-                            &subscription.id,
-                            &proxy_nameservers,
-                        )
-                        .map_err(ImportSubscriptionError::Store)?;
-                    }
-                    let apply = SourceRuntimeApply::from_result(
-                        runtime.apply_saved_sources(&store_dir),
-                    );
-                    Ok::<_, ImportSubscriptionError>((subscription, providers, apply))
+                    Ok::<_, ImportSubscriptionError>((transaction, providers))
                 })
                 .await;
             this.update(cx, |this, cx| {
@@ -1506,7 +1394,8 @@ impl ManisApp {
                     input.update(cx, |input, cx| input.set_enabled(true, cx));
                 }
                 match result {
-                    Ok((subscription, providers, apply)) => {
+                    Ok((transaction, providers)) if transaction.value.is_some() => {
+                        let subscription = transaction.value.expect("checked committed mutation");
                         let node_count: usize =
                             providers.iter().map(|provider| provider.nodes.len()).sum();
                         let provider_count = providers.len();
@@ -1557,21 +1446,36 @@ impl ManisApp {
                         this.configuration_add_section = None;
                         this.subscription_editor_source_id = None;
                         this.subscription_editor_error = None;
-                        apply.reconcile_proxy_mode(&mut this.proxy_mode);
+                        transaction
+                            .apply
+                            .reconcile_proxy_mode(&mut this.proxy_mode);
                         this.status = if language == Language::English {
                             format!(
                                 "Subscription imported · {} groups · {provider_count} sources · {node_count} nodes{}",
                                 this.imported_subscriptions.len(),
-                                apply.status_suffix(language)
+                                transaction.apply.status_suffix(language)
                             )
                         } else {
                             format!(
                                 "订阅已导入 · 共 {} 个订阅组 · {provider_count} 个来源 · {node_count} 个节点{}",
                                 this.imported_subscriptions.len(),
-                                apply.status_suffix(language)
+                                transaction.apply.status_suffix(language)
                             )
                         };
                         trace_ui(UiEvent::SourceImportSucceeded);
+                    }
+                    Ok((transaction, _providers)) => {
+                        this.subscription_feedback = SubscriptionFeedback::StoreFailed(
+                            SubscriptionStoreError::StoreUnavailable,
+                        );
+                        this.status = format!(
+                            "{}{}",
+                            language.text("Could not save subscription", "订阅保存失败"),
+                            transaction
+                                .apply
+                                .status_suffix_after_source_rollback(language)
+                        );
+                        trace_ui(UiEvent::SourceImportFailed);
                     }
                     Err(ImportSubscriptionError::Preview(error)) => {
                         this.subscription_feedback = SubscriptionFeedback::PreviewFailed(error);
@@ -1658,23 +1562,23 @@ impl ManisApp {
                         mihomo::discover_subscription_proxy_nameservers(&source);
                     let providers = mihomo::preview_imported_subscription(source)
                         .map_err(ImportSubscriptionError::Preview)?;
-                    let mut stored = mihomo::mark_subscription_source_update_success_in(
-                        &store_dir,
-                        &task_id,
-                        mihomo::current_unix_secs(),
-                    )
-                    .map_err(ImportSubscriptionError::Store)?;
-                    if !proxy_nameservers.is_empty() {
-                        stored = mihomo::update_subscription_source_proxy_nameservers_in(
+                    let transaction = mutate_saved_sources(&runtime, &store_dir, || {
+                        let mut stored = mihomo::mark_subscription_source_update_success_in(
                             &store_dir,
                             &task_id,
-                            &proxy_nameservers,
-                        )
-                        .map_err(ImportSubscriptionError::Store)?;
-                    }
-                    let apply =
-                        SourceRuntimeApply::from_result(runtime.apply_saved_sources(&store_dir));
-                    Ok::<_, ImportSubscriptionError>((providers, stored, apply))
+                            mihomo::current_unix_secs(),
+                        )?;
+                        if !proxy_nameservers.is_empty() {
+                            stored = mihomo::update_subscription_source_proxy_nameservers_in(
+                                &store_dir,
+                                &task_id,
+                                &proxy_nameservers,
+                            )?;
+                        }
+                        Ok(stored)
+                    })
+                    .map_err(ImportSubscriptionError::Store)?;
+                    Ok::<_, ImportSubscriptionError>((providers, transaction))
                 })
                 .await;
             this.update(cx, |this, cx| {
@@ -1690,7 +1594,8 @@ impl ManisApp {
                     return;
                 }
                 match result {
-                    Ok((providers, stored, apply)) => {
+                    Ok((providers, transaction)) if transaction.value.is_some() => {
+                        let stored = transaction.value.expect("checked committed mutation");
                         let node_count: usize =
                             providers.iter().map(|provider| provider.nodes.len()).sum();
                         subscription.providers = providers;
@@ -1700,19 +1605,30 @@ impl ManisApp {
                             stored.last_successful_update_unix_secs;
                         this.source_refresh_retry_not_before
                             .remove(&DueRemoteSource::Subscription(id.clone()).scheduler_key());
-                        apply.reconcile_proxy_mode(&mut this.proxy_mode);
+                        transaction.apply.reconcile_proxy_mode(&mut this.proxy_mode);
                         this.status = if language == Language::English {
                             format!(
                                 "Subscription updated · {node_count} nodes{}",
-                                apply.status_suffix(language)
+                                transaction.apply.status_suffix(language)
                             )
                         } else {
                             format!(
                                 "订阅更新完成 · {node_count} 个节点{}",
-                                apply.status_suffix(language)
+                                transaction.apply.status_suffix(language)
                             )
                         };
                         trace_ui(UiEvent::SourceRestoreSucceeded);
+                    }
+                    Ok((_providers, transaction)) => {
+                        subscription.state = ImportedSubscriptionState::Pending(kind);
+                        this.status = format!(
+                            "{}{}",
+                            language.text("Subscription update failed", "订阅更新失败"),
+                            transaction
+                                .apply
+                                .status_suffix_after_source_rollback(language)
+                        );
+                        trace_ui(UiEvent::SourceRestoreFailed);
                     }
                     Err(ImportSubscriptionError::Preview(error)) => {
                         subscription.state = ImportedSubscriptionState::Unavailable(kind, error);
@@ -1829,10 +1745,9 @@ impl ManisApp {
         cx.spawn(async move |this, cx| {
             let result = executor
                 .spawn(async move {
-                    mihomo::remove_subscription_source_in(&store_dir, &remove_id)?;
-                    Ok::<_, SubscriptionStoreError>(SourceRuntimeApply::from_result(
-                        runtime.apply_saved_sources(&store_dir),
-                    ))
+                    mutate_saved_sources(&runtime, &store_dir, || {
+                        mihomo::remove_subscription_source_in(&store_dir, &remove_id)
+                    })
                 })
                 .await;
             this.update(cx, |this, cx| {
@@ -1848,17 +1763,30 @@ impl ManisApp {
                     return;
                 }
                 match result {
-                    Ok(apply) => {
+                    Ok(transaction) if transaction.value.is_some() => {
                         this.imported_subscriptions.remove(index);
                         this.source_refresh_retry_not_before
                             .remove(&DueRemoteSource::Subscription(id.clone()).scheduler_key());
-                        apply.reconcile_proxy_mode(&mut this.proxy_mode);
+                        transaction.apply.reconcile_proxy_mode(&mut this.proxy_mode);
                         this.status = format!(
                             "{}{}",
                             language.text("Imported subscription removed", "已移除导入订阅"),
-                            apply.status_suffix(language)
+                            transaction.apply.status_suffix(language)
                         );
                         trace_ui(UiEvent::SourceRemoveSucceeded);
+                    }
+                    Ok(transaction) => {
+                        this.imported_subscriptions[index].state =
+                            ImportedSubscriptionState::Ready(kind);
+                        this.status = format!(
+                            "{}{}",
+                            language
+                                .text("Imported subscription removal failed", "导入订阅移除失败"),
+                            transaction
+                                .apply
+                                .status_suffix_after_source_rollback(language)
+                        );
+                        trace_ui(UiEvent::SourceRemoveFailed);
                     }
                     Err(error) => {
                         this.imported_subscriptions[index].state =
@@ -4079,6 +4007,7 @@ impl ManisApp {
                 .on_click(cx.listener(|this, _, window, cx| {
                     this.dark = !this.dark;
                     crate::theme::sync_component_theme(this.theme(), this.dark, Some(window), cx);
+                    this.sync_window_inputs(window, cx);
                     let language = this.language();
                     if this.dark {
                         trace_ui(UiEvent::ThemeDarkSelected);
@@ -6149,17 +6078,9 @@ impl Default for ManisApp {
 }
 
 impl Render for ManisApp {
-    #[allow(clippy::too_many_lines)]
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let width = window.viewport_size().width.as_f32();
-        self.workspace.resize(width);
-        let size_class = self.workspace.size_class;
+        let size_class = WindowSizeClass::for_width(window.viewport_size().width.as_f32());
         let theme = self.theme();
-        self.ensure_subscription_input(theme, window, cx);
-        self.ensure_qx_rule_input(theme, window, cx);
-        self.ensure_policy_group_inputs(theme, window, cx);
-        self.ensure_runtime_search_inputs(theme, window, cx);
-        self.ensure_source_refresh_scheduler(cx);
         let compact = size_class == WindowSizeClass::Compact;
         let show_groups =
             !compact || self.workspace.compact_navigation == CompactNavigation::GroupList;
@@ -6240,9 +6161,9 @@ impl Render for ManisApp {
                                     if compact {
                                         None
                                     } else if size_class == WindowSizeClass::Medium {
-                                        Some(292.0)
+                                        Some(LayoutMetric::MediumPolicyList.px().as_f32())
                                     } else {
-                                        Some(326.0)
+                                        Some(LayoutMetric::WidePolicyList.px().as_f32())
                                     },
                                     cx,
                                 )
@@ -6277,27 +6198,14 @@ mod tests {
 
     use super::{
         ControllerReadiness, DueRemoteSource, ImportedSubscription, ImportedSubscriptionState,
-        ManisApp, PolicyDetailTab, ProxyModeBlock, RoutingApplyState, SourceRuntimeApply,
-        TunSupport, proxy_mode_block,
+        ManisApp, PolicyDetailTab, ProxyModeBlock, SourceRuntimeApply, TunSupport,
+        proxy_mode_block,
     };
     use crate::subscription::SourceKind;
     use crate::{
         localization::Language,
         mihomo::{self, ControllerState},
     };
-
-    #[test]
-    fn routing_apply_state_rejects_overlapping_operations() {
-        let mut state = RoutingApplyState::default();
-
-        assert!(state.begin());
-        assert!(state.is_busy());
-        assert!(!state.begin());
-
-        state.finish();
-        assert!(!state.is_busy());
-        assert!(state.begin());
-    }
 
     #[test]
     fn policy_detail_tabs_round_trip_through_component_indices() {

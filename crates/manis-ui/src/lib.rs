@@ -49,6 +49,7 @@ pub fn root(
 ) -> gpui_component::Root {
     use gpui::AppContext as _;
 
+    app.update(cx, |app, cx| app.attach_window(window, cx));
     let view = cx.new(|_| ManisRootView { app });
     gpui_component::Root::new(view, window, cx)
 }

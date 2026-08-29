@@ -71,8 +71,6 @@ pub(crate) enum UiEvent {
     SourceRemoveStarted,
     SourceRemoveSucceeded,
     SourceRemoveFailed,
-    #[allow(dead_code)]
-    SubscriptionDraftCleared,
     PolicyPreviewOpened,
     MihomoConnectStarted,
     MihomoConnectSucceeded,
@@ -112,7 +110,6 @@ impl UiEvent {
             Self::SourceRemoveStarted => "configuration.source_remove.started",
             Self::SourceRemoveSucceeded => "configuration.source_remove.succeeded",
             Self::SourceRemoveFailed => "configuration.source_remove.failed",
-            Self::SubscriptionDraftCleared => "configuration.subscription_draft.cleared",
             Self::PolicyPreviewOpened => "configuration.policy_preview.opened",
             Self::MihomoConnectStarted => "mihomo.connect.started",
             Self::MihomoConnectSucceeded => "mihomo.connect.succeeded",
