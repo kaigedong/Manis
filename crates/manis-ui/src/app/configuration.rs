@@ -45,6 +45,29 @@ struct QxRuleSaveRequest {
     refresh_interval: RemoteSourceRefreshInterval,
 }
 
+struct SubscriptionCardPresentation {
+    state: String,
+    activity: SubscriptionCardActivity,
+    controls_enabled: bool,
+    updated: String,
+}
+
+#[derive(Clone, Copy)]
+enum SubscriptionCardActivity {
+    Idle { healthy: bool },
+    Busy,
+}
+
+impl SubscriptionCardActivity {
+    const fn is_busy(self) -> bool {
+        matches!(self, Self::Busy)
+    }
+
+    const fn is_healthy(self) -> bool {
+        matches!(self, Self::Idle { healthy: true } | Self::Busy)
+    }
+}
+
 fn save_qx_rule_source(
     runtime: &super::KernelRuntime,
     store_dir: &Path,
@@ -1263,7 +1286,6 @@ impl ManisApp {
             ))
     }
 
-    #[allow(clippy::too_many_lines)]
     fn source_panel(&self, theme: Theme, compact: bool, cx: &mut Context<Self>) -> Div {
         let language = self.language();
         let saved_source_count = self.imported_subscriptions.len() + self.saved_single_nodes.len();
@@ -2041,558 +2063,275 @@ impl ManisApp {
         cx.notify();
     }
 
-    #[allow(clippy::too_many_lines)]
     fn imported_subscription_cards(&self, theme: Theme, cx: &mut Context<Self>) -> Div {
         let language = self.language();
-        let mut list = div();
         let now = mihomo::current_unix_secs();
-        for subscription in &self.imported_subscriptions {
-            let node_count = subscription
-                .providers
-                .iter()
-                .map(|provider| provider.nodes.len())
-                .sum::<usize>();
-            let (state, busy, healthy) = match &subscription.state {
-                ImportedSubscriptionState::None => {
-                    (language.text("Disabled", "未启用").to_owned(), false, true)
-                }
-                ImportedSubscriptionState::Pending(_)
-                | ImportedSubscriptionState::Refreshing(_) => (
-                    language.text("Updating…", "正在更新…").to_owned(),
-                    true,
-                    true,
-                ),
-                ImportedSubscriptionState::Ready(kind) => (
-                    if language == Language::English {
-                        format!(
-                            "{} · {node_count} nodes",
-                            source_kind_label(*kind, language)
-                        )
-                    } else {
-                        format!(
-                            "{} · {node_count} 个节点",
-                            source_kind_label(*kind, language)
-                        )
-                    },
-                    false,
-                    true,
-                ),
-                ImportedSubscriptionState::Unavailable(_, _)
-                | ImportedSubscriptionState::StoreError(_) => (
-                    language.text("Update failed", "更新失败").to_owned(),
-                    false,
-                    false,
-                ),
-                ImportedSubscriptionState::Removing(_) => (
-                    language.text("Removing…", "正在移除…").to_owned(),
-                    true,
-                    true,
-                ),
-            };
-            let controls_enabled = !busy
-                && !matches!(
-                    self.subscription_feedback,
-                    SubscriptionFeedback::Importing(_)
-                )
-                && !self.source_refresh_busy();
-            let enabled = subscription.enabled;
-            let id = subscription.id.clone();
-            let edit_id = id.clone();
-            let card_edit_id = id.clone();
-            let toggle_id = id.clone();
-            let refresh_id = id.clone();
-            let remove_id = id.clone();
-            let url = subscription.source.expose_to(str::to_owned);
-            let refresh_enabled = controls_enabled && enabled;
-            let updated =
-                source_update_label(subscription.last_successful_update_unix_secs, now, language);
+        div().children(self.imported_subscriptions.iter().map(|subscription| {
+            let presentation = self.subscription_card_presentation(subscription, now, language);
+            Self::imported_subscription_card(subscription, &presentation, language, theme, cx)
+        }))
+    }
 
-            list = list.child(
-                div()
-                    .id(format!("subscription-card-{card_edit_id}"))
-                    .role(Role::Button)
-                    .aria_label(language.text("Edit this subscription", "编辑这个订阅"))
-                    .tab_stop(controls_enabled)
-                    .focusable()
-                    .when(controls_enabled, gpui::Styled::cursor_pointer)
-                    .mt_2()
-                    .px_3()
-                    .py_2()
-                    .rounded(Radius::Row.px())
-                    .border_1()
-                    .border_color(theme.outline_subtle)
-                    .bg(theme.surface_low)
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(
-                                Checkbox::new(format!("subscription-enabled-{toggle_id}"))
-                                    .label("")
-                                    .checked(enabled)
-                                    .disabled(!controls_enabled)
-                                    .tab_stop(controls_enabled)
-                                    .cursor_pointer()
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        cx.stop_propagation();
-                                        if controls_enabled {
-                                            this.set_subscription_enabled(
-                                                toggle_id.clone(),
-                                                !enabled,
-                                                cx,
-                                            );
-                                        }
-                                    })),
-                            )
-                            .child(
-                                div()
-                                    .id(format!("subscription-edit-{edit_id}"))
-                                    .flex_1()
-                                    .min_w(px(0.0))
-                                    .flex()
-                                    .items_center()
-                                    .gap_2()
-                                    .child(
-                                        div()
-                                            .min_w(px(0.0))
-                                            .overflow_x_hidden()
-                                            .whitespace_nowrap()
-                                            .text_ellipsis()
-                                            .text_size(TextRole::Label.size())
-                                            .font_weight(TextRole::Label.weight())
-                                            .text_color(if !enabled {
-                                                theme.text_secondary
-                                            } else if healthy {
-                                                theme.text_primary
-                                            } else {
-                                                theme.status_error
-                                            })
-                                            .child(subscription.name.clone()),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex_shrink_0()
-                                            .text_size(TextRole::Metadata.size())
-                                            .text_color(theme.text_tertiary)
-                                            .child(state),
-                                    ),
-                            )
-                            .when(busy, |row| {
-                                row.child(Self::benchmark_latency_spinner(
-                                    format!("source-refresh-{id}"),
-                                    theme,
-                                ))
-                            }),
+    fn subscription_card_presentation(
+        &self,
+        subscription: &super::ImportedSubscription,
+        now: u64,
+        language: Language,
+    ) -> SubscriptionCardPresentation {
+        let node_count = subscription
+            .providers
+            .iter()
+            .map(|provider| provider.nodes.len())
+            .sum::<usize>();
+        let (state, activity) = match &subscription.state {
+            ImportedSubscriptionState::None => (
+                language.text("Disabled", "未启用").to_owned(),
+                SubscriptionCardActivity::Idle { healthy: true },
+            ),
+            ImportedSubscriptionState::Pending(_) | ImportedSubscriptionState::Refreshing(_) => (
+                language.text("Updating…", "正在更新…").to_owned(),
+                SubscriptionCardActivity::Busy,
+            ),
+            ImportedSubscriptionState::Ready(kind) => (
+                if language == Language::English {
+                    format!(
+                        "{} · {node_count} nodes",
+                        source_kind_label(*kind, language)
                     )
+                } else {
+                    format!(
+                        "{} · {node_count} 个节点",
+                        source_kind_label(*kind, language)
+                    )
+                },
+                SubscriptionCardActivity::Idle { healthy: true },
+            ),
+            ImportedSubscriptionState::Unavailable(_, _)
+            | ImportedSubscriptionState::StoreError(_) => (
+                language.text("Update failed", "更新失败").to_owned(),
+                SubscriptionCardActivity::Idle { healthy: false },
+            ),
+            ImportedSubscriptionState::Removing(_) => (
+                language.text("Removing…", "正在移除…").to_owned(),
+                SubscriptionCardActivity::Busy,
+            ),
+        };
+        let controls_enabled = !activity.is_busy()
+            && !matches!(
+                self.subscription_feedback,
+                SubscriptionFeedback::Importing(_)
+            )
+            && !self.source_refresh_busy();
+        SubscriptionCardPresentation {
+            state,
+            activity,
+            controls_enabled,
+            updated: source_update_label(
+                subscription.last_successful_update_unix_secs,
+                now,
+                language,
+            ),
+        }
+    }
+
+    fn imported_subscription_card(
+        subscription: &super::ImportedSubscription,
+        presentation: &SubscriptionCardPresentation,
+        language: Language,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let card_edit_id = subscription.id.clone();
+        let controls_enabled = presentation.controls_enabled;
+        div()
+            .id(format!("subscription-card-{card_edit_id}"))
+            .role(Role::Button)
+            .aria_label(language.text("Edit this subscription", "编辑这个订阅"))
+            .tab_stop(controls_enabled)
+            .focusable()
+            .when(controls_enabled, gpui::Styled::cursor_pointer)
+            .mt_2()
+            .px_3()
+            .py_2()
+            .rounded(Radius::Row.px())
+            .border_1()
+            .border_color(theme.outline_subtle)
+            .bg(theme.surface_low)
+            .child(Self::subscription_card_header(
+                subscription,
+                presentation,
+                language,
+                theme,
+                cx,
+            ))
+            .child(
+                div()
+                    .mt_1()
+                    .ml_7()
+                    .overflow_x_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .text_size(TextRole::Metadata.size())
+                    .text_color(theme.text_tertiary)
+                    .child(subscription.source.expose_to(str::to_owned)),
+            )
+            .child(Self::subscription_card_actions(
+                subscription,
+                presentation,
+                language,
+                theme,
+                cx,
+            ))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                if controls_enabled {
+                    this.open_subscription_editor(card_edit_id.clone(), cx);
+                    this.open_proxy_source_dialog(window, cx);
+                }
+            }))
+    }
+
+    fn subscription_card_header(
+        subscription: &super::ImportedSubscription,
+        presentation: &SubscriptionCardPresentation,
+        _language: Language,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let toggle_id = subscription.id.clone();
+        let enabled = subscription.enabled;
+        let controls_enabled = presentation.controls_enabled;
+        div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(
+                Checkbox::new(format!("subscription-enabled-{toggle_id}"))
+                    .label("")
+                    .checked(enabled)
+                    .disabled(!controls_enabled)
+                    .tab_stop(controls_enabled)
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        if controls_enabled {
+                            this.set_subscription_enabled(toggle_id.clone(), !enabled, cx);
+                        }
+                    })),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .flex()
+                    .items_center()
+                    .gap_2()
                     .child(
                         div()
-                            .mt_1()
-                            .ml_7()
+                            .min_w(px(0.0))
                             .overflow_x_hidden()
                             .whitespace_nowrap()
                             .text_ellipsis()
+                            .text_size(TextRole::Label.size())
+                            .font_weight(TextRole::Label.weight())
+                            .text_color(if !enabled {
+                                theme.text_secondary
+                            } else if presentation.activity.is_healthy() {
+                                theme.text_primary
+                            } else {
+                                theme.status_error
+                            })
+                            .child(subscription.name.clone()),
+                    )
+                    .child(
+                        div()
+                            .flex_shrink_0()
                             .text_size(TextRole::Metadata.size())
                             .text_color(theme.text_tertiary)
-                            .child(url),
-                    )
-                    .child(
-                        div()
-                            .mt_1()
-                            .ml_7()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .text_size(TextRole::Metadata.size())
-                            .text_color(theme.text_secondary)
-                            .child(refresh_interval_label(
-                                subscription.refresh_interval,
-                                language,
-                            ))
-                            .child("·")
-                            .child(updated)
-                            .child(div().flex_1())
-                            .child(
-                                action_button(
-                                    format!("subscription-refresh-{refresh_id}"),
-                                    if busy {
-                                        language.text("Updating…", "更新中…")
-                                    } else {
-                                        language.text("Update now", "立即更新")
-                                    },
-                                    ActionRole::Quiet,
-                                    ControlSize::Compact,
-                                )
-                                .accessibility_label(
-                                    language
-                                        .text("Update this subscription now", "立即更新这个订阅"),
-                                )
-                                .disabled(!refresh_enabled)
-                                .loading(busy)
-                                .when(refresh_enabled, gpui::Styled::cursor_pointer)
-                                .px_3()
-                                .border_1()
-                                .border_color(theme.outline_subtle)
-                                .bg(theme.surface_high)
-                                .text_color(theme.action_primary)
-                                .on_click(cx.listener(
-                                    move |this, _, _, cx| {
-                                        cx.stop_propagation();
-                                        if refresh_enabled {
-                                            this.refresh_imported_subscription(
-                                                refresh_id.clone(),
-                                                cx,
-                                            );
-                                        }
-                                    },
-                                )),
-                            )
-                            .when(controls_enabled, |row| {
-                                row.child(
-                                    action_button(
-                                        format!("remove-{remove_id}"),
-                                        language.text("Remove", "移除"),
-                                        ActionRole::Quiet,
-                                        ControlSize::Compact,
-                                    )
-                                    .accessibility_label(
-                                        language.text("Remove this subscription", "移除这个订阅"),
-                                    )
-                                    .cursor_pointer()
-                                    .px_3()
-                                    .text_color(theme.status_error)
-                                    .on_click(cx.listener(
-                                        move |this, _, _, cx| {
-                                            cx.stop_propagation();
-                                            this.remove_imported_subscription(
-                                                remove_id.clone(),
-                                                cx,
-                                            );
-                                        },
-                                    )),
-                                )
-                            }),
-                    )
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        if controls_enabled {
-                            this.open_subscription_editor(card_edit_id.clone(), cx);
-                            this.open_proxy_source_dialog(window, cx);
-                        }
-                    })),
-            );
-        }
-        list
+                            .child(presentation.state.clone()),
+                    ),
+            )
+            .when(presentation.activity.is_busy(), |row| {
+                row.child(Self::benchmark_latency_spinner(
+                    format!("source-refresh-{}", subscription.id),
+                    theme,
+                ))
+            })
     }
 
-    #[allow(dead_code, clippy::too_many_lines)]
-    fn imported_subscription_cards_legacy(&self, theme: Theme, cx: &mut Context<Self>) -> Div {
-        let language = self.language();
-        let mut list = div();
-        let now = mihomo::current_unix_secs();
-        for subscription in &self.imported_subscriptions {
-            let node_count: usize = subscription
-                .providers
-                .iter()
-                .map(|provider| provider.nodes.len())
-                .sum();
-            let name = subscription.name.clone();
-            let url = subscription.source.expose_to(str::to_owned);
-            let (detail, busy, healthy) = match subscription.state {
-                ImportedSubscriptionState::None => {
-                    (language.text("Disabled", "未启用").to_owned(), false, true)
-                }
-                ImportedSubscriptionState::Pending(_)
-                | ImportedSubscriptionState::Refreshing(_) => (
-                    if language == Language::English {
-                        format!(
-                            "Updating nodes · Last success: {}",
-                            source_update_label(
-                                subscription.last_successful_update_unix_secs,
-                                now,
-                                language
-                            )
-                        )
+    fn subscription_card_actions(
+        subscription: &super::ImportedSubscription,
+        presentation: &SubscriptionCardPresentation,
+        language: Language,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let refresh_id = subscription.id.clone();
+        let remove_id = subscription.id.clone();
+        let refresh_enabled = presentation.controls_enabled && subscription.enabled;
+        let controls_enabled = presentation.controls_enabled;
+        let busy = presentation.activity.is_busy();
+        div()
+            .mt_1()
+            .ml_7()
+            .flex()
+            .items_center()
+            .gap_2()
+            .text_size(TextRole::Metadata.size())
+            .text_color(theme.text_secondary)
+            .child(refresh_interval_label(
+                subscription.refresh_interval,
+                language,
+            ))
+            .child("·")
+            .child(presentation.updated.clone())
+            .child(div().flex_1())
+            .child(
+                action_button(
+                    format!("subscription-refresh-{refresh_id}"),
+                    if busy {
+                        language.text("Updating…", "更新中…")
                     } else {
-                        format!(
-                            "正在更新节点 · 上次成功：{}",
-                            source_update_label(
-                                subscription.last_successful_update_unix_secs,
-                                now,
-                                language
-                            )
-                        )
+                        language.text("Update now", "立即更新")
                     },
-                    true,
-                    true,
-                ),
-                ImportedSubscriptionState::Ready(kind) => (
-                    if language == Language::English {
-                        format!(
-                            "{} · {} sources · {node_count} nodes · {}",
-                            source_kind_label(kind, language),
-                            subscription.providers.len(),
-                            source_update_label(
-                                subscription.last_successful_update_unix_secs,
-                                now,
-                                language
-                            )
-                        )
-                    } else {
-                        format!(
-                            "{} · {} 个来源 · {node_count} 个节点 · {}",
-                            source_kind_label(kind, language),
-                            subscription.providers.len(),
-                            source_update_label(
-                                subscription.last_successful_update_unix_secs,
-                                now,
-                                language
-                            )
-                        )
-                    },
-                    false,
-                    true,
-                ),
-                ImportedSubscriptionState::Unavailable(kind, error) => (
-                    if language == Language::English {
-                        format!(
-                            "{} · Update failed: {error} · {}",
-                            source_kind_label(kind, language),
-                            source_update_label(
-                                subscription.last_successful_update_unix_secs,
-                                now,
-                                language
-                            )
-                        )
-                    } else {
-                        format!(
-                            "{} · 更新失败：{error} · {}",
-                            source_kind_label(kind, language),
-                            source_update_label(
-                                subscription.last_successful_update_unix_secs,
-                                now,
-                                language
-                            )
-                        )
-                    },
-                    false,
-                    false,
-                ),
-                ImportedSubscriptionState::StoreError(error) => (
-                    if language == Language::English {
-                        format!("{error} · Local source was not deleted")
-                    } else {
-                        format!("{error} · 本地来源没有被删除")
-                    },
-                    false,
-                    false,
-                ),
-                ImportedSubscriptionState::Removing(_) => (
-                    language
-                        .text(
-                            "Deleting locally saved subscription",
-                            "正在删除本机保存的订阅",
-                        )
-                        .to_owned(),
-                    true,
-                    true,
-                ),
-            };
-            let removable = !busy
-                && !matches!(
-                    self.subscription_feedback,
-                    SubscriptionFeedback::Importing(_)
-                );
-            let controls_enabled = removable && !self.source_refresh_busy();
-            let id = subscription.id.clone();
-            let refresh_id = id.clone();
-            let remove_id = id.clone();
-            let edit_id = id.clone();
-            let toggle_id = id.clone();
-            let enabled = subscription.enabled;
-            let refresh_enabled = controls_enabled && enabled;
-            list = list.child(
-                div()
-                    .mt(Space::Md.px())
-                    .p(Space::Md.px())
-                    .rounded(Radius::Row.px())
-                    .border_1()
-                    .border_color(theme.outline_subtle)
-                    .bg(theme.surface_low)
-                    .child(
-                        div()
-                            .flex()
-                            .items_start()
-                            .gap(Space::Md.px())
-                            .child(
-                                Checkbox::new(format!("subscription-enabled-{toggle_id}"))
-                                    .label(language.text("Enabled", "启用"))
-                                    .checked(enabled)
-                                    .disabled(!controls_enabled)
-                                    .tab_stop(controls_enabled)
-                                    .cursor_pointer()
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        if controls_enabled {
-                                            this.set_subscription_enabled(
-                                                toggle_id.clone(),
-                                                !enabled,
-                                                cx,
-                                            );
-                                        }
-                                    })),
-                            )
-                            .child(
-                                div()
-                                    .id(format!("subscription-edit-{edit_id}"))
-                                    .role(Role::Button)
-                                    .aria_label(
-                                        language.text("Edit this subscription", "编辑这个订阅"),
-                                    )
-                                    .tab_stop(controls_enabled)
-                                    .focusable()
-                                    .when(controls_enabled, gpui::Styled::cursor_pointer)
-                                    .flex_1()
-                                    .min_w(px(0.0))
-                                    .child(
-                                        div()
-                                            .overflow_x_hidden()
-                                            .whitespace_nowrap()
-                                            .text_ellipsis()
-                                            .text_size(TextRole::Label.size())
-                                            .line_height(TextRole::Label.line_height())
-                                            .font_weight(TextRole::Label.weight())
-                                            .text_color(if !enabled {
-                                                theme.text_secondary
-                                            } else if healthy {
-                                                theme.status_success
-                                            } else {
-                                                theme.route_trace
-                                            })
-                                            .child(name),
-                                    )
-                                    .child(
-                                        div()
-                                            .mt(Space::Xs.px())
-                                            .text_size(TextRole::Metadata.size())
-                                            .line_height(TextRole::Metadata.line_height())
-                                            .text_color(theme.text_secondary)
-                                            .child(detail),
-                                    )
-                                    .child(
-                                        div()
-                                            .mt(Space::Xs.px())
-                                            .overflow_x_hidden()
-                                            .whitespace_nowrap()
-                                            .text_ellipsis()
-                                            .text_size(TextRole::Metadata.size())
-                                            .line_height(TextRole::Metadata.line_height())
-                                            .text_color(theme.text_tertiary)
-                                            .child(url),
-                                    )
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        if controls_enabled {
-                                            this.open_subscription_editor(edit_id.clone(), cx);
-                                        }
-                                    })),
-                            )
-                            .when(busy, |header| {
-                                header.child(Self::benchmark_latency_spinner(
-                                    format!("source-refresh-{id}"),
-                                    theme,
-                                ))
-                            }),
+                    ActionRole::Quiet,
+                    ControlSize::Compact,
+                )
+                .accessibility_label(
+                    language.text("Update this subscription now", "立即更新这个订阅"),
+                )
+                .disabled(!refresh_enabled)
+                .loading(busy)
+                .when(refresh_enabled, gpui::Styled::cursor_pointer)
+                .px_3()
+                .border_1()
+                .border_color(theme.outline_subtle)
+                .bg(theme.surface_high)
+                .text_color(theme.action_primary)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    if refresh_enabled {
+                        this.refresh_imported_subscription(refresh_id.clone(), cx);
+                    }
+                })),
+            )
+            .when(controls_enabled, |row| {
+                row.child(
+                    action_button(
+                        format!("remove-{remove_id}"),
+                        language.text("Remove", "移除"),
+                        ActionRole::Quiet,
+                        ControlSize::Compact,
                     )
-                    .child(
-                        div()
-                            .mt(Space::Md.px())
-                            .flex()
-                            .flex_wrap()
-                            .items_center()
-                            .gap_2()
-                            .child(
-                                div()
-                                    .h(ControlSize::Compact.height())
-                                    .px(Space::Sm.px())
-                                    .rounded(Radius::Control.px())
-                                    .border_1()
-                                    .border_color(theme.outline_subtle)
-                                    .bg(theme.surface_high)
-                                    .text_size(TextRole::Metadata.size())
-                                    .line_height(TextRole::Metadata.line_height())
-                                    .text_color(theme.text_secondary)
-                                    .child(format!(
-                                        "{} · {}",
-                                        language.text("Update interval", "更新间隔"),
-                                        refresh_interval_label(
-                                            subscription.refresh_interval,
-                                            language
-                                        )
-                                    )),
-                            )
-                            .child(
-                                Button::new(format!("subscription-refresh-{refresh_id}"))
-                                    .accessibility_label(
-                                        language.text(
-                                            "Update this subscription now",
-                                            "立即更新这个订阅",
-                                        ),
-                                    )
-                                    .label(if busy {
-                                        language.text("Updating…", "更新中…")
-                                    } else {
-                                        language.text("Update now", "立即更新")
-                                    })
-                                    .icon(IconName::Redo2)
-                                    .tab_stop(refresh_enabled)
-                                    .disabled(!refresh_enabled)
-                                    .loading(busy)
-                                    .with_variant(ButtonVariant::Text)
-                                    .when(refresh_enabled, gpui::Styled::cursor_pointer)
-                                    .px(Space::Sm.px())
-                                    .rounded(Radius::Control.px())
-                                    .border_1()
-                                    .border_color(theme.action_primary)
-                                    .bg(theme.surface_high)
-                                    .text_size(TextRole::Metadata.size())
-                                    .line_height(TextRole::Metadata.line_height())
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(theme.action_primary)
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        if refresh_enabled {
-                                            this.refresh_imported_subscription(
-                                                refresh_id.clone(),
-                                                cx,
-                                            );
-                                        }
-                                    })),
-                            )
-                            .child(div().flex_1())
-                            .when(controls_enabled, |controls| {
-                                controls.child(
-                                    Button::new(format!("remove-{remove_id}"))
-                                        .accessibility_label(
-                                            language
-                                                .text("Remove this subscription", "移除这个订阅"),
-                                        )
-                                        .label(language.text("Remove", "移除"))
-                                        .with_variant(ButtonVariant::Text)
-                                        .cursor_pointer()
-                                        .px(Space::Sm.px())
-                                        .rounded(Radius::Control.px())
-                                        .text_size(TextRole::Metadata.size())
-                                        .line_height(TextRole::Metadata.line_height())
-                                        .text_color(theme.route_trace)
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            this.remove_imported_subscription(
-                                                remove_id.clone(),
-                                                cx,
-                                            );
-                                        })),
-                                )
-                            }),
-                    ),
-            );
-        }
-        list
+                    .accessibility_label(language.text("Remove this subscription", "移除这个订阅"))
+                    .cursor_pointer()
+                    .px_3()
+                    .text_color(theme.status_error)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.remove_imported_subscription(remove_id.clone(), cx);
+                    })),
+                )
+            })
     }
 
     #[allow(clippy::too_many_lines)]
@@ -2847,161 +2586,6 @@ impl ManisApp {
             .ok();
         })
         .detach();
-    }
-
-    #[allow(dead_code, clippy::too_many_lines)]
-    fn saved_single_node_cards_legacy(&self, theme: Theme, cx: &mut Context<Self>) -> Div {
-        let language = self.language();
-        let mut list = div();
-        for saved in &self.saved_single_nodes {
-            let id = saved.id.clone();
-            let node = saved.source.preview();
-            list = list.child(
-                div()
-                    .mt(Space::Md.px())
-                    .p(Space::Md.px())
-                    .rounded(Radius::Row.px())
-                    .border_1()
-                    .border_color(theme.outline_subtle)
-                    .bg(theme.surface_low)
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .gap(Space::Md.px())
-                            .child(
-                                div()
-                                    .min_w(px(0.0))
-                                    .overflow_x_hidden()
-                                    .whitespace_nowrap()
-                                    .text_ellipsis()
-                                    .text_size(TextRole::Label.size())
-                                    .line_height(TextRole::Label.line_height())
-                                    .font_weight(TextRole::Label.weight())
-                                    .child(node.name.clone()),
-                            )
-                            .child(
-                                Button::new(format!("remove-{id}"))
-                                    .accessibility_label(
-                                        language.text("Remove saved node", "移除已保存节点"),
-                                    )
-                                    .label(language.text("Remove", "移除"))
-                                    .with_variant(ButtonVariant::Text)
-                                    .cursor_pointer()
-                                    .px(Space::Sm.px())
-                                    .rounded(Radius::Control.px())
-                                    .border_1()
-                                    .border_color(theme.outline_subtle)
-                                    .bg(theme.surface_high)
-                                    .text_size(TextRole::Metadata.size())
-                                    .line_height(TextRole::Metadata.line_height())
-                                    .text_color(theme.text_secondary)
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        let Some(store_dir) = this.subscription_store_dir.clone()
-                                        else {
-                                            this.language()
-                                                .text(
-                                                    "Could not determine where to save the node",
-                                                    "无法确定节点保存位置",
-                                                )
-                                                .clone_into(&mut this.status);
-                                            cx.notify();
-                                            return;
-                                        };
-                                        let runtime = this.runtime.clone();
-                                        let remove_id = id.clone();
-                                        this.language()
-                                            .text(
-                                                "Removing saved VLESS node",
-                                                "正在移除保存的 VLESS 节点",
-                                            )
-                                            .clone_into(&mut this.status);
-                                        let executor = cx.background_executor().clone();
-                                        cx.spawn(async move |this, cx| {
-                                            let result = executor
-                                                .spawn(async move {
-                                                    super::mutate_saved_sources(
-                                                        &runtime,
-                                                        &store_dir,
-                                                        || {
-                                                            mihomo::remove_single_node_source_in(
-                                                                &store_dir,
-                                                                &remove_id,
-                                                            )?;
-                                                            Ok(remove_id)
-                                                        },
-                                                    )
-                                                })
-                                                .await;
-                                            this.update(cx, |this, cx| {
-                                                match result {
-                                                    Ok(transaction) => {
-                                                        let language = this.language();
-                                                        transaction.apply.reconcile_proxy_mode(
-                                                            &mut this.proxy_mode,
-                                                        );
-                                                        if let Some(deleted_id) = transaction.value {
-                                                            this.saved_single_nodes.retain(|node| {
-                                                                node.id != deleted_id
-                                                            });
-                                                            this.status = if language
-                                                                == Language::English
-                                                            {
-                                                                format!(
-                                                                    "Saved VLESS node removed{}",
-                                                                    transaction
-                                                                        .apply
-                                                                        .status_suffix(language)
-                                                                )
-                                                            } else {
-                                                                format!(
-                                                                    "已移除保存的 VLESS 节点{}",
-                                                                    transaction
-                                                                        .apply
-                                                                        .status_suffix(language)
-                                                                )
-                                                            };
-                                                        } else {
-                                                            this.status = transaction.apply
-                                                                .status_suffix_after_rollback_attempt(
-                                                                    language,
-                                                                    transaction
-                                                                        .rollback_error
-                                                                        .as_ref(),
-                                                                );
-                                                        }
-                                                    }
-                                                    Err(error) => {
-                                                        this.status = format!(
-                                                            "{}: {error}",
-                                                            this.language().text(
-                                                                "Failed to remove node",
-                                                                "移除节点失败"
-                                                            )
-                                                        );
-                                                    }
-                                                }
-                                                cx.notify();
-                                            })
-                                            .ok();
-                                        })
-                                        .detach();
-                                        cx.notify();
-                                    })),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .mt(Space::Xs.px())
-                            .text_size(TextRole::Metadata.size())
-                            .line_height(TextRole::Metadata.line_height())
-                            .text_color(theme.text_secondary)
-                            .child(format!("{} · {}", node.protocol, node.detail)),
-                    ),
-            );
-        }
-        list
     }
 
     fn subscription_error(
