@@ -686,6 +686,7 @@ impl ManagedPolicyRuntimeState {
     }
 }
 
+#[allow(clippy::struct_excessive_bools)]
 pub struct ManisApp {
     localizer: Localizer,
     primary_workspace: PrimaryWorkspace,
@@ -1535,7 +1536,7 @@ impl ManisApp {
         cx.notify();
     }
 
-    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
     fn import_remote_subscription(
         &mut self,
         input: String,

@@ -232,6 +232,10 @@ impl Profile {
     ///
     /// Each local path points to a private file containing one proxy share link. This lets Mihomo
     /// parse all single-node protocols it supports without duplicating those protocol parsers here.
+    ///
+    /// # Errors
+    /// Returns a redacted validation error if the source set is empty, names collide, a local
+    /// provider path is invalid, or a user group references an unknown source or policy.
     pub fn qx_sources_with_groups_and_local_providers(
         subscriptions: Vec<SecretUrl>,
         local_provider_paths: Vec<String>,
