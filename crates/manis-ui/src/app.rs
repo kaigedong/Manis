@@ -55,7 +55,8 @@ mod routing_apply;
 mod stored_workspace;
 
 use routing_apply::{
-    RoutingApplyRollback, RoutingApplyState, SourceRuntimeApply, mutate_saved_sources,
+    RoutingApplyRollback, RoutingApplyState, SourceMutation, SourceRuntimeApply,
+    mutate_saved_sources,
 };
 use stored_workspace::StoredWorkspace;
 
@@ -226,6 +227,10 @@ enum ImportSubscriptionError {
     Store(SubscriptionStoreError),
 }
 
+type SubscriptionRefreshResult =
+    Result<(Vec<LoadedProvider>, SourceMutation<StoredSubscription>), ImportSubscriptionError>;
+type RoutingModeApplyResult = Result<Result<Option<()>, SubscriptionStoreError>, mihomo::LoadError>;
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 enum QxRuleImportFeedback {
     #[default]
@@ -273,6 +278,14 @@ struct PolicyCandidateRowContext {
     selection_busy: bool,
     benchmark_state: GroupBenchmarkNodeState,
     theme: Theme,
+}
+
+#[derive(Clone)]
+struct PolicySelectionRequest {
+    group_id: PolicyGroupId,
+    group_name: String,
+    node_id: ProxyId,
+    node_name: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1541,7 +1554,6 @@ impl ManisApp {
         }
     }
 
-    #[allow(clippy::too_many_lines)]
     fn refresh_imported_subscription(&mut self, id: String, cx: &mut Context<Self>) {
         let language = self.language();
         let Some(store_dir) = self.subscription_store_dir.clone() else {
@@ -1604,79 +1616,90 @@ impl ManisApp {
                 })
                 .await;
             this.update(cx, |this, cx| {
-                let language = this.language();
-                let Some(subscription) = this
-                    .imported_subscriptions
-                    .iter_mut()
-                    .find(|subscription| subscription.id == id)
-                else {
-                    return;
-                };
-                if subscription.generation != generation {
-                    return;
-                }
-                match result {
-                    Ok((providers, transaction)) if transaction.value.is_some() => {
-                        let stored = transaction.value.expect("checked committed mutation");
-                        let node_count: usize =
-                            providers.iter().map(|provider| provider.nodes.len()).sum();
-                        subscription.providers = providers;
-                        subscription.state = ImportedSubscriptionState::Ready(kind);
-                        subscription.refresh_interval = stored.refresh_interval;
-                        subscription.last_successful_update_unix_secs =
-                            stored.last_successful_update_unix_secs;
-                        this.source_refresh_retry_not_before
-                            .remove(&DueRemoteSource::Subscription(id.clone()).scheduler_key());
-                        transaction.apply.reconcile_proxy_mode(&mut this.proxy_mode);
-                        this.status = if language == Language::English {
-                            format!(
-                                "Subscription updated · {node_count} nodes{}",
-                                transaction.apply.status_suffix(language)
-                            )
-                        } else {
-                            format!(
-                                "订阅更新完成 · {node_count} 个节点{}",
-                                transaction.apply.status_suffix(language)
-                            )
-                        };
-                        trace_ui(UiEvent::SourceRestoreSucceeded);
-                    }
-                    Ok((_providers, transaction)) => {
-                        subscription.state = ImportedSubscriptionState::Pending(kind);
-                        this.status = format!(
-                            "{}{}",
-                            language.text("Subscription update failed", "订阅更新失败"),
-                            transaction
-                                .apply
-                                .status_suffix_after_source_rollback(language)
-                        );
-                        trace_ui(UiEvent::SourceRestoreFailed);
-                    }
-                    Err(ImportSubscriptionError::Preview(error)) => {
-                        subscription.state = ImportedSubscriptionState::Unavailable(kind, error);
-                        this.status = format!(
-                            "{}{error}",
-                            language.text("Subscription update failed: ", "订阅更新失败：")
-                        );
-                        trace_ui(UiEvent::SourceRestoreFailed);
-                    }
-                    Err(ImportSubscriptionError::Store(error)) => {
-                        subscription.state = ImportedSubscriptionState::StoreError(error);
-                        this.status = format!(
-                            "{}{error}",
-                            language.text(
-                                "Subscription loaded, but its update time could not be saved: ",
-                                "订阅已读取，但更新时间保存失败："
-                            )
-                        );
-                        trace_ui(UiEvent::SourceRestoreFailed);
-                    }
-                }
-                cx.notify();
+                this.finish_subscription_refresh(&id, generation, kind, result, cx);
             })
             .ok();
         })
         .detach();
+    }
+
+    fn finish_subscription_refresh(
+        &mut self,
+        id: &str,
+        generation: u64,
+        kind: SourceKind,
+        result: SubscriptionRefreshResult,
+        cx: &mut Context<Self>,
+    ) {
+        let language = self.language();
+        let Some(subscription) = self
+            .imported_subscriptions
+            .iter_mut()
+            .find(|subscription| subscription.id == id)
+        else {
+            return;
+        };
+        if subscription.generation != generation {
+            return;
+        }
+        match result {
+            Ok((providers, transaction)) if transaction.value.is_some() => {
+                let stored = transaction.value.expect("checked committed mutation");
+                let node_count: usize = providers.iter().map(|provider| provider.nodes.len()).sum();
+                subscription.providers = providers;
+                subscription.state = ImportedSubscriptionState::Ready(kind);
+                subscription.refresh_interval = stored.refresh_interval;
+                subscription.last_successful_update_unix_secs =
+                    stored.last_successful_update_unix_secs;
+                self.source_refresh_retry_not_before
+                    .remove(&DueRemoteSource::Subscription(id.to_owned()).scheduler_key());
+                transaction.apply.reconcile_proxy_mode(&mut self.proxy_mode);
+                self.status = if language == Language::English {
+                    format!(
+                        "Subscription updated · {node_count} nodes{}",
+                        transaction.apply.status_suffix(language)
+                    )
+                } else {
+                    format!(
+                        "订阅更新完成 · {node_count} 个节点{}",
+                        transaction.apply.status_suffix(language)
+                    )
+                };
+                trace_ui(UiEvent::SourceRestoreSucceeded);
+            }
+            Ok((_providers, transaction)) => {
+                subscription.state = ImportedSubscriptionState::Pending(kind);
+                self.status = format!(
+                    "{}{}",
+                    language.text("Subscription update failed", "订阅更新失败"),
+                    transaction.apply.status_suffix_after_rollback_attempt(
+                        language,
+                        transaction.rollback_error.as_ref(),
+                    )
+                );
+                trace_ui(UiEvent::SourceRestoreFailed);
+            }
+            Err(ImportSubscriptionError::Preview(error)) => {
+                subscription.state = ImportedSubscriptionState::Unavailable(kind, error);
+                self.status = format!(
+                    "{}{error}",
+                    language.text("Subscription update failed: ", "订阅更新失败：")
+                );
+                trace_ui(UiEvent::SourceRestoreFailed);
+            }
+            Err(ImportSubscriptionError::Store(error)) => {
+                subscription.state = ImportedSubscriptionState::StoreError(error);
+                self.status = format!(
+                    "{}{error}",
+                    language.text(
+                        "Subscription loaded, but its update time could not be saved: ",
+                        "订阅已读取，但更新时间保存失败："
+                    )
+                );
+                trace_ui(UiEvent::SourceRestoreFailed);
+            }
+        }
+        cx.notify();
     }
 
     fn source_refresh_busy(&self) -> bool {
@@ -3178,7 +3201,6 @@ impl ManisApp {
         self.apply_proxy_mode(self.proxy_mode.toggled(selected), cx);
     }
 
-    #[allow(clippy::too_many_lines)]
     fn apply_proxy_mode(&mut self, requested: ProxyMode, cx: &mut Context<Self>) {
         let language = self.language();
         let operation = begin_operation(
@@ -3190,69 +3212,7 @@ impl ManisApp {
                 self.runtime.profile_source().label()
             ),
         );
-        if self.proxy_mode_busy.is_some() || requested == self.proxy_mode {
-            record_operation(
-                operation,
-                LogLevel::Warn,
-                "proxy.mode.ignored",
-                format!(
-                    "busy={} already_selected={}",
-                    self.proxy_mode_busy.is_some(),
-                    requested == self.proxy_mode
-                ),
-            );
-            return;
-        }
-        if !matches!(self.controller, ControllerState::Connected { .. }) {
-            record_operation(
-                operation,
-                LogLevel::Error,
-                "proxy.mode.rejected",
-                "reason=controller_not_connected",
-            );
-            trace_ui(UiEvent::ProxyModeFailed);
-            self.status = format!(
-                "{} {}",
-                language.text(
-                    "Connect before changing proxy mode:",
-                    "请先连接后再切换代理模式："
-                ),
-                self.runtime.kind().display_name(),
-            );
-            cx.notify();
-            return;
-        }
-        if requested == ProxyMode::Tun && !self.runtime.capabilities().tun {
-            record_operation(
-                operation,
-                LogLevel::Error,
-                "proxy.mode.rejected",
-                "reason=kernel_has_no_tun_capability",
-            );
-            trace_ui(UiEvent::ProxyModeFailed);
-            language.text(
-                "TUN is not yet available for the sing-box adapter; use the system HTTP/SOCKS proxy",
-                "当前 sing-box 适配器尚未开放 TUN；可使用系统 HTTP/SOCKS 代理",
-            )
-                .clone_into(&mut self.status);
-            cx.notify();
-            return;
-        }
-        if requested == ProxyMode::Tun && self.runtime.is_fixture() {
-            record_operation(
-                operation,
-                LogLevel::Error,
-                "proxy.mode.rejected",
-                "reason=fixture_read_only",
-            );
-            trace_ui(UiEvent::ProxyModeFailed);
-            language
-                .text(
-                    "Test fixtures cannot enable TUN",
-                    "测试快照不能启用 TUN 模式",
-                )
-                .clone_into(&mut self.status);
-            cx.notify();
+        if self.reject_proxy_mode_request(requested, operation, cx) {
             return;
         }
 
@@ -3292,98 +3252,19 @@ impl ManisApp {
         cx.spawn(async move |this, cx| {
             let result = executor
                 .spawn(async move {
-                    let mut system = system_proxy
-                        .lock()
-                        .map_err(|_| "系统代理状态锁已损坏".to_owned())?;
-                    let mut dns = tun_dns
-                        .lock()
-                        .map_err(|_| "TUN DNS 状态锁已损坏".to_owned())?;
-                    match (previous, requested) {
-                        (ProxyMode::System, ProxyMode::Off) => {
-                            system
-                                .disable_with_language(language)
-                                .map_err(|error| error.to_string())?;
-                        }
-                        (ProxyMode::Tun, ProxyMode::Off) => {
-                            disable_tun_with_dns(&runtime, &mut dns, language)?;
-                        }
-                        (ProxyMode::Off, ProxyMode::System) => {
-                            system
-                                .enable_with_language(ports, language)
-                                .map_err(|error| error.to_string())?;
-                        }
-                        (ProxyMode::Tun, ProxyMode::System) => {
-                            disable_tun_with_dns(&runtime, &mut dns, language)?;
-                            if let Err(error) = system.enable_with_language(ports, language) {
-                                let rollback = enable_tun_with_dns(&runtime, &mut dns, language);
-                                return Err(match rollback {
-                                    Ok(()) => error.to_string(),
-                                    Err(rollback) => {
-                                        format!("{error}；恢复原 TUN 模式也失败：{rollback}")
-                                    }
-                                });
-                            }
-                        }
-                        (ProxyMode::Off, ProxyMode::Tun) => {
-                            enable_tun_with_dns(&runtime, &mut dns, language)?;
-                        }
-                        (ProxyMode::System, ProxyMode::Tun) => {
-                            system
-                                .disable_with_language(language)
-                                .map_err(|error| error.to_string())?;
-                            if let Err(error) = enable_tun_with_dns(&runtime, &mut dns, language) {
-                                let rollback = system.enable_with_language(ports, language);
-                                return Err(match rollback {
-                                    Ok(()) => error.clone(),
-                                    Err(rollback) => {
-                                        format!("{error}；恢复原系统代理也失败：{rollback}")
-                                    }
-                                });
-                            }
-                        }
-                        _ => {}
-                    }
-                    Ok::<(), String>(())
+                    apply_proxy_mode_transition(
+                        &runtime,
+                        &system_proxy,
+                        &tun_dns,
+                        previous,
+                        requested,
+                        ports,
+                        language,
+                    )
                 })
                 .await;
             this.update(cx, |this, cx| {
-                let language = this.language();
-                this.proxy_mode_busy = None;
-                match result {
-                    Ok(()) => {
-                        record_operation(
-                            operation,
-                            LogLevel::Info,
-                            "proxy.mode.succeeded",
-                            format!("active={requested:?}"),
-                        );
-                        this.proxy_mode = requested;
-                        match requested {
-                            ProxyMode::Off => trace_ui(UiEvent::SystemProxyDisabled),
-                            ProxyMode::System => trace_ui(UiEvent::SystemProxyEnabled),
-                            ProxyMode::Tun => trace_ui(UiEvent::TunProxyEnabled),
-                        }
-                        this.status = format!(
-                            "{}{}",
-                            proxy_mode_label(language, requested),
-                            language.text(" enabled", "已生效")
-                        );
-                    }
-                    Err(message) => {
-                        record_operation(
-                            operation,
-                            LogLevel::Error,
-                            "proxy.mode.failed",
-                            message.clone(),
-                        );
-                        trace_ui(UiEvent::ProxyModeFailed);
-                        this.status = format!(
-                            "{}{message}",
-                            language.text("Failed to change proxy mode: ", "代理模式切换失败：")
-                        );
-                    }
-                }
-                cx.notify();
+                this.finish_proxy_mode_change(requested, operation, result, cx);
             })
             .ok();
         })
@@ -3391,7 +3272,117 @@ impl ManisApp {
         cx.notify();
     }
 
-    #[allow(clippy::too_many_lines)]
+    fn reject_proxy_mode_request(
+        &mut self,
+        requested: ProxyMode,
+        operation: u64,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let language = self.language();
+        if self.proxy_mode_busy.is_some() || requested == self.proxy_mode {
+            record_operation(
+                operation,
+                LogLevel::Warn,
+                "proxy.mode.ignored",
+                format!(
+                    "busy={} already_selected={}",
+                    self.proxy_mode_busy.is_some(),
+                    requested == self.proxy_mode
+                ),
+            );
+            return true;
+        }
+        let (reason, status) = if !matches!(self.controller, ControllerState::Connected { .. }) {
+            (
+                "controller_not_connected",
+                format!(
+                    "{} {}",
+                    language.text(
+                        "Connect before changing proxy mode:",
+                        "请先连接后再切换代理模式："
+                    ),
+                    self.runtime.kind().display_name(),
+                ),
+            )
+        } else if requested == ProxyMode::Tun && !self.runtime.capabilities().tun {
+            (
+                "kernel_has_no_tun_capability",
+                language.text(
+                    "TUN is not yet available for the sing-box adapter; use the system HTTP/SOCKS proxy",
+                    "当前 sing-box 适配器尚未开放 TUN；可使用系统 HTTP/SOCKS 代理",
+                ).to_owned(),
+            )
+        } else if requested == ProxyMode::Tun && self.runtime.is_fixture() {
+            (
+                "fixture_read_only",
+                language
+                    .text(
+                        "Test fixtures cannot enable TUN",
+                        "测试快照不能启用 TUN 模式",
+                    )
+                    .to_owned(),
+            )
+        } else {
+            return false;
+        };
+        record_operation(
+            operation,
+            LogLevel::Error,
+            "proxy.mode.rejected",
+            format!("reason={reason}"),
+        );
+        trace_ui(UiEvent::ProxyModeFailed);
+        self.status = status;
+        cx.notify();
+        true
+    }
+
+    fn finish_proxy_mode_change(
+        &mut self,
+        requested: ProxyMode,
+        operation: u64,
+        result: Result<(), String>,
+        cx: &mut Context<Self>,
+    ) {
+        let language = self.language();
+        self.proxy_mode_busy = None;
+        match result {
+            Ok(()) => {
+                record_operation(
+                    operation,
+                    LogLevel::Info,
+                    "proxy.mode.succeeded",
+                    format!("active={requested:?}"),
+                );
+                self.proxy_mode = requested;
+                match requested {
+                    ProxyMode::Off => trace_ui(UiEvent::SystemProxyDisabled),
+                    ProxyMode::System => trace_ui(UiEvent::SystemProxyEnabled),
+                    ProxyMode::Tun => trace_ui(UiEvent::TunProxyEnabled),
+                }
+                self.status = format!(
+                    "{}{}",
+                    proxy_mode_label(language, requested),
+                    language.text(" enabled", "已生效")
+                );
+            }
+            Err(message) => {
+                record_operation(
+                    operation,
+                    LogLevel::Error,
+                    "proxy.mode.failed",
+                    message.clone(),
+                );
+                trace_ui(UiEvent::ProxyModeFailed);
+                self.status = format!(
+                    "{}{message}",
+                    language.text("Failed to change proxy mode: ", "代理模式切换失败：")
+                );
+            }
+        }
+        cx.notify();
+    }
+
     fn apply_routing_mode(&mut self, requested: RoutingMode, cx: &mut Context<Self>) {
         let language = self.language();
         let operation = begin_operation(
@@ -3472,63 +3463,7 @@ impl ManisApp {
                 })
                 .await;
             this.update(cx, |this, cx| {
-                let language = this.language();
-                this.routing_mode_busy = None;
-                match result {
-                    Ok(persistence) => {
-                        record_operation(
-                            operation,
-                            LogLevel::Info,
-                            "routing.mode.succeeded",
-                            format!("active={requested:?} persisted={}", persistence.is_ok()),
-                        );
-                        this.routing_mode = requested;
-                        this.proxy_runtime.mode = requested;
-                        trace_ui(UiEvent::RoutingModeChanged);
-                        this.status = match requested {
-                            RoutingMode::Global => this.global_target().map_or_else(
-                                || {
-                                    language.text(
-                                    "Global mode enabled; choose the global exit on the Nodes page",
-                                    "全局模式已生效；请在节点页选择全局出口",
-                                ).to_owned()
-                                },
-                                |target| {
-                                    if language == Language::English {
-                                        format!("Global mode enabled · current exit {target}")
-                                    } else {
-                                        format!("全局模式已生效 · 当前出口 {target}")
-                                    }
-                                },
-                            ),
-                            _ => format!(
-                                "{}{}",
-                                routing_mode_label(language, requested),
-                                language.text(" enabled", "已生效")
-                            ),
-                        };
-                        if persistence.is_err() {
-                            this.status.push_str(language.text(
-                                " · restart preference could not be saved",
-                                " · 但未能保存重启偏好",
-                            ));
-                        }
-                    }
-                    Err(error) => {
-                        record_operation(
-                            operation,
-                            LogLevel::Error,
-                            "routing.mode.failed",
-                            error.to_string(),
-                        );
-                        trace_ui(UiEvent::RoutingModeFailed);
-                        this.status = format!(
-                            "{}{error}",
-                            language.text("Failed to change routing mode: ", "路由模式切换失败：")
-                        );
-                    }
-                }
-                cx.notify();
+                this.finish_routing_mode_change(requested, operation, result, cx);
             })
             .ok();
         })
@@ -3536,7 +3471,75 @@ impl ManisApp {
         cx.notify();
     }
 
-    #[allow(clippy::too_many_lines)]
+    fn finish_routing_mode_change(
+        &mut self,
+        requested: RoutingMode,
+        operation: u64,
+        result: RoutingModeApplyResult,
+        cx: &mut Context<Self>,
+    ) {
+        let language = self.language();
+        self.routing_mode_busy = None;
+        match result {
+            Ok(persistence) => {
+                record_operation(
+                    operation,
+                    LogLevel::Info,
+                    "routing.mode.succeeded",
+                    format!("active={requested:?} persisted={}", persistence.is_ok()),
+                );
+                self.routing_mode = requested;
+                self.proxy_runtime.mode = requested;
+                trace_ui(UiEvent::RoutingModeChanged);
+                self.status = match requested {
+                    RoutingMode::Global => self.global_target().map_or_else(
+                        || {
+                            language
+                                .text(
+                                    "Global mode enabled; choose the global exit on the Nodes page",
+                                    "全局模式已生效；请在节点页选择全局出口",
+                                )
+                                .to_owned()
+                        },
+                        |target| match language {
+                            Language::English => {
+                                format!("Global mode enabled · current exit {target}")
+                            }
+                            Language::SimplifiedChinese => {
+                                format!("全局模式已生效 · 当前出口 {target}")
+                            }
+                        },
+                    ),
+                    _ => format!(
+                        "{}{}",
+                        routing_mode_label(language, requested),
+                        language.text(" enabled", "已生效")
+                    ),
+                };
+                if persistence.is_err() {
+                    self.status.push_str(language.text(
+                        " · restart preference could not be saved",
+                        " · 但未能保存重启偏好",
+                    ));
+                }
+            }
+            Err(error) => {
+                record_operation(
+                    operation,
+                    LogLevel::Error,
+                    "routing.mode.failed",
+                    error.to_string(),
+                );
+                trace_ui(UiEvent::RoutingModeFailed);
+                self.status = format!(
+                    "{}{error}",
+                    language.text("Failed to change routing mode: ", "路由模式切换失败：")
+                );
+            }
+        }
+        cx.notify();
+    }
+
     fn select_global_node(&mut self, selected: NodeIdentity, cx: &mut Context<Self>) {
         let language = self.language();
         let selected_name = selected.node_name.clone();
@@ -3622,49 +3625,7 @@ impl ManisApp {
                 })
                 .await;
             this.update(cx, |this, cx| {
-                let language = this.language();
-                this.global_selection_busy = None;
-                match result {
-                    Ok(snapshot) => {
-                        record_operation(
-                            operation,
-                            LogLevel::Info,
-                            "global.node.succeeded",
-                            "global selector confirmed target",
-                        );
-                        let current = snapshot.current.as_deref().unwrap_or(&selected_name);
-                        trace_ui(UiEvent::GlobalNodeSelected);
-                        this.status = if language == Language::English {
-                            if this.routing_mode == RoutingMode::Global {
-                                format!("Global exit switched to “{current}”")
-                            } else {
-                                format!("Saved global exit “{current}”; it applies in Global mode")
-                            }
-                        } else if this.routing_mode == RoutingMode::Global {
-                            format!("全局出口已切换到“{current}”")
-                        } else {
-                            format!("已保存全局出口“{current}”；切换到全局模式后生效")
-                        };
-                    }
-                    Err(error) => {
-                        record_operation(
-                            operation,
-                            LogLevel::Error,
-                            "global.node.failed",
-                            error.to_string(),
-                        );
-                        this.status = if language == Language::English {
-                            format!(
-                                "Saved global exit “{selected_name}”, but it could not be applied now: {error}"
-                            )
-                        } else {
-                            format!(
-                                "已保存全局出口“{selected_name}”，但暂时无法应用：{error}"
-                            )
-                        };
-                    }
-                }
-                cx.notify();
+                this.finish_global_node_selection(&selected_name, operation, result, cx);
             })
             .ok();
         })
@@ -3672,153 +3633,86 @@ impl ManisApp {
         cx.notify();
     }
 
-    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
-    fn select_policy_node(
+    fn finish_global_node_selection(
         &mut self,
-        group_id: PolicyGroupId,
-        group_name: String,
-        node_id: ProxyId,
-        node_name: String,
+        selected_name: &str,
+        operation: u64,
+        result: Result<mihomo::ManagedPolicyRuntimeSnapshot, mihomo::LoadError>,
         cx: &mut Context<Self>,
     ) {
+        let language = self.language();
+        self.global_selection_busy = None;
+        match result {
+            Ok(snapshot) => {
+                record_operation(
+                    operation,
+                    LogLevel::Info,
+                    "global.node.succeeded",
+                    "global selector confirmed target",
+                );
+                let current = snapshot.current.as_deref().unwrap_or(selected_name);
+                trace_ui(UiEvent::GlobalNodeSelected);
+                self.status = match (language, self.routing_mode) {
+                    (Language::English, RoutingMode::Global) => {
+                        format!("Global exit switched to “{current}”")
+                    }
+                    (Language::English, _) => {
+                        format!("Saved global exit “{current}”; it applies in Global mode")
+                    }
+                    (Language::SimplifiedChinese, RoutingMode::Global) => {
+                        format!("全局出口已切换到“{current}”")
+                    }
+                    (Language::SimplifiedChinese, _) => {
+                        format!("已保存全局出口“{current}”；切换到全局模式后生效")
+                    }
+                };
+            }
+            Err(error) => {
+                record_operation(
+                    operation,
+                    LogLevel::Error,
+                    "global.node.failed",
+                    error.to_string(),
+                );
+                self.status = match language {
+                    Language::English => format!(
+                        "Saved global exit “{selected_name}”, but it could not be applied now: {error}"
+                    ),
+                    Language::SimplifiedChinese => {
+                        format!("已保存全局出口“{selected_name}”，但暂时无法应用：{error}")
+                    }
+                };
+            }
+        }
+        cx.notify();
+    }
+
+    fn select_policy_node(&mut self, request: PolicySelectionRequest, cx: &mut Context<Self>) {
+        let PolicySelectionRequest {
+            group_id,
+            group_name,
+            node_id,
+            node_name,
+        } = request;
         let language = self.language();
         let operation = begin_operation(
             "policy.node.requested",
             format!("group={group_name} candidate_selected=true"),
         );
-        if self.policy_selection_busy.is_some() {
-            record_operation(
-                operation,
-                LogLevel::Warn,
-                "policy.node.ignored",
-                "reason=selection_busy",
-            );
-            return;
-        }
-        let stored_group = self
-            .managed_policy_groups
-            .iter()
-            .find(|group| group.id == group_id.as_str() || group.name == group_name);
-        if !matches!(self.controller, ControllerState::Connected { .. }) && stored_group.is_none() {
-            record_operation(
-                operation,
-                LogLevel::Warn,
-                "policy.node.rejected",
-                "reason=runtime_policy_unavailable",
-            );
-            language
-                .text(
-                    "Start Mihomo before selecting a node for this policy group.",
-                    "请先启动 Mihomo，再为此策略组选择节点。",
-                )
-                .clone_into(&mut self.status);
-            cx.notify();
-            return;
-        }
-        let catalog_allows = self
-            .policy_groups()
-            .find(|group| group.id == group_id || group.name == group_name)
-            .map(|group| {
-                group.kind.allows_manual_selection()
-                    && group.nodes.iter().any(|node| node.name == node_name)
-            });
-        let stored_group_allows = stored_group.map(|group| {
-            group.strategy == ManagedPolicyStrategy::Manual
-                && self
-                    .managed_policy_candidate_names(group)
-                    .iter()
-                    .any(|candidate| candidate == &node_name)
-        });
-        if !policy_target_is_selectable(
-            matches!(self.controller, ControllerState::Connected { .. }),
-            catalog_allows,
-            stored_group_allows,
-        ) {
-            record_operation(
-                operation,
-                LogLevel::Error,
-                "policy.node.rejected",
-                "reason=not_manual_candidate",
-            );
-            language
-                .text(
-                    "Only a candidate inside a manual policy can be selected",
-                    "只能选择手动策略组中的候选节点",
-                )
-                .clone_into(&mut self.status);
-            cx.notify();
+        if self.reject_policy_selection_request(&group_id, &group_name, &node_name, operation, cx) {
             return;
         }
 
-        let previous = self.node_selection_preferences.clone();
-        if let Err(error) = self
-            .node_selection_preferences
-            .set_policy_target(group_name.clone(), node_name.clone())
-        {
-            record_operation(
-                operation,
-                LogLevel::Error,
-                "policy.node.rejected",
-                error.to_string(),
-            );
-            language
-                .text(
-                    "This policy selection cannot be saved",
-                    "无法保存这个策略组选择",
-                )
-                .clone_into(&mut self.status);
-            cx.notify();
-            return;
-        }
-        if let Some(directory) = self.subscription_store_dir.as_deref()
-            && let Err(error) = mihomo::save_node_selection_preferences_in(
-                directory,
-                &self.node_selection_preferences,
-            )
-        {
-            self.node_selection_preferences = previous;
-            record_operation(
-                operation,
-                LogLevel::Error,
-                "policy.node.persistence_failed",
-                error.to_string(),
-            );
-            self.status = format!(
-                "{}{error}",
-                language.text(
-                    "Could not save the policy selection: ",
-                    "无法保存策略组选择："
-                )
-            );
-            cx.notify();
-            return;
-        }
-        let catalog_selection = self
-            .policy_groups()
-            .find(|group| group.name == group_name)
-            .and_then(|group| {
-                group
-                    .nodes
-                    .iter()
-                    .find(|node| node.name == node_name)
-                    .map(|node| (group.id.clone(), node.id.clone()))
-            });
-        if let Some(catalog) = self.catalog.as_mut() {
-            let _ = catalog.apply_selector_target(&group_name, &node_name);
-        }
-        if self.workspace.selected_group.as_ref() == Some(&group_id) {
-            self.workspace.select_node(node_id.clone());
-        } else if let Some((catalog_group_id, catalog_node_id)) = catalog_selection
-            && self.workspace.selected_group.as_ref() == Some(&catalog_group_id)
-        {
-            self.workspace.select_node(catalog_node_id);
-        }
-        record_operation(
+        let Some(previous) = self.persist_policy_selection(
+            &group_id,
+            &group_name,
+            &node_id,
+            &node_name,
             operation,
-            LogLevel::Info,
-            "policy.node.saved",
-            format!("group={group_name}"),
-        );
+            cx,
+        ) else {
+            return;
+        };
 
         let can_apply_now = matches!(self.controller, ControllerState::Connected { .. })
             && matches!(&*self.runtime, ControllerRuntime::Managed { .. });
@@ -3869,6 +3763,12 @@ impl ManisApp {
         } else {
             format!("正在将“{group_name}”设为“{node_name}”…")
         };
+        let completion = PolicySelectionRequest {
+            group_id,
+            group_name: group_name.clone(),
+            node_id,
+            node_name: node_name.clone(),
+        };
         let runtime = self.runtime.clone();
         let executor = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
@@ -3880,72 +3780,245 @@ impl ManisApp {
                 })
                 .await;
             this.update(cx, |this, cx| {
-                this.policy_selection_busy = None;
-                match result {
-                    Ok(snapshot) => {
-                        let current = snapshot
-                            .current
-                            .clone()
-                            .unwrap_or_else(|| node_name.clone());
-                        if let Some(catalog) = this.catalog.as_mut() {
-                            let _ = catalog.apply_selector_target(&group_name, &current);
-                        }
-                        if this.workspace.selected_group.as_ref() == Some(&group_id) {
-                            this.workspace.select_node(node_id);
-                        }
-                        if let Some(stored_group) = this
-                            .managed_policy_groups
-                            .iter()
-                            .find(|group| group.name == group_name)
-                        {
-                            this.managed_policy_runtime_generation =
-                                this.managed_policy_runtime_generation.wrapping_add(1);
-                            this.managed_policy_runtime_states.insert(
-                                stored_group.id.clone(),
-                                ManagedPolicyRuntimeState::Ready {
-                                    generation: this.managed_policy_runtime_generation,
-                                    current: snapshot.current,
-                                    candidates: snapshot.candidates,
-                                },
-                            );
-                        }
-                        record_operation(
-                            operation,
-                            LogLevel::Info,
-                            "policy.node.succeeded",
-                            format!("group={group_name}"),
-                        );
-                        this.status = if this.language() == Language::English {
-                            format!(
-                                "“{group_name}” now uses “{current}” when a rule selects this policy"
-                            )
-                        } else {
-                            format!("规则命中“{group_name}”时将使用“{current}”")
-                        };
-                    }
-                    Err(error) => {
-                        record_operation(
-                            operation,
-                            LogLevel::Error,
-                            "policy.node.failed",
-                            error.to_string(),
-                        );
-                        this.status = if this.language() == Language::English {
-                            format!(
-                                "Saved “{node_name}” for “{group_name}”, but it could not be applied now: {error}"
-                            )
-                        } else {
-                            format!(
-                                "已为“{group_name}”保存“{node_name}”，但暂时无法应用：{error}"
-                            )
-                        };
-                    }
-                }
-                cx.notify();
+                this.finish_policy_node_selection(completion, operation, result, cx);
             })
             .ok();
         })
         .detach();
+        cx.notify();
+    }
+
+    fn reject_policy_selection_request(
+        &mut self,
+        group_id: &PolicyGroupId,
+        group_name: &str,
+        node_name: &str,
+        operation: u64,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let language = self.language();
+        if self.policy_selection_busy.is_some() {
+            record_operation(
+                operation,
+                LogLevel::Warn,
+                "policy.node.ignored",
+                "reason=selection_busy",
+            );
+            return true;
+        }
+        let stored_group = self
+            .managed_policy_groups
+            .iter()
+            .find(|group| group.id == group_id.as_str() || group.name == group_name);
+        if !matches!(self.controller, ControllerState::Connected { .. }) && stored_group.is_none() {
+            record_operation(
+                operation,
+                LogLevel::Warn,
+                "policy.node.rejected",
+                "reason=runtime_policy_unavailable",
+            );
+            language
+                .text(
+                    "Start Mihomo before selecting a node for this policy group.",
+                    "请先启动 Mihomo，再为此策略组选择节点。",
+                )
+                .clone_into(&mut self.status);
+            cx.notify();
+            return true;
+        }
+        let catalog_allows = self
+            .policy_groups()
+            .find(|group| group.id == *group_id || group.name == group_name)
+            .map(|group| {
+                group.kind.allows_manual_selection()
+                    && group.nodes.iter().any(|node| node.name == node_name)
+            });
+        let stored_group_allows = stored_group.map(|group| {
+            group.strategy == ManagedPolicyStrategy::Manual
+                && self
+                    .managed_policy_candidate_names(group)
+                    .iter()
+                    .any(|candidate| candidate == node_name)
+        });
+        if policy_target_is_selectable(
+            matches!(self.controller, ControllerState::Connected { .. }),
+            catalog_allows,
+            stored_group_allows,
+        ) {
+            return false;
+        }
+        record_operation(
+            operation,
+            LogLevel::Error,
+            "policy.node.rejected",
+            "reason=not_manual_candidate",
+        );
+        language
+            .text(
+                "Only a candidate inside a manual policy can be selected",
+                "只能选择手动策略组中的候选节点",
+            )
+            .clone_into(&mut self.status);
+        cx.notify();
+        true
+    }
+
+    fn persist_policy_selection(
+        &mut self,
+        group_id: &PolicyGroupId,
+        group_name: &str,
+        node_id: &ProxyId,
+        node_name: &str,
+        operation: u64,
+        cx: &mut Context<Self>,
+    ) -> Option<mihomo::NodeSelectionPreferences> {
+        let language = self.language();
+        let previous = self.node_selection_preferences.clone();
+        if let Err(error) = self
+            .node_selection_preferences
+            .set_policy_target(group_name, node_name)
+        {
+            record_operation(
+                operation,
+                LogLevel::Error,
+                "policy.node.rejected",
+                error.to_string(),
+            );
+            language
+                .text(
+                    "This policy selection cannot be saved",
+                    "无法保存这个策略组选择",
+                )
+                .clone_into(&mut self.status);
+            cx.notify();
+            return None;
+        }
+        if let Some(directory) = self.subscription_store_dir.as_deref()
+            && let Err(error) = mihomo::save_node_selection_preferences_in(
+                directory,
+                &self.node_selection_preferences,
+            )
+        {
+            self.node_selection_preferences = previous;
+            record_operation(
+                operation,
+                LogLevel::Error,
+                "policy.node.persistence_failed",
+                error.to_string(),
+            );
+            self.status = format!(
+                "{}{error}",
+                language.text(
+                    "Could not save the policy selection: ",
+                    "无法保存策略组选择："
+                )
+            );
+            cx.notify();
+            return None;
+        }
+        let catalog_selection = self
+            .policy_groups()
+            .find(|group| group.name == group_name)
+            .and_then(|group| {
+                group
+                    .nodes
+                    .iter()
+                    .find(|node| node.name == node_name)
+                    .map(|node| (group.id.clone(), node.id.clone()))
+            });
+        if let Some(catalog) = self.catalog.as_mut() {
+            let _ = catalog.apply_selector_target(group_name, node_name);
+        }
+        if self.workspace.selected_group.as_ref() == Some(group_id) {
+            self.workspace.select_node(node_id.clone());
+        } else if let Some((catalog_group_id, catalog_node_id)) = catalog_selection
+            && self.workspace.selected_group.as_ref() == Some(&catalog_group_id)
+        {
+            self.workspace.select_node(catalog_node_id);
+        }
+        record_operation(
+            operation,
+            LogLevel::Info,
+            "policy.node.saved",
+            format!("group={group_name}"),
+        );
+        Some(previous)
+    }
+
+    fn finish_policy_node_selection(
+        &mut self,
+        request: PolicySelectionRequest,
+        operation: u64,
+        result: Result<mihomo::ManagedPolicyRuntimeSnapshot, mihomo::LoadError>,
+        cx: &mut Context<Self>,
+    ) {
+        let PolicySelectionRequest {
+            group_id,
+            group_name,
+            node_id,
+            node_name,
+        } = request;
+        self.policy_selection_busy = None;
+        match result {
+            Ok(snapshot) => {
+                let current = snapshot
+                    .current
+                    .clone()
+                    .unwrap_or_else(|| node_name.clone());
+                if let Some(catalog) = self.catalog.as_mut() {
+                    let _ = catalog.apply_selector_target(&group_name, &current);
+                }
+                if self.workspace.selected_group.as_ref() == Some(&group_id) {
+                    self.workspace.select_node(node_id);
+                }
+                if let Some(stored_group) = self
+                    .managed_policy_groups
+                    .iter()
+                    .find(|group| group.name == group_name)
+                {
+                    self.managed_policy_runtime_generation =
+                        self.managed_policy_runtime_generation.wrapping_add(1);
+                    self.managed_policy_runtime_states.insert(
+                        stored_group.id.clone(),
+                        ManagedPolicyRuntimeState::Ready {
+                            generation: self.managed_policy_runtime_generation,
+                            current: snapshot.current,
+                            candidates: snapshot.candidates,
+                        },
+                    );
+                }
+                record_operation(
+                    operation,
+                    LogLevel::Info,
+                    "policy.node.succeeded",
+                    format!("group={group_name}"),
+                );
+                self.status = match self.language() {
+                    Language::English => format!(
+                        "“{group_name}” now uses “{current}” when a rule selects this policy"
+                    ),
+                    Language::SimplifiedChinese => {
+                        format!("规则命中“{group_name}”时将使用“{current}”")
+                    }
+                };
+            }
+            Err(error) => {
+                record_operation(
+                    operation,
+                    LogLevel::Error,
+                    "policy.node.failed",
+                    error.to_string(),
+                );
+                self.status = match self.language() {
+                    Language::English => format!(
+                        "Saved “{node_name}” for “{group_name}”, but it could not be applied now: {error}"
+                    ),
+                    Language::SimplifiedChinese => {
+                        format!("已为“{group_name}”保存“{node_name}”，但暂时无法应用：{error}")
+                    }
+                };
+            }
+        }
         cx.notify();
     }
 
@@ -5041,10 +5114,12 @@ impl ManisApp {
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if !selection_busy {
                             this.select_policy_node(
-                                policy_id.clone(),
-                                policy_name.clone(),
-                                node_id.clone(),
-                                node_name.clone(),
+                                PolicySelectionRequest {
+                                    group_id: policy_id.clone(),
+                                    group_name: policy_name.clone(),
+                                    node_id: node_id.clone(),
+                                    node_name: node_name.clone(),
+                                },
                                 cx,
                             );
                         }
@@ -5263,10 +5338,12 @@ impl ManisApp {
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if !selection_busy {
                             this.select_policy_node(
-                                policy_id.clone(),
-                                policy_name.clone(),
-                                node_id.clone(),
-                                node_name.clone(),
+                                PolicySelectionRequest {
+                                    group_id: policy_id.clone(),
+                                    group_name: policy_name.clone(),
+                                    node_id: node_id.clone(),
+                                    node_name: node_name.clone(),
+                                },
                                 cx,
                             );
                         }
@@ -5862,6 +5939,58 @@ fn controller_status_label(
             "{kernel_name} {} · {message}",
             language.text("connection failed", "连接失败")
         ),
+    }
+}
+
+fn apply_proxy_mode_transition(
+    runtime: &KernelRuntime,
+    system_proxy: &Arc<Mutex<SystemProxySession>>,
+    tun_dns: &Arc<Mutex<TunDnsSession>>,
+    previous: ProxyMode,
+    requested: ProxyMode,
+    ports: ProxyPorts,
+    language: Language,
+) -> Result<(), String> {
+    let mut system = system_proxy
+        .lock()
+        .map_err(|_| "系统代理状态锁已损坏".to_owned())?;
+    let mut dns = tun_dns
+        .lock()
+        .map_err(|_| "TUN DNS 状态锁已损坏".to_owned())?;
+    match (previous, requested) {
+        (ProxyMode::System, ProxyMode::Off) => system
+            .disable_with_language(language)
+            .map_err(|error| error.to_string()),
+        (ProxyMode::Tun, ProxyMode::Off) => disable_tun_with_dns(runtime, &mut dns, language),
+        (ProxyMode::Off, ProxyMode::System) => system
+            .enable_with_language(ports, language)
+            .map_err(|error| error.to_string()),
+        (ProxyMode::Tun, ProxyMode::System) => {
+            disable_tun_with_dns(runtime, &mut dns, language)?;
+            if let Err(error) = system.enable_with_language(ports, language) {
+                let rollback = enable_tun_with_dns(runtime, &mut dns, language);
+                return Err(match rollback {
+                    Ok(()) => error.to_string(),
+                    Err(rollback) => format!("{error}；恢复原 TUN 模式也失败：{rollback}"),
+                });
+            }
+            Ok(())
+        }
+        (ProxyMode::Off, ProxyMode::Tun) => enable_tun_with_dns(runtime, &mut dns, language),
+        (ProxyMode::System, ProxyMode::Tun) => {
+            system
+                .disable_with_language(language)
+                .map_err(|error| error.to_string())?;
+            if let Err(error) = enable_tun_with_dns(runtime, &mut dns, language) {
+                let rollback = system.enable_with_language(ports, language);
+                return Err(match rollback {
+                    Ok(()) => error,
+                    Err(rollback) => format!("{error}；恢复原系统代理也失败：{rollback}"),
+                });
+            }
+            Ok(())
+        }
+        _ => Ok(()),
     }
 }
 

@@ -11,7 +11,6 @@ use crate::{
 };
 
 impl ManisApp {
-    #[allow(clippy::too_many_lines)]
     pub(super) fn activity_workspace(
         &self,
         theme: Theme,
@@ -62,61 +61,14 @@ impl ManisApp {
         .text_color(theme.text_primary)
         .on_click(cx.listener(|this, _, _, cx| this.connect_mihomo(cx)))
         .into_any_element();
-        let mut rows = div()
-            .id("activity-scroll")
-            .flex_1()
-            .overflow_y_scroll()
-            .flex()
-            .flex_col();
-        if visible_connections.is_empty() {
-            rows = rows.child(div().flex_1().p(Space::Xl.px()).child(if query.is_empty() {
-                empty_state(
-                    language.message(Message::NoActiveConnections),
-                    language.text(
-                        "Live traffic appears here as soon as the kernel reports a connection.",
-                        "内核上报新连接后，实时流量会显示在这里。",
-                    ),
-                    Some(
-                        action_button(
-                            "refresh-activity-empty",
-                            language.message(Message::RefreshData),
-                            ActionRole::Secondary,
-                            ControlSize::Compact,
-                        )
-                        .accessibility_label(language.text(
-                            "Refresh activity data by reconnecting the kernel",
-                            "重新连接内核并刷新网络活动数据",
-                        ))
-                        .border_color(theme.outline_subtle)
-                        .bg(theme.surface_high)
-                        .text_color(theme.text_primary)
-                        .on_click(cx.listener(|this, _, _, cx| this.connect_mihomo(cx)))
-                        .into_any_element(),
-                    ),
-                    theme,
-                )
-            } else {
-                empty_state(
-                    language.message(Message::NoFilterMatches),
-                    language.text(
-                        "Try a target host, process name, rule, or route stage.",
-                        "可以尝试输入目标域名、进程名、规则或路径节点。",
-                    ),
-                    None,
-                    theme,
-                )
-            }));
-        } else {
-            for connection in visible_connections.iter().copied() {
-                rows = rows.child(activity_row(
-                    connection,
-                    self.route_rule_group_label(connection, language).as_deref(),
-                    theme,
-                    compact,
-                    language,
-                ));
-            }
-        }
+        let rows = self.activity_rows(
+            &visible_connections,
+            query.is_empty(),
+            compact,
+            language,
+            theme,
+            cx,
+        );
 
         div()
             .flex_1()
@@ -165,6 +117,74 @@ impl ManisApp {
                     ),
             )
             .child(rows)
+    }
+
+    fn activity_rows(
+        &self,
+        visible_connections: &[&Connection],
+        no_query: bool,
+        compact: bool,
+        language: Language,
+        theme: Theme,
+        cx: &mut gpui::Context<Self>,
+    ) -> gpui::Stateful<Div> {
+        let mut rows = div()
+            .id("activity-scroll")
+            .flex_1()
+            .overflow_y_scroll()
+            .flex()
+            .flex_col();
+        if visible_connections.is_empty() {
+            rows = rows.child(div().flex_1().p(Space::Xl.px()).child(if no_query {
+                empty_state(
+                    language.message(Message::NoActiveConnections),
+                    language.text(
+                        "Live traffic appears here as soon as the kernel reports a connection.",
+                        "内核上报新连接后，实时流量会显示在这里。",
+                    ),
+                    Some(
+                        action_button(
+                            "refresh-activity-empty",
+                            language.message(Message::RefreshData),
+                            ActionRole::Secondary,
+                            ControlSize::Compact,
+                        )
+                        .accessibility_label(language.text(
+                            "Refresh activity data by reconnecting the kernel",
+                            "重新连接内核并刷新网络活动数据",
+                        ))
+                        .border_color(theme.outline_subtle)
+                        .bg(theme.surface_high)
+                        .text_color(theme.text_primary)
+                        .on_click(cx.listener(|this, _, _, cx| this.connect_mihomo(cx)))
+                        .into_any_element(),
+                    ),
+                    theme,
+                )
+            } else {
+                empty_state(
+                    language.message(Message::NoFilterMatches),
+                    language.text(
+                        "Try a target host, process name, rule, or route stage.",
+                        "可以尝试输入目标域名、进程名、规则或路径节点。",
+                    ),
+                    None,
+                    theme,
+                )
+            }));
+        } else {
+            for connection in visible_connections.iter().copied() {
+                rows = rows.child(activity_row(
+                    connection,
+                    self.route_rule_group_label(connection, language).as_deref(),
+                    theme,
+                    compact,
+                    language,
+                ));
+            }
+        }
+
+        rows
     }
 }
 
