@@ -574,14 +574,9 @@ mod macos {
     ) -> Result<DnsSnapshot, SystemProxyError> {
         let ordering = runner.output(&["-listnetworkserviceorder"], language)?;
         let service = network_service_for_interface(&ordering, interface).ok_or_else(|| {
-            SystemProxyError::Unavailable(match language {
-                Language::English => {
-                    format!("Could not map macOS interface {interface} to a network service")
-                }
-                Language::SimplifiedChinese => {
-                    format!("无法将 macOS 接口 {interface} 映射到网络服务")
-                }
-            })
+            SystemProxyError::Unavailable(copy::system_proxy::unmapped_macos_interface(
+                language, interface,
+            ))
         })?;
         let servers = parse_dns_servers(
             &runner.output(&["-getdnsservers", &service], language)?,
@@ -1142,14 +1137,9 @@ mod macos {
                 Ok(())
             } else {
                 let code = status.code().unwrap_or(-1);
-                Err(SystemProxyError::CommandFailed(match language {
-                    Language::English => {
-                        format!("macOS system proxy command failed with exit code {code}")
-                    }
-                    Language::SimplifiedChinese => {
-                        format!("macOS 系统代理命令失败（退出码 {code}）")
-                    }
-                }))
+                Err(SystemProxyError::CommandFailed(
+                    copy::system_proxy::macos_command_failed(language, code),
+                ))
             }
         }
 

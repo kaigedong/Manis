@@ -14,7 +14,7 @@ use sha2::{Digest as _, Sha256};
 use ureq::{Agent, ResponseExt as _};
 use zip::ZipArchive;
 
-use crate::localization::Language;
+use crate::localization::{Language, LocalizedText, copy};
 
 pub(crate) const LATEST_STABLE_RELEASE_API: &str =
     "https://api.github.com/repos/MetaCubeX/mihomo/releases/latest";
@@ -78,77 +78,26 @@ impl fmt::Display for CoreUpdateError {
 
 impl CoreUpdateError {
     pub(crate) const fn localized_message(self, language: Language) -> &'static str {
-        match (self, language) {
-            (Self::MissingAsset, Language::English) => {
-                "No Mihomo core package is available for this platform"
-            }
-            (Self::MissingAsset, Language::SimplifiedChinese) => {
-                "未找到适用于当前平台的 Mihomo 内核包"
-            }
-            (Self::UnsupportedPlatform, Language::English) => {
-                "Automatic Mihomo core updates are unavailable on this platform"
-            }
-            (Self::UnsupportedPlatform, Language::SimplifiedChinese) => {
-                "当前平台暂不支持自动更新 Mihomo 内核"
-            }
-            (Self::DataDirUnavailable, Language::English) => {
-                "The Manis data directory could not be located"
-            }
-            (Self::DataDirUnavailable, Language::SimplifiedChinese) => "无法定位 Manis 数据目录",
-            (Self::NetworkUnavailable, Language::English) => {
-                "The Mihomo release download failed; check the network and try again"
-            }
-            (Self::NetworkUnavailable, Language::SimplifiedChinese) => {
-                "Mihomo release 下载失败，请检查网络后重试"
-            }
-            (Self::InvalidReleaseMetadata, Language::English) => {
-                "The Mihomo release metadata is invalid"
-            }
-            (Self::InvalidReleaseMetadata, Language::SimplifiedChinese) => {
-                "Mihomo release 元数据格式无效"
-            }
-            (Self::InsecureRedirect, Language::English) => {
-                "The Mihomo release download redirected to a non-HTTPS page"
-            }
-            (Self::InsecureRedirect, Language::SimplifiedChinese) => {
-                "Mihomo release 下载跳转到了非 HTTPS 页面"
-            }
-            (Self::MissingDigest, Language::English) => {
-                "The Mihomo release asset is missing its sha256 digest"
-            }
-            (Self::MissingDigest, Language::SimplifiedChinese) => {
-                "Mihomo release asset 缺少 sha256 digest"
-            }
-            (Self::InvalidDigest, Language::English) => {
-                "The Mihomo release asset digest is invalid"
-            }
-            (Self::InvalidDigest, Language::SimplifiedChinese) => {
-                "Mihomo release asset digest 格式无效"
-            }
-            (Self::DigestMismatch, Language::English) => {
-                "The Mihomo core package failed sha256 verification"
-            }
-            (Self::DigestMismatch, Language::SimplifiedChinese) => "Mihomo 内核包 sha256 校验失败",
-            (Self::PackageTooLarge, Language::English) => "The Mihomo core package exceeds 64 MiB",
-            (Self::PackageTooLarge, Language::SimplifiedChinese) => "Mihomo 内核包超过 64 MiB",
-            (Self::InvalidArchive, Language::English) => {
-                "The Mihomo core package has an invalid archive format"
-            }
-            (Self::InvalidArchive, Language::SimplifiedChinese) => "Mihomo 内核包格式无效",
-            (Self::Io, Language::English) => "The Mihomo core file could not be read or written",
-            (Self::Io, Language::SimplifiedChinese) => "Mihomo 内核文件读写失败",
-            (Self::VersionMismatch, Language::English) => {
-                "The Mihomo core version could not be verified"
-            }
-            (Self::VersionMismatch, Language::SimplifiedChinese) => "Mihomo 内核版本验证失败",
-            (Self::PublishFailed, Language::English) => {
-                "The Mihomo core update could not be published"
-            }
-            (Self::PublishFailed, Language::SimplifiedChinese) => "Mihomo 内核发布失败",
-            (Self::RollbackFailed, Language::English) => {
-                "The previous Mihomo core could not be restored"
-            }
-            (Self::RollbackFailed, Language::SimplifiedChinese) => "Mihomo 内核回滚失败",
+        language.localized(self.message())
+    }
+
+    const fn message(self) -> LocalizedText {
+        match self {
+            Self::UnsupportedPlatform => copy::core_update::UNSUPPORTED_PLATFORM,
+            Self::DataDirUnavailable => copy::core_update::DATA_DIR_UNAVAILABLE,
+            Self::NetworkUnavailable => copy::core_update::NETWORK_UNAVAILABLE,
+            Self::InvalidReleaseMetadata => copy::core_update::INVALID_RELEASE_METADATA,
+            Self::InsecureRedirect => copy::core_update::INSECURE_REDIRECT,
+            Self::MissingAsset => copy::core_update::MISSING_ASSET,
+            Self::MissingDigest => copy::core_update::MISSING_DIGEST,
+            Self::InvalidDigest => copy::core_update::INVALID_DIGEST,
+            Self::DigestMismatch => copy::core_update::DIGEST_MISMATCH,
+            Self::PackageTooLarge => copy::core_update::PACKAGE_TOO_LARGE,
+            Self::InvalidArchive => copy::core_update::INVALID_ARCHIVE,
+            Self::Io => copy::core_update::IO,
+            Self::VersionMismatch => copy::core_update::VERSION_MISMATCH,
+            Self::PublishFailed => copy::core_update::PUBLISH_FAILED,
+            Self::RollbackFailed => copy::core_update::ROLLBACK_FAILED,
         }
     }
 }

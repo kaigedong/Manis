@@ -7,6 +7,7 @@ pub(crate) mod activity;
 pub(crate) mod app;
 pub(crate) mod common;
 pub(crate) mod configuration;
+pub(crate) mod core_update;
 pub(crate) mod kernel;
 pub(crate) mod logs;
 pub(crate) mod nodes;

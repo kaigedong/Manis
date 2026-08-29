@@ -176,7 +176,7 @@ pub(crate) enum KernelSelectionError {
 
 impl std::fmt::Display for KernelSelectionError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(self.message(Language::SimplifiedChinese))
+        formatter.write_str(self.message(Language::English))
     }
 }
 

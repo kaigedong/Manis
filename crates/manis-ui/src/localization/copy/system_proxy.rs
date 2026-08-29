@@ -1,5 +1,8 @@
 use crate::localization::LocalizedText;
 
+mod format;
+pub(crate) use format::*;
+
 pub(crate) const COULD_NOT_APPLY_THE_SYSTEM_PROXY_OR_RESTORE_EVERY_PREVIOUS: LocalizedText =
     LocalizedText::new(
         "Could not apply the system proxy or restore every previous setting; the recovery snapshot was retained",
