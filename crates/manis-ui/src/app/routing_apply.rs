@@ -2,7 +2,7 @@ use std::path::Path;
 
 use super::{
     GeneratedProfileApply, KernelRuntime, Language, LogLevel, Message, ProxyMode,
-    SubscriptionStoreError, mihomo, record_event,
+    SubscriptionStoreError, copy, mihomo, record_event,
 };
 
 pub(super) enum SourceRuntimeApply {
@@ -95,7 +95,9 @@ impl SourceRuntimeApply {
         let mut status = self.status_suffix_after_source_rollback(language);
         if let Some(error) = rollback_error {
             status.push_str(language.message(Message::StoreRollbackFailed));
-            status.push_str(&error.to_string());
+            status.push_str(copy::configuration::subscription_store_error(
+                language, *error,
+            ));
         }
         status
     }

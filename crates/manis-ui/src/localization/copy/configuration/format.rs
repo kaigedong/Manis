@@ -1,7 +1,254 @@
 use crate::{
-    localization::{CountNoun, Language},
-    mihomo::RuntimeProfileSource,
+    localization::{CountNoun, Language, LanguagePreferenceError},
+    manual_rule::ManualRuleStoreError,
+    mihomo::{RuntimeProfileSource, SubscriptionPreviewError, SubscriptionStoreError},
+    rule_source::RuleDownloadError,
+    subscription::{SourceNodeDetail, SourceNodeSecurity, SubscriptionInputError},
 };
+
+pub(crate) const fn language_preference_error(
+    language: Language,
+    error: LanguagePreferenceError,
+) -> &'static str {
+    match (language, error) {
+        (Language::English, LanguagePreferenceError::Unavailable) => {
+            "The language preference could not be read or saved"
+        }
+        (Language::English, LanguagePreferenceError::UnsafeFile) => {
+            "The language preference is not stored in a safe regular file"
+        }
+        (Language::English, LanguagePreferenceError::InvalidValue) => {
+            "The saved language preference is not recognized"
+        }
+        (Language::SimplifiedChinese, LanguagePreferenceError::Unavailable) => {
+            "无法读取或保存语言偏好"
+        }
+        (Language::SimplifiedChinese, LanguagePreferenceError::UnsafeFile) => {
+            "语言偏好文件不是安全的常规文件"
+        }
+        (Language::SimplifiedChinese, LanguagePreferenceError::InvalidValue) => {
+            "保存的语言偏好值无法识别"
+        }
+    }
+}
+
+pub(crate) fn source_node_detail(language: Language, detail: SourceNodeDetail) -> String {
+    match detail {
+        SourceNodeDetail::SingleNode => match language {
+            Language::English => "Single-node source".to_owned(),
+            Language::SimplifiedChinese => "单节点来源".to_owned(),
+        },
+        SourceNodeDetail::Vless {
+            security,
+            transport,
+        } => {
+            let security = match (language, security) {
+                (_, SourceNodeSecurity::Tls) => "TLS",
+                (_, SourceNodeSecurity::Reality) => "REALITY",
+                (Language::English, SourceNodeSecurity::Unspecified) => {
+                    "Security layer not specified"
+                }
+                (Language::English, SourceNodeSecurity::None) => "No TLS",
+                (Language::English, SourceNodeSecurity::Custom) => "Custom security layer",
+                (Language::SimplifiedChinese, SourceNodeSecurity::Unspecified) => "未声明安全层",
+                (Language::SimplifiedChinese, SourceNodeSecurity::None) => "无 TLS",
+                (Language::SimplifiedChinese, SourceNodeSecurity::Custom) => "自定义安全层",
+            };
+            transport.map_or_else(
+                || security.to_owned(),
+                |transport| format!("{security} · {transport}"),
+            )
+        }
+    }
+}
+
+pub(crate) const fn subscription_input_error(
+    language: Language,
+    error: SubscriptionInputError,
+) -> &'static str {
+    match (language, error) {
+        (Language::English, SubscriptionInputError::Empty) => {
+            "Enter a subscription URL or single-node share link"
+        }
+        (Language::English, SubscriptionInputError::UnsupportedSource) => {
+            "Use an HTTP/HTTPS subscription or a supported single-node share link"
+        }
+        (Language::English, SubscriptionInputError::TooLong) => {
+            "The source URL is too long; make sure the complete URL was copied"
+        }
+        (Language::English, SubscriptionInputError::InvalidPreset) => {
+            "The subscription URL is valid, but its default profile could not be created"
+        }
+        (Language::English, SubscriptionInputError::InvalidVless) => {
+            "The single-node link is invalid; check its protocol, server, and parameters"
+        }
+        (Language::SimplifiedChinese, SubscriptionInputError::Empty) => {
+            "请输入订阅链接或单节点分享链接"
+        }
+        (Language::SimplifiedChinese, SubscriptionInputError::UnsupportedSource) => {
+            "请输入 HTTP/HTTPS 订阅或受支持的单节点分享链接"
+        }
+        (Language::SimplifiedChinese, SubscriptionInputError::TooLong) => {
+            "来源地址过长，请确认复制的是完整地址"
+        }
+        (Language::SimplifiedChinese, SubscriptionInputError::InvalidPreset) => {
+            "订阅地址有效，但无法生成默认策略"
+        }
+        (Language::SimplifiedChinese, SubscriptionInputError::InvalidVless) => {
+            "单节点链接无效，请检查协议、服务器和参数"
+        }
+    }
+}
+
+pub(crate) const fn rule_download_error(
+    language: Language,
+    error: RuleDownloadError,
+) -> &'static str {
+    match (language, error) {
+        (Language::English, RuleDownloadError::InvalidHttpsUrl) => {
+            "Enter a complete HTTPS rule source URL"
+        }
+        (Language::English, RuleDownloadError::NetworkUnavailable) => {
+            "The rule source could not be downloaded; check the network and try again"
+        }
+        (Language::English, RuleDownloadError::RequestRejected) => {
+            "The rule source rejected the request or returned an unexpected status"
+        }
+        (Language::English, RuleDownloadError::InsecureRedirect) => {
+            "The rule source redirected to a non-HTTPS page, so the import was stopped"
+        }
+        (Language::English, RuleDownloadError::DocumentTooLarge) => {
+            "The rule source exceeds 1 MiB and was not imported"
+        }
+        (Language::English, RuleDownloadError::InvalidText) => {
+            "The rule source is not valid UTF-8 text"
+        }
+        (Language::SimplifiedChinese, RuleDownloadError::InvalidHttpsUrl) => {
+            "请输入完整的 HTTPS 规则地址"
+        }
+        (Language::SimplifiedChinese, RuleDownloadError::NetworkUnavailable) => {
+            "规则下载失败，请检查网络后重试"
+        }
+        (Language::SimplifiedChinese, RuleDownloadError::RequestRejected) => {
+            "规则源拒绝了请求或返回了异常状态"
+        }
+        (Language::SimplifiedChinese, RuleDownloadError::InsecureRedirect) => {
+            "规则地址跳转到了非 HTTPS 页面，已停止导入"
+        }
+        (Language::SimplifiedChinese, RuleDownloadError::DocumentTooLarge) => {
+            "规则文件超过 1 MiB，未执行导入"
+        }
+        (Language::SimplifiedChinese, RuleDownloadError::InvalidText) => {
+            "规则文件不是有效的 UTF-8 文本"
+        }
+    }
+}
+
+pub(crate) const fn subscription_preview_error(
+    language: Language,
+    error: SubscriptionPreviewError,
+) -> &'static str {
+    match (language, error) {
+        (Language::English, SubscriptionPreviewError::UnsupportedPlatform) => {
+            "This platform cannot start an isolated Mihomo preview process"
+        }
+        (Language::English, SubscriptionPreviewError::BinaryUnavailable) => {
+            "The Manis-managed Mihomo core is not installed; download it in Settings and try again"
+        }
+        (Language::English, SubscriptionPreviewError::InvalidSource) => {
+            "The subscription URL is invalid; check it and try again"
+        }
+        (Language::English, SubscriptionPreviewError::WorkspaceUnavailable) => {
+            "A private preview workspace could not be created; check temporary-directory permissions"
+        }
+        (Language::English, SubscriptionPreviewError::ProfileUnavailable) => {
+            "A secure subscription preview profile could not be created"
+        }
+        (Language::English, SubscriptionPreviewError::EngineUnavailable) => {
+            "The Mihomo preview process could not start"
+        }
+        (Language::English, SubscriptionPreviewError::ProviderUnavailable) => {
+            "Mihomo could not download or parse this subscription; check the network and subscription status"
+        }
+        (Language::English, SubscriptionPreviewError::EmptyProvider) => {
+            "The subscription is reachable, but it contains no proxy nodes"
+        }
+        (Language::SimplifiedChinese, SubscriptionPreviewError::UnsupportedPlatform) => {
+            "当前平台尚不能启动隔离的 Mihomo 预览进程"
+        }
+        (Language::SimplifiedChinese, SubscriptionPreviewError::BinaryUnavailable) => {
+            "找不到 Manis 管理的 Mihomo 内核，请在设置中下载后重试"
+        }
+        (Language::SimplifiedChinese, SubscriptionPreviewError::InvalidSource) => {
+            "订阅地址无效，请检查后重试"
+        }
+        (Language::SimplifiedChinese, SubscriptionPreviewError::WorkspaceUnavailable) => {
+            "无法创建私有预览空间，请检查临时目录权限"
+        }
+        (Language::SimplifiedChinese, SubscriptionPreviewError::ProfileUnavailable) => {
+            "无法生成安全的订阅预览配置"
+        }
+        (Language::SimplifiedChinese, SubscriptionPreviewError::EngineUnavailable) => {
+            "Mihomo 预览进程启动失败"
+        }
+        (Language::SimplifiedChinese, SubscriptionPreviewError::ProviderUnavailable) => {
+            "Mihomo 无法下载或解析这份订阅，请检查网络和订阅状态"
+        }
+        (Language::SimplifiedChinese, SubscriptionPreviewError::EmptyProvider) => {
+            "订阅可以访问，但没有解析出任何代理节点"
+        }
+    }
+}
+
+pub(crate) const fn subscription_store_error(
+    language: Language,
+    error: SubscriptionStoreError,
+) -> &'static str {
+    match (language, error) {
+        (Language::English, SubscriptionStoreError::DataDirectoryUnavailable) => {
+            "The Manis user data directory is unavailable"
+        }
+        (Language::English, SubscriptionStoreError::InvalidSource) => {
+            "The subscription source is invalid, so it was not imported"
+        }
+        (Language::English, SubscriptionStoreError::StoreUnavailable) => {
+            "The subscription could not be saved safely; check user data directory permissions"
+        }
+        (Language::English, SubscriptionStoreError::StoredSourceUnavailable) => {
+            "The saved subscription could not be read safely and must be imported again"
+        }
+        (Language::SimplifiedChinese, SubscriptionStoreError::DataDirectoryUnavailable) => {
+            "无法确定 Manis 的用户数据目录"
+        }
+        (Language::SimplifiedChinese, SubscriptionStoreError::InvalidSource) => {
+            "订阅地址无效，未执行导入"
+        }
+        (Language::SimplifiedChinese, SubscriptionStoreError::StoreUnavailable) => {
+            "无法安全保存订阅，请检查用户数据目录权限"
+        }
+        (Language::SimplifiedChinese, SubscriptionStoreError::StoredSourceUnavailable) => {
+            "已保存的订阅无法安全读取，需要重新导入"
+        }
+    }
+}
+
+pub(crate) const fn manual_rule_store_error(
+    language: Language,
+    error: ManualRuleStoreError,
+) -> &'static str {
+    match (language, error) {
+        (Language::English, ManualRuleStoreError::Unavailable) => {
+            "The manual routing rule store is unavailable"
+        }
+        (Language::English, ManualRuleStoreError::Corrupt) => {
+            "The manual routing rule file is corrupt"
+        }
+        (Language::SimplifiedChinese, ManualRuleStoreError::Unavailable) => {
+            "手动分流规则存储不可用"
+        }
+        (Language::SimplifiedChinese, ManualRuleStoreError::Corrupt) => "手动分流规则文件已损坏",
+    }
+}
 
 pub(crate) fn updated_minutes_ago(language: Language, minutes: u64) -> String {
     match language {

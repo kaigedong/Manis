@@ -536,12 +536,15 @@ impl ManisApp {
             .items_center()
             .gap(Space::Md.px())
             .child(Self::policy_group_icon(
-                &format!("saved-{}", view.policy.id),
-                view.policy.icon,
-                &view.policy.name,
-                benchmarkable,
-                benchmarking,
-                theme,
+                PolicyGroupIconView {
+                    id: &format!("saved-{}", view.policy.id),
+                    icon: view.policy.icon,
+                    policy_name: &view.policy.name,
+                    benchmarkable,
+                    running: benchmarking,
+                    language,
+                    theme,
+                },
                 cx.listener(move |this, _, _, cx| {
                     cx.stop_propagation();
                     if !benchmarking {
@@ -893,6 +896,7 @@ impl ManisApp {
                     manually_selectable: view.item.kind.allows_manual_selection(),
                     selection_busy: self.policy_selection_busy.is_some(),
                     benchmark_state,
+                    language,
                     theme,
                 },
                 cx,
@@ -950,12 +954,15 @@ impl ManisApp {
                 theme.surface_low
             })
             .child(Self::policy_group_icon(
-                &view.benchmark_key,
-                view.icon,
-                &view.item.name,
-                benchmarkable,
-                benchmarking,
-                theme,
+                PolicyGroupIconView {
+                    id: &view.benchmark_key,
+                    icon: view.icon,
+                    policy_name: &view.item.name,
+                    benchmarkable,
+                    running: benchmarking,
+                    language,
+                    theme,
+                },
                 cx.listener(move |this, _, _, cx| {
                     cx.stop_propagation();
                     if benchmarkable && !benchmarking {
@@ -1076,6 +1083,7 @@ impl ManisApp {
             manually_selectable,
             selection_busy,
             benchmark_state,
+            language,
             theme,
         } = row_context;
         let node_id = node.id.clone();
@@ -1130,6 +1138,7 @@ impl ManisApp {
                 benchmark_state,
                 idle_latency,
                 &format!("policy-list-node-{}-spinner", node.id.as_str()),
+                language,
                 theme,
             ))
             .when(manually_selectable, |row| {
@@ -1287,6 +1296,7 @@ impl ManisApp {
                         benchmark_state,
                         idle_latency,
                         &spinner_id,
+                        language,
                         theme,
                     )),
             )
@@ -1868,12 +1878,15 @@ impl ManisApp {
                 )
             })
             .child(Self::policy_group_icon(
-                &view.benchmark_key,
-                view.display_icon,
-                &view.policy.name,
-                benchmarkable,
-                benchmarking,
-                theme,
+                PolicyGroupIconView {
+                    id: &view.benchmark_key,
+                    icon: view.display_icon,
+                    policy_name: &view.policy.name,
+                    benchmarkable,
+                    running: benchmarking,
+                    language,
+                    theme,
+                },
                 cx.listener(move |this, _, _, cx| {
                     if benchmarkable && !benchmarking {
                         this.start_policy_group_benchmark(&benchmark_id, cx);

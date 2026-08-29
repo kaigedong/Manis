@@ -1782,9 +1782,10 @@ impl ManisApp {
             }
             Err(error) => {
                 self.status = format!(
-                    "{}: {error}",
+                    "{}: {}",
                     self.language()
-                        .localized(copy::nodes::FAILED_TO_SAVE_POLICY_GROUP)
+                        .localized(copy::nodes::FAILED_TO_SAVE_POLICY_GROUP),
+                    copy::configuration::subscription_store_error(self.language(), error)
                 );
             }
         }
@@ -1868,9 +1869,10 @@ impl ManisApp {
             }
             Err(error) => {
                 self.status = format!(
-                    "{}: {error}",
+                    "{}: {}",
                     self.language()
-                        .localized(copy::nodes::FAILED_TO_DELETE_POLICY_GROUP)
+                        .localized(copy::nodes::FAILED_TO_DELETE_POLICY_GROUP),
+                    copy::configuration::subscription_store_error(self.language(), error)
                 );
             }
         }
@@ -2288,6 +2290,7 @@ impl ManisApp {
             .child(Self::group_benchmark_icon(
                 &presentation.benchmark_key,
                 benchmarking,
+                language,
                 theme,
                 cx.listener(move |this, _, _, cx| {
                     if !benchmarking {
@@ -2536,7 +2539,7 @@ impl ManisApp {
         latency: GroupBenchmarkNodeState,
         idle_latency: String,
         spinner_id: &str,
-        _language: Language,
+        language: Language,
         theme: Theme,
     ) -> Div {
         div()
@@ -2579,6 +2582,7 @@ impl ManisApp {
                                 latency,
                                 idle_latency,
                                 spinner_id,
+                                language,
                                 theme,
                             )),
                     ),
@@ -2590,7 +2594,7 @@ impl ManisApp {
         latency: GroupBenchmarkNodeState,
         idle_latency: String,
         spinner_id: &str,
-        _language: Language,
+        language: Language,
         theme: Theme,
     ) -> Div {
         div()
@@ -2625,6 +2629,7 @@ impl ManisApp {
                         latency,
                         idle_latency,
                         spinner_id,
+                        language,
                         theme,
                     )),
             )

@@ -84,7 +84,7 @@ fn compile_managed_policy_group(
         compile_policy_candidates(group, context)?;
     if provider_indexes.is_empty() && direct_proxies.is_empty() && direct_policies.is_empty() {
         return Err(LoadError::Runtime(format!(
-            "策略组“{}”没有匹配到可用节点",
+            "policy group '{}' matched no available nodes",
             group.name
         )));
     }
@@ -219,17 +219,20 @@ pub(crate) fn validate_managed_policy_references(
             return Ok(());
         }
         if !visiting.insert(id.to_owned()) {
-            return Err(LoadError::Runtime("策略组之间不能形成循环引用".to_owned()));
+            return Err(LoadError::Runtime(
+                "policy groups cannot contain cyclic references".to_owned(),
+            ));
         }
-        let group = groups
-            .iter()
-            .find(|group| group.id == id)
-            .ok_or_else(|| LoadError::Runtime("策略组引用不存在".to_owned()))?;
+        let group = groups.iter().find(|group| group.id == id).ok_or_else(|| {
+            LoadError::Runtime("referenced policy group does not exist".to_owned())
+        })?;
         if let PolicyCandidateMatcher::Explicit(members) = &group.matcher {
             for member in members {
                 if let Some(candidate_id) = member.source_id.strip_prefix("policy:") {
                     if candidate_id == id {
-                        return Err(LoadError::Runtime("策略组不能引用自身".to_owned()));
+                        return Err(LoadError::Runtime(
+                            "a policy group cannot reference itself".to_owned(),
+                        ));
                     }
                     visit(candidate_id, groups, visiting, visited)?;
                 }

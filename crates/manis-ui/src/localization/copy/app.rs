@@ -65,12 +65,14 @@ pub(crate) const COULD_NOT_SAVE_SUBSCRIPTION_2: LocalizedText =
     LocalizedText::new("Could not save subscription: ", "订阅保存失败：");
 pub(crate) const COULD_NOT_SAVE_THE_GLOBAL_NODE: LocalizedText =
     LocalizedText::new("Could not save the global node: ", "无法保存全局节点：");
+pub(crate) const COULD_NOT_SAVE_NODE_SOURCE_EXPANSION: LocalizedText = LocalizedText::new(
+    "Could not save the node source expansion state",
+    "无法保存节点来源展开状态",
+);
 pub(crate) const COULD_NOT_SAVE_THE_POLICY_SELECTION: LocalizedText = LocalizedText::new(
     "Could not save the policy selection: ",
     "无法保存策略组选择：",
 );
-pub(crate) const COULD_NOT_START: LocalizedText =
-    LocalizedText::new("Could not start: ", "无法启动：");
 pub(crate) const CURRENT: LocalizedText = LocalizedText::new("Current", "当前出口");
 pub(crate) const DARK: LocalizedText = LocalizedText::new("Dark", "深色");
 pub(crate) const DARK_THEME_ENABLED: LocalizedText =
@@ -199,7 +201,6 @@ pub(crate) const PREPARING_THE_MACOS_TUN_HELPER_AND_TRAFFIC_ROUTE: LocalizedText
 pub(crate) const PREPARING_TUN: LocalizedText = LocalizedText::new("Preparing TUN…", "准备 TUN…");
 pub(crate) const PROXY: LocalizedText = LocalizedText::new("Proxy", "代理");
 pub(crate) const READ_ONLY: LocalizedText = LocalizedText::new("Read-only", "只读");
-pub(crate) const RECONNECTING: LocalizedText = LocalizedText::new("Reconnecting", "正在重新连接");
 pub(crate) const RECONNECT_TO_RESTART_THE_KERNEL: LocalizedText = LocalizedText::new(
     " · reconnect to restart the kernel",
     " · 重新连接即可重启内核",

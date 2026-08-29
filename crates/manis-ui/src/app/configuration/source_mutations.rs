@@ -248,9 +248,10 @@ impl ManisApp {
         match error {
             ImportQxRuleError::Download(error) => {
                 self.status = format!(
-                    "{}: {error}",
+                    "{}: {}",
                     self.language()
-                        .localized(copy::configuration::QX_RULE_DOWNLOAD_FAILED)
+                        .localized(copy::configuration::QX_RULE_DOWNLOAD_FAILED),
+                    copy::configuration::rule_download_error(self.language(), *error)
                 );
                 self.rule_sources.feedback = QxRuleImportFeedback::DownloadFailed(*error);
                 record_operation(
@@ -276,9 +277,10 @@ impl ManisApp {
             }
             ImportQxRuleError::Store(error) => {
                 self.status = format!(
-                    "{}: {error}",
+                    "{}: {}",
                     self.language()
-                        .localized(copy::configuration::QX_RULE_SAVE_FAILED)
+                        .localized(copy::configuration::QX_RULE_SAVE_FAILED),
+                    copy::configuration::subscription_store_error(self.language(), *error)
                 );
                 self.rule_sources.feedback = QxRuleImportFeedback::StoreFailed(*error);
                 record_operation(
@@ -354,9 +356,10 @@ impl ManisApp {
                     Err(error) => {
                         this.rule_sources.feedback = QxRuleImportFeedback::StoreFailed(error);
                         this.status = format!(
-                            "{}: {error}",
+                            "{}: {}",
                             this.language()
-                                .localized(copy::configuration::REMOTE_QX_RULE_REMOVAL_FAILED)
+                                .localized(copy::configuration::REMOTE_QX_RULE_REMOVAL_FAILED),
+                            copy::configuration::subscription_store_error(this.language(), error)
                         );
                     }
                 }
@@ -473,8 +476,9 @@ impl ManisApp {
                 source.enabled = completion.previous_enabled;
                 source.state = completion.previous_state;
                 self.status = format!(
-                    "{}: {error}",
-                    language.localized(copy::configuration::FAILED_TO_CHANGE_SUBSCRIPTION_STATE)
+                    "{}: {}",
+                    language.localized(copy::configuration::FAILED_TO_CHANGE_SUBSCRIPTION_STATE),
+                    copy::configuration::subscription_store_error(language, error)
                 );
                 false
             }
@@ -552,9 +556,10 @@ impl ManisApp {
                     }
                     Err(error) => {
                         this.status = format!(
-                            "{}: {error}",
+                            "{}: {}",
                             this.language()
-                                .localized(copy::configuration::FAILED_TO_CHANGE_RULE_SOURCE_STATE)
+                                .localized(copy::configuration::FAILED_TO_CHANGE_RULE_SOURCE_STATE),
+                            copy::configuration::subscription_store_error(this.language(), error)
                         );
                     }
                 }
@@ -649,9 +654,10 @@ impl ManisApp {
             }
             Err(error) => {
                 self.status = format!(
-                    "{}: {error}",
+                    "{}: {}",
                     self.language()
-                        .localized(copy::configuration::FAILED_TO_SAVE_RULE_SOURCE_POLICY)
+                        .localized(copy::configuration::FAILED_TO_SAVE_RULE_SOURCE_POLICY),
+                    copy::configuration::subscription_store_error(self.language(), error)
                 );
             }
         }
@@ -827,13 +833,18 @@ impl ManisApp {
         generation: u64,
         error: &ImportQxRuleError,
     ) {
+        let language = self.language();
         let message = match error {
-            ImportQxRuleError::Download(error) => error.to_string(),
+            ImportQxRuleError::Download(error) => {
+                copy::configuration::rule_download_error(language, *error).to_owned()
+            }
             ImportQxRuleError::InvalidDocument => self
                 .language()
                 .localized(copy::configuration::NO_RECOGNIZABLE_DOMAIN_RULES)
                 .to_owned(),
-            ImportQxRuleError::Store(error) => error.to_string(),
+            ImportQxRuleError::Store(error) => {
+                copy::configuration::subscription_store_error(language, *error).to_owned()
+            }
         };
         self.rule_sources.refreshes.insert(
             id.to_owned(),
@@ -844,8 +855,7 @@ impl ManisApp {
         );
         self.status = format!(
             "{}: {message}",
-            self.language()
-                .localized(copy::configuration::QX_RULE_UPDATE_FAILED)
+            language.localized(copy::configuration::QX_RULE_UPDATE_FAILED)
         );
     }
 }

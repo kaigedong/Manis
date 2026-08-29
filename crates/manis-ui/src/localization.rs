@@ -430,10 +430,66 @@ impl std::error::Error for LanguagePreferenceError {}
 mod tests {
     use std::fs;
 
+    use crate::{
+        mihomo::{LiveStreamPhase, SubscriptionStoreError},
+        subscription::{SourceNodeDetail, SourceNodeSecurity, SubscriptionInputError},
+    };
+
     use super::{
-        CountNoun, Language, LanguagePreference, Message, load_language_preference_in,
+        CountNoun, Language, LanguagePreference, Message, copy, load_language_preference_in,
         save_language_preference_in,
     };
+
+    #[test]
+    fn typed_source_errors_are_localized_at_the_presentation_boundary() {
+        assert_eq!(
+            copy::configuration::subscription_input_error(
+                Language::English,
+                SubscriptionInputError::InvalidVless,
+            ),
+            "The single-node link is invalid; check its protocol, server, and parameters"
+        );
+        assert_eq!(
+            copy::configuration::subscription_input_error(
+                Language::SimplifiedChinese,
+                SubscriptionInputError::InvalidVless,
+            ),
+            "单节点链接无效，请检查协议、服务器和参数"
+        );
+        assert_eq!(
+            copy::configuration::subscription_store_error(
+                Language::SimplifiedChinese,
+                SubscriptionStoreError::StoredSourceUnavailable,
+            ),
+            "已保存的订阅无法安全读取，需要重新导入"
+        );
+    }
+
+    #[test]
+    fn source_and_live_state_relocalize_without_reparsing() {
+        let detail = SourceNodeDetail::Vless {
+            security: SourceNodeSecurity::None,
+            transport: Some("WebSocket"),
+        };
+        assert_eq!(
+            copy::configuration::source_node_detail(Language::English, detail),
+            "No TLS · WebSocket"
+        );
+        assert_eq!(
+            copy::configuration::source_node_detail(Language::SimplifiedChinese, detail),
+            "无 TLS · WebSocket"
+        );
+
+        let phase = LiveStreamPhase::Reconnecting(3);
+        assert_eq!(
+            copy::app::live_stream_phase(Language::English, &phase),
+            "Reconnecting · attempt 3"
+        );
+        assert_eq!(
+            copy::app::live_stream_phase(Language::SimplifiedChinese, &phase),
+            "正在重连 · 第 3 次"
+        );
+    }
 
     #[test]
     fn core_product_terms_are_consistent_between_navigation_and_object_settings() {

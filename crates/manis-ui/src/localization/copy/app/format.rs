@@ -1,4 +1,121 @@
-use crate::localization::Language;
+use crate::{localization::Language, mihomo::LiveStreamPhase};
+
+pub(crate) fn live_stream_phase(language: Language, phase: &LiveStreamPhase) -> String {
+    match (language, phase) {
+        (Language::English, LiveStreamPhase::Waiting) => "Waiting to connect".to_owned(),
+        (Language::English, LiveStreamPhase::Connecting) => "Establishing live stream".to_owned(),
+        (Language::English, LiveStreamPhase::Live) => "Live".to_owned(),
+        (Language::English, LiveStreamPhase::Unavailable) => "Live status unavailable".to_owned(),
+        (Language::English, LiveStreamPhase::Reconnecting(attempt)) => {
+            format!("Reconnecting · attempt {attempt}")
+        }
+        (Language::English, LiveStreamPhase::InterruptedHttp(status)) => {
+            format!("Stream interrupted · HTTP {status}")
+        }
+        (Language::English, LiveStreamPhase::InvalidData) => {
+            "Stream data could not be parsed · retrying".to_owned()
+        }
+        (Language::English, LiveStreamPhase::ControllerUnavailable) => {
+            "Controller temporarily unavailable · retrying".to_owned()
+        }
+        (Language::English, LiveStreamPhase::Retrying) => {
+            "Live stream unavailable · retrying".to_owned()
+        }
+        (Language::English, LiveStreamPhase::StartFailed(error)) => {
+            format!("Could not start: {error}")
+        }
+        (Language::SimplifiedChinese, LiveStreamPhase::Waiting) => "等待连接".to_owned(),
+        (Language::SimplifiedChinese, LiveStreamPhase::Connecting) => "正在建立实时流".to_owned(),
+        (Language::SimplifiedChinese, LiveStreamPhase::Live) => "实时".to_owned(),
+        (Language::SimplifiedChinese, LiveStreamPhase::Unavailable) => "实时状态不可用".to_owned(),
+        (Language::SimplifiedChinese, LiveStreamPhase::Reconnecting(attempt)) => {
+            format!("正在重连 · 第 {attempt} 次")
+        }
+        (Language::SimplifiedChinese, LiveStreamPhase::InterruptedHttp(status)) => {
+            format!("流中断 · HTTP {status}")
+        }
+        (Language::SimplifiedChinese, LiveStreamPhase::InvalidData) => {
+            "流数据无法解析 · 正在重试".to_owned()
+        }
+        (Language::SimplifiedChinese, LiveStreamPhase::ControllerUnavailable) => {
+            "控制器暂时不可达 · 正在重试".to_owned()
+        }
+        (Language::SimplifiedChinese, LiveStreamPhase::Retrying) => {
+            "实时流不可用 · 正在重试".to_owned()
+        }
+        (Language::SimplifiedChinese, LiveStreamPhase::StartFailed(error)) => {
+            format!("无法启动：{error}")
+        }
+    }
+}
+
+pub(crate) fn tun_mode_rollback_failed(language: Language, error: &str, rollback: &str) -> String {
+    match language {
+        Language::English => {
+            format!("{error}; restoring the previous TUN mode also failed: {rollback}")
+        }
+        Language::SimplifiedChinese => {
+            format!("{error}；恢复原 TUN 模式也失败：{rollback}")
+        }
+    }
+}
+
+pub(crate) fn system_proxy_rollback_failed(
+    language: Language,
+    error: &str,
+    rollback: &str,
+) -> String {
+    match language {
+        Language::English => {
+            format!("{error}; restoring the previous system proxy also failed: {rollback}")
+        }
+        Language::SimplifiedChinese => {
+            format!("{error}；恢复原系统代理也失败：{rollback}")
+        }
+    }
+}
+
+pub(crate) fn dns_rollback_failed(language: Language, error: &str, rollback: &str) -> String {
+    match language {
+        Language::English => {
+            format!("{error}; restoring the previous DNS settings also failed: {rollback}")
+        }
+        Language::SimplifiedChinese => {
+            format!("{error}；恢复原 DNS 设置也失败：{rollback}")
+        }
+    }
+}
+
+pub(crate) fn tun_shutdown_rollback_failed(
+    language: Language,
+    error: &str,
+    rollback: &str,
+) -> String {
+    match language {
+        Language::English => {
+            format!("{error}; stopping the newly started TUN also failed: {rollback}")
+        }
+        Language::SimplifiedChinese => {
+            format!("{error}；关闭已启动的 TUN 也失败：{rollback}")
+        }
+    }
+}
+
+pub(crate) fn dns_and_tun_rollback_failed(
+    language: Language,
+    error: &str,
+    dns_rollback: &str,
+    tun_rollback: &str,
+) -> String {
+    match language {
+        Language::English => format!(
+            "{error}; restoring the previous DNS settings failed: {dns_rollback}; stopping the newly started TUN failed: {tun_rollback}"
+        ),
+        Language::SimplifiedChinese => format!(
+            "{error}；恢复原 DNS 设置失败：{dns_rollback}；关闭已启动的 TUN 失败：{tun_rollback}"
+        ),
+    }
+}
 
 pub(crate) fn subscription_imported(
     language: Language,

@@ -269,8 +269,10 @@ fn generated_engine_manager(
 ) -> Result<EngineManager, LoadError> {
     #[cfg(target_os = "macos")]
     if privileged {
-        let spawner = crate::macos_privileged::MacosPrivilegedProcessSpawner::prepare()
-            .map_err(|error| LoadError::Runtime(format!("无法连接 macOS TUN 辅助服务：{error}")))?;
+        let spawner =
+            crate::macos_privileged::MacosPrivilegedProcessSpawner::prepare().map_err(|error| {
+                LoadError::Runtime(format!("macOS TUN helper could not be reached: {error}"))
+            })?;
         return Ok(EngineManager::with_adapters(
             config,
             ReadinessPolicy::default(),
@@ -306,14 +308,17 @@ fn compile_saved_profile(
 fn sync_single_node_provider_files(store_dir: &Path, data_dir: &Path) -> Result<(), LoadError> {
     let provider_dir = data_dir.join("single_nodes");
     for stored in load_single_node_sources_in(store_dir)
-        .map_err(|_error| LoadError::Runtime("无法读取已保存的单节点来源".to_owned()))?
+        .map_err(|_error| {
+            LoadError::Runtime("saved single-node sources could not be read".to_owned())
+        })?
         .into_iter()
         .filter(|stored| stored.enabled)
     {
         let file_name = format!("{}.txt", stored.id);
         stored.source.expose_to(|value| {
-            write_private_atomic(&provider_dir, &file_name, value.as_bytes())
-                .map_err(|_error| LoadError::Runtime("无法写入单节点运行来源".to_owned()))
+            write_private_atomic(&provider_dir, &file_name, value.as_bytes()).map_err(|_error| {
+                LoadError::Runtime("single-node runtime source could not be written".to_owned())
+            })
         })?;
     }
     Ok(())
@@ -337,13 +342,12 @@ fn render_generated_profile_with_tun(
         KernelKind::SingBox => {
             let ControllerEndpoint::Tcp(address) = spec.controller else {
                 return Err(LoadError::Runtime(
-                    "sing-box 需要私有 loopback Clash API".to_owned(),
+                    "sing-box requires a private loopback Clash API".to_owned(),
                 ));
             };
-            let secret = spec
-                .controller_secret
-                .as_deref()
-                .ok_or_else(|| LoadError::Runtime("sing-box controller 缺少认证密钥".to_owned()))?;
+            let secret = spec.controller_secret.as_deref().ok_or_else(|| {
+                LoadError::Runtime("sing-box controller has no authentication secret".to_owned())
+            })?;
             render_sing_box_json(profile, &SingBoxOptions::new(address.to_string(), secret))
                 .map_err(|error| LoadError::Runtime(error.to_string()))
         }
@@ -351,10 +355,9 @@ fn render_generated_profile_with_tun(
 }
 
 fn compile_managed_generated_profile(spec: &ManagedGeneratedProfile) -> Result<Profile, LoadError> {
-    let store_dir = spec
-        .profile_store_dir
-        .as_deref()
-        .ok_or_else(|| LoadError::Runtime("托管内核缺少 Manis 来源目录".to_owned()))?;
+    let store_dir = spec.profile_store_dir.as_deref().ok_or_else(|| {
+        LoadError::Runtime("managed kernel has no Manis source directory".to_owned())
+    })?;
     compile_saved_profile(store_dir, None, spec.kernel)
 }
 
@@ -405,15 +408,29 @@ pub(crate) struct KernelLogEntry {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct LiveStreamStatus {
-    pub activity: String,
-    pub logs: String,
+    pub activity: LiveStreamPhase,
+    pub logs: LiveStreamPhase,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum LiveStreamPhase {
+    Waiting,
+    Connecting,
+    Live,
+    Unavailable,
+    Reconnecting(usize),
+    InterruptedHttp(u16),
+    InvalidData,
+    ControllerUnavailable,
+    Retrying,
+    StartFailed(String),
 }
 
 impl Default for LiveStreamStatus {
     fn default() -> Self {
         Self {
-            activity: "等待连接".to_owned(),
-            logs: "等待连接".to_owned(),
+            activity: LiveStreamPhase::Waiting,
+            logs: LiveStreamPhase::Waiting,
         }
     }
 }
@@ -458,8 +475,8 @@ impl LiveRuntimeSession {
                 logs: Vec::new(),
                 dropped_logs: 0,
                 status: LiveStreamStatus {
-                    activity: "实时状态不可用".to_owned(),
-                    logs: "实时状态不可用".to_owned(),
+                    activity: LiveStreamPhase::Unavailable,
+                    logs: LiveStreamPhase::Unavailable,
                 },
             };
         };
@@ -542,7 +559,7 @@ fn load_subscription_provider(providers: &[manis_mihomo::ProxyProvider]) -> Vec<
         .filter(|provider| provider.name == "subscription")
         .map(|provider| {
             let mut loaded = load_provider(provider);
-            "订阅预览".clone_into(&mut loaded.name);
+            "Subscription preview".clone_into(&mut loaded.name);
             loaded
         })
         .collect()
@@ -610,12 +627,14 @@ impl ReadinessProbe for SingBoxReadinessProbe {
 pub(crate) fn configured_runtime(store_dir: Option<&Path>) -> ControllerRuntime {
     if let Some(variable) = first_unsupported_runtime_override(|name| env::var_os(name).is_some()) {
         return ControllerRuntime::Invalid {
-            message: format!("{variable} 已不再支持；Mihomo 配置和 controller 只能由 Manis 管理"),
+            message: format!(
+                "{variable} is no longer supported; Mihomo configuration and controller settings are managed only by Manis"
+            ),
         };
     }
     let Some(store_dir) = store_dir else {
         return ControllerRuntime::Invalid {
-            message: "无法确定 Manis 来源目录".to_owned(),
+            message: "Manis source directory could not be determined".to_owned(),
         };
     };
     #[cfg(debug_assertions)]
@@ -623,7 +642,7 @@ pub(crate) fn configured_runtime(store_dir: Option<&Path>) -> ControllerRuntime 
         discover_mihomo_binary,
         |binary| {
             canonical_binary(Path::new(&binary))
-                .map_err(|_error| format!("{BINARY_ENV} 不是可执行文件"))
+                .map_err(|_error| format!("{BINARY_ENV} does not point to an executable file"))
         },
     );
     #[cfg(not(debug_assertions))]
@@ -674,8 +693,9 @@ fn build_saved_sources_mihomo_runtime_in(
         controller_secret: None,
     };
     let rendered = render_generated_profile(&spec, &profile).map_err(|error| error.to_string())?;
-    let config_file = write_private_atomic(data_dir, GENERATED_PROFILE_FILE, rendered.as_bytes())
-        .map_err(|_error| "无法写入 Mihomo 私有配置".to_owned())?;
+    let config_file =
+        write_private_atomic(data_dir, GENERATED_PROFILE_FILE, rendered.as_bytes())
+            .map_err(|_error| "private Mihomo configuration could not be written".to_owned())?;
     let config = managed_engine_config(&spec, config_file);
     validate_managed_config(&config).map_err(|error| error.to_string())?;
     let manager = EngineManager::new(config, ReadinessPolicy::default(), readiness_probe(&spec));
@@ -692,15 +712,17 @@ fn build_sing_box_runtime(store_dir: &Path) -> Result<ControllerRuntime, String>
     let binary = discover_sing_box_binary()?;
     let data_dir = brand::data_dir()
         .map(|directory| directory.join("sing-box"))
-        .ok_or_else(|| "无法确定 sing-box 数据目录".to_owned())?;
+        .ok_or_else(|| "sing-box data directory could not be determined".to_owned())?;
     let port = TcpListener::bind("127.0.0.1:0")
         .and_then(|listener| listener.local_addr())
         .map(|address| address.port())
-        .map_err(|_error| "无法为 sing-box 分配本机 controller 端口".to_owned())?;
+        .map_err(|_error| {
+            "a loopback controller port could not be reserved for sing-box".to_owned()
+        })?;
     let controller = ControllerEndpoint::Tcp(
         format!("127.0.0.1:{port}")
             .parse()
-            .map_err(|_error| "无法生成 sing-box controller 地址".to_owned())?,
+            .map_err(|_error| "sing-box controller address could not be created".to_owned())?,
     );
     let controller_secret = generate_controller_secret()?;
     let profile = compile_saved_profile(store_dir, None, KernelKind::SingBox)
@@ -715,8 +737,9 @@ fn build_sing_box_runtime(store_dir: &Path) -> Result<ControllerRuntime, String>
         controller_secret: Some(controller_secret.clone()),
     };
     let rendered = render_generated_profile(&spec, &profile).map_err(|error| error.to_string())?;
-    let config_file = write_private_atomic(&data_dir, SING_BOX_PROFILE_FILE, rendered.as_bytes())
-        .map_err(|_error| "无法写入 sing-box 私有配置".to_owned())?;
+    let config_file =
+        write_private_atomic(&data_dir, SING_BOX_PROFILE_FILE, rendered.as_bytes())
+            .map_err(|_error| "private sing-box configuration could not be written".to_owned())?;
     let config = managed_engine_config(&spec, config_file);
     validate_managed_config(&config).map_err(|error| error.to_string())?;
     let manager = EngineManager::new(config, ReadinessPolicy::default(), readiness_probe(&spec));
@@ -732,8 +755,9 @@ fn build_sing_box_runtime(store_dir: &Path) -> Result<ControllerRuntime, String>
 fn discover_sing_box_binary() -> Result<PathBuf, String> {
     if let Some(explicit) = brand::env_var_os(SING_BOX_BINARY_ENV, LEGACY_RELAY_SING_BOX_BINARY_ENV)
     {
-        return canonical_binary(Path::new(&explicit))
-            .map_err(|_error| format!("{SING_BOX_BINARY_ENV} 不是可执行文件"));
+        return canonical_binary(Path::new(&explicit)).map_err(|_error| {
+            format!("{SING_BOX_BINARY_ENV} does not point to an executable file")
+        });
     }
     let executable_name = if cfg!(windows) {
         "sing-box.exe"
@@ -757,7 +781,7 @@ fn discover_sing_box_binary() -> Result<PathBuf, String> {
     candidates
         .into_iter()
         .find_map(|candidate| canonical_binary(&candidate).ok())
-        .ok_or_else(|| format!("未找到 sing-box；请先安装内核或设置 {SING_BOX_BINARY_ENV}"))
+        .ok_or_else(|| format!("sing-box was not found; install it or set {SING_BOX_BINARY_ENV}"))
 }
 
 pub(crate) fn sing_box_binary_available() -> bool {
@@ -769,7 +793,8 @@ fn discover_mihomo_binary() -> Result<PathBuf, String> {
         .map_err(|error| error.to_string())
         .and_then(|path| {
             canonical_binary(&path).map_err(|_error| {
-                "Manis 托管的 Mihomo 尚未安装；请在运行内核中下载稳定版".to_owned()
+                "Manis-managed Mihomo is not installed; download the stable core in Runtime settings"
+                    .to_owned()
             })
         })
 }
@@ -780,7 +805,7 @@ fn generate_controller_secret() -> Result<String, String> {
     let mut random = [0_u8; 32];
     fs::File::open("/dev/urandom")
         .and_then(|mut file| file.read_exact(&mut random))
-        .map_err(|_error| "无法生成 sing-box controller 密钥".to_owned())?;
+        .map_err(|_error| "sing-box controller secret could not be generated".to_owned())?;
     let mut secret = String::with_capacity(random.len() * 2);
     for byte in random {
         secret.push(char::from(HEX[usize::from(byte >> 4)]));
@@ -799,15 +824,15 @@ fn generate_controller_secret() -> Result<String, String> {
             "[guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N')",
         ])
         .output()
-        .map_err(|_error| "无法生成 sing-box controller 密钥".to_owned())?;
+        .map_err(|_error| "sing-box controller secret could not be generated".to_owned())?;
     let secret = String::from_utf8(output.stdout)
-        .map_err(|_error| "无法生成 sing-box controller 密钥".to_owned())?;
+        .map_err(|_error| "sing-box controller secret could not be generated".to_owned())?;
     let secret = secret.trim();
     if !output.status.success()
         || secret.len() != 64
         || !secret.bytes().all(|byte| byte.is_ascii_hexdigit())
     {
-        return Err("无法生成 sing-box controller 密钥".to_owned());
+        return Err("sing-box controller secret could not be generated".to_owned());
     }
     Ok(secret.to_owned())
 }
@@ -825,11 +850,11 @@ fn configured_mixed_port() -> Result<u16, String> {
     match brand::env_var_os(MIXED_PORT_ENV, LEGACY_RELAY_MIXED_PORT_ENV) {
         Some(value) => value
             .to_str()
-            .ok_or_else(|| format!("{MIXED_PORT_ENV} 必须是有效 Unicode"))?
+            .ok_or_else(|| format!("{MIXED_PORT_ENV} must be valid Unicode"))?
             .parse::<u16>()
             .ok()
             .filter(|port| *port != 0)
-            .ok_or_else(|| format!("{MIXED_PORT_ENV} 必须是 1 到 65535 的端口")),
+            .ok_or_else(|| format!("{MIXED_PORT_ENV} must be a port from 1 to 65535")),
         None => Ok(DEFAULT_MANAGED_MIXED_PORT),
     }
 }
@@ -838,7 +863,7 @@ fn configured_data_dir() -> Result<PathBuf, String> {
     brand::env_var_os(DATA_DIR_ENV, LEGACY_RELAY_DATA_DIR_ENV)
         .map(PathBuf::from)
         .or_else(default_data_dir)
-        .ok_or_else(|| format!("无法确定数据目录，请设置 {DATA_DIR_ENV}"))
+        .ok_or_else(|| format!("data directory could not be determined; set {DATA_DIR_ENV}"))
 }
 
 #[cfg(unix)]
@@ -858,12 +883,12 @@ fn default_managed_endpoint(data_dir: &Path) -> ControllerEndpoint {
 
 #[cfg(windows)]
 fn default_managed_endpoint(_data_dir: &Path) -> Result<ControllerEndpoint, String> {
-    Err("Windows 托管 Mihomo controller transport 尚未完成".to_owned())
+    Err("managed Mihomo controller transport is not implemented on Windows".to_owned())
 }
 
 #[cfg(not(any(unix, windows)))]
 fn default_managed_endpoint(_data_dir: &Path) -> Result<ControllerEndpoint, String> {
-    Err("当前平台没有默认的 Mihomo controller transport".to_owned())
+    Err("this platform has no default Mihomo controller transport".to_owned())
 }
 
 fn default_data_dir() -> Option<PathBuf> {
@@ -897,7 +922,7 @@ fn loaded_snapshot(snapshot: &MihomoSnapshot) -> LoadedSnapshot {
         .version
         .version
         .clone()
-        .unwrap_or_else(|| "版本未知".to_owned());
+        .unwrap_or_else(|| "unknown version".to_owned());
     let active_connections = snapshot.connections.connections.len();
     let download_total = snapshot.connections.download_total;
     let upload_total = snapshot.connections.upload_total;
@@ -929,7 +954,7 @@ fn validate_managed_runtime(
         return Ok(());
     }
     Err(LoadError::Runtime(format!(
-        "Mihomo 未能监听 Manis 代理端口 {expected}；可能存在上次异常退出后残留的内核进程"
+        "Mihomo did not listen on Manis proxy port {expected}; a stale kernel process may remain from an earlier abnormal exit"
     )))
 }
 
@@ -972,7 +997,7 @@ fn spawn_connection_stream(
                 |connections| {
                     if let Ok(mut mailbox) = mailbox.lock() {
                         mailbox.latest_connections = Some(connections);
-                        "实时".clone_into(&mut mailbox.status.activity);
+                        mailbox.status.activity = LiveStreamPhase::Live;
                     }
                 },
             );
@@ -1030,26 +1055,26 @@ fn reconnect_live_stream(
     }
 }
 
-fn stream_phase(attempt: usize) -> String {
+fn stream_phase(attempt: usize) -> LiveStreamPhase {
     if attempt == 0 {
-        "正在建立实时流".to_owned()
+        LiveStreamPhase::Connecting
     } else {
-        format!("正在重连 · 第 {attempt} 次")
+        LiveStreamPhase::Reconnecting(attempt)
     }
 }
 
-fn safe_stream_error(error: &MihomoError) -> String {
+fn safe_stream_error(error: &MihomoError) -> LiveStreamPhase {
     match error {
         MihomoError::HttpStatus { status_code, .. } => {
-            format!("流中断 · HTTP {status_code}")
+            LiveStreamPhase::InterruptedHttp(*status_code)
         }
-        MihomoError::Json { .. } => "流数据无法解析 · 正在重试".to_owned(),
-        MihomoError::Io(_) => "控制器暂时不可达 · 正在重试".to_owned(),
-        _ => "实时流不可用 · 正在重试".to_owned(),
+        MihomoError::Json { .. } => LiveStreamPhase::InvalidData,
+        MihomoError::Io(_) => LiveStreamPhase::ControllerUnavailable,
+        _ => LiveStreamPhase::Retrying,
     }
 }
 
-fn set_live_status(mailbox: &Mutex<LiveMailbox>, activity: bool, status: String) {
+fn set_live_status(mailbox: &Mutex<LiveMailbox>, activity: bool, status: LiveStreamPhase) {
     if let Ok(mut mailbox) = mailbox.lock() {
         if activity {
             mailbox.status.activity = status;
@@ -1076,7 +1101,7 @@ fn push_kernel_log(mailbox: &Mutex<LiveMailbox>, sequence: u64, entry: &MihomoLo
             .unwrap_or_default()
             .as_millis(),
     });
-    "实时".clone_into(&mut mailbox.status.logs);
+    mailbox.status.logs = LiveStreamPhase::Live;
 }
 
 fn sanitize_log_field(value: &str, limit: usize) -> String {
@@ -1363,7 +1388,7 @@ fn select_global_node_at_endpoint(
             })
         }
         None => Err(LoadError::Runtime(
-            "所选节点不在当前 Mihomo 全局出口链路中".to_owned(),
+            "selected node is not in the active Mihomo global exit chain".to_owned(),
         )),
     }
 }
@@ -1381,19 +1406,19 @@ fn select_policy_group_candidate(
         .is_some_and(is_selector_proxy_type)
     {
         return Err(LoadError::Runtime(
-            "只有手动选择策略组可以切换节点".to_owned(),
+            "only manual-selection policy groups can switch nodes".to_owned(),
         ));
     }
     if !group.all.iter().any(|candidate| candidate == selected_name) {
         return Err(LoadError::Runtime(
-            "所选节点不在当前 Mihomo 策略组中".to_owned(),
+            "selected node is not in the active Mihomo policy group".to_owned(),
         ));
     }
     put_policy_group_selection(endpoint, group_name, selected_name, controller_secret)?;
     let selected = fetch_policy_group(endpoint, group_name, controller_secret)?;
     if selected.current.as_deref() != Some(selected_name) {
         return Err(LoadError::Runtime(format!(
-            "Mihomo 未确认策略组“{group_name}”的节点切换"
+            "Mihomo did not confirm the node switch for policy group '{group_name}'"
         )));
     }
     Ok(policy_group_runtime_snapshot(selected))
@@ -1496,7 +1521,9 @@ fn fetch_proxy_delay_targets_bounded_with_progress(
     mut on_result: impl FnMut(&str, Option<u16>),
 ) -> Result<BTreeMap<String, u16>, LoadError> {
     if targets.is_empty() {
-        return Err(LoadError::Runtime("当前分组没有可测速节点".to_owned()));
+        return Err(LoadError::Runtime(
+            "the current group has no nodes that can be benchmarked".to_owned(),
+        ));
     }
     let worker_count = targets.len().min(GROUP_DELAY_WORKERS);
     let chunk_size = targets.len().div_ceil(worker_count);
@@ -1545,19 +1572,22 @@ fn fetch_proxy_delay_targets_bounded_with_progress(
     });
     if delays.is_empty() {
         return Err(LoadError::Runtime(
-            "所有节点测速均失败，请检查 Mihomo 连接与网络后重试".to_owned(),
+            "all node benchmarks failed; check the Mihomo connection and network, then try again"
+                .to_owned(),
         ));
     }
     Ok(delays)
 }
 
 fn running_managed_endpoint(manager: &Arc<Mutex<EngineManager>>) -> Result<String, LoadError> {
-    let mut manager = manager
-        .lock()
-        .map_err(|_poisoned| LoadError::Runtime("托管内核状态锁已损坏".to_owned()))?;
+    let mut manager = manager.lock().map_err(|_poisoned| {
+        LoadError::Runtime("managed kernel state lock is poisoned".to_owned())
+    })?;
     manager
         .running_endpoint()?
-        .ok_or_else(|| LoadError::Runtime("Mihomo 尚未运行，请先连接内核".to_owned()))
+        .ok_or_else(|| {
+            LoadError::Runtime("Mihomo is not running; connect the kernel first".to_owned())
+        })
         .map(|endpoint| endpoint.uri())
 }
 

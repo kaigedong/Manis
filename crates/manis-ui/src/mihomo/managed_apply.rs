@@ -40,14 +40,18 @@ pub(super) fn apply_saved_sources(
     else {
         return Err(LoadError::Runtime(match runtime {
             #[cfg(any(test, feature = "snapshot-fixtures"))]
-            ControllerRuntime::Fixture { .. } => "测试快照不能写入运行配置".to_owned(),
+            ControllerRuntime::Fixture { .. } => {
+                "test snapshots cannot write runtime configuration".to_owned()
+            }
             ControllerRuntime::Invalid { message } => message.clone(),
-            ControllerRuntime::Managed { .. } => "托管内核缺少 Manis 生成配置".to_owned(),
+            ControllerRuntime::Managed { .. } => {
+                "managed kernel has no Manis-generated configuration".to_owned()
+            }
         }));
     };
-    let _apply_guard = apply_lock
-        .lock()
-        .map_err(|_poisoned| LoadError::Runtime("配置应用锁已损坏".to_owned()))?;
+    let _apply_guard = apply_lock.lock().map_err(|_poisoned| {
+        LoadError::Runtime("configuration apply lock is poisoned".to_owned())
+    })?;
     let prepared = prepare_profile(spec, store_dir)?;
     install_profile(
         runtime,
@@ -69,7 +73,9 @@ fn prepare_profile(
     let rendered = render_generated_profile(spec, &profile)?;
     let (candidate_name, final_name) = generated_profile_names(spec.kernel);
     let candidate_path = write_private_atomic(&spec.data_dir, candidate_name, rendered.as_bytes())
-        .map_err(|_error| LoadError::Runtime("无法写入候选托管配置".to_owned()))?;
+        .map_err(|_error| {
+            LoadError::Runtime("candidate managed configuration could not be written".to_owned())
+        })?;
     let validation = validate_managed_config(&managed_engine_config(spec, candidate_path.clone()));
     let _ = fs::remove_file(candidate_path);
     validation?;
@@ -93,18 +99,22 @@ fn install_profile(
         prepared.final_name,
         prepared.rendered.as_bytes(),
     )
-    .map_err(|_error| LoadError::Runtime("无法替换托管配置".to_owned()))?;
+    .map_err(|_error| {
+        LoadError::Runtime("managed configuration could not be replaced".to_owned())
+    })?;
     let final_config = managed_engine_config(spec, final_path);
-    let mut manager = manager
-        .lock()
-        .map_err(|_poisoned| LoadError::Runtime("托管内核状态锁已损坏".to_owned()))?;
+    let mut manager = manager.lock().map_err(|_poisoned| {
+        LoadError::Runtime("managed kernel state lock is poisoned".to_owned())
+    })?;
     let running_endpoint = manager.running_endpoint()?;
     let was_running = running_endpoint.is_some();
     let restore_tun = tun_was_enabled(spec, running_endpoint.as_ref())?;
     stop_previous_runtime(&mut manager, was_running, restore_tun)?;
     *manager = generated_engine_manager(spec, final_config, was_privileged).map_err(|error| {
         if restore_tun {
-            LoadError::ProxyModeLost(format!("TUN 已停止，但无法创建新托管内核：{error}"))
+            LoadError::ProxyModeLost(format!(
+                "TUN stopped, but the new managed kernel could not be created: {error}"
+            ))
         } else {
             error
         }
@@ -164,12 +174,12 @@ fn stop_previous_runtime(
     if restore_tun
         && !crate::macos_privileged::wait_for_tun_route_release().map_err(|error| {
             LoadError::ProxyModeLost(format!(
-                "重载托管配置前无法确认 macOS TUN 路由已释放：{error}"
+                "macOS TUN route release could not be confirmed before reloading managed configuration: {error}"
             ))
         })?
     {
         return Err(LoadError::ProxyModeLost(
-            "重载托管配置前 macOS TUN 路由未释放".to_owned(),
+            "macOS TUN route was not released before reloading managed configuration".to_owned(),
         ));
     }
     #[cfg(not(target_os = "macos"))]
@@ -202,7 +212,7 @@ fn rollback_failed_restart(
         .map_err(|rollback_error| {
             if rollback.restore_tun {
                 LoadError::ProxyModeLost(format!(
-                    "新配置启动失败（{restart_error}），旧配置管理器恢复也失败：{rollback_error}"
+                    "new configuration failed to start ({restart_error}); restoring the previous configuration manager also failed: {rollback_error}"
                 ))
             } else {
                 rollback_error
@@ -214,12 +224,12 @@ fn rollback_failed_restart(
     if rollback.restore_tun && rollback_running {
         restore_tun_mode(rollback.runtime, "managed_config_rollback").map_err(|restore_error| {
             LoadError::ProxyModeLost(format!(
-                "新配置启动失败（{restart_error}），旧配置已恢复，但 TUN 重新启用失败：{restore_error}"
+                "new configuration failed to start ({restart_error}); the previous configuration was restored, but TUN could not be re-enabled: {restore_error}"
             ))
         })?;
     } else if rollback.restore_tun {
         return Err(LoadError::ProxyModeLost(format!(
-            "新配置启动失败（{restart_error}），且旧配置未能重新启动"
+            "new configuration failed to start ({restart_error}), and the previous configuration did not restart"
         )));
     }
     Err(LoadError::Engine(error))

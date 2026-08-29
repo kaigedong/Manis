@@ -180,8 +180,8 @@ impl ManisApp {
         self.live_generation = self.live_generation.wrapping_add(1);
         self.live_runtime = None;
         self.live_status = LiveStreamStatus {
-            activity: language.localized(copy::app::RECONNECTING).to_owned(),
-            logs: language.localized(copy::app::RECONNECTING).to_owned(),
+            activity: LiveStreamPhase::Connecting,
+            logs: LiveStreamPhase::Connecting,
         };
 
         let endpoint = self.runtime.endpoint_label();
@@ -568,7 +568,6 @@ impl ManisApp {
         controller_secret: Option<&str>,
         cx: &mut Context<Self>,
     ) {
-        let language = self.language();
         self.live_generation = self.live_generation.wrapping_add(1);
         let generation = self.live_generation;
         self.managed_health_tick = 0;
@@ -576,8 +575,8 @@ impl ManisApp {
             Ok(session) => Some(session),
             Err(error) => {
                 self.live_status = LiveStreamStatus {
-                    activity: format!("{}{error}", language.localized(copy::app::COULD_NOT_START)),
-                    logs: format!("{}{error}", language.localized(copy::app::COULD_NOT_START)),
+                    activity: LiveStreamPhase::StartFailed(error.to_string()),
+                    logs: LiveStreamPhase::StartFailed(error.to_string()),
                 };
                 None
             }

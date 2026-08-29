@@ -16,7 +16,25 @@ pub(crate) struct SourceNodePreview {
     pub name: String,
     pub protocol: &'static str,
     pub endpoint: String,
-    pub detail: String,
+    pub detail: SourceNodeDetail,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SourceNodeDetail {
+    SingleNode,
+    Vless {
+        security: SourceNodeSecurity,
+        transport: Option<&'static str>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SourceNodeSecurity {
+    Unspecified,
+    Tls,
+    Reality,
+    None,
+    Custom,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -49,11 +67,13 @@ pub(crate) enum SubscriptionInputError {
 impl fmt::Display for SubscriptionInputError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
-            Self::Empty => "请输入订阅链接或 VLESS 节点链接",
-            Self::UnsupportedSource => "无法识别；请输入 HTTP/HTTPS 订阅或 vless:// 节点链接",
-            Self::TooLong => "来源地址过长，请确认复制的是完整地址",
-            Self::InvalidPreset => "订阅地址有效，但无法生成默认策略",
-            Self::InvalidVless => "单节点链接无效，请检查协议、服务器和参数",
+            Self::Empty => "enter a subscription URL or single-node share link",
+            Self::UnsupportedSource => {
+                "unsupported source; expected an HTTP/HTTPS subscription or single-node share link"
+            }
+            Self::TooLong => "source URL exceeds the supported length",
+            Self::InvalidPreset => "subscription URL is valid but its default profile is not",
+            Self::InvalidVless => "single-node share link is invalid",
         })
     }
 }
@@ -195,7 +215,7 @@ fn parse_generic_single_node(input: &str) -> Result<SourceNodePreview, Subscript
         name,
         protocol,
         endpoint,
-        detail: "Single-node source".to_owned(),
+        detail: SourceNodeDetail::SingleNode,
     })
 }
 
@@ -228,28 +248,28 @@ fn parse_vless_node(input: &str) -> Result<SourceNodePreview, SubscriptionInputE
         .and_then(percent_decode)
         .filter(|name| !name.trim().is_empty())
         .unwrap_or_else(|| format!("VLESS · {host}"));
-    let security = query_value(query, "security").map_or("未声明安全层", |value| {
-        if value.eq_ignore_ascii_case("tls") {
-            "TLS"
-        } else if value.eq_ignore_ascii_case("reality") {
-            "REALITY"
-        } else if value.eq_ignore_ascii_case("none") {
-            "无 TLS"
-        } else {
-            "自定义安全层"
-        }
-    });
+    let security =
+        query_value(query, "security").map_or(SourceNodeSecurity::Unspecified, |value| {
+            if value.eq_ignore_ascii_case("tls") {
+                SourceNodeSecurity::Tls
+            } else if value.eq_ignore_ascii_case("reality") {
+                SourceNodeSecurity::Reality
+            } else if value.eq_ignore_ascii_case("none") {
+                SourceNodeSecurity::None
+            } else {
+                SourceNodeSecurity::Custom
+            }
+        });
     let transport = query_value(query, "type").and_then(transport_label);
-    let detail = transport.map_or_else(
-        || security.to_owned(),
-        |value| format!("{security} · {value}"),
-    );
 
     Ok(SourceNodePreview {
         name,
         protocol: "VLESS",
         endpoint,
-        detail,
+        detail: SourceNodeDetail::Vless {
+            security,
+            transport,
+        },
     })
 }
 
@@ -330,8 +350,8 @@ fn hex_value(value: u8) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::{
-        SingleNodeSource, SourceKind, SubscriptionInputError, validate_single_node_preview,
-        validate_subscription_preview,
+        SingleNodeSource, SourceKind, SourceNodeDetail, SourceNodeSecurity, SubscriptionInputError,
+        validate_single_node_preview, validate_subscription_preview,
     };
 
     #[test]
@@ -364,7 +384,13 @@ mod tests {
         assert_eq!(preview.nodes[0].name, "Tokyo Edge");
         assert_eq!(preview.nodes[0].protocol, "VLESS");
         assert_eq!(preview.nodes[0].endpoint, "edge.example.invalid:443");
-        assert_eq!(preview.nodes[0].detail, "TLS · WebSocket");
+        assert_eq!(
+            preview.nodes[0].detail,
+            SourceNodeDetail::Vless {
+                security: SourceNodeSecurity::Tls,
+                transport: Some("WebSocket"),
+            }
+        );
         assert!(!format!("{preview:?}").contains("00000000"));
     }
 
@@ -377,7 +403,13 @@ mod tests {
 
         assert_eq!(preview.kind, SourceKind::SingleNode);
         assert_eq!(preview.nodes[0].name, "Reality TCP");
-        assert_eq!(preview.nodes[0].detail, "REALITY · TCP");
+        assert_eq!(
+            preview.nodes[0].detail,
+            SourceNodeDetail::Vless {
+                security: SourceNodeSecurity::Reality,
+                transport: Some("TCP"),
+            }
+        );
     }
 
     #[test]

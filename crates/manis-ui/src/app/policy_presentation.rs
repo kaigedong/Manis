@@ -1,3 +1,14 @@
+#[derive(Clone, Copy)]
+struct PolicyGroupIconView<'a> {
+    id: &'a str,
+    icon: ManagedPolicyIcon,
+    policy_name: &'a str,
+    benchmarkable: bool,
+    running: bool,
+    language: Language,
+    theme: Theme,
+}
+
 impl ManisApp {
     fn persist_node_workspace(&mut self) {
         let Some(store_dir) = self.subscription_store_dir.as_ref() else {
@@ -7,7 +18,9 @@ impl ManisApp {
             mihomo::save_collapsed_groups_in(store_dir, self.node_workspace.collapsed_group_ids())
         {
             self.source_store_error = Some(error);
-            "无法保存节点来源展开状态".clone_into(&mut self.status);
+            self.language()
+                .localized(copy::app::COULD_NOT_SAVE_NODE_SOURCE_EXPANSION)
+                .clone_into(&mut self.status);
         }
     }
 
@@ -243,14 +256,18 @@ impl ManisApp {
     }
 
     fn policy_group_icon(
-        id: &str,
-        icon: ManagedPolicyIcon,
-        policy_name: &str,
-        benchmarkable: bool,
-        running: bool,
-        theme: Theme,
+        view: PolicyGroupIconView<'_>,
         listener: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
     ) -> Stateful<Div> {
+        let PolicyGroupIconView {
+            id,
+            icon,
+            policy_name,
+            benchmarkable,
+            running,
+            language,
+            theme,
+        } = view;
         div()
             .id(format!("policy-icon-{id}"))
             .size(px(38.0))
@@ -259,11 +276,11 @@ impl ManisApp {
             .when(benchmarkable, |avatar| {
                 avatar
                     .role(Role::Button)
-                    .aria_label(if running {
-                        "策略组测速中"
+                    .aria_label(language.localized(if running {
+                        copy::nodes::POLICY_BENCHMARK_IN_PROGRESS
                     } else {
-                        "测试策略组候选项延迟"
-                    })
+                        copy::nodes::TEST_POLICY_CANDIDATE_LATENCY
+                    }))
                     .tab_stop(!running)
                     .focusable()
                     .on_click(listener)
@@ -288,6 +305,7 @@ impl ManisApp {
     fn group_benchmark_icon(
         id: &str,
         running: bool,
+        language: Language,
         theme: Theme,
         listener: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
     ) -> Stateful<Div> {
@@ -299,11 +317,11 @@ impl ManisApp {
         div()
             .id(format!("group-benchmark-{id}"))
             .role(Role::Button)
-            .aria_label(if running {
-                "分组测速中"
+            .aria_label(language.localized(if running {
+                copy::nodes::GROUP_BENCHMARK_IN_PROGRESS
             } else {
-                "测试该分组延迟"
-            })
+                copy::nodes::TEST_GROUP_LATENCY
+            }))
             .tab_stop(!running)
             .focusable()
             .size(px(30.0))
@@ -337,6 +355,7 @@ impl ManisApp {
         state: GroupBenchmarkNodeState,
         idle_label: String,
         spinner_id: &str,
+        language: Language,
         theme: Theme,
     ) -> Div {
         let cell = div()
@@ -356,7 +375,9 @@ impl ManisApp {
             GroupBenchmarkNodeState::Measured(delay) => cell
                 .text_color(theme.status_success)
                 .child(format!("{delay} ms")),
-            GroupBenchmarkNodeState::Failed => cell.text_color(theme.route_trace).child("失败"),
+            GroupBenchmarkNodeState::Failed => cell
+                .text_color(theme.route_trace)
+                .child(language.localized(copy::nodes::BENCHMARK_FAILED)),
         }
     }
 

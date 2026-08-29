@@ -175,6 +175,15 @@ pub(crate) const TESTING: LocalizedText = LocalizedText::new("testing...", "正�
 pub(crate) const TESTING_SOURCE: LocalizedText =
     LocalizedText::new("Testing source", "正在测试来源");
 pub(crate) const TEST_FAILED: LocalizedText = LocalizedText::new("test failed", "测速失败");
+pub(crate) const BENCHMARK_FAILED: LocalizedText = LocalizedText::new("Failed", "失败");
+pub(crate) const GROUP_BENCHMARK_IN_PROGRESS: LocalizedText =
+    LocalizedText::new("Group benchmark in progress", "分组测速中");
+pub(crate) const POLICY_BENCHMARK_IN_PROGRESS: LocalizedText =
+    LocalizedText::new("Policy benchmark in progress", "策略组测速中");
+pub(crate) const TEST_GROUP_LATENCY: LocalizedText =
+    LocalizedText::new("Test this group's latency", "测试该分组延迟");
+pub(crate) const TEST_POLICY_CANDIDATE_LATENCY: LocalizedText =
+    LocalizedText::new("Test policy candidate latency", "测试策略组候选项延迟");
 pub(crate) const THE_CURRENT_RULE_DOES_NOT_MATCH_ANY_IMPORTED_NODES: LocalizedText =
     LocalizedText::new(
         "The current rule does not match any imported nodes",

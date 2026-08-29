@@ -377,10 +377,11 @@ impl ManisApp {
                 }
                 Err(error) => {
                     self.status = format!(
-                        "{}: {error}",
+                        "{}: {}",
                         language.localized(
                             copy::configuration::LANGUAGE_CHANGED_BUT_COULD_NOT_BE_SAVED
-                        )
+                        ),
+                        copy::configuration::language_preference_error(language, error)
                     );
                 }
             },

@@ -180,14 +180,14 @@ pub(crate) enum SubscriptionPreviewError {
 impl fmt::Display for SubscriptionPreviewError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
-            Self::UnsupportedPlatform => "当前平台尚不能启动隔离的 Mihomo 预览进程",
-            Self::BinaryUnavailable => "找不到 Manis 管理的 Mihomo 内核，请在设置中下载后重试",
-            Self::InvalidSource => "订阅地址无效，请检查后重试",
-            Self::WorkspaceUnavailable => "无法创建私有预览空间，请检查临时目录权限",
-            Self::ProfileUnavailable => "无法生成安全的订阅预览配置",
-            Self::EngineUnavailable => "Mihomo 预览进程启动失败",
-            Self::ProviderUnavailable => "Mihomo 无法下载或解析这份订阅，请检查网络和订阅状态",
-            Self::EmptyProvider => "订阅可以访问，但没有解析出任何代理节点",
+            Self::UnsupportedPlatform => "isolated Mihomo preview is unsupported on this platform",
+            Self::BinaryUnavailable => "the Manis-managed Mihomo binary is unavailable",
+            Self::InvalidSource => "subscription source is invalid",
+            Self::WorkspaceUnavailable => "private preview workspace is unavailable",
+            Self::ProfileUnavailable => "secure subscription preview profile is unavailable",
+            Self::EngineUnavailable => "Mihomo preview process could not start",
+            Self::ProviderUnavailable => "Mihomo could not download or parse the subscription",
+            Self::EmptyProvider => "subscription contains no proxy nodes",
         })
     }
 }
@@ -205,10 +205,10 @@ pub(crate) enum SubscriptionStoreError {
 impl fmt::Display for SubscriptionStoreError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
-            Self::DataDirectoryUnavailable => "无法确定 Manis 的用户数据目录",
-            Self::InvalidSource => "订阅地址无效，未执行导入",
-            Self::StoreUnavailable => "无法安全保存订阅，请检查用户数据目录权限",
-            Self::StoredSourceUnavailable => "已保存的订阅无法安全读取，需要重新导入",
+            Self::DataDirectoryUnavailable => "Manis user data directory is unavailable",
+            Self::InvalidSource => "subscription source is invalid",
+            Self::StoreUnavailable => "subscription store is unavailable",
+            Self::StoredSourceUnavailable => "stored subscription could not be read safely",
         })
     }
 }

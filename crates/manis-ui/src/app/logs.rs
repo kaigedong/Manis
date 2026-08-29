@@ -48,14 +48,10 @@ impl ManisApp {
         .bg(theme.surface_high)
         .text_color(theme.text_primary)
         .on_click(cx.listener(|this, _, _, cx| this.connect_mihomo(cx)));
+        let live_status = copy::app::live_stream_phase(language, &self.live_status.logs);
         let heading = page_heading(
             language.message(Message::Logs),
-            logs_summary(
-                language,
-                count,
-                &self.live_status.logs,
-                self.dropped_kernel_logs,
-            ),
+            logs_summary(language, count, &live_status, self.dropped_kernel_logs),
             None,
             theme,
         );

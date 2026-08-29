@@ -173,9 +173,10 @@ impl ManisApp {
             }
             Err(error) => {
                 self.status = format!(
-                    "{}{error}",
+                    "{}{}",
                     self.language()
-                        .localized(copy::configuration::COULD_NOT_READ_MANUAL_RULES)
+                        .localized(copy::configuration::COULD_NOT_READ_MANUAL_RULES),
+                    copy::configuration::manual_rule_store_error(self.language(), error)
                 );
             }
         }
@@ -499,8 +500,9 @@ impl ManisApp {
         {
             let _ = store_snapshot.clone().restore(&store_dir);
             self.status = format!(
-                "{}{error}",
-                language.message(Message::ManualRulesSaveFailed)
+                "{}{}",
+                language.message(Message::ManualRulesSaveFailed),
+                copy::configuration::manual_rule_store_error(language, error)
             );
             cx.notify();
             return false;
@@ -544,11 +546,7 @@ impl ManisApp {
                     let apply =
                         SourceRuntimeApply::from_result(runtime.apply_saved_sources(&store_dir));
                     let rollback_error = if apply.requires_source_rollback() {
-                        disk_rollback
-                            .store_snapshot
-                            .restore(&store_dir)
-                            .map_err(|error| error.to_string())
-                            .err()
+                        disk_rollback.store_snapshot.restore(&store_dir).err()
                     } else {
                         None
                     };
@@ -564,11 +562,15 @@ impl ManisApp {
                 apply.reconcile_proxy_mode(&mut this.proxy_mode);
                 this.status = if let Some(rollback_error) = rollback_error {
                     format!(
-                        "{}{} · {}{rollback_error}",
+                        "{}{} · {}{}",
                         completion,
                         apply.status_suffix(this.language()),
                         this.language().localized(
                             copy::configuration::COULD_NOT_RESTORE_THE_PREVIOUS_SAVED_RULES
+                        ),
+                        copy::configuration::subscription_store_error(
+                            this.language(),
+                            rollback_error,
                         )
                     )
                 } else {
@@ -1932,8 +1934,14 @@ impl ManisApp {
                     .to_owned(),
                 theme.status_error,
             ),
-            QxRuleImportFeedback::DownloadFailed(error) => (error.to_string(), theme.status_error),
-            QxRuleImportFeedback::StoreFailed(error) => (error.to_string(), theme.status_error),
+            QxRuleImportFeedback::DownloadFailed(error) => (
+                copy::configuration::rule_download_error(language, *error).to_owned(),
+                theme.status_error,
+            ),
+            QxRuleImportFeedback::StoreFailed(error) => (
+                copy::configuration::subscription_store_error(language, *error).to_owned(),
+                theme.status_error,
+            ),
         };
         div()
             .mt_2()

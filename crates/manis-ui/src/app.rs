@@ -36,9 +36,9 @@ use crate::{
     localization::{CountNoun, Language, LanguagePreference, Localizer, Message, copy},
     mihomo::{
         self, ControllerRuntime, ControllerState, GeneratedProfileApply, KernelLogEntry,
-        LiveRuntimeSession, LiveStreamStatus, LoadedProvider, LoadedSnapshot, ManagedRuntimeHealth,
-        RemoteSourceRefreshInterval, StoredQxRuleSource, StoredSingleNode, StoredSubscription,
-        SubscriptionPreviewError, SubscriptionStoreError,
+        LiveRuntimeSession, LiveStreamPhase, LiveStreamStatus, LoadedProvider, LoadedSnapshot,
+        ManagedRuntimeHealth, RemoteSourceRefreshInterval, StoredQxRuleSource, StoredSingleNode,
+        StoredSubscription, SubscriptionPreviewError, SubscriptionStoreError,
     },
     rule_source::RuleDownloadError,
     subscription::{SourceKind, SubscriptionInputError, SubscriptionPreview},
@@ -301,6 +301,7 @@ struct PolicyCandidateRowContext {
     manually_selectable: bool,
     selection_busy: bool,
     benchmark_state: GroupBenchmarkNodeState,
+    language: Language,
     theme: Theme,
 }
 
@@ -1589,16 +1590,18 @@ impl ManisApp {
             Err(ImportSubscriptionError::Preview(error)) => {
                 self.proxy_source_editor.feedback = SubscriptionFeedback::PreviewFailed(error);
                 self.status = format!(
-                    "{}{error}",
-                    language.localized(copy::app::SUBSCRIPTION_IMPORT_FAILED)
+                    "{}{}",
+                    language.localized(copy::app::SUBSCRIPTION_IMPORT_FAILED),
+                    copy::configuration::subscription_preview_error(language, error)
                 );
                 trace_ui(UiEvent::SourceImportFailed);
             }
             Err(ImportSubscriptionError::Store(error)) => {
                 self.proxy_source_editor.feedback = SubscriptionFeedback::StoreFailed(error);
                 self.status = format!(
-                    "{}{error}",
-                    language.localized(copy::app::COULD_NOT_SAVE_SUBSCRIPTION_2)
+                    "{}{}",
+                    language.localized(copy::app::COULD_NOT_SAVE_SUBSCRIPTION_2),
+                    copy::configuration::subscription_store_error(language, error)
                 );
                 trace_ui(UiEvent::SourceImportFailed);
             }
@@ -1786,18 +1789,20 @@ impl ManisApp {
             Err(ImportSubscriptionError::Preview(error)) => {
                 subscription.state = ImportedSubscriptionState::Unavailable(kind, error);
                 self.status = format!(
-                    "{}{error}",
-                    language.localized(copy::app::SUBSCRIPTION_UPDATE_FAILED_2)
+                    "{}{}",
+                    language.localized(copy::app::SUBSCRIPTION_UPDATE_FAILED_2),
+                    copy::configuration::subscription_preview_error(language, error)
                 );
                 trace_ui(UiEvent::SourceRestoreFailed);
             }
             Err(ImportSubscriptionError::Store(error)) => {
                 subscription.state = ImportedSubscriptionState::StoreError(error);
                 self.status = format!(
-                    "{}{error}",
+                    "{}{}",
                     language.localized(
                         copy::app::SUBSCRIPTION_LOADED_BUT_ITS_UPDATE_TIME_COULD_NOT_BE_SAVED
-                    )
+                    ),
+                    copy::configuration::subscription_store_error(language, error)
                 );
                 trace_ui(UiEvent::SourceRestoreFailed);
             }
@@ -1942,8 +1947,9 @@ impl ManisApp {
                         this.imported_subscriptions[index].state =
                             ImportedSubscriptionState::StoreError(error);
                         this.status = format!(
-                            "{}{error}",
-                            language.localized(copy::app::COULD_NOT_REMOVE_SUBSCRIPTION)
+                            "{}{}",
+                            language.localized(copy::app::COULD_NOT_REMOVE_SUBSCRIPTION),
+                            copy::configuration::subscription_store_error(language, error)
                         );
                         trace_ui(UiEvent::SourceRemoveFailed);
                     }
@@ -2087,12 +2093,16 @@ fn apply_proxy_mode_transition(
     ports: ProxyPorts,
     language: Language,
 ) -> Result<(), String> {
-    let mut system = system_proxy
-        .lock()
-        .map_err(|_| "系统代理状态锁已损坏".to_owned())?;
-    let mut dns = tun_dns
-        .lock()
-        .map_err(|_| "TUN DNS 状态锁已损坏".to_owned())?;
+    let mut system = system_proxy.lock().map_err(|_| {
+        language
+            .localized(copy::app::SYSTEM_PROXY_STATE_LOCK_WAS_DAMAGED)
+            .to_owned()
+    })?;
+    let mut dns = tun_dns.lock().map_err(|_| {
+        language
+            .localized(copy::app::TUN_DNS_STATE_LOCK_WAS_DAMAGED)
+            .to_owned()
+    })?;
     match (previous, requested) {
         (ProxyMode::System, ProxyMode::Off) => system
             .disable_with_language(language)
@@ -2107,7 +2117,9 @@ fn apply_proxy_mode_transition(
                 let rollback = enable_tun_with_dns(runtime, &mut dns, language);
                 return Err(match rollback {
                     Ok(()) => error.to_string(),
-                    Err(rollback) => format!("{error}；恢复原 TUN 模式也失败：{rollback}"),
+                    Err(rollback) => {
+                        copy::app::tun_mode_rollback_failed(language, &error.to_string(), &rollback)
+                    }
                 });
             }
             Ok(())
@@ -2121,7 +2133,11 @@ fn apply_proxy_mode_transition(
                 let rollback = system.enable_with_language(ports, language);
                 return Err(match rollback {
                     Ok(()) => error,
-                    Err(rollback) => format!("{error}；恢复原系统代理也失败：{rollback}"),
+                    Err(rollback) => copy::app::system_proxy_rollback_failed(
+                        language,
+                        &error,
+                        &rollback.to_string(),
+                    ),
                 });
             }
             Ok(())
@@ -2158,7 +2174,7 @@ fn enable_tun_with_dns(
         return Err(match rollback {
             Ok(()) => error.to_string(),
             Err(rollback) => {
-                format!("{error}；恢复原 DNS 设置也失败：{rollback}")
+                copy::app::dns_rollback_failed(language, &error.to_string(), &rollback.to_string())
             }
         });
     }
@@ -2178,14 +2194,21 @@ fn enable_tun_with_dns(
         );
         return Err(match (dns_rollback, tun_rollback) {
             (Ok(()), Ok(())) => error.to_string(),
-            (Err(dns_rollback), Ok(())) => {
-                format!("{error}；恢复原 DNS 设置也失败：{dns_rollback}")
-            }
-            (Ok(()), Err(tun_rollback)) => {
-                format!("{error}；关闭已启动的 TUN 也失败：{tun_rollback}")
-            }
-            (Err(dns_rollback), Err(tun_rollback)) => format!(
-                "{error}；恢复原 DNS 设置失败：{dns_rollback}；关闭已启动的 TUN 失败：{tun_rollback}"
+            (Err(dns_rollback), Ok(())) => copy::app::dns_rollback_failed(
+                language,
+                &error.to_string(),
+                &dns_rollback.to_string(),
+            ),
+            (Ok(()), Err(tun_rollback)) => copy::app::tun_shutdown_rollback_failed(
+                language,
+                &error.to_string(),
+                &tun_rollback.to_string(),
+            ),
+            (Err(dns_rollback), Err(tun_rollback)) => copy::app::dns_and_tun_rollback_failed(
+                language,
+                &error.to_string(),
+                &dns_rollback.to_string(),
+                &tun_rollback.to_string(),
             ),
         });
     }
@@ -2218,7 +2241,7 @@ fn disable_tun_with_dns(
                 format!("error={error}"),
             );
             Err(format!(
-                "{}：{error}",
+                "{}: {error}",
                 language.localized(
                     copy::app::TUN_IS_DISABLED_BUT_RESTORING_THE_ORIGINAL_DNS_FAILED_RECOVERY
                 )

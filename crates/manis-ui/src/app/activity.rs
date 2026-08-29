@@ -102,7 +102,7 @@ impl ManisApp {
                             .gap(Space::Sm.px())
                             .when(compact, gpui::Styled::w_full)
                             .child(status_badge(
-                                self.live_status.activity.clone(),
+                                copy::app::live_stream_phase(language, &self.live_status.activity),
                                 StatusTone::Neutral,
                                 theme,
                             ))

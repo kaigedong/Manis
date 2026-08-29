@@ -40,8 +40,8 @@ pub(crate) enum DirectRuleStoreError {
 impl fmt::Display for DirectRuleStoreError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Unavailable => formatter.write_str("直连规则存储不可用"),
-            Self::Corrupt => formatter.write_str("直连规则文件已损坏"),
+            Self::Unavailable => formatter.write_str("direct rule store is unavailable"),
+            Self::Corrupt => formatter.write_str("direct rule file is corrupt"),
         }
     }
 }

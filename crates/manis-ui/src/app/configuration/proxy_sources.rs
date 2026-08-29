@@ -25,7 +25,7 @@ impl ManisApp {
             .when_some(self.source_store_error, |panel, error| {
                 panel.child(Self::subscription_error(
                     language.localized(copy::configuration::SOME_LOCAL_SOURCES_COULD_NOT_BE_RESTORED),
-                    error.to_string(),
+                    copy::configuration::subscription_store_error(language, error).to_owned(),
                     Some(language.localized(copy::configuration::OTHER_SAFELY_READABLE_SOURCES_ARE_KEPT_CHECK_THE_USER_DATA)),
                     theme,
                 ))
@@ -624,9 +624,10 @@ impl ManisApp {
             Err(error) => {
                 self.proxy_source_editor.feedback = SubscriptionFeedback::InvalidInput(error);
                 self.status = format!(
-                    "{}: {error}",
+                    "{}: {}",
                     self.language()
-                        .localized(copy::configuration::SOURCE_RECOGNITION_FAILED)
+                        .localized(copy::configuration::SOURCE_RECOGNITION_FAILED),
+                    copy::configuration::subscription_input_error(self.language(), error)
                 );
                 trace_ui(UiEvent::SourceRecognitionFailed);
                 cx.notify();
@@ -720,9 +721,10 @@ impl ManisApp {
             Err(error) => {
                 self.proxy_source_editor.feedback = SubscriptionFeedback::StoreFailed(error);
                 self.status = format!(
-                    "{}: {error}",
+                    "{}: {}",
                     self.language()
-                        .localized(copy::configuration::SINGLE_NODE_SOURCE_SAVE_FAILED)
+                        .localized(copy::configuration::SINGLE_NODE_SOURCE_SAVE_FAILED),
+                    copy::configuration::subscription_store_error(self.language(), error)
                 );
                 trace_ui(UiEvent::SourceImportFailed);
                 cx.notify();
@@ -1196,7 +1198,11 @@ impl ManisApp {
             .gap_2()
             .text_size(TextRole::Metadata.size())
             .text_color(theme.text_secondary)
-            .child(format!("{} · {}", node.endpoint, node.detail))
+            .child(format!(
+                "{} · {}",
+                node.endpoint,
+                copy::configuration::source_node_detail(language, node.detail)
+            ))
             .child(div().flex_1())
             .when(controls_enabled, |row| {
                 row.child(
@@ -1265,9 +1271,10 @@ impl ManisApp {
                     }
                     Err(error) => {
                         this.status = format!(
-                            "{}: {error}",
+                            "{}: {}",
                             this.language()
-                                .localized(copy::configuration::COULD_NOT_UPDATE_SOURCE)
+                                .localized(copy::configuration::COULD_NOT_UPDATE_SOURCE),
+                            copy::configuration::subscription_store_error(this.language(), error)
                         );
                     }
                 }
@@ -1317,9 +1324,10 @@ impl ManisApp {
                     }
                     Err(error) => {
                         this.status = format!(
-                            "{}: {error}",
+                            "{}: {}",
                             this.language()
-                                .localized(copy::configuration::FAILED_TO_REMOVE_SOURCE)
+                                .localized(copy::configuration::FAILED_TO_REMOVE_SOURCE),
+                            copy::configuration::subscription_store_error(this.language(), error)
                         );
                     }
                 }

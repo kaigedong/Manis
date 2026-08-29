@@ -22,12 +22,12 @@ pub(crate) enum RuleDownloadError {
 impl fmt::Display for RuleDownloadError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
-            Self::InvalidHttpsUrl => "请输入完整的 HTTPS 规则地址",
-            Self::NetworkUnavailable => "规则下载失败，请检查网络后重试",
-            Self::RequestRejected => "规则源拒绝了请求或返回了异常状态",
-            Self::InsecureRedirect => "规则地址跳转到了非 HTTPS 页面，已停止导入",
-            Self::DocumentTooLarge => "规则文件超过 1 MiB，未执行导入",
-            Self::InvalidText => "规则文件不是有效的 UTF-8 文本",
+            Self::InvalidHttpsUrl => "rule source must be a complete HTTPS URL",
+            Self::NetworkUnavailable => "rule source download failed",
+            Self::RequestRejected => "rule source rejected the request",
+            Self::InsecureRedirect => "rule source redirected to a non-HTTPS URL",
+            Self::DocumentTooLarge => "rule source exceeds the 1 MiB limit",
+            Self::InvalidText => "rule source is not valid UTF-8 text",
         })
     }
 }

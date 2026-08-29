@@ -21,6 +21,8 @@ use super::{
     select_policy_group_candidate, set_routing_mode, validate_managed_runtime,
 };
 
+const MANAGED_KERNEL_LOCK_POISONED: &str = "managed kernel state lock is poisoned";
+
 impl ControllerRuntime {
     pub(crate) fn is_fixture(&self) -> bool {
         match self {
@@ -46,7 +48,7 @@ impl ControllerRuntime {
         if let Self::Managed { manager, .. } = self {
             manager
                 .lock()
-                .map_err(|_poisoned| LoadError::Runtime("托管内核状态锁已损坏".to_owned()))?
+                .map_err(|_poisoned| LoadError::Runtime(MANAGED_KERNEL_LOCK_POISONED.to_owned()))?
                 .stop()?;
         }
         Ok(())
@@ -59,7 +61,7 @@ impl ControllerRuntime {
             Self::Invalid { message } => Err(LoadError::Runtime(message.clone())),
             Self::Managed { manager, .. } => manager
                 .lock()
-                .map_err(|_poisoned| LoadError::Runtime("托管内核状态锁已损坏".to_owned()))?
+                .map_err(|_poisoned| LoadError::Runtime(MANAGED_KERNEL_LOCK_POISONED.to_owned()))?
                 .running_endpoint()
                 .map(|endpoint| {
                     if endpoint.is_some() {
@@ -85,8 +87,8 @@ impl ControllerRuntime {
         match self {
             #[cfg(any(test, feature = "snapshot-fixtures"))]
             Self::Fixture { endpoint } => endpoint.clone(),
-            Self::Managed { .. } => "Manis 托管".to_owned(),
-            Self::Invalid { .. } => "尚未连接".to_owned(),
+            Self::Managed { .. } => "Manis managed".to_owned(),
+            Self::Invalid { .. } => "not connected".to_owned(),
         }
     }
 
@@ -110,7 +112,7 @@ impl ControllerRuntime {
                     .and_then(|spec| spec.controller_secret.clone());
                 let endpoint = {
                     let mut manager = manager.lock().map_err(|_poisoned| {
-                        LoadError::Runtime("托管内核状态锁已损坏".to_owned())
+                        LoadError::Runtime(MANAGED_KERNEL_LOCK_POISONED.to_owned())
                     })?;
                     let running = manager.running_endpoint()?;
                     #[cfg(target_os = "macos")]
@@ -125,7 +127,7 @@ impl ControllerRuntime {
                         if let Some(spawner) = crate::macos_privileged::MacosPrivilegedProcessSpawner::recover_if_available()
                             .map_err(|error| {
                                 LoadError::Runtime(format!(
-                                    "无法恢复 macOS TUN 辅助服务：{error}"
+                                    "macOS TUN helper could not be recovered: {error}"
                                 ))
                             })?
                         {
@@ -134,7 +136,7 @@ impl ControllerRuntime {
                             )
                                 .map_err(|error| {
                                     LoadError::Runtime(format!(
-                                        "无法回收 Manis 遗留的普通 Mihomo：{error}"
+                                        "stale unprivileged Mihomo process could not be reclaimed: {error}"
                                     ))
                                 })?;
                             *manager = EngineManager::with_adapters(
@@ -158,12 +160,14 @@ impl ControllerRuntime {
                 {
                     let _ = manager
                         .lock()
-                        .map_err(|_poisoned| LoadError::Runtime("托管内核状态锁已损坏".to_owned()))?
+                        .map_err(|_poisoned| {
+                            LoadError::Runtime(MANAGED_KERNEL_LOCK_POISONED.to_owned())
+                        })?
                         .stop();
                     return Err(error);
                 }
                 Ok(RuntimeSnapshot {
-                    endpoint: "Manis 托管".to_owned(),
+                    endpoint: "Manis managed".to_owned(),
                     controller_endpoint: endpoint.clone(),
                     controller_secret: secret.clone(),
                     snapshot,
@@ -192,7 +196,7 @@ impl ControllerRuntime {
                     .and_then(|spec| spec.controller_secret.clone());
                 let endpoint = {
                     let mut manager = manager.lock().map_err(|_poisoned| {
-                        LoadError::Runtime("托管内核状态锁已损坏".to_owned())
+                        LoadError::Runtime(MANAGED_KERNEL_LOCK_POISONED.to_owned())
                     })?;
                     match manager.running_endpoint()? {
                         Some(endpoint) => endpoint,
@@ -201,7 +205,7 @@ impl ControllerRuntime {
                 };
                 let endpoint = endpoint.uri();
                 Ok(RuntimeSnapshot {
-                    endpoint: "Manis 托管".to_owned(),
+                    endpoint: "Manis managed".to_owned(),
                     controller_endpoint: endpoint.clone(),
                     controller_secret: secret.clone(),
                     snapshot: load_sing_box(&endpoint, secret.as_deref())?,
@@ -231,12 +235,14 @@ impl ControllerRuntime {
         let payload = render_generated_profile_with_tun(spec, &profile, enabled)?;
         #[cfg(target_os = "macos")]
         if enabled {
-            if let Some(conflict) = crate::macos_privileged::existing_tun_route()
-                .map_err(|error| LoadError::Runtime(format!("无法检查 macOS TUN 路由：{error}")))?
+            if let Some(conflict) =
+                crate::macos_privileged::existing_tun_route().map_err(|error| {
+                    LoadError::Runtime(format!("macOS TUN routes could not be inspected: {error}"))
+                })?
             {
                 record_event(LogLevel::Error, "controller.tun.conflict", conflict.clone());
                 return Err(LoadError::Runtime(format!(
-                    "检测到其他 TUN 正在占用系统代理路由（{conflict}）；请先关闭其他代理软件的 TUN 模式"
+                    "another TUN is using the system proxy route ({conflict}); turn off TUN mode in other proxy applications first"
                 )));
             }
             if let Err(error) = self.ensure_privileged_mihomo() {
@@ -322,16 +328,17 @@ impl ControllerRuntime {
         else {
             return Err(LoadError::Runtime(match self {
                 #[cfg(any(test, feature = "snapshot-fixtures"))]
-                Self::Fixture { .. } => "测试快照不能启用 TUN 模式".to_owned(),
+                Self::Fixture { .. } => "test snapshots cannot enable TUN mode".to_owned(),
                 Self::Invalid { message } => message.clone(),
                 Self::Managed { .. } => {
-                    "TUN 模式仅支持由 Manis 已保存来源生成的 Mihomo 配置".to_owned()
+                    "TUN mode requires a Mihomo configuration generated from saved Manis sources"
+                        .to_owned()
                 }
             }));
         };
         if spec.kernel != KernelKind::Mihomo {
             return Err(LoadError::Runtime(
-                "当前 TUN 配置重载流程仅支持 Mihomo".to_owned(),
+                "the TUN configuration reload path supports only Mihomo".to_owned(),
             ));
         }
         Ok((manager, spec))
@@ -340,7 +347,9 @@ impl ControllerRuntime {
     #[cfg(target_os = "macos")]
     fn release_macos_tun_route(&self) -> Result<(), LoadError> {
         if crate::macos_privileged::wait_for_tun_route_release().map_err(|error| {
-            LoadError::Runtime(format!("无法确认 macOS TUN 路由已释放：{error}"))
+            LoadError::Runtime(format!(
+                "macOS TUN route release could not be confirmed: {error}"
+            ))
         })? {
             return Ok(());
         }
@@ -352,19 +361,22 @@ impl ControllerRuntime {
         );
         let Self::Managed { manager, .. } = self else {
             return Err(LoadError::Runtime(
-                "关闭 TUN 后路由仍然存在，且当前内核不能由 Manis 重启".to_owned(),
+                "the TUN route remained after disable, and Manis cannot restart the active kernel"
+                    .to_owned(),
             ));
         };
         let mut manager = manager
             .lock()
-            .map_err(|_poisoned| LoadError::Runtime("托管内核状态锁已损坏".to_owned()))?;
+            .map_err(|_poisoned| LoadError::Runtime(MANAGED_KERNEL_LOCK_POISONED.to_owned()))?;
         manager.stop()?;
         manager.start()?;
         if !crate::macos_privileged::wait_for_tun_route_release().map_err(|error| {
-            LoadError::Runtime(format!("重启后无法确认 macOS TUN 路由已释放：{error}"))
+            LoadError::Runtime(format!(
+                "macOS TUN route release could not be confirmed after restart: {error}"
+            ))
         })? {
             return Err(LoadError::Runtime(
-                "Mihomo 重启后 macOS TUN 路由仍未释放".to_owned(),
+                "the macOS TUN route remained after Mihomo restarted".to_owned(),
             ));
         }
         record_event(
@@ -387,12 +399,13 @@ impl ControllerRuntime {
         } = self
         else {
             return Err(LoadError::Runtime(
-                "macOS TUN 仅支持由 Manis 已保存来源生成的 Mihomo 配置".to_owned(),
+                "macOS TUN requires a Mihomo configuration generated from saved Manis sources"
+                    .to_owned(),
             ));
         };
         if spec.kernel != KernelKind::Mihomo {
             return Err(LoadError::Runtime(
-                "macOS 特权辅助服务当前仅支持 Mihomo".to_owned(),
+                "the macOS privileged helper currently supports only Mihomo".to_owned(),
             ));
         }
         if privileged.load(Ordering::Acquire) {
@@ -410,15 +423,16 @@ impl ControllerRuntime {
             "helper.promotion.requested",
             "kernel=mihomo",
         );
-        let spawner = MacosPrivilegedProcessSpawner::prepare()
-            .map_err(|error| LoadError::Runtime(format!("无法准备 macOS TUN 辅助服务：{error}")))?;
+        let spawner = MacosPrivilegedProcessSpawner::prepare().map_err(|error| {
+            LoadError::Runtime(format!("macOS TUN helper could not be prepared: {error}"))
+        })?;
         let final_path = spec.data_dir.join(GENERATED_PROFILE_FILE);
         let config = managed_engine_config(spec, final_path.clone());
         validate_managed_config(&config)?;
 
         let mut manager = manager
             .lock()
-            .map_err(|_poisoned| LoadError::Runtime("托管内核状态锁已损坏".to_owned()))?;
+            .map_err(|_poisoned| LoadError::Runtime(MANAGED_KERNEL_LOCK_POISONED.to_owned()))?;
         let was_running = manager.running_endpoint()?.is_some();
         record_event(
             LogLevel::Info,
@@ -435,7 +449,9 @@ impl ControllerRuntime {
         } else {
             MacosPrivilegedProcessSpawner::reclaim_stale_ordinary(&config.launch_command())
                 .map_err(|error| {
-                    LoadError::Runtime(format!("无法回收 Manis 遗留的普通 Mihomo：{error}"))
+                    LoadError::Runtime(format!(
+                        "stale unprivileged Mihomo process could not be reclaimed: {error}"
+                    ))
                 })?;
         }
         *manager = EngineManager::with_adapters(
@@ -444,42 +460,7 @@ impl ControllerRuntime {
             Box::new(spawner),
             readiness_probe(spec),
         );
-        match manager.start() {
-            Ok(_endpoint) => {
-                privileged.store(true, Ordering::Release);
-                record_event(
-                    LogLevel::Info,
-                    "helper.promotion.succeeded",
-                    "privileged Mihomo controller became ready",
-                );
-                Ok(())
-            }
-            Err(privileged_error) => {
-                record_event(
-                    LogLevel::Error,
-                    "helper.promotion.failed",
-                    privileged_error.to_string(),
-                );
-                let fallback_config = managed_engine_config(spec, final_path);
-                *manager = EngineManager::new(
-                    fallback_config,
-                    ReadinessPolicy::default(),
-                    readiness_probe(spec),
-                );
-                let fallback = if was_running {
-                    manager.start().err()
-                } else {
-                    None
-                };
-                let message = match fallback {
-                    Some(fallback) => format!(
-                        "特权 Mihomo 启动失败：{privileged_error}；恢复普通 Mihomo 也失败：{fallback}"
-                    ),
-                    None => format!("特权 Mihomo 启动失败：{privileged_error}"),
-                };
-                Err(LoadError::Runtime(message))
-            }
-        }
+        start_promoted_mihomo(&mut manager, spec, final_path, was_running, privileged)
     }
 
     pub(crate) fn set_routing_mode(&self, mode: RoutingMode) -> Result<(), LoadError> {
@@ -491,17 +472,23 @@ impl ControllerRuntime {
         let controller_secret = self.controller_secret();
         let endpoint = match self {
             Self::Managed { manager, .. } => {
-                let mut manager = manager
-                    .lock()
-                    .map_err(|_poisoned| LoadError::Runtime("托管内核状态锁已损坏".to_owned()))?;
+                let mut manager = manager.lock().map_err(|_poisoned| {
+                    LoadError::Runtime(MANAGED_KERNEL_LOCK_POISONED.to_owned())
+                })?;
                 manager
                     .running_endpoint()?
-                    .ok_or_else(|| LoadError::Runtime("Mihomo 尚未运行，请先连接内核".to_owned()))?
+                    .ok_or_else(|| {
+                        LoadError::Runtime(
+                            "Mihomo is not running; connect the kernel first".to_owned(),
+                        )
+                    })?
                     .uri()
             }
             #[cfg(any(test, feature = "snapshot-fixtures"))]
             Self::Fixture { .. } => {
-                return Err(LoadError::Runtime("测试快照不能修改路由模式".to_owned()));
+                return Err(LoadError::Runtime(
+                    "test snapshots cannot change routing mode".to_owned(),
+                ));
             }
             Self::Invalid { message } => return Err(LoadError::Runtime(message.clone())),
         };
@@ -533,16 +520,21 @@ impl ControllerRuntime {
         } = self
         else {
             return Err(LoadError::Runtime(
-                "当前控制器不由 Manis 管理，不能修改全局出口".to_owned(),
+                "the active controller is not managed by Manis; its global exit cannot be changed"
+                    .to_owned(),
             ));
         };
         let endpoint = {
             let mut manager = manager
                 .lock()
-                .map_err(|_poisoned| LoadError::Runtime("托管内核状态锁已损坏".to_owned()))?;
+                .map_err(|_poisoned| LoadError::Runtime(MANAGED_KERNEL_LOCK_POISONED.to_owned()))?;
             manager
                 .running_endpoint()?
-                .ok_or_else(|| LoadError::Runtime("Mihomo 尚未运行，请先启动托管内核".to_owned()))?
+                .ok_or_else(|| {
+                    LoadError::Runtime(
+                        "Mihomo is not running; start the managed kernel first".to_owned(),
+                    )
+                })?
                 .uri()
         };
         select_global_node_at_endpoint(&endpoint, selected_name, controller_secret.as_deref())
@@ -554,7 +546,9 @@ impl ControllerRuntime {
         candidate_names: &[String],
     ) -> Result<std::collections::BTreeMap<String, u16>, LoadError> {
         if candidate_names.is_empty() {
-            return Err(LoadError::Runtime("当前分组没有可测速节点".to_owned()));
+            return Err(LoadError::Runtime(
+                "the current group has no nodes that can be benchmarked".to_owned(),
+            ));
         }
         let controller_secret = self.controller_secret();
         let (endpoint, managed) = match self {
@@ -563,7 +557,7 @@ impl ControllerRuntime {
             Self::Managed { manager, .. } => {
                 let endpoint = {
                     let mut manager = manager.lock().map_err(|_poisoned| {
-                        LoadError::Runtime("托管内核状态锁已损坏".to_owned())
+                        LoadError::Runtime(MANAGED_KERNEL_LOCK_POISONED.to_owned())
                     })?;
                     match manager.running_endpoint()? {
                         Some(endpoint) => endpoint,
@@ -600,7 +594,9 @@ impl ControllerRuntime {
         on_result: impl FnMut(&str, Option<u16>),
     ) -> Result<BTreeMap<String, u16>, LoadError> {
         if targets.is_empty() {
-            return Err(LoadError::Runtime("当前分组没有可测速节点".to_owned()));
+            return Err(LoadError::Runtime(
+                "the current group has no nodes that can be benchmarked".to_owned(),
+            ));
         }
         let controller_secret = self.controller_secret();
         let endpoint = match self {
@@ -609,7 +605,7 @@ impl ControllerRuntime {
             Self::Managed { manager, .. } => {
                 let endpoint = {
                     let mut manager = manager.lock().map_err(|_poisoned| {
-                        LoadError::Runtime("托管内核状态锁已损坏".to_owned())
+                        LoadError::Runtime(MANAGED_KERNEL_LOCK_POISONED.to_owned())
                     })?;
                     match manager.running_endpoint()? {
                         Some(endpoint) => endpoint,
@@ -641,7 +637,7 @@ impl ControllerRuntime {
             Self::Managed { manager, .. } => {
                 let endpoint = {
                     let mut manager = manager.lock().map_err(|_poisoned| {
-                        LoadError::Runtime("托管内核状态锁已损坏".to_owned())
+                        LoadError::Runtime(MANAGED_KERNEL_LOCK_POISONED.to_owned())
                     })?;
                     match manager.running_endpoint()? {
                         Some(endpoint) => endpoint,
@@ -672,7 +668,7 @@ impl ControllerRuntime {
         };
         if delays.is_empty() {
             return Err(LoadError::Runtime(
-                "Mihomo 未返回任何有效节点延迟".to_owned(),
+                "Mihomo returned no valid node latency measurements".to_owned(),
             ));
         }
         let current = fetch_policy_group(&endpoint, group_name, controller_secret.as_deref())
@@ -694,16 +690,21 @@ impl ControllerRuntime {
         } = self
         else {
             return Err(LoadError::Runtime(
-                "当前控制器不由 Manis 管理，不能修改其策略组".to_owned(),
+                "the active controller is not managed by Manis; its policy groups cannot be changed"
+                    .to_owned(),
             ));
         };
         let endpoint = {
             let mut manager = manager
                 .lock()
-                .map_err(|_poisoned| LoadError::Runtime("托管内核状态锁已损坏".to_owned()))?;
+                .map_err(|_poisoned| LoadError::Runtime(MANAGED_KERNEL_LOCK_POISONED.to_owned()))?;
             manager
                 .running_endpoint()?
-                .ok_or_else(|| LoadError::Runtime("Mihomo 尚未运行，请先启动托管内核".to_owned()))?
+                .ok_or_else(|| {
+                    LoadError::Runtime(
+                        "Mihomo is not running; start the managed kernel first".to_owned(),
+                    )
+                })?
                 .uri()
         };
         select_policy_group_candidate(
@@ -719,5 +720,49 @@ impl ControllerRuntime {
         store_dir: &Path,
     ) -> Result<GeneratedProfileApply, LoadError> {
         managed_apply::apply_saved_sources(self, store_dir)
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn start_promoted_mihomo(
+    manager: &mut EngineManager,
+    spec: &ManagedGeneratedProfile,
+    final_path: std::path::PathBuf,
+    was_running: bool,
+    privileged: &std::sync::atomic::AtomicBool,
+) -> Result<(), LoadError> {
+    match manager.start() {
+        Ok(_endpoint) => {
+            privileged.store(true, Ordering::Release);
+            record_event(
+                LogLevel::Info,
+                "helper.promotion.succeeded",
+                "privileged Mihomo controller became ready",
+            );
+            Ok(())
+        }
+        Err(privileged_error) => {
+            record_event(
+                LogLevel::Error,
+                "helper.promotion.failed",
+                privileged_error.to_string(),
+            );
+            let fallback_config = managed_engine_config(spec, final_path);
+            *manager = EngineManager::new(
+                fallback_config,
+                ReadinessPolicy::default(),
+                readiness_probe(spec),
+            );
+            let fallback = was_running.then(|| manager.start().err()).flatten();
+            let message = fallback.map_or_else(
+                || format!("privileged Mihomo failed to start: {privileged_error}"),
+                |fallback| {
+                    format!(
+                        "privileged Mihomo failed to start: {privileged_error}; restoring unprivileged Mihomo also failed: {fallback}"
+                    )
+                },
+            );
+            Err(LoadError::Runtime(message))
+        }
     }
 }

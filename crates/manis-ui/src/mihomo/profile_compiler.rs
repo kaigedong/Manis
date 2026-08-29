@@ -45,13 +45,16 @@ fn load_subscription_inputs(
 ) -> Result<SubscriptionInputs, LoadError> {
     let mut subscriptions = base_subscription.into_iter().collect::<Vec<_>>();
     let stored = load_subscription_sources_in(store_dir)
-        .map_err(|_error| LoadError::Runtime("无法读取已保存的订阅来源".to_owned()))?
+        .map_err(|_error| {
+            LoadError::Runtime("saved subscription sources could not be read".to_owned())
+        })?
         .into_iter()
         .filter(|stored| stored.enabled)
         .collect::<Vec<_>>();
     if kernel == KernelKind::SingBox && !stored.is_empty() {
         return Err(LoadError::Runtime(
-            "sing-box 暂不能直接读取 Clash 订阅；请先使用手动 VLESS 节点".to_owned(),
+            "sing-box cannot read Clash subscriptions yet; use manual VLESS nodes instead"
+                .to_owned(),
         ));
     }
     let mut indexes = HashMap::new();
@@ -78,7 +81,9 @@ fn load_subscription_inputs(
 
 fn load_enabled_single_nodes(store_dir: &Path) -> Result<Vec<StoredSingleNode>, LoadError> {
     load_single_node_sources_in(store_dir)
-        .map_err(|_error| LoadError::Runtime("无法读取已保存的单节点来源".to_owned()))
+        .map_err(|_error| {
+            LoadError::Runtime("saved single-node sources could not be read".to_owned())
+        })
         .map(|nodes| nodes.into_iter().filter(|stored| stored.enabled).collect())
 }
 
@@ -106,7 +111,10 @@ fn compile_single_node_inputs(
                 .source
                 .expose_to(VlessProxy::parse_share_link)
                 .map_err(|_error| {
-                    LoadError::Runtime("sing-box 当前只支持 VLESS 格式的手动单节点".to_owned())
+                    LoadError::Runtime(
+                        "sing-box currently supports only manual VLESS single-node sources"
+                            .to_owned(),
+                    )
                 })
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -123,7 +131,7 @@ fn build_base_profile(
 ) -> Result<(Profile, Option<Rule>), LoadError> {
     let mixed_port = configured_mixed_port().map_err(LoadError::Runtime)?;
     let policy_groups = load_managed_policy_groups_in(store_dir)
-        .map_err(|_error| LoadError::Runtime("无法读取策略组".to_owned()))?;
+        .map_err(|_error| LoadError::Runtime("policy groups could not be read".to_owned()))?;
     let user_groups = compile_managed_policy_groups(
         &policy_groups,
         provider_indexes,
@@ -135,7 +143,7 @@ fn build_base_profile(
         subscriptions.is_empty() && local_provider_paths.is_empty() && vless_nodes.is_empty();
     if bootstrap && !user_groups.is_empty() {
         return Err(LoadError::Runtime(
-            "没有节点来源时不能生成策略组".to_owned(),
+            "policy groups cannot be generated without a node source".to_owned(),
         ));
     }
     let mut profile = if bootstrap {
@@ -161,14 +169,15 @@ fn apply_saved_routing(
     bootstrap_fallback: Option<Rule>,
 ) -> Result<(), LoadError> {
     let routing_mode = load_routing_mode_in(store_dir)
-        .map_err(|_error| LoadError::Runtime("无法读取已保存的路由模式".to_owned()))?;
+        .map_err(|_error| LoadError::Runtime("saved routing mode could not be read".to_owned()))?;
     profile.set_mode(profile_mode(routing_mode));
     let sources = load_qx_rule_sources_in(store_dir)
-        .map_err(|_error| LoadError::Runtime("无法读取 QX 规则来源".to_owned()))?;
+        .map_err(|_error| LoadError::Runtime("QX rule sources could not be read".to_owned()))?;
     let manual_rules = crate::manual_rule::load_manual_rules_in(store_dir)
         .map_err(|error| LoadError::Runtime(error.to_string()))?;
-    let stored_order = load_routing_rule_group_order_in(store_dir)
-        .map_err(|_error| LoadError::Runtime("无法读取已保存的分流规则分组顺序".to_owned()))?;
+    let stored_order = load_routing_rule_group_order_in(store_dir).map_err(|_error| {
+        LoadError::Runtime("saved routing rule group order could not be read".to_owned())
+    })?;
     let order =
         normalized_routing_rule_group_order(&stored_order, !manual_rules.is_empty(), &sources);
     for group_id in order {
