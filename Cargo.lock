@@ -4062,6 +4062,7 @@ name = "manis-mihomo"
 version = "0.1.0"
 dependencies = [
  "manis-core",
+ "num-traits",
  "serde",
  "serde_json",
 ]

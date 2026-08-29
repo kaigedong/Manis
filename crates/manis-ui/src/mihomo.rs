@@ -252,12 +252,12 @@ pub(crate) enum RuntimeProfileSource {
 }
 
 impl RuntimeProfileSource {
-    pub(crate) fn label(self) -> &'static str {
+    pub(crate) fn diagnostic_key(self) -> &'static str {
         match self {
             #[cfg(any(test, feature = "snapshot-fixtures"))]
-            Self::FixtureController => "测试快照",
-            Self::SavedSources => "Manis 已保存来源",
-            Self::Invalid => "尚未准备好",
+            Self::FixtureController => "fixture-controller",
+            Self::SavedSources => "saved-sources",
+            Self::Invalid => "invalid",
         }
     }
 }

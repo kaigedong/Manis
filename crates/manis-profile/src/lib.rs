@@ -212,7 +212,6 @@ impl Profile {
     /// # Errors
     /// Returns a redacted validation error if a source set is empty, names collide, or a user
     /// group references an unknown provider index or direct proxy name.
-    #[allow(clippy::too_many_lines)]
     pub fn qx_sources_with_groups(
         subscriptions: Vec<SecretUrl>,
         vless_nodes: Vec<VlessProxy>,

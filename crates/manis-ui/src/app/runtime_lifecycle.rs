@@ -173,7 +173,7 @@ impl ManisApp {
             format!(
                 "kernel={} profile={} endpoint={}",
                 self.runtime.kind().display_name(),
-                self.runtime.profile_source().label(),
+                self.runtime.profile_source().diagnostic_key(),
                 self.runtime.endpoint_label()
             ),
         );

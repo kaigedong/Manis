@@ -272,7 +272,7 @@ mod tests {
             .expect("trigger should render");
         cx.simulate_click(trigger.center(), Modifiers::default());
         cx.update(|window, cx| window.draw(cx).clear(cx));
-        std::thread::sleep(Duration::from_millis(180));
+        cx.executor().advance_clock(Duration::from_millis(180));
         cx.update(|window, cx| window.draw(cx).clear(cx));
 
         let content = cx

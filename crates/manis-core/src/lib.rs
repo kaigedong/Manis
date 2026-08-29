@@ -48,42 +48,58 @@ impl KernelKind {
     #[must_use]
     pub const fn capabilities(self) -> KernelCapabilities {
         match self {
-            Self::Mihomo => KernelCapabilities {
-                subscription_providers: true,
-                manual_vless: true,
-                selector: true,
-                url_test: true,
-                fallback: true,
-                load_balance: true,
-                clash_api: true,
-                tun: true,
-            },
-            Self::SingBox => KernelCapabilities {
-                subscription_providers: false,
-                manual_vless: true,
-                selector: true,
-                url_test: true,
-                fallback: false,
-                load_balance: false,
-                clash_api: true,
-                tun: false,
-            },
+            Self::Mihomo => KernelCapabilities::MIHOMO,
+            Self::SingBox => KernelCapabilities::SING_BOX,
         }
     }
 }
 
 /// Features that are both native to a kernel and implemented by Manis's adapter.
-#[allow(clippy::struct_excessive_bools)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct KernelCapabilities {
-    pub subscription_providers: bool,
-    pub manual_vless: bool,
-    pub selector: bool,
-    pub url_test: bool,
-    pub fallback: bool,
-    pub load_balance: bool,
-    pub clash_api: bool,
-    pub tun: bool,
+    bits: u8,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum KernelCapability {
+    SubscriptionProviders,
+    ManualVless,
+    Selector,
+    UrlTest,
+    Fallback,
+    LoadBalance,
+    ClashApi,
+    Tun,
+}
+
+impl KernelCapability {
+    const fn bit(self) -> u8 {
+        match self {
+            Self::SubscriptionProviders => 1 << 0,
+            Self::ManualVless => 1 << 1,
+            Self::Selector => 1 << 2,
+            Self::UrlTest => 1 << 3,
+            Self::Fallback => 1 << 4,
+            Self::LoadBalance => 1 << 5,
+            Self::ClashApi => 1 << 6,
+            Self::Tun => 1 << 7,
+        }
+    }
+}
+
+impl KernelCapabilities {
+    const MIHOMO: Self = Self { bits: u8::MAX };
+    const SING_BOX: Self = Self {
+        bits: KernelCapability::ManualVless.bit()
+            | KernelCapability::Selector.bit()
+            | KernelCapability::UrlTest.bit()
+            | KernelCapability::ClashApi.bit(),
+    };
+
+    #[must_use]
+    pub const fn supports(self, capability: KernelCapability) -> bool {
+        self.bits & capability.bit() != 0
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -142,9 +142,10 @@ fn policy_node(
     }
 }
 
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 fn rounded_latency(latency: Option<f64>) -> Option<u16> {
-    latency.map(|latency| latency.round().clamp(0.0, f64::from(u16::MAX)) as u16)
+    use num_traits::ToPrimitive as _;
+
+    latency.and_then(|latency| latency.round().clamp(0.0, f64::from(u16::MAX)).to_u16())
 }
 
 fn policy_group_kind(kind: GroupKind) -> CorePolicyGroupKind {

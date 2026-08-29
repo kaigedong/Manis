@@ -936,7 +936,7 @@ impl ManisApp {
                 } else {
                     "invalid"
                 },
-                runtime.profile_source().label()
+                runtime.profile_source().diagnostic_key()
             ),
         );
         let app = Self::with_runtime_and_store(runtime, store);

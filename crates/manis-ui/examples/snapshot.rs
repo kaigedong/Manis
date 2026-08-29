@@ -109,10 +109,7 @@ fn capture_managed_policy_settings(
 
     refresh(cx, window)?;
     cx.simulate_click(window, point(px(1_340.0), px(76.0)), Modifiers::none());
-    for _ in 0..24 {
-        std::thread::sleep(std::time::Duration::from_millis(25));
-        refresh(cx, window)?;
-    }
+    settle_ui_for(cx, window, std::time::Duration::from_millis(600))?;
     save_screenshot(cx, window, "native-wide-saved-policy-collapsed.png")?;
     cx.simulate_click(window, point(px(700.0), px(172.0)), Modifiers::none());
     refresh(cx, window)?;
@@ -147,10 +144,7 @@ fn capture_managed_policy_settings(
     })?;
     let compact_window: AnyWindowHandle = compact_window.into();
     refresh(cx, compact_window)?;
-    for _ in 0..24 {
-        std::thread::sleep(std::time::Duration::from_millis(25));
-        refresh(cx, compact_window)?;
-    }
+    settle_ui_for(cx, compact_window, std::time::Duration::from_millis(600))?;
     cx.simulate_click(
         compact_window,
         point(px(590.0), px(88.0)),
@@ -187,80 +181,29 @@ fn capture_automatic_policy(
 
     refresh(cx, window)?;
     cx.simulate_click(window, point(px(1_350.0), px(82.0)), Modifiers::none());
-    for _ in 0..24 {
-        std::thread::sleep(std::time::Duration::from_millis(25));
-        refresh(cx, window)?;
-    }
+    settle_ui_for(cx, window, std::time::Duration::from_millis(600))?;
     save_screenshot(cx, window, "native-wide-policy-groups-collapsed.png")?;
     cx.simulate_click(window, point(px(380.0), px(190.0)), Modifiers::none());
     refresh(cx, window)?;
     save_screenshot(cx, window, "native-wide-policy-groups-expanded.png")?;
     cx.simulate_click(window, point(px(268.0), px(190.0)), Modifiers::none());
-    for _ in 0..24 {
-        std::thread::sleep(std::time::Duration::from_millis(25));
-        refresh(cx, window)?;
-    }
+    settle_ui_for(cx, window, std::time::Duration::from_millis(600))?;
     save_screenshot(cx, window, "native-wide-policy-groups-tested.png")?;
     close_window(cx, window)?;
     server.stop()
 }
 
 #[cfg(target_os = "macos")]
-#[allow(clippy::too_many_lines)]
 fn capture_remote_subscription_preview(
     cx: &mut gpui::VisualTestAppContext,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use gpui::{AnyWindowHandle, Modifiers, point, px, size};
     use manis_ui::ManisApp;
-    use std::io::{BufRead, BufReader, Write};
-    use std::net::TcpListener;
     use std::path::Path;
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Duration;
 
-    let listener = TcpListener::bind("127.0.0.1:0")?;
-    listener.set_nonblocking(true)?;
-    let subscription_url = format!(
-        "http://{}/subscription?name=Fixture%20Transit",
-        listener.local_addr()?
-    );
-    let stop = Arc::new(AtomicBool::new(false));
-    let server_stop = stop.clone();
-    let server = std::thread::spawn(move || -> std::io::Result<()> {
-        let body = r#"proxies:
-  - name: "Tokyo Edge"
-    type: ss
-    server: 127.0.0.1
-    port: 443
-    cipher: aes-128-gcm
-    password: fixture-alpha
-  - name: "Singapore Core"
-    type: ss
-    server: 127.0.0.1
-    port: 8443
-    cipher: aes-128-gcm
-    password: fixture-beta
-"#;
-        while !server_stop.load(Ordering::Relaxed) {
-            match listener.accept() {
-                Ok((mut stream, _)) => {
-                    let mut request_line = String::new();
-                    BufReader::new(stream.try_clone()?).read_line(&mut request_line)?;
-                    let response = format!(
-                        "HTTP/1.1 200 OK\r\nContent-Type: text/yaml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                        body.len()
-                    );
-                    stream.write_all(response.as_bytes())?;
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                    std::thread::sleep(Duration::from_millis(10));
-                }
-                Err(error) => return Err(error),
-            }
-        }
-        Ok(())
-    });
+    let server = SubscriptionFixtureServer::start()?;
+    let subscription_url = server.url().to_owned();
 
     let fixture_root =
         std::env::temp_dir().join(format!("manis-ui-import-snapshot-{}", std::process::id()));
@@ -280,18 +223,14 @@ fn capture_remote_subscription_preview(
     })?;
     let window: AnyWindowHandle = window.into();
     refresh(cx, window)?;
-    cx.simulate_click(window, point(px(110.0), px(284.0)), Modifiers::none());
-    refresh(cx, window)?;
+    open_workspace(cx, window, 1_420.0, SnapshotWorkspace::Configuration)?;
     scroll_window(cx, window, 1_300.0, 760.0, -600.0)?;
     cx.simulate_click(window, point(px(700.0), px(510.0)), Modifiers::none());
     refresh(cx, window)?;
     cx.simulate_input(window, &subscription_url);
     refresh(cx, window)?;
     cx.simulate_click(window, point(px(700.0), px(560.0)), Modifiers::none());
-    for _ in 0..40 {
-        std::thread::sleep(Duration::from_millis(25));
-        refresh(cx, window)?;
-    }
+    settle_ui_for(cx, window, Duration::from_secs(1))?;
     scroll_window(cx, window, 1_300.0, 760.0, -360.0)?;
     save_screenshot(
         cx,
@@ -313,10 +252,94 @@ fn capture_remote_subscription_preview(
     close_window(cx, window)?;
     write_managed_policy_fixture(&store)?;
     capture_restored_subscription_views(cx, &store)?;
-    stop.store(true, Ordering::Relaxed);
-    server.join().map_err(|_| "fixture server panicked")??;
+    server.stop()?;
     if fixture_root.exists() {
         std::fs::remove_dir_all(fixture_root)?;
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+struct SubscriptionFixtureServer {
+    url: String,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    thread: std::thread::JoinHandle<std::io::Result<()>>,
+}
+
+#[cfg(target_os = "macos")]
+impl SubscriptionFixtureServer {
+    fn start() -> std::io::Result<Self> {
+        use std::net::TcpListener;
+        use std::sync::Arc;
+        use std::sync::atomic::AtomicBool;
+
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        listener.set_nonblocking(true)?;
+        let url = format!(
+            "http://{}/subscription?name=Fixture%20Transit",
+            listener.local_addr()?
+        );
+        let stop = Arc::new(AtomicBool::new(false));
+        let server_stop = stop.clone();
+        let thread =
+            std::thread::spawn(move || serve_subscription_fixture(&listener, &server_stop));
+        Ok(Self { url, stop, thread })
+    }
+
+    fn url(&self) -> &str {
+        &self.url
+    }
+
+    fn stop(self) -> Result<(), Box<dyn std::error::Error>> {
+        use std::sync::atomic::Ordering;
+
+        self.stop.store(true, Ordering::Relaxed);
+        self.thread
+            .join()
+            .map_err(|_| "fixture server panicked")??;
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn serve_subscription_fixture(
+    listener: &std::net::TcpListener,
+    stop: &std::sync::atomic::AtomicBool,
+) -> std::io::Result<()> {
+    use std::io::{BufRead, BufReader, Write};
+    use std::sync::atomic::Ordering;
+    use std::time::Duration;
+
+    const BODY: &str = r#"proxies:
+  - name: "Tokyo Edge"
+    type: ss
+    server: 127.0.0.1
+    port: 443
+    cipher: aes-128-gcm
+    password: fixture-alpha
+  - name: "Singapore Core"
+    type: ss
+    server: 127.0.0.1
+    port: 8443
+    cipher: aes-128-gcm
+    password: fixture-beta
+"#;
+    while !stop.load(Ordering::Relaxed) {
+        match listener.accept() {
+            Ok((mut stream, _)) => {
+                let mut request_line = String::new();
+                BufReader::new(stream.try_clone()?).read_line(&mut request_line)?;
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/yaml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{BODY}",
+                    BODY.len()
+                );
+                stream.write_all(response.as_bytes())?;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => return Err(error),
+        }
     }
     Ok(())
 }
@@ -345,37 +368,57 @@ fn write_managed_policy_fixture(store: &std::path::Path) -> Result<(), Box<dyn s
 }
 
 #[cfg(target_os = "macos")]
-#[allow(clippy::too_many_lines)]
 fn capture_restored_subscription_views(
     cx: &mut gpui::VisualTestAppContext,
     store: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    for view in [
+        RestoredSubscriptionView {
+            width: 1420.0,
+            height: 900.0,
+            configuration_file: "configuration-wide-import-restored.png",
+            nodes_file: "nodes-wide-imported.png",
+            collapsed_file: "nodes-wide-imported-collapsed.png",
+            group_y: 365.0,
+        },
+        RestoredSubscriptionView {
+            width: 720.0,
+            height: 720.0,
+            configuration_file: "configuration-compact-import-restored.png",
+            nodes_file: "nodes-compact-imported.png",
+            collapsed_file: "nodes-compact-imported-collapsed.png",
+            group_y: 310.0,
+        },
+    ] {
+        capture_restored_subscription_view(cx, store, view)?;
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy)]
+struct RestoredSubscriptionView {
+    width: f32,
+    height: f32,
+    configuration_file: &'static str,
+    nodes_file: &'static str,
+    collapsed_file: &'static str,
+    group_y: f32,
+}
+
+#[cfg(target_os = "macos")]
+fn capture_restored_subscription_view(
+    cx: &mut gpui::VisualTestAppContext,
+    store: &std::path::Path,
+    view: RestoredSubscriptionView,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use gpui::{AnyWindowHandle, Modifiers, point, px, size};
     use manis_ui::ManisApp;
     use std::time::Duration;
 
-    for (width, height, navigation_x, configuration_file, nodes_file, collapsed_file, group_y) in [
-        (
-            1420.0,
-            900.0,
-            110.0,
-            "configuration-wide-import-restored.png",
-            "nodes-wide-imported.png",
-            "nodes-wide-imported-collapsed.png",
-            365.0,
-        ),
-        (
-            720.0,
-            720.0,
-            30.0,
-            "configuration-compact-import-restored.png",
-            "nodes-compact-imported.png",
-            "nodes-compact-imported-collapsed.png",
-            310.0,
-        ),
-    ] {
-        let window_store = store.to_owned();
-        let window = cx.open_offscreen_window(size(px(width), px(height)), |window, cx| {
+    let window_store = store.to_owned();
+    let window =
+        cx.open_offscreen_window(size(px(view.width), px(view.height)), |window, cx| {
             manis_root(window, cx, |_| {
                 ManisApp::with_fixture_controller_and_subscription_store(
                     "http://127.0.0.1:9090",
@@ -383,35 +426,29 @@ fn capture_restored_subscription_views(
                 )
             })
         })?;
-        let window: AnyWindowHandle = window.into();
-        refresh(cx, window)?;
-        cx.simulate_click(
-            window,
-            point(px(navigation_x), px(284.0)),
-            Modifiers::none(),
-        );
-        for _ in 0..40 {
-            std::thread::sleep(Duration::from_millis(25));
-            refresh(cx, window)?;
-        }
-        scroll_window(cx, window, width - 100.0, height - 120.0, -360.0)?;
-        save_screenshot(cx, window, configuration_file)?;
-        cx.simulate_click(window, point(px(navigation_x), px(76.0)), Modifiers::none());
-        refresh(cx, window)?;
-        save_screenshot(cx, window, nodes_file)?;
-        cx.simulate_click(
-            window,
-            point(
-                px(if width >= 1_280.0 { 1_360.0 } else { 660.0 }),
-                px(group_y),
-            ),
-            Modifiers::none(),
-        );
-        refresh(cx, window)?;
-        save_screenshot(cx, window, collapsed_file)?;
-        close_window(cx, window)?;
-    }
-    Ok(())
+    let window: AnyWindowHandle = window.into();
+    refresh(cx, window)?;
+    open_workspace(cx, window, view.width, SnapshotWorkspace::Configuration)?;
+    settle_ui_for(cx, window, Duration::from_secs(1))?;
+    scroll_window(cx, window, view.width - 100.0, view.height - 120.0, -360.0)?;
+    save_screenshot(cx, window, view.configuration_file)?;
+    open_workspace(cx, window, view.width, SnapshotWorkspace::Nodes)?;
+    save_screenshot(cx, window, view.nodes_file)?;
+    cx.simulate_click(
+        window,
+        point(
+            px(if view.width >= 1_280.0 {
+                1_360.0
+            } else {
+                660.0
+            }),
+            px(view.group_y),
+        ),
+        Modifiers::none(),
+    );
+    refresh(cx, window)?;
+    save_screenshot(cx, window, view.collapsed_file)?;
+    close_window(cx, window)
 }
 
 #[cfg(target_os = "macos")]
@@ -432,13 +469,7 @@ fn capture_configuration(
     let window: AnyWindowHandle = window.into();
 
     refresh(cx, window)?;
-    let navigation_x = if width >= 1_280.0 { 110.0 } else { 30.0 };
-    cx.simulate_click(
-        window,
-        point(px(navigation_x), px(284.0)),
-        Modifiers::none(),
-    );
-    refresh(cx, window)?;
+    open_workspace(cx, window, width, SnapshotWorkspace::Configuration)?;
     save_screenshot(cx, window, file_name)?;
 
     if width >= 1_280.0 {
@@ -505,13 +536,7 @@ fn capture_localization(
     })?;
     let window: AnyWindowHandle = window.into();
     refresh(cx, window)?;
-    let navigation_x = if width >= 1_280.0 { 110.0 } else { 30.0 };
-    cx.simulate_click(
-        window,
-        point(px(navigation_x), px(284.0)),
-        Modifiers::none(),
-    );
-    refresh(cx, window)?;
+    open_workspace(cx, window, width, SnapshotWorkspace::Configuration)?;
     let language_option = if width >= 1_280.0 {
         point(px(820.0), px(270.0))
     } else {
@@ -585,9 +610,9 @@ fn capture_routing_rules(
     )?;
     std::fs::set_permissions(manual_file, std::fs::Permissions::from_mode(0o600))?;
 
-    for (width, height, navigation_x, file_name) in [
-        (1420.0, 900.0, 110.0, "routing-rules-wide.png"),
-        (720.0, 720.0, 30.0, "routing-rules-compact.png"),
+    for (width, height, file_name) in [
+        (1420.0, 900.0, "routing-rules-wide.png"),
+        (720.0, 720.0, "routing-rules-compact.png"),
     ] {
         let window_store = store.clone();
         let window = cx.open_offscreen_window(size(px(width), px(height)), |window, cx| {
@@ -601,21 +626,11 @@ fn capture_routing_rules(
         let window: AnyWindowHandle = window.into();
         refresh(cx, window)?;
         if width >= 1_280.0 {
-            cx.simulate_click(
-                window,
-                point(px(navigation_x), px(284.0)),
-                Modifiers::none(),
-            );
-            refresh(cx, window)?;
+            open_workspace(cx, window, width, SnapshotWorkspace::Configuration)?;
             scroll_window(cx, window, width - 100.0, height - 120.0, -680.0)?;
             save_screenshot(cx, window, "configuration-wide-rule-source.png")?;
         }
-        cx.simulate_click(
-            window,
-            point(px(navigation_x), px(158.0)),
-            Modifiers::none(),
-        );
-        refresh(cx, window)?;
+        open_workspace(cx, window, width, SnapshotWorkspace::RoutingRules)?;
         save_screenshot(cx, window, file_name)?;
         if width >= 1_280.0 {
             capture_routing_rule_interactions(cx, window)?;
@@ -733,10 +748,7 @@ fn capture_compact_flow(
 
     refresh(cx, window)?;
     cx.simulate_click(window, point(px(185.0), px(412.0)), Modifiers::none());
-    for _ in 0..24 {
-        std::thread::sleep(std::time::Duration::from_millis(25));
-        refresh(cx, window)?;
-    }
+    settle_ui_for(cx, window, std::time::Duration::from_millis(600))?;
     cx.simulate_click(window, point(px(300.0), px(312.0)), Modifiers::none());
     refresh(cx, window)?;
     save_screenshot(cx, window, "native-compact-detail.png")?;
@@ -765,15 +777,9 @@ fn capture_medium_sheet(
     })?;
     let window: AnyWindowHandle = window.into();
 
-    for _ in 0..24 {
-        std::thread::sleep(std::time::Duration::from_millis(25));
-        refresh(cx, window)?;
-    }
+    settle_ui_for(cx, window, std::time::Duration::from_millis(600))?;
     cx.simulate_click(window, point(px(985.0), px(80.0)), Modifiers::none());
-    for _ in 0..24 {
-        std::thread::sleep(std::time::Duration::from_millis(25));
-        refresh(cx, window)?;
-    }
+    settle_ui_for(cx, window, std::time::Duration::from_millis(600))?;
     cx.simulate_click(window, point(px(250.0), px(184.0)), Modifiers::none());
     settle_ui_animation(cx, window)?;
     cx.simulate_click(window, point(px(985.0), px(80.0)), Modifiers::none());
@@ -805,10 +811,7 @@ fn capture_connected(
 
     refresh(cx, window)?;
     cx.simulate_click(window, point(px(1_340.0), px(76.0)), Modifiers::none());
-    for _ in 0..24 {
-        std::thread::sleep(std::time::Duration::from_millis(25));
-        refresh(cx, window)?;
-    }
+    settle_ui_for(cx, window, std::time::Duration::from_millis(600))?;
     refresh(cx, window)?;
     save_screenshot(cx, window, "native-wide-connected.png")?;
 
@@ -816,29 +819,22 @@ fn capture_connected(
     refresh(cx, window)?;
     save_screenshot(cx, window, "nodes-wide-connected-global.png")?;
 
-    cx.simulate_click(window, point(px(110.0), px(117.0)), Modifiers::none());
-    refresh(cx, window)?;
+    open_workspace(cx, window, 1_420.0, SnapshotWorkspace::PolicyGroups)?;
 
     cx.simulate_click(window, point(px(270.0), px(236.0)), Modifiers::none());
-    for _ in 0..24 {
-        std::thread::sleep(std::time::Duration::from_millis(25));
-        refresh(cx, window)?;
-    }
+    settle_ui_for(cx, window, std::time::Duration::from_millis(600))?;
     save_screenshot(cx, window, "native-wide-connected-benchmark.png")?;
 
     cx.advance_clock(std::time::Duration::from_millis(500));
     refresh(cx, window)?;
 
-    cx.simulate_click(window, point(px(110.0), px(199.0)), Modifiers::none());
-    refresh(cx, window)?;
+    open_workspace(cx, window, 1_420.0, SnapshotWorkspace::Activity)?;
     save_screenshot(cx, window, "activity-wide-connected.png")?;
 
-    cx.simulate_click(window, point(px(110.0), px(240.0)), Modifiers::none());
-    refresh(cx, window)?;
+    open_workspace(cx, window, 1_420.0, SnapshotWorkspace::Logs)?;
     save_screenshot(cx, window, "logs-wide-connected.png")?;
 
-    cx.simulate_click(window, point(px(110.0), px(284.0)), Modifiers::none());
-    refresh(cx, window)?;
+    open_workspace(cx, window, 1_420.0, SnapshotWorkspace::Configuration)?;
     save_screenshot(cx, window, "configuration-wide-connected-sources.png")?;
 
     close_window(cx, window)?;
@@ -875,7 +871,7 @@ fn capture_activity_wide_dark_connected(
     settle_ui_animation(cx, window)?;
     cx.simulate_click(window, point(px(850.0), px(24.0)), Modifiers::none());
     settle_ui_animation(cx, window)?;
-    cx.simulate_click(window, point(px(110.0), px(199.0)), Modifiers::none());
+    open_workspace(cx, window, 1_420.0, SnapshotWorkspace::Activity)?;
     settle_ui_animation(cx, window)?;
     save_screenshot(cx, window, "activity-wide-dark-connected.png")?;
 
@@ -899,7 +895,7 @@ fn capture_activity_compact_connected(
     refresh(cx, window)?;
     cx.simulate_click(window, point(px(640.0), px(76.0)), Modifiers::none());
     settle_ui_animation(cx, window)?;
-    cx.simulate_click(window, point(px(30.0), px(199.0)), Modifiers::none());
+    open_workspace(cx, window, 720.0, SnapshotWorkspace::Activity)?;
     settle_ui_animation(cx, window)?;
     save_screenshot(cx, window, "activity-compact-connected.png")?;
 
@@ -923,7 +919,7 @@ fn capture_activity_compact_empty(
     refresh(cx, window)?;
     cx.simulate_click(window, point(px(640.0), px(76.0)), Modifiers::none());
     settle_ui_animation(cx, window)?;
-    cx.simulate_click(window, point(px(30.0), px(199.0)), Modifiers::none());
+    open_workspace(cx, window, 720.0, SnapshotWorkspace::Activity)?;
     settle_ui_animation(cx, window)?;
     save_screenshot(cx, window, "activity-compact-empty.png")?;
 
@@ -947,7 +943,7 @@ fn capture_logs_compact_connected_and_filtered(
     refresh(cx, window)?;
     cx.simulate_click(window, point(px(640.0), px(76.0)), Modifiers::none());
     settle_ui_animation(cx, window)?;
-    cx.simulate_click(window, point(px(30.0), px(240.0)), Modifiers::none());
+    open_workspace(cx, window, 720.0, SnapshotWorkspace::Logs)?;
     settle_ui_animation(cx, window)?;
     save_screenshot(cx, window, "logs-compact-connected.png")?;
     cx.simulate_click(window, point(px(220.0), px(145.0)), Modifiers::none());
@@ -978,7 +974,7 @@ fn capture_configuration_dark(
     refresh(cx, window)?;
     cx.simulate_click(window, point(px(850.0), px(24.0)), Modifiers::none());
     refresh(cx, window)?;
-    cx.simulate_click(window, point(px(110.0), px(284.0)), Modifiers::none());
+    open_workspace(cx, window, 1_420.0, SnapshotWorkspace::Configuration)?;
     settle_ui_animation(cx, window)?;
     save_screenshot(cx, window, "configuration-wide-dark.png")?;
 
@@ -1187,6 +1183,39 @@ fn fixture_response(path: &str) -> &'static str {
 }
 
 #[cfg(target_os = "macos")]
+#[derive(Clone, Copy)]
+enum SnapshotWorkspace {
+    Nodes,
+    PolicyGroups,
+    RoutingRules,
+    Activity,
+    Logs,
+    Configuration,
+}
+
+#[cfg(target_os = "macos")]
+fn open_workspace(
+    cx: &mut gpui::VisualTestAppContext,
+    window: gpui::AnyWindowHandle,
+    width: f32,
+    workspace: SnapshotWorkspace,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use gpui::{Modifiers, point, px};
+
+    let x = if width >= 1_280.0 { 110.0 } else { 30.0 };
+    let y = match workspace {
+        SnapshotWorkspace::Nodes => 76.0,
+        SnapshotWorkspace::PolicyGroups => 117.0,
+        SnapshotWorkspace::RoutingRules => 158.0,
+        SnapshotWorkspace::Activity => 199.0,
+        SnapshotWorkspace::Logs => 240.0,
+        SnapshotWorkspace::Configuration => 284.0,
+    };
+    cx.simulate_click(window, point(px(x), px(y)), Modifiers::none());
+    refresh(cx, window)
+}
+
+#[cfg(target_os = "macos")]
 fn refresh(
     cx: &mut gpui::VisualTestAppContext,
     window: gpui::AnyWindowHandle,
@@ -1202,9 +1231,19 @@ fn settle_ui_animation(
     cx: &mut gpui::VisualTestAppContext,
     window: gpui::AnyWindowHandle,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    for _ in 0..12 {
-        std::thread::sleep(std::time::Duration::from_millis(25));
-        cx.advance_clock(std::time::Duration::from_millis(25));
+    settle_ui_for(cx, window, std::time::Duration::from_millis(300))
+}
+
+#[cfg(target_os = "macos")]
+fn settle_ui_for(
+    cx: &mut gpui::VisualTestAppContext,
+    window: gpui::AnyWindowHandle,
+    duration: std::time::Duration,
+) -> Result<(), Box<dyn std::error::Error>> {
+    const FRAME: std::time::Duration = std::time::Duration::from_millis(25);
+    let frames = duration.as_millis().div_ceil(FRAME.as_millis());
+    for _ in 0..frames {
+        cx.advance_clock(FRAME);
         refresh(cx, window)?;
     }
     Ok(())

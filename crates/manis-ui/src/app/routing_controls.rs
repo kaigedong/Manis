@@ -14,7 +14,11 @@ impl ManisApp {
             },
             if self.runtime.is_fixture() {
                 TunSupport::FixtureReadOnly
-            } else if self.runtime.capabilities().tun {
+            } else if self
+                .runtime
+                .capabilities()
+                .supports(manis_core::KernelCapability::Tun)
+            {
                 TunSupport::Supported
             } else {
                 TunSupport::KernelUnsupported
@@ -40,7 +44,7 @@ impl ManisApp {
                 "from={:?} to={requested:?} controller_state={} profile={}",
                 self.proxy_mode,
                 controller_state_label(&self.controller),
-                self.runtime.profile_source().label()
+                self.runtime.profile_source().diagnostic_key()
             ),
         );
         if self.reject_proxy_mode_request(requested, operation, cx) {
@@ -129,7 +133,12 @@ impl ManisApp {
                     self.runtime.kind().display_name(),
                 ),
             )
-        } else if requested == ProxyMode::Tun && !self.runtime.capabilities().tun {
+        } else if requested == ProxyMode::Tun
+            && !self
+                .runtime
+                .capabilities()
+                .supports(manis_core::KernelCapability::Tun)
+        {
             (
                 "kernel_has_no_tun_capability",
                 language
@@ -212,7 +221,7 @@ impl ManisApp {
                 "from={:?} to={requested:?} controller_state={} profile={}",
                 self.routing_mode,
                 controller_state_label(&self.controller),
-                self.runtime.profile_source().label()
+                self.runtime.profile_source().diagnostic_key()
             ),
         );
         if self.routing_mode_busy.is_some() || requested == self.routing_mode {
@@ -352,7 +361,7 @@ impl ManisApp {
             format!(
                 "controller_state={} profile={} candidate_selected=true",
                 controller_state_label(&self.controller),
-                self.runtime.profile_source().label()
+                self.runtime.profile_source().diagnostic_key()
             ),
         );
         if self.global_selection_busy.is_some() {
