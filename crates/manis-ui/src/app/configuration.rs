@@ -4511,7 +4511,6 @@ impl ManisApp {
         row
     }
 
-    #[allow(clippy::too_many_lines)]
     pub(super) fn manual_rule_editor_modal(
         &self,
         dialog: Dialog,
@@ -4546,104 +4545,10 @@ impl ManisApp {
             .first()
             .map(|condition| condition.kind)
             == Some(crate::manual_rule::ManualRuleKind::Final);
-        let mut conditions = div();
-        for condition_index in 0..self.manual_rule_condition_count {
-            conditions = conditions.child(self.manual_rule_condition_editor(
-                condition_index,
-                self.manual_rule_conditions[condition_index].kind,
-                theme,
-                language,
-                compact,
-                cx,
-            ));
-        }
-        if !final_selected && self.manual_rule_condition_count < crate::manual_rule::MAX_CONDITIONS
-        {
-            conditions = conditions.child(
-                Button::new("add-manual-rule-condition")
-                    .accessibility_label(language.text("Add an AND condition", "添加并且条件"))
-                    .label(language.text("+ Add AND condition", "+ 添加“并且”条件"))
-                    .with_variant(ButtonVariant::Default)
-                    .with_size(ControlSize::Standard.component_size())
-                    .h(ControlSize::Standard.height())
-                    .mt(Space::Md.px())
-                    .px(Space::Md.px())
-                    .py(Space::Sm.px())
-                    .cursor_pointer()
-                    .border_color(theme.outline_strong)
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(theme.action_primary)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.add_manual_rule_condition(cx);
-                    })),
-            );
-        }
-
-        let target_field = div()
-            .mt_4()
-            .child(field_label(
-                language.text("Policy group after match", "命中后的策略组"),
-                theme,
-            ))
-            .child(target);
-
-        let footer = div()
-            .flex_shrink_0()
-            .px_5()
-            .py_3()
-            .border_t_1()
-            .border_color(theme.outline_subtle)
-            .flex()
-            .items_center()
-            .justify_end()
-            .gap_2()
-            .child(
-                style_action_button(
-                    Button::new("cancel-manual-rule")
-                        .accessibility_label(language.text("Cancel editing rule", "取消编辑规则"))
-                        .label(language.message(Message::Cancel)),
-                    ActionRole::Secondary,
-                    ControlSize::Standard,
-                )
-                .px(Space::Lg.px())
-                .cursor_pointer()
-                .border_color(theme.outline_subtle)
-                .bg(theme.surface_high)
-                .text_color(theme.text_primary)
-                .font_weight(FontWeight::SEMIBOLD)
-                .on_click(cx.listener(|this, _, window, cx| {
-                    this.close_manual_rule_editor(cx);
-                    window.close_dialog(cx);
-                })),
-            )
-            .child(
-                style_action_button(
-                    Button::new("save-manual-rule")
-                        .accessibility_label(if editing {
-                            language.text("Save manual rule changes", "保存手动规则修改")
-                        } else {
-                            language.text("Add manual rule", "添加手动规则")
-                        })
-                        .label(if editing {
-                            language.message(Message::SaveChanges)
-                        } else {
-                            language.message(Message::AddRule)
-                        })
-                        .disabled(self.routing_apply_state.is_busy()),
-                    ActionRole::Primary,
-                    ControlSize::Standard,
-                )
-                .px(Space::Lg.px())
-                .cursor_pointer()
-                .bg(theme.action_primary)
-                .text_color(theme.action_on_primary)
-                .font_weight(FontWeight::SEMIBOLD)
-                .on_click(cx.listener(|this, _, window, cx| {
-                    if this.submit_manual_rule(cx) {
-                        window.close_dialog(cx);
-                    }
-                })),
-            );
+        let conditions =
+            self.manual_rule_editor_conditions(final_selected, compact, theme, language, cx);
+        let body = self.manual_rule_editor_body(conditions, target, theme, language);
+        let footer = self.manual_rule_editor_footer(editing, theme, language, cx);
 
         let viewport = window.viewport_size();
         let dialog_width = (viewport.width.as_f32() - 32.0).clamp(280.0, 720.0);
@@ -4672,73 +4577,193 @@ impl ManisApp {
             .rounded_md()
             .bg(theme.surface_high)
             .overflow_hidden()
-            .title(
-                div()
-                    .id("manual-rule-modal-header")
-                    .flex_shrink_0()
-                    .px_5()
-                    .py_4()
-                    .border_b_1()
-                    .border_color(theme.outline_subtle)
-                    .child(
-                        div()
-                            .text_size(px(17.0))
-                            .line_height(TextRole::SectionTitle.line_height())
-                            .font_weight(TextRole::SectionTitle.weight())
-                            .child(if editing {
-                                language.text("Edit routing rule", "编辑分流规则")
-                            } else {
-                                language.text("Add routing rule", "添加分流规则")
-                            }),
-                    )
-                    .child(
-                        div()
-                            .mt_1()
-                            .text_size(TextRole::Metadata.size())
-                            .line_height(TextRole::Metadata.line_height())
-                            .font_weight(FontWeight::NORMAL)
-                            .text_color(theme.text_secondary)
-                            .child(if final_selected {
-                                language.text(
-                                    "FINAL is always evaluated last and handles unmatched traffic.",
-                                    "FINAL 始终最后匹配，用于处理此前未命中的流量。",
-                                )
-                            } else {
-                                language.text(
-                                    "All conditions must match. Group order determines rule priority.",
-                                    "同一条规则中的条件必须全部命中；分组顺序决定规则优先级。",
-                                )
-                            }),
-                    ),
-            )
-            .child(
-                div()
-                    .id("manual-rule-modal-body")
-                    .flex_1()
-                    .min_h(px(0.0))
-                    .overflow_y_scroll()
-                    .px_5()
-                    .py_4()
-                    .child(conditions)
-                    .child(target_field)
-                    .when_some(self.manual_rule_error, |body, error| {
-                        body.child(
-                            div()
-                                .mt_3()
-                                .p_3()
-                                .rounded_md()
-                                .bg(theme.surface_low)
-                                .text_size(TextRole::Body.size())
-                                .line_height(TextRole::Body.line_height())
-                                .text_color(theme.status_error)
-                                .child(manual_rule_error_label(error, language)),
-                        )
-                    }),
-            )
+            .title(Self::manual_rule_editor_title(
+                editing,
+                final_selected,
+                theme,
+                language,
+            ))
+            .child(body)
             .footer(footer)
             .on_close(move |_, _, cx| {
                 app.update(cx, ManisApp::close_manual_rule_editor);
             })
+    }
+
+    fn manual_rule_editor_conditions(
+        &self,
+        final_selected: bool,
+        compact: bool,
+        theme: Theme,
+        language: Language,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let mut conditions = div();
+        for index in 0..self.manual_rule_condition_count {
+            conditions = conditions.child(self.manual_rule_condition_editor(
+                index,
+                self.manual_rule_conditions[index].kind,
+                theme,
+                language,
+                compact,
+                cx,
+            ));
+        }
+        if final_selected || self.manual_rule_condition_count >= crate::manual_rule::MAX_CONDITIONS
+        {
+            return conditions;
+        }
+        conditions.child(
+            Button::new("add-manual-rule-condition")
+                .accessibility_label(language.text("Add an AND condition", "添加并且条件"))
+                .label(language.text("+ Add AND condition", "+ 添加“并且”条件"))
+                .with_variant(ButtonVariant::Default)
+                .with_size(ControlSize::Standard.component_size())
+                .h(ControlSize::Standard.height())
+                .mt(Space::Md.px())
+                .px(Space::Md.px())
+                .py(Space::Sm.px())
+                .cursor_pointer()
+                .border_color(theme.outline_strong)
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(theme.action_primary)
+                .on_click(cx.listener(|this, _, _, cx| this.add_manual_rule_condition(cx))),
+        )
+    }
+
+    fn manual_rule_editor_body(
+        &self,
+        conditions: Div,
+        target: AnyElement,
+        theme: Theme,
+        language: Language,
+    ) -> Stateful<Div> {
+        div()
+            .id("manual-rule-modal-body")
+            .flex_1()
+            .min_h(px(0.0))
+            .overflow_y_scroll()
+            .px_5()
+            .py_4()
+            .child(conditions)
+            .child(
+                div()
+                    .mt_4()
+                    .child(field_label(
+                        language.text("Policy group after match", "命中后的策略组"),
+                        theme,
+                    ))
+                    .child(target),
+            )
+            .when_some(self.manual_rule_error, |body, error| {
+                body.child(
+                    div()
+                        .mt_3()
+                        .p_3()
+                        .rounded_md()
+                        .bg(theme.surface_low)
+                        .text_size(TextRole::Body.size())
+                        .line_height(TextRole::Body.line_height())
+                        .text_color(theme.status_error)
+                        .child(manual_rule_error_label(error, language)),
+                )
+            })
+    }
+
+    fn manual_rule_editor_footer(
+        &self,
+        editing: bool,
+        theme: Theme,
+        language: Language,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        div()
+            .flex_shrink_0()
+            .px_5()
+            .py_3()
+            .border_t_1()
+            .border_color(theme.outline_subtle)
+            .flex()
+            .items_center()
+            .justify_end()
+            .gap_2()
+            .child(
+                style_action_button(
+                    Button::new("cancel-manual-rule").label(language.message(Message::Cancel)),
+                    ActionRole::Secondary,
+                    ControlSize::Standard,
+                )
+                .px(Space::Lg.px())
+                .cursor_pointer()
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.close_manual_rule_editor(cx);
+                    window.close_dialog(cx);
+                })),
+            )
+            .child(
+                style_action_button(
+                    Button::new("save-manual-rule")
+                        .label(if editing {
+                            language.message(Message::SaveChanges)
+                        } else {
+                            language.message(Message::AddRule)
+                        })
+                        .disabled(self.routing_apply_state.is_busy()),
+                    ActionRole::Primary,
+                    ControlSize::Standard,
+                )
+                .px(Space::Lg.px())
+                .cursor_pointer()
+                .bg(theme.action_primary)
+                .text_color(theme.action_on_primary)
+                .on_click(cx.listener(|this, _, window, cx| {
+                    if this.submit_manual_rule(cx) {
+                        window.close_dialog(cx);
+                    }
+                })),
+            )
+    }
+
+    fn manual_rule_editor_title(
+        editing: bool,
+        final_selected: bool,
+        theme: Theme,
+        language: Language,
+    ) -> Stateful<Div> {
+        div()
+            .id("manual-rule-modal-header")
+            .flex_shrink_0()
+            .px_5()
+            .py_4()
+            .border_b_1()
+            .border_color(theme.outline_subtle)
+            .child(
+                div()
+                    .text_size(px(17.0))
+                    .font_weight(TextRole::SectionTitle.weight())
+                    .child(if editing {
+                        language.text("Edit routing rule", "编辑分流规则")
+                    } else {
+                        language.text("Add routing rule", "添加分流规则")
+                    }),
+            )
+            .child(
+                div()
+                    .mt_1()
+                    .text_size(TextRole::Metadata.size())
+                    .text_color(theme.text_secondary)
+                    .child(if final_selected {
+                        language.text(
+                            "FINAL is always evaluated last and handles unmatched traffic.",
+                            "FINAL 始终最后匹配，用于处理此前未命中的流量。",
+                        )
+                    } else {
+                        language.text(
+                            "All conditions must match. Group order determines rule priority.",
+                            "同一条规则中的条件必须全部命中；分组顺序决定规则优先级。",
+                        )
+                    }),
+            )
     }
 
     fn manual_routing_rule_row(
