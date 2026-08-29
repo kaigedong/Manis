@@ -944,55 +944,13 @@ impl ManisApp {
         cx.notify();
     }
 
-    #[allow(clippy::too_many_lines)]
     fn kernel_panel(&self, theme: Theme, compact: bool, cx: &mut Context<Self>) -> Stateful<Div> {
         let language = self.language();
         let active = self.runtime.kind();
-        let sing_box_installed = mihomo::sing_box_binary_available();
-        let has_enabled_subscription = self
-            .imported_subscriptions
-            .iter()
-            .any(|subscription| subscription.enabled);
-        let sing_box_has_sources = !has_enabled_subscription && !self.saved_single_nodes.is_empty();
-        let sing_box_reason = if !sing_box_installed {
-            language.text(
-                "sing-box was not found on this device",
-                "本机未检测到 sing-box",
-            )
-        } else if has_enabled_subscription {
-            language.text(
-                "Clash subscriptions are present; Manis needs its native parser first",
-                "当前包含 Clash 订阅，需等待 Manis 原生订阅解析器",
-            )
-        } else if self.saved_single_nodes.is_empty() {
-            language.text(
-                "At least one saved VLESS node is required",
-                "至少需要一个已保存的 VLESS 节点",
-            )
-        } else {
-            language.text(
-                "Supports manual VLESS, selectors, URL tests, and routing rules",
-                "支持手动 VLESS、选择器、自动测速与分流规则",
-            )
-        };
-        let sing_box_enabled = sing_box_installed
-            && sing_box_has_sources
+        let (sing_box_reason, sing_box_supported) = self.sing_box_support(language);
+        let sing_box_enabled = sing_box_supported
             && !self.kernel_switch_state.is_busy()
             && active != KernelKind::SingBox;
-        let core_updating = self.mihomo_core_update_state.is_busy();
-        let core_update_enabled = !core_updating && self.proxy_mode == ProxyMode::Off;
-        let core_version = match &self.mihomo_core_update_state {
-            MihomoCoreUpdateState::Ready(version) if version.is_empty() => {
-                language.text("Installed", "已安装")
-            }
-            MihomoCoreUpdateState::Ready(version) => version.as_str(),
-            MihomoCoreUpdateState::Missing => language.text("Not installed", "尚未安装"),
-            MihomoCoreUpdateState::Updating => language.text("Updating…", "正在更新…"),
-        };
-        let core_missing = matches!(
-            self.mihomo_core_update_state,
-            MihomoCoreUpdateState::Missing
-        );
 
         panel_surface("configuration-kernel", compact, theme)
             .child(section_heading(
@@ -1028,52 +986,7 @@ impl ManisApp {
                 theme,
                 cx,
             ))
-            .child(
-                div()
-                    .mt(Space::Sm.px())
-                    .ml(Space::Md.px())
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap_3()
-                    .child(
-                        div()
-                            .text_size(TextRole::Metadata.size())
-                            .line_height(TextRole::Metadata.line_height())
-                            .text_color(theme.text_secondary)
-                            .child(if language == Language::English {
-                                format!("Manis-managed stable core · {core_version}")
-                            } else {
-                                format!("Manis 托管稳定版内核 · {core_version}")
-                            }),
-                    )
-                    .child(
-                        style_action_button(
-                            Button::new("mihomo-core-update")
-                                .accessibility_label(language.text(
-                                    "Download or update the Manis-managed Mihomo core",
-                                    "下载或更新 Manis 托管的 Mihomo 内核",
-                                ))
-                                .label(if core_updating {
-                                    language.text("Updating…", "更新中…")
-                                } else if core_missing {
-                                    language.text("Download stable", "下载稳定版")
-                                } else {
-                                    language.text("Check for update", "检查更新")
-                                })
-                                .icon(IconName::Redo2)
-                                .loading(core_updating)
-                                .disabled(!core_update_enabled)
-                                .tab_stop(core_update_enabled),
-                            ActionRole::Quiet,
-                            ControlSize::Compact,
-                        )
-                        .when(core_update_enabled, gpui::Styled::cursor_pointer)
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.update_mihomo_core(cx);
-                        })),
-                    ),
-            )
+            .child(self.mihomo_core_update_row(language, theme, cx))
             .child(Self::kernel_option_row(
                 KernelKind::SingBox,
                 sing_box_reason,
@@ -1083,6 +996,111 @@ impl ManisApp {
                 theme,
                 cx,
             ))
+    }
+
+    fn sing_box_support(&self, language: Language) -> (&'static str, bool) {
+        if !mihomo::sing_box_binary_available() {
+            return (
+                language.text(
+                    "sing-box was not found on this device",
+                    "本机未检测到 sing-box",
+                ),
+                false,
+            );
+        }
+        if self
+            .imported_subscriptions
+            .iter()
+            .any(|subscription| subscription.enabled)
+        {
+            return (
+                language.text(
+                    "Clash subscriptions are present; Manis needs its native parser first",
+                    "当前包含 Clash 订阅，需等待 Manis 原生订阅解析器",
+                ),
+                false,
+            );
+        }
+        if self.saved_single_nodes.is_empty() {
+            return (
+                language.text(
+                    "At least one saved VLESS node is required",
+                    "至少需要一个已保存的 VLESS 节点",
+                ),
+                false,
+            );
+        }
+        (
+            language.text(
+                "Supports manual VLESS, selectors, URL tests, and routing rules",
+                "支持手动 VLESS、选择器、自动测速与分流规则",
+            ),
+            true,
+        )
+    }
+
+    fn mihomo_core_update_row(
+        &self,
+        language: Language,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let updating = self.mihomo_core_update_state.is_busy();
+        let enabled = !updating && self.proxy_mode == ProxyMode::Off;
+        let missing = matches!(
+            self.mihomo_core_update_state,
+            MihomoCoreUpdateState::Missing
+        );
+        let version = match &self.mihomo_core_update_state {
+            MihomoCoreUpdateState::Ready(version) if version.is_empty() => {
+                language.text("Installed", "已安装")
+            }
+            MihomoCoreUpdateState::Ready(version) => version.as_str(),
+            MihomoCoreUpdateState::Missing => language.text("Not installed", "尚未安装"),
+            MihomoCoreUpdateState::Updating => language.text("Updating…", "正在更新…"),
+        };
+        div()
+            .mt(Space::Sm.px())
+            .ml(Space::Md.px())
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_3()
+            .child(
+                div()
+                    .text_size(TextRole::Metadata.size())
+                    .line_height(TextRole::Metadata.line_height())
+                    .text_color(theme.text_secondary)
+                    .child(if language == Language::English {
+                        format!("Manis-managed stable core · {version}")
+                    } else {
+                        format!("Manis 托管稳定版内核 · {version}")
+                    }),
+            )
+            .child(
+                style_action_button(
+                    Button::new("mihomo-core-update")
+                        .accessibility_label(language.text(
+                            "Download or update the Manis-managed Mihomo core",
+                            "下载或更新 Manis 托管的 Mihomo 内核",
+                        ))
+                        .label(if updating {
+                            language.text("Updating…", "更新中…")
+                        } else if missing {
+                            language.text("Download stable", "下载稳定版")
+                        } else {
+                            language.text("Check for update", "检查更新")
+                        })
+                        .icon(IconName::Redo2)
+                        .loading(updating)
+                        .disabled(!enabled)
+                        .tab_stop(enabled),
+                    ActionRole::Quiet,
+                    ControlSize::Compact,
+                )
+                .when(enabled, gpui::Styled::cursor_pointer)
+                .on_click(cx.listener(|this, _, _, cx| this.update_mihomo_core(cx))),
+            )
     }
 
     fn kernel_option_row(
