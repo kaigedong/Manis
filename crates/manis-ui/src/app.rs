@@ -240,6 +240,9 @@ type SubscriptionRefreshResult =
     Result<(Vec<LoadedProvider>, SourceMutation<StoredSubscription>), ImportSubscriptionError>;
 type SubscriptionImportResult =
     Result<(SourceMutation<StoredSubscription>, Vec<LoadedProvider>), ImportSubscriptionError>;
+type SingleNodeImportResult =
+    Result<(SourceMutation<StoredSingleNode>, Vec<LoadedProvider>), SubscriptionStoreError>;
+type QxRuleRefreshResult = Result<SourceMutation<StoredQxRuleSource>, ImportQxRuleError>;
 type RoutingModeApplyResult = Result<Result<Option<()>, SubscriptionStoreError>, mihomo::LoadError>;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]

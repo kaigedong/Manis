@@ -1659,7 +1659,6 @@ impl ManisApp {
             })
     }
 
-    #[allow(clippy::too_many_lines)]
     fn submit_source_import(
         &mut self,
         input: &Entity<SubscriptionTextInput>,
@@ -1708,144 +1707,7 @@ impl ManisApp {
                     cx.notify();
                     return false;
                 }
-                let Some(store_dir) = self.subscription_store_dir.clone() else {
-                    self.subscription_feedback = SubscriptionFeedback::StoreFailed(
-                        SubscriptionStoreError::DataDirectoryUnavailable,
-                    );
-                    self.language()
-                        .text(
-                            "Could not determine where to save the node",
-                            "无法确定节点保存位置",
-                        )
-                        .clone_into(&mut self.status);
-                    trace_ui(UiEvent::SourceImportFailed);
-                    cx.notify();
-                    return false;
-                };
-                self.subscription_preview_generation =
-                    self.subscription_preview_generation.wrapping_add(1);
-                let generation = self.subscription_preview_generation;
-                self.subscription_feedback =
-                    SubscriptionFeedback::Importing(SourceKind::SingleNode);
-                self.language()
-                    .text(
-                        "Validating and saving single-node source",
-                        "正在验证并保存单节点来源",
-                    )
-                    .clone_into(&mut self.status);
-                if let Some(input) = self.subscription_input.as_ref() {
-                    input.update(cx, |input, cx| input.set_enabled(false, cx));
-                }
-                let runtime = self.runtime.clone();
-                let editing_id = self.single_node_editor_source_id.clone();
-                let enabled = self.subscription_editor_enabled;
-                let executor = cx.background_executor().clone();
-                cx.spawn(async move |this, cx| {
-                    let result = executor
-                        .spawn(async move {
-                            let providers = mihomo::preview_single_node(&input_value)?;
-                            let transaction =
-                                super::mutate_saved_sources(&runtime, &store_dir, || {
-                                    if let Some(id) = editing_id {
-                                        mihomo::update_single_node_source_in(
-                                            &store_dir,
-                                            &id,
-                                            &input_value,
-                                            &name,
-                                            enabled,
-                                        )
-                                    } else {
-                                        mihomo::save_single_node_source_with_options_in(
-                                            &store_dir,
-                                            &input_value,
-                                            &name,
-                                            enabled,
-                                        )
-                                    }
-                                })?;
-                            Ok::<_, SubscriptionStoreError>((transaction, providers))
-                        })
-                        .await;
-                    this.update(cx, |this, cx| {
-                        if this.subscription_preview_generation != generation {
-                            return;
-                        }
-                        if let Some(input) = this.subscription_input.as_ref() {
-                            input.update(cx, |input, cx| input.set_enabled(true, cx));
-                        }
-                        match result {
-                            Ok((transaction, providers)) => {
-                                let language = this.language();
-                                transaction.apply.reconcile_proxy_mode(&mut this.proxy_mode);
-                                let Some(stored) = transaction.value else {
-                                    this.subscription_feedback = SubscriptionFeedback::StoreFailed(
-                                        SubscriptionStoreError::StoreUnavailable,
-                                    );
-                                    this.status = format!(
-                                        "{}{}",
-                                        language.text(
-                                            "Single-node source save failed",
-                                            "单节点来源保存失败"
-                                        ),
-                                        transaction
-                                            .apply
-                                            .status_suffix_after_source_rollback(language)
-                                    );
-                                    trace_ui(UiEvent::SourceImportFailed);
-                                    cx.notify();
-                                    return;
-                                };
-                                if let Some(existing) = this
-                                    .saved_single_nodes
-                                    .iter_mut()
-                                    .find(|node| node.id == stored.id)
-                                {
-                                    *existing = stored;
-                                } else {
-                                    this.saved_single_nodes.push(stored);
-                                }
-                                this.subscription_preview_providers = providers;
-                                this.subscription_feedback = SubscriptionFeedback::Valid(preview);
-                                if let Some(input) = this.subscription_input.as_ref() {
-                                    input.update(cx, SubscriptionTextInput::clear_without_event);
-                                }
-                                if let Some(input) = this.subscription_name_input.as_ref() {
-                                    input.update(cx, SubscriptionTextInput::clear_without_event);
-                                }
-                                this.configuration_add_section = None;
-                                this.status = if language == Language::English {
-                                    format!(
-                                        "Single-node source saved · Added to Saved group{}",
-                                        transaction.apply.status_suffix(language)
-                                    )
-                                } else {
-                                    format!(
-                                        "单节点来源已保存 · 已加入“已保存”分组{}",
-                                        transaction.apply.status_suffix(language)
-                                    )
-                                };
-                                trace_ui(UiEvent::SourceImportSucceeded);
-                            }
-                            Err(error) => {
-                                this.subscription_feedback =
-                                    SubscriptionFeedback::StoreFailed(error);
-                                this.status = format!(
-                                    "{}: {error}",
-                                    this.language().text(
-                                        "Single-node source save failed",
-                                        "单节点来源保存失败"
-                                    )
-                                );
-                                trace_ui(UiEvent::SourceImportFailed);
-                            }
-                        }
-                        cx.notify();
-                    })
-                    .ok();
-                })
-                .detach();
-                cx.notify();
-                true
+                self.import_single_node(input_value, name, preview, cx)
             }
             Ok(preview) => {
                 if self.single_node_editor_source_id.is_some() {
@@ -1886,6 +1748,163 @@ impl ManisApp {
                 false
             }
         }
+    }
+
+    fn import_single_node(
+        &mut self,
+        input_value: String,
+        name: String,
+        preview: crate::subscription::SubscriptionPreview,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(store_dir) = self.subscription_store_dir.clone() else {
+            self.subscription_feedback =
+                SubscriptionFeedback::StoreFailed(SubscriptionStoreError::DataDirectoryUnavailable);
+            self.language()
+                .text(
+                    "Could not determine where to save the node",
+                    "无法确定节点保存位置",
+                )
+                .clone_into(&mut self.status);
+            trace_ui(UiEvent::SourceImportFailed);
+            cx.notify();
+            return false;
+        };
+        self.subscription_preview_generation = self.subscription_preview_generation.wrapping_add(1);
+        let generation = self.subscription_preview_generation;
+        self.subscription_feedback = SubscriptionFeedback::Importing(SourceKind::SingleNode);
+        self.language()
+            .text(
+                "Validating and saving single-node source",
+                "正在验证并保存单节点来源",
+            )
+            .clone_into(&mut self.status);
+        if let Some(input) = self.subscription_input.as_ref() {
+            input.update(cx, |input, cx| input.set_enabled(false, cx));
+        }
+        let runtime = self.runtime.clone();
+        let editing_id = self.single_node_editor_source_id.clone();
+        let enabled = self.subscription_editor_enabled;
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let result = executor
+                .spawn(async move {
+                    let providers = mihomo::preview_single_node(&input_value)?;
+                    let transaction = super::mutate_saved_sources(&runtime, &store_dir, || {
+                        if let Some(id) = editing_id {
+                            mihomo::update_single_node_source_in(
+                                &store_dir,
+                                &id,
+                                &input_value,
+                                &name,
+                                enabled,
+                            )
+                        } else {
+                            mihomo::save_single_node_source_with_options_in(
+                                &store_dir,
+                                &input_value,
+                                &name,
+                                enabled,
+                            )
+                        }
+                    })?;
+                    Ok::<_, SubscriptionStoreError>((transaction, providers))
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                this.finish_single_node_import(generation, preview, result, cx);
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+        true
+    }
+
+    fn finish_single_node_import(
+        &mut self,
+        generation: u64,
+        preview: crate::subscription::SubscriptionPreview,
+        result: super::SingleNodeImportResult,
+        cx: &mut Context<Self>,
+    ) {
+        if self.subscription_preview_generation != generation {
+            return;
+        }
+        if let Some(input) = self.subscription_input.as_ref() {
+            input.update(cx, |input, cx| input.set_enabled(true, cx));
+        }
+        match result {
+            Ok((transaction, providers)) => {
+                self.finish_saved_single_node(transaction, providers, preview, cx);
+            }
+            Err(error) => {
+                self.subscription_feedback = SubscriptionFeedback::StoreFailed(error);
+                self.status = format!(
+                    "{}: {error}",
+                    self.language()
+                        .text("Single-node source save failed", "单节点来源保存失败")
+                );
+                trace_ui(UiEvent::SourceImportFailed);
+                cx.notify();
+            }
+        }
+    }
+
+    fn finish_saved_single_node(
+        &mut self,
+        mut transaction: super::SourceMutation<mihomo::StoredSingleNode>,
+        providers: Vec<mihomo::LoadedProvider>,
+        preview: crate::subscription::SubscriptionPreview,
+        cx: &mut Context<Self>,
+    ) {
+        let language = self.language();
+        transaction.apply.reconcile_proxy_mode(&mut self.proxy_mode);
+        let Some(stored) = transaction.value.take() else {
+            self.subscription_feedback =
+                SubscriptionFeedback::StoreFailed(SubscriptionStoreError::StoreUnavailable);
+            self.status = format!(
+                "{}{}",
+                language.text("Single-node source save failed", "单节点来源保存失败"),
+                transaction
+                    .apply
+                    .status_suffix_after_source_rollback(language)
+            );
+            trace_ui(UiEvent::SourceImportFailed);
+            cx.notify();
+            return;
+        };
+        if let Some(existing) = self
+            .saved_single_nodes
+            .iter_mut()
+            .find(|node| node.id == stored.id)
+        {
+            *existing = stored;
+        } else {
+            self.saved_single_nodes.push(stored);
+        }
+        self.subscription_preview_providers = providers;
+        self.subscription_feedback = SubscriptionFeedback::Valid(preview);
+        if let Some(input) = self.subscription_input.as_ref() {
+            input.update(cx, SubscriptionTextInput::clear_without_event);
+        }
+        if let Some(input) = self.subscription_name_input.as_ref() {
+            input.update(cx, SubscriptionTextInput::clear_without_event);
+        }
+        self.configuration_add_section = None;
+        self.status = if language == Language::English {
+            format!(
+                "Single-node source saved · Added to Saved group{}",
+                transaction.apply.status_suffix(language)
+            )
+        } else {
+            format!(
+                "单节点来源已保存 · 已加入“已保存”分组{}",
+                transaction.apply.status_suffix(language)
+            )
+        };
+        trace_ui(UiEvent::SourceImportSucceeded);
+        cx.notify();
     }
 
     #[allow(clippy::too_many_lines)]
@@ -6352,7 +6371,6 @@ impl ManisApp {
         cx.notify();
     }
 
-    #[allow(clippy::too_many_lines)]
     pub(super) fn refresh_qx_rule_source(&mut self, id: String, cx: &mut Context<Self>) {
         if self.source_refresh_busy() {
             return;
@@ -6398,87 +6416,116 @@ impl ManisApp {
                 })
                 .await;
             this.update(cx, |this, cx| {
-                if !matches!(
-                    this.qx_rule_source_refreshes.get(&id),
-                    Some(QxRuleSourceRefreshState::Refreshing { generation: active })
-                        if *active == generation
-                ) {
-                    return;
-                }
-                match result {
-                    Ok(transaction) if transaction.value.is_some() => {
-                        let stored = transaction.value.expect("checked committed mutation");
-                        let language = this.language();
-                        let rule_count = stored.rule_count;
-                        if let Some(source) = this
-                            .qx_rule_sources
-                            .iter_mut()
-                            .find(|source| source.id == id)
-                        {
-                            *source = stored;
-                        }
-                        this.qx_rule_source_refreshes.remove(&id);
-                        this.source_refresh_retry_not_before
-                            .remove(&super::DueRemoteSource::QxRule(id.clone()).scheduler_key());
-                        transaction.apply.reconcile_proxy_mode(&mut this.proxy_mode);
-                        this.status = if language == Language::English {
-                            format!(
-                                "QX rules updated · {rule_count} active rules{}",
-                                transaction.apply.status_suffix(language)
-                            )
-                        } else {
-                            format!(
-                                "QX 规则更新完成 · {rule_count} 条生效{}",
-                                transaction.apply.status_suffix(language)
-                            )
-                        };
-                    }
-                    Err(error) => {
-                        let message = match error {
-                            ImportQxRuleError::Download(error) => error.to_string(),
-                            ImportQxRuleError::InvalidDocument => this
-                                .language()
-                                .text("No recognizable domain rules", "没有可识别的域名规则")
-                                .to_owned(),
-                            ImportQxRuleError::Store(error) => error.to_string(),
-                        };
-                        this.qx_rule_source_refreshes.insert(
-                            id.clone(),
-                            QxRuleSourceRefreshState::Failed {
-                                generation,
-                                message: message.clone(),
-                            },
-                        );
-                        this.status = format!(
-                            "{}: {message}",
-                            this.language()
-                                .text("QX rule update failed", "QX 规则更新失败")
-                        );
-                    }
-                    Ok(transaction) => {
-                        this.qx_rule_source_refreshes.insert(
-                            id.clone(),
-                            QxRuleSourceRefreshState::Failed {
-                                generation,
-                                message: "runtime apply failed".to_owned(),
-                            },
-                        );
-                        this.status = format!(
-                            "{}{}",
-                            this.language()
-                                .text("Remote QX rule update failed", "远程 QX 规则更新失败"),
-                            transaction
-                                .apply
-                                .status_suffix_after_source_rollback(this.language())
-                        );
-                    }
-                }
-                cx.notify();
+                this.finish_qx_rule_source_refresh(&id, generation, result, cx);
             })
             .ok();
         })
         .detach();
         cx.notify();
+    }
+
+    fn finish_qx_rule_source_refresh(
+        &mut self,
+        id: &str,
+        generation: u64,
+        result: super::QxRuleRefreshResult,
+        cx: &mut Context<Self>,
+    ) {
+        if !matches!(
+            self.qx_rule_source_refreshes.get(id),
+            Some(QxRuleSourceRefreshState::Refreshing { generation: active })
+                if *active == generation
+        ) {
+            return;
+        }
+        match result {
+            Ok(transaction) if transaction.value.is_some() => {
+                self.finish_successful_qx_rule_refresh(id, transaction);
+            }
+            Err(error) => self.finish_failed_qx_rule_refresh(id, generation, &error),
+            Ok(transaction) => {
+                let message = "runtime apply failed".to_owned();
+                self.qx_rule_source_refreshes.insert(
+                    id.to_owned(),
+                    QxRuleSourceRefreshState::Failed {
+                        generation,
+                        message,
+                    },
+                );
+                self.status = format!(
+                    "{}{}",
+                    self.language()
+                        .text("Remote QX rule update failed", "远程 QX 规则更新失败"),
+                    transaction
+                        .apply
+                        .status_suffix_after_source_rollback(self.language())
+                );
+            }
+        }
+        cx.notify();
+    }
+
+    fn finish_successful_qx_rule_refresh(
+        &mut self,
+        id: &str,
+        mut transaction: super::SourceMutation<mihomo::StoredQxRuleSource>,
+    ) {
+        let stored = transaction
+            .value
+            .take()
+            .expect("checked committed mutation");
+        let language = self.language();
+        let rule_count = stored.rule_count;
+        if let Some(source) = self
+            .qx_rule_sources
+            .iter_mut()
+            .find(|source| source.id == id)
+        {
+            *source = stored;
+        }
+        self.qx_rule_source_refreshes.remove(id);
+        self.source_refresh_retry_not_before
+            .remove(&super::DueRemoteSource::QxRule(id.to_owned()).scheduler_key());
+        transaction.apply.reconcile_proxy_mode(&mut self.proxy_mode);
+        self.status = if language == Language::English {
+            format!(
+                "QX rules updated · {rule_count} active rules{}",
+                transaction.apply.status_suffix(language)
+            )
+        } else {
+            format!(
+                "QX 规则更新完成 · {rule_count} 条生效{}",
+                transaction.apply.status_suffix(language)
+            )
+        };
+    }
+
+    fn finish_failed_qx_rule_refresh(
+        &mut self,
+        id: &str,
+        generation: u64,
+        error: &ImportQxRuleError,
+    ) {
+        let message = match error {
+            ImportQxRuleError::Download(error) => error.to_string(),
+            ImportQxRuleError::InvalidDocument => self
+                .language()
+                .text("No recognizable domain rules", "没有可识别的域名规则")
+                .to_owned(),
+            ImportQxRuleError::Store(error) => error.to_string(),
+        };
+        self.qx_rule_source_refreshes.insert(
+            id.to_owned(),
+            QxRuleSourceRefreshState::Failed {
+                generation,
+                message: message.clone(),
+            },
+        );
+        self.status = format!(
+            "{}: {message}",
+            self.language()
+                .text("QX rule update failed", "QX 规则更新失败")
+        );
     }
 }
 
