@@ -1,17 +1,16 @@
-use gpui::{Div, FontWeight, ParentElement, Rgba, Styled, div, prelude::*, px};
+use gpui::{Div, FontWeight, ParentElement, Rgba, Stateful, Styled, div, prelude::*, px};
 use manis_core::WindowSizeClass;
 
 use super::ManisApp;
 use crate::{
     components::{ActionRole, action_button, empty_state, page_heading},
     diagnostics::{UiLogEntry, recent_ui_logs},
-    localization::{CountNoun, Language, Message},
+    localization::{Language, Message, copy},
     mihomo::KernelLogEntry,
     theme::{ControlSize, Radius, Space, TextRole, Theme},
 };
 
 impl ManisApp {
-    #[allow(clippy::too_many_lines)]
     pub(super) fn logs_workspace(
         &self,
         theme: Theme,
@@ -20,7 +19,8 @@ impl ManisApp {
     ) -> Div {
         let compact = size_class == WindowSizeClass::Compact;
         let query = self
-            .logs_search_input
+            .inputs
+            .logs_search
             .as_ref()
             .map(|input| input.read(cx).value().trim().to_owned())
             .unwrap_or_default();
@@ -35,34 +35,7 @@ impl ManisApp {
             .collect::<Vec<_>>();
         let count = logs.len() + kernel_logs.len();
         let language = self.language();
-        let mut rows = div()
-            .id("logs-scroll")
-            .flex_1()
-            .overflow_y_scroll()
-            .flex()
-            .flex_col();
-        if logs.is_empty() && kernel_logs.is_empty() {
-            rows = rows.child(
-                div()
-                    .flex_1()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .p(Space::Xl.px())
-                    .child(logs_empty_state(language, query.is_empty(), theme)),
-            );
-        } else {
-            for entry in kernel_logs.into_iter().rev() {
-                rows = rows.child(kernel_log_row(entry, theme));
-            }
-            for entry in logs.into_iter().rev() {
-                let reference = entry.operation_id.map_or_else(
-                    || format!("#{:04}", entry.sequence),
-                    |operation| format!("#{:04} · OP-{operation:04}", entry.sequence),
-                );
-                rows = rows.child(ui_log_row(entry, reference, theme));
-            }
-        }
+        let rows = logs_rows(logs, kernel_logs, query.is_empty(), language, theme);
 
         let refresh_action = action_button(
             "refresh-logs",
@@ -70,19 +43,15 @@ impl ManisApp {
             ActionRole::Secondary,
             ControlSize::Compact,
         )
-        .accessibility_label(language.text("Refresh log data", "刷新日志数据"))
+        .accessibility_label(language.localized(copy::logs::REFRESH_LOG_DATA))
         .border_color(theme.outline_subtle)
         .bg(theme.surface_high)
         .text_color(theme.text_primary)
         .on_click(cx.listener(|this, _, _, cx| this.connect_mihomo(cx)));
+        let live_status = copy::app::live_stream_phase(language, &self.live_status.logs);
         let heading = page_heading(
             language.message(Message::Logs),
-            logs_summary(
-                language,
-                count,
-                &self.live_status.logs,
-                self.dropped_kernel_logs,
-            ),
+            logs_summary(language, count, &live_status, self.dropped_kernel_logs),
             None,
             theme,
         );
@@ -106,7 +75,7 @@ impl ManisApp {
                     .items_center()
                     .gap(Space::Sm.px())
                     .when(compact, gpui::Styled::w_full)
-                    .when_some(self.logs_search_input.clone(), |tools, input| {
+                    .when_some(self.inputs.logs_search.clone(), |tools, input| {
                         tools.child(
                             div()
                                 .w(if compact { px(240.0) } else { px(320.0) })
@@ -129,22 +98,55 @@ impl ManisApp {
     }
 }
 
+fn logs_rows(
+    logs: Vec<UiLogEntry>,
+    kernel_logs: Vec<&KernelLogEntry>,
+    no_query: bool,
+    language: Language,
+    theme: Theme,
+) -> Stateful<Div> {
+    let mut rows = div()
+        .id("logs-scroll")
+        .flex_1()
+        .overflow_y_scroll()
+        .flex()
+        .flex_col();
+    if logs.is_empty() && kernel_logs.is_empty() {
+        return rows.child(
+            div()
+                .flex_1()
+                .flex()
+                .items_center()
+                .justify_center()
+                .p(Space::Xl.px())
+                .child(logs_empty_state(language, no_query, theme)),
+        );
+    }
+    for entry in kernel_logs.into_iter().rev() {
+        rows = rows.child(kernel_log_row(entry, theme));
+    }
+    for entry in logs.into_iter().rev() {
+        let reference = entry.operation_id.map_or_else(
+            || format!("#{:04}", entry.sequence),
+            |operation| format!("#{:04} · OP-{operation:04}", entry.sequence),
+        );
+        rows = rows.child(ui_log_row(entry, reference, theme));
+    }
+    rows
+}
+
 fn logs_empty_state(language: Language, no_query: bool, theme: Theme) -> Div {
     let (title, detail) = if no_query {
         (
             language.message(Message::NoLogs),
-            language.text(
-                "Logs will appear here after Mihomo starts or Manis performs an operation.",
-                "启动 Mihomo 或执行操作后，相关日志会显示在这里。",
-            ),
+            language
+                .localized(copy::logs::LOGS_WILL_APPEAR_HERE_AFTER_MIHOMO_STARTS_OR_MANIS_PERFORMS),
         )
     } else {
         (
             language.message(Message::NoFilterMatches),
-            language.text(
-                "Clear the filter or search by operation, error message, or log level.",
-                "清除筛选，或尝试搜索操作、错误内容或日志级别。",
-            ),
+            language
+                .localized(copy::logs::CLEAR_THE_FILTER_OR_SEARCH_BY_OPERATION_ERROR_MESSAGE_OR),
         )
     };
     empty_state(title, detail, None, theme)
@@ -279,24 +281,7 @@ fn kernel_log_matches_query(entry: &KernelLogEntry, query: &str) -> bool {
 }
 
 fn logs_summary(language: Language, count: usize, live_status: &str, dropped: u64) -> String {
-    let count = language.count(CountNoun::Log, count);
-    match language {
-        Language::English => {
-            let dropped = if dropped == 1 {
-                "1 log".to_owned()
-            } else {
-                format!("{dropped} logs")
-            };
-            format!(
-                "{count} · Mihomo {live_status} · {dropped} dropped under load · sensitive data hidden"
-            )
-        }
-        Language::SimplifiedChinese => {
-            format!(
-                "{count} · Mihomo {live_status} · 高负载时丢弃 {dropped} 条日志 · 敏感信息已隐藏"
-            )
-        }
-    }
+    copy::logs::summary(language, count, live_status, dropped)
 }
 
 fn format_log_time(timestamp_ms: u128) -> String {

@@ -6,12 +6,11 @@ use manis_profile::{MANIS_GLOBAL_GROUP_NAME, QxRuleKind, QxRuleList};
 use super::{ManisApp, format_bytes};
 use crate::{
     components::{ActionRole, StatusTone, action_button, empty_state, page_heading, status_badge},
-    localization::{CountNoun, Language, Message},
+    localization::{CountNoun, Language, Message, copy},
     theme::{ControlSize, Space, TextRole, Theme},
 };
 
 impl ManisApp {
-    #[allow(clippy::too_many_lines)]
     pub(super) fn activity_workspace(
         &self,
         theme: Theme,
@@ -20,7 +19,8 @@ impl ManisApp {
     ) -> Div {
         let compact = size_class == WindowSizeClass::Compact;
         let query = self
-            .activity_search_input
+            .inputs
+            .activity_search
             .as_ref()
             .map(|input| input.read(cx).value().trim().to_owned())
             .unwrap_or_default();
@@ -53,70 +53,22 @@ impl ManisApp {
             ActionRole::Secondary,
             ControlSize::Compact,
         )
-        .accessibility_label(language.text(
-            "Refresh activity data by reconnecting the kernel",
-            "重新连接内核并刷新网络活动数据",
-        ))
+        .accessibility_label(
+            language.localized(copy::activity::REFRESH_ACTIVITY_DATA_BY_RECONNECTING_THE_KERNEL),
+        )
         .border_color(theme.outline_subtle)
         .bg(theme.surface_high)
         .text_color(theme.text_primary)
         .on_click(cx.listener(|this, _, _, cx| this.connect_mihomo(cx)))
         .into_any_element();
-        let mut rows = div()
-            .id("activity-scroll")
-            .flex_1()
-            .overflow_y_scroll()
-            .flex()
-            .flex_col();
-        if visible_connections.is_empty() {
-            rows = rows.child(div().flex_1().p(Space::Xl.px()).child(if query.is_empty() {
-                empty_state(
-                    language.message(Message::NoActiveConnections),
-                    language.text(
-                        "Live traffic appears here as soon as the kernel reports a connection.",
-                        "内核上报新连接后，实时流量会显示在这里。",
-                    ),
-                    Some(
-                        action_button(
-                            "refresh-activity-empty",
-                            language.message(Message::RefreshData),
-                            ActionRole::Secondary,
-                            ControlSize::Compact,
-                        )
-                        .accessibility_label(language.text(
-                            "Refresh activity data by reconnecting the kernel",
-                            "重新连接内核并刷新网络活动数据",
-                        ))
-                        .border_color(theme.outline_subtle)
-                        .bg(theme.surface_high)
-                        .text_color(theme.text_primary)
-                        .on_click(cx.listener(|this, _, _, cx| this.connect_mihomo(cx)))
-                        .into_any_element(),
-                    ),
-                    theme,
-                )
-            } else {
-                empty_state(
-                    language.message(Message::NoFilterMatches),
-                    language.text(
-                        "Try a target host, process name, rule, or route stage.",
-                        "可以尝试输入目标域名、进程名、规则或路径节点。",
-                    ),
-                    None,
-                    theme,
-                )
-            }));
-        } else {
-            for connection in visible_connections.iter().copied() {
-                rows = rows.child(activity_row(
-                    connection,
-                    self.route_rule_group_label(connection, language).as_deref(),
-                    theme,
-                    compact,
-                    language,
-                ));
-            }
-        }
+        let rows = self.activity_rows(
+            &visible_connections,
+            query.is_empty(),
+            compact,
+            language,
+            theme,
+            cx,
+        );
 
         div()
             .flex_1()
@@ -150,11 +102,11 @@ impl ManisApp {
                             .gap(Space::Sm.px())
                             .when(compact, gpui::Styled::w_full)
                             .child(status_badge(
-                                self.live_status.activity.clone(),
+                                copy::app::live_stream_phase(language, &self.live_status.activity),
                                 StatusTone::Neutral,
                                 theme,
                             ))
-                            .when_some(self.activity_search_input.clone(), |tools, input| {
+                            .when_some(self.inputs.activity_search.clone(), |tools, input| {
                                 tools.child(
                                     div()
                                         .w(if compact { px(210.0) } else { px(320.0) })
@@ -165,6 +117,71 @@ impl ManisApp {
                     ),
             )
             .child(rows)
+    }
+
+    fn activity_rows(
+        &self,
+        visible_connections: &[&Connection],
+        no_query: bool,
+        compact: bool,
+        language: Language,
+        theme: Theme,
+        cx: &mut gpui::Context<Self>,
+    ) -> gpui::Stateful<Div> {
+        let mut rows = div()
+            .id("activity-scroll")
+            .flex_1()
+            .overflow_y_scroll()
+            .flex()
+            .flex_col();
+        if visible_connections.is_empty() {
+            rows = rows.child(div().flex_1().p(Space::Xl.px()).child(if no_query {
+                empty_state(
+                    language.message(Message::NoActiveConnections),
+                    language.localized(
+                        copy::activity::LIVE_TRAFFIC_APPEARS_HERE_AS_SOON_AS_THE_KERNEL_REPORTS,
+                    ),
+                    Some(
+                        action_button(
+                            "refresh-activity-empty",
+                            language.message(Message::RefreshData),
+                            ActionRole::Secondary,
+                            ControlSize::Compact,
+                        )
+                        .accessibility_label(language.localized(
+                            copy::activity::REFRESH_ACTIVITY_DATA_BY_RECONNECTING_THE_KERNEL,
+                        ))
+                        .border_color(theme.outline_subtle)
+                        .bg(theme.surface_high)
+                        .text_color(theme.text_primary)
+                        .on_click(cx.listener(|this, _, _, cx| this.connect_mihomo(cx)))
+                        .into_any_element(),
+                    ),
+                    theme,
+                )
+            } else {
+                empty_state(
+                    language.message(Message::NoFilterMatches),
+                    language.localized(
+                        copy::activity::TRY_A_TARGET_HOST_PROCESS_NAME_RULE_OR_ROUTE_STAGE,
+                    ),
+                    None,
+                    theme,
+                )
+            }));
+        } else {
+            for connection in visible_connections.iter().copied() {
+                rows = rows.child(activity_row(
+                    connection,
+                    self.route_rule_group_label(connection, language).as_deref(),
+                    theme,
+                    compact,
+                    language,
+                ));
+            }
+        }
+
+        rows
     }
 }
 
@@ -178,9 +195,9 @@ impl ManisApp {
         language: Language,
     ) -> Option<String> {
         let group_order = crate::mihomo::normalized_routing_rule_group_order(
-            &self.routing_rule_group_order,
+            &self.rule_sources.group_order,
             !self.manual_rules.is_empty(),
-            &self.qx_rule_sources,
+            &self.rule_sources.sources,
         );
         for group_id in group_order {
             if group_id == crate::mihomo::MANUAL_ROUTING_RULE_GROUP_ID {
@@ -189,12 +206,13 @@ impl ManisApp {
                     .iter()
                     .any(|rule| manual_rule_matches_connection(rule, connection))
                 {
-                    return Some(language.text("Manual rules", "手动规则").to_owned());
+                    return Some(language.localized(copy::common::MANUAL_RULES).to_owned());
                 }
                 continue;
             }
             let Some((index, source)) = self
-                .qx_rule_sources
+                .rule_sources
+                .sources
                 .iter()
                 .enumerate()
                 .find(|(_, source)| source.enabled && source.id == group_id)
@@ -202,13 +220,11 @@ impl ManisApp {
                 continue;
             };
             if qx_source_matches_connection(&source.content, connection) {
-                return Some(source.source.subscription_name().unwrap_or_else(|| {
-                    if language == Language::English {
-                        format!("Rule source {}", index + 1)
-                    } else {
-                        format!("规则源 {}", index + 1)
-                    }
-                }));
+                return Some(
+                    source.source.subscription_name().unwrap_or_else(|| {
+                        copy::activity::numbered_rule_source(language, index + 1)
+                    }),
+                );
             }
         }
         None
@@ -230,7 +246,7 @@ fn activity_summary(
             "{}/{} {}",
             visible_count,
             total_count,
-            language.text("connections", "条连接")
+            language.localized(copy::activity::CONNECTIONS)
         )
     };
     format!(
@@ -271,8 +287,12 @@ fn activity_row(
 ) -> Div {
     let target = connection_target(connection, language);
     let metadata = connection_metadata(connection, language);
-    let chain = route_summary_with_group(&connection.chains, rule_group, language)
-        .unwrap_or_else(|| language.text("Route unavailable", "路由未返回").to_owned());
+    let chain =
+        route_summary_with_group(&connection.chains, rule_group, language).unwrap_or_else(|| {
+            language
+                .localized(copy::activity::ROUTE_UNAVAILABLE)
+                .to_owned()
+        });
 
     div()
         .min_h(px(if compact { 78.0 } else { 60.0 }))
@@ -357,7 +377,7 @@ fn user_route_stages(chains: &[String]) -> impl DoubleEndedIterator<Item = &str>
 
 fn route_stage_label(stage: &str, language: Language) -> &str {
     match stage {
-        "DIRECT" => language.text("Direct", "直连"),
+        "DIRECT" => language.localized(copy::common::DIRECT),
         _ => stage,
     }
 }
@@ -440,13 +460,13 @@ fn connection_metadata(connection: &Connection, language: Language) -> String {
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
         })
-        .unwrap_or_else(|| language.text("Unknown process", "未知进程"));
+        .unwrap_or_else(|| language.localized(copy::activity::UNKNOWN_PROCESS));
     let rule = connection
         .rule
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| language.text("No matched rule", "未匹配规则"));
+        .unwrap_or_else(|| language.localized(copy::activity::NO_MATCHED_RULE));
     let rule = connection
         .rule_payload
         .as_deref()
@@ -480,11 +500,10 @@ fn connection_target(connection: &Connection, language: Language) -> String {
         }
         (Some(host), Some(port)) => format!("{host}:{port}"),
         (Some(host), None) => host.to_owned(),
-        (None, Some(port)) => match language {
-            Language::English => format!("Unknown target · port {port}"),
-            Language::SimplifiedChinese => format!("未知目标 · 端口 {port}"),
-        },
-        (None, None) => language.text("Unknown target", "未知目标").to_owned(),
+        (None, Some(port)) => copy::activity::unknown_target_port(language, port),
+        (None, None) => language
+            .localized(copy::activity::UNKNOWN_TARGET)
+            .to_owned(),
     }
 }
 

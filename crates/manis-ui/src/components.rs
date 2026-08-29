@@ -10,7 +10,6 @@ use gpui_component::{
 
 use crate::theme::{ControlSize, Radius, Space, TextRole, Theme};
 
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ActionRole {
     Primary,
@@ -19,7 +18,6 @@ pub(crate) enum ActionRole {
     Danger,
 }
 
-#[allow(dead_code)]
 impl ActionRole {
     pub(crate) fn variant(self) -> ButtonVariant {
         match self {
@@ -31,7 +29,6 @@ impl ActionRole {
     }
 }
 
-#[allow(dead_code)]
 pub(crate) fn action_button(
     id: impl Into<ElementId>,
     label: impl Into<SharedString>,
@@ -41,7 +38,6 @@ pub(crate) fn action_button(
     style_action_button(Button::new(id).label(label), role, size)
 }
 
-#[allow(dead_code)]
 pub(crate) fn style_action_button(button: Button, role: ActionRole, size: ControlSize) -> Button {
     button
         .with_variant(role.variant())
@@ -50,7 +46,6 @@ pub(crate) fn style_action_button(button: Button, role: ActionRole, size: Contro
         .rounded(Radius::Control.px())
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum StatusTone {
     Neutral,
@@ -60,7 +55,6 @@ pub(crate) enum StatusTone {
     Route,
 }
 
-#[allow(dead_code)]
 impl StatusTone {
     fn colors(self, theme: Theme) -> (gpui::Rgba, gpui::Rgba) {
         match self {
@@ -73,7 +67,6 @@ impl StatusTone {
     }
 }
 
-#[allow(dead_code)]
 pub(crate) fn status_badge(label: impl Into<SharedString>, tone: StatusTone, theme: Theme) -> Div {
     let (foreground, background) = tone.colors(theme);
     div()
@@ -92,7 +85,6 @@ pub(crate) fn status_badge(label: impl Into<SharedString>, tone: StatusTone, the
         .child(label.into())
 }
 
-#[allow(dead_code)]
 pub(crate) fn page_heading(
     title: impl Into<SharedString>,
     detail: impl Into<SharedString>,
@@ -109,7 +101,6 @@ pub(crate) fn page_heading(
     )
 }
 
-#[allow(dead_code)]
 pub(crate) fn section_heading(
     title: impl Into<SharedString>,
     detail: impl Into<SharedString>,
@@ -126,7 +117,6 @@ pub(crate) fn section_heading(
     )
 }
 
-#[allow(dead_code)]
 fn heading(
     title: impl Into<SharedString>,
     detail: impl Into<SharedString>,
@@ -168,7 +158,6 @@ fn heading(
         .when_some(action, |this, action| this.flex_none().child(action))
 }
 
-#[allow(dead_code)]
 pub(crate) fn empty_state(
     title: impl Into<SharedString>,
     detail: impl Into<SharedString>,
@@ -283,7 +272,7 @@ mod tests {
             .expect("trigger should render");
         cx.simulate_click(trigger.center(), Modifiers::default());
         cx.update(|window, cx| window.draw(cx).clear(cx));
-        std::thread::sleep(Duration::from_millis(180));
+        cx.executor().advance_clock(Duration::from_millis(180));
         cx.update(|window, cx| window.draw(cx).clear(cx));
 
         let content = cx

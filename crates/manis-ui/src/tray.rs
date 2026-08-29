@@ -12,8 +12,9 @@ use tray_icon::{
 use crate::{
     ManisApp,
     app::ProxyModeBlock,
-    localization::{Language, Localizer},
+    localization::{Language, Localizer, copy},
     mihomo,
+    theme::LayoutMetric,
 };
 
 const SHOW_MENU_ID: &str = "manis.tray.show";
@@ -88,7 +89,10 @@ pub fn open_window(cx: &mut App) -> gpui::Result<()> {
     cx.open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
-            window_min_size: Some(size(px(640.0), px(560.0))),
+            window_min_size: Some(size(
+                LayoutMetric::MinWindowWidth.px(),
+                LayoutMetric::MinWindowHeight.px(),
+            )),
             is_resizable: true,
             focus: true,
             ..Default::default()
@@ -117,23 +121,17 @@ pub fn install(cx: &mut App) -> Result<(), &'static str> {
 pub(crate) fn install_with_language(cx: &mut App, language: Language) -> Result<(), &'static str> {
     #[cfg(target_os = "linux")]
     gtk::init().map_err(|_error| {
-        language.text(
-            "Could not initialize the Linux GTK tray event loop",
-            "无法初始化 Linux GTK 托盘事件循环",
-        )
+        language.localized(copy::tray::COULD_NOT_INITIALIZE_THE_LINUX_GTK_TRAY_EVENT_LOOP)
     })?;
 
     let show = MenuItem::with_id(
         SHOW_MENU_ID,
-        language.text("Open Manis", "打开 Manis"),
+        language.localized(copy::tray::OPEN_MANIS),
         true,
         None,
     );
     let status = MenuItem::new(
-        language.text(
-            "Rule routing · status is available in the main window",
-            "规则路由 · 状态请在主窗口查看",
-        ),
+        language.localized(copy::tray::RULE_ROUTING_STATUS_IS_AVAILABLE_IN_THE_MAIN_WINDOW),
         false,
         None,
     );
@@ -157,7 +155,7 @@ pub(crate) fn install_with_language(cx: &mut App, language: Language) -> Result<
     let proxy_separator = PredefinedMenuItem::separator();
     let quit = MenuItem::with_id(
         QUIT_MENU_ID,
-        language.text("Quit Manis", "退出 Manis"),
+        language.localized(copy::tray::QUIT_MANIS),
         true,
         None,
     );
@@ -170,26 +168,17 @@ pub(crate) fn install_with_language(cx: &mut App, language: Language) -> Result<
         &separator,
         &quit,
     ])
-    .map_err(|_error| {
-        language.text(
-            "Could not create the system tray menu",
-            "无法创建系统托盘菜单",
-        )
-    })?;
-    let icon = Icon::from_rgba(manis_icon_rgba(), 32, 32).map_err(|_error| {
-        language.text(
-            "Could not create the system tray icon",
-            "无法创建系统托盘图标",
-        )
-    })?;
+    .map_err(|_error| language.localized(copy::tray::COULD_NOT_CREATE_THE_SYSTEM_TRAY_MENU))?;
+    let icon = Icon::from_rgba(manis_icon_rgba(), 32, 32)
+        .map_err(|_error| language.localized(copy::tray::COULD_NOT_CREATE_THE_SYSTEM_TRAY_ICON))?;
     let tray = TrayIconBuilder::new()
         .with_id("manis.status")
-        .with_tooltip(language.text("Manis · rule routing", "Manis · 规则路由"))
+        .with_tooltip(language.localized(copy::tray::MANIS_RULE_ROUTING))
         .with_icon(icon)
         .with_icon_as_template(cfg!(target_os = "macos"))
         .with_menu(Box::new(menu))
         .build()
-        .map_err(|_error| language.text("System tray is unavailable", "系统托盘不可用"))?;
+        .map_err(|_error| language.localized(copy::tray::SYSTEM_TRAY_IS_UNAVAILABLE))?;
 
     cx.set_global(ManisTray {
         _icon: tray,
@@ -298,9 +287,9 @@ fn sync_proxy_menu(cx: &mut App) {
 
 fn proxy_mode_menu_label(language: Language, mode: ProxyMode) -> &'static str {
     match mode {
-        ProxyMode::Off => language.text("Off", "关闭代理"),
-        ProxyMode::System => language.text("System proxy", "系统代理"),
-        ProxyMode::Tun => language.text("TUN proxy", "TUN 代理"),
+        ProxyMode::Off => language.localized(copy::common::OFF),
+        ProxyMode::System => language.localized(copy::common::SYSTEM_PROXY),
+        ProxyMode::Tun => language.localized(copy::common::TUN_PROXY),
     }
 }
 

@@ -418,8 +418,8 @@ pub(crate) enum ManualRuleStoreError {
 impl fmt::Display for ManualRuleStoreError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Unavailable => formatter.write_str("手动分流规则存储不可用"),
-            Self::Corrupt => formatter.write_str("手动分流规则文件已损坏"),
+            Self::Unavailable => formatter.write_str("manual routing rule store is unavailable"),
+            Self::Corrupt => formatter.write_str("manual routing rule file is corrupt"),
         }
     }
 }
@@ -438,11 +438,13 @@ impl fmt::Display for ManualRuleCompileError {
         match self {
             Self::UnsupportedType(kind) => write!(
                 formatter,
-                "当前内核无法精确执行 {} 手动分流规则",
+                "the active kernel cannot represent a {} manual routing rule exactly",
                 kind.qx_label()
             ),
-            Self::CorruptValue => formatter.write_str("手动分流规则参数无效"),
-            Self::MultipleFinalRules => formatter.write_str("只能配置一条 FINAL 分流规则"),
+            Self::CorruptValue => formatter.write_str("manual routing rule value is invalid"),
+            Self::MultipleFinalRules => {
+                formatter.write_str("only one FINAL routing rule may be configured")
+            }
         }
     }
 }

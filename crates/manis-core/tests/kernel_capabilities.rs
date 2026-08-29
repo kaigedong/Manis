@@ -1,4 +1,4 @@
-use manis_core::{KernelCapabilities, KernelKind};
+use manis_core::{KernelCapability, KernelKind};
 
 #[test]
 fn kernel_identity_is_stable_for_persistence_and_display() {
@@ -13,30 +13,34 @@ fn kernel_identity_is_stable_for_persistence_and_display() {
 
 #[test]
 fn capability_matrix_does_not_promise_silent_policy_translation() {
-    assert_eq!(
-        KernelKind::Mihomo.capabilities(),
-        KernelCapabilities {
-            subscription_providers: true,
-            manual_vless: true,
-            selector: true,
-            url_test: true,
-            fallback: true,
-            load_balance: true,
-            clash_api: true,
-            tun: true,
-        }
-    );
-    assert_eq!(
-        KernelKind::SingBox.capabilities(),
-        KernelCapabilities {
-            subscription_providers: false,
-            manual_vless: true,
-            selector: true,
-            url_test: true,
-            fallback: false,
-            load_balance: false,
-            clash_api: true,
-            tun: false,
-        }
-    );
+    let mihomo = KernelKind::Mihomo.capabilities();
+    let sing_box = KernelKind::SingBox.capabilities();
+    for capability in [
+        KernelCapability::SubscriptionProviders,
+        KernelCapability::ManualVless,
+        KernelCapability::Selector,
+        KernelCapability::UrlTest,
+        KernelCapability::Fallback,
+        KernelCapability::LoadBalance,
+        KernelCapability::ClashApi,
+        KernelCapability::Tun,
+    ] {
+        assert!(mihomo.supports(capability));
+    }
+    for capability in [
+        KernelCapability::ManualVless,
+        KernelCapability::Selector,
+        KernelCapability::UrlTest,
+        KernelCapability::ClashApi,
+    ] {
+        assert!(sing_box.supports(capability));
+    }
+    for capability in [
+        KernelCapability::SubscriptionProviders,
+        KernelCapability::Fallback,
+        KernelCapability::LoadBalance,
+        KernelCapability::Tun,
+    ] {
+        assert!(!sing_box.supports(capability));
+    }
 }

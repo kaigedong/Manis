@@ -70,7 +70,6 @@ impl Theme {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum TextRole {
     PageTitle,
@@ -81,7 +80,6 @@ pub(crate) enum TextRole {
     Data,
 }
 
-#[allow(dead_code)]
 impl TextRole {
     pub(crate) fn size(self) -> Pixels {
         match self {
@@ -110,60 +108,45 @@ impl TextRole {
             Self::Body | Self::Metadata => FontWeight::NORMAL,
         }
     }
-
-    pub(crate) fn uses_monospace(self) -> bool {
-        matches!(self, Self::Data)
-    }
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Space {
-    None,
     Xs,
     Sm,
     Md,
     Lg,
     Xl,
-    Xxl,
 }
 
-#[allow(dead_code)]
 impl Space {
     pub(crate) fn px(self) -> Pixels {
         match self {
-            Self::None => px(0.0),
             Self::Xs => px(4.0),
             Self::Sm => px(8.0),
             Self::Md => px(12.0),
             Self::Lg => px(16.0),
             Self::Xl => px(24.0),
-            Self::Xxl => px(32.0),
         }
     }
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Radius {
     Control,
     Row,
     Pane,
-    Window,
 }
 
-#[allow(dead_code)]
 impl Radius {
     pub(crate) fn px(self) -> Pixels {
         match self {
             Self::Control | Self::Row => px(8.0),
             Self::Pane => px(12.0),
-            Self::Window => px(18.0),
         }
     }
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ControlSize {
     Compact,
@@ -171,7 +154,6 @@ pub(crate) enum ControlSize {
     Icon,
 }
 
-#[allow(dead_code)]
 impl ControlSize {
     pub(crate) const fn component_size(self) -> gpui_component::Size {
         match self {
@@ -188,13 +170,6 @@ impl ControlSize {
         }
     }
 
-    pub(crate) fn icon(self) -> Pixels {
-        match self {
-            Self::Compact | Self::Icon => px(16.0),
-            Self::Standard => px(18.0),
-        }
-    }
-
     pub(crate) fn min_pointer_target(self) -> Pixels {
         match self {
             Self::Icon => px(32.0),
@@ -204,7 +179,6 @@ impl ControlSize {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum LayoutMetric {
     MinWindowWidth,
@@ -216,7 +190,6 @@ pub(crate) enum LayoutMetric {
     MediumPolicyList,
 }
 
-#[allow(dead_code)]
 impl LayoutMetric {
     pub(crate) fn px(self) -> Pixels {
         match self {
@@ -290,24 +263,19 @@ mod tests {
         assert!(TextRole::SectionTitle.size().as_f32() > TextRole::Body.size().as_f32());
         assert!(TextRole::Body.size().as_f32() > TextRole::Metadata.size().as_f32());
         assert!(TextRole::PageTitle.line_height().as_f32() > TextRole::PageTitle.size().as_f32());
-        assert!(TextRole::Data.uses_monospace());
-        assert!(!TextRole::Body.uses_monospace());
     }
 
     #[test]
     fn spacing_radius_and_control_tokens_match_the_design_system() {
-        assert_px(Space::None.px(), 0.0);
         assert_px(Space::Xs.px(), 4.0);
         assert_px(Space::Sm.px(), 8.0);
         assert_px(Space::Md.px(), 12.0);
         assert_px(Space::Lg.px(), 16.0);
         assert_px(Space::Xl.px(), 24.0);
-        assert_px(Space::Xxl.px(), 32.0);
 
         assert_px(Radius::Control.px(), 8.0);
         assert_px(Radius::Row.px(), 8.0);
         assert_px(Radius::Pane.px(), 12.0);
-        assert_px(Radius::Window.px(), 18.0);
 
         assert_px(ControlSize::Compact.height(), 34.0);
         assert_px(ControlSize::Standard.height(), 38.0);

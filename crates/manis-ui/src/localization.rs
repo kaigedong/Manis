@@ -5,6 +5,8 @@ use std::process::Command;
 
 use manis_profile::write_private_atomic;
 
+pub(crate) mod copy;
+
 const LANGUAGE_PREFERENCE_FILE: &str = "language.preference";
 const MAX_LANGUAGE_PREFERENCE_BYTES: u64 = 32;
 
@@ -28,8 +30,6 @@ pub(crate) enum Message {
     AddRule,
     ManageSources,
     ImportSubscription,
-    #[allow(dead_code)]
-    Clear,
     SaveChanges,
     Cancel,
     Delete,
@@ -42,6 +42,18 @@ pub(crate) enum Message {
     NoActiveConnections,
     NoLogs,
     NoFilterMatches,
+    ChangesApplied,
+    ChangesAppliedAndRestarted,
+    ChangesFailedAndRestored,
+    SavedChangesFailed,
+    TunRestoreFailed,
+    ApplyingChanges,
+    RoutingApplyBusy,
+    ManualRulesLocationUnavailable,
+    ManualRulesSaveFailed,
+    RuleGroupOrderSaveFailed,
+    StoreTransactionUnavailable,
+    StoreRollbackFailed,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -99,6 +111,19 @@ pub(crate) enum Language {
     SimplifiedChinese,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct LocalizedText {
+    english: &'static str,
+    chinese: &'static str,
+}
+
+impl LocalizedText {
+    #[must_use]
+    pub(crate) const fn new(english: &'static str, chinese: &'static str) -> Self {
+        Self { english, chinese }
+    }
+}
+
 impl Language {
     #[must_use]
     pub(crate) fn from_locale(locale: Option<&str>) -> Self {
@@ -118,11 +143,16 @@ impl Language {
     }
 
     #[must_use]
-    pub(crate) const fn text(self, english: &'static str, chinese: &'static str) -> &'static str {
+    const fn select(self, english: &'static str, chinese: &'static str) -> &'static str {
         match self {
             Self::English => english,
             Self::SimplifiedChinese => chinese,
         }
+    }
+
+    #[must_use]
+    pub(crate) const fn localized(self, text: LocalizedText) -> &'static str {
+        self.select(text.english, text.chinese)
     }
 
     #[must_use]
@@ -142,7 +172,6 @@ impl Language {
             Message::AddRule => ("Add rule", "添加规则"),
             Message::ManageSources => ("Manage sources", "管理来源"),
             Message::ImportSubscription => ("Import subscription", "导入订阅"),
-            Message::Clear => ("Clear", "清除"),
             Message::SaveChanges => ("Save changes", "保存修改"),
             Message::Cancel => ("Cancel", "取消"),
             Message::Delete => ("Delete", "删除"),
@@ -155,8 +184,49 @@ impl Language {
             Message::NoActiveConnections => ("No active connections", "暂无活动连接"),
             Message::NoLogs => ("No logs yet", "暂无日志"),
             Message::NoFilterMatches => ("No results match this filter", "没有符合当前筛选的结果"),
+            Message::ChangesApplied => (" · changes applied", " · 更改已生效"),
+            Message::ChangesAppliedAndRestarted => (
+                " · changes applied and Mihomo restarted",
+                " · 更改已生效，Mihomo 已重新启动",
+            ),
+            Message::ChangesFailedAndRestored => (
+                " · changes could not be applied; the previous rules were restored: ",
+                " · 更改未能生效，已恢复先前的规则：",
+            ),
+            Message::SavedChangesFailed => (
+                " · saved, but the changes could not be applied: ",
+                " · 已保存，但更改未能生效：",
+            ),
+            Message::TunRestoreFailed => (
+                " · kernel reloaded, but TUN could not be restored and was turned off: ",
+                " · 内核已重载，但 TUN 恢复失败，已回退为关闭：",
+            ),
+            Message::ApplyingChanges => ("applying changes…", "正在应用更改…"),
+            Message::RoutingApplyBusy => (
+                "Wait for the current routing changes to finish applying",
+                "请等待当前分流更改应用完成",
+            ),
+            Message::ManualRulesLocationUnavailable => (
+                "Could not determine where to save manual rules",
+                "无法确定手动分流规则的保存位置",
+            ),
+            Message::ManualRulesSaveFailed => {
+                ("Could not save manual rules: ", "无法保存手动分流规则：")
+            }
+            Message::RuleGroupOrderSaveFailed => (
+                "Could not save routing rule group order",
+                "无法保存分流规则分组顺序",
+            ),
+            Message::StoreTransactionUnavailable => (
+                "Could not prepare a safe configuration update",
+                "无法准备安全的配置更新",
+            ),
+            Message::StoreRollbackFailed => (
+                " · restoring the previous configuration also failed: ",
+                " · 恢复先前配置时也发生失败：",
+            ),
         };
-        self.text(english, chinese)
+        self.select(english, chinese)
     }
 
     #[must_use]
@@ -360,10 +430,66 @@ impl std::error::Error for LanguagePreferenceError {}
 mod tests {
     use std::fs;
 
+    use crate::{
+        mihomo::{LiveStreamPhase, SubscriptionStoreError},
+        subscription::{SourceNodeDetail, SourceNodeSecurity, SubscriptionInputError},
+    };
+
     use super::{
-        CountNoun, Language, LanguagePreference, Message, load_language_preference_in,
+        CountNoun, Language, LanguagePreference, Message, copy, load_language_preference_in,
         save_language_preference_in,
     };
+
+    #[test]
+    fn typed_source_errors_are_localized_at_the_presentation_boundary() {
+        assert_eq!(
+            copy::configuration::subscription_input_error(
+                Language::English,
+                SubscriptionInputError::InvalidVless,
+            ),
+            "The single-node link is invalid; check its protocol, server, and parameters"
+        );
+        assert_eq!(
+            copy::configuration::subscription_input_error(
+                Language::SimplifiedChinese,
+                SubscriptionInputError::InvalidVless,
+            ),
+            "单节点链接无效，请检查协议、服务器和参数"
+        );
+        assert_eq!(
+            copy::configuration::subscription_store_error(
+                Language::SimplifiedChinese,
+                SubscriptionStoreError::StoredSourceUnavailable,
+            ),
+            "已保存的订阅无法安全读取，需要重新导入"
+        );
+    }
+
+    #[test]
+    fn source_and_live_state_relocalize_without_reparsing() {
+        let detail = SourceNodeDetail::Vless {
+            security: SourceNodeSecurity::None,
+            transport: Some("WebSocket"),
+        };
+        assert_eq!(
+            copy::configuration::source_node_detail(Language::English, detail),
+            "No TLS · WebSocket"
+        );
+        assert_eq!(
+            copy::configuration::source_node_detail(Language::SimplifiedChinese, detail),
+            "无 TLS · WebSocket"
+        );
+
+        let phase = LiveStreamPhase::Reconnecting(3);
+        assert_eq!(
+            copy::app::live_stream_phase(Language::English, &phase),
+            "Reconnecting · attempt 3"
+        );
+        assert_eq!(
+            copy::app::live_stream_phase(Language::SimplifiedChinese, &phase),
+            "正在重连 · 第 3 次"
+        );
+    }
 
     #[test]
     fn core_product_terms_are_consistent_between_navigation_and_object_settings() {

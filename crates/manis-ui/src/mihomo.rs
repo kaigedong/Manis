@@ -9,10 +9,7 @@ use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{env, error::Error, fmt};
 
-use manis_core::{
-    KernelKind, ManagedPolicyGroup, ManagedPolicyIcon, ManagedPolicyStrategy, NodeIdentity,
-    PolicyCandidateMatcher, PolicyCatalog, RoutingMode,
-};
+use manis_core::{KernelKind, NodeIdentity, PolicyCandidateMatcher, PolicyCatalog, RoutingMode};
 use manis_engine::{
     ControllerEndpoint, EngineError, EngineManager, ManagedEngineConfig, ProbeStatus,
     ReadinessPolicy, ReadinessProbe, validate_managed_config,
@@ -34,6 +31,41 @@ use ureq::{Agent, ResponseExt as _};
 use crate::diagnostics::{LogLevel, record_event};
 use crate::subscription::SingleNodeSource;
 use crate::{brand, core_update};
+
+mod managed_apply;
+mod policy_store;
+mod preview;
+mod profile_compiler;
+mod routing_order;
+mod runtime;
+mod store_snapshot;
+mod workspace;
+
+use policy_store::compile_managed_policy_groups;
+pub(crate) use policy_store::*;
+use preview::canonical_binary;
+pub(crate) use preview::*;
+#[cfg(test)]
+use preview::{
+    PreviewWorkspace, extract_subscription_proxy_nameservers,
+    preview_secret_subscription_with_binary, preview_subscription_with_binary,
+};
+pub(crate) use routing_order::{
+    load_routing_rule_group_order_in, move_routing_rule_group, normalized_routing_rule_group_order,
+    save_routing_rule_group_order_in,
+};
+pub(crate) use store_snapshot::SubscriptionStoreSnapshot;
+pub(crate) use workspace::*;
+use workspace::{
+    apply_qx_rule_sources, decode_hex, next_stored_source_id, profile_mode, valid_stored_id,
+};
+#[cfg(test)]
+use workspace::{current_unix_nanos, storage_version_supported};
+#[cfg(not(windows))]
+use workspace::{
+    private_store_entries, read_private_source_allow_empty, read_private_source_allow_empty_max,
+    remove_private_source, require_clean_absolute_store,
+};
 
 const CONTROLLER_ENV: &str = "MANIS_MIHOMO_CONTROLLER";
 const LEGACY_RELAY_CONTROLLER_ENV: &str = "RELAY_MIHOMO_CONTROLLER";
@@ -167,6 +199,7 @@ pub(crate) enum ControllerRuntime {
     },
     Managed {
         manager: Arc<Mutex<EngineManager>>,
+        apply_lock: Arc<Mutex<()>>,
         profile_source: RuntimeProfileSource,
         generated_profile: Option<ManagedGeneratedProfile>,
         privileged: Arc<AtomicBool>,
@@ -222,871 +255,13 @@ pub(crate) enum RuntimeProfileSource {
 }
 
 impl RuntimeProfileSource {
-    pub(crate) fn label(self) -> &'static str {
+    pub(crate) fn diagnostic_key(self) -> &'static str {
         match self {
             #[cfg(any(test, feature = "snapshot-fixtures"))]
-            Self::FixtureController => "测试快照",
-            Self::SavedSources => "Manis 已保存来源",
-            Self::Invalid => "尚未准备好",
+            Self::FixtureController => "fixture-controller",
+            Self::SavedSources => "saved-sources",
+            Self::Invalid => "invalid",
         }
-    }
-
-    pub(crate) fn detail(self) -> &'static str {
-        match self {
-            #[cfg(any(test, feature = "snapshot-fixtures"))]
-            Self::FixtureController => "仅用于测试快照",
-            Self::SavedSources => "从本机私有来源编译",
-            Self::Invalid => "请检查来源设置",
-        }
-    }
-}
-
-impl ControllerRuntime {
-    pub(crate) fn is_fixture(&self) -> bool {
-        match self {
-            #[cfg(any(test, feature = "snapshot-fixtures"))]
-            Self::Fixture { .. } => true,
-            _ => false,
-        }
-    }
-
-    fn controller_secret(&self) -> Option<String> {
-        match self {
-            Self::Managed {
-                generated_profile: Some(spec),
-                ..
-            } => spec.controller_secret.clone(),
-            #[cfg(any(test, feature = "snapshot-fixtures"))]
-            Self::Fixture { .. } => None,
-            Self::Managed { .. } | Self::Invalid { .. } => None,
-        }
-    }
-
-    pub(crate) fn stop_managed(&self) -> Result<(), LoadError> {
-        if let Self::Managed { manager, .. } = self {
-            manager
-                .lock()
-                .map_err(|_poisoned| LoadError::Runtime("托管内核状态锁已损坏".to_owned()))?
-                .stop()?;
-        }
-        Ok(())
-    }
-
-    pub(crate) fn managed_health(&self) -> Result<ManagedRuntimeHealth, LoadError> {
-        match self {
-            #[cfg(any(test, feature = "snapshot-fixtures"))]
-            Self::Fixture { .. } => Ok(ManagedRuntimeHealth::NotManaged),
-            Self::Invalid { message } => Err(LoadError::Runtime(message.clone())),
-            Self::Managed { manager, .. } => manager
-                .lock()
-                .map_err(|_poisoned| LoadError::Runtime("托管内核状态锁已损坏".to_owned()))?
-                .running_endpoint()
-                .map(|endpoint| {
-                    if endpoint.is_some() {
-                        ManagedRuntimeHealth::Running
-                    } else {
-                        ManagedRuntimeHealth::Stopped
-                    }
-                })
-                .map_err(LoadError::from),
-        }
-    }
-
-    pub(crate) fn profile_source(&self) -> RuntimeProfileSource {
-        match self {
-            #[cfg(any(test, feature = "snapshot-fixtures"))]
-            Self::Fixture { .. } => RuntimeProfileSource::FixtureController,
-            Self::Managed { profile_source, .. } => *profile_source,
-            Self::Invalid { .. } => RuntimeProfileSource::Invalid,
-        }
-    }
-
-    pub(crate) fn endpoint_label(&self) -> String {
-        match self {
-            #[cfg(any(test, feature = "snapshot-fixtures"))]
-            Self::Fixture { endpoint } => endpoint.clone(),
-            Self::Managed { .. } => "Manis 托管".to_owned(),
-            Self::Invalid { .. } => "尚未连接".to_owned(),
-        }
-    }
-
-    pub(crate) fn connect(&self) -> Result<RuntimeSnapshot, LoadError> {
-        match self {
-            #[cfg(any(test, feature = "snapshot-fixtures"))]
-            Self::Fixture { endpoint } => Ok(RuntimeSnapshot {
-                endpoint: endpoint.clone(),
-                controller_endpoint: endpoint.clone(),
-                controller_secret: None,
-                snapshot: load(endpoint, None)?,
-            }),
-            Self::Managed {
-                manager,
-                generated_profile,
-                privileged,
-                ..
-            } => {
-                let secret = generated_profile
-                    .as_ref()
-                    .and_then(|spec| spec.controller_secret.clone());
-                let endpoint = {
-                    let mut manager = manager.lock().map_err(|_poisoned| {
-                        LoadError::Runtime("托管内核状态锁已损坏".to_owned())
-                    })?;
-                    let running = manager.running_endpoint()?;
-                    #[cfg(target_os = "macos")]
-                    if running.is_none()
-                        && !privileged.load(Ordering::Acquire)
-                        && let Some(spec) = generated_profile
-                        && spec.kernel == KernelKind::Mihomo
-                    {
-                        let config =
-                            managed_engine_config(spec, spec.data_dir.join(GENERATED_PROFILE_FILE));
-                        validate_managed_config(&config)?;
-                        if let Some(spawner) = crate::macos_privileged::MacosPrivilegedProcessSpawner::recover_if_available()
-                            .map_err(|error| {
-                                LoadError::Runtime(format!(
-                                    "无法恢复 macOS TUN 辅助服务：{error}"
-                                ))
-                            })?
-                        {
-                            crate::macos_privileged::MacosPrivilegedProcessSpawner::reclaim_stale_ordinary(
-                                &config.launch_command(),
-                            )
-                                .map_err(|error| {
-                                    LoadError::Runtime(format!(
-                                        "无法回收 Manis 遗留的普通 Mihomo：{error}"
-                                    ))
-                                })?;
-                            *manager = EngineManager::with_adapters(
-                                config,
-                                ReadinessPolicy::default(),
-                                Box::new(spawner),
-                                readiness_probe(spec),
-                            );
-                            privileged.store(true, Ordering::Release);
-                        }
-                    }
-                    match running {
-                        Some(endpoint) => endpoint,
-                        None => manager.start()?,
-                    }
-                };
-                let endpoint = endpoint.uri();
-                let snapshot = load(&endpoint, secret.as_deref())?;
-                if let Some(spec) = generated_profile
-                    && let Err(error) = validate_managed_runtime(spec, &snapshot.runtime)
-                {
-                    let _ = manager
-                        .lock()
-                        .map_err(|_poisoned| LoadError::Runtime("托管内核状态锁已损坏".to_owned()))?
-                        .stop();
-                    return Err(error);
-                }
-                Ok(RuntimeSnapshot {
-                    endpoint: "Manis 托管".to_owned(),
-                    controller_endpoint: endpoint.clone(),
-                    controller_secret: secret.clone(),
-                    snapshot,
-                })
-            }
-            Self::Invalid { message } => Err(LoadError::Runtime(message.clone())),
-        }
-    }
-
-    pub(crate) fn connect_sing_box(&self) -> Result<RuntimeSnapshot, LoadError> {
-        match self {
-            #[cfg(any(test, feature = "snapshot-fixtures"))]
-            Self::Fixture { endpoint } => Ok(RuntimeSnapshot {
-                endpoint: endpoint.clone(),
-                controller_endpoint: endpoint.clone(),
-                controller_secret: None,
-                snapshot: load_sing_box(endpoint, None)?,
-            }),
-            Self::Managed {
-                manager,
-                generated_profile,
-                ..
-            } => {
-                let secret = generated_profile
-                    .as_ref()
-                    .and_then(|spec| spec.controller_secret.clone());
-                let endpoint = {
-                    let mut manager = manager.lock().map_err(|_poisoned| {
-                        LoadError::Runtime("托管内核状态锁已损坏".to_owned())
-                    })?;
-                    match manager.running_endpoint()? {
-                        Some(endpoint) => endpoint,
-                        None => manager.start()?,
-                    }
-                };
-                let endpoint = endpoint.uri();
-                Ok(RuntimeSnapshot {
-                    endpoint: "Manis 托管".to_owned(),
-                    controller_endpoint: endpoint.clone(),
-                    controller_secret: secret.clone(),
-                    snapshot: load_sing_box(&endpoint, secret.as_deref())?,
-                })
-            }
-            Self::Invalid { message } => Err(LoadError::Runtime(message.clone())),
-        }
-    }
-
-    pub(crate) fn set_tun_enabled(&self, enabled: bool) -> Result<(), LoadError> {
-        record_event(
-            LogLevel::Info,
-            "controller.tun.requested",
-            format!(
-                "enabled={enabled} ownership={}",
-                if matches!(self, Self::Managed { .. }) {
-                    "managed"
-                } else if self.is_fixture() {
-                    "fixture"
-                } else {
-                    "invalid"
-                }
-            ),
-        );
-        let (manager, spec) = self.managed_mihomo_tun_parts()?;
-        let profile = compile_managed_generated_profile(spec)?;
-        let payload = render_generated_profile_with_tun(spec, &profile, enabled)?;
-        #[cfg(target_os = "macos")]
-        if enabled {
-            if let Some(conflict) = crate::macos_privileged::existing_tun_route()
-                .map_err(|error| LoadError::Runtime(format!("无法检查 macOS TUN 路由：{error}")))?
-            {
-                record_event(LogLevel::Error, "controller.tun.conflict", conflict.clone());
-                return Err(LoadError::Runtime(format!(
-                    "检测到其他 TUN 正在占用系统代理路由（{conflict}）；请先关闭其他代理软件的 TUN 模式"
-                )));
-            }
-            if let Err(error) = self.ensure_privileged_mihomo() {
-                record_event(
-                    LogLevel::Error,
-                    "controller.tun.failed",
-                    format!("enabled=true phase=privilege_promotion error={error}"),
-                );
-                return Err(error);
-            }
-            record_event(
-                LogLevel::Info,
-                "controller.tun.interface_selection",
-                "strategy=auto-detect-interface",
-            );
-        }
-        let controller_secret = self.controller_secret();
-        let endpoint = running_managed_endpoint(manager)?;
-        record_event(
-            LogLevel::Info,
-            "controller.tun.config_reload.requested",
-            format!(
-                "enabled={enabled} method=PUT endpoint=/configs?force=true bytes={}",
-                payload.len()
-            ),
-        );
-        let result =
-            reload_mihomo_config(&endpoint, &payload, enabled, controller_secret.as_deref())
-                .map_err(LoadError::from);
-        if result.is_ok() {
-            record_event(
-                LogLevel::Info,
-                "controller.tun.config_reload.succeeded",
-                format!("enabled={enabled} rebuild=general,dns,listeners,tun,providers"),
-            );
-        }
-        #[cfg(target_os = "macos")]
-        let result = match result {
-            Ok(()) if !enabled => self.release_macos_tun_route(),
-            result => result,
-        };
-        #[cfg(target_os = "macos")]
-        if enabled && result.is_ok() {
-            match crate::macos_privileged::existing_tun_route() {
-                Ok(Some(route)) => {
-                    record_event(LogLevel::Info, "controller.tun.route_confirmed", route);
-                }
-                Ok(None) => record_event(
-                    LogLevel::Warn,
-                    "controller.tun.route_missing",
-                    "Mihomo accepted TUN enable but the expected split-default route was not found",
-                ),
-                Err(error) => record_event(
-                    LogLevel::Warn,
-                    "controller.tun.route_probe_failed",
-                    error.to_string(),
-                ),
-            }
-        }
-        match &result {
-            Ok(()) => record_event(
-                LogLevel::Info,
-                "controller.tun.succeeded",
-                format!("enabled={enabled} endpoint={endpoint}"),
-            ),
-            Err(error) => record_event(
-                LogLevel::Error,
-                "controller.tun.failed",
-                format!("enabled={enabled} error={error}"),
-            ),
-        }
-        result
-    }
-
-    fn managed_mihomo_tun_parts(
-        &self,
-    ) -> Result<(&Arc<Mutex<EngineManager>>, &ManagedGeneratedProfile), LoadError> {
-        let Self::Managed {
-            manager,
-            generated_profile: Some(spec),
-            ..
-        } = self
-        else {
-            return Err(LoadError::Runtime(match self {
-                #[cfg(any(test, feature = "snapshot-fixtures"))]
-                Self::Fixture { .. } => "测试快照不能启用 TUN 模式".to_owned(),
-                Self::Invalid { message } => message.clone(),
-                Self::Managed { .. } => {
-                    "TUN 模式仅支持由 Manis 已保存来源生成的 Mihomo 配置".to_owned()
-                }
-            }));
-        };
-        if spec.kernel != KernelKind::Mihomo {
-            return Err(LoadError::Runtime(
-                "当前 TUN 配置重载流程仅支持 Mihomo".to_owned(),
-            ));
-        }
-        Ok((manager, spec))
-    }
-
-    #[cfg(target_os = "macos")]
-    fn release_macos_tun_route(&self) -> Result<(), LoadError> {
-        if crate::macos_privileged::wait_for_tun_route_release().map_err(|error| {
-            LoadError::Runtime(format!("无法确认 macOS TUN 路由已释放：{error}"))
-        })? {
-            return Ok(());
-        }
-
-        record_event(
-            LogLevel::Warn,
-            "controller.tun.route_release_restart",
-            "Mihomo kept the macOS TUN route after disable; restarting managed core",
-        );
-        let Self::Managed { manager, .. } = self else {
-            return Err(LoadError::Runtime(
-                "关闭 TUN 后路由仍然存在，且当前内核不能由 Manis 重启".to_owned(),
-            ));
-        };
-        let mut manager = manager
-            .lock()
-            .map_err(|_poisoned| LoadError::Runtime("托管内核状态锁已损坏".to_owned()))?;
-        manager.stop()?;
-        manager.start()?;
-        if !crate::macos_privileged::wait_for_tun_route_release().map_err(|error| {
-            LoadError::Runtime(format!("重启后无法确认 macOS TUN 路由已释放：{error}"))
-        })? {
-            return Err(LoadError::Runtime(
-                "Mihomo 重启后 macOS TUN 路由仍未释放".to_owned(),
-            ));
-        }
-        record_event(
-            LogLevel::Info,
-            "controller.tun.route_release_succeeded",
-            "managed core restarted and macOS TUN route was released",
-        );
-        Ok(())
-    }
-
-    #[cfg(target_os = "macos")]
-    fn ensure_privileged_mihomo(&self) -> Result<(), LoadError> {
-        use crate::macos_privileged::MacosPrivilegedProcessSpawner;
-
-        let Self::Managed {
-            manager,
-            generated_profile: Some(spec),
-            privileged,
-            ..
-        } = self
-        else {
-            return Err(LoadError::Runtime(
-                "macOS TUN 仅支持由 Manis 已保存来源生成的 Mihomo 配置".to_owned(),
-            ));
-        };
-        if spec.kernel != KernelKind::Mihomo {
-            return Err(LoadError::Runtime(
-                "macOS 特权辅助服务当前仅支持 Mihomo".to_owned(),
-            ));
-        }
-        if privileged.load(Ordering::Acquire) {
-            record_event(
-                LogLevel::Debug,
-                "helper.promotion.skipped",
-                "reason=already_privileged",
-            );
-            return Ok(());
-        }
-
-        // Registration and approval are checked before touching the healthy unprivileged core.
-        record_event(
-            LogLevel::Info,
-            "helper.promotion.requested",
-            "kernel=mihomo",
-        );
-        let spawner = MacosPrivilegedProcessSpawner::prepare()
-            .map_err(|error| LoadError::Runtime(format!("无法准备 macOS TUN 辅助服务：{error}")))?;
-        let final_path = spec.data_dir.join(GENERATED_PROFILE_FILE);
-        let config = managed_engine_config(spec, final_path.clone());
-        validate_managed_config(&config)?;
-
-        let mut manager = manager
-            .lock()
-            .map_err(|_poisoned| LoadError::Runtime("托管内核状态锁已损坏".to_owned()))?;
-        let was_running = manager.running_endpoint()?.is_some();
-        record_event(
-            LogLevel::Info,
-            "helper.promotion.prepared",
-            format!("ordinary_core_running={was_running}"),
-        );
-        if was_running {
-            manager.stop()?;
-            record_event(
-                LogLevel::Info,
-                "helper.promotion.ordinary_core_stopped",
-                "ordinary Mihomo stopped before privileged launch",
-            );
-        } else {
-            MacosPrivilegedProcessSpawner::reclaim_stale_ordinary(&config.launch_command())
-                .map_err(|error| {
-                    LoadError::Runtime(format!("无法回收 Manis 遗留的普通 Mihomo：{error}"))
-                })?;
-        }
-        *manager = EngineManager::with_adapters(
-            config,
-            ReadinessPolicy::default(),
-            Box::new(spawner),
-            readiness_probe(spec),
-        );
-        match manager.start() {
-            Ok(_endpoint) => {
-                privileged.store(true, Ordering::Release);
-                record_event(
-                    LogLevel::Info,
-                    "helper.promotion.succeeded",
-                    "privileged Mihomo controller became ready",
-                );
-                Ok(())
-            }
-            Err(privileged_error) => {
-                record_event(
-                    LogLevel::Error,
-                    "helper.promotion.failed",
-                    privileged_error.to_string(),
-                );
-                let fallback_config = managed_engine_config(spec, final_path);
-                *manager = EngineManager::new(
-                    fallback_config,
-                    ReadinessPolicy::default(),
-                    readiness_probe(spec),
-                );
-                let fallback = if was_running {
-                    manager.start().err()
-                } else {
-                    None
-                };
-                let message = match fallback {
-                    Some(fallback) => format!(
-                        "特权 Mihomo 启动失败：{privileged_error}；恢复普通 Mihomo 也失败：{fallback}"
-                    ),
-                    None => format!("特权 Mihomo 启动失败：{privileged_error}"),
-                };
-                Err(LoadError::Runtime(message))
-            }
-        }
-    }
-
-    pub(crate) fn set_routing_mode(&self, mode: RoutingMode) -> Result<(), LoadError> {
-        record_event(
-            LogLevel::Info,
-            "controller.routing.requested",
-            format!("mode={mode:?}"),
-        );
-        let controller_secret = self.controller_secret();
-        let endpoint = match self {
-            Self::Managed { manager, .. } => {
-                let mut manager = manager
-                    .lock()
-                    .map_err(|_poisoned| LoadError::Runtime("托管内核状态锁已损坏".to_owned()))?;
-                manager
-                    .running_endpoint()?
-                    .ok_or_else(|| LoadError::Runtime("Mihomo 尚未运行，请先连接内核".to_owned()))?
-                    .uri()
-            }
-            #[cfg(any(test, feature = "snapshot-fixtures"))]
-            Self::Fixture { .. } => {
-                return Err(LoadError::Runtime("测试快照不能修改路由模式".to_owned()));
-            }
-            Self::Invalid { message } => return Err(LoadError::Runtime(message.clone())),
-        };
-        let result = set_routing_mode(&endpoint, mode, controller_secret.as_deref());
-        match &result {
-            Ok(()) => record_event(
-                LogLevel::Info,
-                "controller.routing.succeeded",
-                format!("mode={mode:?} endpoint={endpoint}"),
-            ),
-            Err(error) => record_event(
-                LogLevel::Error,
-                "controller.routing.failed",
-                format!("mode={mode:?} error={error}"),
-            ),
-        }
-        result.map_err(LoadError::from)
-    }
-
-    pub(crate) fn select_global_node(
-        &self,
-        selected_name: &str,
-    ) -> Result<ManagedPolicyRuntimeSnapshot, LoadError> {
-        let controller_secret = self.controller_secret();
-        let Self::Managed {
-            manager,
-            generated_profile: Some(_),
-            ..
-        } = self
-        else {
-            return Err(LoadError::Runtime(
-                "当前控制器不由 Manis 管理，不能修改全局出口".to_owned(),
-            ));
-        };
-        let endpoint = {
-            let mut manager = manager
-                .lock()
-                .map_err(|_poisoned| LoadError::Runtime("托管内核状态锁已损坏".to_owned()))?;
-            manager
-                .running_endpoint()?
-                .ok_or_else(|| LoadError::Runtime("Mihomo 尚未运行，请先启动托管内核".to_owned()))?
-                .uri()
-        };
-        select_global_node_at_endpoint(&endpoint, selected_name, controller_secret.as_deref())
-    }
-
-    pub(crate) fn test_proxy_candidates_delay(
-        &self,
-        group_name: &str,
-        candidate_names: &[String],
-    ) -> Result<std::collections::BTreeMap<String, u16>, LoadError> {
-        if candidate_names.is_empty() {
-            return Err(LoadError::Runtime("当前分组没有可测速节点".to_owned()));
-        }
-        let controller_secret = self.controller_secret();
-        let (endpoint, managed) = match self {
-            #[cfg(any(test, feature = "snapshot-fixtures"))]
-            Self::Fixture { endpoint } => (endpoint.clone(), false),
-            Self::Managed { manager, .. } => {
-                let endpoint = {
-                    let mut manager = manager.lock().map_err(|_poisoned| {
-                        LoadError::Runtime("托管内核状态锁已损坏".to_owned())
-                    })?;
-                    match manager.running_endpoint()? {
-                        Some(endpoint) => endpoint,
-                        None => manager.start()?,
-                    }
-                };
-                (endpoint.uri(), true)
-            }
-            Self::Invalid { message } => return Err(LoadError::Runtime(message.clone())),
-        };
-
-        if managed {
-            match fetch_group_delay(&endpoint, group_name, controller_secret.as_deref()) {
-                Ok(delays) => {
-                    let candidates = candidate_names.iter().collect::<BTreeSet<_>>();
-                    return Ok(delays
-                        .into_iter()
-                        .filter(|(name, _delay)| candidates.contains(name))
-                        .collect());
-                }
-                Err(MihomoError::HttpStatus {
-                    status_code: 404, ..
-                }) => {}
-                Err(error) => return Err(error.into()),
-            }
-        }
-
-        fetch_proxy_delays_bounded(&endpoint, candidate_names, controller_secret.as_deref())
-    }
-
-    pub(crate) fn test_proxy_delay_targets_with_progress(
-        &self,
-        targets: &[ProxyDelayTarget],
-        on_result: impl FnMut(&str, Option<u16>),
-    ) -> Result<BTreeMap<String, u16>, LoadError> {
-        if targets.is_empty() {
-            return Err(LoadError::Runtime("当前分组没有可测速节点".to_owned()));
-        }
-        let controller_secret = self.controller_secret();
-        let endpoint = match self {
-            #[cfg(any(test, feature = "snapshot-fixtures"))]
-            Self::Fixture { endpoint } => endpoint.clone(),
-            Self::Managed { manager, .. } => {
-                let endpoint = {
-                    let mut manager = manager.lock().map_err(|_poisoned| {
-                        LoadError::Runtime("托管内核状态锁已损坏".to_owned())
-                    })?;
-                    match manager.running_endpoint()? {
-                        Some(endpoint) => endpoint,
-                        None => manager.start()?,
-                    }
-                };
-                endpoint.uri()
-            }
-            Self::Invalid { message } => return Err(LoadError::Runtime(message.clone())),
-        };
-
-        fetch_proxy_delay_targets_bounded_with_progress(
-            &endpoint,
-            targets,
-            controller_secret.as_deref(),
-            on_result,
-        )
-    }
-
-    pub(crate) fn test_policy_group_delay(
-        &self,
-        group_name: &str,
-        candidate_names: &[String],
-    ) -> Result<PolicyGroupBenchmarkSnapshot, LoadError> {
-        let controller_secret = self.controller_secret();
-        let endpoint = match self {
-            #[cfg(any(test, feature = "snapshot-fixtures"))]
-            Self::Fixture { endpoint } => endpoint.clone(),
-            Self::Managed { manager, .. } => {
-                let endpoint = {
-                    let mut manager = manager.lock().map_err(|_poisoned| {
-                        LoadError::Runtime("托管内核状态锁已损坏".to_owned())
-                    })?;
-                    match manager.running_endpoint()? {
-                        Some(endpoint) => endpoint,
-                        None => manager.start()?,
-                    }
-                };
-                endpoint.uri()
-            }
-            Self::Invalid { message } => return Err(LoadError::Runtime(message.clone())),
-        };
-        let candidates = candidate_names.iter().collect::<BTreeSet<_>>();
-        let group_delays = fetch_group_delay(&endpoint, group_name, controller_secret.as_deref());
-        let delays = match group_delays {
-            Ok(delays) => delays
-                .into_iter()
-                .filter(|(name, _delay)| candidates.contains(name))
-                .collect::<BTreeMap<_, _>>(),
-            Err(group_error) => {
-                match fetch_proxy_delays_bounded(
-                    &endpoint,
-                    candidate_names,
-                    controller_secret.as_deref(),
-                ) {
-                    Ok(delays) => delays,
-                    Err(_fallback_error) => return Err(group_error.into()),
-                }
-            }
-        };
-        if delays.is_empty() {
-            return Err(LoadError::Runtime(
-                "Mihomo 未返回任何有效节点延迟".to_owned(),
-            ));
-        }
-        let current = fetch_policy_group(&endpoint, group_name, controller_secret.as_deref())
-            .ok()
-            .and_then(|group| group.current);
-        Ok(PolicyGroupBenchmarkSnapshot { delays, current })
-    }
-
-    pub(crate) fn select_policy_candidate(
-        &self,
-        group_name: &str,
-        selected_name: &str,
-    ) -> Result<ManagedPolicyRuntimeSnapshot, LoadError> {
-        let controller_secret = self.controller_secret();
-        let Self::Managed {
-            manager,
-            generated_profile: Some(_),
-            ..
-        } = self
-        else {
-            return Err(LoadError::Runtime(
-                "当前控制器不由 Manis 管理，不能修改其策略组".to_owned(),
-            ));
-        };
-        let endpoint = {
-            let mut manager = manager
-                .lock()
-                .map_err(|_poisoned| LoadError::Runtime("托管内核状态锁已损坏".to_owned()))?;
-            manager
-                .running_endpoint()?
-                .ok_or_else(|| LoadError::Runtime("Mihomo 尚未运行，请先启动托管内核".to_owned()))?
-                .uri()
-        };
-        select_policy_group_candidate(
-            &endpoint,
-            group_name,
-            selected_name,
-            controller_secret.as_deref(),
-        )
-    }
-
-    #[allow(clippy::too_many_lines)]
-    pub(crate) fn apply_saved_sources(
-        &self,
-        store_dir: &Path,
-    ) -> Result<GeneratedProfileApply, LoadError> {
-        let Self::Managed {
-            manager,
-            generated_profile: Some(spec),
-            privileged,
-            ..
-        } = self
-        else {
-            return Err(LoadError::Runtime(match self {
-                #[cfg(any(test, feature = "snapshot-fixtures"))]
-                Self::Fixture { .. } => "测试快照不能写入运行配置".to_owned(),
-                Self::Invalid { message } => message.clone(),
-                Self::Managed { .. } => "托管内核缺少 Manis 生成配置".to_owned(),
-            }));
-        };
-        if spec.kernel == KernelKind::Mihomo {
-            sync_single_node_provider_files(store_dir, &spec.data_dir)?;
-        }
-        let profile = compile_saved_profile(store_dir, None, spec.kernel)?;
-        let rendered = render_generated_profile(spec, &profile)?;
-        let (candidate_name, final_name) = generated_profile_names(spec.kernel);
-        let candidate_path =
-            write_private_atomic(&spec.data_dir, candidate_name, rendered.as_bytes())
-                .map_err(|_error| LoadError::Runtime("无法写入候选托管配置".to_owned()))?;
-        let candidate_config = managed_engine_config(spec, candidate_path.clone());
-        let validation = validate_managed_config(&candidate_config);
-        let _ = fs::remove_file(&candidate_path);
-        validation?;
-
-        let final_path = spec.data_dir.join(final_name);
-        let previous_config = fs::read(&final_path).ok();
-        write_private_atomic(&spec.data_dir, final_name, rendered.as_bytes())
-            .map_err(|_error| LoadError::Runtime("无法替换托管配置".to_owned()))?;
-        let final_config = managed_engine_config(spec, final_path);
-        let mut manager = manager
-            .lock()
-            .map_err(|_poisoned| LoadError::Runtime("托管内核状态锁已损坏".to_owned()))?;
-        let running_endpoint = manager.running_endpoint()?;
-        let was_running = running_endpoint.is_some();
-        let restore_tun = if spec.kernel == KernelKind::Mihomo {
-            running_endpoint
-                .as_ref()
-                .map(|endpoint| {
-                    fetch_runtime_config(&endpoint.uri(), spec.controller_secret.as_deref())
-                        .map(|runtime| runtime.tun.enable)
-                        .map_err(LoadError::from)
-                })
-                .transpose()?
-                .unwrap_or(false)
-        } else {
-            false
-        };
-        let was_privileged = privileged.load(Ordering::Acquire);
-        if was_running {
-            manager.stop()?;
-            #[cfg(target_os = "macos")]
-            if restore_tun
-                && !crate::macos_privileged::wait_for_tun_route_release().map_err(|error| {
-                    LoadError::ProxyModeLost(format!(
-                        "重载托管配置前无法确认 macOS TUN 路由已释放：{error}"
-                    ))
-                })?
-            {
-                return Err(LoadError::ProxyModeLost(
-                    "重载托管配置前 macOS TUN 路由未释放".to_owned(),
-                ));
-            }
-        }
-        *manager = match generated_engine_manager(spec, final_config, was_privileged) {
-            Ok(manager) => manager,
-            Err(error) if restore_tun => {
-                return Err(LoadError::ProxyModeLost(format!(
-                    "TUN 已停止，但无法创建新托管内核：{error}"
-                )));
-            }
-            Err(error) => return Err(error),
-        };
-        if was_running && let Err(error) = manager.start() {
-            let restart_error = error.to_string();
-            let mut rollback_running = false;
-            if let Some(previous_config) = previous_config {
-                let _ = write_private_atomic(&spec.data_dir, final_name, &previous_config);
-                let rollback_config = managed_engine_config(spec, spec.data_dir.join(final_name));
-                *manager = match generated_engine_manager(spec, rollback_config, was_privileged) {
-                    Ok(manager) => manager,
-                    Err(rollback_error) if restore_tun => {
-                        return Err(LoadError::ProxyModeLost(format!(
-                            "新配置启动失败（{restart_error}），旧配置管理器恢复也失败：{rollback_error}"
-                        )));
-                    }
-                    Err(rollback_error) => return Err(rollback_error),
-                };
-                rollback_running = manager.start().is_ok();
-            }
-            drop(manager);
-            if restore_tun && rollback_running {
-                record_event(
-                    LogLevel::Info,
-                    "proxy.mode.restore.requested",
-                    "mode=tun reason=managed_config_rollback",
-                );
-                if let Err(restore_error) = self.set_tun_enabled(true) {
-                    record_event(
-                        LogLevel::Error,
-                        "proxy.mode.restore.failed",
-                        format!("mode=tun reason=managed_config_rollback error={restore_error}"),
-                    );
-                    return Err(LoadError::ProxyModeLost(format!(
-                        "新配置启动失败（{restart_error}），旧配置已恢复，但 TUN 重新启用失败：{restore_error}"
-                    )));
-                }
-                record_event(
-                    LogLevel::Info,
-                    "proxy.mode.restore.succeeded",
-                    "mode=tun reason=managed_config_rollback",
-                );
-            } else if restore_tun {
-                return Err(LoadError::ProxyModeLost(format!(
-                    "新配置启动失败（{restart_error}），且旧配置未能重新启动"
-                )));
-            }
-            return Err(LoadError::Engine(error));
-        }
-        drop(manager);
-        if restore_tun {
-            record_event(
-                LogLevel::Info,
-                "proxy.mode.restore.requested",
-                "mode=tun reason=managed_config_restart",
-            );
-            if let Err(error) = self.set_tun_enabled(true) {
-                record_event(
-                    LogLevel::Error,
-                    "proxy.mode.restore.failed",
-                    format!("mode=tun reason=managed_config_restart error={error}"),
-                );
-                return Err(LoadError::ProxyModeLost(error.to_string()));
-            }
-            record_event(
-                LogLevel::Info,
-                "proxy.mode.restore.succeeded",
-                "mode=tun reason=managed_config_restart",
-            );
-        }
-        Ok(if was_running {
-            GeneratedProfileApply::Restarted
-        } else {
-            GeneratedProfileApply::Updated
-        })
     }
 }
 
@@ -1097,8 +272,10 @@ fn generated_engine_manager(
 ) -> Result<EngineManager, LoadError> {
     #[cfg(target_os = "macos")]
     if privileged {
-        let spawner = crate::macos_privileged::MacosPrivilegedProcessSpawner::prepare()
-            .map_err(|error| LoadError::Runtime(format!("无法连接 macOS TUN 辅助服务：{error}")))?;
+        let spawner =
+            crate::macos_privileged::MacosPrivilegedProcessSpawner::prepare().map_err(|error| {
+                LoadError::Runtime(format!("macOS TUN helper could not be reached: {error}"))
+            })?;
         return Ok(EngineManager::with_adapters(
             config,
             ReadinessPolicy::default(),
@@ -1123,149 +300,28 @@ fn generated_profile_names(kernel: KernelKind) -> (&'static str, &'static str) {
     }
 }
 
-#[allow(clippy::too_many_lines)]
 fn compile_saved_profile(
     store_dir: &Path,
     base_subscription: Option<SecretUrl>,
     kernel: KernelKind,
 ) -> Result<Profile, LoadError> {
-    let mut subscriptions = base_subscription.into_iter().collect::<Vec<_>>();
-    let stored_subscriptions = load_subscription_sources_in(store_dir)
-        .map_err(|_error| LoadError::Runtime("无法读取已保存的订阅来源".to_owned()))?
-        .into_iter()
-        .filter(|stored| stored.enabled)
-        .collect::<Vec<_>>();
-    if kernel == KernelKind::SingBox && !stored_subscriptions.is_empty() {
-        return Err(LoadError::Runtime(
-            "sing-box 暂不能直接读取 Clash 订阅；请先使用手动 VLESS 节点".to_owned(),
-        ));
-    }
-    let mut stored_provider_indexes = HashMap::new();
-    let mut proxy_server_nameservers = Vec::new();
-    for stored in &stored_subscriptions {
-        let provider_index = if let Some(index) = subscriptions
-            .iter()
-            .position(|subscription| subscription == &stored.source)
-        {
-            index
-        } else {
-            subscriptions.push(stored.source.clone());
-            subscriptions.len() - 1
-        };
-        stored_provider_indexes.insert(stored.id.as_str(), provider_index);
-        for nameserver in &stored.proxy_server_nameservers {
-            if !proxy_server_nameservers.contains(nameserver)
-                && proxy_server_nameservers.len() < MAX_SUBSCRIPTION_PROXY_DNS_SERVERS
-            {
-                proxy_server_nameservers.push(nameserver.clone());
-            }
-        }
-    }
-    let stored_single_nodes = load_single_node_sources_in(store_dir)
-        .map_err(|_error| LoadError::Runtime("无法读取已保存的单节点来源".to_owned()))?
-        .into_iter()
-        .filter(|stored| stored.enabled)
-        .collect::<Vec<_>>();
-    let (local_provider_paths, vless_nodes) = if kernel == KernelKind::Mihomo {
-        let paths = stored_single_nodes
-            .iter()
-            .map(|stored| format!("./single_nodes/{}.txt", stored.id))
-            .collect::<Vec<_>>();
-        for (offset, stored) in stored_single_nodes.iter().enumerate() {
-            stored_provider_indexes.insert(stored.id.as_str(), subscriptions.len() + offset);
-        }
-        (paths, Vec::new())
-    } else {
-        let nodes = stored_single_nodes
-            .iter()
-            .map(|stored| {
-                stored
-                    .source
-                    .expose_to(VlessProxy::parse_share_link)
-                    .map_err(|_error| {
-                        LoadError::Runtime("sing-box 当前只支持 VLESS 格式的手动单节点".to_owned())
-                    })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        (Vec::new(), nodes)
-    };
-    let mixed_port = configured_mixed_port().map_err(LoadError::Runtime)?;
-    let policy_groups = load_managed_policy_groups_in(store_dir)
-        .map_err(|_error| LoadError::Runtime("无法读取策略组".to_owned()))?;
-    let user_groups = compile_managed_policy_groups(
-        &policy_groups,
-        &stored_provider_indexes,
-        &stored_single_nodes,
-        &vless_nodes,
-        subscriptions.len() + local_provider_paths.len(),
-    )?;
-    let bootstrap =
-        subscriptions.is_empty() && local_provider_paths.is_empty() && vless_nodes.is_empty();
-    let mut profile = if bootstrap {
-        if !user_groups.is_empty() {
-            return Err(LoadError::Runtime(
-                "没有节点来源时不能生成策略组".to_owned(),
-            ));
-        }
-        Profile::managed_empty(mixed_port)
-    } else {
-        Profile::qx_sources_with_groups_and_local_providers(
-            subscriptions,
-            local_provider_paths,
-            vless_nodes,
-            user_groups,
-            mixed_port,
-        )
-    }
-    .map_err(|error| LoadError::Runtime(error.to_string()))?;
-    let bootstrap_fallback = if bootstrap { profile.rules.pop() } else { None };
-    if !proxy_server_nameservers.is_empty() {
-        profile.set_proxy_server_nameservers(proxy_server_nameservers);
-    }
-    let routing_mode = load_routing_mode_in(store_dir)
-        .map_err(|_error| LoadError::Runtime("无法读取已保存的路由模式".to_owned()))?;
-    profile.set_mode(profile_mode(routing_mode));
-    let qx_rule_sources = load_qx_rule_sources_in(store_dir)
-        .map_err(|_error| LoadError::Runtime("无法读取 QX 规则来源".to_owned()))?;
-    let manual_rules = crate::manual_rule::load_manual_rules_in(store_dir)
-        .map_err(|error| LoadError::Runtime(error.to_string()))?;
-    let stored_group_order = load_routing_rule_group_order_in(store_dir)
-        .map_err(|_error| LoadError::Runtime("无法读取已保存的分流规则分组顺序".to_owned()))?;
-    let group_order = normalized_routing_rule_group_order(
-        &stored_group_order,
-        !manual_rules.is_empty(),
-        &qx_rule_sources,
-    );
-    for group_id in group_order {
-        if group_id == MANUAL_ROUTING_RULE_GROUP_ID {
-            crate::manual_rule::append_manual_rules(&mut profile, &manual_rules, kernel)
-                .map_err(|error| LoadError::Runtime(error.to_string()))?;
-        } else if let Some(source) = qx_rule_sources.iter().find(|source| source.id == group_id) {
-            apply_qx_rule_sources(&mut profile, std::slice::from_ref(source))?;
-        }
-    }
-    if let Some(fallback) = bootstrap_fallback
-        && !profile
-            .rules
-            .iter()
-            .any(|rule| matches!(rule, Rule::Match { .. }))
-    {
-        profile.rules.push(fallback);
-    }
-    Ok(profile)
+    profile_compiler::compile_saved_profile(store_dir, base_subscription, kernel)
 }
 
 fn sync_single_node_provider_files(store_dir: &Path, data_dir: &Path) -> Result<(), LoadError> {
     let provider_dir = data_dir.join("single_nodes");
     for stored in load_single_node_sources_in(store_dir)
-        .map_err(|_error| LoadError::Runtime("无法读取已保存的单节点来源".to_owned()))?
+        .map_err(|_error| {
+            LoadError::Runtime("saved single-node sources could not be read".to_owned())
+        })?
         .into_iter()
         .filter(|stored| stored.enabled)
     {
         let file_name = format!("{}.txt", stored.id);
         stored.source.expose_to(|value| {
-            write_private_atomic(&provider_dir, &file_name, value.as_bytes())
-                .map_err(|_error| LoadError::Runtime("无法写入单节点运行来源".to_owned()))
+            write_private_atomic(&provider_dir, &file_name, value.as_bytes()).map_err(|_error| {
+                LoadError::Runtime("single-node runtime source could not be written".to_owned())
+            })
         })?;
     }
     Ok(())
@@ -1289,13 +345,12 @@ fn render_generated_profile_with_tun(
         KernelKind::SingBox => {
             let ControllerEndpoint::Tcp(address) = spec.controller else {
                 return Err(LoadError::Runtime(
-                    "sing-box 需要私有 loopback Clash API".to_owned(),
+                    "sing-box requires a private loopback Clash API".to_owned(),
                 ));
             };
-            let secret = spec
-                .controller_secret
-                .as_deref()
-                .ok_or_else(|| LoadError::Runtime("sing-box controller 缺少认证密钥".to_owned()))?;
+            let secret = spec.controller_secret.as_deref().ok_or_else(|| {
+                LoadError::Runtime("sing-box controller has no authentication secret".to_owned())
+            })?;
             render_sing_box_json(profile, &SingBoxOptions::new(address.to_string(), secret))
                 .map_err(|error| LoadError::Runtime(error.to_string()))
         }
@@ -1303,10 +358,9 @@ fn render_generated_profile_with_tun(
 }
 
 fn compile_managed_generated_profile(spec: &ManagedGeneratedProfile) -> Result<Profile, LoadError> {
-    let store_dir = spec
-        .profile_store_dir
-        .as_deref()
-        .ok_or_else(|| LoadError::Runtime("托管内核缺少 Manis 来源目录".to_owned()))?;
+    let store_dir = spec.profile_store_dir.as_deref().ok_or_else(|| {
+        LoadError::Runtime("managed kernel has no Manis source directory".to_owned())
+    })?;
     compile_saved_profile(store_dir, None, spec.kernel)
 }
 
@@ -1357,15 +411,29 @@ pub(crate) struct KernelLogEntry {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct LiveStreamStatus {
-    pub activity: String,
-    pub logs: String,
+    pub activity: LiveStreamPhase,
+    pub logs: LiveStreamPhase,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum LiveStreamPhase {
+    Waiting,
+    Connecting,
+    Live,
+    Unavailable,
+    Reconnecting(usize),
+    InterruptedHttp(u16),
+    InvalidData,
+    ControllerUnavailable,
+    Retrying,
+    StartFailed(String),
 }
 
 impl Default for LiveStreamStatus {
     fn default() -> Self {
         Self {
-            activity: "等待连接".to_owned(),
-            logs: "等待连接".to_owned(),
+            activity: LiveStreamPhase::Waiting,
+            logs: LiveStreamPhase::Waiting,
         }
     }
 }
@@ -1410,8 +478,8 @@ impl LiveRuntimeSession {
                 logs: Vec::new(),
                 dropped_logs: 0,
                 status: LiveStreamStatus {
-                    activity: "实时状态不可用".to_owned(),
-                    logs: "实时状态不可用".to_owned(),
+                    activity: LiveStreamPhase::Unavailable,
+                    logs: LiveStreamPhase::Unavailable,
                 },
             };
         };
@@ -1487,3124 +555,6 @@ impl ProxyDelayTarget {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) enum RemoteSourceRefreshInterval {
-    #[default]
-    Manual,
-    Hourly,
-    SixHours,
-    TwelveHours,
-    Daily,
-}
-
-impl RemoteSourceRefreshInterval {
-    fn key(self) -> &'static str {
-        match self {
-            Self::Manual => "manual",
-            Self::Hourly => "1h",
-            Self::SixHours => "6h",
-            Self::TwelveHours => "12h",
-            Self::Daily => "24h",
-        }
-    }
-
-    fn parse_key(input: &str) -> Option<Self> {
-        match input {
-            "manual" => Some(Self::Manual),
-            "1h" => Some(Self::Hourly),
-            "6h" => Some(Self::SixHours),
-            "12h" => Some(Self::TwelveHours),
-            "24h" => Some(Self::Daily),
-            _ => None,
-        }
-    }
-
-    pub(crate) fn interval_secs(self) -> Option<u64> {
-        match self {
-            Self::Manual => None,
-            Self::Hourly => Some(60 * 60),
-            Self::SixHours => Some(6 * 60 * 60),
-            Self::TwelveHours => Some(12 * 60 * 60),
-            Self::Daily => Some(24 * 60 * 60),
-        }
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn next(self) -> Self {
-        match self {
-            Self::Manual => Self::Hourly,
-            Self::Hourly => Self::SixHours,
-            Self::SixHours => Self::TwelveHours,
-            Self::TwelveHours => Self::Daily,
-            Self::Daily => Self::Manual,
-        }
-    }
-
-    pub(crate) fn is_due(self, last_successful_update_unix_secs: u64, now_unix_secs: u64) -> bool {
-        let Some(interval_secs) = self.interval_secs() else {
-            return false;
-        };
-        last_successful_update_unix_secs == 0
-            || now_unix_secs.saturating_sub(last_successful_update_unix_secs) >= interval_secs
-    }
-}
-
-#[derive(Clone, Eq, PartialEq)]
-pub(crate) struct StoredSubscription {
-    pub id: String,
-    pub name: String,
-    pub source: SecretUrl,
-    pub enabled: bool,
-    pub refresh_interval: RemoteSourceRefreshInterval,
-    pub last_successful_update_unix_secs: u64,
-    pub proxy_server_nameservers: Vec<ProxyDnsServer>,
-}
-
-impl fmt::Debug for StoredSubscription {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("StoredSubscription")
-            .field("id", &self.id)
-            .field("name", &self.name)
-            .field("source", &"<redacted>")
-            .field("enabled", &self.enabled)
-            .field("refresh_interval", &self.refresh_interval)
-            .field(
-                "last_successful_update_unix_secs",
-                &self.last_successful_update_unix_secs,
-            )
-            .field(
-                "proxy_server_nameservers",
-                &format_args!("<{} redacted>", self.proxy_server_nameservers.len()),
-            )
-            .finish()
-    }
-}
-
-#[derive(Clone, Eq, PartialEq)]
-pub(crate) struct StoredSingleNode {
-    pub id: String,
-    pub name: String,
-    pub source: SingleNodeSource,
-    pub enabled: bool,
-}
-
-impl fmt::Debug for StoredSingleNode {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("StoredSingleNode")
-            .field("id", &self.id)
-            .field("name", &self.name)
-            .field("source", &"<redacted>")
-            .field("enabled", &self.enabled)
-            .finish()
-    }
-}
-
-#[derive(Clone, Eq, PartialEq)]
-pub(crate) struct StoredQxRuleSource {
-    pub id: String,
-    pub source: SecretUrl,
-    pub enabled: bool,
-    pub target_policy: Name,
-    pub content: String,
-    pub rule_count: usize,
-    pub diagnostic_count: usize,
-    pub refresh_interval: RemoteSourceRefreshInterval,
-    pub last_successful_update_unix_secs: u64,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum SaveQxRuleSourceOutcome {
-    Created(StoredQxRuleSource),
-    Existing(StoredQxRuleSource),
-}
-
-impl SaveQxRuleSourceOutcome {
-    #[cfg(test)]
-    pub(crate) fn into_source(self) -> StoredQxRuleSource {
-        match self {
-            Self::Created(source) | Self::Existing(source) => source,
-        }
-    }
-}
-
-impl fmt::Debug for StoredQxRuleSource {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("StoredQxRuleSource")
-            .field("id", &self.id)
-            .field("source", &"<redacted>")
-            .field("enabled", &self.enabled)
-            .field("target_policy", &self.target_policy)
-            .field("content", &"<redacted>")
-            .field("rule_count", &self.rule_count)
-            .field("diagnostic_count", &self.diagnostic_count)
-            .field("refresh_interval", &self.refresh_interval)
-            .field(
-                "last_successful_update_unix_secs",
-                &self.last_successful_update_unix_secs,
-            )
-            .finish()
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum SubscriptionPreviewError {
-    UnsupportedPlatform,
-    BinaryUnavailable,
-    InvalidSource,
-    WorkspaceUnavailable,
-    ProfileUnavailable,
-    EngineUnavailable,
-    ProviderUnavailable,
-    EmptyProvider,
-}
-
-impl fmt::Display for SubscriptionPreviewError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::UnsupportedPlatform => "当前平台尚不能启动隔离的 Mihomo 预览进程",
-            Self::BinaryUnavailable => "找不到 Manis 管理的 Mihomo 内核，请在设置中下载后重试",
-            Self::InvalidSource => "订阅地址无效，请检查后重试",
-            Self::WorkspaceUnavailable => "无法创建私有预览空间，请检查临时目录权限",
-            Self::ProfileUnavailable => "无法生成安全的订阅预览配置",
-            Self::EngineUnavailable => "Mihomo 预览进程启动失败",
-            Self::ProviderUnavailable => "Mihomo 无法下载或解析这份订阅，请检查网络和订阅状态",
-            Self::EmptyProvider => "订阅可以访问，但没有解析出任何代理节点",
-        })
-    }
-}
-
-impl Error for SubscriptionPreviewError {}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum SubscriptionStoreError {
-    DataDirectoryUnavailable,
-    InvalidSource,
-    StoreUnavailable,
-    StoredSourceUnavailable,
-}
-
-impl fmt::Display for SubscriptionStoreError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::DataDirectoryUnavailable => "无法确定 Manis 的用户数据目录",
-            Self::InvalidSource => "订阅地址无效，未执行导入",
-            Self::StoreUnavailable => "无法安全保存订阅，请检查用户数据目录权限",
-            Self::StoredSourceUnavailable => "已保存的订阅无法安全读取，需要重新导入",
-        })
-    }
-}
-
-impl Error for SubscriptionStoreError {}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub(crate) struct NodeSelectionPreferences {
-    global: Option<NodeIdentity>,
-    policy_targets: BTreeMap<String, String>,
-}
-
-impl NodeSelectionPreferences {
-    pub(crate) fn global(&self) -> Option<&NodeIdentity> {
-        self.global.as_ref()
-    }
-
-    pub(crate) fn set_global(&mut self, global: NodeIdentity) {
-        self.global = Some(global);
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn clear_global(&mut self) {
-        self.global = None;
-    }
-
-    pub(crate) fn policy_target(&self, policy: &str) -> Option<&str> {
-        self.policy_targets.get(policy).map(String::as_str)
-    }
-
-    pub(crate) fn set_policy_target(
-        &mut self,
-        policy: impl AsRef<str>,
-        target: impl AsRef<str>,
-    ) -> Result<(), SubscriptionStoreError> {
-        let policy = policy.as_ref();
-        let target = target.as_ref();
-        validate_node_selection_policy(policy)?;
-        validate_node_selection_target(target)?;
-        self.policy_targets
-            .insert(policy.to_owned(), target.to_owned());
-        Ok(())
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn clear_policy_target(
-        &mut self,
-        policy: &str,
-    ) -> Result<(), SubscriptionStoreError> {
-        validate_node_selection_policy(policy)?;
-        self.policy_targets.remove(policy);
-        Ok(())
-    }
-
-    pub(crate) fn iter_policy_targets(&self) -> impl Iterator<Item = (&str, &str)> {
-        self.policy_targets
-            .iter()
-            .map(|(policy, target)| (policy.as_str(), target.as_str()))
-    }
-
-    fn validate(&self) -> Result<(), SubscriptionStoreError> {
-        if self.policy_targets.len() > MAX_NODE_SELECTION_POLICY_TARGETS {
-            return Err(SubscriptionStoreError::InvalidSource);
-        }
-        for (policy, target) in &self.policy_targets {
-            validate_node_selection_policy(policy)?;
-            validate_node_selection_target(target)?;
-        }
-        Ok(())
-    }
-}
-
-struct PreviewWorkspace {
-    path: PathBuf,
-}
-
-impl PreviewWorkspace {
-    fn create() -> Result<Self, std::io::Error> {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        #[cfg(unix)]
-        let temp_root = PathBuf::from("/tmp");
-        #[cfg(not(unix))]
-        let temp_root = env::temp_dir();
-        for _ in 0..16 {
-            let sequence = NEXT_PREVIEW_WORKSPACE.fetch_add(1, Ordering::Relaxed);
-            let path = temp_root.join(format!(
-                "manis-p-{:x}-{nonce:x}-{sequence:x}",
-                std::process::id()
-            ));
-            let mut builder = fs::DirBuilder::new();
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::DirBuilderExt;
-                builder.mode(0o700);
-            }
-            match builder.create(&path) {
-                Ok(()) => return Ok(Self { path }),
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-                Err(error) => return Err(error),
-            }
-        }
-        Err(std::io::Error::new(
-            std::io::ErrorKind::AlreadyExists,
-            "could not reserve a unique preview workspace",
-        ))
-    }
-
-    fn path(&self) -> &Path {
-        &self.path
-    }
-}
-
-impl Drop for PreviewWorkspace {
-    fn drop(&mut self) {
-        if let Ok(metadata) = fs::symlink_metadata(&self.path)
-            && metadata.is_dir()
-            && !metadata.file_type().is_symlink()
-        {
-            let _ = fs::remove_dir_all(&self.path);
-        }
-    }
-}
-
-pub(crate) fn discover_subscription_proxy_nameservers(source: &SecretUrl) -> Vec<ProxyDnsServer> {
-    if let Ok(document) = download_subscription_document(source) {
-        let nameservers = extract_subscription_proxy_nameservers(&document);
-        record_event(
-            LogLevel::Info,
-            "subscription.metadata.loaded",
-            format!("proxy_dns_count={}", nameservers.len()),
-        );
-        nameservers
-    } else {
-        record_event(
-            LogLevel::Warn,
-            "subscription.metadata.unavailable",
-            "proxy_dns_count=0; using safe defaults",
-        );
-        Vec::new()
-    }
-}
-
-fn download_subscription_document(source: &SecretUrl) -> Result<String, ()> {
-    let config = Agent::config_builder()
-        .https_only(source.is_https())
-        .max_redirects(SUBSCRIPTION_MAX_REDIRECTS)
-        .timeout_global(Some(SUBSCRIPTION_DOWNLOAD_TIMEOUT))
-        .user_agent("clash.meta")
-        .build();
-    let agent: Agent = config.into();
-    let mut response = source
-        .expose_to(|url| agent.get(url).call())
-        .map_err(|_error| ())?;
-    if source.is_https() && response.get_uri().scheme_str() != Some("https") {
-        return Err(());
-    }
-    let document = response
-        .body_mut()
-        .with_config()
-        .limit(MAX_SUBSCRIPTION_DOCUMENT_BYTES + 1)
-        .lossy_utf8(false)
-        .read_to_string()
-        .map_err(|_error| ())?;
-    if document.len() as u64 > MAX_SUBSCRIPTION_DOCUMENT_BYTES {
-        return Err(());
-    }
-    Ok(document)
-}
-
-fn extract_subscription_proxy_nameservers(document: &str) -> Vec<ProxyDnsServer> {
-    let mut dns_indent = None;
-    let mut list_indent = None;
-    let mut nameservers = Vec::new();
-
-    for line in document.lines() {
-        if line.trim().is_empty() || line.trim_start().starts_with('#') {
-            continue;
-        }
-        let indent = line
-            .len()
-            .saturating_sub(line.trim_start_matches(' ').len());
-        let trimmed = line.trim();
-        let Some(active_dns_indent) = dns_indent else {
-            if indent == 0 && trimmed == "dns:" {
-                dns_indent = Some(indent);
-            }
-            continue;
-        };
-        if indent <= active_dns_indent {
-            break;
-        }
-
-        if let Some(active_list_indent) = list_indent {
-            if indent <= active_list_indent {
-                break;
-            }
-            let Some(value) = trimmed.strip_prefix('-') else {
-                continue;
-            };
-            push_proxy_dns_scalar(value, &mut nameservers);
-            if nameservers.len() == MAX_SUBSCRIPTION_PROXY_DNS_SERVERS {
-                break;
-            }
-            continue;
-        }
-
-        let Some(value) = trimmed.strip_prefix("proxy-server-nameserver:") else {
-            continue;
-        };
-        list_indent = Some(indent);
-        let value = value.trim();
-        if let Some(inline) = value
-            .strip_prefix('[')
-            .and_then(|value| value.strip_suffix(']'))
-        {
-            for scalar in split_inline_yaml_scalars(inline) {
-                push_proxy_dns_scalar(scalar, &mut nameservers);
-                if nameservers.len() == MAX_SUBSCRIPTION_PROXY_DNS_SERVERS {
-                    break;
-                }
-            }
-            break;
-        }
-    }
-    nameservers
-}
-
-fn split_inline_yaml_scalars(value: &str) -> Vec<&str> {
-    let mut values = Vec::new();
-    let mut quote = None;
-    let mut start = 0;
-    for (index, character) in value.char_indices() {
-        match (quote, character) {
-            (None, '\'' | '"') => quote = Some(character),
-            (Some(active), current) if active == current => quote = None,
-            (None, ',') => {
-                values.push(&value[start..index]);
-                start = index + character.len_utf8();
-            }
-            _ => {}
-        }
-    }
-    values.push(&value[start..]);
-    values
-}
-
-fn push_proxy_dns_scalar(value: &str, nameservers: &mut Vec<ProxyDnsServer>) {
-    let value = value.trim();
-    let value = if value.len() >= 2
-        && ((value.starts_with('\'') && value.ends_with('\''))
-            || (value.starts_with('"') && value.ends_with('"')))
-    {
-        &value[1..value.len() - 1]
-    } else {
-        value
-    };
-    let Ok(nameserver) = ProxyDnsServer::parse_https(value) else {
-        return;
-    };
-    if !nameservers.contains(&nameserver) {
-        nameservers.push(nameserver);
-    }
-}
-
-pub(crate) fn preview_subscription(
-    input: &str,
-) -> Result<Vec<LoadedProvider>, SubscriptionPreviewError> {
-    let binary = discover_preview_binary()?;
-    preview_subscription_with_binary(input, &binary)
-}
-
-pub(crate) fn preview_single_node(
-    input: &str,
-) -> Result<Vec<LoadedProvider>, SubscriptionStoreError> {
-    #[cfg(not(unix))]
-    {
-        let _ = input;
-        return Err(SubscriptionStoreError::StoreUnavailable);
-    }
-    #[cfg(unix)]
-    {
-        let binary =
-            discover_preview_binary().map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
-        let workspace = PreviewWorkspace::create()
-            .map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
-        write_private_atomic(workspace.path(), "single-node.txt", input.as_bytes())
-            .map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
-        let mixed_port =
-            reserve_preview_port().map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
-        let profile = Profile::qx_sources_with_groups_and_local_providers(
-            Vec::new(),
-            vec!["./single-node.txt".to_owned()],
-            Vec::new(),
-            Vec::new(),
-            mixed_port,
-        )
-        .map_err(|_error| SubscriptionStoreError::InvalidSource)?;
-        let yaml =
-            render_mihomo_yaml(&profile).map_err(|_error| SubscriptionStoreError::InvalidSource)?;
-        let config_file = write_private_atomic(workspace.path(), "preview.yaml", yaml.as_bytes())
-            .map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
-        let controller = ControllerEndpoint::UnixSocket(workspace.path().join("controller.sock"));
-        let config =
-            ManagedEngineConfig::new(binary, config_file, workspace.path().to_owned(), controller);
-        let mut manager = EngineManager::new(
-            config,
-            ReadinessPolicy::default(),
-            Box::new(MihomoReadinessProbe),
-        );
-        let endpoint = manager
-            .start()
-            .map_err(|_error| SubscriptionStoreError::InvalidSource)?;
-        let providers = wait_for_preview_providers(&endpoint)
-            .map_err(|_error| SubscriptionStoreError::InvalidSource);
-        let _ = manager.stop();
-        providers
-    }
-}
-
-pub(crate) fn preview_imported_subscription(
-    subscription: SecretUrl,
-) -> Result<Vec<LoadedProvider>, SubscriptionPreviewError> {
-    let binary = discover_preview_binary()?;
-    preview_secret_subscription_with_binary(subscription, &binary)
-}
-
-fn preview_subscription_with_binary(
-    input: &str,
-    binary: &Path,
-) -> Result<Vec<LoadedProvider>, SubscriptionPreviewError> {
-    let subscription = SecretUrl::parse_subscription(input)
-        .map_err(|_error| SubscriptionPreviewError::InvalidSource)?;
-    preview_secret_subscription_with_binary(subscription, binary)
-}
-
-fn preview_secret_subscription_with_binary(
-    subscription: SecretUrl,
-    binary: &Path,
-) -> Result<Vec<LoadedProvider>, SubscriptionPreviewError> {
-    #[cfg(not(unix))]
-    {
-        let _ = (subscription, binary);
-        return Err(SubscriptionPreviewError::UnsupportedPlatform);
-    }
-
-    #[cfg(unix)]
-    {
-        let binary = canonical_binary(binary)?;
-        let workspace = PreviewWorkspace::create()
-            .map_err(|_error| SubscriptionPreviewError::WorkspaceUnavailable)?;
-        let mixed_port = reserve_preview_port()?;
-        let profile = Profile::subscription_preview(subscription, mixed_port)
-            .map_err(|_error| SubscriptionPreviewError::ProfileUnavailable)?;
-        let yaml = render_mihomo_yaml(&profile)
-            .map_err(|_error| SubscriptionPreviewError::ProfileUnavailable)?;
-        let config_file = write_private_atomic(workspace.path(), "preview.yaml", yaml.as_bytes())
-            .map_err(|_error| SubscriptionPreviewError::WorkspaceUnavailable)?;
-        let controller = ControllerEndpoint::UnixSocket(workspace.path().join("controller.sock"));
-        let config =
-            ManagedEngineConfig::new(binary, config_file, workspace.path().to_owned(), controller);
-        let mut manager = EngineManager::new(
-            config,
-            ReadinessPolicy::default(),
-            Box::new(MihomoReadinessProbe),
-        );
-        let endpoint = manager
-            .start()
-            .map_err(|_error| SubscriptionPreviewError::EngineUnavailable)?;
-        let providers = wait_for_preview_providers(&endpoint);
-        manager
-            .stop()
-            .map_err(|_error| SubscriptionPreviewError::EngineUnavailable)?;
-        providers
-    }
-}
-
-pub(crate) fn imported_subscription_store_dir() -> Result<PathBuf, SubscriptionStoreError> {
-    brand::data_dir()
-        .map(|directory| directory.join("subscriptions"))
-        .ok_or(SubscriptionStoreError::DataDirectoryUnavailable)
-}
-
-#[cfg(not(windows))]
-#[allow(dead_code)]
-pub(crate) fn save_subscription_source_in(
-    directory: &Path,
-    input: &str,
-) -> Result<StoredSubscription, SubscriptionStoreError> {
-    let source = SecretUrl::parse_subscription(input)
-        .map_err(|_error| SubscriptionStoreError::InvalidSource)?;
-    let name = source
-        .subscription_name()
-        .unwrap_or_else(|| "Subscription".to_owned());
-    save_subscription_source_with_options_in(
-        directory,
-        input,
-        &name,
-        RemoteSourceRefreshInterval::Manual,
-        true,
-    )
-}
-
-#[cfg(not(windows))]
-pub(crate) fn save_subscription_source_with_options_in(
-    directory: &Path,
-    input: &str,
-    name: &str,
-    refresh_interval: RemoteSourceRefreshInterval,
-    enabled: bool,
-) -> Result<StoredSubscription, SubscriptionStoreError> {
-    let source = SecretUrl::parse_subscription(input)
-        .map_err(|_error| SubscriptionStoreError::InvalidSource)?;
-    let name = validate_subscription_source_name(name)?;
-    if let Some(existing) = load_subscription_sources_in(directory)?
-        .into_iter()
-        .find(|stored| stored.source == source)
-    {
-        return write_subscription_source_in(
-            directory,
-            &existing.id,
-            input,
-            &name,
-            enabled,
-            refresh_interval,
-            existing.last_successful_update_unix_secs,
-            &existing.proxy_server_nameservers,
-        );
-    }
-    let id = next_stored_source_id(STORED_SUBSCRIPTION_PREFIX);
-    let file_name = format!("{id}{STORED_SUBSCRIPTION_SUFFIX}");
-    let last_successful_update_unix_secs = current_unix_secs();
-    let contents = encode_subscription_source(
-        &id,
-        input,
-        &name,
-        enabled,
-        refresh_interval,
-        last_successful_update_unix_secs,
-        &[],
-    )?;
-    write_private_atomic(directory, &file_name, contents.as_bytes())
-        .map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
-    Ok(StoredSubscription {
-        id,
-        name,
-        source,
-        enabled,
-        refresh_interval,
-        last_successful_update_unix_secs,
-        proxy_server_nameservers: Vec::new(),
-    })
-}
-
-#[cfg(windows)]
-#[allow(dead_code)]
-pub(crate) fn save_subscription_source_in(
-    _directory: &Path,
-    _input: &str,
-) -> Result<StoredSubscription, SubscriptionStoreError> {
-    Err(SubscriptionStoreError::StoreUnavailable)
-}
-
-#[cfg(windows)]
-pub(crate) fn save_subscription_source_with_options_in(
-    _directory: &Path,
-    _input: &str,
-    _name: &str,
-    _refresh_interval: RemoteSourceRefreshInterval,
-    _enabled: bool,
-) -> Result<StoredSubscription, SubscriptionStoreError> {
-    Err(SubscriptionStoreError::StoreUnavailable)
-}
-
-#[cfg(not(windows))]
-pub(crate) fn update_subscription_source_in(
-    directory: &Path,
-    id: &str,
-    input: &str,
-    name: &str,
-    refresh_interval: RemoteSourceRefreshInterval,
-    enabled: bool,
-) -> Result<StoredSubscription, SubscriptionStoreError> {
-    let decoded = read_subscription_source_by_id_in(directory, id)?;
-    let source = SecretUrl::parse_subscription(input)
-        .map_err(|_error| SubscriptionStoreError::InvalidSource)?;
-    if load_subscription_sources_in(directory)?
-        .iter()
-        .any(|stored| stored.id != id && stored.source == source)
-    {
-        return Err(SubscriptionStoreError::InvalidSource);
-    }
-    let source_changed = decoded.stored.source != source;
-    write_subscription_source_in(
-        directory,
-        id,
-        input,
-        &validate_subscription_source_name(name)?,
-        enabled,
-        refresh_interval,
-        if source_changed {
-            current_unix_secs()
-        } else {
-            decoded.stored.last_successful_update_unix_secs
-        },
-        if source_changed {
-            &[]
-        } else {
-            &decoded.stored.proxy_server_nameservers
-        },
-    )
-}
-
-#[cfg(not(windows))]
-pub(crate) fn update_subscription_source_enabled_in(
-    directory: &Path,
-    id: &str,
-    enabled: bool,
-) -> Result<StoredSubscription, SubscriptionStoreError> {
-    let decoded = read_subscription_source_by_id_in(directory, id)?;
-    write_subscription_source_in(
-        directory,
-        id,
-        &decoded.url_input,
-        &decoded.stored.name,
-        enabled,
-        decoded.stored.refresh_interval,
-        decoded.stored.last_successful_update_unix_secs,
-        &decoded.stored.proxy_server_nameservers,
-    )
-}
-
-#[cfg(windows)]
-pub(crate) fn update_subscription_source_enabled_in(
-    _directory: &Path,
-    _id: &str,
-    _enabled: bool,
-) -> Result<StoredSubscription, SubscriptionStoreError> {
-    Err(SubscriptionStoreError::StoreUnavailable)
-}
-
-#[cfg(windows)]
-pub(crate) fn update_subscription_source_in(
-    _directory: &Path,
-    _id: &str,
-    _input: &str,
-    _name: &str,
-    _refresh_interval: RemoteSourceRefreshInterval,
-    _enabled: bool,
-) -> Result<StoredSubscription, SubscriptionStoreError> {
-    Err(SubscriptionStoreError::StoreUnavailable)
-}
-
-#[cfg(not(windows))]
-pub(crate) fn load_subscription_sources_in(
-    directory: &Path,
-) -> Result<Vec<StoredSubscription>, SubscriptionStoreError> {
-    let mut sources = Vec::new();
-    let Some(entries) = private_store_entries(directory)? else {
-        return Ok(sources);
-    };
-    for path in entries {
-        let Some(file_name) = path.file_name().and_then(std::ffi::OsStr::to_str) else {
-            continue;
-        };
-        let id = if file_name == IMPORTED_SUBSCRIPTION_FILE {
-            "subscription:legacy".to_owned()
-        } else if let Some(id) = file_name.strip_suffix(STORED_SUBSCRIPTION_SUFFIX)
-            && valid_stored_id(id, STORED_SUBSCRIPTION_PREFIX)
-        {
-            id.to_owned()
-        } else {
-            continue;
-        };
-        let contents =
-            read_private_source_allow_empty_max(&path, MAX_STORED_SUBSCRIPTION_FILE_BYTES)?;
-        let decoded = decode_subscription_source(&contents, &id)?;
-        if !sources
-            .iter()
-            .any(|stored: &StoredSubscription| stored.source == decoded.stored.source)
-        {
-            sources.push(decoded.stored);
-        }
-    }
-    sources.sort_by(|left, right| left.id.cmp(&right.id));
-    Ok(sources)
-}
-
-#[cfg(windows)]
-pub(crate) fn load_subscription_sources_in(
-    directory: &Path,
-) -> Result<Vec<StoredSubscription>, SubscriptionStoreError> {
-    load_imported_subscription_in(directory).map(|source| {
-        source
-            .map(|source| {
-                vec![StoredSubscription {
-                    id: "subscription:legacy".to_owned(),
-                    name: source
-                        .subscription_name()
-                        .unwrap_or_else(|| "Subscription".to_owned()),
-                    source,
-                    enabled: true,
-                    refresh_interval: RemoteSourceRefreshInterval::Manual,
-                    last_successful_update_unix_secs: 0,
-                    proxy_server_nameservers: Vec::new(),
-                }]
-            })
-            .unwrap_or_default()
-    })
-}
-
-#[cfg(not(windows))]
-#[allow(dead_code)]
-pub(crate) fn update_subscription_source_refresh_interval_in(
-    directory: &Path,
-    id: &str,
-    refresh_interval: RemoteSourceRefreshInterval,
-) -> Result<StoredSubscription, SubscriptionStoreError> {
-    let decoded = read_subscription_source_by_id_in(directory, id)?;
-    write_subscription_source_in(
-        directory,
-        id,
-        &decoded.url_input,
-        &decoded.stored.name,
-        decoded.stored.enabled,
-        refresh_interval,
-        decoded.stored.last_successful_update_unix_secs,
-        &decoded.stored.proxy_server_nameservers,
-    )
-}
-
-#[cfg(windows)]
-#[allow(dead_code)]
-pub(crate) fn update_subscription_source_refresh_interval_in(
-    _directory: &Path,
-    _id: &str,
-    _refresh_interval: RemoteSourceRefreshInterval,
-) -> Result<StoredSubscription, SubscriptionStoreError> {
-    Err(SubscriptionStoreError::StoreUnavailable)
-}
-
-#[cfg(not(windows))]
-#[allow(dead_code)]
-pub(crate) fn mark_subscription_source_update_success_in(
-    directory: &Path,
-    id: &str,
-    last_successful_update_unix_secs: u64,
-) -> Result<StoredSubscription, SubscriptionStoreError> {
-    let decoded = read_subscription_source_by_id_in(directory, id)?;
-    write_subscription_source_in(
-        directory,
-        id,
-        &decoded.url_input,
-        &decoded.stored.name,
-        decoded.stored.enabled,
-        decoded.stored.refresh_interval,
-        last_successful_update_unix_secs,
-        &decoded.stored.proxy_server_nameservers,
-    )
-}
-
-#[cfg(not(windows))]
-pub(crate) fn update_subscription_source_proxy_nameservers_in(
-    directory: &Path,
-    id: &str,
-    proxy_server_nameservers: &[ProxyDnsServer],
-) -> Result<StoredSubscription, SubscriptionStoreError> {
-    if proxy_server_nameservers.is_empty()
-        || proxy_server_nameservers.len() > MAX_SUBSCRIPTION_PROXY_DNS_SERVERS
-    {
-        return Err(SubscriptionStoreError::InvalidSource);
-    }
-    let decoded = read_subscription_source_by_id_in(directory, id)?;
-    write_subscription_source_in(
-        directory,
-        id,
-        &decoded.url_input,
-        &decoded.stored.name,
-        decoded.stored.enabled,
-        decoded.stored.refresh_interval,
-        decoded.stored.last_successful_update_unix_secs,
-        proxy_server_nameservers,
-    )
-}
-
-#[cfg(windows)]
-pub(crate) fn update_subscription_source_proxy_nameservers_in(
-    _directory: &Path,
-    _id: &str,
-    _proxy_server_nameservers: &[ProxyDnsServer],
-) -> Result<StoredSubscription, SubscriptionStoreError> {
-    Err(SubscriptionStoreError::StoreUnavailable)
-}
-
-#[cfg(windows)]
-#[allow(dead_code)]
-pub(crate) fn mark_subscription_source_update_success_in(
-    _directory: &Path,
-    _id: &str,
-    _last_successful_update_unix_secs: u64,
-) -> Result<StoredSubscription, SubscriptionStoreError> {
-    Err(SubscriptionStoreError::StoreUnavailable)
-}
-
-#[cfg(not(windows))]
-pub(crate) fn remove_subscription_source_in(
-    directory: &Path,
-    id: &str,
-) -> Result<(), SubscriptionStoreError> {
-    require_clean_absolute_store(directory)?;
-    let file_name = if id == "subscription:legacy" {
-        IMPORTED_SUBSCRIPTION_FILE.to_owned()
-    } else if valid_stored_id(id, STORED_SUBSCRIPTION_PREFIX) {
-        format!("{id}{STORED_SUBSCRIPTION_SUFFIX}")
-    } else {
-        return Err(SubscriptionStoreError::StoreUnavailable);
-    };
-    remove_private_source(&directory.join(file_name))
-}
-
-#[cfg(windows)]
-pub(crate) fn remove_subscription_source_in(
-    _directory: &Path,
-    _id: &str,
-) -> Result<(), SubscriptionStoreError> {
-    Err(SubscriptionStoreError::StoreUnavailable)
-}
-
-#[cfg(not(windows))]
-#[allow(dead_code)]
-pub(crate) fn save_single_node_source_in(
-    directory: &Path,
-    input: &str,
-) -> Result<StoredSingleNode, SubscriptionStoreError> {
-    let source =
-        SingleNodeSource::parse(input).map_err(|_error| SubscriptionStoreError::InvalidSource)?;
-    let name = source.preview().name.clone();
-    save_single_node_source_with_options_in(directory, input, &name, true)
-}
-
-#[cfg(not(windows))]
-pub(crate) fn save_single_node_source_with_options_in(
-    directory: &Path,
-    input: &str,
-    name: &str,
-    enabled: bool,
-) -> Result<StoredSingleNode, SubscriptionStoreError> {
-    let source =
-        SingleNodeSource::parse(input).map_err(|_error| SubscriptionStoreError::InvalidSource)?;
-    if let Some(existing) = load_single_node_sources_in(directory)?
-        .into_iter()
-        .find(|stored| stored.source == source)
-    {
-        if existing.enabled == enabled && existing.name == name.trim() {
-            return Ok(existing);
-        }
-        return update_single_node_source_in(directory, &existing.id, input, name, enabled);
-    }
-    let id = next_stored_source_id(SAVED_SINGLE_NODE_PREFIX);
-    let file_name = format!("{id}{SAVED_SINGLE_NODE_SUFFIX}");
-    let name = validate_subscription_source_name(name)?;
-    let encoded = encode_single_node_source(&id, input, &name, enabled)?;
-    write_private_atomic(directory, &file_name, encoded.as_bytes())
-        .map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
-    Ok(StoredSingleNode {
-        id,
-        name,
-        source,
-        enabled,
-    })
-}
-
-#[cfg(windows)]
-pub(crate) fn save_single_node_source_in(
-    _directory: &Path,
-    _input: &str,
-) -> Result<StoredSingleNode, SubscriptionStoreError> {
-    Err(SubscriptionStoreError::StoreUnavailable)
-}
-
-#[cfg(windows)]
-pub(crate) fn save_single_node_source_with_options_in(
-    _directory: &Path,
-    _input: &str,
-    _name: &str,
-    _enabled: bool,
-) -> Result<StoredSingleNode, SubscriptionStoreError> {
-    Err(SubscriptionStoreError::StoreUnavailable)
-}
-
-#[cfg(not(windows))]
-pub(crate) fn update_single_node_source_in(
-    directory: &Path,
-    id: &str,
-    input: &str,
-    name: &str,
-    enabled: bool,
-) -> Result<StoredSingleNode, SubscriptionStoreError> {
-    require_clean_absolute_store(directory)?;
-    if !valid_stored_id(id, SAVED_SINGLE_NODE_PREFIX) {
-        return Err(SubscriptionStoreError::InvalidSource);
-    }
-    let source =
-        SingleNodeSource::parse(input).map_err(|_error| SubscriptionStoreError::InvalidSource)?;
-    if load_single_node_sources_in(directory)?
-        .into_iter()
-        .any(|stored| stored.id != id && stored.source == source)
-    {
-        return Err(SubscriptionStoreError::InvalidSource);
-    }
-    let name = validate_subscription_source_name(name)?;
-    let encoded = encode_single_node_source(id, input, &name, enabled)?;
-    write_private_atomic(
-        directory,
-        &format!("{id}{SAVED_SINGLE_NODE_SUFFIX}"),
-        encoded.as_bytes(),
-    )
-    .map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
-    Ok(StoredSingleNode {
-        id: id.to_owned(),
-        name,
-        source,
-        enabled,
-    })
-}
-
-#[cfg(windows)]
-pub(crate) fn update_single_node_source_in(
-    _directory: &Path,
-    _id: &str,
-    _input: &str,
-    _name: &str,
-    _enabled: bool,
-) -> Result<StoredSingleNode, SubscriptionStoreError> {
-    Err(SubscriptionStoreError::StoreUnavailable)
-}
-
-pub(crate) fn update_single_node_source_enabled_in(
-    directory: &Path,
-    id: &str,
-    enabled: bool,
-) -> Result<StoredSingleNode, SubscriptionStoreError> {
-    let stored = load_single_node_sources_in(directory)?
-        .into_iter()
-        .find(|stored| stored.id == id)
-        .ok_or(SubscriptionStoreError::StoredSourceUnavailable)?;
-    let input = stored.source.expose_to(str::to_owned);
-    update_single_node_source_in(directory, id, &input, &stored.name, enabled)
-}
-
-#[cfg(not(windows))]
-pub(crate) fn load_single_node_sources_in(
-    directory: &Path,
-) -> Result<Vec<StoredSingleNode>, SubscriptionStoreError> {
-    let mut nodes = Vec::new();
-    let Some(entries) = private_store_entries(directory)? else {
-        return Ok(nodes);
-    };
-    for path in entries {
-        let Some(file_name) = path.file_name().and_then(std::ffi::OsStr::to_str) else {
-            continue;
-        };
-        let Some(id) = file_name.strip_suffix(SAVED_SINGLE_NODE_SUFFIX) else {
-            continue;
-        };
-        if !valid_stored_id(id, SAVED_SINGLE_NODE_PREFIX) {
-            continue;
-        }
-        let contents =
-            read_private_source_allow_empty_max(&path, MAX_STORED_SUBSCRIPTION_FILE_BYTES)?;
-        nodes.push(decode_single_node_source(&contents, id)?);
-    }
-    nodes.sort_by(|left, right| left.id.cmp(&right.id));
-    Ok(nodes)
-}
-
-#[cfg(windows)]
-pub(crate) fn load_single_node_sources_in(
-    _directory: &Path,
-) -> Result<Vec<StoredSingleNode>, SubscriptionStoreError> {
-    Ok(Vec::new())
-}
-
-fn encode_single_node_source(
-    id: &str,
-    input: &str,
-    name: &str,
-    enabled: bool,
-) -> Result<String, SubscriptionStoreError> {
-    if !valid_stored_id(id, SAVED_SINGLE_NODE_PREFIX)
-        || input.len() > crate::subscription::MAX_SUBSCRIPTION_BYTES
-    {
-        return Err(SubscriptionStoreError::InvalidSource);
-    }
-    SingleNodeSource::parse(input).map_err(|_error| SubscriptionStoreError::InvalidSource)?;
-    let name = validate_subscription_source_name(name)?;
-    Ok([
-        SAVED_SINGLE_NODE_VERSION.to_owned(),
-        format!("id\t{id}"),
-        format!("name\t{}", encode_hex(&name)),
-        format!("enabled\t{}", if enabled { "true" } else { "false" }),
-        format!("url\t{}", encode_hex(input)),
-    ]
-    .join("\n"))
-}
-
-fn decode_single_node_source(
-    contents: &str,
-    expected_id: &str,
-) -> Result<StoredSingleNode, SubscriptionStoreError> {
-    if !matches!(
-        contents.lines().next(),
-        Some(SAVED_SINGLE_NODE_VERSION | LEGACY_SAVED_SINGLE_NODE_VERSION)
-    ) {
-        let source = SingleNodeSource::parse(contents)
-            .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
-        return Ok(StoredSingleNode {
-            id: expected_id.to_owned(),
-            name: source.preview().name.clone(),
-            source,
-            enabled: true,
-        });
-    }
-    let mut id = None;
-    let mut name = None;
-    let mut enabled = None;
-    let mut url = None;
-    for line in contents.lines().skip(1) {
-        let fields = line.split('\t').collect::<Vec<_>>();
-        match fields.as_slice() {
-            ["id", value] if id.is_none() => id = Some(*value),
-            ["name", value] if name.is_none() => {
-                name = Some(validate_subscription_source_name(&decode_hex(value)?)?);
-            }
-            ["enabled", value] if enabled.is_none() => {
-                enabled = Some(match *value {
-                    "true" => true,
-                    "false" => false,
-                    _ => return Err(SubscriptionStoreError::StoredSourceUnavailable),
-                });
-            }
-            ["url", value] if url.is_none() => url = Some(decode_hex(value)?),
-            _ => return Err(SubscriptionStoreError::StoredSourceUnavailable),
-        }
-    }
-    if id != Some(expected_id) || !valid_stored_id(expected_id, SAVED_SINGLE_NODE_PREFIX) {
-        return Err(SubscriptionStoreError::StoredSourceUnavailable);
-    }
-    let source = SingleNodeSource::parse(
-        url.as_deref()
-            .ok_or(SubscriptionStoreError::StoredSourceUnavailable)?,
-    )
-    .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
-    Ok(StoredSingleNode {
-        id: expected_id.to_owned(),
-        name: name.unwrap_or_else(|| source.preview().name.clone()),
-        source,
-        enabled: enabled.ok_or(SubscriptionStoreError::StoredSourceUnavailable)?,
-    })
-}
-
-#[cfg(not(windows))]
-pub(crate) fn remove_single_node_source_in(
-    directory: &Path,
-    id: &str,
-) -> Result<(), SubscriptionStoreError> {
-    require_clean_absolute_store(directory)?;
-    if !valid_stored_id(id, SAVED_SINGLE_NODE_PREFIX) {
-        return Err(SubscriptionStoreError::StoreUnavailable);
-    }
-    remove_private_source(&directory.join(format!("{id}{SAVED_SINGLE_NODE_SUFFIX}")))
-}
-
-#[cfg(windows)]
-pub(crate) fn remove_single_node_source_in(
-    _directory: &Path,
-    _id: &str,
-) -> Result<(), SubscriptionStoreError> {
-    Err(SubscriptionStoreError::StoreUnavailable)
-}
-
-#[cfg(not(windows))]
-#[allow(dead_code)]
-pub(crate) fn save_qx_rule_source_in(
-    directory: &Path,
-    url_input: &str,
-    target_policy: &str,
-    content: &str,
-) -> Result<SaveQxRuleSourceOutcome, SubscriptionStoreError> {
-    let source = SecretUrl::parse_https(url_input)
-        .map_err(|_error| SubscriptionStoreError::InvalidSource)?;
-    let target_policy =
-        Name::parse(target_policy).map_err(|_error| SubscriptionStoreError::InvalidSource)?;
-    let (rule_count, diagnostic_count) = validate_qx_rule_source_content(content)?;
-    if let Some(existing) = load_qx_rule_sources_in(directory)?
-        .into_iter()
-        .find(|stored| stored.source == source)
-    {
-        return Ok(SaveQxRuleSourceOutcome::Existing(existing));
-    }
-    let id = next_stored_source_id(QX_RULE_SOURCE_PREFIX);
-    let file_name = format!("{id}{QX_RULE_SOURCE_SUFFIX}");
-    let last_successful_update_unix_secs = current_unix_secs();
-    let contents = encode_qx_rule_source(
-        &id,
-        url_input,
-        &target_policy,
-        content,
-        true,
-        RemoteSourceRefreshInterval::Manual,
-        last_successful_update_unix_secs,
-    )?;
-    write_private_atomic(directory, &file_name, contents.as_bytes())
-        .map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
-    Ok(SaveQxRuleSourceOutcome::Created(StoredQxRuleSource {
-        id,
-        source,
-        enabled: true,
-        target_policy,
-        content: content.to_owned(),
-        rule_count,
-        diagnostic_count,
-        refresh_interval: RemoteSourceRefreshInterval::Manual,
-        last_successful_update_unix_secs,
-    }))
-}
-
-#[cfg(windows)]
-pub(crate) fn save_qx_rule_source_in(
-    _directory: &Path,
-    _url_input: &str,
-    _target_policy: &str,
-    _content: &str,
-) -> Result<SaveQxRuleSourceOutcome, SubscriptionStoreError> {
-    Err(SubscriptionStoreError::StoreUnavailable)
-}
-
-#[cfg(not(windows))]
-pub(crate) fn load_qx_rule_sources_in(
-    directory: &Path,
-) -> Result<Vec<StoredQxRuleSource>, SubscriptionStoreError> {
-    let mut sources = Vec::new();
-    let Some(entries) = private_store_entries(directory)? else {
-        return Ok(sources);
-    };
-    for path in entries {
-        let Some(file_name) = path.file_name().and_then(std::ffi::OsStr::to_str) else {
-            continue;
-        };
-        let Some(id) = file_name.strip_suffix(QX_RULE_SOURCE_SUFFIX) else {
-            continue;
-        };
-        if !valid_stored_id(id, QX_RULE_SOURCE_PREFIX) {
-            continue;
-        }
-        let contents = read_private_source_allow_empty_max(&path, MAX_QX_RULE_SOURCE_FILE_BYTES)?;
-        sources.push(decode_qx_rule_source(&contents, id)?);
-    }
-    sources.sort_by(|left, right| left.id.cmp(&right.id));
-    Ok(sources)
-}
-
-pub(crate) fn normalized_routing_rule_group_order(
-    stored_order: &[String],
-    has_manual_rules: bool,
-    sources: &[StoredQxRuleSource],
-) -> Vec<String> {
-    let source_ids = sources
-        .iter()
-        .map(|source| source.id.as_str())
-        .collect::<BTreeSet<_>>();
-    let mut seen = BTreeSet::new();
-    let mut order = stored_order
-        .iter()
-        .filter(|id| {
-            (has_manual_rules && id.as_str() == MANUAL_ROUTING_RULE_GROUP_ID)
-                || source_ids.contains(id.as_str())
-        })
-        .filter(|id| seen.insert((*id).clone()))
-        .cloned()
-        .collect::<Vec<_>>();
-    if has_manual_rules && seen.insert(MANUAL_ROUTING_RULE_GROUP_ID.to_owned()) {
-        order.insert(0, MANUAL_ROUTING_RULE_GROUP_ID.to_owned());
-    }
-    for source in sources {
-        if seen.insert(source.id.clone()) {
-            order.push(source.id.clone());
-        }
-    }
-    order
-}
-
-pub(crate) fn move_routing_rule_group(order: &mut [String], group_id: &str, direction: i8) -> bool {
-    if !matches!(direction, -1 | 1) {
-        return false;
-    }
-    let Some(index) = order.iter().position(|id| id == group_id) else {
-        return false;
-    };
-    let target = if direction < 0 {
-        index.checked_sub(1)
-    } else {
-        index.checked_add(1).filter(|target| *target < order.len())
-    };
-    let Some(target) = target else {
-        return false;
-    };
-    order.swap(index, target);
-    true
-}
-
-fn valid_routing_rule_group_id(id: &str) -> bool {
-    id == MANUAL_ROUTING_RULE_GROUP_ID || valid_stored_id(id, QX_RULE_SOURCE_PREFIX)
-}
-
-#[cfg(not(windows))]
-pub(crate) fn save_routing_rule_group_order_in(
-    directory: &Path,
-    order: &[String],
-) -> Result<(), SubscriptionStoreError> {
-    if order.len() > MAX_ROUTING_RULE_GROUPS {
-        return Err(SubscriptionStoreError::StoreUnavailable);
-    }
-    let mut seen = BTreeSet::new();
-    if order
-        .iter()
-        .any(|id| !valid_routing_rule_group_id(id) || !seen.insert(id.as_str()))
-    {
-        return Err(SubscriptionStoreError::StoreUnavailable);
-    }
-    let mut contents = ROUTING_RULE_GROUP_ORDER_VERSION.to_owned();
-    for id in order {
-        contents.push('\n');
-        contents.push_str(id);
-    }
-    write_private_atomic(
-        directory,
-        ROUTING_RULE_GROUP_ORDER_FILE,
-        contents.as_bytes(),
-    )
-    .map(|_path| ())
-    .map_err(|_error| SubscriptionStoreError::StoreUnavailable)
-}
-
-#[cfg(windows)]
-pub(crate) fn save_routing_rule_group_order_in(
-    _directory: &Path,
-    _order: &[String],
-) -> Result<(), SubscriptionStoreError> {
-    Err(SubscriptionStoreError::StoreUnavailable)
-}
-
-#[cfg(not(windows))]
-pub(crate) fn load_routing_rule_group_order_in(
-    directory: &Path,
-) -> Result<Vec<String>, SubscriptionStoreError> {
-    require_clean_absolute_store(directory)?;
-    let path = directory.join(ROUTING_RULE_GROUP_ORDER_FILE);
-    let contents = match fs::symlink_metadata(&path) {
-        Ok(_) => {
-            read_private_source_allow_empty_max(&path, MAX_ROUTING_RULE_GROUP_ORDER_FILE_BYTES)?
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(_error) => return Err(SubscriptionStoreError::StoredSourceUnavailable),
-    };
-    let mut lines = contents.lines();
-    if lines.next() != Some(ROUTING_RULE_GROUP_ORDER_VERSION) {
-        return Err(SubscriptionStoreError::StoredSourceUnavailable);
-    }
-    let mut seen = BTreeSet::new();
-    lines
-        .map(str::to_owned)
-        .map(|id| {
-            if valid_routing_rule_group_id(&id) && seen.insert(id.clone()) {
-                Ok(id)
-            } else {
-                Err(SubscriptionStoreError::StoredSourceUnavailable)
-            }
-        })
-        .collect()
-}
-
-#[cfg(windows)]
-pub(crate) fn load_routing_rule_group_order_in(
-    _directory: &Path,
-) -> Result<Vec<String>, SubscriptionStoreError> {
-    Ok(Vec::new())
-}
-
-#[cfg(windows)]
-pub(crate) fn load_qx_rule_sources_in(
-    _directory: &Path,
-) -> Result<Vec<StoredQxRuleSource>, SubscriptionStoreError> {
-    Ok(Vec::new())
-}
-
-#[cfg(not(windows))]
-#[allow(dead_code)]
-pub(crate) fn remove_qx_rule_source_in(
-    directory: &Path,
-    id: &str,
-) -> Result<(), SubscriptionStoreError> {
-    require_clean_absolute_store(directory)?;
-    if !valid_stored_id(id, QX_RULE_SOURCE_PREFIX) {
-        return Err(SubscriptionStoreError::StoreUnavailable);
-    }
-    remove_private_source(&directory.join(format!("{id}{QX_RULE_SOURCE_SUFFIX}")))
-}
-
-#[cfg(windows)]
-pub(crate) fn remove_qx_rule_source_in(
-    _directory: &Path,
-    _id: &str,
-) -> Result<(), SubscriptionStoreError> {
-    Err(SubscriptionStoreError::StoreUnavailable)
-}
-
-#[cfg(not(windows))]
-#[allow(dead_code)]
-pub(crate) fn update_qx_rule_source_refresh_interval_in(
-    directory: &Path,
-    id: &str,
-    refresh_interval: RemoteSourceRefreshInterval,
-) -> Result<StoredQxRuleSource, SubscriptionStoreError> {
-    let decoded = read_qx_rule_source_by_id_in(directory, id)?;
-    write_qx_rule_source_in(
-        directory,
-        id,
-        &decoded.url_input,
-        decoded.stored.target_policy.as_str(),
-        &decoded.stored.content,
-        decoded.stored.enabled,
-        refresh_interval,
-        decoded.stored.last_successful_update_unix_secs,
-    )
-}
-
-#[cfg(windows)]
-#[allow(dead_code)]
-pub(crate) fn update_qx_rule_source_refresh_interval_in(
-    _directory: &Path,
-    _id: &str,
-    _refresh_interval: RemoteSourceRefreshInterval,
-) -> Result<StoredQxRuleSource, SubscriptionStoreError> {
-    Err(SubscriptionStoreError::StoreUnavailable)
-}
-
-#[cfg(not(windows))]
-#[allow(dead_code)]
-pub(crate) fn update_qx_rule_source_target_in(
-    directory: &Path,
-    id: &str,
-    target_policy: &str,
-) -> Result<StoredQxRuleSource, SubscriptionStoreError> {
-    let decoded = read_qx_rule_source_by_id_in(directory, id)?;
-    write_qx_rule_source_in(
-        directory,
-        id,
-        &decoded.url_input,
-        target_policy,
-        &decoded.stored.content,
-        decoded.stored.enabled,
-        decoded.stored.refresh_interval,
-        decoded.stored.last_successful_update_unix_secs,
-    )
-}
-
-#[cfg(windows)]
-#[allow(dead_code)]
-pub(crate) fn update_qx_rule_source_target_in(
-    _directory: &Path,
-    _id: &str,
-    _target_policy: &str,
-) -> Result<StoredQxRuleSource, SubscriptionStoreError> {
-    Err(SubscriptionStoreError::StoreUnavailable)
-}
-
-#[cfg(not(windows))]
-pub(crate) fn replace_qx_rule_source_definition_in(
-    directory: &Path,
-    id: &str,
-    url_input: &str,
-    target_policy: &str,
-    content: &str,
-    refresh_interval: RemoteSourceRefreshInterval,
-    last_successful_update_unix_secs: u64,
-) -> Result<StoredQxRuleSource, SubscriptionStoreError> {
-    let decoded = read_qx_rule_source_by_id_in(directory, id)?;
-    write_qx_rule_source_in(
-        directory,
-        id,
-        url_input,
-        target_policy,
-        content,
-        decoded.stored.enabled,
-        refresh_interval,
-        last_successful_update_unix_secs,
-    )
-}
-
-#[cfg(not(windows))]
-pub(crate) fn update_qx_rule_source_enabled_in(
-    directory: &Path,
-    id: &str,
-    enabled: bool,
-) -> Result<StoredQxRuleSource, SubscriptionStoreError> {
-    let decoded = read_qx_rule_source_by_id_in(directory, id)?;
-    write_qx_rule_source_in(
-        directory,
-        id,
-        &decoded.url_input,
-        decoded.stored.target_policy.as_str(),
-        &decoded.stored.content,
-        enabled,
-        decoded.stored.refresh_interval,
-        decoded.stored.last_successful_update_unix_secs,
-    )
-}
-
-#[cfg(windows)]
-pub(crate) fn update_qx_rule_source_enabled_in(
-    _directory: &Path,
-    _id: &str,
-    _enabled: bool,
-) -> Result<StoredQxRuleSource, SubscriptionStoreError> {
-    Err(SubscriptionStoreError::StoreUnavailable)
-}
-
-#[cfg(windows)]
-pub(crate) fn replace_qx_rule_source_definition_in(
-    _directory: &Path,
-    _id: &str,
-    _url_input: &str,
-    _target_policy: &str,
-    _content: &str,
-    _refresh_interval: RemoteSourceRefreshInterval,
-    _last_successful_update_unix_secs: u64,
-) -> Result<StoredQxRuleSource, SubscriptionStoreError> {
-    Err(SubscriptionStoreError::StoreUnavailable)
-}
-
-#[cfg(not(windows))]
-#[allow(dead_code)]
-pub(crate) fn replace_qx_rule_source_content_in(
-    directory: &Path,
-    id: &str,
-    content: &str,
-    last_successful_update_unix_secs: u64,
-) -> Result<StoredQxRuleSource, SubscriptionStoreError> {
-    validate_qx_rule_source_content(content)?;
-    let decoded = read_qx_rule_source_by_id_in(directory, id)?;
-    write_qx_rule_source_in(
-        directory,
-        id,
-        &decoded.url_input,
-        decoded.stored.target_policy.as_str(),
-        content,
-        decoded.stored.enabled,
-        decoded.stored.refresh_interval,
-        last_successful_update_unix_secs,
-    )
-}
-
-#[cfg(windows)]
-#[allow(dead_code)]
-pub(crate) fn replace_qx_rule_source_content_in(
-    _directory: &Path,
-    _id: &str,
-    _content: &str,
-    _last_successful_update_unix_secs: u64,
-) -> Result<StoredQxRuleSource, SubscriptionStoreError> {
-    Err(SubscriptionStoreError::StoreUnavailable)
-}
-
-fn apply_qx_rule_sources(
-    profile: &mut Profile,
-    sources: &[StoredQxRuleSource],
-) -> Result<(), LoadError> {
-    let has_user_named_proxy = profile
-        .groups
-        .iter()
-        .any(|group| group.name.as_str() == LEGACY_GENERATED_PROXY_GROUP_NAME);
-    let legacy_proxy_target = (!has_user_named_proxy)
-        .then(|| {
-            profile
-                .groups
-                .iter()
-                .find(|group| group.name.as_str() != MANIS_GLOBAL_GROUP_NAME)
-                .or_else(|| profile.groups.first())
-                .map(|group| PolicyRef::Group(group.name.clone()))
-        })
-        .flatten();
-    let mut imported_rules = Vec::new();
-    for source in sources {
-        if !source.enabled {
-            continue;
-        }
-        let target_policy =
-            qx_rule_target_policy(&source.target_policy, legacy_proxy_target.as_ref());
-        let parsed = QxRuleList::parse(&source.content);
-        if parsed.rules.is_empty() {
-            return Err(LoadError::Runtime(
-                "已保存的 QX 规则源没有可导入规则".to_owned(),
-            ));
-        }
-        let rules = parsed
-            .to_profile_rules(|_source_policy| Some(target_policy.clone()))
-            .map_err(|_error| LoadError::Runtime("无法映射 QX 规则策略".to_owned()))?;
-        imported_rules.extend(rules);
-    }
-    if imported_rules.is_empty() {
-        return Ok(());
-    }
-    let insert_at = profile
-        .rules
-        .iter()
-        .position(|rule| matches!(rule, Rule::Match { .. }))
-        .unwrap_or(profile.rules.len());
-    profile.rules.splice(insert_at..insert_at, imported_rules);
-    profile
-        .validate()
-        .map_err(|error| LoadError::Runtime(error.to_string()))
-}
-
-fn qx_rule_target_policy(
-    target_policy: &Name,
-    legacy_proxy_target: Option<&PolicyRef>,
-) -> PolicyRef {
-    match target_policy.as_str() {
-        "DIRECT" => PolicyRef::Direct,
-        "REJECT" => PolicyRef::Reject,
-        LEGACY_GENERATED_PROXY_GROUP_NAME => legacy_proxy_target
-            .cloned()
-            .unwrap_or_else(|| PolicyRef::Group(target_policy.clone())),
-        _ => PolicyRef::Group(target_policy.clone()),
-    }
-}
-
-#[cfg(not(windows))]
-pub(crate) fn save_collapsed_groups_in<'a>(
-    directory: &Path,
-    group_ids: impl IntoIterator<Item = &'a str>,
-) -> Result<(), SubscriptionStoreError> {
-    let mut ids: Vec<_> = group_ids
-        .into_iter()
-        .filter(|id| valid_workspace_group_id(id))
-        .collect();
-    ids.sort_unstable();
-    ids.dedup();
-    let contents = ids.join("\n");
-    write_private_atomic(directory, WORKSPACE_STATE_FILE, contents.as_bytes())
-        .map(|_path| ())
-        .map_err(|_error| SubscriptionStoreError::StoreUnavailable)
-}
-
-#[cfg(windows)]
-pub(crate) fn save_collapsed_groups_in<'a>(
-    _directory: &Path,
-    _group_ids: impl IntoIterator<Item = &'a str>,
-) -> Result<(), SubscriptionStoreError> {
-    Err(SubscriptionStoreError::StoreUnavailable)
-}
-
-#[cfg(not(windows))]
-pub(crate) fn load_collapsed_groups_in(
-    directory: &Path,
-) -> Result<Vec<String>, SubscriptionStoreError> {
-    require_clean_absolute_store(directory)?;
-    let path = directory.join(WORKSPACE_STATE_FILE);
-    let contents = match fs::symlink_metadata(&path) {
-        Ok(_) => read_private_source_allow_empty(&path)?,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(_error) => return Err(SubscriptionStoreError::StoredSourceUnavailable),
-    };
-    contents
-        .lines()
-        .map(str::to_owned)
-        .map(|id| {
-            valid_workspace_group_id(&id)
-                .then_some(id)
-                .ok_or(SubscriptionStoreError::StoredSourceUnavailable)
-        })
-        .collect()
-}
-
-#[cfg(windows)]
-pub(crate) fn load_collapsed_groups_in(
-    _directory: &Path,
-) -> Result<Vec<String>, SubscriptionStoreError> {
-    Ok(Vec::new())
-}
-
-#[cfg(not(windows))]
-pub(crate) fn save_routing_mode_in(
-    directory: &Path,
-    mode: RoutingMode,
-) -> Result<(), SubscriptionStoreError> {
-    write_private_atomic(directory, ROUTING_MODE_FILE, mode.wire_value().as_bytes())
-        .map(|_path| ())
-        .map_err(|_error| SubscriptionStoreError::StoreUnavailable)
-}
-
-#[cfg(windows)]
-pub(crate) fn save_routing_mode_in(
-    _directory: &Path,
-    _mode: RoutingMode,
-) -> Result<(), SubscriptionStoreError> {
-    Err(SubscriptionStoreError::StoreUnavailable)
-}
-
-#[cfg(not(windows))]
-pub(crate) fn load_routing_mode_in(
-    directory: &Path,
-) -> Result<RoutingMode, SubscriptionStoreError> {
-    require_clean_absolute_store(directory)?;
-    let path = directory.join(ROUTING_MODE_FILE);
-    let contents = match fs::symlink_metadata(&path) {
-        Ok(_) => read_private_source_allow_empty(&path)?,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(RoutingMode::Rule);
-        }
-        Err(_error) => return Err(SubscriptionStoreError::StoredSourceUnavailable),
-    };
-    RoutingMode::parse_wire_value(contents.trim())
-        .ok_or(SubscriptionStoreError::StoredSourceUnavailable)
-}
-
-#[cfg(windows)]
-pub(crate) fn load_routing_mode_in(
-    _directory: &Path,
-) -> Result<RoutingMode, SubscriptionStoreError> {
-    Ok(RoutingMode::Rule)
-}
-
-#[cfg(not(windows))]
-pub(crate) fn save_node_selection_preferences_in(
-    directory: &Path,
-    preferences: &NodeSelectionPreferences,
-) -> Result<(), SubscriptionStoreError> {
-    preferences.validate()?;
-    let contents = encode_node_selection_preferences(preferences)?;
-    write_private_atomic(
-        directory,
-        NODE_SELECTION_PREFERENCES_FILE,
-        contents.as_bytes(),
-    )
-    .map(|_path| ())
-    .map_err(|_error| SubscriptionStoreError::StoreUnavailable)
-}
-
-#[cfg(windows)]
-pub(crate) fn save_node_selection_preferences_in(
-    _directory: &Path,
-    _preferences: &NodeSelectionPreferences,
-) -> Result<(), SubscriptionStoreError> {
-    Err(SubscriptionStoreError::StoreUnavailable)
-}
-
-#[cfg(not(windows))]
-pub(crate) fn load_node_selection_preferences_in(
-    directory: &Path,
-) -> Result<NodeSelectionPreferences, SubscriptionStoreError> {
-    require_clean_absolute_store(directory)?;
-    let path = directory.join(NODE_SELECTION_PREFERENCES_FILE);
-    let contents = match fs::symlink_metadata(&path) {
-        Ok(_) => read_private_source_allow_empty_max(&path, MAX_NODE_SELECTION_FILE_BYTES)?,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(NodeSelectionPreferences::default());
-        }
-        Err(_error) => return Err(SubscriptionStoreError::StoredSourceUnavailable),
-    };
-    decode_node_selection_preferences(&contents)
-}
-
-#[cfg(windows)]
-pub(crate) fn load_node_selection_preferences_in(
-    _directory: &Path,
-) -> Result<NodeSelectionPreferences, SubscriptionStoreError> {
-    Ok(NodeSelectionPreferences::default())
-}
-
-fn profile_mode(mode: RoutingMode) -> ProfileMode {
-    match mode {
-        RoutingMode::Direct => ProfileMode::Direct,
-        RoutingMode::Global => ProfileMode::Global,
-        RoutingMode::Rule => ProfileMode::Rule,
-    }
-}
-
-#[cfg(not(windows))]
-#[allow(dead_code)]
-struct DecodedSubscriptionSource {
-    stored: StoredSubscription,
-    url_input: String,
-}
-
-#[cfg(not(windows))]
-#[allow(dead_code)]
-fn read_subscription_source_by_id_in(
-    directory: &Path,
-    id: &str,
-) -> Result<DecodedSubscriptionSource, SubscriptionStoreError> {
-    require_clean_absolute_store(directory)?;
-    let file_name = subscription_source_file_name(id)?;
-    let contents = read_private_source_allow_empty_max(
-        &directory.join(file_name),
-        MAX_STORED_SUBSCRIPTION_FILE_BYTES,
-    )?;
-    decode_subscription_source(&contents, id)
-}
-
-#[cfg(not(windows))]
-#[allow(dead_code, clippy::too_many_arguments)]
-fn write_subscription_source_in(
-    directory: &Path,
-    id: &str,
-    url_input: &str,
-    name: &str,
-    enabled: bool,
-    refresh_interval: RemoteSourceRefreshInterval,
-    last_successful_update_unix_secs: u64,
-    proxy_server_nameservers: &[ProxyDnsServer],
-) -> Result<StoredSubscription, SubscriptionStoreError> {
-    let source = SecretUrl::parse_subscription(url_input)
-        .map_err(|_error| SubscriptionStoreError::InvalidSource)?;
-    let name = validate_subscription_source_name(name)?;
-    let contents = encode_subscription_source(
-        id,
-        url_input,
-        &name,
-        enabled,
-        refresh_interval,
-        last_successful_update_unix_secs,
-        proxy_server_nameservers,
-    )?;
-    let file_name = subscription_source_file_name(id)?;
-    write_private_atomic(directory, &file_name, contents.as_bytes())
-        .map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
-    Ok(StoredSubscription {
-        id: id.to_owned(),
-        name,
-        source,
-        enabled,
-        refresh_interval,
-        last_successful_update_unix_secs,
-        proxy_server_nameservers: proxy_server_nameservers.to_vec(),
-    })
-}
-
-fn validate_subscription_source_name(name: &str) -> Result<String, SubscriptionStoreError> {
-    let name = name.trim();
-    if name.is_empty()
-        || name.len() > MAX_SUBSCRIPTION_SOURCE_NAME_BYTES
-        || name.chars().any(char::is_control)
-    {
-        return Err(SubscriptionStoreError::InvalidSource);
-    }
-    Ok(name.to_owned())
-}
-
-#[cfg(not(windows))]
-fn encode_subscription_source(
-    id: &str,
-    url_input: &str,
-    name: &str,
-    enabled: bool,
-    refresh_interval: RemoteSourceRefreshInterval,
-    last_successful_update_unix_secs: u64,
-    proxy_server_nameservers: &[ProxyDnsServer],
-) -> Result<String, SubscriptionStoreError> {
-    if !valid_subscription_source_id(id) {
-        return Err(SubscriptionStoreError::InvalidSource);
-    }
-    if url_input.len() > crate::subscription::MAX_SUBSCRIPTION_BYTES {
-        return Err(SubscriptionStoreError::InvalidSource);
-    }
-    SecretUrl::parse_subscription(url_input)
-        .map_err(|_error| SubscriptionStoreError::InvalidSource)?;
-    let name = validate_subscription_source_name(name)?;
-    if proxy_server_nameservers.len() > MAX_SUBSCRIPTION_PROXY_DNS_SERVERS {
-        return Err(SubscriptionStoreError::InvalidSource);
-    }
-    let mut lines = vec![
-        STORED_SUBSCRIPTION_VERSION.to_owned(),
-        format!("id\t{id}"),
-        format!("name\t{}", encode_hex(&name)),
-        format!("enabled\t{}", if enabled { "true" } else { "false" }),
-        format!("url\t{}", encode_hex(url_input)),
-        format!("refresh\t{}", refresh_interval.key()),
-        format!("last-success\t{last_successful_update_unix_secs}"),
-    ];
-    lines.extend(
-        proxy_server_nameservers
-            .iter()
-            .map(|nameserver| format!("proxy-dns\t{}", encode_hex(nameserver.as_str()))),
-    );
-    Ok(lines.join("\n"))
-}
-
-#[cfg(not(windows))]
-#[allow(clippy::too_many_lines)]
-fn decode_subscription_source(
-    contents: &str,
-    expected_id: &str,
-) -> Result<DecodedSubscriptionSource, SubscriptionStoreError> {
-    if !valid_subscription_source_id(expected_id) {
-        return Err(SubscriptionStoreError::StoredSourceUnavailable);
-    }
-    let version = contents.lines().next();
-    let structured = version.is_some_and(|version| {
-        matches!(
-            version,
-            STORED_SUBSCRIPTION_VERSION
-                | LEGACY_MANIS_STORED_SUBSCRIPTION_VERSION_V2
-                | LEGACY_MANIS_STORED_SUBSCRIPTION_VERSION
-                | LEGACY_RELAY_STORED_SUBSCRIPTION_VERSION
-        )
-    });
-    if !structured {
-        if contents.is_empty() || contents.lines().count() != 1 || contents.trim() != contents {
-            return Err(SubscriptionStoreError::StoredSourceUnavailable);
-        }
-        let source = SecretUrl::parse_subscription(contents)
-            .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
-        return Ok(DecodedSubscriptionSource {
-            stored: StoredSubscription {
-                id: expected_id.to_owned(),
-                name: source
-                    .subscription_name()
-                    .unwrap_or_else(|| "Subscription".to_owned()),
-                source,
-                enabled: true,
-                refresh_interval: RemoteSourceRefreshInterval::Manual,
-                last_successful_update_unix_secs: 0,
-                proxy_server_nameservers: Vec::new(),
-            },
-            url_input: contents.to_owned(),
-        });
-    }
-
-    let mut id = None;
-    let mut name = None;
-    let mut enabled = None;
-    let mut url = None;
-    let mut refresh_interval = None;
-    let mut last_successful_update_unix_secs = None;
-    let mut proxy_server_nameservers = Vec::new();
-    for line in contents.lines().skip(1) {
-        let fields = line.split('\t').collect::<Vec<_>>();
-        match fields.as_slice() {
-            ["id", value] if id.is_none() => id = Some((*value).to_owned()),
-            ["name", value] if version == Some(STORED_SUBSCRIPTION_VERSION) && name.is_none() => {
-                name = Some(validate_subscription_source_name(&decode_hex(value)?)?);
-            }
-            ["enabled", value]
-                if version == Some(STORED_SUBSCRIPTION_VERSION) && enabled.is_none() =>
-            {
-                enabled = Some(match *value {
-                    "true" => true,
-                    "false" => false,
-                    _ => return Err(SubscriptionStoreError::StoredSourceUnavailable),
-                });
-            }
-            ["url", value] if url.is_none() => url = Some(decode_hex(value)?),
-            ["refresh", value] if refresh_interval.is_none() => {
-                refresh_interval = Some(
-                    RemoteSourceRefreshInterval::parse_key(value)
-                        .ok_or(SubscriptionStoreError::StoredSourceUnavailable)?,
-                );
-            }
-            ["last-success", value] if last_successful_update_unix_secs.is_none() => {
-                last_successful_update_unix_secs = Some(
-                    value
-                        .parse::<u64>()
-                        .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?,
-                );
-            }
-            ["proxy-dns", value]
-                if matches!(
-                    version,
-                    Some(STORED_SUBSCRIPTION_VERSION | LEGACY_MANIS_STORED_SUBSCRIPTION_VERSION_V2)
-                ) && proxy_server_nameservers.len() < MAX_SUBSCRIPTION_PROXY_DNS_SERVERS =>
-            {
-                let decoded = decode_hex(value)?;
-                let nameserver = ProxyDnsServer::parse_https(&decoded)
-                    .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
-                if !proxy_server_nameservers.contains(&nameserver) {
-                    proxy_server_nameservers.push(nameserver);
-                }
-            }
-            _ => return Err(SubscriptionStoreError::StoredSourceUnavailable),
-        }
-    }
-    let id = id.ok_or(SubscriptionStoreError::StoredSourceUnavailable)?;
-    if id != expected_id || !valid_subscription_source_id(&id) {
-        return Err(SubscriptionStoreError::StoredSourceUnavailable);
-    }
-    let url_input = url.ok_or(SubscriptionStoreError::StoredSourceUnavailable)?;
-    let source = SecretUrl::parse_subscription(&url_input)
-        .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
-    let name = name.unwrap_or_else(|| {
-        source
-            .subscription_name()
-            .unwrap_or_else(|| "Subscription".to_owned())
-    });
-    Ok(DecodedSubscriptionSource {
-        stored: StoredSubscription {
-            id,
-            name,
-            source,
-            enabled: enabled.unwrap_or(true),
-            refresh_interval: refresh_interval.unwrap_or_default(),
-            last_successful_update_unix_secs: last_successful_update_unix_secs.unwrap_or_default(),
-            proxy_server_nameservers,
-        },
-        url_input,
-    })
-}
-
-#[cfg(not(windows))]
-#[allow(dead_code)]
-fn subscription_source_file_name(id: &str) -> Result<String, SubscriptionStoreError> {
-    if id == "subscription:legacy" {
-        Ok(IMPORTED_SUBSCRIPTION_FILE.to_owned())
-    } else if valid_stored_id(id, STORED_SUBSCRIPTION_PREFIX) {
-        Ok(format!("{id}{STORED_SUBSCRIPTION_SUFFIX}"))
-    } else {
-        Err(SubscriptionStoreError::StoreUnavailable)
-    }
-}
-
-#[cfg(not(windows))]
-fn valid_subscription_source_id(id: &str) -> bool {
-    id == "subscription:legacy" || valid_stored_id(id, STORED_SUBSCRIPTION_PREFIX)
-}
-
-pub(crate) fn new_managed_policy_id() -> String {
-    next_stored_source_id(MANAGED_POLICY_PREFIX)
-}
-
-fn direct_policy_for_member(
-    member: &NodeIdentity,
-    current_group_id: &str,
-    groups: &[ManagedPolicyGroup],
-) -> Result<Option<PolicyRef>, LoadError> {
-    if member.source_id == "builtin" {
-        return Ok(match member.node_name.as_str() {
-            "DIRECT" => Some(PolicyRef::Direct),
-            "REJECT" => Some(PolicyRef::Reject),
-            _ => None,
-        });
-    }
-    let Some(policy_id) = member.source_id.strip_prefix("policy:") else {
-        return Ok(None);
-    };
-    if policy_id == current_group_id {
-        return Ok(None);
-    }
-    groups
-        .iter()
-        .find(|candidate| candidate.id == policy_id)
-        .map(|candidate| {
-            Name::parse(&candidate.name)
-                .map(PolicyRef::Group)
-                .map_err(|error| LoadError::Runtime(error.to_string()))
-        })
-        .transpose()
-}
-
-#[allow(clippy::too_many_lines)]
-fn compile_managed_policy_groups(
-    groups: &[ManagedPolicyGroup],
-    stored_provider_indexes: &HashMap<&str, usize>,
-    stored_single_nodes: &[StoredSingleNode],
-    vless_nodes: &[VlessProxy],
-    provider_count: usize,
-) -> Result<Vec<UserPolicyGroup>, LoadError> {
-    validate_managed_policy_references(groups)?;
-    groups
-        .iter()
-        .map(|group| {
-            let mut provider_indexes = Vec::new();
-            let mut direct_proxies = Vec::new();
-            let mut direct_policies = Vec::new();
-            let filter = match &group.matcher {
-                PolicyCandidateMatcher::All => {
-                    provider_indexes.extend(0..provider_count);
-                    direct_proxies.extend(vless_nodes.iter().map(|proxy| proxy.name().clone()));
-                    None
-                }
-                PolicyCandidateMatcher::NameContains(fragment) => {
-                    provider_indexes.extend(0..provider_count);
-                    let lowercase = fragment.to_lowercase();
-                    direct_proxies.extend(
-                        vless_nodes
-                            .iter()
-                            .filter(|proxy| {
-                                proxy.name().as_str().to_lowercase().contains(&lowercase)
-                            })
-                            .map(|proxy| proxy.name().clone()),
-                    );
-                    Some(format!("(?i){}", escape_regex(fragment)))
-                }
-                PolicyCandidateMatcher::Explicit(members) => {
-                    let mut provider_names = Vec::new();
-                    for member in members {
-                        if member.source_id == "builtin" || member.source_id.starts_with("policy:")
-                        {
-                            if let Some(policy) =
-                                direct_policy_for_member(member, &group.id, groups)?
-                            {
-                                direct_policies.push(policy);
-                            }
-                            continue;
-                        }
-                        if member.source_id == "saved" {
-                            if let Some(stored) = stored_single_nodes
-                                .iter()
-                                .find(|stored| stored.source.preview().name == member.node_name)
-                                && let Some(index) =
-                                    stored_provider_indexes.get(stored.id.as_str()).copied()
-                            {
-                                if !provider_indexes.contains(&index) {
-                                    provider_indexes.push(index);
-                                }
-                            } else if let Some(proxy) = vless_nodes
-                                .iter()
-                                .find(|proxy| proxy.name().as_str() == member.node_name)
-                            {
-                                direct_proxies.push(proxy.name().clone());
-                            }
-                            continue;
-                        }
-                        let Some(stored_id) = member.source_id.strip_prefix("subscription:") else {
-                            continue;
-                        };
-                        let Some(index) = stored_provider_indexes.get(stored_id).copied() else {
-                            continue;
-                        };
-                        if !provider_indexes.contains(&index) {
-                            provider_indexes.push(index);
-                        }
-                        provider_names.push(member.node_name.as_str());
-                    }
-                    (!provider_names.is_empty()).then(|| {
-                        format!(
-                            "^(?:{})$",
-                            provider_names
-                                .into_iter()
-                                .map(escape_regex)
-                                .collect::<Vec<_>>()
-                                .join("|")
-                        )
-                    })
-                }
-            };
-            if provider_indexes.is_empty()
-                && direct_proxies.is_empty()
-                && direct_policies.is_empty()
-            {
-                return Err(LoadError::Runtime(format!(
-                    "策略组“{}”没有匹配到可用节点",
-                    group.name
-                )));
-            }
-            let kind = match group.strategy {
-                ManagedPolicyStrategy::Manual => UserPolicyGroupKind::Select,
-                ManagedPolicyStrategy::LowestLatency => UserPolicyGroupKind::UrlTest {
-                    tolerance: 50,
-                    interval_secs: group.test_interval_secs,
-                },
-            };
-            Ok(UserPolicyGroup {
-                name: Name::parse(&group.name)
-                    .map_err(|error| LoadError::Runtime(error.to_string()))?,
-                icon: None,
-                kind,
-                provider_indexes,
-                direct_proxies,
-                direct_policies,
-                filter,
-            })
-        })
-        .collect()
-}
-
-pub(crate) fn validate_managed_policy_references(
-    groups: &[ManagedPolicyGroup],
-) -> Result<(), LoadError> {
-    fn visit(
-        id: &str,
-        groups: &[ManagedPolicyGroup],
-        visiting: &mut BTreeSet<String>,
-        visited: &mut BTreeSet<String>,
-    ) -> Result<(), LoadError> {
-        if visited.contains(id) {
-            return Ok(());
-        }
-        if !visiting.insert(id.to_owned()) {
-            return Err(LoadError::Runtime("策略组之间不能形成循环引用".to_owned()));
-        }
-        let group = groups
-            .iter()
-            .find(|group| group.id == id)
-            .ok_or_else(|| LoadError::Runtime("策略组引用不存在".to_owned()))?;
-        if let PolicyCandidateMatcher::Explicit(members) = &group.matcher {
-            for member in members {
-                if let Some(candidate_id) = member.source_id.strip_prefix("policy:") {
-                    if candidate_id == id {
-                        return Err(LoadError::Runtime("策略组不能引用自身".to_owned()));
-                    }
-                    visit(candidate_id, groups, visiting, visited)?;
-                }
-            }
-        }
-        visiting.remove(id);
-        visited.insert(id.to_owned());
-        Ok(())
-    }
-
-    let mut visiting = BTreeSet::new();
-    let mut visited = BTreeSet::new();
-    for group in groups {
-        visit(&group.id, groups, &mut visiting, &mut visited)?;
-    }
-    Ok(())
-}
-
-fn escape_regex(value: &str) -> String {
-    let mut escaped = String::with_capacity(value.len());
-    for character in value.chars() {
-        if matches!(
-            character,
-            '\\' | '.' | '+' | '*' | '?' | '(' | ')' | '|' | '[' | ']' | '{' | '}' | '^' | '$'
-        ) {
-            escaped.push('\\');
-        }
-        escaped.push(character);
-    }
-    escaped
-}
-
-#[cfg(not(windows))]
-pub(crate) fn save_managed_policy_in(
-    directory: &Path,
-    group: &ManagedPolicyGroup,
-) -> Result<(), SubscriptionStoreError> {
-    group
-        .validate()
-        .map_err(|_error| SubscriptionStoreError::InvalidSource)?;
-    if !valid_managed_policy_id(&group.id) {
-        return Err(SubscriptionStoreError::InvalidSource);
-    }
-    let contents = encode_managed_policy(group)?;
-    let file_name = format!("{}{MANAGED_POLICY_SUFFIX}", group.id);
-    write_private_atomic(directory, &file_name, contents.as_bytes())
-        .map(|_path| ())
-        .map_err(|_error| SubscriptionStoreError::StoreUnavailable)
-}
-
-#[cfg(windows)]
-pub(crate) fn save_managed_policy_in(
-    _directory: &Path,
-    _group: &ManagedPolicyGroup,
-) -> Result<(), SubscriptionStoreError> {
-    Err(SubscriptionStoreError::StoreUnavailable)
-}
-
-#[cfg(not(windows))]
-pub(crate) fn load_managed_policy_groups_in(
-    directory: &Path,
-) -> Result<Vec<ManagedPolicyGroup>, SubscriptionStoreError> {
-    let mut groups = BTreeMap::new();
-    let Some(entries) = private_store_entries(directory)? else {
-        return Ok(Vec::new());
-    };
-    for path in &entries {
-        let Some(file_name) = path.file_name().and_then(std::ffi::OsStr::to_str) else {
-            continue;
-        };
-        let Some(id) = file_name.strip_suffix(MANAGED_POLICY_SUFFIX) else {
-            continue;
-        };
-        if !valid_managed_policy_id(id) {
-            continue;
-        }
-        let contents = read_private_source_allow_empty(path)?;
-        let group = decode_managed_policy(&contents, id)?;
-        groups.insert(group.id.clone(), group);
-        if groups.len() > MAX_MANAGED_POLICIES {
-            return Err(SubscriptionStoreError::StoredSourceUnavailable);
-        }
-    }
-    for path in entries {
-        let Some(file_name) = path.file_name().and_then(std::ffi::OsStr::to_str) else {
-            continue;
-        };
-        let Some(id) = file_name.strip_suffix(LEGACY_MANAGED_POLICY_SUFFIX) else {
-            continue;
-        };
-        if !valid_stored_id(id, LEGACY_MANAGED_POLICY_PREFIX) {
-            continue;
-        }
-        if !groups.contains_key(id) {
-            let contents = read_private_source_allow_empty(&path)?;
-            let group = decode_managed_policy(&contents, id)?;
-            save_managed_policy_in(directory, &group)?;
-            groups.insert(group.id.clone(), group);
-        }
-        remove_private_source(&path)?;
-        if groups.len() > MAX_MANAGED_POLICIES {
-            return Err(SubscriptionStoreError::StoredSourceUnavailable);
-        }
-    }
-    Ok(groups.into_values().collect())
-}
-
-#[cfg(windows)]
-pub(crate) fn load_managed_policy_groups_in(
-    _directory: &Path,
-) -> Result<Vec<ManagedPolicyGroup>, SubscriptionStoreError> {
-    Ok(Vec::new())
-}
-
-#[cfg(not(windows))]
-pub(crate) fn remove_managed_policy_in(
-    directory: &Path,
-    id: &str,
-) -> Result<(), SubscriptionStoreError> {
-    require_clean_absolute_store(directory)?;
-    if !valid_managed_policy_id(id) {
-        return Err(SubscriptionStoreError::StoreUnavailable);
-    }
-    remove_private_source(&directory.join(format!("{id}{MANAGED_POLICY_SUFFIX}")))?;
-    remove_private_source(&directory.join(format!("{id}{LEGACY_MANAGED_POLICY_SUFFIX}")))
-}
-
-#[cfg(windows)]
-pub(crate) fn remove_managed_policy_in(
-    _directory: &Path,
-    _id: &str,
-) -> Result<(), SubscriptionStoreError> {
-    Err(SubscriptionStoreError::StoreUnavailable)
-}
-
-fn encode_managed_policy(group: &ManagedPolicyGroup) -> Result<String, SubscriptionStoreError> {
-    group
-        .validate()
-        .map_err(|_error| SubscriptionStoreError::InvalidSource)?;
-    let (matcher_key, filter, members): (&str, &str, Vec<&NodeIdentity>) = match &group.matcher {
-        PolicyCandidateMatcher::All => ("all", "", Vec::new()),
-        PolicyCandidateMatcher::NameContains(value) => ("name", value, Vec::new()),
-        PolicyCandidateMatcher::Explicit(members) => ("explicit", "", members.iter().collect()),
-    };
-    let mut lines = vec![
-        MANAGED_POLICY_VERSION.to_owned(),
-        format!("id\t{}", group.id),
-        format!("name\t{}", encode_hex(&group.name)),
-        format!("icon\t{}", group.icon.key()),
-        format!("strategy\t{}", group.strategy.key()),
-        format!("interval\t{}", group.test_interval_secs),
-        format!("matcher\t{matcher_key}"),
-        format!("filter\t{}", encode_hex(filter)),
-    ];
-    lines.extend(members.into_iter().map(|member| {
-        format!(
-            "member\t{}\t{}",
-            encode_hex(&member.source_id),
-            encode_hex(&member.node_name)
-        )
-    }));
-    let contents = lines.join("\n");
-    if contents.len() as u64 > MAX_SUBSCRIPTION_FILE_BYTES {
-        return Err(SubscriptionStoreError::InvalidSource);
-    }
-    Ok(contents)
-}
-
-fn decode_managed_policy(
-    contents: &str,
-    expected_id: &str,
-) -> Result<ManagedPolicyGroup, SubscriptionStoreError> {
-    let mut lines = contents.lines();
-    if !lines.next().is_some_and(|version| {
-        matches!(
-            version,
-            MANAGED_POLICY_VERSION
-                | LEGACY_MANIS_MANAGED_POLICY_VERSION
-                | LEGACY_RELAY_MANAGED_POLICY_VERSION
-        )
-    }) {
-        return Err(SubscriptionStoreError::StoredSourceUnavailable);
-    }
-    let mut id = None;
-    let mut name = None;
-    let mut icon = None;
-    let mut strategy = None;
-    let mut interval = None;
-    let mut matcher = None;
-    let mut filter = None;
-    let mut members = BTreeSet::new();
-    for line in lines {
-        let fields = line.split('\t').collect::<Vec<_>>();
-        match fields.as_slice() {
-            ["id", value] if id.is_none() => id = Some((*value).to_owned()),
-            ["name", value] if name.is_none() => name = Some(decode_hex(value)?),
-            ["icon", value] if icon.is_none() => {
-                icon = Some(
-                    ManagedPolicyIcon::parse_key(value)
-                        .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?,
-                );
-            }
-            ["strategy", value] if strategy.is_none() => {
-                strategy = Some(
-                    ManagedPolicyStrategy::parse_key(value)
-                        .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?,
-                );
-            }
-            ["interval", value] if interval.is_none() => {
-                interval = Some(
-                    value
-                        .parse::<u32>()
-                        .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?,
-                );
-            }
-            ["matcher", value] if matcher.is_none() => matcher = Some((*value).to_owned()),
-            ["filter", value] if filter.is_none() => filter = Some(decode_hex(value)?),
-            ["member", source, node] => {
-                members.insert(
-                    NodeIdentity::new(&decode_hex(source)?, &decode_hex(node)?)
-                        .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?,
-                );
-            }
-            _ => return Err(SubscriptionStoreError::StoredSourceUnavailable),
-        }
-    }
-    let id = id.ok_or(SubscriptionStoreError::StoredSourceUnavailable)?;
-    if id != expected_id {
-        return Err(SubscriptionStoreError::StoredSourceUnavailable);
-    }
-    let mut group = ManagedPolicyGroup::new(
-        &id,
-        &name.ok_or(SubscriptionStoreError::StoredSourceUnavailable)?,
-    )
-    .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
-    group.icon = icon.ok_or(SubscriptionStoreError::StoredSourceUnavailable)?;
-    group.strategy = strategy.ok_or(SubscriptionStoreError::StoredSourceUnavailable)?;
-    group
-        .set_test_interval_secs(interval.unwrap_or(600))
-        .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
-    let filter = filter.ok_or(SubscriptionStoreError::StoredSourceUnavailable)?;
-    let parsed_matcher = match matcher.as_deref() {
-        Some("all") if filter.is_empty() && members.is_empty() => PolicyCandidateMatcher::All,
-        Some("name") if !filter.is_empty() && members.is_empty() => {
-            PolicyCandidateMatcher::name_contains(&filter)
-                .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?
-        }
-        Some("explicit") if filter.is_empty() => PolicyCandidateMatcher::Explicit(members),
-        _ => return Err(SubscriptionStoreError::StoredSourceUnavailable),
-    };
-    group
-        .set_matcher(parsed_matcher)
-        .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
-    group
-        .validate()
-        .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
-    Ok(group)
-}
-
-fn valid_managed_policy_id(id: &str) -> bool {
-    valid_stored_id(id, MANAGED_POLICY_PREFIX) || valid_stored_id(id, LEGACY_MANAGED_POLICY_PREFIX)
-}
-
-fn encode_node_selection_preferences(
-    preferences: &NodeSelectionPreferences,
-) -> Result<String, SubscriptionStoreError> {
-    preferences.validate()?;
-    let mut lines = vec![NODE_SELECTION_PREFERENCES_VERSION.to_owned()];
-    if let Some(global) = preferences.global() {
-        let checked = NodeIdentity::new(&global.source_id, &global.node_name)
-            .map_err(|_error| SubscriptionStoreError::InvalidSource)?;
-        lines.push(format!(
-            "global\t{}\t{}",
-            encode_hex(&checked.source_id),
-            encode_hex(&checked.node_name)
-        ));
-    }
-    lines.extend(
-        preferences.iter_policy_targets().map(|(policy, target)| {
-            format!("policy\t{}\t{}", encode_hex(policy), encode_hex(target))
-        }),
-    );
-    let contents = lines.join("\n");
-    if contents.len() as u64 > MAX_NODE_SELECTION_FILE_BYTES {
-        return Err(SubscriptionStoreError::InvalidSource);
-    }
-    Ok(contents)
-}
-
-fn decode_node_selection_preferences(
-    contents: &str,
-) -> Result<NodeSelectionPreferences, SubscriptionStoreError> {
-    let mut lines = contents.lines();
-    if !storage_version_supported(
-        lines.next(),
-        NODE_SELECTION_PREFERENCES_VERSION,
-        LEGACY_RELAY_NODE_SELECTION_PREFERENCES_VERSION,
-    ) {
-        return Err(SubscriptionStoreError::StoredSourceUnavailable);
-    }
-    let mut preferences = NodeSelectionPreferences::default();
-    let mut seen_global = false;
-    for line in lines {
-        let fields = line.split('\t').collect::<Vec<_>>();
-        match fields.as_slice() {
-            ["global", source, node] if !seen_global => {
-                seen_global = true;
-                let source = decode_hex(source)?;
-                let node = decode_hex(node)?;
-                preferences.global = Some(
-                    NodeIdentity::new(&source, &node)
-                        .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?,
-                );
-            }
-            ["policy", policy, target] => {
-                let policy = decode_hex(policy)?;
-                let target = decode_hex(target)?;
-                validate_node_selection_policy(&policy)
-                    .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
-                validate_node_selection_target(&target)
-                    .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
-                if preferences.policy_targets.insert(policy, target).is_some()
-                    || preferences.policy_targets.len() > MAX_NODE_SELECTION_POLICY_TARGETS
-                {
-                    return Err(SubscriptionStoreError::StoredSourceUnavailable);
-                }
-            }
-            _ => return Err(SubscriptionStoreError::StoredSourceUnavailable),
-        }
-    }
-    Ok(preferences)
-}
-
-fn validate_node_selection_policy(policy: &str) -> Result<(), SubscriptionStoreError> {
-    Name::parse(policy)
-        .map(|_name| ())
-        .map_err(|_error| SubscriptionStoreError::InvalidSource)
-}
-
-fn validate_node_selection_target(target: &str) -> Result<(), SubscriptionStoreError> {
-    if valid_node_selection_target(target) {
-        Ok(())
-    } else {
-        Err(SubscriptionStoreError::InvalidSource)
-    }
-}
-
-fn valid_node_selection_target(target: &str) -> bool {
-    !target.is_empty()
-        && target.len() <= 512
-        && target.trim() == target
-        && !target.chars().any(char::is_control)
-}
-
-#[allow(dead_code)]
-struct DecodedQxRuleSource {
-    stored: StoredQxRuleSource,
-    url_input: String,
-}
-
-#[cfg(not(windows))]
-#[allow(dead_code)]
-fn read_qx_rule_source_by_id_in(
-    directory: &Path,
-    id: &str,
-) -> Result<DecodedQxRuleSource, SubscriptionStoreError> {
-    require_clean_absolute_store(directory)?;
-    let file_name = qx_rule_source_file_name(id)?;
-    let contents = read_private_source_allow_empty_max(
-        &directory.join(file_name),
-        MAX_QX_RULE_SOURCE_FILE_BYTES,
-    )?;
-    decode_qx_rule_source_with_url(&contents, id)
-}
-
-#[cfg(not(windows))]
-#[allow(dead_code, clippy::too_many_arguments)]
-fn write_qx_rule_source_in(
-    directory: &Path,
-    id: &str,
-    url_input: &str,
-    target_policy: &str,
-    content: &str,
-    enabled: bool,
-    refresh_interval: RemoteSourceRefreshInterval,
-    last_successful_update_unix_secs: u64,
-) -> Result<StoredQxRuleSource, SubscriptionStoreError> {
-    let source = SecretUrl::parse_https(url_input)
-        .map_err(|_error| SubscriptionStoreError::InvalidSource)?;
-    let target_policy =
-        Name::parse(target_policy).map_err(|_error| SubscriptionStoreError::InvalidSource)?;
-    let (rule_count, diagnostic_count) = validate_qx_rule_source_content(content)?;
-    let contents = encode_qx_rule_source(
-        id,
-        url_input,
-        &target_policy,
-        content,
-        enabled,
-        refresh_interval,
-        last_successful_update_unix_secs,
-    )?;
-    let file_name = qx_rule_source_file_name(id)?;
-    write_private_atomic(directory, &file_name, contents.as_bytes())
-        .map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
-    Ok(StoredQxRuleSource {
-        id: id.to_owned(),
-        source,
-        enabled,
-        target_policy,
-        content: content.to_owned(),
-        rule_count,
-        diagnostic_count,
-        refresh_interval,
-        last_successful_update_unix_secs,
-    })
-}
-
-#[cfg(not(windows))]
-#[allow(dead_code)]
-fn qx_rule_source_file_name(id: &str) -> Result<String, SubscriptionStoreError> {
-    if valid_stored_id(id, QX_RULE_SOURCE_PREFIX) {
-        Ok(format!("{id}{QX_RULE_SOURCE_SUFFIX}"))
-    } else {
-        Err(SubscriptionStoreError::StoreUnavailable)
-    }
-}
-
-fn encode_qx_rule_source(
-    id: &str,
-    url_input: &str,
-    target_policy: &Name,
-    content: &str,
-    enabled: bool,
-    refresh_interval: RemoteSourceRefreshInterval,
-    last_successful_update_unix_secs: u64,
-) -> Result<String, SubscriptionStoreError> {
-    if !valid_stored_id(id, QX_RULE_SOURCE_PREFIX) {
-        return Err(SubscriptionStoreError::InvalidSource);
-    }
-    SecretUrl::parse_https(url_input).map_err(|_error| SubscriptionStoreError::InvalidSource)?;
-    validate_qx_rule_source_content(content)?;
-    Ok([
-        QX_RULE_SOURCE_VERSION.to_owned(),
-        format!("id\t{id}"),
-        format!("url\t{}", encode_hex(url_input)),
-        format!("target\t{}", encode_hex(target_policy.as_str())),
-        format!("content\t{}", encode_hex(content)),
-        format!("enabled\t{}", u8::from(enabled)),
-        format!("refresh\t{}", refresh_interval.key()),
-        format!("last-success\t{last_successful_update_unix_secs}"),
-    ]
-    .join("\n"))
-}
-
-fn decode_qx_rule_source(
-    contents: &str,
-    expected_id: &str,
-) -> Result<StoredQxRuleSource, SubscriptionStoreError> {
-    decode_qx_rule_source_with_url(contents, expected_id).map(|decoded| decoded.stored)
-}
-
-fn decode_qx_rule_source_with_url(
-    contents: &str,
-    expected_id: &str,
-) -> Result<DecodedQxRuleSource, SubscriptionStoreError> {
-    let mut lines = contents.lines();
-    let version = lines.next();
-    if !matches!(
-        version,
-        Some(
-            QX_RULE_SOURCE_VERSION
-                | LEGACY_MANIS_QX_RULE_SOURCE_VERSION
-                | LEGACY_RELAY_QX_RULE_SOURCE_VERSION
-        )
-    ) {
-        return Err(SubscriptionStoreError::StoredSourceUnavailable);
-    }
-    let mut id = None;
-    let mut url = None;
-    let mut target = None;
-    let mut content = None;
-    let mut enabled = None;
-    let mut refresh_interval = None;
-    let mut last_successful_update_unix_secs = None;
-    for line in lines {
-        let fields = line.split('\t').collect::<Vec<_>>();
-        match fields.as_slice() {
-            ["id", value] if id.is_none() => id = Some((*value).to_owned()),
-            ["url", value] if url.is_none() => url = Some(decode_hex(value)?),
-            ["target", value] if target.is_none() => target = Some(decode_hex(value)?),
-            ["content", value] if content.is_none() => content = Some(decode_hex(value)?),
-            ["enabled", value] if enabled.is_none() => {
-                enabled = Some(match *value {
-                    "0" => false,
-                    "1" => true,
-                    _ => return Err(SubscriptionStoreError::StoredSourceUnavailable),
-                });
-            }
-            ["refresh", value] if refresh_interval.is_none() => {
-                refresh_interval = Some(
-                    RemoteSourceRefreshInterval::parse_key(value)
-                        .ok_or(SubscriptionStoreError::StoredSourceUnavailable)?,
-                );
-            }
-            ["last-success", value] if last_successful_update_unix_secs.is_none() => {
-                last_successful_update_unix_secs = Some(
-                    value
-                        .parse::<u64>()
-                        .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?,
-                );
-            }
-            _ => return Err(SubscriptionStoreError::StoredSourceUnavailable),
-        }
-    }
-    let id = id.ok_or(SubscriptionStoreError::StoredSourceUnavailable)?;
-    if id != expected_id || !valid_stored_id(&id, QX_RULE_SOURCE_PREFIX) {
-        return Err(SubscriptionStoreError::StoredSourceUnavailable);
-    }
-    let url_input = url.ok_or(SubscriptionStoreError::StoredSourceUnavailable)?;
-    let source = SecretUrl::parse_https(&url_input)
-        .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
-    let target_policy =
-        Name::parse(&target.ok_or(SubscriptionStoreError::StoredSourceUnavailable)?)
-            .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
-    let content = content.ok_or(SubscriptionStoreError::StoredSourceUnavailable)?;
-    let (rule_count, diagnostic_count) = validate_qx_rule_source_content(&content)?;
-    Ok(DecodedQxRuleSource {
-        stored: StoredQxRuleSource {
-            id,
-            source,
-            enabled: enabled.unwrap_or(true),
-            target_policy,
-            content,
-            rule_count,
-            diagnostic_count,
-            refresh_interval: refresh_interval.unwrap_or_default(),
-            last_successful_update_unix_secs: last_successful_update_unix_secs.unwrap_or_default(),
-        },
-        url_input,
-    })
-}
-
-fn validate_qx_rule_source_content(
-    content: &str,
-) -> Result<(usize, usize), SubscriptionStoreError> {
-    if content.is_empty() || content.len() > MAX_QX_RULE_SOURCE_CONTENT_BYTES {
-        return Err(SubscriptionStoreError::InvalidSource);
-    }
-    let parsed = QxRuleList::parse(content);
-    if parsed.rules.is_empty() {
-        return Err(SubscriptionStoreError::InvalidSource);
-    }
-    Ok((parsed.rules.len(), parsed.diagnostics.len()))
-}
-
-fn storage_version_supported(actual: Option<&str>, current: &str, legacy_relay: &str) -> bool {
-    actual.is_some_and(|actual| actual == current || actual == legacy_relay)
-}
-
-fn encode_hex(value: &str) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut encoded = String::with_capacity(value.len() * 2);
-    for byte in value.bytes() {
-        encoded.push(char::from(HEX[usize::from(byte >> 4)]));
-        encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
-    }
-    encoded
-}
-
-fn decode_hex(value: &str) -> Result<String, SubscriptionStoreError> {
-    if !value.len().is_multiple_of(2) {
-        return Err(SubscriptionStoreError::StoredSourceUnavailable);
-    }
-    let bytes = value.as_bytes();
-    let mut decoded = Vec::with_capacity(bytes.len() / 2);
-    for index in (0..bytes.len()).step_by(2) {
-        let high = decode_hex_digit(bytes[index])?;
-        let low = decode_hex_digit(bytes[index + 1])?;
-        decoded.push((high << 4) | low);
-    }
-    String::from_utf8(decoded).map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)
-}
-
-fn decode_hex_digit(value: u8) -> Result<u8, SubscriptionStoreError> {
-    match value {
-        b'0'..=b'9' => Ok(value - b'0'),
-        b'a'..=b'f' => Ok(value - b'a' + 10),
-        _ => Err(SubscriptionStoreError::StoredSourceUnavailable),
-    }
-}
-
-fn next_stored_source_id(prefix: &str) -> String {
-    let timestamp = current_unix_nanos();
-    let sequence = NEXT_STORED_SOURCE.fetch_add(1, Ordering::Relaxed);
-    format!("{prefix}{timestamp:x}-{sequence:x}")
-}
-
-pub(crate) fn current_unix_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-}
-
-fn current_unix_nanos() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos()
-}
-
-fn valid_stored_id(id: &str, prefix: &str) -> bool {
-    id.strip_prefix(prefix).is_some_and(|suffix| {
-        !suffix.is_empty()
-            && suffix
-                .bytes()
-                .all(|byte| byte.is_ascii_hexdigit() || byte == b'-')
-    })
-}
-
-fn valid_workspace_group_id(id: &str) -> bool {
-    !id.is_empty()
-        && id.len() <= 160
-        && id
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b':' | b'-' | b'_'))
-}
-
-#[cfg(not(windows))]
-fn private_store_entries(directory: &Path) -> Result<Option<Vec<PathBuf>>, SubscriptionStoreError> {
-    require_clean_absolute_store(directory)?;
-    let iterator = match fs::read_dir(directory) {
-        Ok(iterator) => iterator,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(_error) => return Err(SubscriptionStoreError::StoredSourceUnavailable),
-    };
-    let mut paths = Vec::new();
-    for entry in iterator {
-        paths.push(
-            entry
-                .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?
-                .path(),
-        );
-    }
-    Ok(Some(paths))
-}
-
-#[cfg(not(windows))]
-#[allow(dead_code)]
-fn read_private_source(path: &Path) -> Result<String, SubscriptionStoreError> {
-    let contents = read_private_source_allow_empty(path)?;
-    if contents.is_empty() || contents.lines().count() != 1 || contents.trim() != contents {
-        return Err(SubscriptionStoreError::StoredSourceUnavailable);
-    }
-    Ok(contents)
-}
-
-#[cfg(not(windows))]
-fn read_private_source_allow_empty(path: &Path) -> Result<String, SubscriptionStoreError> {
-    read_private_source_allow_empty_max(path, MAX_SUBSCRIPTION_FILE_BYTES)
-}
-
-#[cfg(not(windows))]
-fn read_private_source_allow_empty_max(
-    path: &Path,
-    max_bytes: u64,
-) -> Result<String, SubscriptionStoreError> {
-    let metadata = fs::symlink_metadata(path)
-        .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return Err(SubscriptionStoreError::StoredSourceUnavailable);
-    }
-    let file =
-        fs::File::open(path).map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
-    let opened_metadata = file
-        .metadata()
-        .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
-    if opened_metadata.len() > max_bytes {
-        return Err(SubscriptionStoreError::StoredSourceUnavailable);
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::{MetadataExt, PermissionsExt};
-
-        if metadata.dev() != opened_metadata.dev()
-            || metadata.ino() != opened_metadata.ino()
-            || opened_metadata.permissions().mode() & 0o077 != 0
-        {
-            return Err(SubscriptionStoreError::StoredSourceUnavailable);
-        }
-    }
-    let mut contents = String::new();
-    file.take(max_bytes + 1)
-        .read_to_string(&mut contents)
-        .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
-    if contents.len() as u64 > max_bytes {
-        return Err(SubscriptionStoreError::StoredSourceUnavailable);
-    }
-    Ok(contents)
-}
-
-#[cfg(not(windows))]
-fn remove_private_source(path: &Path) -> Result<(), SubscriptionStoreError> {
-    match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
-            Err(SubscriptionStoreError::StoredSourceUnavailable)
-        }
-        Ok(_) => fs::remove_file(path).map_err(|_error| SubscriptionStoreError::StoreUnavailable),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(_error) => Err(SubscriptionStoreError::StoreUnavailable),
-    }
-}
-
-#[cfg(not(windows))]
-#[allow(dead_code)]
-pub(crate) fn save_imported_subscription_in(
-    directory: &Path,
-    input: &str,
-) -> Result<SecretUrl, SubscriptionStoreError> {
-    let subscription = SecretUrl::parse_subscription(input)
-        .map_err(|_error| SubscriptionStoreError::InvalidSource)?;
-    write_private_atomic(directory, IMPORTED_SUBSCRIPTION_FILE, input.as_bytes())
-        .map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
-    Ok(subscription)
-}
-
-#[cfg(windows)]
-pub(crate) fn save_imported_subscription_in(
-    _directory: &Path,
-    _input: &str,
-) -> Result<SecretUrl, SubscriptionStoreError> {
-    Err(SubscriptionStoreError::StoreUnavailable)
-}
-
-#[cfg(not(windows))]
-#[allow(dead_code)]
-pub(crate) fn load_imported_subscription_in(
-    directory: &Path,
-) -> Result<Option<SecretUrl>, SubscriptionStoreError> {
-    require_clean_absolute_store(directory)?;
-    let path = directory.join(IMPORTED_SUBSCRIPTION_FILE);
-    let metadata = match fs::symlink_metadata(&path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(_error) => return Err(SubscriptionStoreError::StoredSourceUnavailable),
-    };
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return Err(SubscriptionStoreError::StoredSourceUnavailable);
-    }
-    let file =
-        fs::File::open(&path).map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
-    let opened_metadata = file
-        .metadata()
-        .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
-    if opened_metadata.len() > MAX_SUBSCRIPTION_FILE_BYTES {
-        return Err(SubscriptionStoreError::StoredSourceUnavailable);
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::{MetadataExt, PermissionsExt};
-
-        if metadata.dev() != opened_metadata.dev()
-            || metadata.ino() != opened_metadata.ino()
-            || opened_metadata.permissions().mode() & 0o077 != 0
-        {
-            return Err(SubscriptionStoreError::StoredSourceUnavailable);
-        }
-    }
-    let mut contents = String::new();
-    file.take(MAX_SUBSCRIPTION_FILE_BYTES + 1)
-        .read_to_string(&mut contents)
-        .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
-    if contents.len() as u64 > MAX_SUBSCRIPTION_FILE_BYTES {
-        return Err(SubscriptionStoreError::StoredSourceUnavailable);
-    }
-    decode_subscription_source(&contents, "subscription:legacy")
-        .map(|decoded| Some(decoded.stored.source))
-}
-
-#[cfg(windows)]
-pub(crate) fn load_imported_subscription_in(
-    directory: &Path,
-) -> Result<Option<SecretUrl>, SubscriptionStoreError> {
-    if directory.join(IMPORTED_SUBSCRIPTION_FILE).exists() {
-        Err(SubscriptionStoreError::StoredSourceUnavailable)
-    } else {
-        Ok(None)
-    }
-}
-
-#[cfg(not(windows))]
-#[allow(dead_code)]
-pub(crate) fn remove_imported_subscription_in(
-    directory: &Path,
-) -> Result<(), SubscriptionStoreError> {
-    require_clean_absolute_store(directory)?;
-    let path = directory.join(IMPORTED_SUBSCRIPTION_FILE);
-    match fs::symlink_metadata(&path) {
-        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
-            Err(SubscriptionStoreError::StoredSourceUnavailable)
-        }
-        Ok(_) => fs::remove_file(path).map_err(|_error| SubscriptionStoreError::StoreUnavailable),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(_error) => Err(SubscriptionStoreError::StoreUnavailable),
-    }
-}
-
-#[cfg(windows)]
-pub(crate) fn remove_imported_subscription_in(
-    _directory: &Path,
-) -> Result<(), SubscriptionStoreError> {
-    Err(SubscriptionStoreError::StoreUnavailable)
-}
-
-#[cfg(not(windows))]
-fn require_clean_absolute_store(directory: &Path) -> Result<(), SubscriptionStoreError> {
-    if !directory.is_absolute() || !has_only_clean_components(directory) {
-        return Err(SubscriptionStoreError::StoreUnavailable);
-    }
-    match fs::symlink_metadata(directory) {
-        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
-            Err(SubscriptionStoreError::StoreUnavailable)
-        }
-        Ok(metadata) => {
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                if metadata.permissions().mode() & 0o077 != 0 {
-                    return Err(SubscriptionStoreError::StoredSourceUnavailable);
-                }
-            }
-            Ok(())
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(_error) => Err(SubscriptionStoreError::StoreUnavailable),
-    }
-}
-
-fn discover_preview_binary() -> Result<PathBuf, SubscriptionPreviewError> {
-    #[cfg(debug_assertions)]
-    if let Some(explicit) = brand::env_var_os(BINARY_ENV, LEGACY_RELAY_BINARY_ENV) {
-        return canonical_binary(Path::new(&explicit));
-    }
-    core_update::managed_core_binary_path()
-        .map_err(|_error| SubscriptionPreviewError::BinaryUnavailable)
-        .and_then(|path| canonical_binary(&path))
-}
-
-fn canonical_binary(path: &Path) -> Result<PathBuf, SubscriptionPreviewError> {
-    let canonical = path
-        .canonicalize()
-        .map_err(|_error| SubscriptionPreviewError::BinaryUnavailable)?;
-    canonical
-        .is_file()
-        .then_some(canonical)
-        .ok_or(SubscriptionPreviewError::BinaryUnavailable)
-}
-
-fn reserve_preview_port() -> Result<u16, SubscriptionPreviewError> {
-    TcpListener::bind("127.0.0.1:0")
-        .and_then(|listener| listener.local_addr())
-        .map(|address| address.port())
-        .map_err(|_error| SubscriptionPreviewError::WorkspaceUnavailable)
-}
-
-#[cfg(unix)]
-fn wait_for_preview_providers(
-    endpoint: &ControllerEndpoint,
-) -> Result<Vec<LoadedProvider>, SubscriptionPreviewError> {
-    let ControllerEndpoint::UnixSocket(socket_path) = endpoint else {
-        return Err(SubscriptionPreviewError::UnsupportedPlatform);
-    };
-    let client = MihomoClient::new(
-        ControllerConfig::default(),
-        UnixSocketTransport::new(socket_path),
-    );
-    for attempt in 0..PREVIEW_PROVIDER_ATTEMPTS {
-        if let Ok(providers) = client.fetch_proxy_providers() {
-            let providers = load_subscription_provider(&providers);
-            if providers.iter().any(|provider| !provider.nodes.is_empty()) {
-                return Ok(providers);
-            }
-        }
-        if attempt + 1 < PREVIEW_PROVIDER_ATTEMPTS {
-            thread::sleep(PREVIEW_PROVIDER_DELAY);
-        }
-    }
-    match client.fetch_proxy_providers() {
-        Ok(providers)
-            if providers.iter().any(|provider| {
-                provider.name == "subscription" && !provider.proxies.is_empty()
-            }) =>
-        {
-            Ok(load_subscription_provider(&providers))
-        }
-        Ok(_) => Err(SubscriptionPreviewError::EmptyProvider),
-        Err(_) => Err(SubscriptionPreviewError::ProviderUnavailable),
-    }
-}
-
 #[cfg(unix)]
 fn load_subscription_provider(providers: &[manis_mihomo::ProxyProvider]) -> Vec<LoadedProvider> {
     providers
@@ -4612,7 +562,7 @@ fn load_subscription_provider(providers: &[manis_mihomo::ProxyProvider]) -> Vec<
         .filter(|provider| provider.name == "subscription")
         .map(|provider| {
             let mut loaded = load_provider(provider);
-            "订阅预览".clone_into(&mut loaded.name);
+            "Subscription preview".clone_into(&mut loaded.name);
             loaded
         })
         .collect()
@@ -4680,12 +630,14 @@ impl ReadinessProbe for SingBoxReadinessProbe {
 pub(crate) fn configured_runtime(store_dir: Option<&Path>) -> ControllerRuntime {
     if let Some(variable) = first_unsupported_runtime_override(|name| env::var_os(name).is_some()) {
         return ControllerRuntime::Invalid {
-            message: format!("{variable} 已不再支持；Mihomo 配置和 controller 只能由 Manis 管理"),
+            message: format!(
+                "{variable} is no longer supported; Mihomo configuration and controller settings are managed only by Manis"
+            ),
         };
     }
     let Some(store_dir) = store_dir else {
         return ControllerRuntime::Invalid {
-            message: "无法确定 Manis 来源目录".to_owned(),
+            message: "Manis source directory could not be determined".to_owned(),
         };
     };
     #[cfg(debug_assertions)]
@@ -4693,7 +645,7 @@ pub(crate) fn configured_runtime(store_dir: Option<&Path>) -> ControllerRuntime 
         discover_mihomo_binary,
         |binary| {
             canonical_binary(Path::new(&binary))
-                .map_err(|_error| format!("{BINARY_ENV} 不是可执行文件"))
+                .map_err(|_error| format!("{BINARY_ENV} does not point to an executable file"))
         },
     );
     #[cfg(not(debug_assertions))]
@@ -4718,6 +670,9 @@ fn build_saved_sources_mihomo_runtime_with_binary(
     binary: &Path,
 ) -> Result<ControllerRuntime, String> {
     let data_dir = configured_data_dir()?;
+    #[cfg(unix)]
+    let controller = configured_managed_controller(&data_dir);
+    #[cfg(not(unix))]
     let controller = configured_managed_controller(&data_dir)?;
     build_saved_sources_mihomo_runtime_in(store_dir, binary, &data_dir, &controller)
 }
@@ -4741,13 +696,15 @@ fn build_saved_sources_mihomo_runtime_in(
         controller_secret: None,
     };
     let rendered = render_generated_profile(&spec, &profile).map_err(|error| error.to_string())?;
-    let config_file = write_private_atomic(data_dir, GENERATED_PROFILE_FILE, rendered.as_bytes())
-        .map_err(|_error| "无法写入 Mihomo 私有配置".to_owned())?;
+    let config_file =
+        write_private_atomic(data_dir, GENERATED_PROFILE_FILE, rendered.as_bytes())
+            .map_err(|_error| "private Mihomo configuration could not be written".to_owned())?;
     let config = managed_engine_config(&spec, config_file);
     validate_managed_config(&config).map_err(|error| error.to_string())?;
     let manager = EngineManager::new(config, ReadinessPolicy::default(), readiness_probe(&spec));
     Ok(ControllerRuntime::Managed {
         manager: Arc::new(Mutex::new(manager)),
+        apply_lock: Arc::new(Mutex::new(())),
         profile_source: RuntimeProfileSource::SavedSources,
         generated_profile: Some(spec),
         privileged: Arc::new(AtomicBool::new(false)),
@@ -4758,15 +715,17 @@ fn build_sing_box_runtime(store_dir: &Path) -> Result<ControllerRuntime, String>
     let binary = discover_sing_box_binary()?;
     let data_dir = brand::data_dir()
         .map(|directory| directory.join("sing-box"))
-        .ok_or_else(|| "无法确定 sing-box 数据目录".to_owned())?;
+        .ok_or_else(|| "sing-box data directory could not be determined".to_owned())?;
     let port = TcpListener::bind("127.0.0.1:0")
         .and_then(|listener| listener.local_addr())
         .map(|address| address.port())
-        .map_err(|_error| "无法为 sing-box 分配本机 controller 端口".to_owned())?;
+        .map_err(|_error| {
+            "a loopback controller port could not be reserved for sing-box".to_owned()
+        })?;
     let controller = ControllerEndpoint::Tcp(
         format!("127.0.0.1:{port}")
             .parse()
-            .map_err(|_error| "无法生成 sing-box controller 地址".to_owned())?,
+            .map_err(|_error| "sing-box controller address could not be created".to_owned())?,
     );
     let controller_secret = generate_controller_secret()?;
     let profile = compile_saved_profile(store_dir, None, KernelKind::SingBox)
@@ -4781,13 +740,15 @@ fn build_sing_box_runtime(store_dir: &Path) -> Result<ControllerRuntime, String>
         controller_secret: Some(controller_secret.clone()),
     };
     let rendered = render_generated_profile(&spec, &profile).map_err(|error| error.to_string())?;
-    let config_file = write_private_atomic(&data_dir, SING_BOX_PROFILE_FILE, rendered.as_bytes())
-        .map_err(|_error| "无法写入 sing-box 私有配置".to_owned())?;
+    let config_file =
+        write_private_atomic(&data_dir, SING_BOX_PROFILE_FILE, rendered.as_bytes())
+            .map_err(|_error| "private sing-box configuration could not be written".to_owned())?;
     let config = managed_engine_config(&spec, config_file);
     validate_managed_config(&config).map_err(|error| error.to_string())?;
     let manager = EngineManager::new(config, ReadinessPolicy::default(), readiness_probe(&spec));
     Ok(ControllerRuntime::Managed {
         manager: Arc::new(Mutex::new(manager)),
+        apply_lock: Arc::new(Mutex::new(())),
         profile_source: RuntimeProfileSource::SavedSources,
         generated_profile: Some(spec),
         privileged: Arc::new(AtomicBool::new(false)),
@@ -4797,8 +758,9 @@ fn build_sing_box_runtime(store_dir: &Path) -> Result<ControllerRuntime, String>
 fn discover_sing_box_binary() -> Result<PathBuf, String> {
     if let Some(explicit) = brand::env_var_os(SING_BOX_BINARY_ENV, LEGACY_RELAY_SING_BOX_BINARY_ENV)
     {
-        return canonical_binary(Path::new(&explicit))
-            .map_err(|_error| format!("{SING_BOX_BINARY_ENV} 不是可执行文件"));
+        return canonical_binary(Path::new(&explicit)).map_err(|_error| {
+            format!("{SING_BOX_BINARY_ENV} does not point to an executable file")
+        });
     }
     let executable_name = if cfg!(windows) {
         "sing-box.exe"
@@ -4822,7 +784,7 @@ fn discover_sing_box_binary() -> Result<PathBuf, String> {
     candidates
         .into_iter()
         .find_map(|candidate| canonical_binary(&candidate).ok())
-        .ok_or_else(|| format!("未找到 sing-box；请先安装内核或设置 {SING_BOX_BINARY_ENV}"))
+        .ok_or_else(|| format!("sing-box was not found; install it or set {SING_BOX_BINARY_ENV}"))
 }
 
 pub(crate) fn sing_box_binary_available() -> bool {
@@ -4834,7 +796,8 @@ fn discover_mihomo_binary() -> Result<PathBuf, String> {
         .map_err(|error| error.to_string())
         .and_then(|path| {
             canonical_binary(&path).map_err(|_error| {
-                "Manis 托管的 Mihomo 尚未安装；请在运行内核中下载稳定版".to_owned()
+                "Manis-managed Mihomo is not installed; download the stable core in Runtime settings"
+                    .to_owned()
             })
         })
 }
@@ -4845,7 +808,7 @@ fn generate_controller_secret() -> Result<String, String> {
     let mut random = [0_u8; 32];
     fs::File::open("/dev/urandom")
         .and_then(|mut file| file.read_exact(&mut random))
-        .map_err(|_error| "无法生成 sing-box controller 密钥".to_owned())?;
+        .map_err(|_error| "sing-box controller secret could not be generated".to_owned())?;
     let mut secret = String::with_capacity(random.len() * 2);
     for byte in random {
         secret.push(char::from(HEX[usize::from(byte >> 4)]));
@@ -4864,15 +827,15 @@ fn generate_controller_secret() -> Result<String, String> {
             "[guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N')",
         ])
         .output()
-        .map_err(|_error| "无法生成 sing-box controller 密钥".to_owned())?;
+        .map_err(|_error| "sing-box controller secret could not be generated".to_owned())?;
     let secret = String::from_utf8(output.stdout)
-        .map_err(|_error| "无法生成 sing-box controller 密钥".to_owned())?;
+        .map_err(|_error| "sing-box controller secret could not be generated".to_owned())?;
     let secret = secret.trim();
     if !output.status.success()
         || secret.len() != 64
         || !secret.bytes().all(|byte| byte.is_ascii_hexdigit())
     {
-        return Err("无法生成 sing-box controller 密钥".to_owned());
+        return Err("sing-box controller secret could not be generated".to_owned());
     }
     Ok(secret.to_owned())
 }
@@ -4890,11 +853,11 @@ fn configured_mixed_port() -> Result<u16, String> {
     match brand::env_var_os(MIXED_PORT_ENV, LEGACY_RELAY_MIXED_PORT_ENV) {
         Some(value) => value
             .to_str()
-            .ok_or_else(|| format!("{MIXED_PORT_ENV} 必须是有效 Unicode"))?
+            .ok_or_else(|| format!("{MIXED_PORT_ENV} must be valid Unicode"))?
             .parse::<u16>()
             .ok()
             .filter(|port| *port != 0)
-            .ok_or_else(|| format!("{MIXED_PORT_ENV} 必须是 1 到 65535 的端口")),
+            .ok_or_else(|| format!("{MIXED_PORT_ENV} must be a port from 1 to 65535")),
         None => Ok(DEFAULT_MANAGED_MIXED_PORT),
     }
 }
@@ -4903,29 +866,32 @@ fn configured_data_dir() -> Result<PathBuf, String> {
     brand::env_var_os(DATA_DIR_ENV, LEGACY_RELAY_DATA_DIR_ENV)
         .map(PathBuf::from)
         .or_else(default_data_dir)
-        .ok_or_else(|| format!("无法确定数据目录，请设置 {DATA_DIR_ENV}"))
+        .ok_or_else(|| format!("data directory could not be determined; set {DATA_DIR_ENV}"))
 }
 
+#[cfg(unix)]
+fn configured_managed_controller(data_dir: &Path) -> ControllerEndpoint {
+    default_managed_endpoint(data_dir)
+}
+
+#[cfg(not(unix))]
 fn configured_managed_controller(data_dir: &Path) -> Result<ControllerEndpoint, String> {
     default_managed_endpoint(data_dir)
 }
 
 #[cfg(unix)]
-#[allow(clippy::unnecessary_wraps)]
-fn default_managed_endpoint(data_dir: &Path) -> Result<ControllerEndpoint, String> {
-    Ok(ControllerEndpoint::UnixSocket(
-        data_dir.join("controller.sock"),
-    ))
+fn default_managed_endpoint(data_dir: &Path) -> ControllerEndpoint {
+    ControllerEndpoint::UnixSocket(data_dir.join("controller.sock"))
 }
 
 #[cfg(windows)]
 fn default_managed_endpoint(_data_dir: &Path) -> Result<ControllerEndpoint, String> {
-    Err("Windows 托管 Mihomo controller transport 尚未完成".to_owned())
+    Err("managed Mihomo controller transport is not implemented on Windows".to_owned())
 }
 
 #[cfg(not(any(unix, windows)))]
 fn default_managed_endpoint(_data_dir: &Path) -> Result<ControllerEndpoint, String> {
-    Err("当前平台没有默认的 Mihomo controller transport".to_owned())
+    Err("this platform has no default Mihomo controller transport".to_owned())
 }
 
 fn default_data_dir() -> Option<PathBuf> {
@@ -4959,7 +925,7 @@ fn loaded_snapshot(snapshot: &MihomoSnapshot) -> LoadedSnapshot {
         .version
         .version
         .clone()
-        .unwrap_or_else(|| "版本未知".to_owned());
+        .unwrap_or_else(|| "unknown version".to_owned());
     let active_connections = snapshot.connections.connections.len();
     let download_total = snapshot.connections.download_total;
     let upload_total = snapshot.connections.upload_total;
@@ -4991,7 +957,7 @@ fn validate_managed_runtime(
         return Ok(());
     }
     Err(LoadError::Runtime(format!(
-        "Mihomo 未能监听 Manis 代理端口 {expected}；可能存在上次异常退出后残留的内核进程"
+        "Mihomo did not listen on Manis proxy port {expected}; a stale kernel process may remain from an earlier abnormal exit"
     )))
 }
 
@@ -5034,7 +1000,7 @@ fn spawn_connection_stream(
                 |connections| {
                     if let Ok(mut mailbox) = mailbox.lock() {
                         mailbox.latest_connections = Some(connections);
-                        "实时".clone_into(&mut mailbox.status.activity);
+                        mailbox.status.activity = LiveStreamPhase::Live;
                     }
                 },
             );
@@ -5092,26 +1058,26 @@ fn reconnect_live_stream(
     }
 }
 
-fn stream_phase(attempt: usize) -> String {
+fn stream_phase(attempt: usize) -> LiveStreamPhase {
     if attempt == 0 {
-        "正在建立实时流".to_owned()
+        LiveStreamPhase::Connecting
     } else {
-        format!("正在重连 · 第 {attempt} 次")
+        LiveStreamPhase::Reconnecting(attempt)
     }
 }
 
-fn safe_stream_error(error: &MihomoError) -> String {
+fn safe_stream_error(error: &MihomoError) -> LiveStreamPhase {
     match error {
         MihomoError::HttpStatus { status_code, .. } => {
-            format!("流中断 · HTTP {status_code}")
+            LiveStreamPhase::InterruptedHttp(*status_code)
         }
-        MihomoError::Json { .. } => "流数据无法解析 · 正在重试".to_owned(),
-        MihomoError::Io(_) => "控制器暂时不可达 · 正在重试".to_owned(),
-        _ => "实时流不可用 · 正在重试".to_owned(),
+        MihomoError::Json { .. } => LiveStreamPhase::InvalidData,
+        MihomoError::Io(_) => LiveStreamPhase::ControllerUnavailable,
+        _ => LiveStreamPhase::Retrying,
     }
 }
 
-fn set_live_status(mailbox: &Mutex<LiveMailbox>, activity: bool, status: String) {
+fn set_live_status(mailbox: &Mutex<LiveMailbox>, activity: bool, status: LiveStreamPhase) {
     if let Ok(mut mailbox) = mailbox.lock() {
         if activity {
             mailbox.status.activity = status;
@@ -5138,7 +1104,7 @@ fn push_kernel_log(mailbox: &Mutex<LiveMailbox>, sequence: u64, entry: &MihomoLo
             .unwrap_or_default()
             .as_millis(),
     });
-    "实时".clone_into(&mut mailbox.status.logs);
+    mailbox.status.logs = LiveStreamPhase::Live;
 }
 
 fn sanitize_log_field(value: &str, limit: usize) -> String {
@@ -5425,7 +1391,7 @@ fn select_global_node_at_endpoint(
             })
         }
         None => Err(LoadError::Runtime(
-            "所选节点不在当前 Mihomo 全局出口链路中".to_owned(),
+            "selected node is not in the active Mihomo global exit chain".to_owned(),
         )),
     }
 }
@@ -5443,19 +1409,19 @@ fn select_policy_group_candidate(
         .is_some_and(is_selector_proxy_type)
     {
         return Err(LoadError::Runtime(
-            "只有手动选择策略组可以切换节点".to_owned(),
+            "only manual-selection policy groups can switch nodes".to_owned(),
         ));
     }
     if !group.all.iter().any(|candidate| candidate == selected_name) {
         return Err(LoadError::Runtime(
-            "所选节点不在当前 Mihomo 策略组中".to_owned(),
+            "selected node is not in the active Mihomo policy group".to_owned(),
         ));
     }
     put_policy_group_selection(endpoint, group_name, selected_name, controller_secret)?;
     let selected = fetch_policy_group(endpoint, group_name, controller_secret)?;
     if selected.current.as_deref() != Some(selected_name) {
         return Err(LoadError::Runtime(format!(
-            "Mihomo 未确认策略组“{group_name}”的节点切换"
+            "Mihomo did not confirm the node switch for policy group '{group_name}'"
         )));
     }
     Ok(policy_group_runtime_snapshot(selected))
@@ -5558,7 +1524,9 @@ fn fetch_proxy_delay_targets_bounded_with_progress(
     mut on_result: impl FnMut(&str, Option<u16>),
 ) -> Result<BTreeMap<String, u16>, LoadError> {
     if targets.is_empty() {
-        return Err(LoadError::Runtime("当前分组没有可测速节点".to_owned()));
+        return Err(LoadError::Runtime(
+            "the current group has no nodes that can be benchmarked".to_owned(),
+        ));
     }
     let worker_count = targets.len().min(GROUP_DELAY_WORKERS);
     let chunk_size = targets.len().div_ceil(worker_count);
@@ -5607,19 +1575,22 @@ fn fetch_proxy_delay_targets_bounded_with_progress(
     });
     if delays.is_empty() {
         return Err(LoadError::Runtime(
-            "所有节点测速均失败，请检查 Mihomo 连接与网络后重试".to_owned(),
+            "all node benchmarks failed; check the Mihomo connection and network, then try again"
+                .to_owned(),
         ));
     }
     Ok(delays)
 }
 
 fn running_managed_endpoint(manager: &Arc<Mutex<EngineManager>>) -> Result<String, LoadError> {
-    let mut manager = manager
-        .lock()
-        .map_err(|_poisoned| LoadError::Runtime("托管内核状态锁已损坏".to_owned()))?;
+    let mut manager = manager.lock().map_err(|_poisoned| {
+        LoadError::Runtime("managed kernel state lock is poisoned".to_owned())
+    })?;
     manager
         .running_endpoint()?
-        .ok_or_else(|| LoadError::Runtime("Mihomo 尚未运行，请先连接内核".to_owned()))
+        .ok_or_else(|| {
+            LoadError::Runtime("Mihomo is not running; connect the kernel first".to_owned())
+        })
         .map(|endpoint| endpoint.uri())
 }
 
@@ -5910,12 +1881,6 @@ mod tests {
     fn remote_source_refresh_intervals_cycle_and_respect_last_success() {
         use super::RemoteSourceRefreshInterval as Interval;
 
-        assert_eq!(Interval::Manual.next(), Interval::Hourly);
-        assert_eq!(Interval::Hourly.next(), Interval::SixHours);
-        assert_eq!(Interval::SixHours.next(), Interval::TwelveHours);
-        assert_eq!(Interval::TwelveHours.next(), Interval::Daily);
-        assert_eq!(Interval::Daily.next(), Interval::Manual);
-
         assert!(!Interval::Manual.is_due(0, u64::MAX));
         assert!(Interval::Hourly.is_due(0, 1));
         assert!(!Interval::Hourly.is_due(10_000, 13_599));
@@ -6054,15 +2019,12 @@ mod tests {
         let global = NodeIdentity::new("subscription:source-1", "Hong Kong Edge")?;
         let mut preferences = super::NodeSelectionPreferences::default();
         preferences.set_global(global.clone());
-        preferences.set_policy_target("Proxy", "Hong Kong Edge")?;
         preferences.set_policy_target("视频服务", "Tokyo Manual")?;
-        preferences.clear_policy_target("Proxy")?;
 
         super::save_node_selection_preferences_in(&store, &preferences)?;
         let loaded = super::load_node_selection_preferences_in(&store)?;
 
         assert_eq!(loaded.global(), Some(&global));
-        assert_eq!(loaded.policy_target("Proxy"), None);
         assert_eq!(loaded.policy_target("视频服务"), Some("Tokyo Manual"));
         assert_eq!(
             loaded.iter_policy_targets().collect::<Vec<_>>(),
@@ -6989,7 +2951,7 @@ IP-CIDR,192.0.2.0/24,DIRECT
         let saved = VlessProxy::parse_share_link(
             "vless://00000000-0000-4000-8000-000000000000@edge.example.invalid:443?security=tls#Private%20Edge",
         )?;
-        let indexes = HashMap::from([("source-a", 1_usize)]);
+        let indexes = HashMap::from([("source-a".to_owned(), 1_usize)]);
 
         let mut latency = ManagedPolicyGroup::new("group-a-1", "香港优选")?;
         latency.strategy = ManagedPolicyStrategy::LowestLatency;
@@ -7192,6 +3154,19 @@ IP-CIDR,192.0.2.0/24,DIRECT
             &data_dir,
             &ControllerEndpoint::UnixSocket(data_dir.join("controller.sock")),
         )?;
+        let cloned_runtime = runtime.clone();
+
+        match (&runtime, &cloned_runtime) {
+            (
+                super::ControllerRuntime::Managed {
+                    apply_lock: left, ..
+                },
+                super::ControllerRuntime::Managed {
+                    apply_lock: right, ..
+                },
+            ) => assert!(std::sync::Arc::ptr_eq(left, right)),
+            _ => panic!("saved sources should share a managed apply lock"),
+        }
 
         assert_eq!(
             runtime.managed_health()?,

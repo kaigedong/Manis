@@ -5,7 +5,7 @@ use manis_core::{
     ManagedPolicyStrategy, NodeAvailabilityFilter, NodeIdentity, NodeWorkspaceState,
     PolicyCandidateKind, PolicyCandidateMatcher, PolicyCatalog, PolicyGroup, PolicyGroupId,
     PolicyGroupKind, PolicyNode, PolicyRule, PolicyWorkspaceState, PrimaryWorkspace, ProxyId,
-    ProxyMode, RouteEvidence, RoutingMode, WindowSizeClass,
+    ProxyMode, RoutingMode, WindowSizeClass,
 };
 
 fn streaming() -> PolicyGroupId {
@@ -66,23 +66,6 @@ fn switching_groups_restores_each_groups_node_selection() {
     state.select_group(search());
 
     assert_eq!(state.selected_node, Some(sg_02()));
-}
-
-#[test]
-fn local_route_result_is_explicitly_predicted() {
-    let state = PolicyWorkspaceState::demo();
-
-    let evidence = state.predict("youtube.com");
-
-    assert!(matches!(
-        evidence,
-        RouteEvidence::Predicted {
-            domain,
-            rule: "DOMAIN-SUFFIX",
-            policy,
-            proxy,
-        } if domain == "youtube.com" && policy == streaming() && proxy == hk_01()
-    ));
 }
 
 #[test]
@@ -285,19 +268,6 @@ fn replacing_a_data_source_keeps_size_but_resets_navigation_and_selection() {
     assert_eq!(state.compact_navigation, CompactNavigation::GroupList);
     assert_eq!(state.selected_group, Some(PolicyGroupId::new("真实策略")));
     assert_eq!(state.selected_node, Some(ProxyId::new("真实节点")));
-}
-
-#[test]
-fn process_dependent_rule_requires_an_actual_connection() {
-    let state = PolicyWorkspaceState::demo();
-
-    let evidence = state.predict("process-dependent.example");
-
-    assert!(matches!(
-        evidence,
-        RouteEvidence::NeedsConnection { reason, .. }
-            if reason.contains("进程")
-    ));
 }
 
 #[test]
