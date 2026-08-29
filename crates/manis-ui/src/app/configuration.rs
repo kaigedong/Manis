@@ -92,6 +92,27 @@ struct QxRuleEditorView {
     dialog_width: f32,
 }
 
+struct RuleSourceCardPresentation {
+    name: String,
+    refresh: RuleSourceRefreshPresentation,
+    duplicate: bool,
+    controls_enabled: bool,
+    target_policy: String,
+    last_update: String,
+}
+
+enum RuleSourceRefreshPresentation {
+    Idle,
+    Refreshing,
+    Failed(String),
+}
+
+impl RuleSourceRefreshPresentation {
+    const fn is_refreshing(&self) -> bool {
+        matches!(self, Self::Refreshing)
+    }
+}
+
 impl SubscriptionCardActivity {
     const fn is_busy(self) -> bool {
         matches!(self, Self::Busy)
@@ -3141,49 +3162,20 @@ impl ManisApp {
             )
     }
 
-    #[allow(clippy::too_many_lines)]
     fn rule_source_card(
         &self,
         index: usize,
-        source: &crate::mihomo::StoredQxRuleSource,
+        source: &mihomo::StoredQxRuleSource,
         busy: bool,
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let language = self.language();
-        let id = source.id.clone();
-        let toggle_id = id.clone();
-        let refresh_id = id.clone();
-        let remove_id = id.clone();
-        let edit_id = id.clone();
-        let refresh_state = self.qx_rule_source_refreshes.get(&source.id);
-        let refreshing = refresh_state.is_some_and(QxRuleSourceRefreshState::is_refreshing);
-        let duplicate = matches!(
-            &self.qx_rule_feedback,
-            QxRuleImportFeedback::AlreadyExists { source_id, .. } if source_id == &source.id
-        );
-        let controls_enabled = !busy && !self.source_refresh_busy();
-        let enabled = source.enabled;
-        let refresh_enabled = controls_enabled && enabled;
-        let name = source.source.subscription_name().unwrap_or_else(|| {
-            if language == Language::English {
-                format!("Rule source {}", index + 1)
-            } else {
-                format!("规则源 {}", index + 1)
-            }
-        });
-        let last_update = source_update_label(
-            source.last_successful_update_unix_secs,
-            mihomo::current_unix_secs(),
-            language,
-        );
-        let refresh_error = match refresh_state {
-            Some(QxRuleSourceRefreshState::Failed { message, .. }) => Some(message.clone()),
-            _ => None,
-        };
-        let target_policy = self.effective_rule_target(source.target_policy.as_str(), language);
+        let presentation = self.rule_source_card_presentation(index, source, busy, language);
+        let edit_id = source.id.clone();
+        let controls_enabled = presentation.controls_enabled;
         div()
-            .id(format!("qx-rule-source-card-{id}"))
+            .id(format!("qx-rule-source-card-{}", source.id))
             .role(Role::Button)
             .aria_label(language.text("Edit this rule source", "编辑这个规则来源"))
             .tab_stop(controls_enabled)
@@ -3193,79 +3185,19 @@ impl ManisApp {
             .p(Space::Md.px())
             .rounded(Radius::Row.px())
             .border_1()
-            .border_color(if duplicate {
+            .border_color(if presentation.duplicate {
                 theme.status_warning
             } else {
                 theme.outline_subtle
             })
             .bg(theme.surface_low)
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .child(
-                        Checkbox::new(format!("qx-rule-enabled-{toggle_id}"))
-                            .label("")
-                            .checked(enabled)
-                            .disabled(!controls_enabled)
-                            .tab_stop(controls_enabled)
-                            .cursor_pointer()
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                cx.stop_propagation();
-                                if controls_enabled {
-                                    this.set_qx_rule_source_enabled(
-                                        toggle_id.clone(),
-                                        !enabled,
-                                        cx,
-                                    );
-                                }
-                            })),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w(px(0.0))
-                            .overflow_x_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
-                            .text_size(TextRole::Label.size())
-                            .line_height(TextRole::Label.line_height())
-                            .font_weight(TextRole::Label.weight())
-                            .text_color(if enabled {
-                                theme.text_primary
-                            } else {
-                                theme.text_secondary
-                            })
-                            .child(name),
-                    )
-                    .when(refreshing, |header| {
-                        header.child(Self::benchmark_latency_spinner(
-                            format!("qx-rule-refresh-{id}"),
-                            theme,
-                        ))
-                    })
-                    .when(duplicate, |header| {
-                        header.child(
-                            div()
-                                .flex_shrink_0()
-                                .text_size(TextRole::Metadata.size())
-                                .line_height(TextRole::Metadata.line_height())
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(theme.status_warning)
-                                .child(language.text("Already added", "已添加")),
-                        )
-                    })
-                    .when(!enabled, |header| {
-                        header.child(
-                            div()
-                                .flex_shrink_0()
-                                .text_size(TextRole::Metadata.size())
-                                .text_color(theme.text_tertiary)
-                                .child(language.text("Disabled", "未启用")),
-                        )
-                    }),
-            )
+            .child(Self::rule_source_card_header(
+                source,
+                &presentation,
+                language,
+                theme,
+                cx,
+            ))
             .child(
                 div()
                     .mt_1()
@@ -3277,108 +3209,261 @@ impl ManisApp {
                     .text_color(theme.text_tertiary)
                     .child(source.source.expose_to(str::to_owned)),
             )
-            .when_some(refresh_error, |card, error| {
-                card.child(
-                    div()
-                        .mt_1()
-                        .ml_7()
-                        .text_size(TextRole::Metadata.size())
-                        .line_height(TextRole::Metadata.line_height())
-                        .text_color(theme.route_trace)
-                        .child(format!(
-                            "{}: {error}",
-                            language.text("Last update failed", "上次更新失败")
-                        )),
-                )
-            })
-            .child(
-                div()
-                    .mt_1()
-                    .ml_7()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .text_size(TextRole::Metadata.size())
-                    .text_color(theme.text_secondary)
-                    .child(if language == Language::English {
-                        format!(
-                            "{} rules · {} skipped",
-                            source.rule_count, source.diagnostic_count
-                        )
-                    } else {
-                        format!(
-                            "{} 条 · 跳过 {} 条",
-                            source.rule_count, source.diagnostic_count
-                        )
-                    })
-                    .child("·")
-                    .child(format!(
-                        "{} {target_policy}",
-                        language.text("Target", "目标")
-                    ))
-                    .child("·")
-                    .child(refresh_interval_label(source.refresh_interval, language))
-                    .child("·")
-                    .child(last_update)
-                    .child(div().flex_1())
-                    .child(
-                        action_button(
-                            format!("qx-rule-refresh-{refresh_id}"),
-                            if refreshing {
-                                language.text("Updating…", "更新中…")
-                            } else {
-                                language.text("Update now", "立即更新")
-                            },
-                            ActionRole::Quiet,
-                            ControlSize::Compact,
-                        )
-                        .accessibility_label(
-                            language
-                                .text("Update this remote QX rule now", "立即更新这份远程 QX 规则"),
-                        )
-                        .disabled(!refresh_enabled)
-                        .loading(refreshing)
-                        .when(refresh_enabled, gpui::Styled::cursor_pointer)
-                        .px_3()
-                        .border_1()
-                        .border_color(theme.outline_subtle)
-                        .bg(theme.surface_high)
-                        .text_color(theme.action_primary)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            cx.stop_propagation();
-                            if refresh_enabled {
-                                this.refresh_qx_rule_source(refresh_id.clone(), cx);
-                            }
-                        })),
-                    )
-                    .child(
-                        action_button(
-                            format!("qx-rule-remove-{index}"),
-                            language.text("Remove", "移除"),
-                            ActionRole::Quiet,
-                            ControlSize::Compact,
-                        )
-                        .accessibility_label(
-                            language.text("Delete this remote QX rule", "删除这份远程 QX 规则"),
-                        )
-                        .disabled(!controls_enabled)
-                        .when(controls_enabled, gpui::Styled::cursor_pointer)
-                        .px_3()
-                        .text_color(theme.status_error)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            cx.stop_propagation();
-                            if controls_enabled {
-                                this.remove_qx_rule_source(remove_id.clone(), cx);
-                            }
-                        })),
-                    ),
+            .when_some(
+                Self::rule_source_refresh_error(&presentation),
+                |card, error| card.child(Self::rule_source_error(error, language, theme)),
             )
+            .child(Self::rule_source_card_actions(
+                index,
+                source,
+                &presentation,
+                language,
+                theme,
+                cx,
+            ))
             .on_click(cx.listener(move |this, _, window, cx| {
                 if controls_enabled {
                     this.open_qx_rule_editor(edit_id.clone(), cx);
                     this.open_qx_rule_source_dialog(window, cx);
                 }
             }))
+    }
+
+    fn rule_source_card_presentation(
+        &self,
+        index: usize,
+        source: &mihomo::StoredQxRuleSource,
+        busy: bool,
+        language: Language,
+    ) -> RuleSourceCardPresentation {
+        let refresh = match self.qx_rule_source_refreshes.get(&source.id) {
+            Some(QxRuleSourceRefreshState::Refreshing { .. }) => {
+                RuleSourceRefreshPresentation::Refreshing
+            }
+            Some(QxRuleSourceRefreshState::Failed { message, .. }) => {
+                RuleSourceRefreshPresentation::Failed(message.clone())
+            }
+            None => RuleSourceRefreshPresentation::Idle,
+        };
+        RuleSourceCardPresentation {
+            name: source.source.subscription_name().unwrap_or_else(|| {
+                if language == Language::English {
+                    format!("Rule source {}", index + 1)
+                } else {
+                    format!("规则源 {}", index + 1)
+                }
+            }),
+            refresh,
+            duplicate: matches!(
+                &self.qx_rule_feedback,
+                QxRuleImportFeedback::AlreadyExists { source_id, .. } if source_id == &source.id
+            ),
+            controls_enabled: !busy && !self.source_refresh_busy(),
+            target_policy: self.effective_rule_target(source.target_policy.as_str(), language),
+            last_update: source_update_label(
+                source.last_successful_update_unix_secs,
+                mihomo::current_unix_secs(),
+                language,
+            ),
+        }
+    }
+
+    fn rule_source_card_header(
+        source: &mihomo::StoredQxRuleSource,
+        presentation: &RuleSourceCardPresentation,
+        language: Language,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let toggle_id = source.id.clone();
+        let enabled = source.enabled;
+        let controls_enabled = presentation.controls_enabled;
+        div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(
+                Checkbox::new(format!("qx-rule-enabled-{toggle_id}"))
+                    .label("")
+                    .checked(enabled)
+                    .disabled(!controls_enabled)
+                    .tab_stop(controls_enabled)
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        if controls_enabled {
+                            this.set_qx_rule_source_enabled(toggle_id.clone(), !enabled, cx);
+                        }
+                    })),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .overflow_x_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .text_size(TextRole::Label.size())
+                    .font_weight(TextRole::Label.weight())
+                    .text_color(if enabled {
+                        theme.text_primary
+                    } else {
+                        theme.text_secondary
+                    })
+                    .child(presentation.name.clone()),
+            )
+            .when(presentation.refresh.is_refreshing(), |header| {
+                header.child(Self::benchmark_latency_spinner(
+                    format!("qx-rule-refresh-{}", source.id),
+                    theme,
+                ))
+            })
+            .when(presentation.duplicate, |header| {
+                header.child(Self::rule_source_state_label(
+                    language.text("Already added", "已添加"),
+                    theme.status_warning,
+                ))
+            })
+            .when(!enabled, |header| {
+                header.child(Self::rule_source_state_label(
+                    language.text("Disabled", "未启用"),
+                    theme.text_tertiary,
+                ))
+            })
+    }
+
+    fn rule_source_state_label(label: &'static str, color: gpui::Rgba) -> Div {
+        div()
+            .flex_shrink_0()
+            .text_size(TextRole::Metadata.size())
+            .font_weight(FontWeight::SEMIBOLD)
+            .text_color(color)
+            .child(label)
+    }
+
+    fn rule_source_refresh_error(presentation: &RuleSourceCardPresentation) -> Option<&str> {
+        match &presentation.refresh {
+            RuleSourceRefreshPresentation::Failed(message) => Some(message),
+            RuleSourceRefreshPresentation::Idle | RuleSourceRefreshPresentation::Refreshing => None,
+        }
+    }
+
+    fn rule_source_error(error: &str, language: Language, theme: Theme) -> Div {
+        div()
+            .mt_1()
+            .ml_7()
+            .text_size(TextRole::Metadata.size())
+            .line_height(TextRole::Metadata.line_height())
+            .text_color(theme.route_trace)
+            .child(format!(
+                "{}: {error}",
+                language.text("Last update failed", "上次更新失败")
+            ))
+    }
+
+    fn rule_source_card_actions(
+        index: usize,
+        source: &mihomo::StoredQxRuleSource,
+        presentation: &RuleSourceCardPresentation,
+        language: Language,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let refresh_id = source.id.clone();
+        let remove_id = source.id.clone();
+        let refreshing = presentation.refresh.is_refreshing();
+        let refresh_enabled = presentation.controls_enabled && source.enabled;
+        let controls_enabled = presentation.controls_enabled;
+        div()
+            .mt_1()
+            .ml_7()
+            .flex()
+            .items_center()
+            .gap_2()
+            .text_size(TextRole::Metadata.size())
+            .text_color(theme.text_secondary)
+            .child(if language == Language::English {
+                format!(
+                    "{} rules · {} skipped",
+                    source.rule_count, source.diagnostic_count
+                )
+            } else {
+                format!(
+                    "{} 条 · 跳过 {} 条",
+                    source.rule_count, source.diagnostic_count
+                )
+            })
+            .child("·")
+            .child(format!(
+                "{} {}",
+                language.text("Target", "目标"),
+                presentation.target_policy
+            ))
+            .child("·")
+            .child(refresh_interval_label(source.refresh_interval, language))
+            .child("·")
+            .child(presentation.last_update.clone())
+            .child(div().flex_1())
+            .child(Self::rule_source_refresh_button(
+                refresh_id,
+                refreshing,
+                refresh_enabled,
+                language,
+                theme,
+                cx,
+            ))
+            .child(
+                action_button(
+                    format!("qx-rule-remove-{index}"),
+                    language.text("Remove", "移除"),
+                    ActionRole::Quiet,
+                    ControlSize::Compact,
+                )
+                .disabled(!controls_enabled)
+                .when(controls_enabled, gpui::Styled::cursor_pointer)
+                .px_3()
+                .text_color(theme.status_error)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    if controls_enabled {
+                        this.remove_qx_rule_source(remove_id.clone(), cx);
+                    }
+                })),
+            )
+    }
+
+    fn rule_source_refresh_button(
+        id: String,
+        refreshing: bool,
+        enabled: bool,
+        language: Language,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Button {
+        action_button(
+            format!("qx-rule-refresh-{id}"),
+            if refreshing {
+                language.text("Updating…", "更新中…")
+            } else {
+                language.text("Update now", "立即更新")
+            },
+            ActionRole::Quiet,
+            ControlSize::Compact,
+        )
+        .disabled(!enabled)
+        .loading(refreshing)
+        .when(enabled, gpui::Styled::cursor_pointer)
+        .px_3()
+        .border_1()
+        .border_color(theme.outline_subtle)
+        .bg(theme.surface_high)
+        .text_color(theme.action_primary)
+        .on_click(cx.listener(move |this, _, _, cx| {
+            cx.stop_propagation();
+            if enabled {
+                this.refresh_qx_rule_source(id.clone(), cx);
+            }
+        }))
     }
 
     fn qx_rule_source_target_menu(
