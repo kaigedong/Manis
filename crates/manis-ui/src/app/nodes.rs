@@ -54,6 +54,15 @@ struct WorkspaceNodeRowContext {
     theme: Theme,
 }
 
+struct SourceGroupPresentation {
+    visible_count: usize,
+    collapsed: bool,
+    benchmark_key: String,
+    benchmark: GroupBenchmarkState,
+    detail: String,
+    total_nodes: usize,
+}
+
 enum ManagedPolicyDraftError {
     InvalidName,
     DuplicateName,
@@ -2169,7 +2178,6 @@ impl ManisApp {
         list
     }
 
-    #[allow(clippy::too_many_lines)]
     fn source_group(
         &self,
         group: &NodeSourceGroup<'_>,
@@ -2179,148 +2187,10 @@ impl ManisApp {
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Div {
-        let mut counts = NodeCounts::from_provider_refs(&group.providers);
-        counts.total += group.saved_nodes.len();
-        counts.untested += group.saved_nodes.len();
-        let visible_count = counts.count_for(filter);
-        let collapsed = self.node_workspace.is_group_collapsed(&group.id);
-        let benchmark_key = Self::source_group_benchmark_key(&group.id);
-        let benchmark = self
-            .group_benchmarks
-            .get(&benchmark_key)
-            .cloned()
-            .unwrap_or_default();
-        let benchmarking = benchmark.is_running();
-        let benchmark_id = group.id.clone();
-        let benchmark_name = group.name.clone();
-        let delay_targets = group.delay_targets();
-        let detail = match &benchmark {
-            GroupBenchmarkState::Idle => group.detail.clone(),
-            GroupBenchmarkState::Running { .. } => format!(
-                "{} · {}",
-                group.detail,
-                language.text("testing...", "正在测速…")
-            ),
-            GroupBenchmarkState::Complete { summary, .. } => format!(
-                "{} · {} {}",
-                group.detail,
-                language.text("test", "测速"),
-                Self::success_fraction_label(summary.succeeded, summary.total, language)
-            ),
-            GroupBenchmarkState::Failed { .. } => format!(
-                "{} · {}",
-                group.detail,
-                language.text("test failed", "测速失败")
-            ),
-        };
-        let action = if collapsed {
-            language.text("Expand", "展开")
-        } else {
-            language.text("Collapse", "收起")
-        };
-        let trigger_group_id = group.id.clone();
-        let trigger = Button::new(format!("source-group-header-{}", group.id))
-            .accessibility_label(format!(
-                "{} {} {}",
-                action,
-                language.text("node source", "节点来源"),
-                group.name
-            ))
-            .with_variant(ButtonVariant::Ghost)
-            .h_full()
-            .flex_1()
-            .px_0()
-            .text_color(theme.text_primary)
-            .child(
-                div()
-                    .min_w(px(0.0))
-                    .w_full()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap_3()
-                    .child(
-                        div()
-                            .min_w(px(0.0))
-                            .flex_1()
-                            .child(
-                                div()
-                                    .overflow_x_hidden()
-                                    .whitespace_nowrap()
-                                    .text_ellipsis()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .child(group.name.clone()),
-                            )
-                            .child(
-                                div()
-                                    .mt(Space::Xs.px())
-                                    .text_size(TextRole::Metadata.size())
-                                    .line_height(TextRole::Metadata.line_height())
-                                    .text_color(theme.text_tertiary)
-                                    .child(detail),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .flex_shrink_0()
-                            .flex()
-                            .items_center()
-                            .gap_3()
-                            .child(
-                                div()
-                                    .text_size(TextRole::Metadata.size())
-                                    .line_height(TextRole::Metadata.line_height())
-                                    .text_color(theme.text_secondary)
-                                    .child(Self::node_count_label(counts.total, language)),
-                            )
-                            .child(
-                                Icon::new(if collapsed {
-                                    IconName::ChevronRight
-                                } else {
-                                    IconName::ChevronDown
-                                })
-                                .xsmall()
-                                .text_color(theme.action_primary),
-                            ),
-                    ),
-            )
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.node_workspace.toggle_group(&trigger_group_id);
-                this.persist_node_workspace();
-                this.language()
-                    .text(
-                        "Node source expanded state updated",
-                        "已更新节点来源展开状态",
-                    )
-                    .clone_into(&mut this.status);
-                cx.notify();
-            }));
-        let header = div()
-            .min_h(px(58.0))
-            .px(if compact { px(12.0) } else { px(16.0) })
-            .py_3()
-            .flex()
-            .items_center()
-            .gap_3()
-            .bg(theme.surface_low)
-            .child(Self::group_benchmark_icon(
-                &benchmark_key,
-                benchmarking,
-                theme,
-                cx.listener(move |this, _, _, cx| {
-                    if !benchmarking {
-                        this.start_source_group_benchmark(
-                            &benchmark_id,
-                            &benchmark_name,
-                            delay_targets.clone(),
-                            cx,
-                        );
-                    }
-                }),
-            ))
-            .child(trigger);
+        let presentation = self.source_group_presentation(group, filter, language);
+        let header = Self::source_group_header(group, &presentation, compact, language, theme, cx);
 
-        let content = if visible_count == 0 {
+        let content = if presentation.visible_count == 0 {
             div()
                 .px_4()
                 .py_3()
@@ -2337,7 +2207,7 @@ impl ManisApp {
         } else {
             self.source_group_table(
                 group,
-                &benchmark,
+                &presentation.benchmark,
                 NodeWorkspaceView {
                     filter,
                     compact,
@@ -2357,9 +2227,185 @@ impl ManisApp {
             .overflow_hidden()
             .child(
                 Collapsible::new()
-                    .open(!collapsed)
+                    .open(!presentation.collapsed)
                     .child(header)
                     .content(content),
+            )
+    }
+
+    fn source_group_presentation(
+        &self,
+        group: &NodeSourceGroup<'_>,
+        filter: NodeAvailabilityFilter,
+        language: Language,
+    ) -> SourceGroupPresentation {
+        let mut counts = NodeCounts::from_provider_refs(&group.providers);
+        counts.total += group.saved_nodes.len();
+        counts.untested += group.saved_nodes.len();
+        let benchmark_key = Self::source_group_benchmark_key(&group.id);
+        let benchmark = self
+            .group_benchmarks
+            .get(&benchmark_key)
+            .cloned()
+            .unwrap_or_default();
+        let detail = match &benchmark {
+            GroupBenchmarkState::Idle => group.detail.clone(),
+            GroupBenchmarkState::Running { .. } => format!(
+                "{} · {}",
+                group.detail,
+                language.text("testing...", "正在测速…")
+            ),
+            GroupBenchmarkState::Complete { summary, .. } => format!(
+                "{} · {} {}",
+                group.detail,
+                language.text("test", "测速"),
+                Self::success_fraction_label(summary.succeeded, summary.total, language)
+            ),
+            GroupBenchmarkState::Failed { .. } => format!(
+                "{} · {}",
+                group.detail,
+                language.text("test failed", "测速失败")
+            ),
+        };
+        SourceGroupPresentation {
+            visible_count: counts.count_for(filter),
+            collapsed: self.node_workspace.is_group_collapsed(&group.id),
+            benchmark_key,
+            benchmark,
+            detail,
+            total_nodes: counts.total,
+        }
+    }
+
+    fn source_group_header(
+        group: &NodeSourceGroup<'_>,
+        presentation: &SourceGroupPresentation,
+        compact: bool,
+        language: Language,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let action = if presentation.collapsed {
+            language.text("Expand", "展开")
+        } else {
+            language.text("Collapse", "收起")
+        };
+        let trigger_group_id = group.id.clone();
+        let trigger = Button::new(format!("source-group-header-{}", group.id))
+            .accessibility_label(format!(
+                "{} {} {}",
+                action,
+                language.text("node source", "节点来源"),
+                group.name
+            ))
+            .with_variant(ButtonVariant::Ghost)
+            .h_full()
+            .flex_1()
+            .px_0()
+            .text_color(theme.text_primary)
+            .child(Self::source_group_header_content(
+                group,
+                presentation,
+                language,
+                theme,
+            ))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.node_workspace.toggle_group(&trigger_group_id);
+                this.persist_node_workspace();
+                this.language()
+                    .text(
+                        "Node source expanded state updated",
+                        "已更新节点来源展开状态",
+                    )
+                    .clone_into(&mut this.status);
+                cx.notify();
+            }));
+        let benchmarking = presentation.benchmark.is_running();
+        let benchmark_id = group.id.clone();
+        let benchmark_name = group.name.clone();
+        let delay_targets = group.delay_targets();
+        div()
+            .min_h(px(58.0))
+            .px(if compact { px(12.0) } else { px(16.0) })
+            .py_3()
+            .flex()
+            .items_center()
+            .gap_3()
+            .bg(theme.surface_low)
+            .child(Self::group_benchmark_icon(
+                &presentation.benchmark_key,
+                benchmarking,
+                theme,
+                cx.listener(move |this, _, _, cx| {
+                    if !benchmarking {
+                        this.start_source_group_benchmark(
+                            &benchmark_id,
+                            &benchmark_name,
+                            delay_targets.clone(),
+                            cx,
+                        );
+                    }
+                }),
+            ))
+            .child(trigger)
+    }
+
+    fn source_group_header_content(
+        group: &NodeSourceGroup<'_>,
+        presentation: &SourceGroupPresentation,
+        language: Language,
+        theme: Theme,
+    ) -> Div {
+        div()
+            .min_w(px(0.0))
+            .w_full()
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_3()
+            .child(
+                div()
+                    .min_w(px(0.0))
+                    .flex_1()
+                    .child(
+                        div()
+                            .overflow_x_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(group.name.clone()),
+                    )
+                    .child(
+                        div()
+                            .mt(Space::Xs.px())
+                            .text_size(TextRole::Metadata.size())
+                            .line_height(TextRole::Metadata.line_height())
+                            .text_color(theme.text_tertiary)
+                            .child(presentation.detail.clone()),
+                    ),
+            )
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .child(
+                        div()
+                            .text_size(TextRole::Metadata.size())
+                            .line_height(TextRole::Metadata.line_height())
+                            .text_color(theme.text_secondary)
+                            .child(Self::node_count_label(presentation.total_nodes, language)),
+                    )
+                    .child(
+                        Icon::new(if presentation.collapsed {
+                            IconName::ChevronRight
+                        } else {
+                            IconName::ChevronDown
+                        })
+                        .xsmall()
+                        .text_color(theme.action_primary),
+                    ),
             )
     }
 
