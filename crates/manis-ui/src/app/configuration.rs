@@ -26,15 +26,9 @@ use crate::{
     },
     diagnostics::{LogLevel, UiEvent, begin_operation, record_event, record_operation, trace_ui},
     localization::{CountNoun, Language, LanguagePreference, Message, save_language_preference_in},
-    mihomo::{
-        self, LoadedProvider, RemoteSourceRefreshInterval, RuntimeProfileSource,
-        SubscriptionStoreError,
-    },
+    mihomo::{self, RemoteSourceRefreshInterval, RuntimeProfileSource, SubscriptionStoreError},
     rule_source::{download_qx_rule_document, download_qx_rule_document_secret},
-    subscription::{
-        SourceKind, SubscriptionPreview, validate_single_node_preview,
-        validate_subscription_preview,
-    },
+    subscription::{SourceKind, validate_single_node_preview, validate_subscription_preview},
     subscription_input::SubscriptionTextInput,
     theme::{ControlSize, Radius, Space, TextRole, Theme},
 };
@@ -1890,157 +1884,6 @@ impl ManisApp {
                 false
             }
         }
-    }
-
-    #[allow(dead_code)]
-    fn subscription_feedback(
-        feedback: &SubscriptionFeedback,
-        providers: &[LoadedProvider],
-        language: Language,
-        theme: Theme,
-    ) -> Div {
-        match feedback {
-            SubscriptionFeedback::Idle => div(),
-            SubscriptionFeedback::Importing(kind) => {
-                Self::subscription_loading(*kind, language, theme)
-            }
-            SubscriptionFeedback::Valid(preview) => {
-                Self::subscription_valid(preview, providers, language, theme)
-            }
-            SubscriptionFeedback::InvalidInput(error) => Self::subscription_error(
-                language.text("Could not recognize source", "无法识别来源"),
-                error.to_string(),
-                None,
-                theme,
-            ),
-            SubscriptionFeedback::PreviewFailed(error) => Self::subscription_error(
-                language.text("Could not read subscription nodes", "无法读取订阅节点"),
-                error.to_string(),
-                Some(language.text(
-                    "The link is still in the input; check it and retry.",
-                    "链接仍保留在输入框中；检查后可再次读取。",
-                )),
-                theme,
-            ),
-            SubscriptionFeedback::StoreFailed(error) => Self::subscription_error(
-                language.text(
-                    "Source is valid, but could not be saved",
-                    "来源有效，但无法保存",
-                ),
-                error.to_string(),
-                Some(language.text(
-                    "Existing sources are unchanged; check directory permissions and retry.",
-                    "现有来源未受影响；检查目录权限后重试。",
-                )),
-                theme,
-            ),
-        }
-    }
-
-    fn subscription_loading(kind: SourceKind, language: Language, theme: Theme) -> Div {
-        let title = match kind {
-            SourceKind::HttpSubscription => language.text(
-                "Validating and importing HTTP subscription",
-                "正在验证并导入 HTTP 订阅",
-            ),
-            SourceKind::HttpsSubscription => language.text(
-                "Validating and importing HTTPS subscription",
-                "正在验证并导入 HTTPS 订阅",
-            ),
-            SourceKind::SingleNode => language.text("Saving single node", "正在保存单节点"),
-        };
-        div()
-            .mt(Space::Md.px())
-            .p(Space::Md.px())
-            .rounded(Radius::Pane.px())
-            .bg(theme.action_soft)
-            .child(
-                div()
-                    .text_size(TextRole::Label.size())
-                    .line_height(TextRole::Label.line_height())
-                    .font_weight(TextRole::Label.weight())
-                    .text_color(theme.action_primary)
-                    .child(title),
-            )
-            .child(
-                div()
-                    .mt(Space::Xs.px())
-                    .text_size(TextRole::Metadata.size())
-                    .line_height(TextRole::Metadata.line_height())
-                    .text_color(theme.text_secondary)
-                    .child(language.text(
-                        "Manis is checking the source and will save it after validation succeeds.",
-                        "正在检查来源；验证通过后会自动保存。",
-                    )),
-            )
-    }
-
-    fn subscription_valid(
-        preview: &SubscriptionPreview,
-        providers: &[LoadedProvider],
-        language: Language,
-        theme: Theme,
-    ) -> Div {
-        let (title, detail) = match preview.kind {
-            SourceKind::HttpSubscription => (
-                language.text("HTTP subscription imported", "HTTP 订阅预览完成"),
-                language.text(
-                    "Nodes were actually read; plain HTTP can expose subscription credentials.",
-                    "节点已实际读取；HTTP 明文传输可能暴露订阅凭据",
-                ),
-            ),
-            SourceKind::HttpsSubscription => (
-                language.text("HTTPS subscription added", "HTTPS 订阅已添加"),
-                language.text(
-                    "Mihomo downloaded and parsed nodes; view them on the Nodes page.",
-                    "节点已由 Mihomo 实际下载并解析；可前往节点页查看",
-                ),
-            ),
-            SourceKind::SingleNode => (
-                language.text("Single node saved", "单节点已保存"),
-                language.text(
-                    "Added to the Saved group on Nodes.",
-                    "已加入节点页的“已保存”分组",
-                ),
-            ),
-        };
-        let node_count: usize = providers.iter().map(|provider| provider.nodes.len()).sum();
-
-        div()
-            .mt(Space::Md.px())
-            .p(Space::Md.px())
-            .rounded(Radius::Pane.px())
-            .bg(theme.action_soft)
-            .child(
-                div()
-                    .text_size(TextRole::Label.size())
-                    .line_height(TextRole::Label.line_height())
-                    .font_weight(TextRole::Label.weight())
-                    .text_color(theme.status_success)
-                    .child(title),
-            )
-            .child(
-                div()
-                    .mt(Space::Xs.px())
-                    .text_size(TextRole::Metadata.size())
-                    .line_height(TextRole::Metadata.line_height())
-                    .text_color(theme.text_secondary)
-                    .child(detail),
-            )
-            .when(preview.kind != SourceKind::SingleNode, |card| {
-                card.child(
-                    div()
-                        .mt(Space::Sm.px())
-                        .text_size(TextRole::Label.size())
-                        .line_height(TextRole::Label.line_height())
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .child(if language == Language::English {
-                            format!("{} sources · {node_count} nodes", providers.len())
-                        } else {
-                            format!("{} 个来源 · {node_count} 个节点", providers.len())
-                        }),
-                )
-            })
     }
 
     #[allow(clippy::too_many_lines)]
@@ -5806,23 +5649,6 @@ impl ManisApp {
         )
     }
 
-    #[allow(dead_code)]
-    fn cycle_qx_rule_target(&mut self) {
-        let targets = self.qx_rule_targets();
-        let next = targets
-            .iter()
-            .position(|target| target == &self.qx_rule_target_policy)
-            .map_or(0, |index| (index + 1) % targets.len());
-        self.qx_rule_target_policy.clone_from(&targets[next]);
-        self.qx_rule_feedback = QxRuleImportFeedback::Idle;
-        self.status = format!(
-            "{} {}",
-            self.language()
-                .text("QX rule target switched to", "QX 规则目标已切换为"),
-            self.qx_rule_target_policy
-        );
-    }
-
     #[allow(clippy::too_many_lines)]
     fn submit_qx_rule_import(
         &mut self,
@@ -6407,93 +6233,6 @@ impl ManisApp {
                             "{}: {error}",
                             this.language()
                                 .text("Failed to change rule source state", "规则来源状态修改失败")
-                        );
-                    }
-                }
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
-        cx.notify();
-    }
-
-    #[allow(dead_code)]
-    fn set_qx_rule_refresh_interval(
-        &mut self,
-        id: String,
-        refresh_interval: RemoteSourceRefreshInterval,
-        cx: &mut Context<Self>,
-    ) {
-        if self.source_refresh_busy() {
-            return;
-        }
-        let Some(store_dir) = self.subscription_store_dir.clone() else {
-            return;
-        };
-        self.qx_rule_import_generation = self.qx_rule_import_generation.wrapping_add(1);
-        let generation = self.qx_rule_import_generation;
-        self.qx_rule_source_refreshes.insert(
-            id.clone(),
-            QxRuleSourceRefreshState::Refreshing { generation },
-        );
-        self.status = format!(
-            "{}: {}",
-            self.language()
-                .text("Saving rule update interval", "正在保存规则更新间隔"),
-            refresh_interval_label(refresh_interval, self.language())
-        );
-        let executor = cx.background_executor().clone();
-        let task_id = id.clone();
-        cx.spawn(async move |this, cx| {
-            let result = executor
-                .spawn(async move {
-                    mihomo::update_qx_rule_source_refresh_interval_in(
-                        &store_dir,
-                        &task_id,
-                        refresh_interval,
-                    )
-                })
-                .await;
-            this.update(cx, |this, cx| {
-                if !matches!(
-                    this.qx_rule_source_refreshes.get(&id),
-                    Some(QxRuleSourceRefreshState::Refreshing { generation: active })
-                        if *active == generation
-                ) {
-                    return;
-                }
-                match result {
-                    Ok(stored) => {
-                        let language = this.language();
-                        if let Some(source) = this
-                            .qx_rule_sources
-                            .iter_mut()
-                            .find(|source| source.id == id)
-                        {
-                            *source = stored;
-                        }
-                        this.qx_rule_source_refreshes.remove(&id);
-                        this.status = format!(
-                            "{} {}",
-                            language.text("Rule update interval set to", "规则更新间隔已设为"),
-                            refresh_interval_label(refresh_interval, language)
-                        );
-                    }
-                    Err(error) => {
-                        this.qx_rule_source_refreshes.insert(
-                            id.clone(),
-                            QxRuleSourceRefreshState::Failed {
-                                generation,
-                                message: error.to_string(),
-                            },
-                        );
-                        this.status = format!(
-                            "{}: {error}",
-                            this.language().text(
-                                "Failed to save rule update interval",
-                                "规则更新间隔保存失败"
-                            )
                         );
                     }
                 }

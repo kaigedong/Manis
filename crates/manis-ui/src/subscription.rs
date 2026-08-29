@@ -109,7 +109,7 @@ impl SingleNodeSource {
         use_value(&self.value)
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn input_with_name(
         input: &str,
         name: &str,

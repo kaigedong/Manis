@@ -1,4 +1,4 @@
-use gpui::{Div, FontWeight, ParentElement, Rgba, Styled, div, prelude::*, px};
+use gpui::{Div, FontWeight, ParentElement, Rgba, Stateful, Styled, div, prelude::*, px};
 use manis_core::WindowSizeClass;
 
 use super::ManisApp;
@@ -11,7 +11,6 @@ use crate::{
 };
 
 impl ManisApp {
-    #[allow(clippy::too_many_lines)]
     pub(super) fn logs_workspace(
         &self,
         theme: Theme,
@@ -35,34 +34,7 @@ impl ManisApp {
             .collect::<Vec<_>>();
         let count = logs.len() + kernel_logs.len();
         let language = self.language();
-        let mut rows = div()
-            .id("logs-scroll")
-            .flex_1()
-            .overflow_y_scroll()
-            .flex()
-            .flex_col();
-        if logs.is_empty() && kernel_logs.is_empty() {
-            rows = rows.child(
-                div()
-                    .flex_1()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .p(Space::Xl.px())
-                    .child(logs_empty_state(language, query.is_empty(), theme)),
-            );
-        } else {
-            for entry in kernel_logs.into_iter().rev() {
-                rows = rows.child(kernel_log_row(entry, theme));
-            }
-            for entry in logs.into_iter().rev() {
-                let reference = entry.operation_id.map_or_else(
-                    || format!("#{:04}", entry.sequence),
-                    |operation| format!("#{:04} · OP-{operation:04}", entry.sequence),
-                );
-                rows = rows.child(ui_log_row(entry, reference, theme));
-            }
-        }
+        let rows = logs_rows(logs, kernel_logs, query.is_empty(), language, theme);
 
         let refresh_action = action_button(
             "refresh-logs",
@@ -127,6 +99,43 @@ impl ManisApp {
             .child(header)
             .child(rows)
     }
+}
+
+fn logs_rows(
+    logs: Vec<UiLogEntry>,
+    kernel_logs: Vec<&KernelLogEntry>,
+    no_query: bool,
+    language: Language,
+    theme: Theme,
+) -> Stateful<Div> {
+    let mut rows = div()
+        .id("logs-scroll")
+        .flex_1()
+        .overflow_y_scroll()
+        .flex()
+        .flex_col();
+    if logs.is_empty() && kernel_logs.is_empty() {
+        return rows.child(
+            div()
+                .flex_1()
+                .flex()
+                .items_center()
+                .justify_center()
+                .p(Space::Xl.px())
+                .child(logs_empty_state(language, no_query, theme)),
+        );
+    }
+    for entry in kernel_logs.into_iter().rev() {
+        rows = rows.child(kernel_log_row(entry, theme));
+    }
+    for entry in logs.into_iter().rev() {
+        let reference = entry.operation_id.map_or_else(
+            || format!("#{:04}", entry.sequence),
+            |operation| format!("#{:04} · OP-{operation:04}", entry.sequence),
+        );
+        rows = rows.child(ui_log_row(entry, reference, theme));
+    }
+    rows
 }
 
 fn logs_empty_state(language: Language, no_query: bool, theme: Theme) -> Div {
