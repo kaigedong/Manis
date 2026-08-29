@@ -1828,13 +1828,15 @@ pub(crate) fn save_subscription_source_with_options_in(
     {
         return write_subscription_source_in(
             directory,
-            &existing.id,
-            input,
-            &name,
-            enabled,
-            refresh_interval,
-            existing.last_successful_update_unix_secs,
-            &existing.proxy_server_nameservers,
+            SubscriptionSourceWrite {
+                id: &existing.id,
+                url_input: input,
+                name: &name,
+                enabled,
+                refresh_interval,
+                last_successful_update_unix_secs: existing.last_successful_update_unix_secs,
+                proxy_server_nameservers: &existing.proxy_server_nameservers,
+            },
         );
     }
     let id = next_stored_source_id(STORED_SUBSCRIPTION_PREFIX);
@@ -1900,22 +1902,26 @@ pub(crate) fn update_subscription_source_in(
         return Err(SubscriptionStoreError::InvalidSource);
     }
     let source_changed = decoded.stored.source != source;
+    let proxy_server_nameservers: &[ProxyDnsServer] = if source_changed {
+        &[]
+    } else {
+        &decoded.stored.proxy_server_nameservers
+    };
+    let validated_name = validate_subscription_source_name(name)?;
     write_subscription_source_in(
         directory,
-        id,
-        input,
-        &validate_subscription_source_name(name)?,
-        enabled,
-        refresh_interval,
-        if source_changed {
-            current_unix_secs()
-        } else {
-            decoded.stored.last_successful_update_unix_secs
-        },
-        if source_changed {
-            &[]
-        } else {
-            &decoded.stored.proxy_server_nameservers
+        SubscriptionSourceWrite {
+            id,
+            url_input: input,
+            name: &validated_name,
+            enabled,
+            refresh_interval,
+            last_successful_update_unix_secs: if source_changed {
+                current_unix_secs()
+            } else {
+                decoded.stored.last_successful_update_unix_secs
+            },
+            proxy_server_nameservers,
         },
     )
 }
@@ -1929,13 +1935,15 @@ pub(crate) fn update_subscription_source_enabled_in(
     let decoded = read_subscription_source_by_id_in(directory, id)?;
     write_subscription_source_in(
         directory,
-        id,
-        &decoded.url_input,
-        &decoded.stored.name,
-        enabled,
-        decoded.stored.refresh_interval,
-        decoded.stored.last_successful_update_unix_secs,
-        &decoded.stored.proxy_server_nameservers,
+        SubscriptionSourceWrite {
+            id,
+            url_input: &decoded.url_input,
+            name: &decoded.stored.name,
+            enabled,
+            refresh_interval: decoded.stored.refresh_interval,
+            last_successful_update_unix_secs: decoded.stored.last_successful_update_unix_secs,
+            proxy_server_nameservers: &decoded.stored.proxy_server_nameservers,
+        },
     )
 }
 
@@ -2027,13 +2035,15 @@ pub(crate) fn update_subscription_source_refresh_interval_in(
     let decoded = read_subscription_source_by_id_in(directory, id)?;
     write_subscription_source_in(
         directory,
-        id,
-        &decoded.url_input,
-        &decoded.stored.name,
-        decoded.stored.enabled,
-        refresh_interval,
-        decoded.stored.last_successful_update_unix_secs,
-        &decoded.stored.proxy_server_nameservers,
+        SubscriptionSourceWrite {
+            id,
+            url_input: &decoded.url_input,
+            name: &decoded.stored.name,
+            enabled: decoded.stored.enabled,
+            refresh_interval,
+            last_successful_update_unix_secs: decoded.stored.last_successful_update_unix_secs,
+            proxy_server_nameservers: &decoded.stored.proxy_server_nameservers,
+        },
     )
 }
 
@@ -2055,13 +2065,15 @@ pub(crate) fn mark_subscription_source_update_success_in(
     let decoded = read_subscription_source_by_id_in(directory, id)?;
     write_subscription_source_in(
         directory,
-        id,
-        &decoded.url_input,
-        &decoded.stored.name,
-        decoded.stored.enabled,
-        decoded.stored.refresh_interval,
-        last_successful_update_unix_secs,
-        &decoded.stored.proxy_server_nameservers,
+        SubscriptionSourceWrite {
+            id,
+            url_input: &decoded.url_input,
+            name: &decoded.stored.name,
+            enabled: decoded.stored.enabled,
+            refresh_interval: decoded.stored.refresh_interval,
+            last_successful_update_unix_secs,
+            proxy_server_nameservers: &decoded.stored.proxy_server_nameservers,
+        },
     )
 }
 
@@ -2079,13 +2091,15 @@ pub(crate) fn update_subscription_source_proxy_nameservers_in(
     let decoded = read_subscription_source_by_id_in(directory, id)?;
     write_subscription_source_in(
         directory,
-        id,
-        &decoded.url_input,
-        &decoded.stored.name,
-        decoded.stored.enabled,
-        decoded.stored.refresh_interval,
-        decoded.stored.last_successful_update_unix_secs,
-        proxy_server_nameservers,
+        SubscriptionSourceWrite {
+            id,
+            url_input: &decoded.url_input,
+            name: &decoded.stored.name,
+            enabled: decoded.stored.enabled,
+            refresh_interval: decoded.stored.refresh_interval,
+            last_successful_update_unix_secs: decoded.stored.last_successful_update_unix_secs,
+            proxy_server_nameservers,
+        },
     )
 }
 
@@ -2499,13 +2513,15 @@ pub(crate) fn update_qx_rule_source_refresh_interval_in(
     let decoded = read_qx_rule_source_by_id_in(directory, id)?;
     write_qx_rule_source_in(
         directory,
-        id,
-        &decoded.url_input,
-        decoded.stored.target_policy.as_str(),
-        &decoded.stored.content,
-        decoded.stored.enabled,
-        refresh_interval,
-        decoded.stored.last_successful_update_unix_secs,
+        QxRuleSourceWrite {
+            id,
+            url_input: &decoded.url_input,
+            target_policy: decoded.stored.target_policy.as_str(),
+            content: &decoded.stored.content,
+            enabled: decoded.stored.enabled,
+            refresh_interval,
+            last_successful_update_unix_secs: decoded.stored.last_successful_update_unix_secs,
+        },
     )
 }
 
@@ -2527,13 +2543,15 @@ pub(crate) fn update_qx_rule_source_target_in(
     let decoded = read_qx_rule_source_by_id_in(directory, id)?;
     write_qx_rule_source_in(
         directory,
-        id,
-        &decoded.url_input,
-        target_policy,
-        &decoded.stored.content,
-        decoded.stored.enabled,
-        decoded.stored.refresh_interval,
-        decoded.stored.last_successful_update_unix_secs,
+        QxRuleSourceWrite {
+            id,
+            url_input: &decoded.url_input,
+            target_policy,
+            content: &decoded.stored.content,
+            enabled: decoded.stored.enabled,
+            refresh_interval: decoded.stored.refresh_interval,
+            last_successful_update_unix_secs: decoded.stored.last_successful_update_unix_secs,
+        },
     )
 }
 
@@ -2559,13 +2577,15 @@ pub(crate) fn replace_qx_rule_source_definition_in(
     let decoded = read_qx_rule_source_by_id_in(directory, id)?;
     write_qx_rule_source_in(
         directory,
-        id,
-        url_input,
-        target_policy,
-        content,
-        decoded.stored.enabled,
-        refresh_interval,
-        last_successful_update_unix_secs,
+        QxRuleSourceWrite {
+            id,
+            url_input,
+            target_policy,
+            content,
+            enabled: decoded.stored.enabled,
+            refresh_interval,
+            last_successful_update_unix_secs,
+        },
     )
 }
 
@@ -2578,13 +2598,15 @@ pub(crate) fn update_qx_rule_source_enabled_in(
     let decoded = read_qx_rule_source_by_id_in(directory, id)?;
     write_qx_rule_source_in(
         directory,
-        id,
-        &decoded.url_input,
-        decoded.stored.target_policy.as_str(),
-        &decoded.stored.content,
-        enabled,
-        decoded.stored.refresh_interval,
-        decoded.stored.last_successful_update_unix_secs,
+        QxRuleSourceWrite {
+            id,
+            url_input: &decoded.url_input,
+            target_policy: decoded.stored.target_policy.as_str(),
+            content: &decoded.stored.content,
+            enabled,
+            refresh_interval: decoded.stored.refresh_interval,
+            last_successful_update_unix_secs: decoded.stored.last_successful_update_unix_secs,
+        },
     )
 }
 
@@ -2621,13 +2643,15 @@ pub(crate) fn replace_qx_rule_source_content_in(
     let decoded = read_qx_rule_source_by_id_in(directory, id)?;
     write_qx_rule_source_in(
         directory,
-        id,
-        &decoded.url_input,
-        decoded.stored.target_policy.as_str(),
-        content,
-        decoded.stored.enabled,
-        decoded.stored.refresh_interval,
-        last_successful_update_unix_secs,
+        QxRuleSourceWrite {
+            id,
+            url_input: &decoded.url_input,
+            target_policy: decoded.stored.target_policy.as_str(),
+            content,
+            enabled: decoded.stored.enabled,
+            refresh_interval: decoded.stored.refresh_interval,
+            last_successful_update_unix_secs,
+        },
     )
 }
 
@@ -2877,40 +2901,45 @@ fn read_subscription_source_by_id_in(
 }
 
 #[cfg(not(windows))]
-#[allow(dead_code, clippy::too_many_arguments)]
-fn write_subscription_source_in(
-    directory: &Path,
-    id: &str,
-    url_input: &str,
-    name: &str,
+#[derive(Clone, Copy)]
+struct SubscriptionSourceWrite<'a> {
+    id: &'a str,
+    url_input: &'a str,
+    name: &'a str,
     enabled: bool,
     refresh_interval: RemoteSourceRefreshInterval,
     last_successful_update_unix_secs: u64,
-    proxy_server_nameservers: &[ProxyDnsServer],
+    proxy_server_nameservers: &'a [ProxyDnsServer],
+}
+
+#[cfg(not(windows))]
+fn write_subscription_source_in(
+    directory: &Path,
+    write: SubscriptionSourceWrite<'_>,
 ) -> Result<StoredSubscription, SubscriptionStoreError> {
-    let source = SecretUrl::parse_subscription(url_input)
+    let source = SecretUrl::parse_subscription(write.url_input)
         .map_err(|_error| SubscriptionStoreError::InvalidSource)?;
-    let name = validate_subscription_source_name(name)?;
+    let name = validate_subscription_source_name(write.name)?;
     let contents = encode_subscription_source(
-        id,
-        url_input,
+        write.id,
+        write.url_input,
         &name,
-        enabled,
-        refresh_interval,
-        last_successful_update_unix_secs,
-        proxy_server_nameservers,
+        write.enabled,
+        write.refresh_interval,
+        write.last_successful_update_unix_secs,
+        write.proxy_server_nameservers,
     )?;
-    let file_name = subscription_source_file_name(id)?;
+    let file_name = subscription_source_file_name(write.id)?;
     write_private_atomic(directory, &file_name, contents.as_bytes())
         .map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
     Ok(StoredSubscription {
-        id: id.to_owned(),
+        id: write.id.to_owned(),
         name,
         source,
-        enabled,
-        refresh_interval,
-        last_successful_update_unix_secs,
-        proxy_server_nameservers: proxy_server_nameservers.to_vec(),
+        enabled: write.enabled,
+        refresh_interval: write.refresh_interval,
+        last_successful_update_unix_secs: write.last_successful_update_unix_secs,
+        proxy_server_nameservers: write.proxy_server_nameservers.to_vec(),
     })
 }
 
@@ -3717,44 +3746,49 @@ fn read_qx_rule_source_by_id_in(
 }
 
 #[cfg(not(windows))]
-#[allow(dead_code, clippy::too_many_arguments)]
-fn write_qx_rule_source_in(
-    directory: &Path,
-    id: &str,
-    url_input: &str,
-    target_policy: &str,
-    content: &str,
+#[derive(Clone, Copy)]
+struct QxRuleSourceWrite<'a> {
+    id: &'a str,
+    url_input: &'a str,
+    target_policy: &'a str,
+    content: &'a str,
     enabled: bool,
     refresh_interval: RemoteSourceRefreshInterval,
     last_successful_update_unix_secs: u64,
+}
+
+#[cfg(not(windows))]
+fn write_qx_rule_source_in(
+    directory: &Path,
+    write: QxRuleSourceWrite<'_>,
 ) -> Result<StoredQxRuleSource, SubscriptionStoreError> {
-    let source = SecretUrl::parse_https(url_input)
+    let source = SecretUrl::parse_https(write.url_input)
         .map_err(|_error| SubscriptionStoreError::InvalidSource)?;
     let target_policy =
-        Name::parse(target_policy).map_err(|_error| SubscriptionStoreError::InvalidSource)?;
-    let (rule_count, diagnostic_count) = validate_qx_rule_source_content(content)?;
+        Name::parse(write.target_policy).map_err(|_error| SubscriptionStoreError::InvalidSource)?;
+    let (rule_count, diagnostic_count) = validate_qx_rule_source_content(write.content)?;
     let contents = encode_qx_rule_source(
-        id,
-        url_input,
+        write.id,
+        write.url_input,
         &target_policy,
-        content,
-        enabled,
-        refresh_interval,
-        last_successful_update_unix_secs,
+        write.content,
+        write.enabled,
+        write.refresh_interval,
+        write.last_successful_update_unix_secs,
     )?;
-    let file_name = qx_rule_source_file_name(id)?;
+    let file_name = qx_rule_source_file_name(write.id)?;
     write_private_atomic(directory, &file_name, contents.as_bytes())
         .map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
     Ok(StoredQxRuleSource {
-        id: id.to_owned(),
+        id: write.id.to_owned(),
         source,
-        enabled,
+        enabled: write.enabled,
         target_policy,
-        content: content.to_owned(),
+        content: write.content.to_owned(),
         rule_count,
         diagnostic_count,
-        refresh_interval,
-        last_successful_update_unix_secs,
+        refresh_interval: write.refresh_interval,
+        last_successful_update_unix_secs: write.last_successful_update_unix_secs,
     })
 }
 
