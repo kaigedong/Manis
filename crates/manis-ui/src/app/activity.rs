@@ -197,7 +197,7 @@ impl ManisApp {
                 .qx_rule_sources
                 .iter()
                 .enumerate()
-                .find(|(_, source)| source.id == group_id)
+                .find(|(_, source)| source.enabled && source.id == group_id)
             else {
                 continue;
             };

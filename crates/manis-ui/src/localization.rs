@@ -29,6 +29,7 @@ pub(crate) enum Message {
     TestRules,
     ManageSources,
     ImportSubscription,
+    #[allow(dead_code)]
     Clear,
     SaveChanges,
     Cancel,

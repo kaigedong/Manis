@@ -38,7 +38,7 @@ use crate::{
     mihomo::{
         self, ControllerRuntime, ControllerState, GeneratedProfileApply, KernelLogEntry,
         LiveRuntimeSession, LiveStreamStatus, LoadedProvider, LoadedSnapshot, ManagedRuntimeHealth,
-        RemoteSourceRefreshInterval, StoredQxRuleSource, StoredSubscription, StoredVlessNode,
+        RemoteSourceRefreshInterval, StoredQxRuleSource, StoredSingleNode, StoredSubscription,
         SubscriptionPreviewError, SubscriptionStoreError,
     },
     rule_source::RuleDownloadError,
@@ -54,6 +54,43 @@ mod activity;
 mod configuration;
 mod logs;
 mod nodes;
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum ConfigurationSection {
+    General,
+    Runtime,
+    #[default]
+    ProxySources,
+    RuleSources,
+    Advanced,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum ProxySourceEditorKind {
+    #[default]
+    Subscription,
+    SingleNode,
+}
+
+impl ConfigurationSection {
+    const ALL: [Self; 5] = [
+        Self::General,
+        Self::Runtime,
+        Self::ProxySources,
+        Self::RuleSources,
+        Self::Advanced,
+    ];
+
+    const fn key(self) -> &'static str {
+        match self {
+            Self::General => "general",
+            Self::Runtime => "runtime",
+            Self::ProxySources => "proxy-sources",
+            Self::RuleSources => "rule-sources",
+            Self::Advanced => "advanced",
+        }
+    }
+}
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 enum SubscriptionFeedback {
@@ -209,7 +246,9 @@ enum ImportedSubscriptionState {
 #[derive(Clone, Debug)]
 struct ImportedSubscription {
     id: String,
+    name: String,
     source: SecretUrl,
+    enabled: bool,
     state: ImportedSubscriptionState,
     providers: Vec<LoadedProvider>,
     generation: u64,
@@ -222,8 +261,14 @@ impl ImportedSubscription {
         let kind = source_kind(&stored.source);
         Self {
             id: stored.id,
+            name: stored.name,
             source: stored.source,
-            state: ImportedSubscriptionState::Pending(kind),
+            enabled: stored.enabled,
+            state: if stored.enabled {
+                ImportedSubscriptionState::Pending(kind)
+            } else {
+                ImportedSubscriptionState::None
+            },
             providers: Vec::new(),
             generation: 0,
             refresh_interval: stored.refresh_interval,
@@ -350,15 +395,17 @@ fn next_due_remote_source(
     subscriptions
         .iter()
         .find(|source| {
-            !matches!(
-                source.state,
-                ImportedSubscriptionState::None
-                    | ImportedSubscriptionState::Pending(_)
-                    | ImportedSubscriptionState::Refreshing(_)
-                    | ImportedSubscriptionState::Removing(_)
-            ) && source
-                .refresh_interval
-                .is_due(source.last_successful_update_unix_secs, now_unix_secs)
+            source.enabled
+                && !matches!(
+                    source.state,
+                    ImportedSubscriptionState::None
+                        | ImportedSubscriptionState::Pending(_)
+                        | ImportedSubscriptionState::Refreshing(_)
+                        | ImportedSubscriptionState::Removing(_)
+                )
+                && source
+                    .refresh_interval
+                    .is_due(source.last_successful_update_unix_secs, now_unix_secs)
                 && retry_not_before
                     .get(&DueRemoteSource::Subscription(source.id.clone()).scheduler_key())
                     .is_none_or(|retry_at| now_unix_secs >= *retry_at)
@@ -368,9 +415,10 @@ fn next_due_remote_source(
             qx_rule_sources
                 .iter()
                 .find(|source| {
-                    source
-                        .refresh_interval
-                        .is_due(source.last_successful_update_unix_secs, now_unix_secs)
+                    source.enabled
+                        && source
+                            .refresh_interval
+                            .is_due(source.last_successful_update_unix_secs, now_unix_secs)
                         && retry_not_before
                             .get(&DueRemoteSource::QxRule(source.id.clone()).scheduler_key())
                             .is_none_or(|retry_at| now_unix_secs >= *retry_at)
@@ -641,6 +689,8 @@ impl ManagedPolicyRuntimeState {
 pub struct ManisApp {
     localizer: Localizer,
     primary_workspace: PrimaryWorkspace,
+    configuration_section: ConfigurationSection,
+    configuration_add_section: Option<ConfigurationSection>,
     node_workspace: NodeWorkspaceState,
     workspace: PolicyWorkspaceState,
     expanded_policy_group: Option<PolicyGroupId>,
@@ -656,11 +706,15 @@ pub struct ManisApp {
     subscription_preview_generation: u64,
     subscription_store_dir: Option<PathBuf>,
     imported_subscriptions: Vec<ImportedSubscription>,
-    saved_vless_nodes: Vec<StoredVlessNode>,
+    saved_single_nodes: Vec<StoredSingleNode>,
     qx_rule_sources: Vec<StoredQxRuleSource>,
     routing_rule_group_order: Vec<String>,
     qx_rule_feedback: QxRuleImportFeedback,
     qx_rule_target_policy: String,
+    qx_rule_editor_source_id: Option<String>,
+    qx_rule_editor_refresh_interval: RemoteSourceRefreshInterval,
+    qx_rule_editor_target_popover: bool,
+    qx_rule_editor_interval_popover: bool,
     qx_rule_import_generation: u64,
     qx_rule_source_refreshes: BTreeMap<String, QxRuleSourceRefreshState>,
     qx_rule_source_target_updates: BTreeMap<String, u64>,
@@ -699,6 +753,14 @@ pub struct ManisApp {
     dark: bool,
     status: String,
     subscription_input: Option<Entity<SubscriptionTextInput>>,
+    subscription_name_input: Option<Entity<SubscriptionTextInput>>,
+    subscription_editor_source_id: Option<String>,
+    single_node_editor_source_id: Option<String>,
+    proxy_source_editor_kind: ProxySourceEditorKind,
+    subscription_editor_refresh_interval: RemoteSourceRefreshInterval,
+    subscription_editor_interval_popover: bool,
+    subscription_editor_enabled: bool,
+    subscription_editor_error: Option<String>,
     subscription_feedback: SubscriptionFeedback,
     subscription_input_events: Option<Subscription>,
     qx_rule_input: Option<Entity<SubscriptionTextInput>>,
@@ -739,7 +801,7 @@ impl Render for RouteInspectorSheetContent {
 
 struct StoredWorkspace {
     imported_subscriptions: Vec<ImportedSubscription>,
-    saved_vless_nodes: Vec<StoredVlessNode>,
+    saved_single_nodes: Vec<StoredSingleNode>,
     qx_rule_sources: Vec<StoredQxRuleSource>,
     routing_rule_group_order: Vec<String>,
     collapsed_groups: Vec<String>,
@@ -754,7 +816,7 @@ impl StoredWorkspace {
         let Some(directory) = directory else {
             return Self {
                 imported_subscriptions: Vec::new(),
-                saved_vless_nodes: Vec::new(),
+                saved_single_nodes: Vec::new(),
                 qx_rule_sources: Vec::new(),
                 routing_rule_group_order: Vec::new(),
                 collapsed_groups: Vec::new(),
@@ -765,7 +827,7 @@ impl StoredWorkspace {
             };
         };
         let subscriptions = mihomo::load_subscription_sources_in(directory);
-        let nodes = mihomo::load_vless_sources_in(directory);
+        let nodes = mihomo::load_single_node_sources_in(directory);
         let qx_rule_sources = mihomo::load_qx_rule_sources_in(directory);
         let routing_rule_group_order = mihomo::load_routing_rule_group_order_in(directory);
         let collapsed = mihomo::load_collapsed_groups_in(directory);
@@ -791,7 +853,7 @@ impl StoredWorkspace {
                 .into_iter()
                 .map(ImportedSubscription::from_stored)
                 .collect(),
-            saved_vless_nodes: nodes.unwrap_or_default(),
+            saved_single_nodes: nodes.unwrap_or_default(),
             qx_rule_sources: qx_rule_sources.unwrap_or_default(),
             routing_rule_group_order: routing_rule_group_order.unwrap_or_default(),
             collapsed_groups: collapsed.unwrap_or_default(),
@@ -899,7 +961,7 @@ impl ManisApp {
         let mut status = runtime.initial_status_in(language);
         let StoredWorkspace {
             imported_subscriptions,
-            saved_vless_nodes,
+            saved_single_nodes,
             qx_rule_sources,
             routing_rule_group_order,
             collapsed_groups,
@@ -913,7 +975,7 @@ impl ManisApp {
             .map_or_else(|| "DIRECT".to_owned(), |group| group.name.clone());
         if let Some(directory) = subscription_store_dir.as_ref()
             && (!imported_subscriptions.is_empty()
-                || !saved_vless_nodes.is_empty()
+                || !saved_single_nodes.is_empty()
                 || !qx_rule_sources.is_empty()
                 || !managed_policy_groups.is_empty()
                 || routing_mode != RoutingMode::Rule)
@@ -945,6 +1007,8 @@ impl ManisApp {
         Self {
             localizer,
             primary_workspace: PrimaryWorkspace::default(),
+            configuration_section: ConfigurationSection::default(),
+            configuration_add_section: None,
             node_workspace,
             workspace: PolicyWorkspaceState::default(),
             expanded_policy_group: None,
@@ -972,11 +1036,15 @@ impl ManisApp {
             subscription_preview_generation: 0,
             subscription_store_dir,
             imported_subscriptions,
-            saved_vless_nodes,
+            saved_single_nodes,
             qx_rule_sources,
             routing_rule_group_order,
             qx_rule_feedback: QxRuleImportFeedback::Idle,
             qx_rule_target_policy: default_rule_target.clone(),
+            qx_rule_editor_source_id: None,
+            qx_rule_editor_refresh_interval: RemoteSourceRefreshInterval::Manual,
+            qx_rule_editor_target_popover: false,
+            qx_rule_editor_interval_popover: false,
             qx_rule_import_generation: 0,
             qx_rule_source_refreshes: BTreeMap::new(),
             qx_rule_source_target_updates: BTreeMap::new(),
@@ -1015,6 +1083,14 @@ impl ManisApp {
             dark: false,
             status,
             subscription_input: None,
+            subscription_name_input: None,
+            subscription_editor_source_id: None,
+            single_node_editor_source_id: None,
+            proxy_source_editor_kind: ProxySourceEditorKind::Subscription,
+            subscription_editor_refresh_interval: RemoteSourceRefreshInterval::Manual,
+            subscription_editor_interval_popover: false,
+            subscription_editor_enabled: true,
+            subscription_editor_error: None,
             subscription_feedback: SubscriptionFeedback::Idle,
             subscription_input_events: None,
             qx_rule_input: None,
@@ -1164,6 +1240,15 @@ impl ManisApp {
                 input.set_theme(theme, self.dark, cx);
                 input.set_language(language, cx);
             });
+            if let Some(name_input) = self.subscription_name_input.as_ref() {
+                name_input.update(cx, |input, cx| {
+                    input.set_theme(theme, self.dark, cx);
+                    input.set_placeholder(
+                        language.text("For example: My subscription", "例如：我的订阅"),
+                        cx,
+                    );
+                });
+            }
             return;
         }
 
@@ -1177,6 +1262,17 @@ impl ManisApp {
             }
         });
         self.subscription_input = Some(input);
+        self.subscription_name_input = Some(cx.new(|cx| {
+            SubscriptionTextInput::new_field(
+                "subscription-name-input",
+                language.text("For example: My subscription", "例如：我的订阅"),
+                96,
+                theme,
+                self.dark,
+                window,
+                cx,
+            )
+        }));
         self.subscription_input_events = Some(events);
         self.restore_imported_subscriptions(cx);
     }
@@ -1443,6 +1539,10 @@ impl ManisApp {
     fn import_remote_subscription(
         &mut self,
         input: String,
+        name: String,
+        refresh_interval: RemoteSourceRefreshInterval,
+        enabled: bool,
+        editing_id: Option<String>,
         kind: SourceKind,
         cx: &mut Context<Self>,
     ) {
@@ -1473,6 +1573,9 @@ impl ManisApp {
         if let Some(input) = self.subscription_input.as_ref() {
             input.update(cx, |input, cx| input.set_enabled(false, cx));
         }
+        if let Some(input) = self.subscription_name_input.as_ref() {
+            input.update(cx, |input, cx| input.set_enabled(false, cx));
+        }
 
         let executor = cx.background_executor().clone();
         let runtime = self.runtime.clone();
@@ -1481,8 +1584,25 @@ impl ManisApp {
                 .spawn(async move {
                     let providers = mihomo::preview_subscription(&input)
                         .map_err(ImportSubscriptionError::Preview)?;
-                    let mut subscription = mihomo::save_subscription_source_in(&store_dir, &input)
-                        .map_err(ImportSubscriptionError::Store)?;
+                    let mut subscription = if let Some(id) = editing_id.as_deref() {
+                        mihomo::update_subscription_source_in(
+                            &store_dir,
+                            id,
+                            &input,
+                            &name,
+                            refresh_interval,
+                            enabled,
+                        )
+                    } else {
+                        mihomo::save_subscription_source_with_options_in(
+                            &store_dir,
+                            &input,
+                            &name,
+                            refresh_interval,
+                            enabled,
+                        )
+                    }
+                    .map_err(ImportSubscriptionError::Store)?;
                     let proxy_nameservers =
                         mihomo::discover_subscription_proxy_nameservers(&subscription.source);
                     if !proxy_nameservers.is_empty() {
@@ -1507,6 +1627,9 @@ impl ManisApp {
                 if let Some(input) = this.subscription_input.as_ref() {
                     input.update(cx, |input, cx| input.set_enabled(true, cx));
                 }
+                if let Some(input) = this.subscription_name_input.as_ref() {
+                    input.update(cx, |input, cx| input.set_enabled(true, cx));
+                }
                 match result {
                     Ok((subscription, providers, apply)) => {
                         let node_count: usize =
@@ -1518,8 +1641,14 @@ impl ManisApp {
                             .iter_mut()
                             .find(|existing| existing.id == stored_id)
                         {
+                            existing.name.clone_from(&subscription.name);
                             existing.source = subscription.source;
-                            existing.state = ImportedSubscriptionState::Ready(kind);
+                            existing.enabled = subscription.enabled;
+                            existing.state = if subscription.enabled {
+                                ImportedSubscriptionState::Ready(kind)
+                            } else {
+                                ImportedSubscriptionState::None
+                            };
                             existing.providers.clone_from(&providers);
                             existing.refresh_interval = subscription.refresh_interval;
                             existing.last_successful_update_unix_secs =
@@ -1527,8 +1656,14 @@ impl ManisApp {
                         } else {
                             this.imported_subscriptions.push(ImportedSubscription {
                                 id: stored_id,
+                                name: subscription.name,
                                 source: subscription.source,
-                                state: ImportedSubscriptionState::Ready(kind),
+                                enabled: subscription.enabled,
+                                state: if subscription.enabled {
+                                    ImportedSubscriptionState::Ready(kind)
+                                } else {
+                                    ImportedSubscriptionState::None
+                                },
                                 providers: providers.clone(),
                                 generation,
                                 refresh_interval: subscription.refresh_interval,
@@ -1541,6 +1676,12 @@ impl ManisApp {
                         if let Some(input) = this.subscription_input.as_ref() {
                             input.update(cx, SubscriptionTextInput::clear_without_event);
                         }
+                        if let Some(input) = this.subscription_name_input.as_ref() {
+                            input.update(cx, SubscriptionTextInput::clear_without_event);
+                        }
+                        this.configuration_add_section = None;
+                        this.subscription_editor_source_id = None;
+                        this.subscription_editor_error = None;
                         apply.reconcile_proxy_mode(&mut this.proxy_mode);
                         this.status = if language == Language::English {
                             format!(
@@ -1617,7 +1758,8 @@ impl ManisApp {
             ImportedSubscriptionState::None
                 | ImportedSubscriptionState::Refreshing(_)
                 | ImportedSubscriptionState::Removing(_)
-        ) {
+        ) || !subscription.enabled
+        {
             return;
         }
         let kind = source_kind(&subscription.source);
@@ -2350,11 +2492,13 @@ impl ManisApp {
             .provider
             .as_deref()
             .and_then(managed_subscription_provider_index)
-            && let Some(subscription) = self.imported_subscriptions.get(index)
+            && let Some(subscription) = self
+                .imported_subscriptions
+                .iter()
+                .filter(|subscription| subscription.enabled)
+                .nth(index)
         {
-            return subscription.source.subscription_name().unwrap_or_else(|| {
-                format!("{} {}", language.text("Subscription", "订阅"), index + 1)
-            });
+            return subscription.name.clone();
         }
 
         if let Some(provider) = node.provider.as_ref() {
@@ -2362,29 +2506,29 @@ impl ManisApp {
         }
 
         if self
-            .saved_vless_nodes
+            .saved_single_nodes
             .iter()
+            .filter(|saved| saved.enabled)
             .any(|saved| saved.source.preview().name == node.name)
         {
             return language.text("Saved", "已保存").to_owned();
         }
 
-        if let Some((index, subscription)) =
-            self.imported_subscriptions
-                .iter()
-                .enumerate()
-                .find(|(_, subscription)| {
-                    subscription.providers.iter().any(|provider| {
-                        provider
-                            .nodes
-                            .iter()
-                            .any(|candidate| candidate.name == node.name)
-                    })
+        if let Some((_index, subscription)) = self
+            .imported_subscriptions
+            .iter()
+            .enumerate()
+            .filter(|(_, subscription)| subscription.enabled)
+            .find(|(_, subscription)| {
+                subscription.providers.iter().any(|provider| {
+                    provider
+                        .nodes
+                        .iter()
+                        .any(|candidate| candidate.name == node.name)
                 })
+            })
         {
-            return subscription.source.subscription_name().unwrap_or_else(|| {
-                format!("{} {}", language.text("Subscription", "订阅"), index + 1)
-            });
+            return subscription.name.clone();
         }
 
         language.text("Local configuration", "本地配置").to_owned()
@@ -7017,10 +7161,12 @@ mod tests {
         let mut app = ManisApp::with_fixture_controller("http://127.0.0.1:9090");
         app.imported_subscriptions.push(ImportedSubscription {
             id: "subscription:fixture".to_owned(),
+            name: "NaiU_Net".to_owned(),
             source: manis_profile::SecretUrl::parse_subscription(
                 "https://subscription.example.invalid/client?name=NaiU_Net",
             )
             .expect("fixture subscription"),
+            enabled: true,
             state: ImportedSubscriptionState::Ready(SourceKind::HttpsSubscription),
             providers: Vec::new(),
             generation: 0,
@@ -7047,10 +7193,12 @@ mod tests {
     fn scheduled_refresh_selects_one_due_source_with_subscriptions_first() {
         let subscription = ImportedSubscription {
             id: "subscription:fixture".to_owned(),
+            name: "Fixture".to_owned(),
             source: manis_profile::SecretUrl::parse_subscription(
                 "https://subscription.example.invalid/client",
             )
             .expect("fixture subscription"),
+            enabled: true,
             state: ImportedSubscriptionState::Ready(SourceKind::HttpsSubscription),
             providers: Vec::new(),
             generation: 0,
@@ -7061,6 +7209,7 @@ mod tests {
             id: "qx-rule-source:fixture".to_owned(),
             source: manis_profile::SecretUrl::parse_https("https://rules.example.invalid/list")
                 .expect("fixture rule URL"),
+            enabled: true,
             target_policy: manis_profile::Name::parse("Proxy").expect("fixture policy"),
             content: "DOMAIN-SUFFIX,example.com,Proxy".to_owned(),
             rule_count: 1,
@@ -7079,6 +7228,18 @@ mod tests {
             Some(DueRemoteSource::Subscription(subscription.id.clone()))
         );
 
+        let mut disabled_subscription = subscription.clone();
+        disabled_subscription.enabled = false;
+        assert_eq!(
+            super::next_due_remote_source(
+                &[disabled_subscription],
+                std::slice::from_ref(&rule_source),
+                &BTreeMap::new(),
+                3_700,
+            ),
+            Some(DueRemoteSource::QxRule(rule_source.id.clone()))
+        );
+
         let mut second_subscription = subscription.clone();
         second_subscription.id = "subscription:second".to_owned();
         let retry_not_before = BTreeMap::from([(
@@ -7095,6 +7256,12 @@ mod tests {
             Some(DueRemoteSource::Subscription(second_subscription.id))
         );
 
+        rule_source.enabled = false;
+        assert_eq!(
+            super::next_due_remote_source(&[], &[rule_source.clone()], &BTreeMap::new(), 3_700),
+            None
+        );
+        rule_source.enabled = true;
         rule_source.refresh_interval = mihomo::RemoteSourceRefreshInterval::Manual;
         assert_eq!(
             super::next_due_remote_source(&[], &[rule_source], &BTreeMap::new(), 3_700),
@@ -7387,6 +7554,7 @@ mod tests {
         );
 
         assert_eq!(app.qx_rule_sources.len(), 1);
+        assert!(app.qx_rule_sources[0].enabled);
         assert_eq!(app.qx_rule_sources[0].rule_count, 1);
         assert_eq!(app.qx_rule_sources[0].target_policy.as_str(), "Proxy");
         fs::remove_dir_all(root).expect("remove fixture");

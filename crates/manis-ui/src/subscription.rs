@@ -8,7 +8,7 @@ pub(crate) const MAX_SUBSCRIPTION_BYTES: usize = 16 * 1024;
 pub(crate) enum SourceKind {
     HttpSubscription,
     HttpsSubscription,
-    VlessNode,
+    SingleNode,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -26,14 +26,14 @@ pub(crate) struct SubscriptionPreview {
 }
 
 #[derive(Clone, Eq, PartialEq)]
-pub(crate) struct VlessSource {
+pub(crate) struct SingleNodeSource {
     value: String,
     preview: SourceNodePreview,
 }
 
-impl fmt::Debug for VlessSource {
+impl fmt::Debug for SingleNodeSource {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("VlessSource(<redacted>)")
+        formatter.write_str("SingleNodeSource(<redacted>)")
     }
 }
 
@@ -53,7 +53,7 @@ impl fmt::Display for SubscriptionInputError {
             Self::UnsupportedSource => "无法识别；请输入 HTTP/HTTPS 订阅或 vless:// 节点链接",
             Self::TooLong => "来源地址过长，请确认复制的是完整地址",
             Self::InvalidPreset => "订阅地址有效，但无法生成默认策略",
-            Self::InvalidVless => "VLESS 链接不完整，请检查 UUID、服务器和端口",
+            Self::InvalidVless => "单节点链接无效，请检查协议、服务器和参数",
         })
     }
 }
@@ -67,10 +67,6 @@ pub(crate) fn validate_subscription_preview(
     if input.len() > MAX_SUBSCRIPTION_BYTES {
         return Err(SubscriptionInputError::TooLong);
     }
-    if input.starts_with("vless://") {
-        return VlessSource::parse(input).map(VlessSource::into_preview);
-    }
-
     let subscription = SecretUrl::parse_subscription(input)
         .map_err(|_error| SubscriptionInputError::UnsupportedSource)?;
     Profile::qx_default(subscription).map_err(|_error| SubscriptionInputError::InvalidPreset)?;
@@ -84,11 +80,21 @@ pub(crate) fn validate_subscription_preview(
     })
 }
 
-impl VlessSource {
+pub(crate) fn validate_single_node_preview(
+    input: &str,
+) -> Result<SubscriptionPreview, SubscriptionInputError> {
+    SingleNodeSource::parse(input).map(SingleNodeSource::into_preview)
+}
+
+impl SingleNodeSource {
     pub(crate) fn parse(input: &str) -> Result<Self, SubscriptionInputError> {
-        VlessProxy::parse_share_link(input)
-            .map_err(|_error| SubscriptionInputError::InvalidVless)?;
-        let preview = parse_vless_node(input)?;
+        let preview = if input.starts_with("vless://") {
+            VlessProxy::parse_share_link(input)
+                .map_err(|_error| SubscriptionInputError::InvalidVless)?;
+            parse_vless_node(input)?
+        } else {
+            parse_generic_single_node(input)?
+        };
         Ok(Self {
             value: input.to_owned(),
             preview,
@@ -103,12 +109,94 @@ impl VlessSource {
         use_value(&self.value)
     }
 
+    #[allow(dead_code)]
+    pub(crate) fn input_with_name(
+        input: &str,
+        name: &str,
+    ) -> Result<String, SubscriptionInputError> {
+        let name = name.trim();
+        if name.is_empty() || name.len() > 96 || name.chars().any(char::is_control) {
+            return Err(SubscriptionInputError::InvalidVless);
+        }
+        Self::parse(input)?;
+        if input.starts_with("vmess://") || input.starts_with("ssr://") {
+            return Ok(input.to_owned());
+        }
+        let base = input
+            .split_once('#')
+            .map_or(input, |(base, _fragment)| base);
+        let mut encoded = String::with_capacity(name.len());
+        for byte in name.as_bytes() {
+            if byte.is_ascii_alphanumeric() || matches!(*byte, b'-' | b'.' | b'_' | b'~') {
+                encoded.push(char::from(*byte));
+            } else {
+                use std::fmt::Write as _;
+                write!(&mut encoded, "%{byte:02X}")
+                    .map_err(|_error| SubscriptionInputError::InvalidVless)?;
+            }
+        }
+        let renamed = format!("{base}#{encoded}");
+        Self::parse(&renamed)?;
+        Ok(renamed)
+    }
+
     fn into_preview(self) -> SubscriptionPreview {
         SubscriptionPreview {
-            kind: SourceKind::VlessNode,
+            kind: SourceKind::SingleNode,
             nodes: vec![self.preview],
         }
     }
+}
+
+fn parse_generic_single_node(input: &str) -> Result<SourceNodePreview, SubscriptionInputError> {
+    if input.trim() != input
+        || input.chars().any(char::is_control)
+        || input.len() > MAX_SUBSCRIPTION_BYTES
+    {
+        return Err(SubscriptionInputError::InvalidVless);
+    }
+    let (scheme, remainder) = input
+        .split_once("://")
+        .ok_or(SubscriptionInputError::InvalidVless)?;
+    if remainder.is_empty() || remainder.chars().any(char::is_whitespace) {
+        return Err(SubscriptionInputError::InvalidVless);
+    }
+    let protocol = match scheme {
+        "vmess" => "VMess",
+        "ss" => "Shadowsocks",
+        "ssr" => "ShadowsocksR",
+        "trojan" => "Trojan",
+        "hysteria" => "Hysteria",
+        "hysteria2" | "hy2" => "Hysteria2",
+        "tuic" => "TUIC",
+        "wireguard" => "WireGuard",
+        _ if scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https") => {
+            return Err(SubscriptionInputError::InvalidVless);
+        }
+        _ => "Single node",
+    };
+    let (without_fragment, fragment) = remainder
+        .split_once('#')
+        .map_or((remainder, None), |(value, fragment)| {
+            (value, Some(fragment))
+        });
+    let name = fragment
+        .and_then(percent_decode)
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or_else(|| format!("{protocol} node"));
+    let endpoint = without_fragment
+        .split('?')
+        .next()
+        .and_then(|value| value.rsplit('@').next())
+        .filter(|value| value.contains(':') && value.len() <= 128)
+        .unwrap_or("Single node")
+        .to_owned();
+    Ok(SourceNodePreview {
+        name,
+        protocol,
+        endpoint,
+        detail: "Single-node source".to_owned(),
+    })
 }
 
 fn parse_vless_node(input: &str) -> Result<SourceNodePreview, SubscriptionInputError> {
@@ -241,7 +329,10 @@ fn hex_value(value: u8) -> Option<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{SourceKind, SubscriptionInputError, VlessSource, validate_subscription_preview};
+    use super::{
+        SingleNodeSource, SourceKind, SubscriptionInputError, validate_single_node_preview,
+        validate_subscription_preview,
+    };
 
     #[test]
     fn recognizes_http_and_https_subscription_sources() {
@@ -263,12 +354,12 @@ mod tests {
 
     #[test]
     fn recognizes_vless_share_link_as_a_real_single_node_preview() {
-        let preview = validate_subscription_preview(
+        let preview = validate_single_node_preview(
             "vless://00000000-0000-4000-8000-000000000000@edge.example.invalid:443?security=tls&type=ws#Tokyo%20Edge",
         )
         .expect("valid VLESS share link should be recognized");
 
-        assert_eq!(preview.kind, SourceKind::VlessNode);
+        assert_eq!(preview.kind, SourceKind::SingleNode);
         assert_eq!(preview.nodes.len(), 1);
         assert_eq!(preview.nodes[0].name, "Tokyo Edge");
         assert_eq!(preview.nodes[0].protocol, "VLESS");
@@ -279,26 +370,36 @@ mod tests {
 
     #[test]
     fn recognizes_reality_tcp_with_an_empty_optional_header_type() {
-        let preview = validate_subscription_preview(
+        let preview = validate_single_node_preview(
             "vless://00000000-0000-4000-8000-000000000000@198.51.100.7:443?security=reality&encryption=none&pbk=fixture_reality-public-key&headerType=&fp=chrome&type=tcp&flow=xtls-rprx-vision&sni=cdn.example.invalid#Reality%20TCP",
         )
         .expect("QX-style empty optional query fields should be accepted");
 
-        assert_eq!(preview.kind, SourceKind::VlessNode);
+        assert_eq!(preview.kind, SourceKind::SingleNode);
         assert_eq!(preview.nodes[0].name, "Reality TCP");
         assert_eq!(preview.nodes[0].detail, "REALITY · TCP");
     }
 
     #[test]
     fn vless_source_keeps_credentials_out_of_debug_output() {
-        let source = VlessSource::parse(
+        let source = SingleNodeSource::parse(
             "vless://00000000-0000-4000-8000-000000000000@edge.example.invalid:443?security=tls#Saved",
         )
         .expect("fixture VLESS link should parse");
 
         assert_eq!(source.preview().name, "Saved");
-        assert_eq!(format!("{source:?}"), "VlessSource(<redacted>)");
+        assert_eq!(format!("{source:?}"), "SingleNodeSource(<redacted>)");
         assert!(!format!("{source:?}").contains("00000000"));
+    }
+
+    #[test]
+    fn vless_source_name_field_replaces_the_share_link_fragment() {
+        let input = "vless://00000000-0000-4000-8000-000000000000@edge.example.invalid:443?security=tls#Old";
+        let renamed = SingleNodeSource::input_with_name(input, "香港 节点").expect("renamed VLESS");
+        let source = SingleNodeSource::parse(&renamed).expect("renamed source should parse");
+
+        assert_eq!(source.preview().name, "香港 节点");
+        assert!(renamed.ends_with("#%E9%A6%99%E6%B8%AF%20%E8%8A%82%E7%82%B9"));
     }
 
     #[test]
