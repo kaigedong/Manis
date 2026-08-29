@@ -20,8 +20,43 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  mihomo-seeds:
+    name: Prepare verified Mihomo seeds
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Fetch and verify release assets
+        env:
+          MANIS_GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          mkdir -p dist/mihomo-seeds
+
+          MANIS_MIHOMO_OS=Linux MANIS_MIHOMO_ARCH=x86_64 \
+            packaging/fetch-mihomo.sh dist/mihomo-seeds/mihomo-linux-x86_64 \
+            > dist/mihomo-seeds/mihomo-linux-x86_64.version
+
+          MANIS_MIHOMO_SKIP_VERSION_CHECK=1 \
+            MANIS_MIHOMO_OS=Darwin MANIS_MIHOMO_ARCH=arm64 \
+            packaging/fetch-mihomo.sh dist/mihomo-seeds/mihomo-darwin-arm64 \
+            > dist/mihomo-seeds/mihomo-darwin-arm64.version
+
+          MANIS_MIHOMO_SKIP_VERSION_CHECK=1 \
+            MANIS_MIHOMO_OS=Darwin MANIS_MIHOMO_ARCH=x86_64 \
+            packaging/fetch-mihomo.sh dist/mihomo-seeds/mihomo-darwin-x86_64 \
+            > dist/mihomo-seeds/mihomo-darwin-x86_64.version
+      - name: Upload verified Mihomo seeds
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mihomo-seeds
+          path: dist/mihomo-seeds
+          if-no-files-found: error
+          retention-days: 1
+
   macos:
     name: macOS ${{ matrix.architecture }}
+    needs: mihomo-seeds
     strategy:
       fail-fast: false
       matrix:
@@ -36,6 +71,20 @@ jobs:
       MACOSX_DEPLOYMENT_TARGET: "13.0"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Download verified Mihomo seeds
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: mihomo-seeds
+          path: ${{ runner.temp }}/mihomo-seeds
+      - name: Verify native Mihomo seed
+        shell: bash
+        run: |
+          seed="$RUNNER_TEMP/mihomo-seeds/mihomo-darwin-${{ matrix.architecture }}"
+          expected_version="$(< "$seed.version")"
+          chmod 0755 "$seed"
+          version_output="$("$seed" -v 2>&1)"
+          [[ "$version_output" == *"$expected_version"* ]]
+          echo "$version_output"
       - name: Resolve package version
         id: package
         shell: bash
@@ -61,6 +110,7 @@ jobs:
         env:
           MANIS_BUNDLE_BUILD: ${{ github.run_number }}
           MANIS_BUNDLE_VERSION: ${{ steps.package.outputs.version }}
+          MANIS_MIHOMO_BINARY: ${{ runner.temp }}/mihomo-seeds/mihomo-darwin-${{ matrix.architecture }}
         run: packaging/macos/build-app.sh
       - name: Save Cargo cache
         if: always() && steps.cargo-cache.outputs.cache-hit != 'true'
@@ -98,12 +148,18 @@ jobs:
 
   archlinux-wayland:
     name: Arch Linux Wayland x86_64
+    needs: mihomo-seeds
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     container:
       image: archlinux:base-devel@sha256:a26046b7363dad8e2614858f4313949ae9b05c9c5f31de343a54864b9e20806f
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Download verified Mihomo seeds
+        uses: actions/download-artifact@3e5f45b2cfb9172054d4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: mihomo-seeds
+          path: ${{ runner.temp }}/mihomo-seeds
       - name: Install build dependencies
         shell: bash
         run: |
@@ -144,7 +200,10 @@ jobs:
       - name: Build Arch package
         shell: bash
         run: |
-          runuser -u builder -- bash -c \
+          chmod 0755 "$RUNNER_TEMP/mihomo-seeds/mihomo-linux-x86_64"
+          runuser -u builder -- env \
+            MANIS_MIHOMO_BINARY="$RUNNER_TEMP/mihomo-seeds/mihomo-linux-x86_64" \
+            bash -c \
             'cd "$1/packaging/archlinux" && makepkg --noconfirm --cleanbuild' \
             _ "$GITHUB_WORKSPACE"
           mkdir -p dist
