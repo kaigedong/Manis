@@ -36,6 +36,7 @@ use crate::subscription::SingleNodeSource;
 use crate::{brand, core_update};
 
 mod managed_apply;
+mod profile_compiler;
 mod routing_order;
 mod store_snapshot;
 
@@ -986,136 +987,12 @@ fn generated_profile_names(kernel: KernelKind) -> (&'static str, &'static str) {
     }
 }
 
-#[allow(clippy::too_many_lines)]
 fn compile_saved_profile(
     store_dir: &Path,
     base_subscription: Option<SecretUrl>,
     kernel: KernelKind,
 ) -> Result<Profile, LoadError> {
-    let mut subscriptions = base_subscription.into_iter().collect::<Vec<_>>();
-    let stored_subscriptions = load_subscription_sources_in(store_dir)
-        .map_err(|_error| LoadError::Runtime("无法读取已保存的订阅来源".to_owned()))?
-        .into_iter()
-        .filter(|stored| stored.enabled)
-        .collect::<Vec<_>>();
-    if kernel == KernelKind::SingBox && !stored_subscriptions.is_empty() {
-        return Err(LoadError::Runtime(
-            "sing-box 暂不能直接读取 Clash 订阅；请先使用手动 VLESS 节点".to_owned(),
-        ));
-    }
-    let mut stored_provider_indexes = HashMap::new();
-    let mut proxy_server_nameservers = Vec::new();
-    for stored in &stored_subscriptions {
-        let provider_index = if let Some(index) = subscriptions
-            .iter()
-            .position(|subscription| subscription == &stored.source)
-        {
-            index
-        } else {
-            subscriptions.push(stored.source.clone());
-            subscriptions.len() - 1
-        };
-        stored_provider_indexes.insert(stored.id.as_str(), provider_index);
-        for nameserver in &stored.proxy_server_nameservers {
-            if !proxy_server_nameservers.contains(nameserver)
-                && proxy_server_nameservers.len() < MAX_SUBSCRIPTION_PROXY_DNS_SERVERS
-            {
-                proxy_server_nameservers.push(nameserver.clone());
-            }
-        }
-    }
-    let stored_single_nodes = load_single_node_sources_in(store_dir)
-        .map_err(|_error| LoadError::Runtime("无法读取已保存的单节点来源".to_owned()))?
-        .into_iter()
-        .filter(|stored| stored.enabled)
-        .collect::<Vec<_>>();
-    let (local_provider_paths, vless_nodes) = if kernel == KernelKind::Mihomo {
-        let paths = stored_single_nodes
-            .iter()
-            .map(|stored| format!("./single_nodes/{}.txt", stored.id))
-            .collect::<Vec<_>>();
-        for (offset, stored) in stored_single_nodes.iter().enumerate() {
-            stored_provider_indexes.insert(stored.id.as_str(), subscriptions.len() + offset);
-        }
-        (paths, Vec::new())
-    } else {
-        let nodes = stored_single_nodes
-            .iter()
-            .map(|stored| {
-                stored
-                    .source
-                    .expose_to(VlessProxy::parse_share_link)
-                    .map_err(|_error| {
-                        LoadError::Runtime("sing-box 当前只支持 VLESS 格式的手动单节点".to_owned())
-                    })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        (Vec::new(), nodes)
-    };
-    let mixed_port = configured_mixed_port().map_err(LoadError::Runtime)?;
-    let policy_groups = load_managed_policy_groups_in(store_dir)
-        .map_err(|_error| LoadError::Runtime("无法读取策略组".to_owned()))?;
-    let user_groups = compile_managed_policy_groups(
-        &policy_groups,
-        &stored_provider_indexes,
-        &stored_single_nodes,
-        &vless_nodes,
-        subscriptions.len() + local_provider_paths.len(),
-    )?;
-    let bootstrap =
-        subscriptions.is_empty() && local_provider_paths.is_empty() && vless_nodes.is_empty();
-    let mut profile = if bootstrap {
-        if !user_groups.is_empty() {
-            return Err(LoadError::Runtime(
-                "没有节点来源时不能生成策略组".to_owned(),
-            ));
-        }
-        Profile::managed_empty(mixed_port)
-    } else {
-        Profile::qx_sources_with_groups_and_local_providers(
-            subscriptions,
-            local_provider_paths,
-            vless_nodes,
-            user_groups,
-            mixed_port,
-        )
-    }
-    .map_err(|error| LoadError::Runtime(error.to_string()))?;
-    let bootstrap_fallback = if bootstrap { profile.rules.pop() } else { None };
-    if !proxy_server_nameservers.is_empty() {
-        profile.set_proxy_server_nameservers(proxy_server_nameservers);
-    }
-    let routing_mode = load_routing_mode_in(store_dir)
-        .map_err(|_error| LoadError::Runtime("无法读取已保存的路由模式".to_owned()))?;
-    profile.set_mode(profile_mode(routing_mode));
-    let qx_rule_sources = load_qx_rule_sources_in(store_dir)
-        .map_err(|_error| LoadError::Runtime("无法读取 QX 规则来源".to_owned()))?;
-    let manual_rules = crate::manual_rule::load_manual_rules_in(store_dir)
-        .map_err(|error| LoadError::Runtime(error.to_string()))?;
-    let stored_group_order = load_routing_rule_group_order_in(store_dir)
-        .map_err(|_error| LoadError::Runtime("无法读取已保存的分流规则分组顺序".to_owned()))?;
-    let group_order = normalized_routing_rule_group_order(
-        &stored_group_order,
-        !manual_rules.is_empty(),
-        &qx_rule_sources,
-    );
-    for group_id in group_order {
-        if group_id == MANUAL_ROUTING_RULE_GROUP_ID {
-            crate::manual_rule::append_manual_rules(&mut profile, &manual_rules, kernel)
-                .map_err(|error| LoadError::Runtime(error.to_string()))?;
-        } else if let Some(source) = qx_rule_sources.iter().find(|source| source.id == group_id) {
-            apply_qx_rule_sources(&mut profile, std::slice::from_ref(source))?;
-        }
-    }
-    if let Some(fallback) = bootstrap_fallback
-        && !profile
-            .rules
-            .iter()
-            .any(|rule| matches!(rule, Rule::Match { .. }))
-    {
-        profile.rules.push(fallback);
-    }
-    Ok(profile)
+    profile_compiler::compile_saved_profile(store_dir, base_subscription, kernel)
 }
 
 fn sync_single_node_provider_files(store_dir: &Path, data_dir: &Path) -> Result<(), LoadError> {
@@ -1915,8 +1792,7 @@ pub(crate) fn imported_subscription_store_dir() -> Result<PathBuf, SubscriptionS
         .ok_or(SubscriptionStoreError::DataDirectoryUnavailable)
 }
 
-#[cfg(not(windows))]
-#[allow(dead_code)]
+#[cfg(all(not(windows), test))]
 pub(crate) fn save_subscription_source_in(
     directory: &Path,
     input: &str,
@@ -1986,8 +1862,7 @@ pub(crate) fn save_subscription_source_with_options_in(
     })
 }
 
-#[cfg(windows)]
-#[allow(dead_code)]
+#[cfg(all(windows, test))]
 pub(crate) fn save_subscription_source_in(
     _directory: &Path,
     _input: &str,
@@ -2143,8 +2018,7 @@ pub(crate) fn load_subscription_sources_in(
     })
 }
 
-#[cfg(not(windows))]
-#[allow(dead_code)]
+#[cfg(all(not(windows), test))]
 pub(crate) fn update_subscription_source_refresh_interval_in(
     directory: &Path,
     id: &str,
@@ -2163,8 +2037,7 @@ pub(crate) fn update_subscription_source_refresh_interval_in(
     )
 }
 
-#[cfg(windows)]
-#[allow(dead_code)]
+#[cfg(all(windows, test))]
 pub(crate) fn update_subscription_source_refresh_interval_in(
     _directory: &Path,
     _id: &str,
@@ -2174,7 +2047,6 @@ pub(crate) fn update_subscription_source_refresh_interval_in(
 }
 
 #[cfg(not(windows))]
-#[allow(dead_code)]
 pub(crate) fn mark_subscription_source_update_success_in(
     directory: &Path,
     id: &str,
@@ -2227,7 +2099,6 @@ pub(crate) fn update_subscription_source_proxy_nameservers_in(
 }
 
 #[cfg(windows)]
-#[allow(dead_code)]
 pub(crate) fn mark_subscription_source_update_success_in(
     _directory: &Path,
     _id: &str,
@@ -2260,8 +2131,7 @@ pub(crate) fn remove_subscription_source_in(
     Err(SubscriptionStoreError::StoreUnavailable)
 }
 
-#[cfg(not(windows))]
-#[allow(dead_code)]
+#[cfg(all(not(windows), test))]
 pub(crate) fn save_single_node_source_in(
     directory: &Path,
     input: &str,
@@ -2514,7 +2384,6 @@ pub(crate) fn remove_single_node_source_in(
 }
 
 #[cfg(not(windows))]
-#[allow(dead_code)]
 pub(crate) fn save_qx_rule_source_in(
     directory: &Path,
     url_input: &str,
@@ -2602,7 +2471,6 @@ pub(crate) fn load_qx_rule_sources_in(
 }
 
 #[cfg(not(windows))]
-#[allow(dead_code)]
 pub(crate) fn remove_qx_rule_source_in(
     directory: &Path,
     id: &str,
@@ -2623,7 +2491,6 @@ pub(crate) fn remove_qx_rule_source_in(
 }
 
 #[cfg(not(windows))]
-#[allow(dead_code)]
 pub(crate) fn update_qx_rule_source_refresh_interval_in(
     directory: &Path,
     id: &str,
@@ -2643,7 +2510,6 @@ pub(crate) fn update_qx_rule_source_refresh_interval_in(
 }
 
 #[cfg(windows)]
-#[allow(dead_code)]
 pub(crate) fn update_qx_rule_source_refresh_interval_in(
     _directory: &Path,
     _id: &str,
@@ -2653,7 +2519,6 @@ pub(crate) fn update_qx_rule_source_refresh_interval_in(
 }
 
 #[cfg(not(windows))]
-#[allow(dead_code)]
 pub(crate) fn update_qx_rule_source_target_in(
     directory: &Path,
     id: &str,
@@ -2673,7 +2538,6 @@ pub(crate) fn update_qx_rule_source_target_in(
 }
 
 #[cfg(windows)]
-#[allow(dead_code)]
 pub(crate) fn update_qx_rule_source_target_in(
     _directory: &Path,
     _id: &str,
@@ -2747,7 +2611,6 @@ pub(crate) fn replace_qx_rule_source_definition_in(
 }
 
 #[cfg(not(windows))]
-#[allow(dead_code)]
 pub(crate) fn replace_qx_rule_source_content_in(
     directory: &Path,
     id: &str,
@@ -2769,7 +2632,6 @@ pub(crate) fn replace_qx_rule_source_content_in(
 }
 
 #[cfg(windows)]
-#[allow(dead_code)]
 pub(crate) fn replace_qx_rule_source_content_in(
     _directory: &Path,
     _id: &str,
@@ -2995,14 +2857,12 @@ fn profile_mode(mode: RoutingMode) -> ProfileMode {
 }
 
 #[cfg(not(windows))]
-#[allow(dead_code)]
 struct DecodedSubscriptionSource {
     stored: StoredSubscription,
     url_input: String,
 }
 
 #[cfg(not(windows))]
-#[allow(dead_code)]
 fn read_subscription_source_by_id_in(
     directory: &Path,
     id: &str,
@@ -3105,7 +2965,6 @@ fn encode_subscription_source(
 }
 
 #[cfg(not(windows))]
-#[allow(clippy::too_many_lines)]
 fn decode_subscription_source(
     contents: &str,
     expected_id: &str,
@@ -3127,85 +2986,21 @@ fn decode_subscription_source(
         if contents.is_empty() || contents.lines().count() != 1 || contents.trim() != contents {
             return Err(SubscriptionStoreError::StoredSourceUnavailable);
         }
-        let source = SecretUrl::parse_subscription(contents)
-            .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
-        return Ok(DecodedSubscriptionSource {
-            stored: StoredSubscription {
-                id: expected_id.to_owned(),
-                name: source
-                    .subscription_name()
-                    .unwrap_or_else(|| "Subscription".to_owned()),
-                source,
-                enabled: true,
-                refresh_interval: RemoteSourceRefreshInterval::Manual,
-                last_successful_update_unix_secs: 0,
-                proxy_server_nameservers: Vec::new(),
-            },
-            url_input: contents.to_owned(),
-        });
+        return decode_legacy_subscription_source(contents, expected_id);
     }
-
-    let mut id = None;
-    let mut name = None;
-    let mut enabled = None;
-    let mut url = None;
-    let mut refresh_interval = None;
-    let mut last_successful_update_unix_secs = None;
-    let mut proxy_server_nameservers = Vec::new();
-    for line in contents.lines().skip(1) {
-        let fields = line.split('\t').collect::<Vec<_>>();
-        match fields.as_slice() {
-            ["id", value] if id.is_none() => id = Some((*value).to_owned()),
-            ["name", value] if version == Some(STORED_SUBSCRIPTION_VERSION) && name.is_none() => {
-                name = Some(validate_subscription_source_name(&decode_hex(value)?)?);
-            }
-            ["enabled", value]
-                if version == Some(STORED_SUBSCRIPTION_VERSION) && enabled.is_none() =>
-            {
-                enabled = Some(match *value {
-                    "true" => true,
-                    "false" => false,
-                    _ => return Err(SubscriptionStoreError::StoredSourceUnavailable),
-                });
-            }
-            ["url", value] if url.is_none() => url = Some(decode_hex(value)?),
-            ["refresh", value] if refresh_interval.is_none() => {
-                refresh_interval = Some(
-                    RemoteSourceRefreshInterval::parse_key(value)
-                        .ok_or(SubscriptionStoreError::StoredSourceUnavailable)?,
-                );
-            }
-            ["last-success", value] if last_successful_update_unix_secs.is_none() => {
-                last_successful_update_unix_secs = Some(
-                    value
-                        .parse::<u64>()
-                        .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?,
-                );
-            }
-            ["proxy-dns", value]
-                if matches!(
-                    version,
-                    Some(STORED_SUBSCRIPTION_VERSION | LEGACY_MANIS_STORED_SUBSCRIPTION_VERSION_V2)
-                ) && proxy_server_nameservers.len() < MAX_SUBSCRIPTION_PROXY_DNS_SERVERS =>
-            {
-                let decoded = decode_hex(value)?;
-                let nameserver = ProxyDnsServer::parse_https(&decoded)
-                    .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
-                if !proxy_server_nameservers.contains(&nameserver) {
-                    proxy_server_nameservers.push(nameserver);
-                }
-            }
-            _ => return Err(SubscriptionStoreError::StoredSourceUnavailable),
-        }
-    }
-    let id = id.ok_or(SubscriptionStoreError::StoredSourceUnavailable)?;
+    let fields = parse_subscription_source_fields(contents, version)?;
+    let id = fields
+        .id
+        .ok_or(SubscriptionStoreError::StoredSourceUnavailable)?;
     if id != expected_id || !valid_subscription_source_id(&id) {
         return Err(SubscriptionStoreError::StoredSourceUnavailable);
     }
-    let url_input = url.ok_or(SubscriptionStoreError::StoredSourceUnavailable)?;
+    let url_input = fields
+        .url
+        .ok_or(SubscriptionStoreError::StoredSourceUnavailable)?;
     let source = SecretUrl::parse_subscription(&url_input)
         .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
-    let name = name.unwrap_or_else(|| {
+    let name = fields.name.unwrap_or_else(|| {
         source
             .subscription_name()
             .unwrap_or_else(|| "Subscription".to_owned())
@@ -3215,17 +3010,108 @@ fn decode_subscription_source(
             id,
             name,
             source,
-            enabled: enabled.unwrap_or(true),
-            refresh_interval: refresh_interval.unwrap_or_default(),
-            last_successful_update_unix_secs: last_successful_update_unix_secs.unwrap_or_default(),
-            proxy_server_nameservers,
+            enabled: fields.enabled.unwrap_or(true),
+            refresh_interval: fields.refresh_interval.unwrap_or_default(),
+            last_successful_update_unix_secs: fields.last_success.unwrap_or_default(),
+            proxy_server_nameservers: fields.proxy_dns,
         },
         url_input,
     })
 }
 
 #[cfg(not(windows))]
-#[allow(dead_code)]
+fn decode_legacy_subscription_source(
+    contents: &str,
+    expected_id: &str,
+) -> Result<DecodedSubscriptionSource, SubscriptionStoreError> {
+    let source = SecretUrl::parse_subscription(contents)
+        .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
+    Ok(DecodedSubscriptionSource {
+        stored: StoredSubscription {
+            id: expected_id.to_owned(),
+            name: source
+                .subscription_name()
+                .unwrap_or_else(|| "Subscription".to_owned()),
+            source,
+            enabled: true,
+            refresh_interval: RemoteSourceRefreshInterval::Manual,
+            last_successful_update_unix_secs: 0,
+            proxy_server_nameservers: Vec::new(),
+        },
+        url_input: contents.to_owned(),
+    })
+}
+
+#[cfg(not(windows))]
+#[derive(Default)]
+struct SubscriptionSourceFields {
+    id: Option<String>,
+    name: Option<String>,
+    enabled: Option<bool>,
+    url: Option<String>,
+    refresh_interval: Option<RemoteSourceRefreshInterval>,
+    last_success: Option<u64>,
+    proxy_dns: Vec<ProxyDnsServer>,
+}
+
+#[cfg(not(windows))]
+fn parse_subscription_source_fields(
+    contents: &str,
+    version: Option<&str>,
+) -> Result<SubscriptionSourceFields, SubscriptionStoreError> {
+    let mut parsed = SubscriptionSourceFields::default();
+    for line in contents.lines().skip(1) {
+        let fields = line.split('\t').collect::<Vec<_>>();
+        match fields.as_slice() {
+            ["id", value] if parsed.id.is_none() => parsed.id = Some((*value).to_owned()),
+            ["name", value]
+                if version == Some(STORED_SUBSCRIPTION_VERSION) && parsed.name.is_none() =>
+            {
+                parsed.name = Some(validate_subscription_source_name(&decode_hex(value)?)?);
+            }
+            ["enabled", value]
+                if version == Some(STORED_SUBSCRIPTION_VERSION) && parsed.enabled.is_none() =>
+            {
+                parsed.enabled = Some(match *value {
+                    "true" => true,
+                    "false" => false,
+                    _ => return Err(SubscriptionStoreError::StoredSourceUnavailable),
+                });
+            }
+            ["url", value] if parsed.url.is_none() => parsed.url = Some(decode_hex(value)?),
+            ["refresh", value] if parsed.refresh_interval.is_none() => {
+                parsed.refresh_interval = Some(
+                    RemoteSourceRefreshInterval::parse_key(value)
+                        .ok_or(SubscriptionStoreError::StoredSourceUnavailable)?,
+                );
+            }
+            ["last-success", value] if parsed.last_success.is_none() => {
+                parsed.last_success = Some(
+                    value
+                        .parse::<u64>()
+                        .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?,
+                );
+            }
+            ["proxy-dns", value]
+                if matches!(
+                    version,
+                    Some(STORED_SUBSCRIPTION_VERSION | LEGACY_MANIS_STORED_SUBSCRIPTION_VERSION_V2)
+                ) && parsed.proxy_dns.len() < MAX_SUBSCRIPTION_PROXY_DNS_SERVERS =>
+            {
+                let decoded = decode_hex(value)?;
+                let nameserver = ProxyDnsServer::parse_https(&decoded)
+                    .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
+                if !parsed.proxy_dns.contains(&nameserver) {
+                    parsed.proxy_dns.push(nameserver);
+                }
+            }
+            _ => return Err(SubscriptionStoreError::StoredSourceUnavailable),
+        }
+    }
+    Ok(parsed)
+}
+
+#[cfg(not(windows))]
 fn subscription_source_file_name(id: &str) -> Result<String, SubscriptionStoreError> {
     if id == "subscription:legacy" {
         Ok(IMPORTED_SUBSCRIPTION_FILE.to_owned())
@@ -3274,121 +3160,163 @@ fn direct_policy_for_member(
         .transpose()
 }
 
-#[allow(clippy::too_many_lines)]
 fn compile_managed_policy_groups(
     groups: &[ManagedPolicyGroup],
-    stored_provider_indexes: &HashMap<&str, usize>,
+    stored_provider_indexes: &HashMap<String, usize>,
     stored_single_nodes: &[StoredSingleNode],
     vless_nodes: &[VlessProxy],
     provider_count: usize,
 ) -> Result<Vec<UserPolicyGroup>, LoadError> {
     validate_managed_policy_references(groups)?;
+    let context = ManagedPolicyCompileContext {
+        groups,
+        stored_provider_indexes,
+        stored_single_nodes,
+        vless_nodes,
+        provider_count,
+    };
     groups
         .iter()
-        .map(|group| {
-            let mut provider_indexes = Vec::new();
-            let mut direct_proxies = Vec::new();
-            let mut direct_policies = Vec::new();
-            let filter = match &group.matcher {
-                PolicyCandidateMatcher::All => {
-                    provider_indexes.extend(0..provider_count);
-                    direct_proxies.extend(vless_nodes.iter().map(|proxy| proxy.name().clone()));
-                    None
-                }
-                PolicyCandidateMatcher::NameContains(fragment) => {
-                    provider_indexes.extend(0..provider_count);
-                    let lowercase = fragment.to_lowercase();
-                    direct_proxies.extend(
-                        vless_nodes
-                            .iter()
-                            .filter(|proxy| {
-                                proxy.name().as_str().to_lowercase().contains(&lowercase)
-                            })
-                            .map(|proxy| proxy.name().clone()),
-                    );
-                    Some(format!("(?i){}", escape_regex(fragment)))
-                }
-                PolicyCandidateMatcher::Explicit(members) => {
-                    let mut provider_names = Vec::new();
-                    for member in members {
-                        if member.source_id == "builtin" || member.source_id.starts_with("policy:")
-                        {
-                            if let Some(policy) =
-                                direct_policy_for_member(member, &group.id, groups)?
-                            {
-                                direct_policies.push(policy);
-                            }
-                            continue;
-                        }
-                        if member.source_id == "saved" {
-                            if let Some(stored) = stored_single_nodes
-                                .iter()
-                                .find(|stored| stored.source.preview().name == member.node_name)
-                                && let Some(index) =
-                                    stored_provider_indexes.get(stored.id.as_str()).copied()
-                            {
-                                if !provider_indexes.contains(&index) {
-                                    provider_indexes.push(index);
-                                }
-                            } else if let Some(proxy) = vless_nodes
-                                .iter()
-                                .find(|proxy| proxy.name().as_str() == member.node_name)
-                            {
-                                direct_proxies.push(proxy.name().clone());
-                            }
-                            continue;
-                        }
-                        let Some(stored_id) = member.source_id.strip_prefix("subscription:") else {
-                            continue;
-                        };
-                        let Some(index) = stored_provider_indexes.get(stored_id).copied() else {
-                            continue;
-                        };
-                        if !provider_indexes.contains(&index) {
-                            provider_indexes.push(index);
-                        }
-                        provider_names.push(member.node_name.as_str());
-                    }
-                    (!provider_names.is_empty()).then(|| {
-                        format!(
-                            "^(?:{})$",
-                            provider_names
-                                .into_iter()
-                                .map(escape_regex)
-                                .collect::<Vec<_>>()
-                                .join("|")
-                        )
-                    })
-                }
-            };
-            if provider_indexes.is_empty()
-                && direct_proxies.is_empty()
-                && direct_policies.is_empty()
-            {
-                return Err(LoadError::Runtime(format!(
-                    "策略组“{}”没有匹配到可用节点",
-                    group.name
-                )));
-            }
-            let kind = match group.strategy {
-                ManagedPolicyStrategy::Manual => UserPolicyGroupKind::Select,
-                ManagedPolicyStrategy::LowestLatency => UserPolicyGroupKind::UrlTest {
-                    tolerance: 50,
-                    interval_secs: group.test_interval_secs,
-                },
-            };
-            Ok(UserPolicyGroup {
-                name: Name::parse(&group.name)
-                    .map_err(|error| LoadError::Runtime(error.to_string()))?,
-                icon: None,
-                kind,
-                provider_indexes,
-                direct_proxies,
-                direct_policies,
-                filter,
-            })
-        })
+        .map(|group| compile_managed_policy_group(group, &context))
         .collect()
+}
+
+struct ManagedPolicyCompileContext<'a> {
+    groups: &'a [ManagedPolicyGroup],
+    stored_provider_indexes: &'a HashMap<String, usize>,
+    stored_single_nodes: &'a [StoredSingleNode],
+    vless_nodes: &'a [VlessProxy],
+    provider_count: usize,
+}
+
+fn compile_managed_policy_group(
+    group: &ManagedPolicyGroup,
+    context: &ManagedPolicyCompileContext<'_>,
+) -> Result<UserPolicyGroup, LoadError> {
+    let (provider_indexes, direct_proxies, direct_policies, filter) =
+        compile_policy_candidates(group, context)?;
+    if provider_indexes.is_empty() && direct_proxies.is_empty() && direct_policies.is_empty() {
+        return Err(LoadError::Runtime(format!(
+            "策略组“{}”没有匹配到可用节点",
+            group.name
+        )));
+    }
+    let kind = match group.strategy {
+        ManagedPolicyStrategy::Manual => UserPolicyGroupKind::Select,
+        ManagedPolicyStrategy::LowestLatency => UserPolicyGroupKind::UrlTest {
+            tolerance: 50,
+            interval_secs: group.test_interval_secs,
+        },
+    };
+    Ok(UserPolicyGroup {
+        name: Name::parse(&group.name).map_err(|error| LoadError::Runtime(error.to_string()))?,
+        icon: None,
+        kind,
+        provider_indexes,
+        direct_proxies,
+        direct_policies,
+        filter,
+    })
+}
+
+type CompiledPolicyCandidates = (Vec<usize>, Vec<Name>, Vec<PolicyRef>, Option<String>);
+
+fn compile_policy_candidates(
+    group: &ManagedPolicyGroup,
+    context: &ManagedPolicyCompileContext<'_>,
+) -> Result<CompiledPolicyCandidates, LoadError> {
+    let mut provider_indexes = Vec::new();
+    let mut direct_proxies = Vec::new();
+    let mut direct_policies = Vec::new();
+    let filter = match &group.matcher {
+        PolicyCandidateMatcher::All => {
+            provider_indexes.extend(0..context.provider_count);
+            direct_proxies.extend(context.vless_nodes.iter().map(|proxy| proxy.name().clone()));
+            None
+        }
+        PolicyCandidateMatcher::NameContains(fragment) => {
+            provider_indexes.extend(0..context.provider_count);
+            let lowercase = fragment.to_lowercase();
+            direct_proxies.extend(
+                context
+                    .vless_nodes
+                    .iter()
+                    .filter(|proxy| proxy.name().as_str().to_lowercase().contains(&lowercase))
+                    .map(|proxy| proxy.name().clone()),
+            );
+            Some(format!("(?i){}", escape_regex(fragment)))
+        }
+        PolicyCandidateMatcher::Explicit(members) => compile_explicit_policy_candidates(
+            group,
+            members,
+            context,
+            &mut provider_indexes,
+            &mut direct_proxies,
+            &mut direct_policies,
+        )?,
+    };
+    Ok((provider_indexes, direct_proxies, direct_policies, filter))
+}
+
+fn compile_explicit_policy_candidates(
+    group: &ManagedPolicyGroup,
+    members: &BTreeSet<NodeIdentity>,
+    context: &ManagedPolicyCompileContext<'_>,
+    provider_indexes: &mut Vec<usize>,
+    direct_proxies: &mut Vec<Name>,
+    direct_policies: &mut Vec<PolicyRef>,
+) -> Result<Option<String>, LoadError> {
+    let mut provider_names = Vec::new();
+    for member in members {
+        if member.source_id == "builtin" || member.source_id.starts_with("policy:") {
+            if let Some(policy) = direct_policy_for_member(member, &group.id, context.groups)? {
+                direct_policies.push(policy);
+            }
+            continue;
+        }
+        if member.source_id == "saved" {
+            if let Some(stored) = context
+                .stored_single_nodes
+                .iter()
+                .find(|stored| stored.source.preview().name == member.node_name)
+                && let Some(index) = context
+                    .stored_provider_indexes
+                    .get(stored.id.as_str())
+                    .copied()
+            {
+                if !provider_indexes.contains(&index) {
+                    provider_indexes.push(index);
+                }
+            } else if let Some(proxy) = context
+                .vless_nodes
+                .iter()
+                .find(|proxy| proxy.name().as_str() == member.node_name)
+            {
+                direct_proxies.push(proxy.name().clone());
+            }
+            continue;
+        }
+        let Some(stored_id) = member.source_id.strip_prefix("subscription:") else {
+            continue;
+        };
+        let Some(index) = context.stored_provider_indexes.get(stored_id).copied() else {
+            continue;
+        };
+        if !provider_indexes.contains(&index) {
+            provider_indexes.push(index);
+        }
+        provider_names.push(member.node_name.as_str());
+    }
+    Ok((!provider_names.is_empty()).then(|| {
+        format!(
+            "^(?:{})$",
+            provider_names
+                .into_iter()
+                .map(escape_regex)
+                .collect::<Vec<_>>()
+                .join("|")
+        )
+    }))
 }
 
 pub(crate) fn validate_managed_policy_references(
@@ -3769,14 +3697,12 @@ fn valid_node_selection_target(target: &str) -> bool {
         && !target.chars().any(char::is_control)
 }
 
-#[allow(dead_code)]
 struct DecodedQxRuleSource {
     stored: StoredQxRuleSource,
     url_input: String,
 }
 
 #[cfg(not(windows))]
-#[allow(dead_code)]
 fn read_qx_rule_source_by_id_in(
     directory: &Path,
     id: &str,
@@ -3833,7 +3759,6 @@ fn write_qx_rule_source_in(
 }
 
 #[cfg(not(windows))]
-#[allow(dead_code)]
 fn qx_rule_source_file_name(id: &str) -> Result<String, SubscriptionStoreError> {
     if valid_stored_id(id, QX_RULE_SOURCE_PREFIX) {
         Ok(format!("{id}{QX_RULE_SOURCE_SUFFIX}"))
@@ -4063,16 +3988,6 @@ fn private_store_entries(directory: &Path) -> Result<Option<Vec<PathBuf>>, Subsc
 }
 
 #[cfg(not(windows))]
-#[allow(dead_code)]
-fn read_private_source(path: &Path) -> Result<String, SubscriptionStoreError> {
-    let contents = read_private_source_allow_empty(path)?;
-    if contents.is_empty() || contents.lines().count() != 1 || contents.trim() != contents {
-        return Err(SubscriptionStoreError::StoredSourceUnavailable);
-    }
-    Ok(contents)
-}
-
-#[cfg(not(windows))]
 fn read_private_source_allow_empty(path: &Path) -> Result<String, SubscriptionStoreError> {
     read_private_source_allow_empty_max(path, MAX_SUBSCRIPTION_FILE_BYTES)
 }
@@ -4128,8 +4043,7 @@ fn remove_private_source(path: &Path) -> Result<(), SubscriptionStoreError> {
     }
 }
 
-#[cfg(not(windows))]
-#[allow(dead_code)]
+#[cfg(all(not(windows), test))]
 pub(crate) fn save_imported_subscription_in(
     directory: &Path,
     input: &str,
@@ -4141,7 +4055,7 @@ pub(crate) fn save_imported_subscription_in(
     Ok(subscription)
 }
 
-#[cfg(windows)]
+#[cfg(all(windows, test))]
 pub(crate) fn save_imported_subscription_in(
     _directory: &Path,
     _input: &str,
@@ -4149,8 +4063,7 @@ pub(crate) fn save_imported_subscription_in(
     Err(SubscriptionStoreError::StoreUnavailable)
 }
 
-#[cfg(not(windows))]
-#[allow(dead_code)]
+#[cfg(all(not(windows), test))]
 pub(crate) fn load_imported_subscription_in(
     directory: &Path,
 ) -> Result<Option<SecretUrl>, SubscriptionStoreError> {
@@ -4205,8 +4118,7 @@ pub(crate) fn load_imported_subscription_in(
     }
 }
 
-#[cfg(not(windows))]
-#[allow(dead_code)]
+#[cfg(all(not(windows), test))]
 pub(crate) fn remove_imported_subscription_in(
     directory: &Path,
 ) -> Result<(), SubscriptionStoreError> {
@@ -4222,7 +4134,7 @@ pub(crate) fn remove_imported_subscription_in(
     }
 }
 
-#[cfg(windows)]
+#[cfg(all(windows, test))]
 pub(crate) fn remove_imported_subscription_in(
     _directory: &Path,
 ) -> Result<(), SubscriptionStoreError> {
@@ -6692,7 +6604,7 @@ IP-CIDR,192.0.2.0/24,DIRECT
         let saved = VlessProxy::parse_share_link(
             "vless://00000000-0000-4000-8000-000000000000@edge.example.invalid:443?security=tls#Private%20Edge",
         )?;
-        let indexes = HashMap::from([("source-a", 1_usize)]);
+        let indexes = HashMap::from([("source-a".to_owned(), 1_usize)]);
 
         let mut latency = ManagedPolicyGroup::new("group-a-1", "香港优选")?;
         latency.strategy = ManagedPolicyStrategy::LowestLatency;

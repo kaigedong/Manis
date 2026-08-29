@@ -29,7 +29,7 @@ use crate::{
     mihomo::{self, RemoteSourceRefreshInterval, RuntimeProfileSource, SubscriptionStoreError},
     rule_source::{download_qx_rule_document, download_qx_rule_document_secret},
     subscription::{SourceKind, validate_single_node_preview, validate_subscription_preview},
-    subscription_input::SubscriptionTextInput,
+    subscription_input::{SubscriptionTextInput, TextInputSpec},
     theme::{ControlSize, Radius, Space, TextRole, Theme},
 };
 
@@ -3815,11 +3815,13 @@ impl ManisApp {
                 let placeholder = manual_rule_placeholder(kind, self.language());
                 let input = cx.new(|cx| {
                     SubscriptionTextInput::new_field(
-                        format!("manual-rule-parameter-{index}"),
-                        placeholder,
-                        MAX_MANUAL_RULE_INPUT_BYTES,
-                        theme,
-                        self.dark,
+                        TextInputSpec::new(
+                            format!("manual-rule-parameter-{index}"),
+                            placeholder,
+                            MAX_MANUAL_RULE_INPUT_BYTES,
+                            theme,
+                            self.dark,
+                        ),
                         window,
                         cx,
                     )

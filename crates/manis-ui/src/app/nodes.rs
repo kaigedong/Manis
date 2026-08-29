@@ -38,6 +38,14 @@ struct NodeSourceGroup<'a> {
     saved_nodes: Vec<&'a SourceNodePreview>,
 }
 
+#[derive(Clone, Copy)]
+struct NodeWorkspaceView {
+    filter: NodeAvailabilityFilter,
+    compact: bool,
+    language: Language,
+    theme: Theme,
+}
+
 struct PolicyEditorPopup {
     kind: PolicyEditorPopover,
     open: bool,
@@ -275,6 +283,12 @@ impl ManisApp {
             language.text("Current Mihomo", "当前 Mihomo")
         };
 
+        let view = NodeWorkspaceView {
+            filter,
+            compact,
+            language,
+            theme,
+        };
         div()
             .flex_1()
             .min_w(px(0.0))
@@ -285,24 +299,12 @@ impl ManisApp {
             .child(Self::node_workspace_header(
                 groups.len(),
                 counts,
-                filter,
                 origin,
                 refreshing,
-                compact,
-                language,
-                theme,
+                view,
                 cx,
             ))
-            .child(self.node_workspace_body(
-                &groups,
-                filter,
-                loading,
-                unavailable,
-                compact,
-                language,
-                theme,
-                cx,
-            ))
+            .child(self.node_workspace_body(&groups, loading, unavailable, view, cx))
     }
 
     fn node_source_groups(
@@ -410,18 +412,20 @@ impl ManisApp {
             .collect()
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn node_workspace_header(
         source_count: usize,
         counts: NodeCounts,
-        filter: NodeAvailabilityFilter,
         origin: &'static str,
         refreshing: bool,
-        compact: bool,
-        language: Language,
-        theme: Theme,
+        view: NodeWorkspaceView,
         cx: &mut Context<Self>,
     ) -> Div {
+        let NodeWorkspaceView {
+            filter,
+            compact,
+            language,
+            theme,
+        } = view;
         let actions = div()
             .flex()
             .items_center()
@@ -465,18 +469,20 @@ impl ManisApp {
             ))
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn node_workspace_body(
         &self,
         groups: &[NodeSourceGroup<'_>],
-        filter: NodeAvailabilityFilter,
         loading: bool,
         unavailable: bool,
-        compact: bool,
-        language: Language,
-        theme: Theme,
+        view: NodeWorkspaceView,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
+        let NodeWorkspaceView {
+            filter,
+            compact,
+            language,
+            theme,
+        } = view;
         div()
             .id("nodes-scroll")
             .flex_1()
@@ -2243,8 +2249,18 @@ impl ManisApp {
                 ))
                 .into_any_element()
         } else {
-            self.source_group_table(group, filter, &benchmark, compact, language, theme, cx)
-                .into_any_element()
+            self.source_group_table(
+                group,
+                &benchmark,
+                NodeWorkspaceView {
+                    filter,
+                    compact,
+                    language,
+                    theme,
+                },
+                cx,
+            )
+            .into_any_element()
         };
 
         div()
@@ -2261,17 +2277,19 @@ impl ManisApp {
             )
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn source_group_table(
         &self,
         group: &NodeSourceGroup<'_>,
-        filter: NodeAvailabilityFilter,
         benchmark: &GroupBenchmarkState,
-        compact: bool,
-        language: Language,
-        theme: Theme,
+        view: NodeWorkspaceView,
         cx: &mut Context<Self>,
     ) -> Div {
+        let NodeWorkspaceView {
+            filter,
+            compact,
+            language,
+            theme,
+        } = view;
         let mut table = div();
         if !compact {
             table = table.child(Self::node_table_header(language, theme));

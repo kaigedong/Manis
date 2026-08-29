@@ -77,7 +77,7 @@ impl SystemProxySession {
         self.applied
     }
 
-    #[allow(dead_code)]
+    #[cfg(not(test))]
     pub(crate) fn recover_stale_with_language(
         &mut self,
         language: Language,
@@ -177,7 +177,7 @@ pub(crate) struct TunDnsSession {
 }
 
 impl TunDnsSession {
-    #[allow(dead_code)]
+    #[cfg(not(test))]
     pub(crate) fn recover_stale_with_language(
         &mut self,
         language: Language,
@@ -289,6 +289,7 @@ fn tun_dns_recovery_snapshot_path(language: Language) -> Result<PathBuf, SystemP
         })
 }
 
+#[cfg(not(test))]
 fn read_tun_dns_recovery_snapshot(language: Language) -> Result<Option<String>, SystemProxyError> {
     let path = tun_dns_recovery_snapshot_path(language)?;
     read_recovery_snapshot_at(&path, language)
@@ -307,7 +308,7 @@ fn delete_tun_dns_recovery_snapshot(language: Language) -> Result<(), SystemProx
     delete_recovery_snapshot_at(&path, language)
 }
 
-#[allow(dead_code)]
+#[cfg(not(test))]
 fn read_recovery_snapshot(language: Language) -> Result<Option<String>, SystemProxyError> {
     let path = recovery_snapshot_path(language)?;
     read_recovery_snapshot_at(&path, language)
@@ -556,9 +557,12 @@ mod macos {
 
     use super::{
         ProxyPorts, RECOVERY_VERSION, SystemProxyError, TUN_DNS_RECOVERY_VERSION, decode_string,
-        delete_recovery_snapshot, delete_recovery_snapshot_at, delete_tun_dns_recovery_snapshot,
-        encode_string, read_recovery_snapshot, read_tun_dns_recovery_snapshot,
+        delete_recovery_snapshot, delete_recovery_snapshot_at, encode_string,
         write_recovery_snapshot, write_recovery_snapshot_at, write_tun_dns_recovery_snapshot,
+    };
+    #[cfg(not(test))]
+    use super::{
+        delete_tun_dns_recovery_snapshot, read_recovery_snapshot, read_tun_dns_recovery_snapshot,
     };
 
     const TUN_DNS_SERVER: &str = "114.114.114.114";
@@ -663,6 +667,7 @@ mod macos {
         runner.run(&args, language)
     }
 
+    #[cfg(not(test))]
     pub(super) fn recover_stale_tun_dns(language: Language) -> Result<(), SystemProxyError> {
         let Some(contents) = read_tun_dns_recovery_snapshot(language)? else {
             return Ok(());
@@ -1056,7 +1061,7 @@ mod macos {
         )
     }
 
-    #[allow(dead_code)]
+    #[cfg(not(test))]
     pub(super) fn recover_stale(language: Language) -> Result<(), SystemProxyError> {
         let Some(contents) = read_recovery_snapshot(language)? else {
             return Ok(());

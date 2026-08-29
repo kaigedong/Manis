@@ -16,6 +16,32 @@ use crate::{
 pub(crate) struct SubscriptionInputChanged;
 pub(crate) struct SubscriptionInputSubmitted;
 
+pub(crate) struct TextInputSpec {
+    element_id: SharedString,
+    placeholder: SharedString,
+    max_bytes: usize,
+    theme: Theme,
+    dark: bool,
+}
+
+impl TextInputSpec {
+    pub(crate) fn new(
+        element_id: impl Into<SharedString>,
+        placeholder: impl Into<SharedString>,
+        max_bytes: usize,
+        theme: Theme,
+        dark: bool,
+    ) -> Self {
+        Self {
+            element_id: element_id.into(),
+            placeholder: placeholder.into(),
+            max_bytes,
+            theme,
+            dark,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum InputAvailability {
     Enabled,
@@ -45,27 +71,30 @@ impl SubscriptionTextInput {
         cx: &mut Context<Self>,
     ) -> Self {
         Self::new_field(
-            "subscription-url-input",
-            subscription_placeholder(language),
-            MAX_SUBSCRIPTION_BYTES,
-            theme,
-            dark,
+            TextInputSpec::new(
+                "subscription-url-input",
+                subscription_placeholder(language),
+                MAX_SUBSCRIPTION_BYTES,
+                theme,
+                dark,
+            ),
             window,
             cx,
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new_field(
-        element_id: impl Into<SharedString>,
-        placeholder: impl Into<SharedString>,
-        max_bytes: usize,
-        theme: Theme,
-        dark: bool,
+        spec: TextInputSpec,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let placeholder = placeholder.into();
+        let TextInputSpec {
+            element_id,
+            placeholder,
+            max_bytes,
+            theme,
+            dark,
+        } = spec;
         let state = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder(placeholder.clone())
@@ -89,7 +118,7 @@ impl SubscriptionTextInput {
         Self {
             state,
             _state_events: state_events,
-            element_id: element_id.into(),
+            element_id,
             content: "".into(),
             placeholder,
             max_bytes,
@@ -254,8 +283,8 @@ mod tests {
     use gpui::{AppContext, Context, Entity, ParentElement, Render, Styled, Window, div, px};
 
     use super::{
-        SubscriptionInputChanged, SubscriptionInputSubmitted, SubscriptionTextInput, clamp_offset,
-        clamp_to_byte_limit,
+        SubscriptionInputChanged, SubscriptionInputSubmitted, SubscriptionTextInput, TextInputSpec,
+        clamp_offset, clamp_to_byte_limit,
     };
     use crate::theme::Theme;
 
@@ -301,11 +330,7 @@ mod tests {
         let (_, window_cx) = cx.add_window_view(|window, cx| {
             let entity = cx.new(|cx| {
                 SubscriptionTextInput::new_field(
-                    "test-input",
-                    "placeholder",
-                    4,
-                    Theme::light(),
-                    false,
+                    TextInputSpec::new("test-input", "placeholder", 4, Theme::light(), false),
                     window,
                     cx,
                 )
@@ -346,11 +371,7 @@ mod tests {
         let (_, window_cx) = cx.add_window_view(|window, cx| {
             let entity = cx.new(|cx| {
                 SubscriptionTextInput::new_field(
-                    "test-input",
-                    "placeholder",
-                    128,
-                    Theme::light(),
-                    false,
+                    TextInputSpec::new("test-input", "placeholder", 128, Theme::light(), false),
                     window,
                     cx,
                 )

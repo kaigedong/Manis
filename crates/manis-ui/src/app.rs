@@ -42,7 +42,7 @@ use crate::{
     },
     rule_source::RuleDownloadError,
     subscription::{SourceKind, SubscriptionInputError, SubscriptionPreview},
-    subscription_input::{SubscriptionInputChanged, SubscriptionTextInput},
+    subscription_input::{SubscriptionInputChanged, SubscriptionTextInput, TextInputSpec},
     system_proxy::{ProxyPorts, SystemProxySession, TunDnsSession},
     theme::{ControlSize, LayoutMetric, Radius, Space, TextRole, Theme},
 };
@@ -263,6 +263,16 @@ enum ImportQxRuleSuccess {
         apply: SourceRuntimeApply,
         rollback_error: Option<SubscriptionStoreError>,
     },
+}
+
+struct PolicyCandidateRowContext {
+    policy_id: PolicyGroupId,
+    policy_name: String,
+    current: bool,
+    manually_selectable: bool,
+    selection_busy: bool,
+    benchmark_state: GroupBenchmarkNodeState,
+    theme: Theme,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1141,11 +1151,13 @@ impl ManisApp {
         self.subscription_input = Some(input);
         self.subscription_name_input = Some(cx.new(|cx| {
             SubscriptionTextInput::new_field(
-                "subscription-name-input",
-                language.text("For example: My subscription", "例如：我的订阅"),
-                96,
-                theme,
-                self.dark,
+                TextInputSpec::new(
+                    "subscription-name-input",
+                    language.text("For example: My subscription", "例如：我的订阅"),
+                    96,
+                    theme,
+                    self.dark,
+                ),
                 window,
                 cx,
             )
@@ -1161,11 +1173,13 @@ impl ManisApp {
         }
         let input = cx.new(|cx| {
             SubscriptionTextInput::new_field(
-                "qx-rule-url-input",
-                "https://example.com/rules.list",
-                16 * 1024,
-                theme,
-                self.dark,
+                TextInputSpec::new(
+                    "qx-rule-url-input",
+                    "https://example.com/rules.list",
+                    16 * 1024,
+                    theme,
+                    self.dark,
+                ),
                 window,
                 cx,
             )
@@ -1199,11 +1213,13 @@ impl ManisApp {
         if self.policy_group_name_input.is_none() {
             self.policy_group_name_input = Some(cx.new(|cx| {
                 SubscriptionTextInput::new_field(
-                    "policy-group-name-input",
-                    language.text("For example: Hong Kong Auto", "例如：香港自动优选"),
-                    96,
-                    theme,
-                    self.dark,
+                    TextInputSpec::new(
+                        "policy-group-name-input",
+                        language.text("For example: Hong Kong Auto", "例如：香港自动优选"),
+                        96,
+                        theme,
+                        self.dark,
+                    ),
                     window,
                     cx,
                 )
@@ -1212,11 +1228,13 @@ impl ManisApp {
         if self.policy_group_filter_input.is_none() {
             self.policy_group_filter_input = Some(cx.new(|cx| {
                 SubscriptionTextInput::new_field(
-                    "policy-group-filter-input",
-                    language.text("For example: Hong Kong", "例如：Hong Kong"),
-                    256,
-                    theme,
-                    self.dark,
+                    TextInputSpec::new(
+                        "policy-group-filter-input",
+                        language.text("For example: Hong Kong", "例如：Hong Kong"),
+                        256,
+                        theme,
+                        self.dark,
+                    ),
                     window,
                     cx,
                 )
@@ -1245,14 +1263,16 @@ impl ManisApp {
         } else {
             let input = cx.new(|cx| {
                 SubscriptionTextInput::new_field(
-                    "activity-search-input",
-                    language.text(
-                        "Filter by target, process, rule, or route",
-                        "筛选目标、进程、规则或路径",
+                    TextInputSpec::new(
+                        "activity-search-input",
+                        language.text(
+                            "Filter by target, process, rule, or route",
+                            "筛选目标、进程、规则或路径",
+                        ),
+                        256,
+                        theme,
+                        self.dark,
                     ),
-                    256,
-                    theme,
-                    self.dark,
                     window,
                     cx,
                 )
@@ -1278,14 +1298,16 @@ impl ManisApp {
         } else {
             let input = cx.new(|cx| {
                 SubscriptionTextInput::new_field(
-                    "logs-search-input",
-                    language.text(
-                        "Search operations, errors, or log levels",
-                        "搜索操作、错误或日志级别",
+                    TextInputSpec::new(
+                        "logs-search-input",
+                        language.text(
+                            "Search operations, errors, or log levels",
+                            "搜索操作、错误或日志级别",
+                        ),
+                        256,
+                        theme,
+                        self.dark,
                     ),
-                    256,
-                    theme,
-                    self.dark,
                     window,
                     cx,
                 )
@@ -4879,13 +4901,15 @@ impl ManisApp {
                             });
                         card = card.child(Self::policy_list_candidate_row(
                             node,
-                            item.id.clone(),
-                            item.name.clone(),
-                            current,
-                            item.kind.allows_manual_selection(),
-                            self.policy_selection_busy.is_some(),
-                            benchmark_state,
-                            theme,
+                            PolicyCandidateRowContext {
+                                policy_id: item.id.clone(),
+                                policy_name: item.name.clone(),
+                                current,
+                                manually_selectable: item.kind.allows_manual_selection(),
+                                selection_busy: self.policy_selection_busy.is_some(),
+                                benchmark_state,
+                                theme,
+                            },
                             cx,
                         ));
                     }
@@ -4937,18 +4961,20 @@ impl ManisApp {
             .child(rows)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn policy_list_candidate_row(
         node: PolicyNode,
-        policy_id: PolicyGroupId,
-        policy_name: String,
-        current: bool,
-        manually_selectable: bool,
-        selection_busy: bool,
-        benchmark_state: GroupBenchmarkNodeState,
-        theme: Theme,
+        row_context: PolicyCandidateRowContext,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
+        let PolicyCandidateRowContext {
+            policy_id,
+            policy_name,
+            current,
+            manually_selectable,
+            selection_busy,
+            benchmark_state,
+            theme,
+        } = row_context;
         let node_id = node.id.clone();
         let node_name = node.name.clone();
         let idle_latency = node
