@@ -107,6 +107,15 @@ enum RuleSourceRefreshPresentation {
     Failed(String),
 }
 
+#[derive(Clone, Copy)]
+struct RuleGroupRenderContext {
+    position: usize,
+    group_count: usize,
+    compact: bool,
+    language: Language,
+    theme: Theme,
+}
+
 impl RuleSourceRefreshPresentation {
     const fn is_refreshing(&self) -> bool {
         matches!(self, Self::Refreshing)
@@ -5040,7 +5049,6 @@ impl ManisApp {
             )
     }
 
-    #[allow(clippy::too_many_lines)]
     fn active_rules_panel(
         &self,
         theme: Theme,
@@ -5066,9 +5074,90 @@ impl ManisApp {
             .filter(|rule| rule.is_enabled())
             .count();
         let disabled_manual_count = self.manual_rules.len() - enabled_manual_count;
-        let disabled_count = disabled_manual_count + disabled_remote_count;
         let active_count = enabled_manual_count + remote_count;
-        let mut list = div()
+        let disabled_count = disabled_manual_count + disabled_remote_count;
+        let group_order = mihomo::normalized_routing_rule_group_order(
+            &self.routing_rule_group_order,
+            !self.manual_rules.is_empty(),
+            &self.qx_rule_sources,
+        );
+        let mut list = Self::active_rules_panel_shell(
+            active_count,
+            disabled_count,
+            compact,
+            language,
+            theme,
+            cx,
+        );
+        let mut rule_order = 1;
+        for (position, group_id) in group_order.iter().enumerate() {
+            if group_id == mihomo::MANUAL_ROUTING_RULE_GROUP_ID {
+                list = list.child(self.manual_rule_group(
+                    disabled_manual_count,
+                    &mut rule_order,
+                    RuleGroupRenderContext {
+                        position,
+                        group_count: group_order.len(),
+                        compact,
+                        language,
+                        theme,
+                    },
+                    cx,
+                ));
+            } else if let Some((source_index, source)) = self
+                .qx_rule_sources
+                .iter()
+                .enumerate()
+                .find(|(_, source)| source.id == *group_id)
+            {
+                list = list.child(self.remote_rule_group(
+                    source_index,
+                    source,
+                    &mut rule_order,
+                    RuleGroupRenderContext {
+                        position,
+                        group_count: group_order.len(),
+                        compact,
+                        language,
+                        theme,
+                    },
+                    cx,
+                ));
+            }
+        }
+        if group_order.is_empty() {
+            list = list.child(
+                empty_state(
+                    language.text("No routing rules yet", "还没有分流规则"),
+                    language.text(
+                        "Add rules to send matching connections through a policy group. Rules are evaluated from top to bottom.",
+                        "添加规则，将匹配的连接交给指定策略组。规则会按从上到下的顺序生效。",
+                    ),
+                    None,
+                    theme,
+                )
+                .mt(Space::Lg.px()),
+            );
+        }
+        list
+    }
+
+    fn active_rules_panel_shell(
+        active_count: usize,
+        disabled_count: usize,
+        compact: bool,
+        language: Language,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let summary = if disabled_count == 0 {
+            language.count(CountNoun::Rule, active_count)
+        } else if language == Language::English {
+            format!("{active_count} active · {disabled_count} disabled")
+        } else {
+            format!("{active_count} 条生效 · {disabled_count} 条已禁用")
+        };
+        div()
             .id("active-routing-rules")
             .w_full()
             .flex_1()
@@ -5103,17 +5192,7 @@ impl ManisApp {
                             .flex()
                             .items_center()
                             .gap(Space::Sm.px())
-                            .child(status_badge(
-                                if disabled_count == 0 {
-                                    language.count(CountNoun::Rule, active_count)
-                                } else if language == Language::English {
-                                    format!("{active_count} active · {disabled_count} disabled")
-                                } else {
-                                    format!("{active_count} 条生效 · {disabled_count} 条已禁用")
-                                },
-                                StatusTone::Route,
-                                theme,
-                            ))
+                            .child(status_badge(summary, StatusTone::Route, theme))
                             .child(
                                 action_button(
                                     "open-manual-rule-editor",
@@ -5121,12 +5200,8 @@ impl ManisApp {
                                     ActionRole::Primary,
                                     ControlSize::Compact,
                                 )
-                                .accessibility_label(
-                                    language.text("Add routing rule", "添加分流规则"),
-                                )
                                 .cursor_pointer()
                                 .bg(theme.action_primary)
-                                .font_weight(FontWeight::SEMIBOLD)
                                 .text_color(theme.action_on_primary)
                                 .on_click(cx.listener(
                                     |this, _, window, cx| {
@@ -5135,49 +5210,187 @@ impl ManisApp {
                                 )),
                             ),
                     ),
-            );
+            )
+    }
 
-        let group_order = mihomo::normalized_routing_rule_group_order(
-            &self.routing_rule_group_order,
-            !self.manual_rules.is_empty(),
-            &self.qx_rule_sources,
+    fn manual_rule_group(
+        &self,
+        disabled_count: usize,
+        rule_order: &mut usize,
+        view: RuleGroupRenderContext,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let RuleGroupRenderContext {
+            compact,
+            language,
+            theme,
+            ..
+        } = view;
+        let group_name = language.text("Manual rules", "手动规则");
+        let detail = match (disabled_count, language) {
+            (0, Language::English) => format!(
+                "{} · Saved locally",
+                language.count(CountNoun::Rule, self.manual_rules.len())
+            ),
+            (0, Language::SimplifiedChinese) => format!(
+                "{} · 本地保存",
+                language.count(CountNoun::Rule, self.manual_rules.len())
+            ),
+            (_, Language::English) => format!(
+                "{} · {disabled_count} disabled · Saved locally",
+                language.count(CountNoun::Rule, self.manual_rules.len())
+            ),
+            (_, Language::SimplifiedChinese) => format!(
+                "{} · {disabled_count} 条已禁用 · 本地保存",
+                language.count(CountNoun::Rule, self.manual_rules.len())
+            ),
+        };
+        let title = self.rule_group_title(
+            mihomo::MANUAL_ROUTING_RULE_GROUP_ID,
+            group_name,
+            detail,
+            None,
+            view,
+            cx,
         );
-        let group_count = group_order.len();
-        let mut order = 1;
-        for (group_position, group_id) in group_order.iter().enumerate() {
-            if group_id == mihomo::MANUAL_ROUTING_RULE_GROUP_ID {
-                let open = rule_group_is_open(&self.node_workspace, MANUAL_RULES_EXPANSION_KEY);
-                let group_name = language.text("Manual rules", "手动规则");
-                let detail = if disabled_manual_count == 0 && language == Language::English {
-                    format!(
-                        "{} · Saved locally",
-                        language.count(CountNoun::Rule, self.manual_rules.len())
-                    )
-                } else if disabled_manual_count == 0 {
-                    format!(
-                        "{} · 本地保存",
-                        language.count(CountNoun::Rule, self.manual_rules.len())
-                    )
-                } else if language == Language::English {
-                    format!(
-                        "{} · {disabled_manual_count} disabled · Saved locally",
-                        language.count(CountNoun::Rule, self.manual_rules.len())
-                    )
-                } else {
-                    format!(
-                        "{} · {disabled_manual_count} 条已禁用 · 本地保存",
-                        language.count(CountNoun::Rule, self.manual_rules.len())
-                    )
-                };
-                let title_detail = div()
+        let mut rules = Self::rule_group_rows(compact, theme);
+        for (index, rule) in self.manual_rules.iter().enumerate() {
+            rules = rules.child(self.manual_routing_rule_row(
+                *rule_order,
+                index,
+                rule,
+                theme,
+                language,
+                cx,
+            ));
+            *rule_order += 1;
+        }
+        let open = rule_group_is_open(&self.node_workspace, MANUAL_RULES_EXPANSION_KEY);
+        Accordion::new("routing-manual-rules")
+            .bordered(false)
+            .with_size(Size::Large)
+            .mt(Space::Lg.px())
+            .rounded(Radius::Pane.px())
+            .overflow_hidden()
+            .border_1()
+            .border_color(theme.outline_subtle)
+            .bg(theme.surface_low)
+            .item(|item| {
+                item.open(open)
+                    .title_style(accordion_title_style(compact))
+                    .content_style(accordion_content_style())
+                    .title(title)
+                    .child(rules)
+            })
+            .on_toggle_click(cx.listener(|this, open_indices: &[usize], _, cx| {
+                Self::sync_rule_group_open(
+                    this,
+                    MANUAL_RULES_EXPANSION_KEY,
+                    open_indices.contains(&0),
+                    cx,
+                );
+            }))
+            .into_any_element()
+    }
+
+    fn remote_rule_group(
+        &self,
+        source_index: usize,
+        source: &mihomo::StoredQxRuleSource,
+        rule_order: &mut usize,
+        view: RuleGroupRenderContext,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let RuleGroupRenderContext {
+            compact,
+            language,
+            theme,
+            ..
+        } = view;
+        let parsed = QxRuleList::parse(&source.content);
+        let target = self.effective_rule_target(source.target_policy.as_str(), language);
+        let name = source.source.subscription_name().unwrap_or_else(|| {
+            if language == Language::English {
+                format!("Rule source {}", source_index + 1)
+            } else {
+                format!("规则源 {}", source_index + 1)
+            }
+        });
+        let detail = Self::remote_rule_group_detail(source, parsed.rules.len(), &target, language);
+        let target_select = self.qx_rule_source_target_select(
+            source,
+            source.enabled && !self.source_refresh_busy(),
+            theme,
+            cx,
+        );
+        let title = self.rule_group_title(&source.id, &name, detail, Some(target_select), view, cx);
+        let mut rules = Self::rule_group_rows(compact, theme);
+        for rule in parsed.rules {
+            rules = rules.child(Self::routing_rule_row(
+                *rule_order,
+                Self::qx_rule_kind_label(rule.kind),
+                &rule.value,
+                &target,
+                theme,
+            ));
+            *rule_order += 1;
+        }
+        let expansion_key = rule_source_expansion_key(&source.id);
+        let toggle_key = expansion_key.clone();
+        let open = rule_group_is_open(&self.node_workspace, &expansion_key);
+        Accordion::new(format!("routing-rule-source-{}", source.id))
+            .bordered(false)
+            .with_size(Size::Large)
+            .mt(Space::Lg.px())
+            .rounded(Radius::Pane.px())
+            .overflow_hidden()
+            .border_1()
+            .border_color(theme.outline_subtle)
+            .bg(theme.surface_low)
+            .item(|item| {
+                item.open(open)
+                    .title_style(accordion_title_style(compact))
+                    .content_style(accordion_content_style())
+                    .title(title)
+                    .child(rules)
+            })
+            .on_toggle_click(cx.listener(move |this, open_indices: &[usize], _, cx| {
+                Self::sync_rule_group_open(this, &toggle_key, open_indices.contains(&0), cx);
+            }))
+            .into_any_element()
+    }
+
+    fn rule_group_title(
+        &self,
+        group_id: &str,
+        name: &str,
+        detail: String,
+        middle: Option<AnyElement>,
+        view: RuleGroupRenderContext,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let RuleGroupRenderContext {
+            position,
+            group_count,
+            language,
+            theme,
+            ..
+        } = view;
+        div()
+            .w_full()
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap(Space::Sm.px())
+            .child(
+                div()
                     .flex_1()
                     .min_w(px(0.0))
                     .child(
                         div()
                             .text_size(TextRole::Label.size())
-                            .line_height(TextRole::Label.line_height())
                             .font_weight(TextRole::Label.weight())
-                            .child(group_name),
+                            .child(name.to_owned()),
                     )
                     .child(
                         div()
@@ -5186,239 +5399,65 @@ impl ManisApp {
                             .whitespace_nowrap()
                             .text_ellipsis()
                             .text_size(TextRole::Metadata.size())
-                            .line_height(TextRole::Metadata.line_height())
                             .text_color(theme.text_tertiary)
                             .child(detail),
-                    )
-                    .child(
-                        div()
-                            .mt(Space::Xs.px())
-                            .text_size(TextRole::Metadata.size())
-                            .line_height(TextRole::Metadata.line_height())
-                            .text_color(theme.text_secondary)
-                            .child(language.text(
-                                "Click a rule to edit; right-click to disable or delete.",
-                                "点击规则编辑；右键可禁用或删除。",
-                            )),
-                    );
-                let title = div()
-                    .w_full()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap(Space::Sm.px())
-                    .child(title_detail)
-                    .child(self.rule_group_order_controls(
-                        group_id,
-                        group_name,
-                        (group_position, group_count),
-                        theme,
-                        language,
-                        cx,
-                    ));
-                let mut rules = div()
-                    .px(if compact {
-                        Space::Sm.px()
-                    } else {
-                        Space::Md.px()
-                    })
-                    .pb(Space::Md.px())
-                    .border_t_1()
-                    .border_color(theme.outline_subtle)
-                    .bg(theme.surface_high);
-                for (index, rule) in self.manual_rules.iter().enumerate() {
-                    rules = rules.child(
-                        self.manual_routing_rule_row(order, index, rule, theme, language, cx),
-                    );
-                    order += 1;
-                }
-                let manual_group = Accordion::new("routing-manual-rules")
-                    .bordered(false)
-                    .with_size(Size::Large)
-                    .mt(Space::Lg.px())
-                    .rounded(Radius::Pane.px())
-                    .overflow_hidden()
-                    .border_1()
-                    .border_color(theme.outline_subtle)
-                    .bg(theme.surface_low)
-                    .item(|item| {
-                        item.open(open)
-                            .rounded(Radius::Pane.px())
-                            .overflow_hidden()
-                            .title_style(accordion_title_style(compact))
-                            .content_style(accordion_content_style())
-                            .bg(theme.surface_low)
-                            .title(title)
-                            .child(rules)
-                    })
-                    .on_toggle_click(cx.listener(|this, open_indices: &[usize], _, cx| {
-                        let should_collapse = !open_indices.contains(&0);
-                        if this
-                            .node_workspace
-                            .is_group_collapsed(MANUAL_RULES_EXPANSION_KEY)
-                            != should_collapse
-                        {
-                            this.node_workspace.toggle_group(MANUAL_RULES_EXPANSION_KEY);
-                            this.persist_node_workspace();
-                            cx.notify();
-                        }
-                    }));
-                list = list.child(manual_group);
-                continue;
-            }
-            let Some((source_index, source)) = self
-                .qx_rule_sources
-                .iter()
-                .enumerate()
-                .find(|(_, source)| source.id == *group_id)
-            else {
-                continue;
-            };
-            let parsed = QxRuleList::parse(&source.content);
-            let rule_count = parsed.rules.len();
-            let expansion_key = rule_source_expansion_key(&source.id);
-            let open = rule_group_is_open(&self.node_workspace, &expansion_key);
-            let name = source.source.subscription_name().unwrap_or_else(|| {
-                if language == Language::English {
-                    format!("Rule source {}", source_index + 1)
-                } else {
-                    format!("规则源 {}", source_index + 1)
-                }
-            });
+                    ),
+            )
+            .when_some(middle, ParentElement::child)
+            .child(self.rule_group_order_controls(
+                group_id,
+                name,
+                (position, group_count),
+                theme,
+                language,
+                cx,
+            ))
+    }
+
+    fn remote_rule_group_detail(
+        source: &mihomo::StoredQxRuleSource,
+        rule_count: usize,
+        target: &str,
+        language: Language,
+    ) -> String {
+        if !source.enabled && language == Language::English {
+            format!("{rule_count} rules · Disabled")
+        } else if !source.enabled {
+            format!("{rule_count} 条规则 · 已停用")
+        } else {
             let update = source_update_label(
                 source.last_successful_update_unix_secs,
                 mihomo::current_unix_secs(),
                 language,
             );
-            let target_policy = self.effective_rule_target(source.target_policy.as_str(), language);
-            let detail = if !source.enabled && language == Language::English {
-                format!("{rule_count} rules · Disabled")
-            } else if !source.enabled {
-                format!("{rule_count} 条规则 · 已停用")
-            } else if language == Language::English {
-                format!("{rule_count} rules · Target {target_policy} · {update}")
+            if language == Language::English {
+                format!("{rule_count} rules · Target {target} · {update}")
             } else {
-                format!("{rule_count} 条规则 · 目标 {target_policy} · {update}")
-            };
-            let toggle_key = expansion_key.clone();
-            let title_detail = div()
-                .flex_1()
-                .min_w(px(0.0))
-                .child(
-                    div()
-                        .overflow_x_hidden()
-                        .whitespace_nowrap()
-                        .text_ellipsis()
-                        .text_size(TextRole::Label.size())
-                        .line_height(TextRole::Label.line_height())
-                        .font_weight(TextRole::Label.weight())
-                        .text_color(if source.enabled {
-                            theme.text_primary
-                        } else {
-                            theme.text_tertiary
-                        })
-                        .child(name.clone()),
-                )
-                .child(
-                    div()
-                        .mt(Space::Xs.px())
-                        .overflow_x_hidden()
-                        .whitespace_nowrap()
-                        .text_ellipsis()
-                        .text_size(TextRole::Metadata.size())
-                        .line_height(TextRole::Metadata.line_height())
-                        .text_color(theme.text_tertiary)
-                        .child(detail),
-                );
-            let title = div()
-                .w_full()
-                .flex()
-                .items_center()
-                .justify_between()
-                .gap(Space::Sm.px())
-                .child(title_detail)
-                .child(self.qx_rule_source_target_select(
-                    source,
-                    source.enabled && !self.source_refresh_busy(),
-                    theme,
-                    cx,
-                ))
-                .child(self.rule_group_order_controls(
-                    group_id,
-                    &name,
-                    (group_position, group_count),
-                    theme,
-                    language,
-                    cx,
-                ));
-            let mut rules = div()
-                .px(if compact {
-                    Space::Sm.px()
-                } else {
-                    Space::Md.px()
-                })
-                .pb(Space::Md.px())
-                .border_t_1()
-                .border_color(theme.outline_subtle)
-                .bg(theme.surface_high);
-            for rule in parsed.rules {
-                rules = rules.child(Self::routing_rule_row(
-                    order,
-                    Self::qx_rule_kind_label(rule.kind),
-                    &rule.value,
-                    &target_policy,
-                    theme,
-                ));
-                order += 1;
+                format!("{rule_count} 条规则 · 目标 {target} · {update}")
             }
-            let source_group = Accordion::new(format!("routing-rule-source-{}", source.id))
-                .bordered(false)
-                .with_size(Size::Large)
-                .mt(Space::Lg.px())
-                .rounded(Radius::Pane.px())
-                .overflow_hidden()
-                .border_1()
-                .border_color(theme.outline_subtle)
-                .bg(theme.surface_low)
-                .item(|item| {
-                    item.open(open)
-                        .rounded(Radius::Pane.px())
-                        .overflow_hidden()
-                        .title_style(accordion_title_style(compact))
-                        .content_style(accordion_content_style())
-                        .bg(theme.surface_low)
-                        .title(title)
-                        .child(rules)
-                })
-                .on_toggle_click(cx.listener(move |this, open_indices: &[usize], _, cx| {
-                    let should_collapse = !open_indices.contains(&0);
-                    if this.node_workspace.is_group_collapsed(&toggle_key) != should_collapse {
-                        this.node_workspace.toggle_group(&toggle_key);
-                        this.persist_node_workspace();
-                        this.language()
-                            .text("Rule source expanded state updated", "已更新规则源展开状态")
-                            .clone_into(&mut this.status);
-                        cx.notify();
-                    }
-                }));
-            list = list.child(source_group);
         }
+    }
 
-        if group_order.is_empty() {
-            list = list.child(
-                empty_state(
-                    language.text("No routing rules yet", "还没有分流规则"),
-                    language.text(
-                        "Add rules to send matching connections through a policy group. Rules are evaluated from top to bottom.",
-                        "添加规则，将匹配的连接交给指定策略组。规则会按从上到下的顺序生效。",
-                    ),
-                    None,
-                    theme,
-                )
-                .mt(Space::Lg.px()),
-            );
+    fn rule_group_rows(compact: bool, theme: Theme) -> Div {
+        div()
+            .px(if compact {
+                Space::Sm.px()
+            } else {
+                Space::Md.px()
+            })
+            .pb(Space::Md.px())
+            .border_t_1()
+            .border_color(theme.outline_subtle)
+            .bg(theme.surface_high)
+    }
+
+    fn sync_rule_group_open(this: &mut Self, key: &str, open: bool, cx: &mut Context<Self>) {
+        let should_collapse = !open;
+        if this.node_workspace.is_group_collapsed(key) != should_collapse {
+            this.node_workspace.toggle_group(key);
+            this.persist_node_workspace();
+            cx.notify();
         }
-        list
     }
 
     fn qx_rule_kind_label(kind: QxRuleKind) -> &'static str {
