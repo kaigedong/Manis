@@ -362,10 +362,6 @@ fn route_stage_label(stage: &str, language: Language) -> &str {
     }
 }
 
-pub(super) fn route_summary(chains: &[String], language: Language) -> Option<String> {
-    route_summary_with_group(chains, None, language)
-}
-
 fn route_summary_with_group(
     chains: &[String],
     rule_group: Option<&str>,
@@ -562,8 +558,9 @@ mod tests {
         );
 
         assert_eq!(
-            super::route_summary(
+            super::route_summary_with_group(
                 &["DIRECT".to_owned()],
+                None,
                 crate::localization::Language::SimplifiedChinese
             )
             .as_deref(),

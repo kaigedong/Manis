@@ -26,7 +26,6 @@ pub(crate) enum Message {
     RefreshData,
     RefreshNodes,
     AddRule,
-    TestRules,
     ManageSources,
     ImportSubscription,
     #[allow(dead_code)]
@@ -141,7 +140,6 @@ impl Language {
             Message::RefreshData => ("Refresh", "刷新"),
             Message::RefreshNodes => ("Refresh nodes", "刷新节点"),
             Message::AddRule => ("Add rule", "添加规则"),
-            Message::TestRules => ("Test rules", "测试规则"),
             Message::ManageSources => ("Manage sources", "管理来源"),
             Message::ImportSubscription => ("Import subscription", "导入订阅"),
             Message::Clear => ("Clear", "清除"),

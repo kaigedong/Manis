@@ -214,7 +214,6 @@ pub(crate) enum LayoutMetric {
     CompactNavigation,
     WidePolicyList,
     MediumPolicyList,
-    RouteInspector,
 }
 
 #[allow(dead_code)]
@@ -228,7 +227,6 @@ impl LayoutMetric {
             Self::CompactNavigation => px(56.0),
             Self::WidePolicyList => px(326.0),
             Self::MediumPolicyList => px(292.0),
-            Self::RouteInspector => px(340.0),
         }
     }
 }
@@ -333,6 +331,5 @@ mod tests {
         assert_px(LayoutMetric::CompactNavigation.px(), 56.0);
         assert_px(LayoutMetric::WidePolicyList.px(), 326.0);
         assert_px(LayoutMetric::MediumPolicyList.px(), 292.0);
-        assert_px(LayoutMetric::RouteInspector.px(), 340.0);
     }
 }
