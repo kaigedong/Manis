@@ -58,6 +58,33 @@ enum SubscriptionCardActivity {
     Busy,
 }
 
+#[derive(Clone, Copy)]
+struct ProxySourceEditorView {
+    direct_input: bool,
+    editing: bool,
+    activity: ProxySourceEditorActivity,
+    enabled: bool,
+    dialog_width: f32,
+}
+
+#[derive(Clone, Copy)]
+enum ProxySourceEditorActivity {
+    Idle,
+    Busy,
+}
+
+impl ProxySourceEditorView {
+    const fn busy(self) -> bool {
+        matches!(self.activity, ProxySourceEditorActivity::Busy)
+    }
+}
+
+struct ProxySourceEditorInputs {
+    source: Entity<SubscriptionTextInput>,
+    name: Entity<SubscriptionTextInput>,
+    interval_select: AnyElement,
+}
+
 impl SubscriptionCardActivity {
     const fn is_busy(self) -> bool {
         matches!(self, Self::Busy)
@@ -1468,7 +1495,6 @@ impl ManisApp {
         cx.notify();
     }
 
-    #[allow(clippy::too_many_lines)]
     fn proxy_source_editor_modal(
         &self,
         dialog: Dialog,
@@ -1487,20 +1513,64 @@ impl ManisApp {
             .as_ref()
             .expect("subscription name input is initialized before rendering")
             .clone();
-        let direct_input = self.proxy_source_editor_kind == ProxySourceEditorKind::SingleNode;
-        let editing = self.subscription_editor_source_id.is_some()
-            || self.single_node_editor_source_id.is_some();
-        let busy = matches!(
-            self.subscription_feedback,
-            SubscriptionFeedback::Importing(_)
-        );
-        let enabled = self.subscription_editor_enabled;
-        let save_input = input.clone();
-        let app = cx.entity();
         let viewport = window.viewport_size();
-        let dialog_width = (viewport.width.as_f32() - 32.0).clamp(300.0, 620.0);
-        let interval_open = self.subscription_editor_interval_popover;
-        let mut interval_menu = div().p_1();
+        let view = ProxySourceEditorView {
+            direct_input: self.proxy_source_editor_kind == ProxySourceEditorKind::SingleNode,
+            editing: self.subscription_editor_source_id.is_some()
+                || self.single_node_editor_source_id.is_some(),
+            activity: if matches!(
+                self.subscription_feedback,
+                SubscriptionFeedback::Importing(_)
+            ) {
+                ProxySourceEditorActivity::Busy
+            } else {
+                ProxySourceEditorActivity::Idle
+            },
+            enabled: self.subscription_editor_enabled,
+            dialog_width: (viewport.width.as_f32() - 32.0).clamp(300.0, 620.0),
+        };
+        let interval_select = self.proxy_source_interval_select(view, language, theme, cx);
+        let body = self.proxy_source_editor_body(
+            ProxySourceEditorInputs {
+                source: input.clone(),
+                name: name_input,
+                interval_select,
+            },
+            view,
+            language,
+            theme,
+            cx,
+        );
+        let footer = Self::proxy_source_editor_footer(input, view, language, theme, cx);
+        let app = cx.entity();
+        dialog
+            .width(px(view.dialog_width))
+            .max_h(px((viewport.height.as_f32() - 32.0).max(320.0)))
+            .margin_top(px(((viewport.height.as_f32() - 480.0) / 2.0).max(16.0)))
+            .overlay(true)
+            .overlay_closable(true)
+            .keyboard(true)
+            .close_button(false)
+            .p_0()
+            .rounded_md()
+            .bg(theme.surface_high)
+            .overflow_hidden()
+            .title(Self::proxy_source_editor_title(view, language, theme))
+            .child(body)
+            .footer(footer)
+            .on_close(move |_, _, cx| {
+                app.update(cx, ManisApp::close_subscription_editor);
+            })
+    }
+
+    fn proxy_source_interval_select(
+        &self,
+        view: ProxySourceEditorView,
+        language: Language,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let mut menu = div().p_1();
         for interval in [
             RemoteSourceRefreshInterval::Manual,
             RemoteSourceRefreshInterval::Hourly,
@@ -1509,7 +1579,7 @@ impl ManisApp {
             RemoteSourceRefreshInterval::Daily,
         ] {
             let selected = interval == self.subscription_editor_refresh_interval;
-            interval_menu = interval_menu.child(
+            menu = menu.child(
                 div()
                     .id(format!("subscription-refresh-option-{interval:?}"))
                     .role(Role::Button)
@@ -1525,8 +1595,6 @@ impl ManisApp {
                     } else {
                         theme.surface_high
                     })
-                    .text_size(TextRole::Label.size())
-                    .line_height(TextRole::Label.line_height())
                     .font_weight(if selected {
                         FontWeight::SEMIBOLD
                     } else {
@@ -1545,7 +1613,7 @@ impl ManisApp {
                     })),
             );
         }
-        let interval_trigger = Button::new("subscription-editor-refresh-interval")
+        let trigger = Button::new("subscription-editor-refresh-interval")
             .accessibility_label(
                 language.text("Choose subscription update interval", "选择订阅更新间隔"),
             )
@@ -1554,138 +1622,74 @@ impl ManisApp {
             .with_size(ControlSize::Standard.component_size())
             .h(ControlSize::Standard.height())
             .w_full()
-            .child(
-                div()
-                    .w_full()
-                    .text_size(TextRole::Label.size())
-                    .line_height(TextRole::Label.line_height())
-                    .font_weight(TextRole::Label.weight())
-                    .child(refresh_interval_label(
-                        self.subscription_editor_refresh_interval,
-                        language,
-                    )),
-            )
-            .disabled(busy);
-        let interval_app = app.clone();
-        let interval_select = crate::components::anchored_popover(
+            .child(refresh_interval_label(
+                self.subscription_editor_refresh_interval,
+                language,
+            ))
+            .disabled(view.busy());
+        let app = cx.entity();
+        crate::components::anchored_popover(
             "subscription-editor-refresh-popover",
-            interval_trigger,
-            interval_menu,
-            (dialog_width - 40.0).max(240.0),
+            trigger,
+            menu,
+            (view.dialog_width - 40.0).max(240.0),
             280.0,
         )
-        .open(interval_open)
+        .open(self.subscription_editor_interval_popover)
         .on_open_change(move |open, _, cx| {
-            interval_app.update(cx, |this, cx| {
+            app.update(cx, |this, cx| {
                 this.subscription_editor_interval_popover = *open;
                 cx.notify();
             });
-        });
+        })
+        .into_any_element()
+    }
 
-        let body = div()
+    fn proxy_source_editor_body(
+        &self,
+        inputs: ProxySourceEditorInputs,
+        view: ProxySourceEditorView,
+        language: Language,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        div()
             .id("proxy-source-modal-body")
             .flex_1()
             .min_h(px(0.0))
             .overflow_y_scroll()
             .px_5()
             .py_4()
-            .when(!editing, |body| {
+            .when(!view.editing, |body| {
                 body.child(field_label(language.text("Source type", "来源类型"), theme))
-                    .child(
-                        div()
-                            .mt_1()
-                            .flex()
-                            .gap_2()
-                            .child(
-                                action_button(
-                                    "proxy-source-kind-subscription",
-                                    language.text("Subscription", "订阅来源"),
-                                    if direct_input {
-                                        ActionRole::Secondary
-                                    } else {
-                                        ActionRole::Primary
-                                    },
-                                    ControlSize::Compact,
-                                )
-                                .cursor_pointer()
-                                .bg(if direct_input {
-                                    theme.surface_high
-                                } else {
-                                    theme.action_primary
-                                })
-                                .text_color(if direct_input {
-                                    theme.text_secondary
-                                } else {
-                                    theme.action_on_primary
-                                })
-                                .on_click(cx.listener(
-                                    |this, _, _, cx| {
-                                        this.proxy_source_editor_kind =
-                                            ProxySourceEditorKind::Subscription;
-                                        this.subscription_editor_error = None;
-                                        cx.notify();
-                                    },
-                                )),
-                            )
-                            .child(
-                                action_button(
-                                    "proxy-source-kind-single-node",
-                                    language.text("Single node", "单节点来源"),
-                                    if direct_input {
-                                        ActionRole::Primary
-                                    } else {
-                                        ActionRole::Secondary
-                                    },
-                                    ControlSize::Compact,
-                                )
-                                .cursor_pointer()
-                                .bg(if direct_input {
-                                    theme.action_primary
-                                } else {
-                                    theme.surface_high
-                                })
-                                .text_color(if direct_input {
-                                    theme.action_on_primary
-                                } else {
-                                    theme.text_secondary
-                                })
-                                .on_click(cx.listener(
-                                    |this, _, _, cx| {
-                                        this.proxy_source_editor_kind =
-                                            ProxySourceEditorKind::SingleNode;
-                                        this.subscription_editor_error = None;
-                                        cx.notify();
-                                    },
-                                )),
-                            ),
-                    )
+                    .child(Self::proxy_source_kind_picker(view, language, theme, cx))
             })
             .child(field_label(
-                if direct_input {
+                if view.direct_input {
                     language.text("Node name", "节点名称")
                 } else {
                     language.text("Source name", "来源名称")
                 },
                 theme,
             ))
-            .child(name_input)
+            .child(inputs.name)
             .child(field_label(language.text("Source URL", "来源 URL"), theme).mt_4())
-            .child(input)
-            .when(!direct_input, |body| {
+            .child(inputs.source)
+            .when(!view.direct_input, |body| {
                 body.child(field_label(language.text("Update interval", "更新间隔"), theme).mt_4())
-                    .child(interval_select)
+                    .child(inputs.interval_select)
             })
             .child(
                 Checkbox::new("proxy-source-editor-enabled")
                     .label(language.text("Use this source", "使用此来源"))
-                    .checked(enabled)
-                    .disabled(busy)
-                    .tab_stop(!busy)
+                    .checked(view.enabled)
+                    .disabled(view.busy())
+                    .tab_stop(!view.busy())
                     .cursor_pointer()
                     .mt_4()
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        if !busy {
-                            this.subscription_editor_enabled = !enabled;
+                        if !view.busy() {
+                            this.subscription_editor_enabled = !view.enabled;
                             cx.notify();
                         }
                     })),
@@ -1698,9 +1702,73 @@ impl ManisApp {
                         .text_color(theme.status_error)
                         .child(error),
                 )
-            });
+            })
+    }
 
-        let footer = div()
+    fn proxy_source_kind_picker(
+        view: ProxySourceEditorView,
+        language: Language,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        div().mt_1().flex().gap_2().children(
+            [
+                (
+                    ProxySourceEditorKind::Subscription,
+                    "proxy-source-kind-subscription",
+                ),
+                (
+                    ProxySourceEditorKind::SingleNode,
+                    "proxy-source-kind-single-node",
+                ),
+            ]
+            .map(|(kind, id)| {
+                let selected = (kind == ProxySourceEditorKind::SingleNode) == view.direct_input;
+                action_button(
+                    id,
+                    match kind {
+                        ProxySourceEditorKind::Subscription => {
+                            language.text("Subscription", "订阅来源")
+                        }
+                        ProxySourceEditorKind::SingleNode => {
+                            language.text("Single node", "单节点来源")
+                        }
+                    },
+                    if selected {
+                        ActionRole::Primary
+                    } else {
+                        ActionRole::Secondary
+                    },
+                    ControlSize::Compact,
+                )
+                .cursor_pointer()
+                .bg(if selected {
+                    theme.action_primary
+                } else {
+                    theme.surface_high
+                })
+                .text_color(if selected {
+                    theme.action_on_primary
+                } else {
+                    theme.text_secondary
+                })
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.proxy_source_editor_kind = kind;
+                    this.subscription_editor_error = None;
+                    cx.notify();
+                }))
+            }),
+        )
+    }
+
+    fn proxy_source_editor_footer(
+        input: Entity<SubscriptionTextInput>,
+        view: ProxySourceEditorView,
+        language: Language,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        div()
             .flex_shrink_0()
             .px_5()
             .py_4()
@@ -1712,17 +1780,12 @@ impl ManisApp {
             .gap_2()
             .child(
                 style_action_button(
-                    Button::new("cancel-proxy-source")
-                        .accessibility_label(language.text("Cancel source editing", "取消编辑来源"))
-                        .label(language.message(Message::Cancel)),
+                    Button::new("cancel-proxy-source").label(language.message(Message::Cancel)),
                     ActionRole::Secondary,
                     ControlSize::Standard,
                 )
                 .px(Space::Lg.px())
                 .cursor_pointer()
-                .border_color(theme.outline_subtle)
-                .bg(theme.surface_high)
-                .text_color(theme.text_primary)
                 .on_click(cx.listener(|this, _, window, cx| {
                     this.close_subscription_editor(cx);
                     window.close_dialog(cx);
@@ -1731,88 +1794,74 @@ impl ManisApp {
             .child(
                 style_action_button(
                     Button::new("save-proxy-source")
-                        .accessibility_label(language.text("Save proxy source", "保存代理来源"))
-                        .label(if busy {
+                        .label(if view.busy() {
                             language.text("Processing…", "正在处理…")
-                        } else if editing {
+                        } else if view.editing {
                             language.message(Message::SaveChanges)
                         } else {
                             language.text("Add source", "添加来源")
                         })
-                        .loading(busy),
+                        .loading(view.busy()),
                     ActionRole::Primary,
                     ControlSize::Standard,
                 )
                 .px(Space::Lg.px())
-                .when(!busy, gpui::Styled::cursor_pointer)
-                .bg(if busy {
+                .when(!view.busy(), gpui::Styled::cursor_pointer)
+                .bg(if view.busy() {
                     theme.action_soft
                 } else {
                     theme.action_primary
                 })
-                .text_color(if busy {
+                .text_color(if view.busy() {
                     theme.action_primary
                 } else {
                     theme.action_on_primary
                 })
                 .on_click(cx.listener(move |this, _, window, cx| {
-                    if !busy && this.submit_source_import(&save_input, cx) {
+                    if !view.busy() && this.submit_source_import(&input, cx) {
                         window.close_dialog(cx);
                     }
                 })),
-            );
-
-        dialog
-            .width(px(dialog_width))
-            .max_h(px((viewport.height.as_f32() - 32.0).max(320.0)))
-            .margin_top(px(((viewport.height.as_f32() - 480.0) / 2.0).max(16.0)))
-            .overlay(true)
-            .overlay_closable(true)
-            .keyboard(true)
-            .close_button(false)
-            .p_0()
-            .rounded_md()
-            .bg(theme.surface_high)
-            .overflow_hidden()
-            .title(
-                div()
-                    .px_5()
-                    .py_4()
-                    .border_b_1()
-                    .border_color(theme.outline_subtle)
-                    .child(
-                        div()
-                            .text_size(px(17.0))
-                            .font_weight(TextRole::SectionTitle.weight())
-                            .child(if editing {
-                                language.text("Edit proxy source", "编辑代理来源")
-                            } else {
-                                language.text("Add proxy source", "添加代理来源")
-                            }),
-                    )
-                    .child(
-                        div()
-                            .mt_1()
-                            .text_size(TextRole::Metadata.size())
-                            .text_color(theme.text_secondary)
-                            .child(if direct_input {
-                                language.text(
-                                    "A single-node source does not need an update interval.",
-                                    "单节点来源不需要更新间隔。",
-                                )
-                            } else {
-                                language.text(
-                                    "Choose a subscription or a single-node share link.",
-                                    "请选择订阅来源或单节点分享链接。",
-                                )
-                            }),
-                    ),
             )
-            .child(body)
-            .footer(footer)
-            .on_close(move |_, _, cx| {
-                app.update(cx, ManisApp::close_subscription_editor);
-            })
+    }
+
+    fn proxy_source_editor_title(
+        view: ProxySourceEditorView,
+        language: Language,
+        theme: Theme,
+    ) -> Div {
+        div()
+            .px_5()
+            .py_4()
+            .border_b_1()
+            .border_color(theme.outline_subtle)
+            .child(
+                div()
+                    .text_size(px(17.0))
+                    .font_weight(TextRole::SectionTitle.weight())
+                    .child(if view.editing {
+                        language.text("Edit proxy source", "编辑代理来源")
+                    } else {
+                        language.text("Add proxy source", "添加代理来源")
+                    }),
+            )
+            .child(
+                div()
+                    .mt_1()
+                    .text_size(TextRole::Metadata.size())
+                    .text_color(theme.text_secondary)
+                    .child(if view.direct_input {
+                        language.text(
+                            "A single-node source does not need an update interval.",
+                            "单节点来源不需要更新间隔。",
+                        )
+                    } else {
+                        language.text(
+                            "Choose a subscription or a single-node share link.",
+                            "请选择订阅来源或单节点分享链接。",
+                        )
+                    }),
+            )
     }
 
     fn submit_source_import(
