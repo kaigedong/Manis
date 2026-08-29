@@ -1,0 +1,721 @@
+impl ManisApp {
+    fn configuration_navigation(&self, theme: Theme, compact: bool, cx: &mut Context<Self>) -> Div {
+        let language = self.language();
+        let navigation = div()
+            .flex_shrink_0()
+            .bg(theme.surface_low)
+            .when(compact, |navigation| {
+                navigation
+                    .w_full()
+                    .px(Space::Md.px())
+                    .py(Space::Sm.px())
+                    .border_b_1()
+            })
+            .when(!compact, |navigation| {
+                navigation
+                    .w(px(228.0))
+                    .h_full()
+                    .p(Space::Md.px())
+                    .border_r_1()
+                    .flex()
+                    .flex_col()
+            })
+            .border_color(theme.outline_subtle)
+            .when(!compact, |navigation| {
+                navigation.child(
+                    div()
+                        .px(Space::Sm.px())
+                        .pb(Space::Sm.px())
+                        .text_size(TextRole::Metadata.size())
+                        .line_height(TextRole::Metadata.line_height())
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(theme.text_tertiary)
+                        .child(language.localized(copy::configuration::SETTINGS)),
+                )
+            });
+        let items =
+            div()
+                .id("configuration-navigation-items")
+                .flex()
+                .gap(if compact {
+                    Space::Xs.px()
+                } else {
+                    Space::Sm.px()
+                })
+                .when(compact, gpui::StatefulInteractiveElement::overflow_x_scroll)
+                .when(!compact, gpui::Styled::flex_col)
+                .children(ConfigurationSection::ALL.into_iter().map(|section| {
+                    self.configuration_navigation_item(section, theme, compact, cx)
+                }));
+        navigation.child(items).when(!compact, |navigation| {
+            navigation.child(
+                div()
+                    .mt_auto()
+                    .px(Space::Sm.px())
+                    .pt(Space::Lg.px())
+                    .text_size(TextRole::Metadata.size())
+                    .line_height(TextRole::Metadata.line_height())
+                    .text_color(theme.text_tertiary)
+                    .child(language.localized(copy::configuration::CHANGES_ARE_STORED_LOCALLY)),
+            )
+        })
+    }
+
+    fn configuration_navigation_item(
+        &self,
+        section: ConfigurationSection,
+        theme: Theme,
+        compact: bool,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let language = self.language();
+        let selected = self.configuration_section == section;
+        let metadata = match section {
+            ConfigurationSection::General => self.language().display_name().to_owned(),
+            ConfigurationSection::Runtime => self.runtime.kind().display_name().to_owned(),
+            ConfigurationSection::ProxySources => language.count(
+                CountNoun::Source,
+                self.imported_subscriptions.len() + self.saved_single_nodes.len(),
+            ),
+            ConfigurationSection::RuleSources => {
+                language.count(CountNoun::Source, self.rule_sources.sources.len())
+            }
+            ConfigurationSection::Advanced => language
+                .localized(copy::configuration::MANAGED_2)
+                .to_owned(),
+        };
+        div()
+            .id(format!("configuration-nav-{}", section.key()))
+            .role(Role::Button)
+            .aria_label(configuration_section_label(section, language))
+            .aria_toggled(if selected {
+                gpui::Toggled::True
+            } else {
+                gpui::Toggled::False
+            })
+            .tab_stop(true)
+            .focusable()
+            .cursor_pointer()
+            .min_w(if compact { px(104.0) } else { px(0.0) })
+            .px(Space::Md.px())
+            .py(Space::Sm.px())
+            .rounded(Radius::Control.px())
+            .border_1()
+            .border_color(if selected {
+                theme.action_primary
+            } else {
+                theme.surface_low
+            })
+            .bg(if selected {
+                theme.action_soft
+            } else {
+                theme.surface_low
+            })
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap(Space::Sm.px())
+                    .child(
+                        div()
+                            .text_size(TextRole::Label.size())
+                            .line_height(TextRole::Label.line_height())
+                            .font_weight(if selected {
+                                FontWeight::SEMIBOLD
+                            } else {
+                                FontWeight::NORMAL
+                            })
+                            .text_color(if selected {
+                                theme.action_primary
+                            } else {
+                                theme.text_primary
+                            })
+                            .child(configuration_section_label(section, language)),
+                    )
+                    .when(!compact, |row| {
+                        row.child(
+                            div()
+                                .text_size(TextRole::Metadata.size())
+                                .line_height(TextRole::Metadata.line_height())
+                                .text_color(theme.text_tertiary)
+                                .child(metadata),
+                        )
+                    }),
+            )
+            .when(!compact, |item| {
+                item.child(
+                    div()
+                        .mt(px(2.0))
+                        .text_size(TextRole::Metadata.size())
+                        .line_height(TextRole::Metadata.line_height())
+                        .text_color(theme.text_secondary)
+                        .child(configuration_section_detail(section, language)),
+                )
+            })
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.configuration_section = section;
+                cx.notify();
+            }))
+    }
+
+    fn advanced_configuration_panel(&self, theme: Theme, compact: bool) -> Stateful<Div> {
+        let language = self.language();
+        let profile_source = self.runtime.profile_source();
+        let profile_detail = copy::configuration::profile_source_detail(language, profile_source);
+        panel_surface("configuration-advanced", compact, theme)
+            .child(section_heading(
+                language.localized(copy::configuration::ADVANCED_SETTINGS),
+                language.localized(copy::configuration::CURRENT_MANAGED_NETWORK_BEHAVIOR),
+                Some(
+                    status_badge(
+                        language.localized(copy::configuration::MANAGED),
+                        StatusTone::Neutral,
+                        theme,
+                    )
+                    .into_any_element(),
+                ),
+                theme,
+            ))
+            .child(Self::advanced_configuration_row(
+                language.localized(copy::configuration::PROXY_MODE),
+                proxy_mode_label(language, self.proxy_mode),
+                language.localized(copy::configuration::CHANGED_FROM_THE_MAIN_TOOLBAR),
+                theme,
+            ))
+            .child(Self::advanced_configuration_row(
+                language.localized(copy::configuration::ROUTING_MODE),
+                routing_mode_label(language, self.routing_mode),
+                language.localized(copy::configuration::DIRECT_GLOBAL_OR_ORDERED_RULES),
+                theme,
+            ))
+            .child(Self::advanced_configuration_row(
+                language.localized(copy::configuration::PROCESS_IDENTIFICATION),
+                language.localized(copy::configuration::ALWAYS),
+                language.localized(copy::configuration::USED_TO_IMPROVE_NETWORK_ACTIVITY),
+                theme,
+            ))
+            .child(Self::advanced_configuration_row(
+                language.localized(copy::configuration::DNS_AND_TUN),
+                language.localized(copy::configuration::AUTOMATIC),
+                profile_detail,
+                theme,
+            ))
+    }
+
+    fn advanced_configuration_row(
+        label: &'static str,
+        value: &'static str,
+        detail: &'static str,
+        theme: Theme,
+    ) -> Div {
+        div()
+            .mt(Space::Md.px())
+            .pt(Space::Md.px())
+            .border_t_1()
+            .border_color(theme.outline_subtle)
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap(Space::Lg.px())
+            .child(
+                div()
+                    .min_w(px(0.0))
+                    .child(
+                        div()
+                            .text_size(TextRole::Label.size())
+                            .line_height(TextRole::Label.line_height())
+                            .font_weight(TextRole::Label.weight())
+                            .text_color(theme.text_primary)
+                            .child(label),
+                    )
+                    .child(
+                        div()
+                            .mt(Space::Xs.px())
+                            .text_size(TextRole::Metadata.size())
+                            .line_height(TextRole::Metadata.line_height())
+                            .text_color(theme.text_secondary)
+                            .child(detail),
+                    ),
+            )
+            .child(status_badge(value, StatusTone::Neutral, theme))
+    }
+
+    fn language_panel(&self, theme: Theme, compact: bool, cx: &mut Context<Self>) -> Stateful<Div> {
+        let language = self.language();
+        let current_preference = self.language_preference();
+        let current_language = language.display_name();
+        panel_surface("configuration-language", compact, theme)
+            .child(section_heading(
+                language.localized(copy::configuration::INTERFACE_LANGUAGE),
+                "",
+                Some(
+                    status_badge(
+                        format!(
+                            "{} · {current_language}",
+                            language.localized(copy::configuration::CURRENT)
+                        ),
+                        StatusTone::Neutral,
+                        theme,
+                    )
+                    .into_any_element(),
+                ),
+                theme,
+            ))
+            .child(
+                div()
+                    .mt(Space::Md.px())
+                    .grid()
+                    .gap(Space::Sm.px())
+                    .grid_cols(if compact { 1 } else { 3 })
+                    .children(
+                        [
+                            LanguagePreference::FollowSystem,
+                            LanguagePreference::English,
+                            LanguagePreference::SimplifiedChinese,
+                        ]
+                        .into_iter()
+                        .map(|preference| {
+                            Self::language_option(
+                                preference,
+                                preference == current_preference,
+                                language,
+                                theme,
+                                cx,
+                            )
+                        }),
+                    ),
+            )
+    }
+
+    fn language_option(
+        preference: LanguagePreference,
+        selected: bool,
+        language: Language,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let label = language_preference_label(preference, language);
+        div()
+            .id(format!(
+                "language-option-{}",
+                preference.persistence_key().replace('-', "_")
+            ))
+            .role(Role::Button)
+            .aria_label(format!(
+                "{}: {label}",
+                language.localized(copy::configuration::SELECT_LANGUAGE)
+            ))
+            .aria_toggled(if selected {
+                gpui::Toggled::True
+            } else {
+                gpui::Toggled::False
+            })
+            .tab_stop(true)
+            .focusable()
+            .cursor_pointer()
+            .min_h(px(52.0))
+            .px(Space::Md.px())
+            .py(Space::Sm.px())
+            .rounded(Radius::Row.px())
+            .border_1()
+            .border_color(if selected {
+                theme.action_primary
+            } else {
+                theme.outline_subtle
+            })
+            .bg(if selected {
+                theme.action_soft
+            } else {
+                theme.surface_low
+            })
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_size(TextRole::Label.size())
+                            .line_height(TextRole::Label.line_height())
+                            .font_weight(TextRole::Label.weight())
+                            .text_color(if selected {
+                                theme.action_primary
+                            } else {
+                                theme.text_primary
+                            })
+                            .child(label),
+                    )
+                    .when(selected, |row| {
+                        row.child(
+                            div()
+                                .text_size(TextRole::Metadata.size())
+                                .line_height(TextRole::Metadata.line_height())
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(theme.action_primary)
+                                .child(language.localized(copy::configuration::SELECTED)),
+                        )
+                    }),
+            )
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.set_language_preference(preference, cx);
+            }))
+    }
+
+    fn set_language_preference(&mut self, preference: LanguagePreference, cx: &mut Context<Self>) {
+        self.localizer.set_preference(preference);
+        let language = self.language();
+        match self.subscription_store_dir.as_ref() {
+            Some(store_dir) => match save_language_preference_in(store_dir, preference) {
+                Ok(_path) => {
+                    self.status = format!(
+                        "{} · {}",
+                        language.localized(copy::configuration::LANGUAGE_SAVED),
+                        language_preference_label(preference, language)
+                    );
+                }
+                Err(error) => {
+                    self.status = format!(
+                        "{}: {error}",
+                        language.localized(
+                            copy::configuration::LANGUAGE_CHANGED_BUT_COULD_NOT_BE_SAVED
+                        )
+                    );
+                }
+            },
+            None => {
+                language
+                    .localized(copy::configuration::LANGUAGE_CHANGED_FOR_THIS_SESSION_DATA_DIRECTORY_UNAVAILABLE)
+                    .clone_into(&mut self.status);
+            }
+        }
+        if let Some(input) = self.proxy_source_editor.input.as_ref() {
+            input.update(cx, |input, cx| input.set_language(language, cx));
+        }
+        if let Some(input) = self.proxy_source_editor.name_input.as_ref() {
+            input.update(cx, |input, cx| {
+                input.set_placeholder(
+                    language.localized(copy::common::FOR_EXAMPLE_MY_SUBSCRIPTION),
+                    cx,
+                );
+            });
+        }
+        if let Some(input) = self.inputs.policy_group_name.as_ref() {
+            input.update(cx, |input, cx| {
+                input.set_placeholder(
+                    language.localized(copy::common::FOR_EXAMPLE_HONG_KONG_AUTO),
+                    cx,
+                );
+            });
+        }
+        if let Some(input) = self.inputs.policy_group_filter.as_ref() {
+            input.update(cx, |input, cx| {
+                input.set_placeholder(language.localized(copy::common::FOR_EXAMPLE_HONG_KONG), cx);
+            });
+        }
+        cx.notify();
+    }
+
+    fn kernel_panel(&self, theme: Theme, compact: bool, cx: &mut Context<Self>) -> Stateful<Div> {
+        let language = self.language();
+        let active = self.runtime.kind();
+        let (sing_box_reason, sing_box_supported) = self.sing_box_support(language);
+        let sing_box_enabled = sing_box_supported
+            && !self.kernel_switch_state.is_busy()
+            && active != KernelKind::SingBox;
+
+        panel_surface("configuration-kernel", compact, theme)
+            .child(section_heading(
+                language.localized(copy::configuration::RUNTIME_KERNEL),
+                "",
+                Some(
+                    status_badge(
+                        if self.kernel_switch_state.is_busy() {
+                            language.localized(copy::configuration::VALIDATING)
+                        } else {
+                            active.display_name()
+                        },
+                        if self.kernel_switch_state.is_busy() {
+                            StatusTone::Warning
+                        } else {
+                            StatusTone::Neutral
+                        },
+                        theme,
+                    )
+                    .into_any_element(),
+                ),
+                theme,
+            ))
+            .child(Self::kernel_option_row(
+                KernelKind::Mihomo,
+                language
+                    .localized(copy::configuration::SUBSCRIPTIONS_POLICY_GROUPS_AND_LATENCY_TESTS),
+                !self.kernel_switch_state.is_busy() && active != KernelKind::Mihomo,
+                active == KernelKind::Mihomo,
+                language,
+                theme,
+                cx,
+            ))
+            .child(self.mihomo_core_update_row(language, theme, cx))
+            .child(Self::kernel_option_row(
+                KernelKind::SingBox,
+                sing_box_reason,
+                sing_box_enabled,
+                active == KernelKind::SingBox,
+                language,
+                theme,
+                cx,
+            ))
+    }
+
+    fn sing_box_support(&self, language: Language) -> (&'static str, bool) {
+        if !mihomo::sing_box_binary_available() {
+            return (
+                language.localized(copy::configuration::SING_BOX_WAS_NOT_FOUND_ON_THIS_DEVICE),
+                false,
+            );
+        }
+        if self
+            .imported_subscriptions
+            .iter()
+            .any(|subscription| subscription.enabled)
+        {
+            return (
+                language.localized(copy::configuration::CLASH_SUBSCRIPTIONS_ARE_PRESENT_MANIS_NEEDS_ITS_NATIVE_PARSER_FIRST),
+                false,
+            );
+        }
+        if self.saved_single_nodes.is_empty() {
+            return (
+                language.localized(copy::configuration::AT_LEAST_ONE_SAVED_VLESS_NODE_IS_REQUIRED),
+                false,
+            );
+        }
+        (
+            language.localized(
+                copy::configuration::SUPPORTS_MANUAL_VLESS_SELECTORS_URL_TESTS_AND_ROUTING_RULES,
+            ),
+            true,
+        )
+    }
+
+    fn mihomo_core_update_row(
+        &self,
+        language: Language,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let updating = self.mihomo_core_update_state.is_busy();
+        let enabled = !updating && self.proxy_mode == ProxyMode::Off;
+        let missing = matches!(
+            self.mihomo_core_update_state,
+            MihomoCoreUpdateState::Missing
+        );
+        let version = match &self.mihomo_core_update_state {
+            MihomoCoreUpdateState::Ready(version) if version.is_empty() => {
+                language.localized(copy::configuration::INSTALLED)
+            }
+            MihomoCoreUpdateState::Ready(version) => version.as_str(),
+            MihomoCoreUpdateState::Missing => {
+                language.localized(copy::configuration::NOT_INSTALLED)
+            }
+            MihomoCoreUpdateState::Updating => language.localized(copy::configuration::UPDATING_2),
+        };
+        div()
+            .mt(Space::Sm.px())
+            .ml(Space::Md.px())
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_3()
+            .child(
+                div()
+                    .text_size(TextRole::Metadata.size())
+                    .line_height(TextRole::Metadata.line_height())
+                    .text_color(theme.text_secondary)
+                    .child(copy::configuration::managed_core_version(language, version)),
+            )
+            .child(
+                style_action_button(
+                    Button::new("mihomo-core-update")
+                        .accessibility_label(language.localized(
+                            copy::configuration::DOWNLOAD_OR_UPDATE_THE_MANIS_MANAGED_MIHOMO_CORE,
+                        ))
+                        .label(if updating {
+                            language.localized(copy::configuration::UPDATING)
+                        } else if missing {
+                            language.localized(copy::configuration::DOWNLOAD_STABLE)
+                        } else {
+                            language.localized(copy::configuration::CHECK_FOR_UPDATE)
+                        })
+                        .icon(IconName::Redo2)
+                        .loading(updating)
+                        .disabled(!enabled)
+                        .tab_stop(enabled),
+                    ActionRole::Quiet,
+                    ControlSize::Compact,
+                )
+                .when(enabled, gpui::Styled::cursor_pointer)
+                .on_click(cx.listener(|this, _, _, cx| this.update_mihomo_core(cx))),
+            )
+    }
+
+    fn kernel_option_row(
+        kind: KernelKind,
+        detail: &str,
+        enabled: bool,
+        selected: bool,
+        language: Language,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        div()
+            .mt(Space::Md.px())
+            .pt(Space::Md.px())
+            .border_t_1()
+            .border_color(theme.outline_subtle)
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap(Space::Md.px())
+            .child(
+                div()
+                    .min_w(px(0.0))
+                    .child(
+                        div()
+                            .text_size(TextRole::Label.size())
+                            .line_height(TextRole::Label.line_height())
+                            .font_weight(TextRole::Label.weight())
+                            .child(kind.display_name()),
+                    )
+                    .child(
+                        div()
+                            .mt(Space::Xs.px())
+                            .text_size(TextRole::Metadata.size())
+                            .line_height(TextRole::Metadata.line_height())
+                            .text_color(theme.text_secondary)
+                            .child(detail.to_owned()),
+                    ),
+            )
+            .child(
+                div()
+                    .id(format!("kernel-select-{}", kind.persistence_key()))
+                    .role(Role::Button)
+                    .aria_label(format!(
+                        "{} {}",
+                        language.localized(copy::configuration::SWITCH_TO),
+                        kind.display_name()
+                    ))
+                    .tab_stop(enabled)
+                    .focusable()
+                    .when(enabled, gpui::Styled::cursor_pointer)
+                    .h(ControlSize::Compact.height())
+                    .px(Space::Md.px())
+                    .rounded(Radius::Control.px())
+                    .border_1()
+                    .border_color(if selected {
+                        theme.action_primary
+                    } else {
+                        theme.outline_subtle
+                    })
+                    .bg(if selected {
+                        theme.action_soft
+                    } else {
+                        theme.surface_high
+                    })
+                    .text_size(TextRole::Label.size())
+                    .line_height(TextRole::Label.line_height())
+                    .font_weight(TextRole::Label.weight())
+                    .text_color(if selected || enabled {
+                        theme.action_primary
+                    } else {
+                        theme.text_tertiary
+                    })
+                    .child(if selected {
+                        language.localized(copy::configuration::CURRENT_2)
+                    } else {
+                        language.localized(copy::configuration::SWITCH_AND_VALIDATE)
+                    })
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if enabled {
+                            this.switch_kernel(kind, cx);
+                        }
+                    })),
+            )
+    }
+
+    pub(super) fn routing_rules_workspace(
+        &mut self,
+        theme: Theme,
+        size_class: WindowSizeClass,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let compact = size_class == WindowSizeClass::Compact;
+        let language = self.language();
+        self.ensure_manual_rule_input(theme, window, cx);
+        div()
+            .flex_1()
+            .min_w(px(0.0))
+            .h_full()
+            .flex()
+            .flex_col()
+            .bg(theme.surface_base)
+            .child(Self::workspace_header(
+                language.message(Message::RoutingRules),
+                language.localized(copy::configuration::INSPECT_THE_ORDERED_RULES_THAT_ACTUALLY_PARTICIPATE_IN_MATCHING_MANAGE),
+                language.localized(copy::configuration::TOP_DOWN),
+                StatusTone::Route,
+                theme,
+                compact,
+            ))
+            .child(
+                div()
+                    .id("routing-rules-scroll")
+                    .flex_1()
+                    .min_h(px(0.0))
+                    .overflow_y_scroll()
+                    .p(if compact { px(12.0) } else { px(20.0) })
+                    .pb(px(56.0))
+                    .child(
+                        div()
+                            .max_w(px(1040.0))
+                            .mx_auto()
+                            .child(self.active_rules_panel(theme, language, compact, cx)),
+                    ),
+            )
+    }
+
+    fn workspace_header(
+        title: &'static str,
+        detail: &'static str,
+        badge: &'static str,
+        badge_tone: StatusTone,
+        theme: Theme,
+        compact: bool,
+    ) -> Div {
+        div()
+            .px(if compact {
+                Space::Lg.px()
+            } else {
+                Space::Xl.px()
+            })
+            .py(Space::Md.px())
+            .flex_shrink_0()
+            .border_b_1()
+            .border_color(theme.outline_subtle)
+            .bg(theme.surface_high)
+            .flex()
+            .items_start()
+            .justify_between()
+            .gap(Space::Lg.px())
+            .child(page_heading(
+                title,
+                if compact { "" } else { detail },
+                Some(status_badge(badge, badge_tone, theme).into_any_element()),
+                theme,
+            ))
+    }
+
+}

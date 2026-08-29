@@ -1956,13 +1956,9 @@ impl ManisApp {
     }
 }
 include!("app/policy_presentation.rs");
-impl ManisApp {}
 include!("app/runtime_lifecycle.rs");
-impl ManisApp {}
 include!("app/routing_controls.rs");
-impl ManisApp {}
 include!("app/policy_workspace.rs");
-impl ManisApp {}
 
 struct StatusBarValues {
     endpoint: String,
