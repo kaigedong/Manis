@@ -1474,7 +1474,6 @@ impl ManisApp {
         cx.notify();
     }
 
-    #[allow(clippy::too_many_lines)]
     pub(super) fn start_managed_policy_create(&mut self, cx: &mut Context<Self>) {
         self.managed_policy_editor_popover = None;
         self.managed_policy_draft = Some(ManagedPolicyDraft {

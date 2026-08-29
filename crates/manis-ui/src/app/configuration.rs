@@ -2972,8 +2972,7 @@ impl ManisApp {
     fn open_new_qx_rule_editor(&mut self, cx: &mut Context<Self>) {
         self.qx_rule_editor_source_id = None;
         self.qx_rule_editor_refresh_interval = RemoteSourceRefreshInterval::Manual;
-        self.qx_rule_editor_target_popover = false;
-        self.qx_rule_editor_interval_popover = false;
+        self.qx_rule_editor_popover = super::QxRuleEditorPopover::None;
         self.qx_rule_feedback = QxRuleImportFeedback::Idle;
         if !self.qx_rule_targets().contains(&self.qx_rule_target_policy)
             && let Some(target) = self.qx_rule_targets().into_iter().next()
@@ -2994,8 +2993,7 @@ impl ManisApp {
         let target = self.effective_rule_target(source.target_policy.as_str(), self.language());
         self.qx_rule_editor_source_id = Some(id);
         self.qx_rule_editor_refresh_interval = source.refresh_interval;
-        self.qx_rule_editor_target_popover = false;
-        self.qx_rule_editor_interval_popover = false;
+        self.qx_rule_editor_popover = super::QxRuleEditorPopover::None;
         self.qx_rule_target_policy = target;
         self.qx_rule_feedback = QxRuleImportFeedback::Idle;
         if let Some(input) = self.qx_rule_input.as_ref() {
@@ -3019,8 +3017,7 @@ impl ManisApp {
 
     fn close_qx_rule_editor(&mut self, cx: &mut Context<Self>) {
         self.qx_rule_editor_source_id = None;
-        self.qx_rule_editor_target_popover = false;
-        self.qx_rule_editor_interval_popover = false;
+        self.qx_rule_editor_popover = super::QxRuleEditorPopover::None;
         self.qx_rule_feedback = QxRuleImportFeedback::Idle;
         if let Some(input) = self.qx_rule_input.as_ref() {
             input.update(cx, SubscriptionTextInput::clear_without_event);
@@ -3082,7 +3079,7 @@ impl ManisApp {
                     .child(target.clone())
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.qx_rule_target_policy.clone_from(&target);
-                        this.qx_rule_editor_target_popover = false;
+                        this.qx_rule_editor_popover = super::QxRuleEditorPopover::None;
                         this.qx_rule_feedback = QxRuleImportFeedback::Idle;
                         cx.notify();
                     })),
@@ -3111,10 +3108,14 @@ impl ManisApp {
             (dialog_width - 40.0).max(240.0),
             320.0,
         )
-        .open(self.qx_rule_editor_target_popover)
+        .open(self.qx_rule_editor_popover == super::QxRuleEditorPopover::Target)
         .on_open_change(move |open, _, cx| {
             target_app.update(cx, |this, cx| {
-                this.qx_rule_editor_target_popover = *open;
+                this.qx_rule_editor_popover = if *open {
+                    super::QxRuleEditorPopover::Target
+                } else {
+                    super::QxRuleEditorPopover::None
+                };
                 cx.notify();
             });
         });
@@ -3158,7 +3159,7 @@ impl ManisApp {
                     .child(refresh_interval_label(interval, language))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.qx_rule_editor_refresh_interval = interval;
-                        this.qx_rule_editor_interval_popover = false;
+                        this.qx_rule_editor_popover = super::QxRuleEditorPopover::None;
                         cx.notify();
                     })),
             );
@@ -3189,10 +3190,14 @@ impl ManisApp {
             (dialog_width - 40.0).max(240.0),
             280.0,
         )
-        .open(self.qx_rule_editor_interval_popover)
+        .open(self.qx_rule_editor_popover == super::QxRuleEditorPopover::Interval)
         .on_open_change(move |open, _, cx| {
             interval_app.update(cx, |this, cx| {
-                this.qx_rule_editor_interval_popover = *open;
+                this.qx_rule_editor_popover = if *open {
+                    super::QxRuleEditorPopover::Interval
+                } else {
+                    super::QxRuleEditorPopover::None
+                };
                 cx.notify();
             });
         });

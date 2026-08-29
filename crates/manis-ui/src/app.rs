@@ -261,6 +261,14 @@ enum QxRuleImportFeedback {
     StoreFailed(SubscriptionStoreError),
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum QxRuleEditorPopover {
+    #[default]
+    None,
+    Target,
+    Interval,
+}
+
 enum ImportQxRuleError {
     Download(RuleDownloadError),
     InvalidDocument,
@@ -684,7 +692,6 @@ impl ManagedPolicyRuntimeState {
     }
 }
 
-#[allow(clippy::struct_excessive_bools)]
 pub struct ManisApp {
     localizer: Localizer,
     primary_workspace: PrimaryWorkspace,
@@ -712,8 +719,7 @@ pub struct ManisApp {
     qx_rule_target_policy: String,
     qx_rule_editor_source_id: Option<String>,
     qx_rule_editor_refresh_interval: RemoteSourceRefreshInterval,
-    qx_rule_editor_target_popover: bool,
-    qx_rule_editor_interval_popover: bool,
+    qx_rule_editor_popover: QxRuleEditorPopover,
     qx_rule_import_generation: u64,
     qx_rule_source_refreshes: BTreeMap<String, QxRuleSourceRefreshState>,
     qx_rule_source_target_updates: BTreeMap<String, u64>,
@@ -955,8 +961,7 @@ impl ManisApp {
             qx_rule_target_policy: default_rule_target.clone(),
             qx_rule_editor_source_id: None,
             qx_rule_editor_refresh_interval: RemoteSourceRefreshInterval::Manual,
-            qx_rule_editor_target_popover: false,
-            qx_rule_editor_interval_popover: false,
+            qx_rule_editor_popover: QxRuleEditorPopover::None,
             qx_rule_import_generation: 0,
             qx_rule_source_refreshes: BTreeMap::new(),
             qx_rule_source_target_updates: BTreeMap::new(),
