@@ -121,8 +121,8 @@ impl SystemProxySession {
             return Err(SystemProxyError::Unavailable(
                 language
                     .text(
-                        "This platform does not have a system proxy adapter yet",
-                        "当前平台尚未实现系统代理适配器",
+                        "Manis cannot configure the system proxy on this desktop yet",
+                        "Manis 暂不支持在当前桌面上自动设置系统代理",
                     )
                     .to_owned(),
             ));

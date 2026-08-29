@@ -227,23 +227,20 @@ impl ManisApp {
     fn source_runtime_apply_suffix(apply: &SourceRuntimeApply, language: Language) -> String {
         match apply {
             SourceRuntimeApply::Applied(mihomo::GeneratedProfileApply::Updated) => language
-                .text(
-                    " · written to Manis-managed config",
-                    " · 已写入 Manis 托管配置",
-                )
+                .text(" · changes applied", " · 更改已生效")
                 .to_owned(),
             SourceRuntimeApply::Applied(mihomo::GeneratedProfileApply::Restarted) => language
                 .text(
-                    " · Manis-managed kernel reloaded safely",
-                    " · Manis 托管内核已安全重载",
+                    " · changes applied and Mihomo restarted",
+                    " · 更改已生效，Mihomo 已重新启动",
                 )
                 .to_owned(),
             SourceRuntimeApply::Failed(message) => match language {
                 Language::English => {
-                    format!(" · saved, but managed config apply failed: {message}")
+                    format!(" · saved, but the changes could not be applied: {message}")
                 }
                 Language::SimplifiedChinese => {
-                    format!(" · 持久化已完成，但托管配置应用失败：{message}")
+                    format!(" · 已保存，但更改未能生效：{message}")
                 }
             },
             SourceRuntimeApply::ProxyModeLost(message) => match language {
@@ -531,8 +528,8 @@ impl ManisApp {
                 body.child(Self::node_message_panel(
                     language.text("Restoring nodes", "正在恢复节点"),
                     language.text(
-                        "Manis is reloading imported subscriptions through isolated Mihomo.",
-                        "Manis 正在通过隔离 Mihomo 重新读取已导入订阅。",
+                        "Manis is loading nodes from your saved subscriptions.",
+                        "正在从已保存的订阅中载入节点。",
                     ),
                     theme,
                 ))
@@ -1489,9 +1486,8 @@ impl ManisApp {
                         this.status = format!(
                             "{}：{}",
                             language.text("Source test failed", "来源测速失败"),
-                            failure.as_deref().unwrap_or_else(
-                                || language.text("unknown controller error", "未知控制器错误")
-                            )
+                            failure.as_deref().unwrap_or_else(|| language
+                                .text("Mihomo did not return a result", "Mihomo 未返回结果"))
                         );
                     }
                     _ => return,
@@ -1741,7 +1737,7 @@ impl ManisApp {
             "{} “{}”; {}",
             language.text("Group saved", "分组已保存"),
             group.name,
-            language.text("applying managed config", "正在应用托管配置")
+            language.text("applying changes", "正在应用更改")
         );
         self.apply_managed_policy_groups(
             store_dir,
@@ -1808,7 +1804,7 @@ impl ManisApp {
             "{} “{}”; {}",
             language.text("Group deleted", "分组已删除"),
             group.name,
-            language.text("applying managed config", "正在应用托管配置")
+            language.text("applying changes", "正在应用更改")
         );
         self.apply_managed_policy_groups(
             store_dir,

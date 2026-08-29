@@ -1951,8 +1951,8 @@ impl ManisApp {
                     .line_height(TextRole::Metadata.line_height())
                     .text_color(theme.text_secondary)
                     .child(language.text(
-                        "An isolated Mihomo process is parsing nodes; Manis only saves after success.",
-                        "隔离的 Mihomo 正在解析节点；成功后才会原子保存。",
+                        "Manis is checking the source and will save it after validation succeeds.",
+                        "正在检查来源；验证通过后会自动保存。",
                     )),
             )
     }
@@ -5447,10 +5447,10 @@ impl ManisApp {
         if group_order.is_empty() {
             list = list.child(
                 empty_state(
-                    language.text("No active routing rules", "暂无生效规则"),
+                    language.text("No routing rules yet", "还没有分流规则"),
                     language.text(
-                        "No active routing rules. Manis does not add locked fallback rules.",
-                        "暂无生效规则；Manis 不会添加不可编辑的兜底规则。",
+                        "Add rules to send matching connections through a policy group. Rules are evaluated from top to bottom.",
+                        "添加规则，将匹配的连接交给指定策略组。规则会按从上到下的顺序生效。",
                     ),
                     None,
                     theme,

@@ -142,22 +142,19 @@ impl SourceRuntimeApply {
     fn status_suffix(&self, language: Language) -> String {
         match self {
             Self::Applied(GeneratedProfileApply::Updated) => language
-                .text(
-                    " · written to the Manis-managed configuration",
-                    " · 已写入 Manis 托管配置",
-                )
+                .text(" · changes applied", " · 更改已生效")
                 .to_owned(),
             Self::Applied(GeneratedProfileApply::Restarted) => language
                 .text(
-                    " · Manis-managed kernel safely reloaded",
-                    " · Manis 托管内核已安全重载",
+                    " · changes applied and Mihomo restarted",
+                    " · 更改已生效，Mihomo 已重新启动",
                 )
                 .to_owned(),
             Self::Failed(message) => format!(
                 "{}{message}",
                 language.text(
-                    " · saved, but the managed configuration could not be applied: ",
-                    " · 持久化已完成，但托管配置应用失败："
+                    " · saved, but the changes could not be applied: ",
+                    " · 已保存，但更改未能生效："
                 )
             ),
             Self::ProxyModeLost(message) => format!(
@@ -983,22 +980,19 @@ impl ManisApp {
         {
             status = match runtime.apply_saved_sources(directory) {
                 Ok(GeneratedProfileApply::Updated) => language
-                    .text(
-                        "Saved sources written to the Manis-managed configuration",
-                        "已将保存来源写入 Manis 托管配置",
-                    )
+                    .text("Saved sources are ready", "已载入保存的来源")
                     .to_owned(),
                 Ok(GeneratedProfileApply::Restarted) => language
                     .text(
-                        "Saved sources applied to the Manis-managed kernel",
-                        "已将保存来源应用到 Manis 托管内核",
+                        "Saved sources are ready and Mihomo was restarted",
+                        "已载入保存的来源，Mihomo 已重新启动",
                     )
                     .to_owned(),
                 Err(error) => format!(
                     "{}{error}",
                     language.text(
-                        "Saved sources loaded, but the managed configuration was not applied: ",
-                        "保存来源已载入，但托管配置未应用："
+                        "Saved sources were loaded, but the changes could not be applied: ",
+                        "已载入保存的来源，但更改未能生效："
                     )
                 ),
             };
@@ -1393,8 +1387,8 @@ impl ManisApp {
                 input.set_theme(theme, self.dark, cx);
                 input.set_placeholder(
                     language.text(
-                        "Filter events, errors, or OP number",
-                        "筛选事件、错误或 OP 编号",
+                        "Search operations, errors, or log levels",
+                        "搜索操作、错误或日志级别",
                     ),
                     cx,
                 );
@@ -1404,8 +1398,8 @@ impl ManisApp {
                 SubscriptionTextInput::new_field(
                     "logs-search-input",
                     language.text(
-                        "Filter events, errors, or OP number",
-                        "筛选事件、错误或 OP 编号",
+                        "Search operations, errors, or log levels",
+                        "搜索操作、错误或日志级别",
                     ),
                     256,
                     theme,
@@ -3012,8 +3006,8 @@ impl ManisApp {
         if !matches!(self.controller, ControllerState::Connected { .. }) {
             language
                 .text(
-                    "Connect to the kernel before testing a live policy group",
-                    "请先连接内核，再测试真实策略组",
+                    "Start Mihomo before testing this policy group",
+                    "请先启动 Mihomo，再测试此策略组",
                 )
                 .clone_into(&mut self.status);
             cx.notify();
@@ -3131,9 +3125,8 @@ impl ManisApp {
                         this.status = format!(
                             "{}：{}",
                             language.text("Policy group benchmark failed", "策略组测速失败"),
-                            failure.as_deref().unwrap_or_else(
-                                || language.text("unknown controller error", "未知控制器错误")
-                            )
+                            failure.as_deref().unwrap_or_else(|| language
+                                .text("Mihomo did not return a result", "Mihomo 未返回结果"))
                         );
                     }
                     _ => return,
@@ -3886,8 +3879,8 @@ impl ManisApp {
             );
             language
                 .text(
-                    "Connect the kernel before selecting a runtime policy node.",
-                    "请先连接内核，再选择真实策略组节点。",
+                    "Start Mihomo before selecting a node for this policy group.",
+                    "请先启动 Mihomo，再为此策略组选择节点。",
                 )
                 .clone_into(&mut self.status);
             cx.notify();
@@ -4551,29 +4544,29 @@ impl ManisApp {
             ControllerState::Disconnected => (
                 language.message(Message::NoPolicyGroups),
                 language.text(
-                    "Start or connect the kernel to load its real policy groups. Manis does not fill this page with sample data.",
-                    "启动或连接内核后，这里会显示它返回的真实策略组。Manis 不再用示例数据填充此页面。",
+                    "Start Mihomo to load your policy groups and selected nodes.",
+                    "启动 Mihomo 后即可查看策略组和已选节点。",
                 ),
             ),
             ControllerState::Connecting { .. } => (
                 language.text("Loading policy groups…", "正在读取策略组…"),
                 language.text(
-                    "Waiting for the kernel to return its current groups and selected exits.",
-                    "正在等待内核返回当前策略组及其已选出口。",
+                    "Manis is loading your current groups and selected nodes.",
+                    "正在载入当前策略组和已选节点。",
                 ),
             ),
             ControllerState::Failed { .. } => (
                 language.text("Policy groups unavailable", "暂时无法读取策略组"),
                 language.text(
-                    "The kernel connection failed. Check Logs for the exact error, then try again.",
-                    "内核连接失败。请在“日志”中查看具体错误，然后重试。",
+                    "Mihomo could not be started. Check Logs for details, then try again.",
+                    "Mihomo 启动失败。请在“日志”中查看原因，然后重试。",
                 ),
             ),
             ControllerState::Connected { .. } => (
-                language.text("No policy groups returned", "内核未返回策略组"),
+                language.text("No policy groups yet", "还没有策略组"),
                 language.text(
-                    "The connected kernel did not expose any policy groups.",
-                    "当前连接的内核没有提供任何策略组。",
+                    "Add a source or create a policy group to choose how traffic should be routed.",
+                    "添加来源或新建策略组，开始设置流量出口。",
                 ),
             ),
         };
