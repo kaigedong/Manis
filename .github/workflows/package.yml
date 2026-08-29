@@ -3,14 +3,17 @@ name: Package
 on:
   workflow_dispatch:
   push:
+    branches:
+      - main
     tags:
       - "*"
+      - "!latest"
 
 permissions:
   contents: read
 
 concurrency:
-  group: package-${{ github.ref }}
+  group: package-${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'latest' || github.ref }}
   cancel-in-progress: true
 
 env:
@@ -177,8 +180,8 @@ jobs:
           retention-days: 14
 
   draft-release:
-    name: Draft GitHub release
-    if: github.ref_type == 'tag'
+    name: Update draft release
+    if: github.event_name == 'push'
     needs:
       - macos
       - archlinux-wayland
@@ -206,47 +209,72 @@ jobs:
           [[ ${#linux_packages[@]} -eq 1 ]]
           [[ ${#checksums[@]} -eq 3 ]]
           sha256sum --check "${checksums[@]}"
-      - name: Create draft release with test packages
+      - name: Create or update draft release
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.ref_name }}
         shell: bash
         run: |
           notes_file="$(mktemp)"
           trap 'rm -f "$notes_file"' EXIT
-          cat > "$notes_file" <<'EOF'
+          create_target=()
+          edit_target=()
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            release_tag="$GITHUB_REF_NAME"
+            release_title="Manis $release_tag test build"
+            create_target=(--verify-tag)
+            cat > "$notes_file" <<'EOF'
           Automated test packages for macOS and Arch Linux.
 
           The macOS archives are ad-hoc signed and not notarized. Normal proxy mode can be tested,
           but the production TUN helper requires a Developer ID-signed and notarized application.
           This release remains a draft until the maintainer release checklist is complete.
           EOF
+          else
+            release_tag="latest"
+            release_title="Latest Manis development build (${GITHUB_SHA::7})"
+            create_target=(--target "$GITHUB_SHA")
+            edit_target=(--target "$GITHUB_SHA")
+            {
+              echo 'Automated test packages from the latest successful build of `main`.'
+              echo
+              printf 'Commit: `%s`\n' "$GITHUB_SHA"
+              echo
+              echo 'The macOS archives are ad-hoc signed and not notarized. Normal proxy mode can be'
+              echo 'tested, but the production TUN helper requires a Developer ID-signed and notarized'
+              echo 'application. The Arch Linux package is experimental and supports native Wayland.'
+              echo
+              echo 'This rolling draft is replaced after every successful `main` build. Verify the'
+              echo 'download with its accompanying `.sha256` file before installing it.'
+            } > "$notes_file"
+          fi
+
           release_assets=(dist/release/*)
           if is_draft="$(
-            gh release view "$RELEASE_TAG" \
+            gh release view "$release_tag" \
               --repo "$GITHUB_REPOSITORY" \
               --json isDraft \
               --jq .isDraft 2>/dev/null
           )"; then
             if [[ "$is_draft" != "true" ]]; then
-              echo "release $RELEASE_TAG is already published; refusing to replace its assets" >&2
+              echo "release $release_tag is already published; refusing to replace its assets" >&2
               exit 1
             fi
-            gh release upload "$RELEASE_TAG" "${release_assets[@]}" \
+            gh release upload "$release_tag" "${release_assets[@]}" \
               --repo "$GITHUB_REPOSITORY" \
               --clobber
-            gh release edit "$RELEASE_TAG" \
+            gh release edit "$release_tag" \
               --repo "$GITHUB_REPOSITORY" \
-              --draft=true \
-              --prerelease=true \
-              --title "Manis $RELEASE_TAG test build" \
-              --notes-file "$notes_file"
-          else
-            gh release create "$RELEASE_TAG" "${release_assets[@]}" \
-              --repo "$GITHUB_REPOSITORY" \
-              --verify-tag \
+              "${edit_target[@]}" \
               --draft \
               --prerelease \
-              --title "Manis $RELEASE_TAG test build" \
+              --title "$release_title" \
+              --notes-file "$notes_file"
+          else
+            gh release create "$release_tag" "${release_assets[@]}" \
+              --repo "$GITHUB_REPOSITORY" \
+              "${create_target[@]}" \
+              --draft \
+              --prerelease \
+              --title "$release_title" \
               --notes-file "$notes_file"
           fi
