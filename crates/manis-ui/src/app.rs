@@ -310,6 +310,14 @@ struct PolicyNodeRowContext {
     theme: Theme,
 }
 
+struct PolicyBenchmarkRun {
+    key: String,
+    generation: u64,
+    group_id: PolicyGroupId,
+    group_kind: manis_core::PolicyGroupKind,
+    total: usize,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum QxRuleSourceRefreshState {
     Refreshing { generation: u64 },
@@ -1978,122 +1986,18 @@ impl ManisApp {
         .detach();
     }
 
-    #[allow(clippy::too_many_lines)]
     fn policy_icon_visual(
         icon: ManagedPolicyIcon,
         policy_name: &str,
         size: f32,
         theme: Theme,
     ) -> Div {
-        let glyph_color = theme.action_primary;
         let glyph = match icon {
-            ManagedPolicyIcon::None => div()
-                .size_full()
-                .flex()
-                .items_center()
-                .justify_center()
-                .font_weight(FontWeight::BOLD)
-                .text_color(glyph_color)
-                .child(
-                    policy_name
-                        .chars()
-                        .next()
-                        .map_or_else(|| "?".to_owned(), |character| character.to_string()),
-                ),
-            ManagedPolicyIcon::Bolt => div()
-                .relative()
-                .size(px(20.0))
-                .child(
-                    div()
-                        .absolute()
-                        .left(px(9.0))
-                        .top(px(1.0))
-                        .w(px(5.0))
-                        .h(px(8.0))
-                        .rounded_sm()
-                        .bg(glyph_color),
-                )
-                .child(
-                    div()
-                        .absolute()
-                        .left(px(6.0))
-                        .top(px(7.0))
-                        .w(px(8.0))
-                        .h(px(6.0))
-                        .rounded_sm()
-                        .bg(glyph_color),
-                )
-                .child(
-                    div()
-                        .absolute()
-                        .left(px(6.0))
-                        .top(px(12.0))
-                        .w(px(5.0))
-                        .h(px(7.0))
-                        .rounded_sm()
-                        .bg(glyph_color),
-                ),
-            ManagedPolicyIcon::Globe => div()
-                .relative()
-                .size(px(20.0))
-                .rounded_full()
-                .border_2()
-                .border_color(glyph_color)
-                .child(
-                    div()
-                        .absolute()
-                        .left(px(7.0))
-                        .top(px(1.0))
-                        .w(px(2.0))
-                        .h(px(14.0))
-                        .rounded_full()
-                        .bg(glyph_color),
-                )
-                .child(
-                    div()
-                        .absolute()
-                        .left(px(1.0))
-                        .top(px(7.0))
-                        .w(px(14.0))
-                        .h(px(2.0))
-                        .rounded_full()
-                        .bg(glyph_color),
-                ),
-            ManagedPolicyIcon::Shield => div()
-                .size(px(19.0))
-                .rounded_md()
-                .border_2()
-                .border_color(glyph_color)
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(div().size(px(7.0)).rounded_full().bg(glyph_color)),
-            ManagedPolicyIcon::Compass => div()
-                .relative()
-                .size(px(20.0))
-                .rounded_full()
-                .border_2()
-                .border_color(glyph_color)
-                .child(
-                    div()
-                        .absolute()
-                        .left(px(7.0))
-                        .top(px(3.0))
-                        .w(px(3.0))
-                        .h(px(10.0))
-                        .rounded_full()
-                        .bg(glyph_color),
-                )
-                .child(
-                    div()
-                        .absolute()
-                        .left(px(5.0))
-                        .top(px(7.0))
-                        .size(px(7.0))
-                        .rounded_full()
-                        .border_2()
-                        .border_color(theme.surface_high),
-                ),
+            ManagedPolicyIcon::None => Self::policy_initial_glyph(policy_name, theme),
+            ManagedPolicyIcon::Bolt => Self::policy_bolt_glyph(theme),
+            ManagedPolicyIcon::Globe => Self::policy_globe_glyph(theme),
+            ManagedPolicyIcon::Shield => Self::policy_shield_glyph(theme),
+            ManagedPolicyIcon::Compass => Self::policy_compass_glyph(theme),
         };
         div()
             .size(px(size))
@@ -2103,6 +2007,130 @@ impl ManisApp {
             .items_center()
             .justify_center()
             .child(glyph)
+    }
+
+    fn policy_initial_glyph(policy_name: &str, theme: Theme) -> Div {
+        div()
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .font_weight(FontWeight::BOLD)
+            .text_color(theme.action_primary)
+            .child(
+                policy_name
+                    .chars()
+                    .next()
+                    .map_or_else(|| "?".to_owned(), |character| character.to_string()),
+            )
+    }
+
+    fn policy_bolt_glyph(theme: Theme) -> Div {
+        let color = theme.action_primary;
+        div()
+            .relative()
+            .size(px(20.0))
+            .child(
+                div()
+                    .absolute()
+                    .left(px(9.0))
+                    .top(px(1.0))
+                    .w(px(5.0))
+                    .h(px(8.0))
+                    .rounded_sm()
+                    .bg(color),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .left(px(6.0))
+                    .top(px(7.0))
+                    .w(px(8.0))
+                    .h(px(6.0))
+                    .rounded_sm()
+                    .bg(color),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .left(px(6.0))
+                    .top(px(12.0))
+                    .w(px(5.0))
+                    .h(px(7.0))
+                    .rounded_sm()
+                    .bg(color),
+            )
+    }
+
+    fn policy_globe_glyph(theme: Theme) -> Div {
+        let color = theme.action_primary;
+        div()
+            .relative()
+            .size(px(20.0))
+            .rounded_full()
+            .border_2()
+            .border_color(color)
+            .child(
+                div()
+                    .absolute()
+                    .left(px(7.0))
+                    .top(px(1.0))
+                    .w(px(2.0))
+                    .h(px(14.0))
+                    .rounded_full()
+                    .bg(color),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .left(px(1.0))
+                    .top(px(7.0))
+                    .w(px(14.0))
+                    .h(px(2.0))
+                    .rounded_full()
+                    .bg(color),
+            )
+    }
+
+    fn policy_shield_glyph(theme: Theme) -> Div {
+        div()
+            .size(px(19.0))
+            .rounded_md()
+            .border_2()
+            .border_color(theme.action_primary)
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(div().size(px(7.0)).rounded_full().bg(theme.action_primary))
+    }
+
+    fn policy_compass_glyph(theme: Theme) -> Div {
+        div()
+            .relative()
+            .size(px(20.0))
+            .rounded_full()
+            .border_2()
+            .border_color(theme.action_primary)
+            .child(
+                div()
+                    .absolute()
+                    .left(px(7.0))
+                    .top(px(3.0))
+                    .w(px(3.0))
+                    .h(px(10.0))
+                    .rounded_full()
+                    .bg(theme.action_primary),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .left(px(5.0))
+                    .top(px(7.0))
+                    .size(px(7.0))
+                    .rounded_full()
+                    .border_2()
+                    .border_color(theme.surface_high),
+            )
     }
 
     fn policy_group_icon(
@@ -2882,7 +2910,6 @@ impl ManisApp {
         .detach();
     }
 
-    #[allow(clippy::too_many_lines)]
     fn start_policy_group_benchmark(
         &mut self,
         id: &manis_core::PolicyGroupId,
@@ -2954,6 +2981,13 @@ impl ManisApp {
         let group_name = group.name.clone();
         let group_kind = group.kind;
         let total = candidate_names.len();
+        let run = PolicyBenchmarkRun {
+            key,
+            generation,
+            group_id,
+            group_kind,
+            total,
+        };
         let executor = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
             let result = executor
@@ -2971,57 +3005,74 @@ impl ManisApp {
                 })
                 .await;
             this.update(cx, |this, cx| {
-                let language = this.language();
-                if this.group_benchmark_active_generation != Some(generation) {
-                    return;
-                }
-                this.group_benchmark_active_generation = None;
-                let (delays, current, failure) = match result {
-                    Ok(snapshot) => (Some(snapshot.delays), snapshot.current, None),
-                    Err(error) => (None, None, Some(error.to_string())),
-                };
-                if let Some(delays) = delays.as_ref()
-                    && let Some(catalog) = this.catalog.as_mut()
-                {
-                    let _ = catalog.apply_group_benchmark(&group_id, current.as_deref(), delays);
-                }
-                let Some(state) = this.group_benchmarks.get_mut(&key) else {
-                    cx.notify();
-                    return;
-                };
-                let accepted = match delays {
-                    Some(delays) => state.complete(generation, total, delays),
-                    None => state.fail(generation),
-                };
-                if !accepted {
-                    return;
-                }
-                match state {
-                    GroupBenchmarkState::Complete { summary, .. } => {
-                        trace_ui(UiEvent::GroupBenchmarkSucceeded);
-                        this.status = Self::policy_benchmark_status(
-                            language,
-                            group_kind,
-                            current.as_deref(),
-                            *summary,
-                        );
-                    }
-                    GroupBenchmarkState::Failed { .. } => {
-                        trace_ui(UiEvent::GroupBenchmarkFailed);
-                        this.status = format!(
-                            "{}：{}",
-                            language.text("Policy group benchmark failed", "策略组测速失败"),
-                            failure.as_deref().unwrap_or_else(|| language
-                                .text("Mihomo did not return a result", "Mihomo 未返回结果"))
-                        );
-                    }
-                    _ => return,
-                }
-                cx.notify();
+                this.finish_policy_group_benchmark(run, result, cx);
             })
             .ok();
         })
         .detach();
+        cx.notify();
+    }
+
+    fn finish_policy_group_benchmark(
+        &mut self,
+        run: PolicyBenchmarkRun,
+        result: Result<mihomo::PolicyGroupBenchmarkSnapshot, mihomo::LoadError>,
+        cx: &mut Context<Self>,
+    ) {
+        let PolicyBenchmarkRun {
+            key,
+            generation,
+            group_id,
+            group_kind,
+            total,
+        } = run;
+        let language = self.language();
+        if self.group_benchmark_active_generation != Some(generation) {
+            return;
+        }
+        self.group_benchmark_active_generation = None;
+        let (delays, current, failure) = match result {
+            Ok(snapshot) => (Some(snapshot.delays), snapshot.current, None),
+            Err(error) => (None, None, Some(error.to_string())),
+        };
+        if let Some(delays) = delays.as_ref()
+            && let Some(catalog) = self.catalog.as_mut()
+        {
+            let _ = catalog.apply_group_benchmark(&group_id, current.as_deref(), delays);
+        }
+        let Some(state) = self.group_benchmarks.get_mut(&key) else {
+            cx.notify();
+            return;
+        };
+        let accepted = match delays {
+            Some(delays) => state.complete(generation, total, delays),
+            None => state.fail(generation),
+        };
+        if !accepted {
+            return;
+        }
+        match state {
+            GroupBenchmarkState::Complete { summary, .. } => {
+                trace_ui(UiEvent::GroupBenchmarkSucceeded);
+                self.status = Self::policy_benchmark_status(
+                    language,
+                    group_kind,
+                    current.as_deref(),
+                    *summary,
+                );
+            }
+            GroupBenchmarkState::Failed { .. } => {
+                trace_ui(UiEvent::GroupBenchmarkFailed);
+                self.status = format!(
+                    "{}：{}",
+                    language.text("Policy group benchmark failed", "策略组测速失败"),
+                    failure.as_deref().unwrap_or_else(|| {
+                        language.text("Mihomo did not return a result", "Mihomo 未返回结果")
+                    })
+                );
+            }
+            _ => return,
+        }
         cx.notify();
     }
 
@@ -4072,16 +4123,8 @@ impl ManisApp {
             .map(|group| group.target.as_str())
     }
 
-    #[allow(clippy::too_many_lines)]
     fn chrome(&self, theme: Theme, size_class: WindowSizeClass, cx: &mut Context<Self>) -> Div {
         let compact = size_class == WindowSizeClass::Compact;
-        let language = self.language();
-        let theme_label = if self.dark {
-            language.text("Light", "浅色")
-        } else {
-            language.text("Dark", "深色")
-        };
-
         div()
             .h(ControlSize::Standard.height() + Space::Md.px())
             .flex_shrink_0()
@@ -4092,65 +4135,75 @@ impl ManisApp {
             .bg(theme.surface_chrome)
             .border_b_1()
             .border_color(theme.outline_subtle)
-            .child(
-                div()
-                    .w(if compact {
-                        LayoutMetric::CompactNavigation.px()
-                    } else {
-                        LayoutMetric::WideNavigation.px()
-                    })
-                    .flex_shrink_0()
-                    .flex()
-                    .items_center()
-                    .gap(Space::Sm.px())
-                    .child(
-                        div()
-                            .size(ControlSize::Icon.min_pointer_target() - Space::Sm.px())
-                            .flex_shrink_0()
-                            .rounded(Radius::Control.px() - px(2.0))
-                            .overflow_hidden()
-                            .child(img(assets::BRAND_MARK_PATH).size_full()),
-                    )
-                    .when(!compact, |brand| {
-                        brand.child(
-                            div()
-                                .text_size(TextRole::SectionTitle.size())
-                                .line_height(TextRole::SectionTitle.line_height())
-                                .font_weight(TextRole::SectionTitle.weight())
-                                .text_color(theme.text_primary)
-                                .child(brand::PRODUCT_NAME),
-                        )
-                    }),
-            )
+            .child(Self::chrome_brand(theme, compact))
             .child(div().flex_1())
-            .child(
-                action_button(
-                    "theme-toggle",
-                    theme_label,
-                    ActionRole::Secondary,
-                    ControlSize::Compact,
-                )
-                .accessibility_label(theme_label)
-                .border_color(theme.outline_subtle)
-                .bg(theme.surface_high)
-                .on_click(cx.listener(|this, _, window, cx| {
-                    this.dark = !this.dark;
-                    crate::theme::sync_component_theme(this.theme(), this.dark, Some(window), cx);
-                    this.sync_window_inputs(window, cx);
-                    let language = this.language();
-                    if this.dark {
-                        trace_ui(UiEvent::ThemeDarkSelected);
-                        language.text("Dark theme enabled", "已切换到深色主题")
-                    } else {
-                        trace_ui(UiEvent::ThemeLightSelected);
-                        language.text("Light theme enabled", "已切换到浅色主题")
-                    }
-                    .clone_into(&mut this.status);
-                    cx.notify();
-                })),
-            )
+            .child(self.theme_toggle(theme, cx))
             .child(self.proxy_control(theme, size_class != WindowSizeClass::Wide, cx))
             .child(self.routing_control(theme, size_class != WindowSizeClass::Wide, cx))
+    }
+
+    fn chrome_brand(theme: Theme, compact: bool) -> Div {
+        div()
+            .w(if compact {
+                LayoutMetric::CompactNavigation.px()
+            } else {
+                LayoutMetric::WideNavigation.px()
+            })
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .gap(Space::Sm.px())
+            .child(
+                div()
+                    .size(ControlSize::Icon.min_pointer_target() - Space::Sm.px())
+                    .flex_shrink_0()
+                    .rounded(Radius::Control.px() - px(2.0))
+                    .overflow_hidden()
+                    .child(img(assets::BRAND_MARK_PATH).size_full()),
+            )
+            .when(!compact, |brand| {
+                brand.child(
+                    div()
+                        .text_size(TextRole::SectionTitle.size())
+                        .line_height(TextRole::SectionTitle.line_height())
+                        .font_weight(TextRole::SectionTitle.weight())
+                        .text_color(theme.text_primary)
+                        .child(brand::PRODUCT_NAME),
+                )
+            })
+    }
+
+    fn theme_toggle(&self, theme: Theme, cx: &mut Context<Self>) -> Button {
+        let language = self.language();
+        let label = if self.dark {
+            language.text("Light", "浅色")
+        } else {
+            language.text("Dark", "深色")
+        };
+        action_button(
+            "theme-toggle",
+            label,
+            ActionRole::Secondary,
+            ControlSize::Compact,
+        )
+        .accessibility_label(label)
+        .border_color(theme.outline_subtle)
+        .bg(theme.surface_high)
+        .on_click(cx.listener(|this, _, window, cx| {
+            this.dark = !this.dark;
+            crate::theme::sync_component_theme(this.theme(), this.dark, Some(window), cx);
+            this.sync_window_inputs(window, cx);
+            let language = this.language();
+            if this.dark {
+                trace_ui(UiEvent::ThemeDarkSelected);
+                language.text("Dark theme enabled", "已切换到深色主题")
+            } else {
+                trace_ui(UiEvent::ThemeLightSelected);
+                language.text("Light theme enabled", "已切换到浅色主题")
+            }
+            .clone_into(&mut this.status);
+            cx.notify();
+        }))
     }
 
     fn proxy_control(&self, theme: Theme, compact: bool, cx: &mut Context<Self>) -> AnyElement {
@@ -4348,7 +4401,6 @@ impl ManisApp {
             .into_any_element()
     }
 
-    #[allow(clippy::too_many_lines)]
     fn navigation(&self, theme: Theme, size_class: WindowSizeClass, cx: &mut Context<Self>) -> Div {
         let language = self.language();
         let entries = [
@@ -4433,45 +4485,43 @@ impl ManisApp {
                     })
                     .child(if show_labels { label } else { short_label })
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        this.primary_workspace = workspace;
-                        let language = this.language();
-                        this.status = match workspace {
-                            PrimaryWorkspace::Policies => {
-                                trace_ui(UiEvent::WorkspacePoliciesOpened);
-                                language
-                                    .text("Policy groups opened", "已打开策略组工作区")
-                                    .to_owned()
-                            }
-                            PrimaryWorkspace::Nodes => {
-                                trace_ui(UiEvent::WorkspaceNodesOpened);
-                                language.text("Nodes opened", "已打开节点工作区").to_owned()
-                            }
-                            PrimaryWorkspace::RoutingRules => {
-                                trace_ui(UiEvent::WorkspaceRoutingRulesOpened);
-                                language
-                                    .text("Routing rules opened", "已打开分流规则")
-                                    .to_owned()
-                            }
-                            PrimaryWorkspace::Activity => {
-                                trace_ui(UiEvent::WorkspaceActivityOpened);
-                                language
-                                    .text("Network activity opened", "已打开网络活动")
-                                    .to_owned()
-                            }
-                            PrimaryWorkspace::Logs => {
-                                trace_ui(UiEvent::WorkspaceLogsOpened);
-                                language.text("Logs opened", "已打开日志").to_owned()
-                            }
-                            PrimaryWorkspace::Configuration => {
-                                trace_ui(UiEvent::WorkspaceConfigurationOpened);
-                                language
-                                    .text("Configuration opened", "已打开配置")
-                                    .to_owned()
-                            }
-                        };
-                        cx.notify();
+                        this.open_primary_workspace(workspace, cx);
                     }))
             }))
+    }
+
+    fn open_primary_workspace(&mut self, workspace: PrimaryWorkspace, cx: &mut Context<Self>) {
+        self.primary_workspace = workspace;
+        let language = self.language();
+        let (event, status) = match workspace {
+            PrimaryWorkspace::Policies => (
+                UiEvent::WorkspacePoliciesOpened,
+                language.text("Policy groups opened", "已打开策略组工作区"),
+            ),
+            PrimaryWorkspace::Nodes => (
+                UiEvent::WorkspaceNodesOpened,
+                language.text("Nodes opened", "已打开节点工作区"),
+            ),
+            PrimaryWorkspace::RoutingRules => (
+                UiEvent::WorkspaceRoutingRulesOpened,
+                language.text("Routing rules opened", "已打开分流规则"),
+            ),
+            PrimaryWorkspace::Activity => (
+                UiEvent::WorkspaceActivityOpened,
+                language.text("Network activity opened", "已打开网络活动"),
+            ),
+            PrimaryWorkspace::Logs => (
+                UiEvent::WorkspaceLogsOpened,
+                language.text("Logs opened", "已打开日志"),
+            ),
+            PrimaryWorkspace::Configuration => (
+                UiEvent::WorkspaceConfigurationOpened,
+                language.text("Configuration opened", "已打开配置"),
+            ),
+        };
+        trace_ui(event);
+        status.clone_into(&mut self.status);
+        cx.notify();
     }
 
     #[allow(clippy::too_many_lines)]
