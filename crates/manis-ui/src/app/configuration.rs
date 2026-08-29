@@ -396,7 +396,7 @@ impl ManisApp {
                     .flex_1()
                     .min_h(px(0.0))
                     .flex()
-                    .when(compact, |body| body.flex_col())
+                    .when(compact, gpui::Styled::flex_col)
                     .child(navigation)
                     .child(content),
             )
@@ -446,7 +446,7 @@ impl ManisApp {
                     Space::Sm.px()
                 })
                 .when(compact, gpui::StatefulInteractiveElement::overflow_x_scroll)
-                .when(!compact, |items| items.flex_col())
+                .when(!compact, gpui::Styled::flex_col)
                 .children(ConfigurationSection::ALL.into_iter().map(|section| {
                     self.configuration_navigation_item(section, theme, compact, cx)
                 }));
@@ -1318,6 +1318,7 @@ impl ManisApp {
         cx.notify();
     }
 
+    #[allow(clippy::too_many_lines)]
     fn proxy_source_editor_modal(
         &self,
         dialog: Dialog,
@@ -2024,6 +2025,7 @@ impl ManisApp {
             })
     }
 
+    #[allow(clippy::too_many_lines)]
     fn imported_subscription_cards(&self, theme: Theme, cx: &mut Context<Self>) -> Div {
         let language = self.language();
         let mut list = div();
@@ -2577,6 +2579,7 @@ impl ManisApp {
         list
     }
 
+    #[allow(clippy::too_many_lines)]
     fn saved_single_node_cards(&self, theme: Theme, cx: &mut Context<Self>) -> Div {
         let language = self.language();
         let mut list = div();
@@ -3172,7 +3175,7 @@ impl ManisApp {
                     })
                     .child(target.clone())
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        this.qx_rule_target_policy = target.clone();
+                        this.qx_rule_target_policy.clone_from(&target);
                         this.qx_rule_editor_target_popover = false;
                         this.qx_rule_feedback = QxRuleImportFeedback::Idle;
                         cx.notify();

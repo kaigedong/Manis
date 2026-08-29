@@ -1124,6 +1124,7 @@ fn generated_profile_names(kernel: KernelKind) -> (&'static str, &'static str) {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn compile_saved_profile(
     store_dir: &Path,
     base_subscription: Option<SecretUrl>,
@@ -3307,7 +3308,7 @@ fn read_subscription_source_by_id_in(
 }
 
 #[cfg(not(windows))]
-#[allow(dead_code)]
+#[allow(dead_code, clippy::too_many_arguments)]
 fn write_subscription_source_in(
     directory: &Path,
     id: &str,
@@ -3395,6 +3396,7 @@ fn encode_subscription_source(
 }
 
 #[cfg(not(windows))]
+#[allow(clippy::too_many_lines)]
 fn decode_subscription_source(
     contents: &str,
     expected_id: &str,
@@ -3563,6 +3565,7 @@ fn direct_policy_for_member(
         .transpose()
 }
 
+#[allow(clippy::too_many_lines)]
 fn compile_managed_policy_groups(
     groups: &[ManagedPolicyGroup],
     stored_provider_indexes: &HashMap<&str, usize>,
@@ -4079,7 +4082,7 @@ fn read_qx_rule_source_by_id_in(
 }
 
 #[cfg(not(windows))]
-#[allow(dead_code)]
+#[allow(dead_code, clippy::too_many_arguments)]
 fn write_qx_rule_source_in(
     directory: &Path,
     id: &str,
@@ -4172,9 +4175,11 @@ fn decode_qx_rule_source_with_url(
     let version = lines.next();
     if !matches!(
         version,
-        Some(QX_RULE_SOURCE_VERSION)
-            | Some(LEGACY_MANIS_QX_RULE_SOURCE_VERSION)
-            | Some(LEGACY_RELAY_QX_RULE_SOURCE_VERSION)
+        Some(
+            QX_RULE_SOURCE_VERSION
+                | LEGACY_MANIS_QX_RULE_SOURCE_VERSION
+                | LEGACY_RELAY_QX_RULE_SOURCE_VERSION
+        )
     ) {
         return Err(SubscriptionStoreError::StoredSourceUnavailable);
     }
