@@ -61,17 +61,19 @@ Manis 源码仓库不提交预编译代理内核。发行构建会从 Mihomo 官
 CI 会检查三个平台，但“能够编译”不代表该平台上的所有网络集成都已经完成真实验证。
 
 Package workflow 会分别构建 Apple Silicon、Intel 的未公证 macOS 应用包，以及支持原生
-Wayland 的实验性 Arch Linux `x86_64` 软件包，并附带校验文件。手动运行工作流时，产物在
-Actions 中保留 14 天；推送任意标签时，工作流还会把同一批产物放进 Draft
-Release，待维护者完成发布清单后再决定是否公开。安装前请阅读
+Wayland 的实验性 Arch Linux `x86_64` 软件包，并附带校验文件。每次提交合并到 `main` 后，
+工作流会覆盖更新名为 `latest` 的滚动 Draft Release；手动运行的 Actions 产物保留 14 天。
+推送任意版本标签时，工作流还会创建独立的 Draft Release，待维护者完成发布清单后再决定
+是否公开。安装前请阅读
 [macOS](packaging/macos/README.md) 与 [Arch Linux](packaging/archlinux/README.md) 打包说明。
 
 ## 下载测试构建
 
-仓库维护者可以在 [GitHub Actions 的 Package 页面](https://github.com/kaigedong/Manis/actions/workflows/package.yml)
-下载最近一次成功运行的测试产物。Apple Silicon Mac 选择 `arm64`，Intel Mac 选择
-`x86_64`。标签构建还会出现在仓库的 Draft Release 中；仓库尚未创建标签时，公开 Release
-页面没有安装包是正常的。
+仓库维护者可以直接从 [Releases 页面](https://github.com/kaigedong/Manis/releases) 中名为
+`Latest Manis development build` 的 Draft Release 下载最近一次成功合并到 `main` 的测试
+产物，也可以在 [GitHub Actions 的 Package 页面](https://github.com/kaigedong/Manis/actions/workflows/package.yml)
+下载单次运行产物。Apple Silicon Mac 选择 `arm64`，Intel Mac 选择 `x86_64`；CachyOS 和
+Arch Linux 使用 `.pkg.tar.zst` 软件包。Draft Release 只有拥有仓库权限并已登录的用户可见。
 
 这些 macOS 包经过 ad-hoc 签名，但没有 Developer ID 签名和 Apple 公证，只适合测试。
 普通系统代理模式可以试用；生产 TUN helper 仍需要正式签名与公证。下载后应同时取得
