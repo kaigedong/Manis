@@ -8,7 +8,7 @@ use std::{
 use std::os::unix::fs::PermissionsExt;
 
 use crate::brand;
-use crate::localization::Language;
+use crate::localization::{Language, copy};
 
 const RECOVERY_FILE: &str = "system-proxy.recovery";
 const RECOVERY_VERSION: &str = "manis-system-proxy-v1";
@@ -32,10 +32,7 @@ impl ProxyPorts {
         if self.http.is_none() && self.socks.is_none() {
             Err(SystemProxyError::Unavailable(
                 language
-                    .text(
-                        "Mihomo has no open HTTP, mixed, or SOCKS listener",
-                        "Mihomo 没有开放 HTTP、mixed 或 SOCKS 端口",
-                    )
+                    .localized(copy::system_proxy::MIHOMO_HAS_NO_OPEN_HTTP_MIXED_OR_SOCKS_LISTENER)
                     .to_owned(),
             ))
         } else {
@@ -120,10 +117,7 @@ impl SystemProxySession {
             let _ = ports;
             return Err(SystemProxyError::Unavailable(
                 language
-                    .text(
-                        "Manis cannot configure the system proxy on this desktop yet",
-                        "Manis 暂不支持在当前桌面上自动设置系统代理",
-                    )
+                    .localized(copy::system_proxy::MANIS_CANNOT_CONFIGURE_THE_SYSTEM_PROXY_ON_THIS_DESKTOP_YET)
                     .to_owned(),
             ));
         }
@@ -213,10 +207,7 @@ impl TunDnsSession {
         if !self.prepared {
             return Err(SystemProxyError::Unavailable(
                 language
-                    .text(
-                        "TUN DNS was not prepared before activation",
-                        "TUN DNS 激活前尚未完成准备",
-                    )
+                    .localized(copy::system_proxy::TUN_DNS_WAS_NOT_PREPARED_BEFORE_ACTIVATION)
                     .to_owned(),
             ));
         }
@@ -265,10 +256,7 @@ fn recovery_snapshot_path(language: Language) -> Result<PathBuf, SystemProxyErro
         .ok_or_else(|| {
             SystemProxyError::Unavailable(
                 language
-                    .text(
-                        "Could not determine Manis data directory for system proxy recovery",
-                        "无法确定 Manis 系统代理恢复目录",
-                    )
+                    .localized(copy::system_proxy::COULD_NOT_DETERMINE_MANIS_DATA_DIRECTORY_FOR_SYSTEM_PROXY_RECOVERY)
                     .to_owned(),
             )
         })
@@ -280,10 +268,7 @@ fn tun_dns_recovery_snapshot_path(language: Language) -> Result<PathBuf, SystemP
         .ok_or_else(|| {
             SystemProxyError::Unavailable(
                 language
-                    .text(
-                        "Could not determine Manis data directory for TUN DNS recovery",
-                        "无法确定 Manis TUN DNS 恢复目录",
-                    )
+                    .localized(copy::system_proxy::COULD_NOT_DETERMINE_MANIS_DATA_DIRECTORY_FOR_TUN_DNS_RECOVERY)
                     .to_owned(),
             )
         })
@@ -347,9 +332,8 @@ fn read_recovery_snapshot_at(
 fn recovery_read_error(language: Language) -> SystemProxyError {
     SystemProxyError::CommandFailed(
         language
-            .text(
-                "Could not safely read Manis system proxy recovery snapshot",
-                "无法安全读取 Manis 系统代理恢复快照",
+            .localized(
+                copy::system_proxy::COULD_NOT_SAFELY_READ_MANIS_SYSTEM_PROXY_RECOVERY_SNAPSHOT,
             )
             .to_owned(),
     )
@@ -368,9 +352,8 @@ fn write_recovery_snapshot_at(
     let Some(directory) = path.parent() else {
         return Err(SystemProxyError::Unavailable(
             language
-                .text(
-                    "Could not determine Manis system proxy recovery directory",
-                    "无法确定 Manis 系统代理恢复目录",
+                .localized(
+                    copy::system_proxy::COULD_NOT_DETERMINE_MANIS_SYSTEM_PROXY_RECOVERY_DIRECTORY,
                 )
                 .to_owned(),
         ));
@@ -390,9 +373,8 @@ fn write_recovery_snapshot_at(
         .map_err(|_error| {
             SystemProxyError::CommandFailed(
                 language
-                    .text(
-                        "Could not create Manis system proxy recovery snapshot",
-                        "无法创建 Manis 系统代理恢复快照",
+                    .localized(
+                        copy::system_proxy::COULD_NOT_CREATE_MANIS_SYSTEM_PROXY_RECOVERY_SNAPSHOT,
                     )
                     .to_owned(),
             )
@@ -402,9 +384,8 @@ fn write_recovery_snapshot_at(
         .map_err(|_error| {
             SystemProxyError::CommandFailed(
                 language
-                    .text(
-                        "Could not protect Manis system proxy recovery snapshot",
-                        "无法保护 Manis 系统代理恢复快照",
+                    .localized(
+                        copy::system_proxy::COULD_NOT_PROTECT_MANIS_SYSTEM_PROXY_RECOVERY_SNAPSHOT,
                     )
                     .to_owned(),
             )
@@ -412,20 +393,14 @@ fn write_recovery_snapshot_at(
     file.write_all(contents.as_bytes()).map_err(|_error| {
         SystemProxyError::CommandFailed(
             language
-                .text(
-                    "Could not write Manis system proxy recovery snapshot",
-                    "无法写入 Manis 系统代理恢复快照",
-                )
+                .localized(copy::system_proxy::COULD_NOT_WRITE_MANIS_SYSTEM_PROXY_RECOVERY_SNAPSHOT)
                 .to_owned(),
         )
     })?;
     file.sync_all().map_err(|_error| {
         SystemProxyError::CommandFailed(
             language
-                .text(
-                    "Could not flush Manis system proxy recovery snapshot",
-                    "无法刷写 Manis 系统代理恢复快照",
-                )
+                .localized(copy::system_proxy::COULD_NOT_FLUSH_MANIS_SYSTEM_PROXY_RECOVERY_SNAPSHOT)
                 .to_owned(),
         )
     })?;
@@ -434,9 +409,8 @@ fn write_recovery_snapshot_at(
         let _ = fs::remove_file(&temporary);
         SystemProxyError::CommandFailed(
             language
-                .text(
-                    "Could not replace Manis system proxy recovery snapshot",
-                    "无法替换 Manis 系统代理恢复快照",
+                .localized(
+                    copy::system_proxy::COULD_NOT_REPLACE_MANIS_SYSTEM_PROXY_RECOVERY_SNAPSHOT,
                 )
                 .to_owned(),
         )
@@ -451,10 +425,7 @@ fn prepare_recovery_directory(
         Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
             return Err(SystemProxyError::CommandFailed(
                 language
-                    .text(
-                        "Manis system proxy recovery directory is unsafe",
-                        "Manis 系统代理恢复目录不安全",
-                    )
+                    .localized(copy::system_proxy::MANIS_SYSTEM_PROXY_RECOVERY_DIRECTORY_IS_UNSAFE)
                     .to_owned(),
             ));
         }
@@ -463,10 +434,7 @@ fn prepare_recovery_directory(
             fs::create_dir_all(directory).map_err(|_error| {
                 SystemProxyError::CommandFailed(
                     language
-                        .text(
-                            "Could not create Manis system proxy recovery directory",
-                            "无法创建 Manis 系统代理恢复目录",
-                        )
+                        .localized(copy::system_proxy::COULD_NOT_CREATE_MANIS_SYSTEM_PROXY_RECOVERY_DIRECTORY)
                         .to_owned(),
                 )
             })?;
@@ -474,9 +442,8 @@ fn prepare_recovery_directory(
         Err(_error) => {
             return Err(SystemProxyError::CommandFailed(
                 language
-                    .text(
-                        "Could not inspect Manis system proxy recovery directory",
-                        "无法检查 Manis 系统代理恢复目录",
+                    .localized(
+                        copy::system_proxy::COULD_NOT_INSPECT_MANIS_SYSTEM_PROXY_RECOVERY_DIRECTORY,
                     )
                     .to_owned(),
             ));
@@ -486,9 +453,8 @@ fn prepare_recovery_directory(
     fs::set_permissions(directory, fs::Permissions::from_mode(0o700)).map_err(|_error| {
         SystemProxyError::CommandFailed(
             language
-                .text(
-                    "Could not protect Manis system proxy recovery directory",
-                    "无法保护 Manis 系统代理恢复目录",
+                .localized(
+                    copy::system_proxy::COULD_NOT_PROTECT_MANIS_SYSTEM_PROXY_RECOVERY_DIRECTORY,
                 )
                 .to_owned(),
         )
@@ -507,9 +473,8 @@ fn delete_recovery_snapshot_at(path: &Path, language: Language) -> Result<(), Sy
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(_error) => Err(SystemProxyError::CommandFailed(
             language
-                .text(
-                    "Could not remove Manis system proxy recovery snapshot",
-                    "无法删除 Manis 系统代理恢复快照",
+                .localized(
+                    copy::system_proxy::COULD_NOT_REMOVE_MANIS_SYSTEM_PROXY_RECOVERY_SNAPSHOT,
                 )
                 .to_owned(),
         )),
@@ -519,9 +484,8 @@ fn delete_recovery_snapshot_at(path: &Path, language: Language) -> Result<(), Sy
 fn rollback_failed_message(language: Language) -> SystemProxyError {
     SystemProxyError::CommandFailed(
         language
-            .text(
-                "Could not apply the system proxy or restore every previous setting; the recovery snapshot was retained",
-                "系统代理应用失败，且未能完整恢复原设置；恢复快照已保留",
+            .localized(
+                copy::system_proxy::COULD_NOT_APPLY_THE_SYSTEM_PROXY_OR_RESTORE_EVERY_PREVIOUS,
             )
             .to_owned(),
     )
@@ -553,7 +517,7 @@ mod macos {
     use std::net::IpAddr;
     use std::process::{Command, Stdio};
 
-    use crate::localization::Language;
+    use crate::localization::{Language, copy};
 
     use super::{
         ProxyPorts, RECOVERY_VERSION, SystemProxyError, TUN_DNS_RECOVERY_VERSION, decode_string,
@@ -675,10 +639,7 @@ mod macos {
         let snapshot = decode_dns_snapshot(&contents).ok_or_else(|| {
             SystemProxyError::CommandFailed(
                 language
-                    .text(
-                        "Manis TUN DNS recovery snapshot is invalid",
-                        "Manis TUN DNS 恢复快照无效",
-                    )
+                    .localized(copy::system_proxy::MANIS_TUN_DNS_RECOVERY_SNAPSHOT_IS_INVALID)
                     .to_owned(),
             )
         })?;
@@ -711,20 +672,14 @@ mod macos {
             .map_err(|_| {
                 SystemProxyError::Unavailable(
                     language
-                        .text(
-                            "Could not inspect the macOS default route",
-                            "无法检查 macOS 默认路由",
-                        )
+                        .localized(copy::system_proxy::COULD_NOT_INSPECT_THE_MACOS_DEFAULT_ROUTE)
                         .to_owned(),
                 )
             })?;
         if !output.status.success() {
             return Err(SystemProxyError::Unavailable(
                 language
-                    .text(
-                        "Could not inspect the macOS default route",
-                        "无法检查 macOS 默认路由",
-                    )
+                    .localized(copy::system_proxy::COULD_NOT_INSPECT_THE_MACOS_DEFAULT_ROUTE)
                     .to_owned(),
             ));
         }
@@ -739,10 +694,7 @@ mod macos {
             .ok_or_else(|| {
                 SystemProxyError::Unavailable(
                     language
-                        .text(
-                            "The macOS default route did not identify an interface",
-                            "macOS 默认路由未提供出口接口",
-                        )
+                        .localized(copy::system_proxy::THE_MACOS_DEFAULT_ROUTE_DID_NOT_IDENTIFY_AN_INTERFACE)
                         .to_owned(),
                 )
             })
@@ -790,10 +742,7 @@ mod macos {
             value.parse::<IpAddr>().map_err(|_| {
                 SystemProxyError::CommandFailed(
                     language
-                        .text(
-                            "macOS returned an invalid DNS server address",
-                            "macOS 返回了无效的 DNS 服务器地址",
-                        )
+                        .localized(copy::system_proxy::MACOS_RETURNED_AN_INVALID_DNS_SERVER_ADDRESS)
                         .to_owned(),
                 )
             })?;
@@ -881,10 +830,7 @@ mod macos {
         if services.is_empty() {
             return Err(SystemProxyError::Unavailable(
                 language
-                    .text(
-                        "macOS has no configurable network services",
-                        "macOS 没有可配置的网络服务",
-                    )
+                    .localized(copy::system_proxy::MACOS_HAS_NO_CONFIGURABLE_NETWORK_SERVICES)
                     .to_owned(),
             ));
         }
@@ -1069,10 +1015,7 @@ mod macos {
         let snapshots = decode_snapshots(&contents).ok_or_else(|| {
             SystemProxyError::CommandFailed(
                 language
-                    .text(
-                        "Manis system proxy recovery snapshot is invalid",
-                        "Manis 系统代理恢复快照无效",
-                    )
+                    .localized(copy::system_proxy::MANIS_SYSTEM_PROXY_RECOVERY_SNAPSHOT_IS_INVALID)
                     .to_owned(),
             )
         })?;
@@ -1191,10 +1134,7 @@ mod macos {
                 .map_err(|_| {
                     SystemProxyError::Unavailable(
                         language
-                            .text(
-                                "Could not start macOS networksetup",
-                                "无法启动 macOS networksetup",
-                            )
+                            .localized(copy::system_proxy::COULD_NOT_START_MACOS_NETWORKSETUP)
                             .to_owned(),
                     )
                 })?;
@@ -1226,10 +1166,7 @@ mod macos {
                 .map_err(|_| {
                     SystemProxyError::Unavailable(
                         language
-                            .text(
-                                "Could not start macOS networksetup",
-                                "无法启动 macOS networksetup",
-                            )
+                            .localized(copy::system_proxy::COULD_NOT_START_MACOS_NETWORKSETUP)
                             .to_owned(),
                     )
                 })?;
@@ -1238,10 +1175,7 @@ mod macos {
             } else {
                 Err(SystemProxyError::CommandFailed(
                     language
-                        .text(
-                            "Could not read macOS system proxy status",
-                            "无法读取 macOS 系统代理状态",
-                        )
+                        .localized(copy::system_proxy::COULD_NOT_READ_MACOS_SYSTEM_PROXY_STATUS)
                         .to_owned(),
                 ))
             }
@@ -1611,7 +1545,7 @@ mod macos {
 mod linux {
     use std::process::Command;
 
-    use crate::localization::Language;
+    use crate::localization::{Language, copy};
 
     use super::{
         ProxyPorts, RECOVERY_VERSION, SystemProxyError, decode_string, delete_recovery_snapshot,
@@ -1746,10 +1680,7 @@ mod linux {
         let snapshot = decode_snapshot(&contents).ok_or_else(|| {
             SystemProxyError::CommandFailed(
                 language
-                    .text(
-                        "Manis system proxy recovery snapshot is invalid",
-                        "Manis 系统代理恢复快照无效",
-                    )
+                    .localized(copy::system_proxy::MANIS_SYSTEM_PROXY_RECOVERY_SNAPSHOT_IS_INVALID)
                     .to_owned(),
             )
         })?;
@@ -1796,10 +1727,7 @@ mod linux {
             .map_err(|_| {
                 SystemProxyError::Unavailable(
                     language
-                        .text(
-                            "This desktop does not support gsettings",
-                            "当前桌面不支持 gsettings",
-                        )
+                        .localized(copy::system_proxy::THIS_DESKTOP_DOES_NOT_SUPPORT_GSETTINGS)
                         .to_owned(),
                 )
             })?;
@@ -1808,10 +1736,7 @@ mod linux {
         } else {
             Err(SystemProxyError::CommandFailed(
                 language
-                    .text(
-                        "Could not read GNOME system proxy status",
-                        "无法读取 GNOME 系统代理状态",
-                    )
+                    .localized(copy::system_proxy::COULD_NOT_READ_GNOME_SYSTEM_PROXY_STATUS)
                     .to_owned(),
             ))
         }
@@ -1829,20 +1754,14 @@ mod linux {
             .map_err(|_| {
                 SystemProxyError::Unavailable(
                     language
-                        .text(
-                            "This desktop does not support gsettings",
-                            "当前桌面不支持 gsettings",
-                        )
+                        .localized(copy::system_proxy::THIS_DESKTOP_DOES_NOT_SUPPORT_GSETTINGS)
                         .to_owned(),
                 )
             })?;
         status.success().then_some(()).ok_or_else(|| {
             SystemProxyError::CommandFailed(
                 language
-                    .text(
-                        "Could not write GNOME system proxy settings",
-                        "无法写入 GNOME 系统代理设置",
-                    )
+                    .localized(copy::system_proxy::COULD_NOT_WRITE_GNOME_SYSTEM_PROXY_SETTINGS)
                     .to_owned(),
             )
         })
@@ -1853,7 +1772,7 @@ mod linux {
 mod windows {
     use std::process::Command;
 
-    use crate::localization::Language;
+    use crate::localization::{Language, copy};
 
     use super::{
         ProxyPorts, RECOVERY_VERSION, SystemProxyError, decode_string, delete_recovery_snapshot,
@@ -1922,10 +1841,7 @@ mod windows {
         let snapshot = decode_snapshot(&contents).ok_or_else(|| {
             SystemProxyError::CommandFailed(
                 language
-                    .text(
-                        "Manis system proxy recovery snapshot is invalid",
-                        "Manis 系统代理恢复快照无效",
-                    )
+                    .localized(copy::system_proxy::MANIS_SYSTEM_PROXY_RECOVERY_SNAPSHOT_IS_INVALID)
                     .to_owned(),
             )
         })?;
@@ -2011,7 +1927,7 @@ mod windows {
             .map_err(|_| {
                 SystemProxyError::Unavailable(
                     language
-                        .text("Could not start Windows reg", "无法启动 Windows reg")
+                        .localized(copy::system_proxy::COULD_NOT_START_WINDOWS_REG)
                         .to_owned(),
                 )
             })?;
@@ -2020,10 +1936,7 @@ mod windows {
         } else {
             Err(SystemProxyError::CommandFailed(
                 language
-                    .text(
-                        "Could not restore Windows system proxy settings",
-                        "无法恢复 Windows 系统代理设置",
-                    )
+                    .localized(copy::system_proxy::COULD_NOT_RESTORE_WINDOWS_SYSTEM_PROXY_SETTINGS)
                     .to_owned(),
             ))
         }
@@ -2036,17 +1949,14 @@ mod windows {
         let status = Command::new("reg").args(args).status().map_err(|_| {
             SystemProxyError::Unavailable(
                 language
-                    .text("Could not start Windows reg", "无法启动 Windows reg")
+                    .localized(copy::system_proxy::COULD_NOT_START_WINDOWS_REG)
                     .to_owned(),
             )
         })?;
         status.success().then_some(()).ok_or_else(|| {
             SystemProxyError::CommandFailed(
                 language
-                    .text(
-                        "Could not write Windows system proxy settings",
-                        "无法写入 Windows 系统代理设置",
-                    )
+                    .localized(copy::system_proxy::COULD_NOT_WRITE_WINDOWS_SYSTEM_PROXY_SETTINGS)
                     .to_owned(),
             )
         })
@@ -2060,19 +1970,15 @@ mod windows {
             .map_err(|_| {
                 SystemProxyError::Unavailable(
                     language
-                        .text(
-                            "Could not notify Windows that proxy settings changed",
-                            "无法通知 Windows 代理设置更新",
-                        )
+                        .localized(copy::system_proxy::COULD_NOT_NOTIFY_WINDOWS_THAT_PROXY_SETTINGS_CHANGED)
                         .to_owned(),
                 )
             })?;
         status.success().then_some(()).ok_or_else(|| {
             SystemProxyError::CommandFailed(
                 language
-                    .text(
-                        "Windows proxy was written, but the system refresh failed",
-                        "Windows 代理已写入，但系统刷新失败",
+                    .localized(
+                        copy::system_proxy::WINDOWS_PROXY_WAS_WRITTEN_BUT_THE_SYSTEM_REFRESH_FAILED,
                     )
                     .to_owned(),
             )

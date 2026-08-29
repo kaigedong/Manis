@@ -27,7 +27,9 @@ use crate::{
         status_badge, style_action_button,
     },
     diagnostics::{LogLevel, UiEvent, begin_operation, record_event, record_operation, trace_ui},
-    localization::{CountNoun, Language, LanguagePreference, Message, save_language_preference_in},
+    localization::{
+        CountNoun, Language, LanguagePreference, Message, copy, save_language_preference_in,
+    },
     mihomo::{self, RemoteSourceRefreshInterval, RuntimeProfileSource, SubscriptionStoreError},
     rule_source::{download_qx_rule_document, download_qx_rule_document_secret},
     subscription::{SourceKind, validate_single_node_preview, validate_subscription_preview},
@@ -43,6 +45,14 @@ struct QxRuleSaveRequest {
     target: String,
     editing_id: Option<String>,
     refresh_interval: RemoteSourceRefreshInterval,
+}
+
+struct SubscriptionToggleCompletion {
+    id: String,
+    generation: u64,
+    kind: SourceKind,
+    previous_state: ImportedSubscriptionState,
+    previous_enabled: bool,
 }
 
 struct SubscriptionCardPresentation {
@@ -331,7 +341,7 @@ fn manual_rule_placeholder(
         ManualRuleKind::UserAgent => "*abc?",
         ManualRuleKind::IpCidr => "192.168.0.1/24",
         ManualRuleKind::Ip6Cidr => "2001:4860:4860::8888/32",
-        ManualRuleKind::GeoIp => language.text("US", "US（国家代码）"),
+        ManualRuleKind::GeoIp => language.localized(copy::configuration::US),
         ManualRuleKind::IpAsn => "6185",
         ManualRuleKind::DstPort => "22",
         ManualRuleKind::Final => "",
@@ -344,20 +354,21 @@ fn manual_rule_kind_detail(
 ) -> &'static str {
     use crate::manual_rule::ManualRuleKind;
     match kind {
-        ManualRuleKind::Host => language.text("Exact domain", "完整域名"),
-        ManualRuleKind::HostSuffix => language.text("Domain suffix", "域名后缀"),
-        ManualRuleKind::HostWildcard => language.text("Wildcard domain", "通配符域名"),
-        ManualRuleKind::HostKeyword => language.text("Domain contains keyword", "域名中包含关键词"),
-        ManualRuleKind::UserAgent => language.text("Browser user agent", "浏览器标识"),
-        ManualRuleKind::IpCidr => language.text("IPv4 address range", "IPv4 地址段"),
-        ManualRuleKind::Ip6Cidr => language.text("IPv6 address range", "IPv6 地址段"),
-        ManualRuleKind::GeoIp => language.text("Country or region", "国家或地区"),
-        ManualRuleKind::IpAsn => language.text("Autonomous system", "自治系统"),
-        ManualRuleKind::DstPort => language.text("Destination port", "目标端口"),
-        ManualRuleKind::Final => language.text(
-            "Fallback for traffic not matched above",
-            "兜底处理此前未命中的流量",
-        ),
+        ManualRuleKind::Host => language.localized(copy::configuration::EXACT_DOMAIN),
+        ManualRuleKind::HostSuffix => language.localized(copy::configuration::DOMAIN_SUFFIX),
+        ManualRuleKind::HostWildcard => language.localized(copy::configuration::WILDCARD_DOMAIN),
+        ManualRuleKind::HostKeyword => {
+            language.localized(copy::configuration::DOMAIN_CONTAINS_KEYWORD)
+        }
+        ManualRuleKind::UserAgent => language.localized(copy::configuration::BROWSER_USER_AGENT),
+        ManualRuleKind::IpCidr => language.localized(copy::configuration::IPV4_ADDRESS_RANGE),
+        ManualRuleKind::Ip6Cidr => language.localized(copy::configuration::IPV6_ADDRESS_RANGE),
+        ManualRuleKind::GeoIp => language.localized(copy::configuration::COUNTRY_OR_REGION),
+        ManualRuleKind::IpAsn => language.localized(copy::configuration::AUTONOMOUS_SYSTEM),
+        ManualRuleKind::DstPort => language.localized(copy::configuration::DESTINATION_PORT),
+        ManualRuleKind::Final => {
+            language.localized(copy::configuration::FALLBACK_FOR_TRAFFIC_NOT_MATCHED_ABOVE)
+        }
     }
 }
 
@@ -367,77 +378,63 @@ fn manual_rule_error_label(
 ) -> &'static str {
     use crate::manual_rule::ManualRuleError;
     match error {
-        ManualRuleError::Empty => language.text("Enter a match parameter", "请输入匹配参数"),
-        ManualRuleError::InvalidDomain => language.text(
-            "Enter a plain domain such as example.com",
-            "请输入纯域名，例如 example.com",
-        ),
-        ManualRuleError::InvalidWildcard => language.text(
-            "Enter a domain pattern such as *.example.com",
-            "请输入域名模式，例如 *.example.com",
-        ),
-        ManualRuleError::InvalidKeyword => language.text(
-            "The parameter cannot contain commas, tabs, or line breaks",
-            "参数不能包含逗号、制表符或换行",
-        ),
-        ManualRuleError::InvalidIpv4Cidr => language.text(
-            "Enter an IPv4 CIDR such as 192.168.0.1/24",
-            "请输入 IPv4 CIDR，例如 192.168.0.1/24",
-        ),
-        ManualRuleError::InvalidIpv6Cidr => language.text(
-            "Enter an IPv6 CIDR such as 2001:4860:4860::8888/32",
-            "请输入 IPv6 CIDR，例如 2001:4860:4860::8888/32",
-        ),
-        ManualRuleError::InvalidGeoIp => language.text(
-            "Enter a two-letter country code such as US",
-            "请输入两位国家代码，例如 US",
-        ),
-        ManualRuleError::InvalidAsn => language.text(
-            "Enter an ASN number such as 6185",
-            "请输入 ASN 数字，例如 6185",
-        ),
-        ManualRuleError::InvalidDestinationPort => language.text(
-            "Enter a destination port between 1 and 65535",
-            "请输入 1 到 65535 之间的目标端口",
-        ),
-        ManualRuleError::InvalidPolicy => {
-            language.text("Choose an existing policy group", "请选择已有策略组")
+        ManualRuleError::Empty => language.localized(copy::configuration::ENTER_A_MATCH_PARAMETER),
+        ManualRuleError::InvalidDomain => {
+            language.localized(copy::configuration::ENTER_A_PLAIN_DOMAIN_SUCH_AS_EXAMPLE_COM)
         }
-        ManualRuleError::UnsupportedByKernel => language.text(
-            "This rule type cannot be matched exactly by the current kernel",
-            "当前内核无法精确匹配这种规则类型",
+        ManualRuleError::InvalidWildcard => {
+            language.localized(copy::configuration::ENTER_A_DOMAIN_PATTERN_SUCH_AS_EXAMPLE_COM)
+        }
+        ManualRuleError::InvalidKeyword => language.localized(
+            copy::configuration::THE_PARAMETER_CANNOT_CONTAIN_COMMAS_TABS_OR_LINE_BREAKS,
+        ),
+        ManualRuleError::InvalidIpv4Cidr => {
+            language.localized(copy::configuration::ENTER_AN_IPV4_CIDR_SUCH_AS_192_168_0_1)
+        }
+        ManualRuleError::InvalidIpv6Cidr => {
+            language.localized(copy::configuration::ENTER_AN_IPV6_CIDR_SUCH_AS_2001_4860_4860_8888)
+        }
+        ManualRuleError::InvalidGeoIp => {
+            language.localized(copy::configuration::ENTER_A_TWO_LETTER_COUNTRY_CODE_SUCH_AS_US)
+        }
+        ManualRuleError::InvalidAsn => {
+            language.localized(copy::configuration::ENTER_AN_ASN_NUMBER_SUCH_AS_6185)
+        }
+        ManualRuleError::InvalidDestinationPort => {
+            language.localized(copy::configuration::ENTER_A_DESTINATION_PORT_BETWEEN_1_AND_65535)
+        }
+        ManualRuleError::InvalidPolicy => {
+            language.localized(copy::configuration::CHOOSE_AN_EXISTING_POLICY_GROUP)
+        }
+        ManualRuleError::UnsupportedByKernel => language.localized(
+            copy::configuration::THIS_RULE_TYPE_CANNOT_BE_MATCHED_EXACTLY_BY_THE_CURRENT,
         ),
         ManualRuleError::Duplicate => {
-            language.text("This manual rule already exists", "这条手动规则已经存在")
+            language.localized(copy::configuration::THIS_MANUAL_RULE_ALREADY_EXISTS)
         }
-        ManualRuleError::DuplicateCondition => language.text(
-            "The same condition appears more than once",
-            "同一个匹配条件不能重复添加",
-        ),
-        ManualRuleError::TooManyConditions => language.text(
-            "A rule can contain at most four conditions",
-            "一条规则最多包含四个条件",
-        ),
-        ManualRuleError::FinalMustStandAlone => language.text(
-            "FINAL cannot be combined with another condition",
-            "FINAL 不能和其他匹配条件组合",
-        ),
-        ManualRuleError::FinalHasNoParameter => language.text(
-            "FINAL does not need a match parameter",
-            "FINAL 不需要匹配参数",
-        ),
-        ManualRuleError::FinalAlreadyExists => language.text(
-            "Only one FINAL rule can be configured",
-            "只能配置一条 FINAL 规则",
-        ),
+        ManualRuleError::DuplicateCondition => {
+            language.localized(copy::configuration::THE_SAME_CONDITION_APPEARS_MORE_THAN_ONCE)
+        }
+        ManualRuleError::TooManyConditions => {
+            language.localized(copy::configuration::A_RULE_CAN_CONTAIN_AT_MOST_FOUR_CONDITIONS)
+        }
+        ManualRuleError::FinalMustStandAlone => {
+            language.localized(copy::configuration::FINAL_CANNOT_BE_COMBINED_WITH_ANOTHER_CONDITION)
+        }
+        ManualRuleError::FinalHasNoParameter => {
+            language.localized(copy::configuration::FINAL_DOES_NOT_NEED_A_MATCH_PARAMETER)
+        }
+        ManualRuleError::FinalAlreadyExists => {
+            language.localized(copy::configuration::ONLY_ONE_FINAL_RULE_CAN_BE_CONFIGURED)
+        }
     }
 }
 
 fn source_kind_label(kind: SourceKind, language: Language) -> &'static str {
     match kind {
-        SourceKind::HttpSubscription => language.text("HTTP subscription", "HTTP 订阅"),
-        SourceKind::HttpsSubscription => language.text("HTTPS subscription", "HTTPS 订阅"),
-        SourceKind::SingleNode => language.text("Single node", "单节点"),
+        SourceKind::HttpSubscription => language.localized(copy::common::HTTP_SUBSCRIPTION),
+        SourceKind::HttpsSubscription => language.localized(copy::common::HTTPS_SUBSCRIPTION),
+        SourceKind::SingleNode => language.localized(copy::configuration::SINGLE_NODE),
     }
 }
 
@@ -447,11 +444,15 @@ fn source_update_label(
     language: Language,
 ) -> String {
     if last_successful_update_unix_secs == 0 {
-        return language.text("Never updated", "从未更新").to_owned();
+        return language
+            .localized(copy::configuration::NEVER_UPDATED)
+            .to_owned();
     }
     let elapsed = now_unix_secs.saturating_sub(last_successful_update_unix_secs);
     match elapsed {
-        0..=59 => language.text("Updated just now", "刚刚更新").to_owned(),
+        0..=59 => language
+            .localized(copy::configuration::UPDATED_JUST_NOW)
+            .to_owned(),
         60..=3_599 => {
             let minutes = elapsed / 60;
             if language == Language::English {
@@ -488,17 +489,23 @@ fn refresh_interval_label(
     language: Language,
 ) -> &'static str {
     match interval {
-        RemoteSourceRefreshInterval::Manual => language.text("Manual", "手动"),
-        RemoteSourceRefreshInterval::Hourly => language.text("Every 1 hour", "每 1 小时"),
-        RemoteSourceRefreshInterval::SixHours => language.text("Every 6 hours", "每 6 小时"),
-        RemoteSourceRefreshInterval::TwelveHours => language.text("Every 12 hours", "每 12 小时"),
-        RemoteSourceRefreshInterval::Daily => language.text("Daily", "每天"),
+        RemoteSourceRefreshInterval::Manual => language.localized(copy::configuration::MANUAL),
+        RemoteSourceRefreshInterval::Hourly => {
+            language.localized(copy::configuration::EVERY_1_HOUR)
+        }
+        RemoteSourceRefreshInterval::SixHours => {
+            language.localized(copy::configuration::EVERY_6_HOURS)
+        }
+        RemoteSourceRefreshInterval::TwelveHours => {
+            language.localized(copy::configuration::EVERY_12_HOURS)
+        }
+        RemoteSourceRefreshInterval::Daily => language.localized(copy::configuration::DAILY),
     }
 }
 
 fn language_preference_label(preference: LanguagePreference, language: Language) -> &'static str {
     match preference {
-        LanguagePreference::FollowSystem => language.text("Follow system", "跟随系统"),
+        LanguagePreference::FollowSystem => language.localized(copy::configuration::FOLLOW_SYSTEM),
         LanguagePreference::English => "English",
         LanguagePreference::SimplifiedChinese => "中文",
     }
@@ -506,23 +513,29 @@ fn language_preference_label(preference: LanguagePreference, language: Language)
 
 fn configuration_section_label(section: ConfigurationSection, language: Language) -> &'static str {
     match section {
-        ConfigurationSection::General => language.text("General", "通用"),
-        ConfigurationSection::Runtime => language.text("Runtime", "运行内核"),
-        ConfigurationSection::ProxySources => language.text("Proxy sources", "代理来源"),
-        ConfigurationSection::RuleSources => language.text("Rule sources", "规则来源"),
-        ConfigurationSection::Advanced => language.text("Advanced", "高级设置"),
+        ConfigurationSection::General => language.localized(copy::configuration::GENERAL),
+        ConfigurationSection::Runtime => language.localized(copy::configuration::RUNTIME),
+        ConfigurationSection::ProxySources => {
+            language.localized(copy::configuration::PROXY_SOURCES)
+        }
+        ConfigurationSection::RuleSources => language.localized(copy::configuration::RULE_SOURCES),
+        ConfigurationSection::Advanced => language.localized(copy::configuration::ADVANCED),
     }
 }
 
 fn configuration_section_detail(section: ConfigurationSection, language: Language) -> &'static str {
     match section {
-        ConfigurationSection::General => language.text("Interface language", "界面语言"),
-        ConfigurationSection::Runtime => language.text("Core and updates", "内核与更新"),
-        ConfigurationSection::ProxySources => {
-            language.text("Subscriptions and nodes", "订阅与单节点")
+        ConfigurationSection::General => {
+            language.localized(copy::configuration::INTERFACE_LANGUAGE)
         }
-        ConfigurationSection::RuleSources => language.text("Remote rule sets", "远程规则集"),
-        ConfigurationSection::Advanced => language.text("Network behavior", "网络行为"),
+        ConfigurationSection::Runtime => language.localized(copy::configuration::CORE_AND_UPDATES),
+        ConfigurationSection::ProxySources => {
+            language.localized(copy::configuration::SUBSCRIPTIONS_AND_NODES)
+        }
+        ConfigurationSection::RuleSources => {
+            language.localized(copy::configuration::REMOTE_RULE_SETS)
+        }
+        ConfigurationSection::Advanced => language.localized(copy::configuration::NETWORK_BEHAVIOR),
     }
 }
 
@@ -580,10 +593,7 @@ impl ManisApp {
             .bg(theme.surface_base)
             .child(Self::workspace_header(
                 language.message(Message::Configuration),
-                language.text(
-                    "Manage Manis preferences and data sources",
-                    "管理 Manis 偏好与数据来源",
-                ),
+                language.localized(copy::configuration::MANAGE_MANIS_PREFERENCES_AND_DATA_SOURCES),
                 configuration_section_label(selected_section, language),
                 StatusTone::Neutral,
                 theme,
@@ -631,7 +641,7 @@ impl ManisApp {
                         .line_height(TextRole::Metadata.line_height())
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(theme.text_tertiary)
-                        .child(language.text("SETTINGS", "设置")),
+                        .child(language.localized(copy::configuration::SETTINGS)),
                 )
             });
         let items =
@@ -657,7 +667,7 @@ impl ManisApp {
                     .text_size(TextRole::Metadata.size())
                     .line_height(TextRole::Metadata.line_height())
                     .text_color(theme.text_tertiary)
-                    .child(language.text("Changes are stored locally", "更改仅保存在本机")),
+                    .child(language.localized(copy::configuration::CHANGES_ARE_STORED_LOCALLY)),
             )
         })
     }
@@ -681,7 +691,9 @@ impl ManisApp {
             ConfigurationSection::RuleSources => {
                 language.count(CountNoun::Source, self.rule_sources.sources.len())
             }
-            ConfigurationSection::Advanced => language.text("Managed", "托管").to_owned(),
+            ConfigurationSection::Advanced => language
+                .localized(copy::configuration::MANAGED_2)
+                .to_owned(),
         };
         div()
             .id(format!("configuration-nav-{}", section.key()))
@@ -773,11 +785,11 @@ impl ManisApp {
         };
         panel_surface("configuration-advanced", compact, theme)
             .child(section_heading(
-                language.text("Advanced settings", "高级设置"),
-                language.text("Current managed network behavior", "当前托管网络行为"),
+                language.localized(copy::configuration::ADVANCED_SETTINGS),
+                language.localized(copy::configuration::CURRENT_MANAGED_NETWORK_BEHAVIOR),
                 Some(
                     status_badge(
-                        language.text("Managed", "Manis 托管"),
+                        language.localized(copy::configuration::MANAGED),
                         StatusTone::Neutral,
                         theme,
                     )
@@ -786,29 +798,26 @@ impl ManisApp {
                 theme,
             ))
             .child(Self::advanced_configuration_row(
-                language.text("Proxy mode", "代理模式"),
+                language.localized(copy::configuration::PROXY_MODE),
                 proxy_mode_label(language, self.proxy_mode),
-                language.text("Changed from the main toolbar", "可在主工具栏中切换"),
+                language.localized(copy::configuration::CHANGED_FROM_THE_MAIN_TOOLBAR),
                 theme,
             ))
             .child(Self::advanced_configuration_row(
-                language.text("Routing mode", "路由模式"),
+                language.localized(copy::configuration::ROUTING_MODE),
                 routing_mode_label(language, self.routing_mode),
-                language.text("Direct, global, or ordered rules", "直连、全局或有序规则"),
+                language.localized(copy::configuration::DIRECT_GLOBAL_OR_ORDERED_RULES),
                 theme,
             ))
             .child(Self::advanced_configuration_row(
-                language.text("Process identification", "进程识别"),
-                language.text("Always", "始终识别"),
-                language.text(
-                    "Used to improve Network Activity",
-                    "用于改善网络活动中的进程信息",
-                ),
+                language.localized(copy::configuration::PROCESS_IDENTIFICATION),
+                language.localized(copy::configuration::ALWAYS),
+                language.localized(copy::configuration::USED_TO_IMPROVE_NETWORK_ACTIVITY),
                 theme,
             ))
             .child(Self::advanced_configuration_row(
-                language.text("DNS and TUN", "DNS 与 TUN"),
-                language.text("Automatic", "自动管理"),
+                language.localized(copy::configuration::DNS_AND_TUN),
+                language.localized(copy::configuration::AUTOMATIC),
                 profile_detail,
                 theme,
             ))
@@ -858,11 +867,14 @@ impl ManisApp {
         let current_language = language.display_name();
         panel_surface("configuration-language", compact, theme)
             .child(section_heading(
-                language.text("Interface language", "界面语言"),
+                language.localized(copy::configuration::INTERFACE_LANGUAGE),
                 "",
                 Some(
                     status_badge(
-                        format!("{} · {current_language}", language.text("Current", "当前")),
+                        format!(
+                            "{} · {current_language}",
+                            language.localized(copy::configuration::CURRENT)
+                        ),
                         StatusTone::Neutral,
                         theme,
                     )
@@ -912,7 +924,7 @@ impl ManisApp {
             .role(Role::Button)
             .aria_label(format!(
                 "{}: {label}",
-                language.text("Select language", "选择界面语言")
+                language.localized(copy::configuration::SELECT_LANGUAGE)
             ))
             .aria_toggled(if selected {
                 gpui::Toggled::True
@@ -962,7 +974,7 @@ impl ManisApp {
                                 .line_height(TextRole::Metadata.line_height())
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .text_color(theme.action_primary)
-                                .child(language.text("Selected", "已选择")),
+                                .child(language.localized(copy::configuration::SELECTED)),
                         )
                     }),
             )
@@ -979,26 +991,22 @@ impl ManisApp {
                 Ok(_path) => {
                     self.status = format!(
                         "{} · {}",
-                        language.text("Language saved", "界面语言已保存"),
+                        language.localized(copy::configuration::LANGUAGE_SAVED),
                         language_preference_label(preference, language)
                     );
                 }
                 Err(error) => {
                     self.status = format!(
                         "{}: {error}",
-                        language.text(
-                            "Language changed but could not be saved",
-                            "界面语言已切换，但保存失败"
+                        language.localized(
+                            copy::configuration::LANGUAGE_CHANGED_BUT_COULD_NOT_BE_SAVED
                         )
                     );
                 }
             },
             None => {
                 language
-                    .text(
-                        "Language changed for this session; data directory unavailable.",
-                        "界面语言已在本次会话生效；无法确定保存位置。",
-                    )
+                    .localized(copy::configuration::LANGUAGE_CHANGED_FOR_THIS_SESSION_DATA_DIRECTORY_UNAVAILABLE)
                     .clone_into(&mut self.status);
             }
         }
@@ -1008,7 +1016,7 @@ impl ManisApp {
         if let Some(input) = self.proxy_source_editor.name_input.as_ref() {
             input.update(cx, |input, cx| {
                 input.set_placeholder(
-                    language.text("For example: My subscription", "例如：我的订阅"),
+                    language.localized(copy::common::FOR_EXAMPLE_MY_SUBSCRIPTION),
                     cx,
                 );
             });
@@ -1016,17 +1024,14 @@ impl ManisApp {
         if let Some(input) = self.inputs.policy_group_name.as_ref() {
             input.update(cx, |input, cx| {
                 input.set_placeholder(
-                    language.text("For example: Hong Kong Auto", "例如：香港自动优选"),
+                    language.localized(copy::common::FOR_EXAMPLE_HONG_KONG_AUTO),
                     cx,
                 );
             });
         }
         if let Some(input) = self.inputs.policy_group_filter.as_ref() {
             input.update(cx, |input, cx| {
-                input.set_placeholder(
-                    language.text("For example: Hong Kong", "例如：Hong Kong"),
-                    cx,
-                );
+                input.set_placeholder(language.localized(copy::common::FOR_EXAMPLE_HONG_KONG), cx);
             });
         }
         cx.notify();
@@ -1042,12 +1047,12 @@ impl ManisApp {
 
         panel_surface("configuration-kernel", compact, theme)
             .child(section_heading(
-                language.text("Runtime kernel", "运行内核"),
+                language.localized(copy::configuration::RUNTIME_KERNEL),
                 "",
                 Some(
                     status_badge(
                         if self.kernel_switch_state.is_busy() {
-                            language.text("Validating", "正在校验")
+                            language.localized(copy::configuration::VALIDATING)
                         } else {
                             active.display_name()
                         },
@@ -1064,10 +1069,8 @@ impl ManisApp {
             ))
             .child(Self::kernel_option_row(
                 KernelKind::Mihomo,
-                language.text(
-                    "Subscriptions, policy groups, and latency tests",
-                    "支持订阅、策略组与测速",
-                ),
+                language
+                    .localized(copy::configuration::SUBSCRIPTIONS_POLICY_GROUPS_AND_LATENCY_TESTS),
                 !self.kernel_switch_state.is_busy() && active != KernelKind::Mihomo,
                 active == KernelKind::Mihomo,
                 language,
@@ -1089,10 +1092,7 @@ impl ManisApp {
     fn sing_box_support(&self, language: Language) -> (&'static str, bool) {
         if !mihomo::sing_box_binary_available() {
             return (
-                language.text(
-                    "sing-box was not found on this device",
-                    "本机未检测到 sing-box",
-                ),
+                language.localized(copy::configuration::SING_BOX_WAS_NOT_FOUND_ON_THIS_DEVICE),
                 false,
             );
         }
@@ -1102,26 +1102,19 @@ impl ManisApp {
             .any(|subscription| subscription.enabled)
         {
             return (
-                language.text(
-                    "Clash subscriptions are present; Manis needs its native parser first",
-                    "当前包含 Clash 订阅，需等待 Manis 原生订阅解析器",
-                ),
+                language.localized(copy::configuration::CLASH_SUBSCRIPTIONS_ARE_PRESENT_MANIS_NEEDS_ITS_NATIVE_PARSER_FIRST),
                 false,
             );
         }
         if self.saved_single_nodes.is_empty() {
             return (
-                language.text(
-                    "At least one saved VLESS node is required",
-                    "至少需要一个已保存的 VLESS 节点",
-                ),
+                language.localized(copy::configuration::AT_LEAST_ONE_SAVED_VLESS_NODE_IS_REQUIRED),
                 false,
             );
         }
         (
-            language.text(
-                "Supports manual VLESS, selectors, URL tests, and routing rules",
-                "支持手动 VLESS、选择器、自动测速与分流规则",
+            language.localized(
+                copy::configuration::SUPPORTS_MANUAL_VLESS_SELECTORS_URL_TESTS_AND_ROUTING_RULES,
             ),
             true,
         )
@@ -1141,11 +1134,13 @@ impl ManisApp {
         );
         let version = match &self.mihomo_core_update_state {
             MihomoCoreUpdateState::Ready(version) if version.is_empty() => {
-                language.text("Installed", "已安装")
+                language.localized(copy::configuration::INSTALLED)
             }
             MihomoCoreUpdateState::Ready(version) => version.as_str(),
-            MihomoCoreUpdateState::Missing => language.text("Not installed", "尚未安装"),
-            MihomoCoreUpdateState::Updating => language.text("Updating…", "正在更新…"),
+            MihomoCoreUpdateState::Missing => {
+                language.localized(copy::configuration::NOT_INSTALLED)
+            }
+            MihomoCoreUpdateState::Updating => language.localized(copy::configuration::UPDATING_2),
         };
         div()
             .mt(Space::Sm.px())
@@ -1168,16 +1163,15 @@ impl ManisApp {
             .child(
                 style_action_button(
                     Button::new("mihomo-core-update")
-                        .accessibility_label(language.text(
-                            "Download or update the Manis-managed Mihomo core",
-                            "下载或更新 Manis 托管的 Mihomo 内核",
+                        .accessibility_label(language.localized(
+                            copy::configuration::DOWNLOAD_OR_UPDATE_THE_MANIS_MANAGED_MIHOMO_CORE,
                         ))
                         .label(if updating {
-                            language.text("Updating…", "更新中…")
+                            language.localized(copy::configuration::UPDATING)
                         } else if missing {
-                            language.text("Download stable", "下载稳定版")
+                            language.localized(copy::configuration::DOWNLOAD_STABLE)
                         } else {
-                            language.text("Check for update", "检查更新")
+                            language.localized(copy::configuration::CHECK_FOR_UPDATE)
                         })
                         .icon(IconName::Redo2)
                         .loading(updating)
@@ -1234,7 +1228,7 @@ impl ManisApp {
                     .role(Role::Button)
                     .aria_label(format!(
                         "{} {}",
-                        language.text("Switch to", "切换到"),
+                        language.localized(copy::configuration::SWITCH_TO),
                         kind.display_name()
                     ))
                     .tab_stop(enabled)
@@ -1263,9 +1257,9 @@ impl ManisApp {
                         theme.text_tertiary
                     })
                     .child(if selected {
-                        language.text("Current", "当前使用")
+                        language.localized(copy::configuration::CURRENT_2)
                     } else {
-                        language.text("Switch and validate", "切换并校验")
+                        language.localized(copy::configuration::SWITCH_AND_VALIDATE)
                     })
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if enabled {
@@ -1294,11 +1288,8 @@ impl ManisApp {
             .bg(theme.surface_base)
             .child(Self::workspace_header(
                 language.message(Message::RoutingRules),
-                language.text(
-                    "Inspect the ordered rules that actually participate in matching; manage sources in Settings",
-                    "查看最终参与匹配的有序规则；来源请前往配置页管理",
-                ),
-                language.text("Top-down", "从上到下匹配"),
+                language.localized(copy::configuration::INSPECT_THE_ORDERED_RULES_THAT_ACTUALLY_PARTICIPATE_IN_MATCHING_MANAGE),
+                language.localized(copy::configuration::TOP_DOWN),
                 StatusTone::Route,
                 theme,
                 compact,
@@ -1356,7 +1347,7 @@ impl ManisApp {
         let saved_source_count = self.imported_subscriptions.len() + self.saved_single_nodes.len();
         let add_action = action_button(
             "configuration-add-proxy-source",
-            language.text("Add source", "添加来源"),
+            language.localized(copy::configuration::ADD_SOURCE),
             ActionRole::Primary,
             ControlSize::Compact,
         )
@@ -1369,19 +1360,16 @@ impl ManisApp {
 
         let panel = panel_surface("configuration-source", compact, theme)
             .child(section_heading(
-                language.text("Proxy sources", "代理来源"),
+                language.localized(copy::configuration::PROXY_SOURCES),
                 language.count(CountNoun::Source, saved_source_count),
                 Some(add_action.into_any_element()),
                 theme,
             ))
             .when_some(self.source_store_error, |panel, error| {
                 panel.child(Self::subscription_error(
-                    language.text("Some local sources could not be restored", "部分本地来源未能恢复"),
+                    language.localized(copy::configuration::SOME_LOCAL_SOURCES_COULD_NOT_BE_RESTORED),
                     error.to_string(),
-                    Some(language.text(
-                        "Other safely readable sources are kept; check the user data directory permissions.",
-                        "其余可安全读取的来源仍然保留；可检查用户数据目录权限。",
-                    )),
+                    Some(language.localized(copy::configuration::OTHER_SAFELY_READABLE_SOURCES_ARE_KEPT_CHECK_THE_USER_DATA)),
                     theme,
                 ))
             })
@@ -1399,21 +1387,18 @@ impl ManisApp {
                             .text_size(TextRole::Label.size())
                             .line_height(TextRole::Label.line_height())
                             .font_weight(TextRole::Label.weight())
-                            .child(language.text("Saved", "已保存")),
+                            .child(language.localized(copy::common::SAVED)),
                     ),
             )
             .when(saved_source_count == 0, |panel| {
                 panel.child(
                     empty_state(
-                        language.text("No proxy sources", "暂无代理来源"),
-                        language.text(
-                            "Add a subscription or a single-node source.",
-                            "添加订阅或单节点来源。",
-                        ),
+                        language.localized(copy::configuration::NO_PROXY_SOURCES),
+                        language.localized(copy::configuration::ADD_A_SUBSCRIPTION_OR_A_SINGLE_NODE_SOURCE),
                         Some(
                             action_button(
                                 "configuration-empty-add-proxy-source",
-                                language.text("Add source", "添加来源"),
+                                language.localized(copy::configuration::ADD_SOURCE),
                                 ActionRole::Primary,
                                 ControlSize::Compact,
                             )
@@ -1655,7 +1640,7 @@ impl ManisApp {
         }
         let trigger = Button::new("subscription-editor-refresh-interval")
             .accessibility_label(
-                language.text("Choose subscription update interval", "选择订阅更新间隔"),
+                language.localized(copy::configuration::CHOOSE_SUBSCRIPTION_UPDATE_INTERVAL),
             )
             .dropdown_caret(true)
             .with_variant(ButtonVariant::Default)
@@ -1701,27 +1686,36 @@ impl ManisApp {
             .px_5()
             .py_4()
             .when(!view.editing, |body| {
-                body.child(field_label(language.text("Source type", "来源类型"), theme))
-                    .child(Self::proxy_source_kind_picker(view, language, theme, cx))
+                body.child(field_label(
+                    language.localized(copy::configuration::SOURCE_TYPE),
+                    theme,
+                ))
+                .child(Self::proxy_source_kind_picker(view, language, theme, cx))
             })
             .child(field_label(
                 if view.direct_input {
-                    language.text("Node name", "节点名称")
+                    language.localized(copy::configuration::NODE_NAME)
                 } else {
-                    language.text("Source name", "来源名称")
+                    language.localized(copy::configuration::SOURCE_NAME)
                 },
                 theme,
             ))
             .child(inputs.name)
-            .child(field_label(language.text("Source URL", "来源 URL"), theme).mt_4())
+            .child(field_label(language.localized(copy::configuration::SOURCE_URL), theme).mt_4())
             .child(inputs.source)
             .when(!view.direct_input, |body| {
-                body.child(field_label(language.text("Update interval", "更新间隔"), theme).mt_4())
-                    .child(inputs.interval_select)
+                body.child(
+                    field_label(
+                        language.localized(copy::configuration::UPDATE_INTERVAL),
+                        theme,
+                    )
+                    .mt_4(),
+                )
+                .child(inputs.interval_select)
             })
             .child(
                 Checkbox::new("proxy-source-editor-enabled")
-                    .label(language.text("Use this source", "使用此来源"))
+                    .label(language.localized(copy::configuration::USE_THIS_SOURCE))
                     .checked(view.enabled)
                     .disabled(view.busy())
                     .tab_stop(!view.busy())
@@ -1768,10 +1762,10 @@ impl ManisApp {
                     id,
                     match kind {
                         ProxySourceEditorKind::Subscription => {
-                            language.text("Subscription", "订阅来源")
+                            language.localized(copy::configuration::SUBSCRIPTION)
                         }
                         ProxySourceEditorKind::SingleNode => {
-                            language.text("Single node", "单节点来源")
+                            language.localized(copy::configuration::SINGLE_NODE_2)
                         }
                     },
                     if selected {
@@ -1835,11 +1829,11 @@ impl ManisApp {
                 style_action_button(
                     Button::new("save-proxy-source")
                         .label(if view.busy() {
-                            language.text("Processing…", "正在处理…")
+                            language.localized(copy::configuration::PROCESSING)
                         } else if view.editing {
                             language.message(Message::SaveChanges)
                         } else {
-                            language.text("Add source", "添加来源")
+                            language.localized(copy::configuration::ADD_SOURCE)
                         })
                         .loading(view.busy()),
                     ActionRole::Primary,
@@ -1880,9 +1874,9 @@ impl ManisApp {
                     .text_size(px(17.0))
                     .font_weight(TextRole::SectionTitle.weight())
                     .child(if view.editing {
-                        language.text("Edit proxy source", "编辑代理来源")
+                        language.localized(copy::configuration::EDIT_PROXY_SOURCE)
                     } else {
-                        language.text("Add proxy source", "添加代理来源")
+                        language.localized(copy::configuration::ADD_PROXY_SOURCE)
                     }),
             )
             .child(
@@ -1891,15 +1885,9 @@ impl ManisApp {
                     .text_size(TextRole::Metadata.size())
                     .text_color(theme.text_secondary)
                     .child(if view.direct_input {
-                        language.text(
-                            "A single-node source does not need an update interval.",
-                            "单节点来源不需要更新间隔。",
-                        )
+                        language.localized(copy::configuration::A_SINGLE_NODE_SOURCE_DOES_NOT_NEED_AN_UPDATE_INTERVAL)
                     } else {
-                        language.text(
-                            "Choose a subscription or a single-node share link.",
-                            "请选择订阅来源或单节点分享链接。",
-                        )
+                        language.localized(copy::configuration::CHOOSE_A_SUBSCRIPTION_OR_A_SINGLE_NODE_SHARE_LINK)
                     }),
             )
     }
@@ -1918,7 +1906,7 @@ impl ManisApp {
         if name.is_empty() {
             self.proxy_source_editor.error = Some(
                 self.language()
-                    .text("Enter a source name", "请输入来源名称")
+                    .localized(copy::configuration::ENTER_A_SOURCE_NAME)
                     .to_owned(),
             );
             cx.notify();
@@ -1944,10 +1932,7 @@ impl ManisApp {
                 if self.proxy_source_editor.subscription_source_id.is_some() {
                     self.proxy_source_editor.error = Some(
                         self.language()
-                            .text(
-                                "An existing subscription must keep an HTTP/HTTPS URL",
-                                "现有订阅必须使用 HTTP/HTTPS URL",
-                            )
+                            .localized(copy::configuration::AN_EXISTING_SUBSCRIPTION_MUST_KEEP_AN_HTTP_HTTPS_URL)
                             .to_owned(),
                     );
                     cx.notify();
@@ -1959,10 +1944,7 @@ impl ManisApp {
                 if self.proxy_source_editor.single_node_source_id.is_some() {
                     self.proxy_source_editor.error = Some(
                         self.language()
-                            .text(
-                                "This source must remain a single-node share link",
-                                "此来源必须保持为单节点分享链接",
-                            )
+                            .localized(copy::configuration::THIS_SOURCE_MUST_REMAIN_A_SINGLE_NODE_SHARE_LINK)
                             .to_owned(),
                     );
                     cx.notify();
@@ -1987,7 +1969,7 @@ impl ManisApp {
                 self.status = format!(
                     "{}: {error}",
                     self.language()
-                        .text("Source recognition failed", "来源识别失败")
+                        .localized(copy::configuration::SOURCE_RECOGNITION_FAILED)
                 );
                 trace_ui(UiEvent::SourceRecognitionFailed);
                 cx.notify();
@@ -2007,10 +1989,7 @@ impl ManisApp {
             self.proxy_source_editor.feedback =
                 SubscriptionFeedback::StoreFailed(SubscriptionStoreError::DataDirectoryUnavailable);
             self.language()
-                .text(
-                    "Could not determine where to save the node",
-                    "无法确定节点保存位置",
-                )
+                .localized(copy::configuration::COULD_NOT_DETERMINE_WHERE_TO_SAVE_THE_NODE)
                 .clone_into(&mut self.status);
             trace_ui(UiEvent::SourceImportFailed);
             cx.notify();
@@ -2020,10 +1999,7 @@ impl ManisApp {
         let generation = self.subscription_preview_generation;
         self.proxy_source_editor.feedback = SubscriptionFeedback::Importing(SourceKind::SingleNode);
         self.language()
-            .text(
-                "Validating and saving single-node source",
-                "正在验证并保存单节点来源",
-            )
+            .localized(copy::configuration::VALIDATING_AND_SAVING_SINGLE_NODE_SOURCE)
             .clone_into(&mut self.status);
         if let Some(input) = self.proxy_source_editor.input.as_ref() {
             input.update(cx, |input, cx| input.set_enabled(false, cx));
@@ -2089,7 +2065,7 @@ impl ManisApp {
                 self.status = format!(
                     "{}: {error}",
                     self.language()
-                        .text("Single-node source save failed", "单节点来源保存失败")
+                        .localized(copy::configuration::SINGLE_NODE_SOURCE_SAVE_FAILED)
                 );
                 trace_ui(UiEvent::SourceImportFailed);
                 cx.notify();
@@ -2111,7 +2087,7 @@ impl ManisApp {
                 SubscriptionFeedback::StoreFailed(SubscriptionStoreError::StoreUnavailable);
             self.status = format!(
                 "{}{}",
-                language.text("Single-node source save failed", "单节点来源保存失败"),
+                language.localized(copy::configuration::SINGLE_NODE_SOURCE_SAVE_FAILED),
                 transaction
                     .apply
                     .status_suffix_after_source_rollback(language)
@@ -2175,11 +2151,15 @@ impl ManisApp {
             .sum::<usize>();
         let (state, activity) = match &subscription.state {
             ImportedSubscriptionState::None => (
-                language.text("Disabled", "未启用").to_owned(),
+                language
+                    .localized(copy::configuration::DISABLED_2)
+                    .to_owned(),
                 SubscriptionCardActivity::Idle { healthy: true },
             ),
             ImportedSubscriptionState::Pending(_) | ImportedSubscriptionState::Refreshing(_) => (
-                language.text("Updating…", "正在更新…").to_owned(),
+                language
+                    .localized(copy::configuration::UPDATING_2)
+                    .to_owned(),
                 SubscriptionCardActivity::Busy,
             ),
             ImportedSubscriptionState::Ready(kind) => (
@@ -2198,11 +2178,13 @@ impl ManisApp {
             ),
             ImportedSubscriptionState::Unavailable(_, _)
             | ImportedSubscriptionState::StoreError(_) => (
-                language.text("Update failed", "更新失败").to_owned(),
+                language
+                    .localized(copy::configuration::UPDATE_FAILED)
+                    .to_owned(),
                 SubscriptionCardActivity::Idle { healthy: false },
             ),
             ImportedSubscriptionState::Removing(_) => (
-                language.text("Removing…", "正在移除…").to_owned(),
+                language.localized(copy::configuration::REMOVING).to_owned(),
                 SubscriptionCardActivity::Busy,
             ),
         };
@@ -2236,7 +2218,7 @@ impl ManisApp {
         div()
             .id(format!("subscription-card-{card_edit_id}"))
             .role(Role::Button)
-            .aria_label(language.text("Edit this subscription", "编辑这个订阅"))
+            .aria_label(language.localized(copy::configuration::EDIT_THIS_SUBSCRIPTION))
             .tab_stop(controls_enabled)
             .focusable()
             .when(controls_enabled, gpui::Styled::cursor_pointer)
@@ -2304,7 +2286,7 @@ impl ManisApp {
                     .on_click(cx.listener(move |this, _, _, cx| {
                         cx.stop_propagation();
                         if controls_enabled {
-                            this.set_subscription_enabled(toggle_id.clone(), !enabled, cx);
+                            this.set_subscription_enabled(&toggle_id, !enabled, cx);
                         }
                     })),
             )
@@ -2379,15 +2361,15 @@ impl ManisApp {
                 action_button(
                     format!("subscription-refresh-{refresh_id}"),
                     if busy {
-                        language.text("Updating…", "更新中…")
+                        language.localized(copy::configuration::UPDATING)
                     } else {
-                        language.text("Update now", "立即更新")
+                        language.localized(copy::configuration::UPDATE_NOW)
                     },
                     ActionRole::Quiet,
                     ControlSize::Compact,
                 )
                 .accessibility_label(
-                    language.text("Update this subscription now", "立即更新这个订阅"),
+                    language.localized(copy::configuration::UPDATE_THIS_SUBSCRIPTION_NOW),
                 )
                 .disabled(!refresh_enabled)
                 .loading(busy)
@@ -2408,11 +2390,13 @@ impl ManisApp {
                 row.child(
                     action_button(
                         format!("remove-{remove_id}"),
-                        language.text("Remove", "移除"),
+                        language.localized(copy::configuration::REMOVE),
                         ActionRole::Quiet,
                         ControlSize::Compact,
                     )
-                    .accessibility_label(language.text("Remove this subscription", "移除这个订阅"))
+                    .accessibility_label(
+                        language.localized(copy::configuration::REMOVE_THIS_SUBSCRIPTION),
+                    )
                     .cursor_pointer()
                     .px_3()
                     .text_color(theme.status_error)
@@ -2447,7 +2431,7 @@ impl ManisApp {
         div()
             .id(format!("single-node-card-{card_edit_id}"))
             .role(Role::Button)
-            .aria_label(language.text("Edit this single-node source", "编辑这个单节点来源"))
+            .aria_label(language.localized(copy::configuration::EDIT_THIS_SINGLE_NODE_SOURCE))
             .tab_stop(controls_enabled)
             .focusable()
             .when(controls_enabled, gpui::Styled::cursor_pointer)
@@ -2574,12 +2558,12 @@ impl ManisApp {
                 row.child(
                     action_button(
                         format!("remove-single-node-{remove_id}"),
-                        language.text("Remove", "移除"),
+                        language.localized(copy::configuration::REMOVE),
                         ActionRole::Quiet,
                         ControlSize::Compact,
                     )
                     .accessibility_label(
-                        language.text("Remove single-node source", "移除单节点来源"),
+                        language.localized(copy::configuration::REMOVE_SINGLE_NODE_SOURCE),
                     )
                     .cursor_pointer()
                     .px_3()
@@ -2621,13 +2605,13 @@ impl ManisApp {
                             }
                             this.status = format!(
                                 "{}{}",
-                                language.text("Single-node source updated", "单节点来源已更新"),
+                                language.localized(copy::configuration::SINGLE_NODE_SOURCE_UPDATED),
                                 transaction.apply.status_suffix(language)
                             );
                         } else {
                             this.status = format!(
                                 "{}{}",
-                                language.text("Could not update source", "无法更新来源"),
+                                language.localized(copy::configuration::COULD_NOT_UPDATE_SOURCE),
                                 transaction.apply.status_suffix_after_rollback_attempt(
                                     language,
                                     transaction.rollback_error.as_ref(),
@@ -2639,7 +2623,7 @@ impl ManisApp {
                         this.status = format!(
                             "{}: {error}",
                             this.language()
-                                .text("Could not update source", "无法更新来源")
+                                .localized(copy::configuration::COULD_NOT_UPDATE_SOURCE)
                         );
                     }
                 }
@@ -2673,13 +2657,13 @@ impl ManisApp {
                             this.saved_single_nodes.retain(|node| node.id != deleted_id);
                             this.status = format!(
                                 "{}{}",
-                                language.text("Single-node source removed", "单节点来源已移除"),
+                                language.localized(copy::configuration::SINGLE_NODE_SOURCE_REMOVED),
                                 transaction.apply.status_suffix(language)
                             );
                         } else {
                             this.status = format!(
                                 "{}{}",
-                                language.text("Failed to remove source", "移除来源失败"),
+                                language.localized(copy::configuration::FAILED_TO_REMOVE_SOURCE),
                                 transaction.apply.status_suffix_after_rollback_attempt(
                                     language,
                                     transaction.rollback_error.as_ref(),
@@ -2691,7 +2675,7 @@ impl ManisApp {
                         this.status = format!(
                             "{}: {error}",
                             this.language()
-                                .text("Failed to remove source", "移除来源失败")
+                                .localized(copy::configuration::FAILED_TO_REMOVE_SOURCE)
                         );
                     }
                 }
@@ -2753,7 +2737,7 @@ impl ManisApp {
         let language = self.language();
         let add_action = action_button(
             "configuration-add-rule-source",
-            language.text("Add source", "添加来源"),
+            language.localized(copy::configuration::ADD_SOURCE),
             ActionRole::Primary,
             ControlSize::Compact,
         )
@@ -2765,7 +2749,7 @@ impl ManisApp {
         }));
         let mut panel = panel_surface("configuration-rule-sources", compact, theme)
             .child(section_heading(
-                language.text("Rule sources", "规则来源"),
+                language.localized(copy::configuration::RULE_SOURCES),
                 language.count(CountNoun::Source, self.rule_sources.sources.len()),
                 Some(add_action.into_any_element()),
                 theme,
@@ -2784,19 +2768,19 @@ impl ManisApp {
                             .text_size(TextRole::Label.size())
                             .line_height(TextRole::Label.line_height())
                             .font_weight(TextRole::Label.weight())
-                            .child(language.text("Saved", "已保存")),
+                            .child(language.localized(copy::common::SAVED)),
                     ),
             );
 
         if self.rule_sources.sources.is_empty() {
             panel = panel.child(
                 empty_state(
-                    language.text("No rule sources", "暂无规则源"),
-                    language.text("Add a remote QX rule set.", "添加一个远程 QX 规则集。"),
+                    language.localized(copy::configuration::NO_RULE_SOURCES),
+                    language.localized(copy::configuration::ADD_A_REMOTE_QX_RULE_SET),
                     Some(
                         action_button(
                             "configuration-empty-add-rule-source",
-                            language.text("Add source", "添加来源"),
+                            language.localized(copy::configuration::ADD_SOURCE),
                             ActionRole::Primary,
                             ControlSize::Compact,
                         )
@@ -2909,11 +2893,26 @@ impl ManisApp {
             .overflow_y_scroll()
             .px_5()
             .py_4()
-            .child(field_label(language.text("Rule URL", "规则 URL"), theme))
+            .child(field_label(
+                language.localized(copy::configuration::RULE_URL),
+                theme,
+            ))
             .child(input.clone())
-            .child(field_label(language.text("Target policy", "目标策略"), theme).mt_4())
+            .child(
+                field_label(
+                    language.localized(copy::configuration::TARGET_POLICY),
+                    theme,
+                )
+                .mt_4(),
+            )
             .child(self.qx_rule_target_select(view, language, theme, cx))
-            .child(field_label(language.text("Update interval", "更新间隔"), theme).mt_4())
+            .child(
+                field_label(
+                    language.localized(copy::configuration::UPDATE_INTERVAL),
+                    theme,
+                )
+                .mt_4(),
+            )
             .child(self.qx_rule_interval_select(view, language, theme, cx))
             .child(self.qx_rule_import_feedback(theme, language));
         let app = cx.entity();
@@ -2963,7 +2962,7 @@ impl ManisApp {
             ));
         }
         let trigger = Button::new("qx-rule-editor-target")
-            .accessibility_label(language.text("Choose target policy", "选择目标策略"))
+            .accessibility_label(language.localized(copy::configuration::CHOOSE_TARGET_POLICY))
             .dropdown_caret(true)
             .with_variant(ButtonVariant::Default)
             .with_size(ControlSize::Standard.component_size())
@@ -3022,7 +3021,9 @@ impl ManisApp {
             ));
         }
         let trigger = Button::new("qx-rule-editor-refresh-interval")
-            .accessibility_label(language.text("Choose rule update interval", "选择规则更新间隔"))
+            .accessibility_label(
+                language.localized(copy::configuration::CHOOSE_RULE_UPDATE_INTERVAL),
+            )
             .dropdown_caret(true)
             .with_variant(ButtonVariant::Default)
             .with_size(ControlSize::Standard.component_size())
@@ -3125,11 +3126,11 @@ impl ManisApp {
                 style_action_button(
                     Button::new("save-qx-rule-source")
                         .label(if view.busy {
-                            language.text("Processing…", "正在处理…")
+                            language.localized(copy::configuration::PROCESSING)
                         } else if view.editing {
                             language.message(Message::SaveChanges)
                         } else {
-                            language.text("Add source", "添加来源")
+                            language.localized(copy::configuration::ADD_SOURCE)
                         })
                         .loading(view.busy),
                     ActionRole::Primary,
@@ -3166,9 +3167,9 @@ impl ManisApp {
                     .text_size(px(17.0))
                     .font_weight(TextRole::SectionTitle.weight())
                     .child(if editing {
-                        language.text("Edit rule source", "编辑规则来源")
+                        language.localized(copy::configuration::EDIT_RULE_SOURCE)
                     } else {
-                        language.text("Add rule source", "添加规则来源")
+                        language.localized(copy::configuration::ADD_RULE_SOURCE)
                     }),
             )
             .child(
@@ -3176,9 +3177,8 @@ impl ManisApp {
                     .mt_1()
                     .text_size(TextRole::Metadata.size())
                     .text_color(theme.text_secondary)
-                    .child(language.text(
-                        "The target policy is used by every rule in this source.",
-                        "此来源中的全部规则都会使用所选目标策略。",
+                    .child(language.localized(
+                        copy::configuration::THE_TARGET_POLICY_IS_USED_BY_EVERY_RULE_IN_THIS,
                     )),
             )
     }
@@ -3198,7 +3198,7 @@ impl ManisApp {
         div()
             .id(format!("qx-rule-source-card-{}", source.id))
             .role(Role::Button)
-            .aria_label(language.text("Edit this rule source", "编辑这个规则来源"))
+            .aria_label(language.localized(copy::configuration::EDIT_THIS_RULE_SOURCE))
             .tab_stop(controls_enabled)
             .focusable()
             .when(controls_enabled, gpui::Styled::cursor_pointer)
@@ -3341,13 +3341,13 @@ impl ManisApp {
             })
             .when(presentation.duplicate, |header| {
                 header.child(Self::rule_source_state_label(
-                    language.text("Already added", "已添加"),
+                    language.localized(copy::configuration::ALREADY_ADDED),
                     theme.status_warning,
                 ))
             })
             .when(!enabled, |header| {
                 header.child(Self::rule_source_state_label(
-                    language.text("Disabled", "未启用"),
+                    language.localized(copy::configuration::DISABLED_2),
                     theme.text_tertiary,
                 ))
             })
@@ -3378,7 +3378,7 @@ impl ManisApp {
             .text_color(theme.route_trace)
             .child(format!(
                 "{}: {error}",
-                language.text("Last update failed", "上次更新失败")
+                language.localized(copy::configuration::LAST_UPDATE_FAILED)
             ))
     }
 
@@ -3417,7 +3417,7 @@ impl ManisApp {
             .child("·")
             .child(format!(
                 "{} {}",
-                language.text("Target", "目标"),
+                language.localized(copy::configuration::TARGET),
                 presentation.target_policy
             ))
             .child("·")
@@ -3436,7 +3436,7 @@ impl ManisApp {
             .child(
                 action_button(
                     format!("qx-rule-remove-{index}"),
-                    language.text("Remove", "移除"),
+                    language.localized(copy::configuration::REMOVE),
                     ActionRole::Quiet,
                     ControlSize::Compact,
                 )
@@ -3464,9 +3464,9 @@ impl ManisApp {
         action_button(
             format!("qx-rule-refresh-{id}"),
             if refreshing {
-                language.text("Updating…", "更新中…")
+                language.localized(copy::configuration::UPDATING)
             } else {
-                language.text("Update now", "立即更新")
+                language.localized(copy::configuration::UPDATE_NOW)
             },
             ActionRole::Quiet,
             ControlSize::Compact,
@@ -3552,7 +3552,7 @@ impl ManisApp {
         let updating = self.rule_sources.target_updates.contains_key(&source.id);
         let menu = self.qx_rule_source_target_menu(&source.id, &selected_target, theme, cx);
         let display_value = if updating {
-            language.text("Saving…", "保存中…").to_owned()
+            language.localized(copy::configuration::SAVING).to_owned()
         } else {
             format!(
                 "{} · {selected_target}",
@@ -3560,10 +3560,9 @@ impl ManisApp {
             )
         };
         let trigger = Button::new(format!("qx-rule-target-select-{}", source.id))
-            .accessibility_label(language.text(
-                "Change target policy for this rule source",
-                "修改这个规则源的目标策略",
-            ))
+            .accessibility_label(
+                language.localized(copy::configuration::CHANGE_TARGET_POLICY_FOR_THIS_RULE_SOURCE),
+            )
             .dropdown_caret(true)
             .with_variant(ButtonVariant::Default)
             .with_size(ControlSize::Compact.component_size())
@@ -3774,7 +3773,7 @@ impl ManisApp {
                 self.status = format!(
                     "{}{error}",
                     self.language()
-                        .text("Could not read manual rules: ", "无法读取手动分流规则：")
+                        .localized(copy::configuration::COULD_NOT_READ_MANUAL_RULES)
                 );
             }
         }
@@ -3966,7 +3965,7 @@ impl ManisApp {
         }
         let completion = self
             .language()
-            .text("Manual rules updated", "手动分流规则已更新")
+            .localized(copy::configuration::MANUAL_RULES_UPDATED)
             .to_owned();
         if !self.persist_manual_rules(completion, previous_rules.clone(), cx) {
             self.manual_rules = previous_rules;
@@ -3999,7 +3998,7 @@ impl ManisApp {
         let removed = self.manual_rules.remove(index);
         let completion = self
             .language()
-            .text("Manual rule removed", "手动规则已删除")
+            .localized(copy::configuration::MANUAL_RULE_REMOVED)
             .to_owned();
         if !self.persist_manual_rules(completion, previous_rules.clone(), cx) {
             self.manual_rules = previous_rules;
@@ -4028,18 +4027,11 @@ impl ManisApp {
         rule.set_enabled(enabled);
         let completion = self
             .language()
-            .text(
-                if enabled {
-                    "Manual rule enabled"
-                } else {
-                    "Manual rule disabled"
-                },
-                if enabled {
-                    "手动规则已启用"
-                } else {
-                    "手动规则已禁用"
-                },
-            )
+            .localized(if enabled {
+                copy::configuration::MANUAL_RULE_ENABLED
+            } else {
+                copy::configuration::MANUAL_RULE_DISABLED
+            })
             .to_owned();
         if !self.persist_manual_rules(completion, previous_rules.clone(), cx) {
             self.manual_rules = previous_rules;
@@ -4173,9 +4165,8 @@ impl ManisApp {
                         "{}{} · {}{rollback_error}",
                         completion,
                         apply.status_suffix(this.language()),
-                        this.language().text(
-                            "could not restore the previous saved rules: ",
-                            "无法恢复先前保存的规则：",
+                        this.language().localized(
+                            copy::configuration::COULD_NOT_RESTORE_THE_PREVIOUS_SAVED_RULES
                         )
                     )
                 } else {
@@ -4246,9 +4237,9 @@ impl ManisApp {
         }
         let language = self.language();
         let completion = if direction < 0 {
-            language.text("Rule group moved up", "规则分组已上移")
+            language.localized(copy::configuration::RULE_GROUP_MOVED_UP)
         } else {
-            language.text("Rule group moved down", "规则分组已下移")
+            language.localized(copy::configuration::RULE_GROUP_MOVED_DOWN)
         }
         .to_owned();
         self.start_routing_runtime_apply(
@@ -4289,11 +4280,11 @@ impl ManisApp {
             let detail = if supported {
                 manual_rule_kind_detail(kind, language)
             } else if kind == crate::manual_rule::ManualRuleKind::Final {
-                language.text("Already configured", "已经配置")
+                language.localized(copy::configuration::ALREADY_CONFIGURED)
             } else if kind == crate::manual_rule::ManualRuleKind::UserAgent {
-                language.text("No exact kernel equivalent", "内核无精确等价规则")
+                language.localized(copy::configuration::NO_EXACT_KERNEL_EQUIVALENT)
             } else {
-                language.text("Available with Mihomo", "仅 Mihomo 可用")
+                language.localized(copy::configuration::AVAILABLE_WITH_MIHOMO)
             };
             choices = choices.child(
                 div()
@@ -4447,7 +4438,7 @@ impl ManisApp {
         let kind_open = self.manual_rule_popover == Some(kind_popover);
         let kind_menu = self.manual_rule_kind_menu(condition_index, kind, theme, language, cx);
         let select_id = format!("manual-rule-kind-select-{condition_index}");
-        let label = language.text("Choose condition type", "选择条件类型");
+        let label = language.localized(copy::configuration::CHOOSE_CONDITION_TYPE);
         let app = cx.entity();
         let kind_select = Self::manual_rule_select(
             &select_id,
@@ -4468,7 +4459,7 @@ impl ManisApp {
             .mt_3()
             .child(div().child(field_label(
                 if condition_index == 0 {
-                    language.text("Condition 1", "条件 1").to_owned()
+                    language.localized(copy::configuration::CONDITION_1).to_owned()
                 } else if language == Language::English {
                     format!("AND · Condition {}", condition_index + 1)
                 } else {
@@ -4506,10 +4497,7 @@ impl ManisApp {
                                         .text_size(TextRole::Body.size())
                                         .line_height(TextRole::Body.line_height())
                                         .text_color(theme.text_secondary)
-                                        .child(language.text(
-                                            "Matches only after every rule above misses",
-                                            "仅在上方所有规则均未命中时生效",
-                                        )),
+                                        .child(language.localized(copy::configuration::MATCHES_ONLY_AFTER_EVERY_RULE_ABOVE_MISSES)),
                                 )
                             }),
                     ),
@@ -4517,8 +4505,10 @@ impl ManisApp {
         if condition_index > 0 {
             row = row.child(
                 Button::new(format!("remove-manual-rule-condition-{condition_index}"))
-                    .accessibility_label(language.text("Remove this condition", "移除这个条件"))
-                    .label(language.text("Remove condition", "移除条件"))
+                    .accessibility_label(
+                        language.localized(copy::configuration::REMOVE_THIS_CONDITION),
+                    )
+                    .label(language.localized(copy::configuration::REMOVE_CONDITION))
                     .text()
                     .with_size(ControlSize::Compact.component_size())
                     .h(ControlSize::Compact.height())
@@ -4549,7 +4539,7 @@ impl ManisApp {
         let app = cx.entity();
         let target = Self::manual_rule_select(
             "manual-rule-target-select",
-            language.text("Choose target policy", "选择目标策略"),
+            language.localized(copy::configuration::CHOOSE_TARGET_POLICY),
             self.manual_rule_target.clone(),
             target_menu,
             target_open,
@@ -4638,8 +4628,8 @@ impl ManisApp {
         }
         conditions.child(
             Button::new("add-manual-rule-condition")
-                .accessibility_label(language.text("Add an AND condition", "添加并且条件"))
-                .label(language.text("+ Add AND condition", "+ 添加“并且”条件"))
+                .accessibility_label(language.localized(copy::configuration::ADD_AN_AND_CONDITION))
+                .label(language.localized(copy::configuration::ADD_AND_CONDITION))
                 .with_variant(ButtonVariant::Default)
                 .with_size(ControlSize::Standard.component_size())
                 .h(ControlSize::Standard.height())
@@ -4673,7 +4663,7 @@ impl ManisApp {
                 div()
                     .mt_4()
                     .child(field_label(
-                        language.text("Policy group after match", "命中后的策略组"),
+                        language.localized(copy::configuration::POLICY_GROUP_AFTER_MATCH),
                         theme,
                     ))
                     .child(target),
@@ -4765,9 +4755,9 @@ impl ManisApp {
                     .text_size(px(17.0))
                     .font_weight(TextRole::SectionTitle.weight())
                     .child(if editing {
-                        language.text("Edit routing rule", "编辑分流规则")
+                        language.localized(copy::configuration::EDIT_ROUTING_RULE)
                     } else {
-                        language.text("Add routing rule", "添加分流规则")
+                        language.localized(copy::configuration::ADD_ROUTING_RULE)
                     }),
             )
             .child(
@@ -4776,15 +4766,9 @@ impl ManisApp {
                     .text_size(TextRole::Metadata.size())
                     .text_color(theme.text_secondary)
                     .child(if final_selected {
-                        language.text(
-                            "FINAL is always evaluated last and handles unmatched traffic.",
-                            "FINAL 始终最后匹配，用于处理此前未命中的流量。",
-                        )
+                        language.localized(copy::configuration::FINAL_IS_ALWAYS_EVALUATED_LAST_AND_HANDLES_UNMATCHED_TRAFFIC)
                     } else {
-                        language.text(
-                            "All conditions must match. Group order determines rule priority.",
-                            "同一条规则中的条件必须全部命中；分组顺序决定规则优先级。",
-                        )
+                        language.localized(copy::configuration::ALL_CONDITIONS_MUST_MATCH_GROUP_ORDER_DETERMINES_RULE_PRIORITY)
                     }),
             )
     }
@@ -4881,7 +4865,7 @@ impl ManisApp {
                         .line_height(TextRole::Metadata.line_height())
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(theme.text_tertiary)
-                        .child(language.text("Disabled", "已禁用")),
+                        .child(language.localized(copy::configuration::DISABLED)),
                 )
             });
         Self::manual_rule_context_menu(row, index, enabled, language, cx.entity())
@@ -4959,7 +4943,7 @@ impl ManisApp {
                         .text_size(TextRole::Metadata.size())
                         .line_height(TextRole::Metadata.line_height())
                         .text_color(secondary_text)
-                        .child(language.text("Fallback · always last", "兜底规则 · 始终最后")),
+                        .child(language.localized(copy::configuration::FALLBACK_ALWAYS_LAST)),
                 );
         }
         let mut matchers = div()
@@ -4978,7 +4962,7 @@ impl ManisApp {
                         .line_height(TextRole::Metadata.line_height())
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(theme.text_tertiary)
-                        .child(language.text("AND", "并且")),
+                        .child(language.localized(copy::configuration::AND)),
                 );
             }
             matchers = matchers.child(
@@ -5145,11 +5129,8 @@ impl ManisApp {
         if group_order.is_empty() {
             list = list.child(
                 empty_state(
-                    language.text("No routing rules yet", "还没有分流规则"),
-                    language.text(
-                        "Add rules to send matching connections through a policy group. Rules are evaluated from top to bottom.",
-                        "添加规则，将匹配的连接交给指定策略组。规则会按从上到下的顺序生效。",
-                    ),
+                    language.localized(copy::configuration::NO_ROUTING_RULES_YET),
+                    language.localized(copy::configuration::ADD_RULES_TO_SEND_MATCHING_CONNECTIONS_THROUGH_A_POLICY_GROUP),
                     None,
                     theme,
                 )
@@ -5195,10 +5176,9 @@ impl ManisApp {
                     .justify_between()
                     .gap(Space::Md.px())
                     .child(section_heading(
-                        language.text("Active rules", "生效规则"),
-                        language.text(
-                            "Groups match from top to bottom; use the arrows to change priority.",
-                            "分组从上到下匹配；使用箭头调整优先级。",
+                        language.localized(copy::configuration::ACTIVE_RULES),
+                        language.localized(
+                            copy::configuration::GROUPS_MATCH_FROM_TOP_TO_BOTTOM_USE_THE_ARROWS_TO,
                         ),
                         None,
                         theme,
@@ -5243,7 +5223,7 @@ impl ManisApp {
             theme,
             ..
         } = view;
-        let group_name = language.text("Manual rules", "手动规则");
+        let group_name = language.localized(copy::common::MANUAL_RULES);
         let detail = match (disabled_count, language) {
             (0, Language::English) => format!(
                 "{} · Saved locally",
@@ -5547,19 +5527,13 @@ impl ManisApp {
         let (message, color) = match &self.rule_sources.feedback {
             QxRuleImportFeedback::Idle => (
                 language
-                    .text(
-                        "HTTPS only · Up to 1 MiB · Invalid lines are counted separately",
-                        "只接受 HTTPS · 最多 1 MiB · 无效行会单独计数",
-                    )
+                    .localized(copy::configuration::HTTPS_ONLY_UP_TO_1_MIB_INVALID_LINES_ARE_COUNTED)
                     .to_owned(),
                 theme.text_secondary,
             ),
             QxRuleImportFeedback::Importing => (
                 language
-                    .text(
-                        "Securely downloading, parsing, and writing locally…",
-                        "正在安全下载、解析并写入本机…",
-                    )
+                    .localized(copy::configuration::SECURELY_DOWNLOADING_PARSING_AND_WRITING_LOCALLY)
                     .to_owned(),
                 theme.action_primary,
             ),
@@ -5600,10 +5574,7 @@ impl ManisApp {
             ),
             QxRuleImportFeedback::InvalidDocument => (
                 language
-                    .text(
-                        "File downloaded, but no recognizable QX domain rules were found",
-                        "文件已下载，但没有可识别的 QX 域名规则",
-                    )
+                    .localized(copy::configuration::FILE_DOWNLOADED_BUT_NO_RECOGNIZABLE_QX_DOMAIN_RULES_WERE_FOUND)
                     .to_owned(),
                 theme.status_error,
             ),
@@ -5640,7 +5611,11 @@ impl ManisApp {
             return target.to_owned();
         }
         self.managed_policies.groups.first().map_or_else(
-            || language.text("Global exit", "全局出口").to_owned(),
+            || {
+                language
+                    .localized(copy::configuration::GLOBAL_EXIT)
+                    .to_owned()
+            },
             |group| group.name.clone(),
         )
     }
@@ -5666,10 +5641,7 @@ impl ManisApp {
             self.rule_sources.feedback =
                 QxRuleImportFeedback::StoreFailed(SubscriptionStoreError::InvalidSource);
             self.language()
-                .text(
-                    "Enter a valid HTTPS rule URL",
-                    "请输入有效的 HTTPS 规则地址",
-                )
+                .localized(copy::configuration::ENTER_A_VALID_HTTPS_RULE_URL)
                 .clone_into(&mut self.status);
             cx.notify();
             return false;
@@ -5678,10 +5650,7 @@ impl ManisApp {
             self.rule_sources.feedback =
                 QxRuleImportFeedback::StoreFailed(SubscriptionStoreError::DataDirectoryUnavailable);
             self.language()
-                .text(
-                    "Could not determine where to save rules",
-                    "无法确定规则保存位置",
-                )
+                .localized(copy::configuration::COULD_NOT_DETERMINE_WHERE_TO_SAVE_RULES)
                 .clone_into(&mut self.status);
             record_operation(
                 operation_id,
@@ -5704,7 +5673,7 @@ impl ManisApp {
         let generation = self.rule_sources.import_generation;
         self.rule_sources.feedback = QxRuleImportFeedback::Importing;
         self.language()
-            .text("Downloading and parsing QX rules", "正在下载并解析 QX 规则")
+            .localized(copy::configuration::DOWNLOADING_AND_PARSING_QX_RULES)
             .clone_into(&mut self.status);
         input.update(cx, |input, cx| input.set_enabled(false, cx));
         let runtime = self.runtime.clone();
@@ -5765,10 +5734,7 @@ impl ManisApp {
             target_policy: target_policy.clone(),
         };
         self.language()
-            .text(
-                "Rule source already exists; no duplicate was added",
-                "规则源已存在，未重复添加",
-            )
+            .localized(copy::configuration::RULE_SOURCE_ALREADY_EXISTS_NO_DUPLICATE_WAS_ADDED)
             .clone_into(&mut self.status);
         record_operation(
             operation_id,
@@ -5886,10 +5852,7 @@ impl ManisApp {
             target_policy: target_policy.clone(),
         };
         self.language()
-            .text(
-                "Rule source already exists; no duplicate was added",
-                "规则源已存在，未重复添加",
-            )
+            .localized(copy::configuration::RULE_SOURCE_ALREADY_EXISTS_NO_DUPLICATE_WAS_ADDED)
             .clone_into(&mut self.status);
         record_operation(
             operation_id,
@@ -5913,7 +5876,7 @@ impl ManisApp {
                 self.status = format!(
                     "{}: {error}",
                     self.language()
-                        .text("QX rule download failed", "QX 规则下载失败")
+                        .localized(copy::configuration::QX_RULE_DOWNLOAD_FAILED)
                 );
                 self.rule_sources.feedback = QxRuleImportFeedback::DownloadFailed(*error);
                 record_operation(
@@ -5926,9 +5889,8 @@ impl ManisApp {
             ImportQxRuleError::InvalidDocument => {
                 self.rule_sources.feedback = QxRuleImportFeedback::InvalidDocument;
                 self.language()
-                    .text(
-                        "QX rules not imported: no recognizable domain rules",
-                        "QX 规则未导入：没有可识别的域名规则",
+                    .localized(
+                        copy::configuration::QX_RULES_NOT_IMPORTED_NO_RECOGNIZABLE_DOMAIN_RULES,
                     )
                     .clone_into(&mut self.status);
                 record_operation(
@@ -5942,7 +5904,7 @@ impl ManisApp {
                 self.status = format!(
                     "{}: {error}",
                     self.language()
-                        .text("QX rule save failed", "QX 规则保存失败")
+                        .localized(copy::configuration::QX_RULE_SAVE_FAILED)
                 );
                 self.rule_sources.feedback = QxRuleImportFeedback::StoreFailed(*error);
                 record_operation(
@@ -5963,7 +5925,7 @@ impl ManisApp {
         let generation = self.rule_sources.import_generation;
         self.rule_sources.feedback = QxRuleImportFeedback::Importing;
         self.language()
-            .text("Removing remote QX rules", "正在移除远程 QX 规则")
+            .localized(copy::configuration::REMOVING_REMOTE_QX_RULES)
             .clone_into(&mut self.status);
         let runtime = self.runtime.clone();
         let executor = cx.background_executor().clone();
@@ -6016,7 +5978,7 @@ impl ManisApp {
                         this.status = format!(
                             "{}{}",
                             this.language()
-                                .text("Remote QX rule removal failed", "远程 QX 规则移除失败"),
+                                .localized(copy::configuration::REMOTE_QX_RULE_REMOVAL_FAILED),
                             transaction
                                 .apply
                                 .status_suffix_after_source_rollback(this.language())
@@ -6027,7 +5989,7 @@ impl ManisApp {
                         this.status = format!(
                             "{}: {error}",
                             this.language()
-                                .text("Remote QX rule removal failed", "远程 QX 规则移除失败")
+                                .localized(copy::configuration::REMOTE_QX_RULE_REMOVAL_FAILED)
                         );
                     }
                 }
@@ -6039,7 +6001,7 @@ impl ManisApp {
         cx.notify();
     }
 
-    fn set_subscription_enabled(&mut self, id: String, enabled: bool, cx: &mut Context<Self>) {
+    fn set_subscription_enabled(&mut self, id: &str, enabled: bool, cx: &mut Context<Self>) {
         if self.source_refresh_busy() {
             return;
         }
@@ -6060,12 +6022,19 @@ impl ManisApp {
         let generation = self.subscription_preview_generation;
         source.generation = generation;
         source.state = ImportedSubscriptionState::Refreshing(kind);
+        let completion = SubscriptionToggleCompletion {
+            id: id.to_owned(),
+            generation,
+            kind,
+            previous_state,
+            previous_enabled,
+        };
         self.language()
-            .text("Applying subscription state", "正在应用订阅状态")
+            .localized(copy::configuration::APPLYING_SUBSCRIPTION_STATE)
             .clone_into(&mut self.status);
         let runtime = self.runtime.clone();
         let executor = cx.background_executor().clone();
-        let task_id = id.clone();
+        let task_id = id.to_owned();
         cx.spawn(async move |this, cx| {
             let result = executor
                 .spawn(async move {
@@ -6075,69 +6044,77 @@ impl ManisApp {
                 })
                 .await;
             this.update(cx, |this, cx| {
-                let language = this.language();
-                let mut refresh_after_enable = false;
-                let Some(source) = this
-                    .imported_subscriptions
-                    .iter_mut()
-                    .find(|source| source.id == id)
-                else {
-                    return;
-                };
-                if source.generation != generation {
-                    return;
-                }
-                match result {
-                    Ok(transaction) if transaction.value.is_some() => {
-                        let stored = transaction.value.expect("checked committed mutation");
-                        source.enabled = stored.enabled;
-                        source.state = if stored.enabled {
-                            refresh_after_enable = true;
-                            ImportedSubscriptionState::Pending(kind)
-                        } else {
-                            ImportedSubscriptionState::None
-                        };
-                        transaction.apply.reconcile_proxy_mode(&mut this.proxy_mode);
-                        this.status = format!(
-                            "{}{}",
-                            if stored.enabled {
-                                language.text("Subscription enabled", "订阅已启用")
-                            } else {
-                                language.text("Subscription disabled", "订阅已停用")
-                            },
-                            transaction.apply.status_suffix(language)
-                        );
-                    }
-                    Ok(transaction) => {
-                        source.enabled = previous_enabled;
-                        source.state = previous_state;
-                        this.status = format!(
-                            "{}{}",
-                            language
-                                .text("Failed to change subscription state", "订阅状态修改失败"),
-                            transaction
-                                .apply
-                                .status_suffix_after_source_rollback(language)
-                        );
-                    }
-                    Err(error) => {
-                        source.enabled = previous_enabled;
-                        source.state = previous_state;
-                        this.status = format!(
-                            "{}: {error}",
-                            language
-                                .text("Failed to change subscription state", "订阅状态修改失败")
-                        );
-                    }
-                }
-                if refresh_after_enable {
-                    this.refresh_imported_subscription(id.clone(), cx);
-                }
-                cx.notify();
+                this.finish_subscription_toggle(completion, result, cx);
             })
             .ok();
         })
         .detach();
+        cx.notify();
+    }
+
+    fn finish_subscription_toggle(
+        &mut self,
+        completion: SubscriptionToggleCompletion,
+        result: Result<super::SourceMutation<mihomo::StoredSubscription>, SubscriptionStoreError>,
+        cx: &mut Context<Self>,
+    ) {
+        let language = self.language();
+        let Some(source) = self
+            .imported_subscriptions
+            .iter_mut()
+            .find(|source| source.id == completion.id)
+        else {
+            return;
+        };
+        if source.generation != completion.generation {
+            return;
+        }
+        let refresh_after_enable = match result {
+            Ok(transaction) if transaction.value.is_some() => {
+                let stored = transaction.value.expect("checked committed mutation");
+                source.enabled = stored.enabled;
+                source.state = if stored.enabled {
+                    ImportedSubscriptionState::Pending(completion.kind)
+                } else {
+                    ImportedSubscriptionState::None
+                };
+                transaction.apply.reconcile_proxy_mode(&mut self.proxy_mode);
+                self.status = format!(
+                    "{}{}",
+                    if stored.enabled {
+                        language.localized(copy::configuration::SUBSCRIPTION_ENABLED)
+                    } else {
+                        language.localized(copy::configuration::SUBSCRIPTION_DISABLED)
+                    },
+                    transaction.apply.status_suffix(language)
+                );
+                stored.enabled
+            }
+            Ok(transaction) => {
+                source.enabled = completion.previous_enabled;
+                source.state = completion.previous_state;
+                self.status = format!(
+                    "{}{}",
+                    language.localized(copy::configuration::FAILED_TO_CHANGE_SUBSCRIPTION_STATE),
+                    transaction
+                        .apply
+                        .status_suffix_after_source_rollback(language)
+                );
+                false
+            }
+            Err(error) => {
+                source.enabled = completion.previous_enabled;
+                source.state = completion.previous_state;
+                self.status = format!(
+                    "{}: {error}",
+                    language.localized(copy::configuration::FAILED_TO_CHANGE_SUBSCRIPTION_STATE)
+                );
+                false
+            }
+        };
+        if refresh_after_enable {
+            self.refresh_imported_subscription(completion.id, cx);
+        }
         cx.notify();
     }
 
@@ -6154,7 +6131,7 @@ impl ManisApp {
             .target_updates
             .insert(id.clone(), generation);
         self.language()
-            .text("Applying rule source state", "正在应用规则来源状态")
+            .localized(copy::configuration::APPLYING_RULE_SOURCE_STATE)
             .clone_into(&mut self.status);
         let runtime = self.runtime.clone();
         let executor = cx.background_executor().clone();
@@ -6189,9 +6166,9 @@ impl ManisApp {
                         this.status = format!(
                             "{}{}",
                             if enabled {
-                                language.text("Rule source enabled", "规则来源已启用")
+                                language.localized(copy::configuration::RULE_SOURCE_ENABLED)
                             } else {
-                                language.text("Rule source disabled", "规则来源已停用")
+                                language.localized(copy::configuration::RULE_SOURCE_DISABLED)
                             },
                             transaction.apply.status_suffix(language)
                         );
@@ -6200,7 +6177,7 @@ impl ManisApp {
                         this.status = format!(
                             "{}{}",
                             this.language()
-                                .text("Failed to change rule source state", "规则来源状态修改失败"),
+                                .localized(copy::configuration::FAILED_TO_CHANGE_RULE_SOURCE_STATE),
                             transaction
                                 .apply
                                 .status_suffix_after_source_rollback(this.language())
@@ -6210,7 +6187,7 @@ impl ManisApp {
                         this.status = format!(
                             "{}: {error}",
                             this.language()
-                                .text("Failed to change rule source state", "规则来源状态修改失败")
+                                .localized(copy::configuration::FAILED_TO_CHANGE_RULE_SOURCE_STATE)
                         );
                     }
                 }
@@ -6228,10 +6205,7 @@ impl ManisApp {
         }
         let Some(store_dir) = self.subscription_store_dir.clone() else {
             self.language()
-                .text(
-                    "Could not determine where to save the rule source",
-                    "无法确定规则源的保存位置",
-                )
+                .localized(copy::configuration::COULD_NOT_DETERMINE_WHERE_TO_SAVE_THE_RULE_SOURCE)
                 .clone_into(&mut self.status);
             cx.notify();
             return;
@@ -6259,7 +6233,7 @@ impl ManisApp {
         self.status = format!(
             "{} {target}",
             self.language()
-                .text("Saving rule source policy", "正在保存规则源策略")
+                .localized(copy::configuration::SAVING_RULE_SOURCE_POLICY)
         );
         let runtime = self.runtime.clone();
         let executor = cx.background_executor().clone();
@@ -6300,7 +6274,7 @@ impl ManisApp {
                 self.status = format!(
                     "{}{}",
                     self.language()
-                        .text("Failed to save rule source policy", "规则源策略保存失败"),
+                        .localized(copy::configuration::FAILED_TO_SAVE_RULE_SOURCE_POLICY),
                     transaction
                         .apply
                         .status_suffix_after_source_rollback(self.language())
@@ -6310,7 +6284,7 @@ impl ManisApp {
                 self.status = format!(
                     "{}: {error}",
                     self.language()
-                        .text("Failed to save rule source policy", "规则源策略保存失败")
+                        .localized(copy::configuration::FAILED_TO_SAVE_RULE_SOURCE_POLICY)
                 );
             }
         }
@@ -6339,7 +6313,7 @@ impl ManisApp {
         transaction.apply.reconcile_proxy_mode(&mut self.proxy_mode);
         self.status = format!(
             "{} {target}{}",
-            language.text("Rule source policy set to", "规则源策略已设为"),
+            language.localized(copy::configuration::RULE_SOURCE_POLICY_SET_TO),
             transaction.apply.status_suffix(language)
         );
         record_event(
@@ -6372,7 +6346,7 @@ impl ManisApp {
             QxRuleSourceRefreshState::Refreshing { generation },
         );
         self.language()
-            .text("Updating remote QX rules", "正在更新远程 QX 规则")
+            .localized(copy::configuration::UPDATING_REMOTE_QX_RULES)
             .clone_into(&mut self.status);
         let runtime = self.runtime.clone();
         let executor = cx.background_executor().clone();
@@ -6438,7 +6412,7 @@ impl ManisApp {
                 self.status = format!(
                     "{}{}",
                     self.language()
-                        .text("Remote QX rule update failed", "远程 QX 规则更新失败"),
+                        .localized(copy::configuration::REMOTE_QX_RULE_UPDATE_FAILED),
                     transaction
                         .apply
                         .status_suffix_after_source_rollback(self.language())
@@ -6495,7 +6469,7 @@ impl ManisApp {
             ImportQxRuleError::Download(error) => error.to_string(),
             ImportQxRuleError::InvalidDocument => self
                 .language()
-                .text("No recognizable domain rules", "没有可识别的域名规则")
+                .localized(copy::configuration::NO_RECOGNIZABLE_DOMAIN_RULES)
                 .to_owned(),
             ImportQxRuleError::Store(error) => error.to_string(),
         };
@@ -6509,7 +6483,7 @@ impl ManisApp {
         self.status = format!(
             "{}: {message}",
             self.language()
-                .text("QX rule update failed", "QX 规则更新失败")
+                .localized(copy::configuration::QX_RULE_UPDATE_FAILED)
         );
     }
 }

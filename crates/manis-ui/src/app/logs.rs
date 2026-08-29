@@ -5,7 +5,7 @@ use super::ManisApp;
 use crate::{
     components::{ActionRole, action_button, empty_state, page_heading},
     diagnostics::{UiLogEntry, recent_ui_logs},
-    localization::{CountNoun, Language, Message},
+    localization::{CountNoun, Language, Message, copy},
     mihomo::KernelLogEntry,
     theme::{ControlSize, Radius, Space, TextRole, Theme},
 };
@@ -43,7 +43,7 @@ impl ManisApp {
             ActionRole::Secondary,
             ControlSize::Compact,
         )
-        .accessibility_label(language.text("Refresh log data", "刷新日志数据"))
+        .accessibility_label(language.localized(copy::logs::REFRESH_LOG_DATA))
         .border_color(theme.outline_subtle)
         .bg(theme.surface_high)
         .text_color(theme.text_primary)
@@ -143,18 +143,14 @@ fn logs_empty_state(language: Language, no_query: bool, theme: Theme) -> Div {
     let (title, detail) = if no_query {
         (
             language.message(Message::NoLogs),
-            language.text(
-                "Logs will appear here after Mihomo starts or Manis performs an operation.",
-                "启动 Mihomo 或执行操作后，相关日志会显示在这里。",
-            ),
+            language
+                .localized(copy::logs::LOGS_WILL_APPEAR_HERE_AFTER_MIHOMO_STARTS_OR_MANIS_PERFORMS),
         )
     } else {
         (
             language.message(Message::NoFilterMatches),
-            language.text(
-                "Clear the filter or search by operation, error message, or log level.",
-                "清除筛选，或尝试搜索操作、错误内容或日志级别。",
-            ),
+            language
+                .localized(copy::logs::CLEAR_THE_FILTER_OR_SEARCH_BY_OPERATION_ERROR_MESSAGE_OR),
         )
     };
     empty_state(title, detail, None, theme)

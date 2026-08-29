@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use manis_core::{KernelCapabilities, KernelKind};
 use manis_profile::write_private_atomic;
 
-use crate::localization::Language;
+use crate::localization::{Language, Message, copy};
 use crate::mihomo::{self, ControllerRuntime, ControllerState, LoadError, RuntimeSnapshot};
 
 const KERNEL_SELECTION_FILE: &str = "kernel.kind";
@@ -53,10 +53,7 @@ impl KernelRuntime {
             KernelKind::SingBox => {
                 let store_dir = store_dir.ok_or_else(|| {
                     language
-                        .text(
-                            "Cannot prepare sing-box without a source directory",
-                            "无法确定来源目录，不能准备 sing-box",
-                        )
+                        .localized(copy::kernel::CANNOT_PREPARE_SING_BOX_WITHOUT_A_SOURCE_DIRECTORY)
                         .to_owned()
                 })?;
                 mihomo::configured_sing_box_runtime(store_dir)?
@@ -94,21 +91,18 @@ impl KernelRuntime {
             #[cfg(any(test, feature = "snapshot-fixtures"))]
             ControllerRuntime::Fixture { .. } => format!(
                 "{} {}",
-                language.text("Not connected to", "尚未连接"),
+                language.localized(copy::kernel::NOT_CONNECTED_TO),
                 self.kind.display_name()
             ),
             ControllerRuntime::Managed { .. } => format!(
                 "{} {}",
-                language.text(
-                    "Managed kernel configured · click to start",
-                    "托管内核已配置 · 点击启动"
-                ),
+                language.localized(copy::kernel::MANAGED_KERNEL_CONFIGURED_CLICK_TO_START),
                 self.kind.display_name()
             ),
             ControllerRuntime::Invalid { message } => format!(
                 "{} {}: {message}",
                 self.kind.display_name(),
-                language.text("configuration is invalid", "配置无效")
+                language.localized(copy::kernel::CONFIGURATION_IS_INVALID)
             ),
         }
     }
@@ -120,16 +114,18 @@ impl KernelRuntime {
         language: Language,
     ) -> &'static str {
         match (self.kind, &self.controller, state) {
-            (_, _, ControllerState::Connecting { .. }) => language.text("Connecting…", "正在连接…"),
-            (_, _, ControllerState::Connected { .. }) => language.text("Refresh", "刷新数据"),
+            (_, _, ControllerState::Connecting { .. }) => {
+                language.localized(copy::kernel::CONNECTING)
+            }
+            (_, _, ControllerState::Connected { .. }) => language.localized(copy::kernel::REFRESH),
             (KernelKind::Mihomo, ControllerRuntime::Managed { .. }, _) => {
-                language.text("Start Mihomo", "启动 Mihomo")
+                language.localized(copy::kernel::START_MIHOMO)
             }
             (KernelKind::SingBox, ControllerRuntime::Managed { .. }, _) => {
-                language.text("Start sing-box", "启动 sing-box")
+                language.localized(copy::kernel::START_SING_BOX)
             }
-            (KernelKind::Mihomo, _, _) => language.text("Connect Mihomo", "连接 Mihomo"),
-            (KernelKind::SingBox, _, _) => language.text("Connect sing-box", "连接 sing-box"),
+            (KernelKind::Mihomo, _, _) => language.message(Message::ConnectMihomo),
+            (KernelKind::SingBox, _, _) => language.localized(copy::kernel::CONNECT_SING_BOX),
         }
     }
 }
@@ -190,18 +186,15 @@ impl KernelSelectionError {
     #[must_use]
     pub(crate) fn message(self, language: Language) -> &'static str {
         match self {
-            Self::Unavailable => language.text(
-                "Kernel selection could not be read or saved",
-                "无法读取或保存内核选择",
-            ),
-            Self::UnsafeFile => language.text(
-                "Kernel selection is not a safe regular file",
-                "内核选择文件不是安全的普通文件",
-            ),
-            Self::InvalidValue => language.text(
-                "Kernel selection contains an unknown value",
-                "内核选择包含未知值",
-            ),
+            Self::Unavailable => {
+                language.localized(copy::kernel::KERNEL_SELECTION_COULD_NOT_BE_READ_OR_SAVED)
+            }
+            Self::UnsafeFile => {
+                language.localized(copy::kernel::KERNEL_SELECTION_IS_NOT_A_SAFE_REGULAR_FILE)
+            }
+            Self::InvalidValue => {
+                language.localized(copy::kernel::KERNEL_SELECTION_CONTAINS_AN_UNKNOWN_VALUE)
+            }
         }
     }
 }

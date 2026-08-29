@@ -8,7 +8,7 @@ use gpui_component::{
 };
 
 use crate::{
-    localization::Language,
+    localization::{Language, copy},
     subscription::MAX_SUBSCRIPTION_BYTES,
     theme::{ControlSize, Radius, TextRole, Theme},
 };
@@ -221,10 +221,7 @@ fn clamp_to_byte_limit(value: &str, max_bytes: usize) -> SharedString {
 }
 
 fn subscription_placeholder(language: Language) -> &'static str {
-    language.text(
-        "Paste a subscription URL or single-node share link",
-        "粘贴订阅 URL 或单节点分享链接",
-    )
+    language.localized(copy::subscription_input::PASTE_A_SUBSCRIPTION_URL_OR_SINGLE_NODE_SHARE_LINK)
 }
 
 impl EventEmitter<SubscriptionInputChanged> for SubscriptionTextInput {}

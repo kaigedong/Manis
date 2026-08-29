@@ -33,7 +33,7 @@ use crate::{
         self, LogLevel, UiEvent, begin_operation, record_event, record_operation, trace_ui,
     },
     kernel::{self, KernelRuntime},
-    localization::{CountNoun, Language, LanguagePreference, Localizer, Message},
+    localization::{CountNoun, Language, LanguagePreference, Localizer, Message, copy},
     mihomo::{
         self, ControllerRuntime, ControllerState, GeneratedProfileApply, KernelLogEntry,
         LiveRuntimeSession, LiveStreamStatus, LoadedProvider, LoadedSnapshot, ManagedRuntimeHealth,
@@ -1099,20 +1099,15 @@ impl ManisApp {
         }
         match runtime.apply_saved_sources(directory) {
             Ok(GeneratedProfileApply::Updated) => language
-                .text("Saved sources are ready", "已载入保存的来源")
+                .localized(copy::app::SAVED_SOURCES_ARE_READY)
                 .to_owned(),
             Ok(GeneratedProfileApply::Restarted) => language
-                .text(
-                    "Saved sources are ready and Mihomo was restarted",
-                    "已载入保存的来源，Mihomo 已重新启动",
-                )
+                .localized(copy::app::SAVED_SOURCES_ARE_READY_AND_MIHOMO_WAS_RESTARTED)
                 .to_owned(),
             Err(error) => format!(
                 "{}{error}",
-                language.text(
-                    "Saved sources were loaded, but the changes could not be applied: ",
-                    "已载入保存的来源，但更改未能生效："
-                )
+                language
+                    .localized(copy::app::SAVED_SOURCES_WERE_LOADED_BUT_THE_CHANGES_COULD_NOT_BE)
             ),
         }
     }
@@ -1216,19 +1211,13 @@ impl ManisApp {
                 if let Err(error) = system.recover_stale_with_language(language) {
                     self.status = format!(
                         "{}{error}",
-                        language.text(
-                            "System proxy recovery needs attention: ",
-                            "系统代理恢复需要处理："
-                        )
+                        language.localized(copy::app::SYSTEM_PROXY_RECOVERY_NEEDS_ATTENTION)
                     );
                 }
             }
             Err(_poisoned) => {
                 language
-                    .text(
-                        "System proxy recovery state is unavailable",
-                        "系统代理恢复状态不可用",
-                    )
+                    .localized(copy::app::SYSTEM_PROXY_RECOVERY_STATE_IS_UNAVAILABLE)
                     .clone_into(&mut self.status);
             }
         }
@@ -1237,19 +1226,13 @@ impl ManisApp {
                 if let Err(error) = dns.recover_stale_with_language(language) {
                     self.status = format!(
                         "{}{error}",
-                        language.text(
-                            "TUN DNS recovery needs attention: ",
-                            "TUN DNS 恢复需要处理："
-                        )
+                        language.localized(copy::app::TUN_DNS_RECOVERY_NEEDS_ATTENTION)
                     );
                 }
             }
             Err(_poisoned) => {
                 language
-                    .text(
-                        "TUN DNS recovery state is unavailable",
-                        "TUN DNS 恢复状态不可用",
-                    )
+                    .localized(copy::app::TUN_DNS_RECOVERY_STATE_IS_UNAVAILABLE)
                     .clone_into(&mut self.status);
             }
         }
@@ -1281,7 +1264,7 @@ impl ManisApp {
                 name_input.update(cx, |input, cx| {
                     input.set_theme(theme, self.dark, cx);
                     input.set_placeholder(
-                        language.text("For example: My subscription", "例如：我的订阅"),
+                        language.localized(copy::common::FOR_EXAMPLE_MY_SUBSCRIPTION),
                         cx,
                     );
                 });
@@ -1303,7 +1286,7 @@ impl ManisApp {
             SubscriptionTextInput::new_field(
                 TextInputSpec::new(
                     "subscription-name-input",
-                    language.text("For example: My subscription", "例如：我的订阅"),
+                    language.localized(copy::common::FOR_EXAMPLE_MY_SUBSCRIPTION),
                     96,
                     theme,
                     self.dark,
@@ -1365,7 +1348,7 @@ impl ManisApp {
                 SubscriptionTextInput::new_field(
                     TextInputSpec::new(
                         "policy-group-name-input",
-                        language.text("For example: Hong Kong Auto", "例如：香港自动优选"),
+                        language.localized(copy::common::FOR_EXAMPLE_HONG_KONG_AUTO),
                         96,
                         theme,
                         self.dark,
@@ -1380,7 +1363,7 @@ impl ManisApp {
                 SubscriptionTextInput::new_field(
                     TextInputSpec::new(
                         "policy-group-filter-input",
-                        language.text("For example: Hong Kong", "例如：Hong Kong"),
+                        language.localized(copy::common::FOR_EXAMPLE_HONG_KONG),
                         256,
                         theme,
                         self.dark,
@@ -1403,10 +1386,7 @@ impl ManisApp {
             input.update(cx, |input, cx| {
                 input.set_theme(theme, self.dark, cx);
                 input.set_placeholder(
-                    language.text(
-                        "Filter by target, process, rule, or route",
-                        "筛选目标、进程、规则或路径",
-                    ),
+                    language.localized(copy::app::FILTER_BY_TARGET_PROCESS_RULE_OR_ROUTE),
                     cx,
                 );
             });
@@ -1415,10 +1395,7 @@ impl ManisApp {
                 SubscriptionTextInput::new_field(
                     TextInputSpec::new(
                         "activity-search-input",
-                        language.text(
-                            "Filter by target, process, rule, or route",
-                            "筛选目标、进程、规则或路径",
-                        ),
+                        language.localized(copy::app::FILTER_BY_TARGET_PROCESS_RULE_OR_ROUTE),
                         256,
                         theme,
                         self.dark,
@@ -1438,10 +1415,7 @@ impl ManisApp {
             input.update(cx, |input, cx| {
                 input.set_theme(theme, self.dark, cx);
                 input.set_placeholder(
-                    language.text(
-                        "Search operations, errors, or log levels",
-                        "搜索操作、错误或日志级别",
-                    ),
+                    language.localized(copy::app::SEARCH_OPERATIONS_ERRORS_OR_LOG_LEVELS),
                     cx,
                 );
             });
@@ -1450,10 +1424,7 @@ impl ManisApp {
                 SubscriptionTextInput::new_field(
                     TextInputSpec::new(
                         "logs-search-input",
-                        language.text(
-                            "Search operations, errors, or log levels",
-                            "搜索操作、错误或日志级别",
-                        ),
+                        language.localized(copy::app::SEARCH_OPERATIONS_ERRORS_OR_LOG_LEVELS),
                         256,
                         theme,
                         self.dark,
@@ -1488,10 +1459,7 @@ impl ManisApp {
             self.proxy_source_editor.feedback =
                 SubscriptionFeedback::StoreFailed(SubscriptionStoreError::DataDirectoryUnavailable);
             language
-                .text(
-                    "The subscription storage location is unavailable",
-                    "无法确定订阅保存位置",
-                )
+                .localized(copy::app::THE_SUBSCRIPTION_STORAGE_LOCATION_IS_UNAVAILABLE)
                 .clone_into(&mut self.status);
             trace_ui(UiEvent::SourceImportFailed);
             cx.notify();
@@ -1501,10 +1469,7 @@ impl ManisApp {
         let generation = self.subscription_preview_generation;
         self.proxy_source_editor.feedback = SubscriptionFeedback::Importing(kind);
         language
-            .text(
-                "Validating nodes and importing subscription",
-                "正在验证节点并导入订阅",
-            )
+            .localized(copy::app::VALIDATING_NODES_AND_IMPORTING_SUBSCRIPTION)
             .clone_into(&mut self.status);
         trace_ui(UiEvent::SourceImportStarted);
         if let Some(input) = self.proxy_source_editor.input.as_ref() {
@@ -1618,7 +1583,7 @@ impl ManisApp {
                     SubscriptionFeedback::StoreFailed(SubscriptionStoreError::StoreUnavailable);
                 self.status = format!(
                     "{}{}",
-                    language.text("Could not save subscription", "订阅保存失败"),
+                    language.localized(copy::app::COULD_NOT_SAVE_SUBSCRIPTION),
                     transaction.apply.status_suffix_after_rollback_attempt(
                         language,
                         transaction.rollback_error.as_ref(),
@@ -1630,7 +1595,7 @@ impl ManisApp {
                 self.proxy_source_editor.feedback = SubscriptionFeedback::PreviewFailed(error);
                 self.status = format!(
                     "{}{error}",
-                    language.text("Subscription import failed: ", "订阅导入失败：")
+                    language.localized(copy::app::SUBSCRIPTION_IMPORT_FAILED)
                 );
                 trace_ui(UiEvent::SourceImportFailed);
             }
@@ -1638,7 +1603,7 @@ impl ManisApp {
                 self.proxy_source_editor.feedback = SubscriptionFeedback::StoreFailed(error);
                 self.status = format!(
                     "{}{error}",
-                    language.text("Could not save subscription: ", "订阅保存失败：")
+                    language.localized(copy::app::COULD_NOT_SAVE_SUBSCRIPTION_2)
                 );
                 trace_ui(UiEvent::SourceImportFailed);
             }
@@ -1731,7 +1696,7 @@ impl ManisApp {
         subscription.generation = generation;
         subscription.state = ImportedSubscriptionState::Refreshing(kind);
         language
-            .text("Updating subscription nodes", "正在更新订阅节点")
+            .localized(copy::app::UPDATING_SUBSCRIPTION_NODES)
             .clone_into(&mut self.status);
         trace_ui(UiEvent::SourceRestoreStarted);
 
@@ -1821,7 +1786,7 @@ impl ManisApp {
                 subscription.state = ImportedSubscriptionState::Pending(kind);
                 self.status = format!(
                     "{}{}",
-                    language.text("Subscription update failed", "订阅更新失败"),
+                    language.localized(copy::app::SUBSCRIPTION_UPDATE_FAILED),
                     transaction.apply.status_suffix_after_rollback_attempt(
                         language,
                         transaction.rollback_error.as_ref(),
@@ -1833,7 +1798,7 @@ impl ManisApp {
                 subscription.state = ImportedSubscriptionState::Unavailable(kind, error);
                 self.status = format!(
                     "{}{error}",
-                    language.text("Subscription update failed: ", "订阅更新失败：")
+                    language.localized(copy::app::SUBSCRIPTION_UPDATE_FAILED_2)
                 );
                 trace_ui(UiEvent::SourceRestoreFailed);
             }
@@ -1841,9 +1806,8 @@ impl ManisApp {
                 subscription.state = ImportedSubscriptionState::StoreError(error);
                 self.status = format!(
                     "{}{error}",
-                    language.text(
-                        "Subscription loaded, but its update time could not be saved: ",
-                        "订阅已读取，但更新时间保存失败："
+                    language.localized(
+                        copy::app::SUBSCRIPTION_LOADED_BUT_ITS_UPDATE_TIME_COULD_NOT_BE_SAVED
                     )
                 );
                 trace_ui(UiEvent::SourceRestoreFailed);
@@ -1932,7 +1896,7 @@ impl ManisApp {
         self.proxy_source_editor.feedback = SubscriptionFeedback::Idle;
         subscription.state = ImportedSubscriptionState::Removing(kind);
         language
-            .text("Removing imported subscription", "正在移除已导入订阅")
+            .localized(copy::app::REMOVING_IMPORTED_SUBSCRIPTION)
             .clone_into(&mut self.status);
         trace_ui(UiEvent::SourceRemoveStarted);
 
@@ -1968,7 +1932,7 @@ impl ManisApp {
                         transaction.apply.reconcile_proxy_mode(&mut this.proxy_mode);
                         this.status = format!(
                             "{}{}",
-                            language.text("Imported subscription removed", "已移除导入订阅"),
+                            language.localized(copy::app::IMPORTED_SUBSCRIPTION_REMOVED),
                             transaction.apply.status_suffix(language)
                         );
                         trace_ui(UiEvent::SourceRemoveSucceeded);
@@ -1978,8 +1942,7 @@ impl ManisApp {
                             ImportedSubscriptionState::Ready(kind);
                         this.status = format!(
                             "{}{}",
-                            language
-                                .text("Imported subscription removal failed", "导入订阅移除失败"),
+                            language.localized(copy::app::IMPORTED_SUBSCRIPTION_REMOVAL_FAILED),
                             transaction
                                 .apply
                                 .status_suffix_after_source_rollback(language)
@@ -1991,7 +1954,7 @@ impl ManisApp {
                             ImportedSubscriptionState::StoreError(error);
                         this.status = format!(
                             "{}{error}",
-                            language.text("Could not remove subscription: ", "移除订阅失败：")
+                            language.localized(copy::app::COULD_NOT_REMOVE_SUBSCRIPTION)
                         );
                         trace_ui(UiEvent::SourceRemoveFailed);
                     }
@@ -2453,9 +2416,8 @@ impl ManisApp {
             }
             GroupBenchmarkState::Failed { .. } => (
                 language
-                    .text(
-                        "Latency test failed · this policy group returned no delay data",
-                        "测速失败 · 当前策略组未返回延迟，请检查 Mihomo 连接后重试",
+                    .localized(
+                        copy::app::LATENCY_TEST_FAILED_THIS_POLICY_GROUP_RETURNED_NO_DELAY_DATA,
                     )
                     .to_owned(),
                 theme.route_trace,
@@ -2493,13 +2455,13 @@ impl ManisApp {
                 id: ProxyId::new("unavailable"),
                 name: self
                     .language()
-                    .text("No available nodes", "暂无可用节点")
+                    .localized(copy::app::NO_AVAILABLE_NODES)
                     .to_owned(),
                 kind: manis_core::PolicyCandidateKind::Node,
                 provider: None,
                 detail: self
                     .language()
-                    .text("The kernel returned no group members", "内核未返回组内节点")
+                    .localized(copy::app::THE_KERNEL_RETURNED_NO_GROUP_MEMBERS)
                     .to_owned(),
                 latency_ms: None,
                 alive: None,
@@ -2508,7 +2470,7 @@ impl ManisApp {
 
     fn policy_node_source_label(&self, node: &PolicyNode, language: Language) -> String {
         if node.kind == manis_core::PolicyCandidateKind::PolicyGroup {
-            return language.text("Policy group", "策略组").to_owned();
+            return language.message(Message::PolicyGroup).to_owned();
         }
 
         if let Some(index) = node
@@ -2534,7 +2496,7 @@ impl ManisApp {
             .filter(|saved| saved.enabled)
             .any(|saved| saved.source.preview().name == node.name)
         {
-            return language.text("Saved", "已保存").to_owned();
+            return language.localized(copy::common::SAVED).to_owned();
         }
 
         if let Some((_index, subscription)) = self
@@ -2554,7 +2516,9 @@ impl ManisApp {
             return subscription.name.clone();
         }
 
-        language.text("Local configuration", "本地配置").to_owned()
+        language
+            .localized(copy::app::LOCAL_CONFIGURATION)
+            .to_owned()
     }
 
     fn switch_kernel(&mut self, requested: KernelKind, cx: &mut Context<Self>) {
@@ -2564,10 +2528,7 @@ impl ManisApp {
         }
         let Some(store_dir) = self.subscription_store_dir.clone() else {
             language
-                .text(
-                    "The local configuration directory is unavailable; the kernel cannot be changed",
-                    "无法确定本机配置目录，不能切换内核",
-                )
+                .localized(copy::app::THE_LOCAL_CONFIGURATION_DIRECTORY_IS_UNAVAILABLE_THE_KERNEL_CANNOT_BE)
                 .clone_into(&mut self.status);
             cx.notify();
             return;
@@ -2575,9 +2536,9 @@ impl ManisApp {
         self.kernel_switch_state = KernelSwitchState::Preparing;
         self.status = format!(
             "{} {} {}",
-            language.text("Validating", "正在校验并准备"),
+            language.localized(copy::app::VALIDATING),
             requested.display_name(),
-            language.text("configuration", "配置")
+            language.localized(copy::app::CONFIGURATION)
         );
         let previous = self.runtime.clone();
         let previous_kind = previous.kind();
@@ -2646,19 +2607,15 @@ impl ManisApp {
         }
         if self.proxy_mode != ProxyMode::Off {
             self.language()
-                .text(
-                    "Turn off the active proxy mode before updating Mihomo",
-                    "请先关闭当前代理模式，再更新 Mihomo",
-                )
+                .localized(copy::app::TURN_OFF_THE_ACTIVE_PROXY_MODE_BEFORE_UPDATING_MIHOMO)
                 .clone_into(&mut self.status);
             cx.notify();
             return;
         }
         let Some(store_dir) = self.subscription_store_dir.clone() else {
             self.language()
-                .text(
-                    "The Manis data directory is unavailable; Mihomo cannot be updated",
-                    "无法确定 Manis 数据目录，不能更新 Mihomo",
+                .localized(
+                    copy::app::THE_MANIS_DATA_DIRECTORY_IS_UNAVAILABLE_MIHOMO_CANNOT_BE_UPDATED,
                 )
                 .clone_into(&mut self.status);
             cx.notify();
@@ -2673,10 +2630,7 @@ impl ManisApp {
         self.live_runtime = None;
         self.controller = ControllerState::Disconnected;
         language
-            .text(
-                "Downloading and verifying the stable Mihomo release…",
-                "正在下载并校验 Mihomo 稳定版…",
-            )
+            .localized(copy::app::DOWNLOADING_AND_VERIFYING_THE_STABLE_MIHOMO_RELEASE)
             .clone_into(&mut self.status);
 
         let executor = cx.background_executor().clone();
@@ -2724,10 +2678,8 @@ impl ManisApp {
                 self.apply_core_update_snapshot(recovered, cx);
                 self.status = format!(
                     "{}{message}",
-                    language.text(
-                        "Mihomo update failed; the previous core was restored: ",
-                        "Mihomo 更新失败，已恢复原内核：",
-                    )
+                    language
+                        .localized(copy::app::MIHOMO_UPDATE_FAILED_THE_PREVIOUS_CORE_WAS_RESTORED)
                 );
             }
         }
@@ -2766,8 +2718,8 @@ impl ManisApp {
         self.live_generation = self.live_generation.wrapping_add(1);
         self.live_runtime = None;
         self.live_status = LiveStreamStatus {
-            activity: language.text("Reconnecting", "正在重新连接").to_owned(),
-            logs: language.text("Reconnecting", "正在重新连接").to_owned(),
+            activity: language.localized(copy::app::RECONNECTING).to_owned(),
+            logs: language.localized(copy::app::RECONNECTING).to_owned(),
         };
 
         let endpoint = self.runtime.endpoint_label();
@@ -2819,7 +2771,7 @@ impl ManisApp {
                         let endpoint = this
                             .controller
                             .endpoint()
-                            .unwrap_or(language.text("Local controller", "本地控制器"))
+                            .unwrap_or(language.localized(copy::app::LOCAL_CONTROLLER))
                             .to_owned();
                         let message = error.to_string();
                         this.controller = ControllerState::Failed {
@@ -3032,10 +2984,7 @@ impl ManisApp {
         let language = self.language();
         if !matches!(self.controller, ControllerState::Connected { .. }) {
             language
-                .text(
-                    "Start Mihomo before testing this policy group",
-                    "请先启动 Mihomo，再测试此策略组",
-                )
+                .localized(copy::app::START_MIHOMO_BEFORE_TESTING_THIS_POLICY_GROUP)
                 .clone_into(&mut self.status);
             cx.notify();
             return;
@@ -3057,20 +3006,14 @@ impl ManisApp {
             .collect::<Vec<_>>();
         if candidate_names.is_empty() {
             language
-                .text(
-                    "This policy group has no testable candidates",
-                    "当前策略组没有可测速候选项",
-                )
+                .localized(copy::app::THIS_POLICY_GROUP_HAS_NO_TESTABLE_CANDIDATES)
                 .clone_into(&mut self.status);
             cx.notify();
             return;
         }
         let Some(generation) = self.begin_group_benchmark(key.clone()) else {
             language
-                .text(
-                    "Another group is being tested; wait for it to finish",
-                    "已有分组正在测速，请等待完成后再试",
-                )
+                .localized(copy::app::ANOTHER_GROUP_IS_BEING_TESTED_WAIT_FOR_IT_TO_FINISH)
                 .clone_into(&mut self.status);
             cx.notify();
             return;
@@ -3179,9 +3122,9 @@ impl ManisApp {
                 trace_ui(UiEvent::GroupBenchmarkFailed);
                 self.status = format!(
                     "{}：{}",
-                    language.text("Policy group benchmark failed", "策略组测速失败"),
+                    language.localized(copy::app::POLICY_GROUP_BENCHMARK_FAILED),
                     failure.as_deref().unwrap_or_else(|| {
-                        language.text("Mihomo did not return a result", "Mihomo 未返回结果")
+                        language.localized(copy::common::MIHOMO_DID_NOT_RETURN_A_RESULT)
                     })
                 );
             }
@@ -3204,14 +3147,8 @@ impl ManisApp {
             Ok(session) => Some(session),
             Err(error) => {
                 self.live_status = LiveStreamStatus {
-                    activity: format!(
-                        "{}{error}",
-                        language.text("Could not start: ", "无法启动：")
-                    ),
-                    logs: format!(
-                        "{}{error}",
-                        language.text("Could not start: ", "无法启动：")
-                    ),
+                    activity: format!("{}{error}", language.localized(copy::app::COULD_NOT_START)),
+                    logs: format!("{}{error}", language.localized(copy::app::COULD_NOT_START)),
                 };
                 None
             }
@@ -3278,10 +3215,7 @@ impl ManisApp {
             Ok(ManagedRuntimeHealth::Running) => return false,
             Ok(ManagedRuntimeHealth::Stopped) => self
                 .language()
-                .text(
-                    "The Manis-managed kernel stopped unexpectedly",
-                    "Manis 托管内核已意外停止",
-                )
+                .localized(copy::app::THE_MANIS_MANAGED_KERNEL_STOPPED_UNEXPECTEDLY)
                 .to_owned(),
             Err(error) => error.to_string(),
         };
@@ -3301,10 +3235,7 @@ impl ManisApp {
                 Err(_poisoned) => {
                     recovery_error = Some(
                         language
-                            .text(
-                                "system proxy state lock was damaged",
-                                "系统代理状态锁已损坏",
-                            )
+                            .localized(copy::app::SYSTEM_PROXY_STATE_LOCK_WAS_DAMAGED)
                             .to_owned(),
                     );
                 }
@@ -3318,7 +3249,7 @@ impl ManisApp {
                 Err(_poisoned) => {
                     recovery_error = Some(
                         language
-                            .text("TUN DNS state lock was damaged", "TUN DNS 状态锁已损坏")
+                            .localized(copy::app::TUN_DNS_STATE_LOCK_WAS_DAMAGED)
                             .to_owned(),
                     );
                 }
@@ -3337,28 +3268,21 @@ impl ManisApp {
                 format!(
                     "{}{}",
                     failure,
-                    language.text(
-                        " · system proxy was restored; reconnect to restart the kernel",
-                        " · 系统代理已恢复；重新连接即可重启内核",
+                    language.localized(
+                        copy::app::SYSTEM_PROXY_WAS_RESTORED_RECONNECT_TO_RESTART_THE_KERNEL
                     )
                 )
             }
             None => format!(
                 "{}{}",
                 failure,
-                language.text(
-                    " · reconnect to restart the kernel",
-                    " · 重新连接即可重启内核",
-                )
+                language.localized(copy::app::RECONNECT_TO_RESTART_THE_KERNEL)
             ),
             Some(recovery_error) => {
                 format!(
                     "{}{}{}",
                     failure,
-                    language.text(
-                        " · automatic system proxy recovery failed: ",
-                        " · 系统代理自动恢复失败：",
-                    ),
+                    language.localized(copy::app::AUTOMATIC_SYSTEM_PROXY_RECOVERY_FAILED),
                     recovery_error
                 )
             }
@@ -3435,14 +3359,11 @@ impl ManisApp {
         self.proxy_mode_busy = Some(requested);
         self.status = match requested {
             ProxyMode::Tun => language
-                .text(
-                    "Preparing the macOS TUN helper and traffic route…",
-                    "正在准备 macOS TUN 辅助服务与流量接管…",
-                )
+                .localized(copy::app::PREPARING_THE_MACOS_TUN_HELPER_AND_TRAFFIC_ROUTE)
                 .to_owned(),
             _ => format!(
                 "{}{}…",
-                language.text("Switching to ", "正在切换到"),
+                language.localized(copy::app::SWITCHING_TO),
                 proxy_mode_label(language, requested)
             ),
         };
@@ -3496,29 +3417,22 @@ impl ManisApp {
                 "controller_not_connected",
                 format!(
                     "{} {}",
-                    language.text(
-                        "Connect before changing proxy mode:",
-                        "请先连接后再切换代理模式："
-                    ),
+                    language.localized(copy::app::CONNECT_BEFORE_CHANGING_PROXY_MODE),
                     self.runtime.kind().display_name(),
                 ),
             )
         } else if requested == ProxyMode::Tun && !self.runtime.capabilities().tun {
             (
                 "kernel_has_no_tun_capability",
-                language.text(
-                    "TUN is not yet available for the sing-box adapter; use the system HTTP/SOCKS proxy",
-                    "当前 sing-box 适配器尚未开放 TUN；可使用系统 HTTP/SOCKS 代理",
-                ).to_owned(),
+                language
+                    .localized(copy::app::TUN_IS_NOT_YET_AVAILABLE_FOR_THE_SING_BOX_ADAPTER)
+                    .to_owned(),
             )
         } else if requested == ProxyMode::Tun && self.runtime.is_fixture() {
             (
                 "fixture_read_only",
                 language
-                    .text(
-                        "Test fixtures cannot enable TUN",
-                        "测试快照不能启用 TUN 模式",
-                    )
+                    .localized(copy::app::TEST_FIXTURES_CANNOT_ENABLE_TUN)
                     .to_owned(),
             )
         } else {
@@ -3562,7 +3476,7 @@ impl ManisApp {
                 self.status = format!(
                     "{}{}",
                     proxy_mode_label(language, requested),
-                    language.text(" enabled", "已生效")
+                    language.localized(copy::app::ENABLED)
                 );
             }
             Err(message) => {
@@ -3575,7 +3489,7 @@ impl ManisApp {
                 trace_ui(UiEvent::ProxyModeFailed);
                 self.status = format!(
                     "{}{message}",
-                    language.text("Failed to change proxy mode: ", "代理模式切换失败：")
+                    language.localized(copy::app::FAILED_TO_CHANGE_PROXY_MODE)
                 );
             }
         }
@@ -3615,10 +3529,7 @@ impl ManisApp {
             );
             trace_ui(UiEvent::RoutingModeFailed);
             language
-                .text(
-                    "Connect to the kernel before changing routing mode",
-                    "请先连接内核，再切换路由模式",
-                )
+                .localized(copy::app::CONNECT_TO_THE_KERNEL_BEFORE_CHANGING_ROUTING_MODE)
                 .clone_into(&mut self.status);
             cx.notify();
             return;
@@ -3632,10 +3543,7 @@ impl ManisApp {
             );
             trace_ui(UiEvent::RoutingModeFailed);
             language
-                .text(
-                    "Test fixtures cannot change routing mode",
-                    "测试快照不能切换路由模式",
-                )
+                .localized(copy::app::TEST_FIXTURES_CANNOT_CHANGE_ROUTING_MODE)
                 .clone_into(&mut self.status);
             cx.notify();
             return;
@@ -3644,7 +3552,7 @@ impl ManisApp {
         self.routing_mode_busy = Some(requested);
         self.status = format!(
             "{}{}…",
-            language.text("Switching to ", "正在切换到"),
+            language.localized(copy::app::SWITCHING_TO),
             routing_mode_label(language, requested)
         );
         let runtime = self.runtime.clone();
@@ -3694,10 +3602,7 @@ impl ManisApp {
                     RoutingMode::Global => self.global_target().map_or_else(
                         || {
                             language
-                                .text(
-                                    "Global mode enabled; choose the global exit on the Nodes page",
-                                    "全局模式已生效；请在节点页选择全局出口",
-                                )
+                                .localized(copy::app::GLOBAL_MODE_ENABLED_CHOOSE_THE_GLOBAL_EXIT_ON_THE_NODES)
                                 .to_owned()
                         },
                         |target| match language {
@@ -3712,14 +3617,13 @@ impl ManisApp {
                     _ => format!(
                         "{}{}",
                         routing_mode_label(language, requested),
-                        language.text(" enabled", "已生效")
+                        language.localized(copy::app::ENABLED)
                     ),
                 };
                 if persistence.is_err() {
-                    self.status.push_str(language.text(
-                        " · restart preference could not be saved",
-                        " · 但未能保存重启偏好",
-                    ));
+                    self.status.push_str(
+                        language.localized(copy::app::RESTART_PREFERENCE_COULD_NOT_BE_SAVED),
+                    );
                 }
             }
             Err(error) => {
@@ -3732,7 +3636,7 @@ impl ManisApp {
                 trace_ui(UiEvent::RoutingModeFailed);
                 self.status = format!(
                     "{}{error}",
-                    language.text("Failed to change routing mode: ", "路由模式切换失败：")
+                    language.localized(copy::app::FAILED_TO_CHANGE_ROUTING_MODE)
                 );
             }
         }
@@ -3777,7 +3681,7 @@ impl ManisApp {
             trace_ui(UiEvent::GlobalNodeSelectionFailed);
             self.status = format!(
                 "{}{error}",
-                language.text("Could not save the global node: ", "无法保存全局节点：")
+                language.localized(copy::app::COULD_NOT_SAVE_THE_GLOBAL_NODE)
             );
             cx.notify();
             return;
@@ -4020,10 +3924,7 @@ impl ManisApp {
                 "reason=runtime_policy_unavailable",
             );
             language
-                .text(
-                    "Start Mihomo before selecting a node for this policy group.",
-                    "请先启动 Mihomo，再为此策略组选择节点。",
-                )
+                .localized(copy::app::START_MIHOMO_BEFORE_SELECTING_A_NODE_FOR_THIS_POLICY_GROUP)
                 .clone_into(&mut self.status);
             cx.notify();
             return true;
@@ -4056,10 +3957,7 @@ impl ManisApp {
             "reason=not_manual_candidate",
         );
         language
-            .text(
-                "Only a candidate inside a manual policy can be selected",
-                "只能选择手动策略组中的候选节点",
-            )
+            .localized(copy::app::ONLY_A_CANDIDATE_INSIDE_A_MANUAL_POLICY_CAN_BE_SELECTED)
             .clone_into(&mut self.status);
         cx.notify();
         true
@@ -4088,10 +3986,7 @@ impl ManisApp {
                 error.to_string(),
             );
             language
-                .text(
-                    "This policy selection cannot be saved",
-                    "无法保存这个策略组选择",
-                )
+                .localized(copy::app::THIS_POLICY_SELECTION_CANNOT_BE_SAVED)
                 .clone_into(&mut self.status);
             cx.notify();
             return None;
@@ -4111,10 +4006,7 @@ impl ManisApp {
             );
             self.status = format!(
                 "{}{error}",
-                language.text(
-                    "Could not save the policy selection: ",
-                    "无法保存策略组选择："
-                )
+                language.localized(copy::app::COULD_NOT_SAVE_THE_POLICY_SELECTION)
             );
             cx.notify();
             return None;
@@ -4295,9 +4187,9 @@ impl ManisApp {
     fn theme_toggle(&self, theme: Theme, cx: &mut Context<Self>) -> Button {
         let language = self.language();
         let label = if self.dark {
-            language.text("Light", "浅色")
+            language.localized(copy::app::LIGHT)
         } else {
-            language.text("Dark", "深色")
+            language.localized(copy::app::DARK)
         };
         action_button(
             "theme-toggle",
@@ -4315,10 +4207,10 @@ impl ManisApp {
             let language = this.language();
             if this.dark {
                 trace_ui(UiEvent::ThemeDarkSelected);
-                language.text("Dark theme enabled", "已切换到深色主题")
+                language.localized(copy::app::DARK_THEME_ENABLED)
             } else {
                 trace_ui(UiEvent::ThemeLightSelected);
-                language.text("Light theme enabled", "已切换到浅色主题")
+                language.localized(copy::app::LIGHT_THEME_ENABLED)
             }
             .clone_into(&mut this.status);
             cx.notify();
@@ -4330,7 +4222,7 @@ impl ManisApp {
         if compact {
             let next = self.proxy_mode.next();
             return Button::new("proxy-mode-cycle")
-                .accessibility_label(language.text("Change proxy mode", "切换代理模式"))
+                .accessibility_label(language.localized(copy::app::CHANGE_PROXY_MODE))
                 .label(compact_proxy_mode_label(
                     language,
                     self.proxy_mode,
@@ -4366,9 +4258,9 @@ impl ManisApp {
                     .accessibility_label(proxy_mode_label(language, mode))
                     .label(if pending {
                         match mode {
-                            ProxyMode::Tun => language.text("Preparing TUN…", "准备 TUN…"),
-                            ProxyMode::System => language.text("Enabling…", "启用中…"),
-                            ProxyMode::Off => language.text("Turning off…", "关闭中…"),
+                            ProxyMode::Tun => language.localized(copy::app::PREPARING_TUN),
+                            ProxyMode::System => language.localized(copy::app::ENABLING),
+                            ProxyMode::Off => language.localized(copy::app::TURNING_OFF),
                         }
                     } else {
                         proxy_mode_label(language, mode)
@@ -4416,7 +4308,7 @@ impl ManisApp {
                     .text_size(TextRole::Metadata.size())
                     .line_height(TextRole::Metadata.line_height())
                     .text_color(theme.text_tertiary)
-                    .child(language.text("Proxy", "代理")),
+                    .child(language.localized(copy::app::PROXY)),
             )
             .child(modes)
             .into_any_element()
@@ -4431,7 +4323,7 @@ impl ManisApp {
                 RoutingMode::Rule => RoutingMode::Direct,
             };
             let label = if self.routing_mode_busy.is_some() {
-                language.text("Switching…", "切换中…")
+                language.localized(copy::app::SWITCHING)
             } else {
                 match self.routing_mode {
                     RoutingMode::Direct => routing_mode_label(language, RoutingMode::Direct),
@@ -4440,7 +4332,7 @@ impl ManisApp {
                 }
             };
             return Button::new("routing-mode-cycle")
-                .accessibility_label(language.text("Change routing mode", "切换路由模式"))
+                .accessibility_label(language.localized(copy::app::CHANGE_ROUTING_MODE))
                 .label(label)
                 .with_variant(ButtonVariant::Default)
                 .with_size(ControlSize::Compact.component_size())
@@ -4469,7 +4361,7 @@ impl ManisApp {
                 Button::new(format!("routing-mode-{mode:?}"))
                     .accessibility_label(routing_mode_label(language, mode))
                     .label(if self.routing_mode_busy == Some(mode) {
-                        language.text("Switching…", "切换中…")
+                        language.localized(copy::app::SWITCHING)
                     } else {
                         routing_mode_label(language, mode)
                     })
@@ -4514,7 +4406,7 @@ impl ManisApp {
                     .text_size(TextRole::Metadata.size())
                     .line_height(TextRole::Metadata.line_height())
                     .text_color(theme.text_tertiary)
-                    .child(language.text("Routing", "路由")),
+                    .child(language.localized(copy::app::ROUTING)),
             )
             .child(modes)
             .into_any_element()
@@ -4525,27 +4417,27 @@ impl ManisApp {
         let entries = [
             (
                 language.message(Message::Nodes),
-                language.text("Nodes", "节点"),
+                language.message(Message::Nodes),
                 PrimaryWorkspace::Nodes,
             ),
             (
                 language.message(Message::PolicyGroups),
-                language.text("Groups", "组"),
+                language.localized(copy::app::GROUPS),
                 PrimaryWorkspace::Policies,
             ),
             (
                 language.message(Message::RoutingRules),
-                language.text("Rules", "规则"),
+                language.localized(copy::app::RULES),
                 PrimaryWorkspace::RoutingRules,
             ),
             (
                 language.message(Message::NetworkActivity),
-                language.text("Activity", "活动"),
+                language.localized(copy::app::ACTIVITY),
                 PrimaryWorkspace::Activity,
             ),
             (
                 language.message(Message::Logs),
-                language.text("Logs", "日志"),
+                language.message(Message::Logs),
                 PrimaryWorkspace::Logs,
             ),
             (
@@ -4615,27 +4507,27 @@ impl ManisApp {
         let (event, status) = match workspace {
             PrimaryWorkspace::Policies => (
                 UiEvent::WorkspacePoliciesOpened,
-                language.text("Policy groups opened", "已打开策略组工作区"),
+                language.localized(copy::app::POLICY_GROUPS_OPENED),
             ),
             PrimaryWorkspace::Nodes => (
                 UiEvent::WorkspaceNodesOpened,
-                language.text("Nodes opened", "已打开节点工作区"),
+                language.localized(copy::app::NODES_OPENED),
             ),
             PrimaryWorkspace::RoutingRules => (
                 UiEvent::WorkspaceRoutingRulesOpened,
-                language.text("Routing rules opened", "已打开分流规则"),
+                language.localized(copy::app::ROUTING_RULES_OPENED),
             ),
             PrimaryWorkspace::Activity => (
                 UiEvent::WorkspaceActivityOpened,
-                language.text("Network activity opened", "已打开网络活动"),
+                language.localized(copy::app::NETWORK_ACTIVITY_OPENED),
             ),
             PrimaryWorkspace::Logs => (
                 UiEvent::WorkspaceLogsOpened,
-                language.text("Logs opened", "已打开日志"),
+                language.localized(copy::app::LOGS_OPENED),
             ),
             PrimaryWorkspace::Configuration => (
                 UiEvent::WorkspaceConfigurationOpened,
-                language.text("Configuration opened", "已打开配置"),
+                language.localized(copy::app::CONFIGURATION_OPENED),
             ),
         };
         trace_ui(event);
@@ -4648,31 +4540,23 @@ impl ManisApp {
         let (title, description) = match &self.controller {
             ControllerState::Disconnected => (
                 language.message(Message::NoPolicyGroups),
-                language.text(
-                    "Start Mihomo to load your policy groups and selected nodes.",
-                    "启动 Mihomo 后即可查看策略组和已选节点。",
+                language.localized(
+                    copy::app::START_MIHOMO_TO_LOAD_YOUR_POLICY_GROUPS_AND_SELECTED_NODES,
                 ),
             ),
             ControllerState::Connecting { .. } => (
-                language.text("Loading policy groups…", "正在读取策略组…"),
-                language.text(
-                    "Manis is loading your current groups and selected nodes.",
-                    "正在载入当前策略组和已选节点。",
-                ),
+                language.localized(copy::app::LOADING_POLICY_GROUPS),
+                language
+                    .localized(copy::app::MANIS_IS_LOADING_YOUR_CURRENT_GROUPS_AND_SELECTED_NODES),
             ),
             ControllerState::Failed { .. } => (
-                language.text("Policy groups unavailable", "暂时无法读取策略组"),
-                language.text(
-                    "Mihomo could not be started. Check Logs for details, then try again.",
-                    "Mihomo 启动失败。请在“日志”中查看原因，然后重试。",
-                ),
+                language.localized(copy::app::POLICY_GROUPS_UNAVAILABLE),
+                language
+                    .localized(copy::app::MIHOMO_COULD_NOT_BE_STARTED_CHECK_LOGS_FOR_DETAILS_THEN),
             ),
             ControllerState::Connected { .. } => (
-                language.text("No policy groups yet", "还没有策略组"),
-                language.text(
-                    "Add a source or create a policy group to choose how traffic should be routed.",
-                    "添加来源或新建策略组，开始设置流量出口。",
-                ),
+                language.localized(copy::app::NO_POLICY_GROUPS_YET),
+                language.localized(copy::app::ADD_A_SOURCE_OR_CREATE_A_POLICY_GROUP_TO_CHOOSE),
             ),
         };
 
@@ -4710,9 +4594,8 @@ impl ManisApp {
                     .bg(theme.surface_high)
                     .child(page_heading(
                         language.message(Message::PolicyGroups),
-                        language.text(
-                            "Routing rules choose policy groups; policies choose exits.",
-                            "分流规则命中策略组，策略组再决定具体出口。",
+                        language.localized(
+                            copy::app::ROUTING_RULES_CHOOSE_POLICY_GROUPS_POLICIES_CHOOSE_EXITS,
                         ),
                         Some(
                             div()
@@ -4762,9 +4645,9 @@ impl ManisApp {
         let benchmark_name = view.policy.name.clone();
         let toggle_id = PolicyGroupId::new(view.policy.id.clone());
         let action = if view.expanded {
-            language.text("Collapse", "收起")
+            language.localized(copy::common::COLLAPSE)
         } else {
-            language.text("Expand", "展开")
+            language.localized(copy::common::EXPAND)
         };
         div()
             .id(format!("saved-policy-header-{}", view.policy.id))
@@ -4825,9 +4708,9 @@ impl ManisApp {
         theme: Theme,
     ) -> Div {
         let kind = match view.policy.strategy {
-            ManagedPolicyStrategy::Manual => language.text("Manual selection", "手动选择"),
+            ManagedPolicyStrategy::Manual => language.localized(copy::app::MANUAL_SELECTION),
             ManagedPolicyStrategy::LowestLatency => {
-                language.text("Automatic selection", "自动选择")
+                language.localized(copy::app::AUTOMATIC_SELECTION)
             }
         };
         div()
@@ -4910,10 +4793,10 @@ impl ManisApp {
                     .text_size(TextRole::Body.size())
                     .line_height(TextRole::Body.line_height())
                     .text_color(theme.text_secondary)
-                    .child(language.text(
-                        "No imported nodes currently match this policy.",
-                        "当前没有已导入节点符合这个策略组。",
-                    )),
+                    .child(
+                        language
+                            .localized(copy::app::NO_IMPORTED_NODES_CURRENTLY_MATCH_THIS_POLICY),
+                    ),
             );
         } else {
             for candidate in &view.candidates {
@@ -4951,7 +4834,7 @@ impl ManisApp {
             .child(
                 action_button(
                     format!("edit-offline-policy-{}", policy.id),
-                    language.text("Edit", "编辑"),
+                    language.localized(copy::app::EDIT),
                     ActionRole::Secondary,
                     ControlSize::Compact,
                 )
@@ -5048,9 +4931,8 @@ impl ManisApp {
                         format!(
                             "{} · {}",
                             language.count(CountNoun::PolicyGroup, policy_count),
-                            language.text(
-                                "rules target a policy; open one to configure its exit",
-                                "分流规则指定策略组；打开后配置它的出口",
+                            language.localized(
+                                copy::app::RULES_TARGET_A_POLICY_OPEN_ONE_TO_CONFIGURE_ITS_EXIT
                             )
                         ),
                         Some(
@@ -5173,9 +5055,9 @@ impl ManisApp {
             .find(|node| node.name == view.item.target)
             .map(|node| node.id.clone());
         let action = if view.expanded {
-            language.text("Collapse", "收起")
+            language.localized(copy::common::COLLAPSE)
         } else {
-            language.text("Expand", "展开")
+            language.localized(copy::common::EXPAND)
         };
         div()
             .id(format!("policy-{}", view.item.id.as_str()))
@@ -5326,10 +5208,7 @@ impl ManisApp {
             .text_size(TextRole::Body.size())
             .line_height(TextRole::Body.line_height())
             .text_color(theme.text_secondary)
-            .child(language.text(
-                "This policy has no candidate nodes.",
-                "这个策略组没有候选节点。",
-            ))
+            .child(language.localized(copy::app::THIS_POLICY_HAS_NO_CANDIDATE_NODES))
     }
 
     fn policy_list_candidate_row(
@@ -5508,7 +5387,7 @@ impl ManisApp {
             node_name,
         } = selection;
         let detail = if item.detail.trim().is_empty() {
-            language.text("Unknown type", "类型未知").to_owned()
+            language.localized(copy::app::UNKNOWN_TYPE).to_owned()
         } else {
             item.detail.clone()
         };
@@ -5629,7 +5508,7 @@ impl ManisApp {
                     .child(name)
                     .when(current && !manually_selectable, |name| {
                         name.child(div().child(status_badge(
-                            language.text("Current", "当前出口"),
+                            language.localized(copy::app::CURRENT),
                             StatusTone::Neutral,
                             theme,
                         )))
@@ -5676,9 +5555,9 @@ impl ManisApp {
             .items_center()
             .justify_center()
             .child(if kind == manis_core::PolicyCandidateKind::PolicyGroup {
-                language.text("G", "组")
+                language.localized(copy::app::G)
             } else {
-                language.text("N", "点")
+                language.localized(copy::app::N)
             })
     }
 
@@ -5702,8 +5581,8 @@ impl ManisApp {
             .selected_index(self.policy_detail_tab.index())
             .child(
                 Tab::new()
-                    .label(language.text("Nodes", "节点"))
-                    .aria_label(language.text("Nodes", "节点")),
+                    .label(language.message(Message::Nodes))
+                    .aria_label(language.message(Message::Nodes)),
             )
             .child(
                 Tab::new()
@@ -5728,10 +5607,7 @@ impl ManisApp {
                             }
                         } else {
                             this.language()
-                                .text(
-                                    "This runtime policy is read-only in Manis",
-                                    "这个运行时策略组在 Manis 中为只读",
-                                )
+                                .localized(copy::app::THIS_RUNTIME_POLICY_IS_READ_ONLY_IN_MANIS)
                                 .clone_into(&mut this.status);
                         }
                     }
@@ -5807,7 +5683,7 @@ impl ManisApp {
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let mut body = Self::policy_detail_body().child(section_heading(
-            language.text("Candidate nodes", "候选节点"),
+            language.localized(copy::app::CANDIDATE_NODES),
             Self::policy_kind_guidance(view.policy.kind, language),
             None,
             theme,
@@ -5867,26 +5743,21 @@ impl ManisApp {
 
     fn policy_kind_guidance(kind: manis_core::PolicyGroupKind, language: Language) -> &'static str {
         match kind {
-            manis_core::PolicyGroupKind::Selector => language.text(
-                "Choose the exit used when a routing rule targets this policy",
-                "分流规则命中此策略组时，使用下方所选出口",
+            manis_core::PolicyGroupKind::Selector => {
+                language.localized(copy::app::CHOOSE_THE_EXIT_USED_WHEN_A_ROUTING_RULE_TARGETS_THIS)
+            }
+            manis_core::PolicyGroupKind::UrlTest => language.localized(
+                copy::app::MIHOMO_MEASURES_THE_CONFIGURED_URL_ON_SCHEDULE_CANDIDATES_ARE_AUTOMATIC,
             ),
-            manis_core::PolicyGroupKind::UrlTest => language.text(
-                "Mihomo measures the configured URL on schedule; candidates are automatic",
-                "Mihomo 按策略配置的 URL 和间隔自动测量，候选项不可手动切换",
+            manis_core::PolicyGroupKind::Fallback => language.localized(
+                copy::app::MIHOMO_CHECKS_CANDIDATES_ON_SCHEDULE_AND_FAILS_OVER_AUTOMATICALLY,
             ),
-            manis_core::PolicyGroupKind::Fallback => language.text(
-                "Mihomo checks candidates on schedule and fails over automatically",
-                "Mihomo 按策略配置的间隔自动检查并故障转移，候选项不可手动切换",
+            manis_core::PolicyGroupKind::LoadBalance => language.localized(
+                copy::app::MIHOMO_DISTRIBUTES_CONNECTIONS_ACROSS_CANDIDATES_AUTOMATICALLY,
             ),
-            manis_core::PolicyGroupKind::LoadBalance => language.text(
-                "Mihomo distributes connections across candidates automatically",
-                "Mihomo 自动在候选分组之间分配连接，候选项不可手动切换",
-            ),
-            manis_core::PolicyGroupKind::Direct => language.text(
-                "Direct policies have no selectable exit",
-                "直连策略没有可切换的出口",
-            ),
+            manis_core::PolicyGroupKind::Direct => {
+                language.localized(copy::app::DIRECT_POLICIES_HAVE_NO_SELECTABLE_EXIT)
+            }
         }
     }
 
@@ -5898,10 +5769,7 @@ impl ManisApp {
             .text_size(TextRole::Metadata.size())
             .line_height(TextRole::Metadata.line_height())
             .text_color(theme.text_secondary)
-            .child(language.text(
-                "Automatic policy. Manis shows candidates for inspection; Mihomo selects the active exit from the policy settings.",
-                "自动策略。Manis 展示候选项供检查；实际出口由 Mihomo 按策略设置自动选择。",
-            ))
+            .child(language.localized(copy::app::AUTOMATIC_POLICY_MANIS_SHOWS_CANDIDATES_FOR_INSPECTION_MIHOMO_SELECTS_THE))
     }
 
     fn policy_candidate_table_header(language: Language, theme: Theme) -> Div {
@@ -5916,10 +5784,18 @@ impl ManisApp {
             .child(
                 div()
                     .flex_1()
-                    .child(language.text("Candidate / group", "候选节点 / 分组")),
+                    .child(language.localized(copy::app::CANDIDATE_GROUP)),
             )
-            .child(div().w(px(100.0)).child(language.text("Source", "来源")))
-            .child(div().w(px(64.0)).child(language.text("Latency", "延迟")))
+            .child(
+                div()
+                    .w(px(100.0))
+                    .child(language.localized(copy::app::SOURCE)),
+            )
+            .child(
+                div()
+                    .w(px(64.0))
+                    .child(language.localized(copy::common::LATENCY)),
+            )
     }
 
     fn policy_settings_detail(
@@ -5934,14 +5810,13 @@ impl ManisApp {
         let Some(group_id) = view.editable_group_id.as_deref() else {
             return body
                 .child(section_heading(
-                    language.text("Runtime policy", "运行时策略组"),
-                    language.text(
-                        "This policy comes from the active kernel configuration and is read-only.",
-                        "这个策略组来自当前内核配置，因此为只读。",
+                    language.localized(copy::app::RUNTIME_POLICY),
+                    language.localized(
+                        copy::app::THIS_POLICY_COMES_FROM_THE_ACTIVE_KERNEL_CONFIGURATION_AND_IS,
                     ),
                     Some(
                         status_badge(
-                            language.text("Read-only", "只读"),
+                            language.localized(copy::app::READ_ONLY),
                             StatusTone::Neutral,
                             theme,
                         )
@@ -5991,7 +5866,7 @@ impl ManisApp {
             .child(
                 action_button(
                     "remove-managed-policy-editing",
-                    language.text("Delete policy group", "删除策略组"),
+                    language.localized(copy::app::DELETE_POLICY_GROUP),
                     ActionRole::Danger,
                     ControlSize::Compact,
                 )
@@ -6050,7 +5925,7 @@ impl ManisApp {
                     .child(
                         action_button(
                             "edit-managed-policy",
-                            language.text("Edit policy group", "编辑策略组"),
+                            language.localized(copy::common::EDIT_POLICY_GROUP),
                             ActionRole::Secondary,
                             ControlSize::Compact,
                         )
@@ -6061,7 +5936,7 @@ impl ManisApp {
                     .child(
                         action_button(
                             "remove-managed-policy",
-                            language.text("Delete policy group", "删除策略组"),
+                            language.localized(copy::app::DELETE_POLICY_GROUP),
                             ActionRole::Danger,
                             ControlSize::Compact,
                         )
@@ -6078,10 +5953,9 @@ impl ManisApp {
         theme: Theme,
     ) -> Div {
         section_heading(
-            language.text("Managed policy settings", "托管策略组设置"),
-            language.text(
-                "Saved in Manis and applied to the managed Mihomo configuration.",
-                "保存在 Manis 中，并会应用到 Manis 托管的 Mihomo 配置。",
+            language.localized(copy::app::MANAGED_POLICY_SETTINGS),
+            language.localized(
+                copy::app::SAVED_IN_MANIS_AND_APPLIED_TO_THE_MANAGED_MIHOMO_CONFIGURATION,
             ),
             actions,
             theme,
@@ -6128,8 +6002,8 @@ impl ManisApp {
             .when(compact, |header| {
                 header.child(
                     Button::new("compact-back")
-                        .accessibility_label(language.text("Back to policy groups", "返回策略组"))
-                        .label(language.text("Back", "返回"))
+                        .accessibility_label(language.localized(copy::app::BACK_TO_POLICY_GROUPS))
+                        .label(language.localized(copy::app::BACK))
                         .icon(IconName::ArrowLeft)
                         .with_size(ControlSize::Compact.component_size())
                         .h(ControlSize::Compact.height())
@@ -6268,7 +6142,7 @@ fn status_bar_values(
 ) -> StatusBarValues {
     match controller {
         ControllerState::Disconnected => StatusBarValues {
-            endpoint: language.text("No runtime data", "无运行数据").to_owned(),
+            endpoint: language.localized(copy::app::NO_RUNTIME_DATA).to_owned(),
             download: "↓ —".to_owned(),
             upload: "↑ —".to_owned(),
             dot: theme.route_trace,
@@ -6297,12 +6171,12 @@ fn status_bar_values(
             endpoint: endpoint.clone(),
             download: format!(
                 "{}↓ {}",
-                language.text("Total ", "累计"),
+                language.localized(copy::app::TOTAL),
                 format_bytes(*download_total)
             ),
             upload: format!(
                 "{}↑ {}",
-                language.text("Total ", "累计"),
+                language.localized(copy::app::TOTAL),
                 format_bytes(*upload_total)
             ),
             dot: theme.status_success,
@@ -6344,10 +6218,16 @@ fn controller_status_label(
 ) -> String {
     match controller {
         ControllerState::Disconnected => {
-            format!("{kernel_name} {}", language.text("disconnected", "未连接"))
+            format!(
+                "{kernel_name} {}",
+                language.localized(copy::app::DISCONNECTED)
+            )
         }
         ControllerState::Connecting { .. } => {
-            format!("{kernel_name} {}", language.text("connecting", "连接中"))
+            format!(
+                "{kernel_name} {}",
+                language.localized(copy::app::CONNECTING)
+            )
         }
         ControllerState::Connected {
             version,
@@ -6360,7 +6240,7 @@ fn controller_status_label(
         // The reason travels with the label: the sidebar used to be the only place it appeared.
         ControllerState::Failed { message, .. } => format!(
             "{kernel_name} {} · {message}",
-            language.text("connection failed", "连接失败")
+            language.localized(copy::app::CONNECTION_FAILED)
         ),
     }
 }
@@ -6506,9 +6386,8 @@ fn disable_tun_with_dns(
             );
             Err(format!(
                 "{}：{error}",
-                language.text(
-                    "TUN is disabled, but restoring the original DNS failed; recovery will be retried",
-                    "TUN 已关闭，但恢复原 DNS 失败；Manis 将继续重试恢复"
+                language.localized(
+                    copy::app::TUN_IS_DISABLED_BUT_RESTORING_THE_ORIGINAL_DNS_FAILED_RECOVERY
                 )
             ))
         },
@@ -6525,9 +6404,9 @@ fn disable_tun_with_dns(
 
 fn proxy_mode_label(language: Language, mode: ProxyMode) -> &'static str {
     match mode {
-        ProxyMode::Off => language.text("Off", "关闭代理"),
-        ProxyMode::System => language.text("System proxy", "系统代理"),
-        ProxyMode::Tun => language.text("TUN proxy", "TUN 代理"),
+        ProxyMode::Off => language.localized(copy::common::OFF),
+        ProxyMode::System => language.localized(copy::common::SYSTEM_PROXY),
+        ProxyMode::Tun => language.localized(copy::common::TUN_PROXY),
     }
 }
 
@@ -6537,12 +6416,12 @@ fn compact_proxy_mode_label(
     pending: Option<ProxyMode>,
 ) -> &'static str {
     match pending {
-        Some(ProxyMode::Tun) => language.text("Preparing TUN…", "准备 TUN…"),
-        Some(ProxyMode::System) => language.text("Enabling…", "启用中…"),
-        Some(ProxyMode::Off) => language.text("Turning off…", "关闭中…"),
+        Some(ProxyMode::Tun) => language.localized(copy::app::PREPARING_TUN),
+        Some(ProxyMode::System) => language.localized(copy::app::ENABLING),
+        Some(ProxyMode::Off) => language.localized(copy::app::TURNING_OFF),
         None => match current {
-            ProxyMode::Off => language.text("Off", "关闭"),
-            ProxyMode::System => language.text("System", "系统代理"),
+            ProxyMode::Off => language.localized(copy::app::OFF),
+            ProxyMode::System => language.localized(copy::app::SYSTEM),
             ProxyMode::Tun => "TUN",
         },
     }
@@ -6576,10 +6455,10 @@ impl ProxyModeBlock {
     /// A short phrase that fits after a tray menu label.
     pub(crate) const fn tray_reason(self, language: Language) -> &'static str {
         match self {
-            Self::Busy => language.text("switching", "切换中"),
-            Self::ControllerNotConnected => language.text("connect first", "需先连接"),
-            Self::KernelHasNoTun => language.text("kernel has no TUN", "当前内核无 TUN"),
-            Self::FixtureReadOnly => language.text("test fixture is read-only", "测试快照只读"),
+            Self::Busy => language.localized(copy::app::SWITCHING_2),
+            Self::ControllerNotConnected => language.localized(copy::app::CONNECT_FIRST),
+            Self::KernelHasNoTun => language.localized(copy::app::KERNEL_HAS_NO_TUN),
+            Self::FixtureReadOnly => language.localized(copy::app::TEST_FIXTURE_IS_READ_ONLY),
         }
     }
 }
@@ -6612,9 +6491,9 @@ const fn proxy_mode_block(
 
 fn routing_mode_label(language: Language, mode: RoutingMode) -> &'static str {
     match mode {
-        RoutingMode::Direct => language.text("Direct", "直连"),
-        RoutingMode::Global => language.text("Global", "全局"),
-        RoutingMode::Rule => language.text("Rules", "规则"),
+        RoutingMode::Direct => language.localized(copy::common::DIRECT),
+        RoutingMode::Global => language.localized(copy::app::GLOBAL),
+        RoutingMode::Rule => language.localized(copy::app::RULES),
     }
 }
 
@@ -6641,11 +6520,11 @@ fn policy_target_is_selectable(
 
 fn policy_kind_label(language: Language, kind: manis_core::PolicyGroupKind) -> &'static str {
     match kind {
-        manis_core::PolicyGroupKind::Selector => language.text("Manual", "手动选择"),
-        manis_core::PolicyGroupKind::UrlTest => language.text("Auto select", "自动选择"),
-        manis_core::PolicyGroupKind::Fallback => language.text("Fallback", "故障转移"),
-        manis_core::PolicyGroupKind::LoadBalance => language.text("Load balance", "负载均衡"),
-        manis_core::PolicyGroupKind::Direct => language.text("Direct", "直连"),
+        manis_core::PolicyGroupKind::Selector => language.localized(copy::app::MANUAL),
+        manis_core::PolicyGroupKind::UrlTest => language.localized(copy::app::AUTO_SELECT),
+        manis_core::PolicyGroupKind::Fallback => language.localized(copy::app::FALLBACK),
+        manis_core::PolicyGroupKind::LoadBalance => language.localized(copy::app::LOAD_BALANCE),
+        manis_core::PolicyGroupKind::Direct => language.localized(copy::common::DIRECT),
     }
 }
 

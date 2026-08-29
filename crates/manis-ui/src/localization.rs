@@ -5,6 +5,8 @@ use std::process::Command;
 
 use manis_profile::write_private_atomic;
 
+pub(crate) mod copy;
+
 const LANGUAGE_PREFERENCE_FILE: &str = "language.preference";
 const MAX_LANGUAGE_PREFERENCE_BYTES: u64 = 32;
 
@@ -109,6 +111,19 @@ pub(crate) enum Language {
     SimplifiedChinese,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct LocalizedText {
+    english: &'static str,
+    chinese: &'static str,
+}
+
+impl LocalizedText {
+    #[must_use]
+    pub(crate) const fn new(english: &'static str, chinese: &'static str) -> Self {
+        Self { english, chinese }
+    }
+}
+
 impl Language {
     #[must_use]
     pub(crate) fn from_locale(locale: Option<&str>) -> Self {
@@ -128,11 +143,16 @@ impl Language {
     }
 
     #[must_use]
-    pub(crate) const fn text(self, english: &'static str, chinese: &'static str) -> &'static str {
+    const fn select(self, english: &'static str, chinese: &'static str) -> &'static str {
         match self {
             Self::English => english,
             Self::SimplifiedChinese => chinese,
         }
+    }
+
+    #[must_use]
+    pub(crate) const fn localized(self, text: LocalizedText) -> &'static str {
+        self.select(text.english, text.chinese)
     }
 
     #[must_use]
@@ -206,7 +226,7 @@ impl Language {
                 " · 恢复先前配置时也发生失败：",
             ),
         };
-        self.text(english, chinese)
+        self.select(english, chinese)
     }
 
     #[must_use]

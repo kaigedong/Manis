@@ -6,7 +6,7 @@ use manis_profile::{MANIS_GLOBAL_GROUP_NAME, QxRuleKind, QxRuleList};
 use super::{ManisApp, format_bytes};
 use crate::{
     components::{ActionRole, StatusTone, action_button, empty_state, page_heading, status_badge},
-    localization::{CountNoun, Language, Message},
+    localization::{CountNoun, Language, Message, copy},
     theme::{ControlSize, Space, TextRole, Theme},
 };
 
@@ -53,10 +53,9 @@ impl ManisApp {
             ActionRole::Secondary,
             ControlSize::Compact,
         )
-        .accessibility_label(language.text(
-            "Refresh activity data by reconnecting the kernel",
-            "重新连接内核并刷新网络活动数据",
-        ))
+        .accessibility_label(
+            language.localized(copy::activity::REFRESH_ACTIVITY_DATA_BY_RECONNECTING_THE_KERNEL),
+        )
         .border_color(theme.outline_subtle)
         .bg(theme.surface_high)
         .text_color(theme.text_primary)
@@ -139,9 +138,8 @@ impl ManisApp {
             rows = rows.child(div().flex_1().p(Space::Xl.px()).child(if no_query {
                 empty_state(
                     language.message(Message::NoActiveConnections),
-                    language.text(
-                        "Live traffic appears here as soon as the kernel reports a connection.",
-                        "内核上报新连接后，实时流量会显示在这里。",
+                    language.localized(
+                        copy::activity::LIVE_TRAFFIC_APPEARS_HERE_AS_SOON_AS_THE_KERNEL_REPORTS,
                     ),
                     Some(
                         action_button(
@@ -150,9 +148,8 @@ impl ManisApp {
                             ActionRole::Secondary,
                             ControlSize::Compact,
                         )
-                        .accessibility_label(language.text(
-                            "Refresh activity data by reconnecting the kernel",
-                            "重新连接内核并刷新网络活动数据",
+                        .accessibility_label(language.localized(
+                            copy::activity::REFRESH_ACTIVITY_DATA_BY_RECONNECTING_THE_KERNEL,
                         ))
                         .border_color(theme.outline_subtle)
                         .bg(theme.surface_high)
@@ -165,9 +162,8 @@ impl ManisApp {
             } else {
                 empty_state(
                     language.message(Message::NoFilterMatches),
-                    language.text(
-                        "Try a target host, process name, rule, or route stage.",
-                        "可以尝试输入目标域名、进程名、规则或路径节点。",
+                    language.localized(
+                        copy::activity::TRY_A_TARGET_HOST_PROCESS_NAME_RULE_OR_ROUTE_STAGE,
                     ),
                     None,
                     theme,
@@ -210,7 +206,7 @@ impl ManisApp {
                     .iter()
                     .any(|rule| manual_rule_matches_connection(rule, connection))
                 {
-                    return Some(language.text("Manual rules", "手动规则").to_owned());
+                    return Some(language.localized(copy::common::MANUAL_RULES).to_owned());
                 }
                 continue;
             }
@@ -252,7 +248,7 @@ fn activity_summary(
             "{}/{} {}",
             visible_count,
             total_count,
-            language.text("connections", "条连接")
+            language.localized(copy::activity::CONNECTIONS)
         )
     };
     format!(
@@ -293,8 +289,12 @@ fn activity_row(
 ) -> Div {
     let target = connection_target(connection, language);
     let metadata = connection_metadata(connection, language);
-    let chain = route_summary_with_group(&connection.chains, rule_group, language)
-        .unwrap_or_else(|| language.text("Route unavailable", "路由未返回").to_owned());
+    let chain =
+        route_summary_with_group(&connection.chains, rule_group, language).unwrap_or_else(|| {
+            language
+                .localized(copy::activity::ROUTE_UNAVAILABLE)
+                .to_owned()
+        });
 
     div()
         .min_h(px(if compact { 78.0 } else { 60.0 }))
@@ -379,7 +379,7 @@ fn user_route_stages(chains: &[String]) -> impl DoubleEndedIterator<Item = &str>
 
 fn route_stage_label(stage: &str, language: Language) -> &str {
     match stage {
-        "DIRECT" => language.text("Direct", "直连"),
+        "DIRECT" => language.localized(copy::common::DIRECT),
         _ => stage,
     }
 }
@@ -462,13 +462,13 @@ fn connection_metadata(connection: &Connection, language: Language) -> String {
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
         })
-        .unwrap_or_else(|| language.text("Unknown process", "未知进程"));
+        .unwrap_or_else(|| language.localized(copy::activity::UNKNOWN_PROCESS));
     let rule = connection
         .rule
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| language.text("No matched rule", "未匹配规则"));
+        .unwrap_or_else(|| language.localized(copy::activity::NO_MATCHED_RULE));
     let rule = connection
         .rule_payload
         .as_deref()
@@ -506,7 +506,9 @@ fn connection_target(connection: &Connection, language: Language) -> String {
             Language::English => format!("Unknown target · port {port}"),
             Language::SimplifiedChinese => format!("未知目标 · 端口 {port}"),
         },
-        (None, None) => language.text("Unknown target", "未知目标").to_owned(),
+        (None, None) => language
+            .localized(copy::activity::UNKNOWN_TARGET)
+            .to_owned(),
     }
 }
 

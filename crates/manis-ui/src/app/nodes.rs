@@ -23,7 +23,7 @@ use super::{
 use crate::{
     components::{ActionRole, action_button, empty_state, section_heading},
     diagnostics::{UiEvent, trace_ui},
-    localization::{CountNoun, Language, Message},
+    localization::{CountNoun, Language, Message, copy},
     mihomo::{self, LoadedProvider, LoadedProviderNode, ProxyDelayTarget, SubscriptionStoreError},
     subscription::SourceNodePreview,
     theme::{ControlSize, Radius, Space, TextRole, Theme},
@@ -78,40 +78,27 @@ impl ManagedPolicyDraftError {
     fn message(self, language: Language) -> String {
         match self {
             Self::InvalidName => language
-                .text(
-                    "Group name cannot be empty or contain newlines/control characters",
-                    "策略组名称不能为空，也不能包含换行或控制字符",
+                .localized(
+                    copy::nodes::GROUP_NAME_CANNOT_BE_EMPTY_OR_CONTAIN_NEWLINES_CONTROL_CHARACTERS,
                 )
                 .to_owned(),
             Self::DuplicateName => language
-                .text(
-                    "A policy group with this name already exists. Choose another name.",
-                    "已有同名策略组，请换一个名称",
-                )
+                .localized(copy::nodes::A_POLICY_GROUP_WITH_THIS_NAME_ALREADY_EXISTS_CHOOSE_ANOTHER)
                 .to_owned(),
             Self::ReservedName => language
-                .text(
-                    "This name is reserved by the proxy kernel",
-                    "该名称由代理内核保留",
-                )
+                .localized(copy::nodes::THIS_NAME_IS_RESERVED_BY_THE_PROXY_KERNEL)
                 .to_owned(),
             Self::InvalidInterval => language
-                .text("Automatic check interval is invalid", "自动检查间隔无效")
+                .localized(copy::nodes::AUTOMATIC_CHECK_INTERVAL_IS_INVALID)
                 .to_owned(),
             Self::MissingFilter => language
-                .text("Enter the node name to match", "请填写要匹配的节点名称")
+                .localized(copy::nodes::ENTER_THE_NODE_NAME_TO_MATCH)
                 .to_owned(),
             Self::MissingExplicitMember => language
-                .text(
-                    "Select at least one node or policy group",
-                    "请至少选择一个节点或策略组",
-                )
+                .localized(copy::nodes::SELECT_AT_LEAST_ONE_NODE_OR_POLICY_GROUP)
                 .to_owned(),
             Self::NoCandidates => language
-                .text(
-                    "The current rule does not match any imported nodes",
-                    "当前规则没有匹配到任何已导入节点",
-                )
+                .localized(copy::nodes::THE_CURRENT_RULE_DOES_NOT_MATCH_ANY_IMPORTED_NODES)
                 .to_owned(),
             Self::InvalidReferences(message) => message,
         }
@@ -255,11 +242,11 @@ impl NodeCounts {
 impl ManisApp {
     fn managed_policy_icon_label(icon: ManagedPolicyIcon, language: Language) -> &'static str {
         match icon {
-            ManagedPolicyIcon::None => language.text("First letter", "首字圆标"),
-            ManagedPolicyIcon::Bolt => language.text("Bolt", "闪电"),
-            ManagedPolicyIcon::Globe => language.text("Globe", "地球"),
-            ManagedPolicyIcon::Shield => language.text("Shield", "盾牌"),
-            ManagedPolicyIcon::Compass => language.text("Compass", "罗盘"),
+            ManagedPolicyIcon::None => language.localized(copy::nodes::FIRST_LETTER),
+            ManagedPolicyIcon::Bolt => language.localized(copy::nodes::BOLT),
+            ManagedPolicyIcon::Globe => language.localized(copy::nodes::GLOBE),
+            ManagedPolicyIcon::Shield => language.localized(copy::nodes::SHIELD),
+            ManagedPolicyIcon::Compass => language.localized(copy::nodes::COMPASS),
         }
     }
 
@@ -268,10 +255,10 @@ impl ManisApp {
         language: Language,
     ) -> &'static str {
         match filter {
-            NodeAvailabilityFilter::All => language.text("All", "全部"),
-            NodeAvailabilityFilter::Available => language.text("Available", "可用"),
-            NodeAvailabilityFilter::Unavailable => language.text("Unavailable", "不可用"),
-            NodeAvailabilityFilter::Untested => language.text("Untested", "未测速"),
+            NodeAvailabilityFilter::All => language.localized(copy::nodes::ALL),
+            NodeAvailabilityFilter::Available => language.localized(copy::nodes::AVAILABLE),
+            NodeAvailabilityFilter::Unavailable => language.localized(copy::nodes::UNAVAILABLE),
+            NodeAvailabilityFilter::Untested => language.localized(copy::nodes::UNTESTED),
         }
     }
 
@@ -348,11 +335,11 @@ impl ManisApp {
                 )
             });
         let origin = if has_local_sources {
-            language.text("Local sources", "本机来源")
+            language.localized(copy::nodes::LOCAL_SOURCES)
         } else if self.source_providers.is_empty() {
-            language.text("No node sources", "尚无节点来源")
+            language.localized(copy::nodes::NO_NODE_SOURCES)
         } else {
-            language.text("Current Mihomo", "当前 Mihomo")
+            language.localized(copy::nodes::CURRENT_MIHOMO)
         };
 
         let view = NodeWorkspaceView {
@@ -402,30 +389,30 @@ impl ManisApp {
                         subscription.providers.is_empty() && !providers.is_empty();
                     let provider_count = providers.len();
                     let transport = if subscription.source.is_https() {
-                        language.text("HTTPS subscription", "HTTPS 订阅")
+                        language.localized(copy::common::HTTPS_SUBSCRIPTION)
                     } else {
-                        language.text("HTTP subscription", "HTTP 订阅")
+                        language.localized(copy::common::HTTP_SUBSCRIPTION)
                     };
                     let state = if using_runtime_cache {
-                        language.text("Using Mihomo cache", "使用 Mihomo 缓存")
+                        language.localized(copy::nodes::USING_MIHOMO_CACHE)
                     } else {
                         match subscription.state {
                             ImportedSubscriptionState::Pending(_)
                             | ImportedSubscriptionState::Refreshing(_) => {
-                                language.text("Restoring", "正在恢复")
+                                language.localized(copy::nodes::RESTORING)
                             }
                             ImportedSubscriptionState::Ready(_) => {
-                                language.text("Restores after restart", "重启后自动恢复")
+                                language.localized(copy::nodes::RESTORES_AFTER_RESTART)
                             }
                             ImportedSubscriptionState::Unavailable(_, _)
                             | ImportedSubscriptionState::StoreError(_) => {
-                                language.text("Unavailable", "当前不可用")
+                                language.localized(copy::nodes::UNAVAILABLE_2)
                             }
                             ImportedSubscriptionState::Removing(_) => {
-                                language.text("Removing", "正在移除")
+                                language.localized(copy::nodes::REMOVING)
                             }
                             ImportedSubscriptionState::None => {
-                                language.text("Not loaded", "尚未读取")
+                                language.localized(copy::nodes::NOT_LOADED)
                             }
                         }
                     };
@@ -442,11 +429,10 @@ impl ManisApp {
             if self.saved_single_nodes.iter().any(|saved| saved.enabled) {
                 groups.push(NodeSourceGroup {
                     id: "saved".to_owned(),
-                    name: language.text("Saved", "已保存").to_owned(),
+                    name: language.localized(copy::common::SAVED).to_owned(),
                     detail: language
-                        .text(
-                            "Individually added VLESS nodes · private local storage",
-                            "单独添加的 VLESS 节点 · 私有本机存储",
+                        .localized(
+                            copy::nodes::INDIVIDUALLY_ADDED_VLESS_NODES_PRIVATE_LOCAL_STORAGE,
                         )
                         .to_owned(),
                     providers: Vec::new(),
@@ -469,11 +455,11 @@ impl ManisApp {
                 id: format!("mihomo:{index}"),
                 name: provider.name.clone(),
                 detail: provider.vehicle_type.as_ref().map_or_else(
-                    || language.text("Mihomo source", "Mihomo 来源").to_owned(),
+                    || language.localized(copy::nodes::MIHOMO_SOURCE).to_owned(),
                     |vehicle| {
                         format!(
                             "{} · {vehicle}",
-                            language.text("Mihomo source", "Mihomo 来源")
+                            language.localized(copy::nodes::MIHOMO_SOURCE)
                         )
                     },
                 ),
@@ -508,10 +494,7 @@ impl ManisApp {
         let detail = format!(
             "{origin} · {} · {}",
             Self::source_count_label(source_count, language),
-            language.text(
-                "Review exit health and global selections here",
-                "在这里查看出口健康状态",
-            )
+            language.localized(copy::nodes::REVIEW_EXIT_HEALTH_AND_GLOBAL_SELECTIONS_HERE)
         );
 
         div()
@@ -563,30 +546,21 @@ impl ManisApp {
             .px(if compact { px(12.0) } else { px(24.0) })
             .py_4()
             .child(Self::node_section_heading(
-                language.text("Imported Nodes", "导入的节点"),
-                language.text(
-                    "Review imported nodes by source; choose one exit for global mode.",
-                    "按来源查看已经导入的节点；可为全局模式指定一个出口。",
-                ),
+                language.localized(copy::nodes::IMPORTED_NODES),
+                language.localized(copy::nodes::REVIEW_IMPORTED_NODES_BY_SOURCE_CHOOSE_ONE_EXIT_FOR_GLOBAL),
                 theme,
             ))
             .when(loading && groups.is_empty(), |body| {
                 body.child(Self::node_message_panel(
-                    language.text("Restoring nodes", "正在恢复节点"),
-                    language.text(
-                        "Manis is loading nodes from your saved subscriptions.",
-                        "正在从已保存的订阅中载入节点。",
-                    ),
+                    language.localized(copy::nodes::RESTORING_NODES),
+                    language.localized(copy::nodes::MANIS_IS_LOADING_NODES_FROM_YOUR_SAVED_SUBSCRIPTIONS),
                     theme,
                 ))
             })
             .when(unavailable && groups.is_empty(), |body| {
                 body.child(Self::node_message_panel(
-                    language.text("Nodes are temporarily unavailable", "暂时无法读取节点"),
-                    language.text(
-                        "Subscriptions remain stored locally. Check source details in Configuration.",
-                        "订阅仍保存在本机。请前往配置页检查来源详情。",
-                    ),
+                    language.localized(copy::nodes::NODES_ARE_TEMPORARILY_UNAVAILABLE),
+                    language.localized(copy::nodes::SUBSCRIPTIONS_REMAIN_STORED_LOCALLY_CHECK_SOURCE_DETAILS_IN_CONFIGURATION),
                     theme,
                 ))
             })
@@ -628,9 +602,9 @@ impl ManisApp {
         cx: &mut Context<Self>,
     ) -> Div {
         let title = if draft.editing_id.is_some() {
-            language.text("Edit policy group", "编辑策略组")
+            language.localized(copy::common::EDIT_POLICY_GROUP)
         } else {
-            language.text("New policy group", "新建策略组")
+            language.localized(copy::nodes::NEW_POLICY_GROUP)
         };
         let left = Self::policy_editor_header_button(
             "policy-editor-back",
@@ -640,7 +614,7 @@ impl ManisApp {
                 this.managed_policies.draft = None;
                 this.managed_policies.editor_popover = None;
                 this.language()
-                    .text("Policy editing cancelled", "已取消编辑策略")
+                    .localized(copy::nodes::POLICY_EDITING_CANCELLED)
                     .clone_into(&mut this.status);
                 cx.notify();
             }),
@@ -726,13 +700,13 @@ impl ManisApp {
                     .max_w(px(760.0))
                     .mx_auto()
                     .child(Self::policy_editor_section_label(
-                        language.text("Basic information", "基本信息"),
+                        language.localized(copy::nodes::BASIC_INFORMATION),
                         theme,
                     ))
                     .child(basics)
                     .child(
                         Self::policy_editor_section_label(
-                            language.text("Candidates", "候选节点"),
+                            language.localized(copy::nodes::CANDIDATES),
                             theme,
                         )
                         .mt_6(),
@@ -745,10 +719,7 @@ impl ManisApp {
                             .text_size(TextRole::Body.size())
                             .line_height(TextRole::Body.line_height())
                             .text_color(theme.text_tertiary)
-                            .child(language.text(
-                                "Routing rules point to this policy; the policy chooses one exit from this node scope.",
-                                "分流规则会指向这个策略组；策略组再从这里配置的节点范围中选择出口。",
-                            )),
+                            .child(language.localized(copy::nodes::ROUTING_RULES_POINT_TO_THIS_POLICY_THE_POLICY_CHOOSES_ONE)),
                     ),
             )
     }
@@ -778,7 +749,7 @@ impl ManisApp {
             .bg(theme.surface_high)
             .child(Self::policy_editor_popup_row(
                 "policy-editor-type",
-                language.text("Type", "类型"),
+                language.localized(copy::nodes::TYPE),
                 strategy,
                 None,
                 theme,
@@ -792,7 +763,7 @@ impl ManisApp {
                 cx,
             ))
             .child(Self::policy_editor_input_row(
-                language.text("Policy group name", "策略组名称"),
+                language.localized(copy::nodes::POLICY_GROUP_NAME),
                 true,
                 self.inputs.policy_group_name.clone(),
                 true,
@@ -800,7 +771,7 @@ impl ManisApp {
             ))
             .child(Self::policy_editor_popup_row(
                 "policy-editor-icon",
-                language.text("Icon", "图标"),
+                language.localized(copy::nodes::ICON),
                 Self::managed_policy_icon_label(draft.icon, language).to_owned(),
                 Some(Self::policy_icon_visual(
                     draft.icon,
@@ -830,12 +801,14 @@ impl ManisApp {
         cx: &mut Context<Self>,
     ) -> Div {
         let matcher = match draft.matcher_kind {
-            PolicyCandidateMatcherKind::All => language.text("All nodes", "全部节点").to_owned(),
+            PolicyCandidateMatcherKind::All => {
+                language.localized(copy::nodes::ALL_NODES).to_owned()
+            }
             PolicyCandidateMatcherKind::NameContains => {
-                language.text("Name contains", "名称包含").to_owned()
+                language.localized(copy::nodes::NAME_CONTAINS).to_owned()
             }
             PolicyCandidateMatcherKind::Explicit => language
-                .text("Select nodes or groups", "选择节点或策略组")
+                .localized(copy::nodes::SELECT_NODES_OR_GROUPS)
                 .to_owned(),
         };
         let has_details = draft.matcher_kind != PolicyCandidateMatcherKind::All
@@ -848,7 +821,7 @@ impl ManisApp {
             .bg(theme.surface_high)
             .child(Self::policy_editor_popup_row(
                 "policy-editor-candidate-mode",
-                language.text("Node scope", "节点范围"),
+                language.localized(copy::nodes::NODE_SCOPE),
                 matcher,
                 None,
                 theme,
@@ -865,7 +838,7 @@ impl ManisApp {
             ));
         if draft.matcher_kind == PolicyCandidateMatcherKind::NameContains {
             nodes = nodes.child(Self::policy_editor_input_row(
-                language.text("Node name contains", "节点名称包含"),
+                language.localized(copy::nodes::NODE_NAME_CONTAINS),
                 false,
                 self.inputs.policy_group_filter.clone(),
                 draft.strategy == ManagedPolicyStrategy::LowestLatency,
@@ -907,7 +880,7 @@ impl ManisApp {
         };
         Self::policy_editor_popup_row(
             "policy-editor-selected-nodes",
-            language.text("Selected candidates", "已选候选项"),
+            language.localized(copy::nodes::SELECTED_CANDIDATES),
             selected,
             None,
             theme,
@@ -945,7 +918,7 @@ impl ManisApp {
         };
         Self::policy_editor_popup_row(
             "policy-editor-interval",
-            language.text("Retest interval", "重测间隔"),
+            language.localized(copy::nodes::RETEST_INTERVAL),
             interval,
             None,
             theme,
@@ -1221,15 +1194,15 @@ impl ManisApp {
         for (matcher, title) in [
             (
                 PolicyCandidateMatcherKind::All,
-                language.text("All nodes", "全部节点"),
+                language.localized(copy::nodes::ALL_NODES),
             ),
             (
                 PolicyCandidateMatcherKind::NameContains,
-                language.text("Name contains", "名称包含"),
+                language.localized(copy::nodes::NAME_CONTAINS),
             ),
             (
                 PolicyCandidateMatcherKind::Explicit,
-                language.text("Select nodes or groups", "选择节点或策略组"),
+                language.localized(copy::nodes::SELECT_NODES_OR_GROUPS),
             ),
         ] {
             let selected = draft.matcher_kind == matcher;
@@ -1278,15 +1251,11 @@ impl ManisApp {
                     cx,
                 ));
         if inventory.is_empty() {
-            list = list.child(
-                div()
-                    .p_5()
-                    .text_color(theme.text_secondary)
-                    .child(language.text(
-                        "Import nodes or create another policy group before making a selection.",
-                        "请先导入节点或创建其他策略组，再进行选择。",
-                    )),
-            );
+            list = list.child(div().p_5().text_color(theme.text_secondary).child(
+                language.localized(
+                    copy::nodes::IMPORT_NODES_OR_CREATE_ANOTHER_POLICY_GROUP_BEFORE_MAKING_A,
+                ),
+            ));
         }
         for member in inventory {
             let selected = draft.explicit_members.contains(&member);
@@ -1313,9 +1282,9 @@ impl ManisApp {
                             .line_height(TextRole::Metadata.line_height())
                             .text_color(theme.text_tertiary)
                             .child(match member.source_id.as_str() {
-                                "builtin" => language.text("Built-in", "内置").to_owned(),
+                                "builtin" => language.localized(copy::nodes::BUILT_IN).to_owned(),
                                 source if source.starts_with("policy:") => {
-                                    language.text("Policy group", "策略组").to_owned()
+                                    language.message(Message::PolicyGroup).to_owned()
                                 }
                                 source => source_labels
                                     .get(source)
@@ -1366,11 +1335,11 @@ impl ManisApp {
             .child(
                 action_button(
                     "policy-editor-node-menu-done",
-                    language.text("Done", "完成"),
+                    language.localized(copy::nodes::DONE),
                     ActionRole::Primary,
                     ControlSize::Icon,
                 )
-                .accessibility_label(language.text("Finish selecting candidates", "完成选择候选项"))
+                .accessibility_label(language.localized(copy::nodes::FINISH_SELECTING_CANDIDATES))
                 .px_3()
                 .cursor_pointer()
                 .font_weight(FontWeight::SEMIBOLD)
@@ -1388,15 +1357,15 @@ impl ManisApp {
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let mut choices = div().id("policy-interval-choices");
-        for (seconds, english, chinese) in [
-            (60, "1 min", "1 分钟"),
-            (300, "5 min", "5 分钟"),
-            (600, "10 min", "10 分钟"),
-            (1_800, "30 min", "30 分钟"),
+        for (seconds, label) in [
+            (60, copy::nodes::INTERVAL_1_MINUTE),
+            (300, copy::nodes::INTERVAL_5_MINUTES),
+            (600, copy::nodes::INTERVAL_10_MINUTES),
+            (1_800, copy::nodes::INTERVAL_30_MINUTES),
         ] {
             choices = choices.child(Self::policy_choice_row(
                 format!("policy-group-interval-{seconds}"),
-                language.text(english, chinese),
+                language.localized(label),
                 draft.test_interval_secs == seconds,
                 theme,
                 cx.listener(move |this, _, _, cx| {
@@ -1492,7 +1461,7 @@ impl ManisApp {
         }
         if targets.is_empty() {
             self.language()
-                .text("This source has no nodes to test", "当前来源没有可测速节点")
+                .localized(copy::nodes::THIS_SOURCE_HAS_NO_NODES_TO_TEST)
                 .clone_into(&mut self.status);
             cx.notify();
             return;
@@ -1510,10 +1479,7 @@ impl ManisApp {
         }
         let Some(generation) = self.begin_group_benchmark(key.clone()) else {
             self.language()
-                .text(
-                    "A group test is already running. Wait for it to finish.",
-                    "已有分组正在测速，请等待完成后再试",
-                )
+                .localized(copy::nodes::A_GROUP_TEST_IS_ALREADY_RUNNING_WAIT_FOR_IT_TO)
                 .clone_into(&mut self.status);
             cx.notify();
             return;
@@ -1521,7 +1487,7 @@ impl ManisApp {
         let language = self.language();
         self.status = format!(
             "{} “{name}” · {}",
-            language.text("Testing source", "正在测试来源"),
+            language.localized(copy::nodes::TESTING_SOURCE),
             Self::node_count_label(targets.len(), language)
         );
         trace_ui(UiEvent::GroupBenchmarkStarted);
@@ -1584,7 +1550,7 @@ impl ManisApp {
                 trace_ui(UiEvent::GroupBenchmarkSucceeded);
                 self.status = format!(
                     "{}: {}",
-                    language.text("Source test completed", "来源测速完成"),
+                    language.localized(copy::nodes::SOURCE_TEST_COMPLETED),
                     Self::success_fraction_label(summary.succeeded, summary.total, language)
                 );
             }
@@ -1592,9 +1558,9 @@ impl ManisApp {
                 trace_ui(UiEvent::GroupBenchmarkFailed);
                 self.status = format!(
                     "{}：{}",
-                    language.text("Source test failed", "来源测速失败"),
+                    language.localized(copy::nodes::SOURCE_TEST_FAILED),
                     failure.as_deref().unwrap_or_else(|| {
-                        language.text("Mihomo did not return a result", "Mihomo 未返回结果")
+                        language.localized(copy::common::MIHOMO_DID_NOT_RETURN_A_RESULT)
                     })
                 );
             }
@@ -1626,7 +1592,7 @@ impl ManisApp {
             );
         }
         self.language()
-            .text("Creating policy group", "正在创建策略组")
+            .localized(copy::nodes::CREATING_POLICY_GROUP)
             .clone_into(&mut self.status);
         cx.notify();
     }
@@ -1674,7 +1640,7 @@ impl ManisApp {
         let language = self.language();
         self.status = format!(
             "{} “{}”",
-            language.text("Editing group", "正在编辑分组"),
+            language.localized(copy::nodes::EDITING_GROUP),
             group.name
         );
         cx.notify();
@@ -1769,10 +1735,7 @@ impl ManisApp {
         };
         let Some(store_dir) = self.subscription_store_dir.clone() else {
             language
-                .text(
-                    "Could not determine where to save policy groups",
-                    "无法确定策略组保存位置",
-                )
+                .localized(copy::nodes::COULD_NOT_DETERMINE_WHERE_TO_SAVE_POLICY_GROUPS)
                 .clone_into(&mut self.status);
             cx.notify();
             return;
@@ -1780,9 +1743,9 @@ impl ManisApp {
         let group_name = group.name.clone();
         self.status = format!(
             "{} “{}”; {}",
-            language.text("Group saved", "分组已保存"),
+            language.localized(copy::nodes::GROUP_SAVED),
             group_name,
-            language.text("applying changes", "正在应用更改")
+            language.localized(copy::nodes::APPLYING_CHANGES)
         );
         let runtime = self.runtime.clone();
         let executor = cx.background_executor().clone();
@@ -1834,14 +1797,14 @@ impl ManisApp {
                     self.managed_policies.editor_popover = None;
                     self.status = format!(
                         "{} “{}”{}",
-                        language.text("Group saved", "分组已保存"),
+                        language.localized(copy::nodes::GROUP_SAVED),
                         group.name,
                         transaction.apply.status_suffix(language)
                     );
                 } else {
                     self.status = format!(
                         "{}{}",
-                        language.text("Failed to save policy group", "策略组保存失败"),
+                        language.localized(copy::nodes::FAILED_TO_SAVE_POLICY_GROUP),
                         transaction.apply.status_suffix_after_rollback_attempt(
                             language,
                             transaction.rollback_error.as_ref(),
@@ -1853,7 +1816,7 @@ impl ManisApp {
                 self.status = format!(
                     "{}: {error}",
                     self.language()
-                        .text("Failed to save policy group", "策略组保存失败")
+                        .localized(copy::nodes::FAILED_TO_SAVE_POLICY_GROUP)
                 );
             }
         }
@@ -1870,10 +1833,7 @@ impl ManisApp {
             )
         }) {
             self.language()
-                .text(
-                    "This policy group is used by another policy group and cannot be deleted",
-                    "该策略组正被其他策略组使用，无法删除",
-                )
+                .localized(copy::nodes::THIS_POLICY_GROUP_IS_USED_BY_ANOTHER_POLICY_GROUP_AND)
                 .clone_into(&mut self.status);
             cx.notify();
             return;
@@ -1894,9 +1854,9 @@ impl ManisApp {
         let remove_id = id.to_owned();
         self.status = format!(
             "{} “{}”; {}",
-            language.text("Group deleted", "分组已删除"),
+            language.localized(copy::nodes::GROUP_DELETED),
             group.name,
-            language.text("applying changes", "正在应用更改")
+            language.localized(copy::nodes::APPLYING_CHANGES)
         );
         let runtime = self.runtime.clone();
         let executor = cx.background_executor().clone();
@@ -1931,7 +1891,7 @@ impl ManisApp {
                 let language = self.language();
                 self.status = format!(
                     "{}{}",
-                    language.text("Failed to delete policy group", "策略组删除失败"),
+                    language.localized(copy::nodes::FAILED_TO_DELETE_POLICY_GROUP),
                     transaction.apply.status_suffix_after_rollback_attempt(
                         language,
                         transaction.rollback_error.as_ref(),
@@ -1942,7 +1902,7 @@ impl ManisApp {
                 self.status = format!(
                     "{}: {error}",
                     self.language()
-                        .text("Failed to delete policy group", "策略组删除失败")
+                        .localized(copy::nodes::FAILED_TO_DELETE_POLICY_GROUP)
                 );
             }
         }
@@ -1978,7 +1938,7 @@ impl ManisApp {
         }
         self.status = format!(
             "{} “{}”{}",
-            language.text("Group deleted", "分组已删除"),
+            language.localized(copy::nodes::GROUP_DELETED),
             group.name,
             transaction.apply.status_suffix(language)
         );
@@ -1991,16 +1951,13 @@ impl ManisApp {
             ActionRole::Quiet,
             ControlSize::Compact,
         )
-        .accessibility_label(language.text("Manage subscription sources", "管理订阅来源"))
+        .accessibility_label(language.localized(copy::nodes::MANAGE_SUBSCRIPTION_SOURCES))
         .px_3()
         .cursor_pointer()
         .on_click(cx.listener(|this, _, _, cx| {
             this.primary_workspace = PrimaryWorkspace::Configuration;
             this.language()
-                .text(
-                    "Subscription source configuration opened",
-                    "已打开订阅来源配置",
-                )
+                .localized(copy::nodes::SUBSCRIPTION_SOURCE_CONFIGURATION_OPENED)
                 .clone_into(&mut this.status);
             cx.notify();
         }))
@@ -2015,14 +1972,14 @@ impl ManisApp {
         action_button(
             "nodes-refresh",
             if refreshing {
-                language.text("Loading…", "读取中…")
+                language.localized(copy::nodes::LOADING)
             } else {
                 language.message(Message::RefreshNodes)
             },
             ActionRole::Secondary,
             ControlSize::Compact,
         )
-        .accessibility_label(language.text("Refresh node health", "刷新节点健康状态"))
+        .accessibility_label(language.localized(copy::nodes::REFRESH_NODE_HEALTH))
         .tab_stop(!refreshing)
         .px_3()
         .cursor_pointer()
@@ -2047,10 +2004,7 @@ impl ManisApp {
                 this.restore_imported_subscriptions(cx);
             } else if !this.saved_single_nodes.is_empty() {
                 this.language()
-                    .text(
-                        "Saved nodes do not need to be downloaded again",
-                        "已保存节点不需要重新下载",
-                    )
+                    .localized(copy::nodes::SAVED_NODES_DO_NOT_NEED_TO_BE_DOWNLOADED_AGAIN)
                     .clone_into(&mut this.status);
                 cx.notify();
             } else {
@@ -2075,19 +2029,19 @@ impl ManisApp {
                 Space::Xl.px()
             })
             .child(Self::node_health_value(
-                language.text("Available", "可用"),
+                language.localized(copy::nodes::AVAILABLE),
                 counts.available,
                 theme.status_success,
                 theme,
             ))
             .child(Self::node_health_value(
-                language.text("Unavailable", "不可用"),
+                language.localized(copy::nodes::UNAVAILABLE),
                 counts.unavailable,
                 theme.text_secondary,
                 theme,
             ))
             .child(Self::node_health_value(
-                language.text("Untested", "未测速"),
+                language.localized(copy::nodes::UNTESTED),
                 counts.untested,
                 theme.text_tertiary,
                 theme,
@@ -2150,7 +2104,7 @@ impl ManisApp {
                     .role(Role::Button)
                     .aria_label(format!(
                         "{} {label}",
-                        language.text("Filter nodes by", "筛选节点")
+                        language.localized(copy::nodes::FILTER_NODES_BY)
                     ))
                     .tab_stop(true)
                     .focusable()
@@ -2187,7 +2141,7 @@ impl ManisApp {
                         let language = this.language();
                         this.status = format!(
                             "{}: {}",
-                            language.text("Node filter", "节点筛选"),
+                            language.localized(copy::nodes::NODE_FILTER),
                             Self::availability_filter_label(filter, language)
                         );
                         cx.notify();
@@ -2232,10 +2186,10 @@ impl ManisApp {
                 .text_size(TextRole::Body.size())
                 .line_height(TextRole::Body.line_height())
                 .text_color(theme.text_secondary)
-                .child(language.text(
-                    "No nodes from this source match the current filter.",
-                    "这个来源中没有符合当前筛选的节点。",
-                ))
+                .child(
+                    language
+                        .localized(copy::nodes::NO_NODES_FROM_THIS_SOURCE_MATCH_THE_CURRENT_FILTER),
+                )
                 .into_any_element()
         } else {
             self.source_group_table(
@@ -2287,18 +2241,18 @@ impl ManisApp {
             GroupBenchmarkState::Running { .. } => format!(
                 "{} · {}",
                 group.detail,
-                language.text("testing...", "正在测速…")
+                language.localized(copy::nodes::TESTING)
             ),
             GroupBenchmarkState::Complete { summary, .. } => format!(
                 "{} · {} {}",
                 group.detail,
-                language.text("test", "测速"),
+                language.localized(copy::nodes::TEST),
                 Self::success_fraction_label(summary.succeeded, summary.total, language)
             ),
             GroupBenchmarkState::Failed { .. } => format!(
                 "{} · {}",
                 group.detail,
-                language.text("test failed", "测速失败")
+                language.localized(copy::nodes::TEST_FAILED)
             ),
         };
         SourceGroupPresentation {
@@ -2320,16 +2274,16 @@ impl ManisApp {
         cx: &mut Context<Self>,
     ) -> Div {
         let action = if presentation.collapsed {
-            language.text("Expand", "展开")
+            language.localized(copy::common::EXPAND)
         } else {
-            language.text("Collapse", "收起")
+            language.localized(copy::common::COLLAPSE)
         };
         let trigger_group_id = group.id.clone();
         let trigger = Button::new(format!("source-group-header-{}", group.id))
             .accessibility_label(format!(
                 "{} {} {}",
                 action,
-                language.text("node source", "节点来源"),
+                language.localized(copy::nodes::NODE_SOURCE),
                 group.name
             ))
             .with_variant(ButtonVariant::Ghost)
@@ -2347,10 +2301,7 @@ impl ManisApp {
                 this.node_workspace.toggle_group(&trigger_group_id);
                 this.persist_node_workspace();
                 this.language()
-                    .text(
-                        "Node source expanded state updated",
-                        "已更新节点来源展开状态",
-                    )
+                    .localized(copy::nodes::NODE_SOURCE_EXPANDED_STATE_UPDATED)
                     .clone_into(&mut this.status);
                 cx.notify();
             }));
@@ -2522,13 +2473,17 @@ impl ManisApp {
             .line_height(TextRole::Metadata.line_height())
             .font_weight(TextRole::Metadata.weight())
             .text_color(theme.text_tertiary)
-            .child(div().flex_1().child(language.text("Node", "节点")))
-            .child(div().w(px(100.0)).child(language.text("Protocol", "协议")))
+            .child(div().flex_1().child(language.localized(copy::nodes::NODE)))
+            .child(
+                div()
+                    .w(px(100.0))
+                    .child(language.localized(copy::nodes::PROTOCOL)),
+            )
             .child(
                 div()
                     .w(px(72.0))
                     .text_align(gpui::TextAlign::Right)
-                    .child(language.text("Latency", "延迟")),
+                    .child(language.localized(copy::common::LATENCY)),
             )
     }
 
@@ -2589,8 +2544,8 @@ impl ManisApp {
                 row.role(Role::RadioButton)
                     .aria_label(format!(
                         "{} {selected_name} {}",
-                        language.text("Select", "选择"),
-                        language.text("as global exit", "作为全局出口")
+                        language.localized(copy::nodes::SELECT),
+                        language.localized(copy::nodes::AS_GLOBAL_EXIT)
                     ))
                     .aria_toggled(if global_selected {
                         Toggled::True
@@ -2719,10 +2674,9 @@ impl ManisApp {
             ActionRole::Primary,
             ControlSize::Standard,
         )
-        .accessibility_label(language.text(
-            "Go to Configuration to import a subscription",
-            "前往配置导入订阅",
-        ))
+        .accessibility_label(
+            language.localized(copy::nodes::GO_TO_CONFIGURATION_TO_IMPORT_A_SUBSCRIPTION),
+        )
         .cursor_pointer()
         .w(px(180.0))
         .px_4()
@@ -2732,10 +2686,7 @@ impl ManisApp {
         .on_click(cx.listener(|this, _, _, cx| {
             this.primary_workspace = PrimaryWorkspace::Configuration;
             this.language()
-                .text(
-                    "Subscription source configuration opened",
-                    "已打开订阅来源配置",
-                )
+                .localized(copy::nodes::SUBSCRIPTION_SOURCE_CONFIGURATION_OPENED)
                 .clone_into(&mut this.status);
             cx.notify();
         }))
@@ -2747,10 +2698,8 @@ impl ManisApp {
             .items_center()
             .child(empty_state(
                 language.message(Message::NoNodes),
-                language.text(
-                    "Import a subscription or add a VLESS node; nodes will then appear here automatically.",
-                    "导入订阅或添加 VLESS 节点后，节点会自动出现在这里。",
-                ),
+                language
+                    .localized(copy::nodes::IMPORT_A_SUBSCRIPTION_OR_ADD_A_VLESS_NODE_NODES_WILL),
                 Some(action),
                 theme,
             ))
