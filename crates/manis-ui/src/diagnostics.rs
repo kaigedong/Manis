@@ -71,6 +71,7 @@ pub(crate) enum UiEvent {
     SourceRemoveStarted,
     SourceRemoveSucceeded,
     SourceRemoveFailed,
+    #[allow(dead_code)]
     SubscriptionDraftCleared,
     PolicyPreviewOpened,
     MihomoConnectStarted,

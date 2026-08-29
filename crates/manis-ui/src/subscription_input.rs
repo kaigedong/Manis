@@ -114,6 +114,7 @@ impl SubscriptionTextInput {
         self.set_content_without_event(clamp_to_byte_limit(&value, self.max_bytes), cx);
     }
 
+    #[allow(dead_code)]
     pub(crate) fn clear(&mut self, cx: &mut Context<Self>) {
         self.set_content_without_event(SharedString::default(), cx);
         cx.emit(SubscriptionInputChanged);
@@ -198,8 +199,8 @@ fn clamp_to_byte_limit(value: &str, max_bytes: usize) -> SharedString {
 
 fn subscription_placeholder(language: Language) -> &'static str {
     language.text(
-        "Paste an HTTP/HTTPS subscription or vless:// node link",
-        "粘贴 HTTP/HTTPS 订阅或 vless:// 节点链接",
+        "Paste a subscription URL or single-node share link",
+        "粘贴订阅 URL 或单节点分享链接",
     )
 }
 

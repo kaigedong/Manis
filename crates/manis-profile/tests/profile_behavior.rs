@@ -879,7 +879,7 @@ fn renderer_escapes_double_quoted_yaml_scalars() {
         proxies: Vec::new(),
         providers: vec![ProxyProvider {
             name: Name::parse("subscription").expect("valid name"),
-            url: fixture_secret(),
+            source: manis_profile::ProxyProviderSource::Http(fixture_secret()),
             interval_secs: 86_400,
             path: "providers/subscription.yaml".to_owned(),
             health_check: HealthCheck {
@@ -926,7 +926,7 @@ fn validation_rejects_invalid_names_duplicates_dangling_refs_and_misplaced_match
         proxies: Vec::new(),
         providers: vec![ProxyProvider {
             name: provider_name.clone(),
-            url: fixture_secret(),
+            source: manis_profile::ProxyProviderSource::Http(fixture_secret()),
             interval_secs: 86_400,
             path: "providers/subscription.yaml".to_owned(),
             health_check: HealthCheck {

@@ -219,7 +219,27 @@ impl Profile {
         user_groups: Vec<UserPolicyGroup>,
         mixed_port: u16,
     ) -> Result<Self, ProfileError> {
-        if subscriptions.is_empty() && vless_nodes.is_empty() {
+        Self::qx_sources_with_groups_and_local_providers(
+            subscriptions,
+            Vec::new(),
+            vless_nodes,
+            user_groups,
+            mixed_port,
+        )
+    }
+
+    /// Builds a QX-style profile with remote subscriptions and Mihomo file providers.
+    ///
+    /// Each local path points to a private file containing one proxy share link. This lets Mihomo
+    /// parse all single-node protocols it supports without duplicating those protocol parsers here.
+    pub fn qx_sources_with_groups_and_local_providers(
+        subscriptions: Vec<SecretUrl>,
+        local_provider_paths: Vec<String>,
+        vless_nodes: Vec<VlessProxy>,
+        user_groups: Vec<UserPolicyGroup>,
+        mixed_port: u16,
+    ) -> Result<Self, ProfileError> {
+        if subscriptions.is_empty() && local_provider_paths.is_empty() && vless_nodes.is_empty() {
             return Err(ProfileError::InvalidValue("profile sources"));
         }
         if vless_nodes.iter().any(|proxy| {
@@ -236,7 +256,7 @@ impl Profile {
                 let display_index = index + 1;
                 Ok(ProxyProvider {
                     name: Name::parse(&format!("Subscription {display_index}"))?,
-                    url,
+                    source: ProxyProviderSource::Http(url),
                     interval_secs: 86_400,
                     path: format!("./proxy_providers/subscription-{display_index}.yaml"),
                     health_check: HealthCheck {
@@ -247,6 +267,21 @@ impl Profile {
                 })
             })
             .collect::<Result<Vec<_>, ProfileError>>()?;
+        let mut providers = providers;
+        for (index, path) in local_provider_paths.into_iter().enumerate() {
+            let display_index = index + 1;
+            providers.push(ProxyProvider {
+                name: Name::parse(&format!("Single node {display_index}"))?,
+                source: ProxyProviderSource::File,
+                interval_secs: 86_400,
+                path,
+                health_check: HealthCheck {
+                    enabled: true,
+                    interval_secs: 600,
+                    url: GROUP_TEST_URL.to_owned(),
+                },
+            });
+        }
         let provider_names = providers
             .iter()
             .map(|provider| provider.name.clone())
@@ -306,7 +341,7 @@ impl Profile {
             proxies: Vec::new(),
             providers: vec![ProxyProvider {
                 name: provider_name.clone(),
-                url: subscription,
+                source: ProxyProviderSource::Http(subscription),
                 interval_secs: 86_400,
                 path: "./proxy_providers/subscription.yaml".to_owned(),
                 health_check: HealthCheck {
@@ -426,10 +461,16 @@ pub enum LogLevel {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProxyProvider {
     pub name: Name,
-    pub url: SecretUrl,
+    pub source: ProxyProviderSource,
     pub interval_secs: u32,
     pub path: String,
     pub health_check: HealthCheck,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ProxyProviderSource {
+    Http(SecretUrl),
+    File,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1078,11 +1119,18 @@ pub fn render_mihomo_yaml_with_tun(
     yaml.push_str("proxy-providers:\n");
     for provider in &profile.providers {
         writeln!(yaml, "  {}:", quoted(provider.name.as_str())).expect("String write cannot fail");
-        yaml.push_str("    type: \"http\"\n");
-        writeln!(yaml, "    url: {}", quoted(&provider.url.0)).expect("String write cannot fail");
+        match &provider.source {
+            ProxyProviderSource::Http(url) => {
+                yaml.push_str("    type: \"http\"\n");
+                writeln!(yaml, "    url: {}", quoted(&url.0)).expect("String write cannot fail");
+            }
+            ProxyProviderSource::File => yaml.push_str("    type: \"file\"\n"),
+        }
         writeln!(yaml, "    path: {}", quoted(&provider.path)).expect("String write cannot fail");
-        writeln!(yaml, "    interval: {}", provider.interval_secs)
-            .expect("String write cannot fail");
+        if matches!(provider.source, ProxyProviderSource::Http(_)) {
+            writeln!(yaml, "    interval: {}", provider.interval_secs)
+                .expect("String write cannot fail");
+        }
         writeln!(
             yaml,
             "    exclude-filter: {}",
