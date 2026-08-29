@@ -85,6 +85,13 @@ struct ProxySourceEditorInputs {
     interval_select: AnyElement,
 }
 
+#[derive(Clone, Copy)]
+struct QxRuleEditorView {
+    editing: bool,
+    busy: bool,
+    dialog_width: f32,
+}
+
 impl SubscriptionCardActivity {
     const fn is_busy(self) -> bool {
         matches!(self, Self::Busy)
@@ -2701,7 +2708,6 @@ impl ManisApp {
             })
     }
 
-    #[allow(clippy::too_many_lines)]
     fn rule_source_manager(
         &self,
         _input: Entity<SubscriptionTextInput>,
@@ -2835,7 +2841,6 @@ impl ManisApp {
         cx.notify();
     }
 
-    #[allow(clippy::too_many_lines)]
     fn qx_rule_source_editor_modal(
         &self,
         dialog: Dialog,
@@ -2849,169 +2854,12 @@ impl ManisApp {
             .as_ref()
             .expect("QX rule input is initialized before rendering")
             .clone();
-        let save_input = input.clone();
-        let editing = self.qx_rule_editor_source_id.is_some();
-        let busy = self.qx_rule_feedback == QxRuleImportFeedback::Importing;
-        let app = cx.entity();
         let viewport = window.viewport_size();
-        let dialog_width = (viewport.width.as_f32() - 32.0).clamp(300.0, 620.0);
-
-        let mut target_menu = div().p_1();
-        for target in self.qx_rule_targets() {
-            let selected = target == self.qx_rule_target_policy;
-            target_menu = target_menu.child(
-                div()
-                    .id(format!("qx-rule-editor-target-{target}"))
-                    .role(Role::Button)
-                    .aria_label(target.clone())
-                    .tab_stop(true)
-                    .focusable()
-                    .cursor_pointer()
-                    .px_3()
-                    .py_2()
-                    .rounded(Radius::Control.px())
-                    .bg(if selected {
-                        theme.action_soft
-                    } else {
-                        theme.surface_high
-                    })
-                    .text_size(TextRole::Label.size())
-                    .font_weight(if selected {
-                        FontWeight::SEMIBOLD
-                    } else {
-                        FontWeight::NORMAL
-                    })
-                    .text_color(if selected {
-                        theme.action_primary
-                    } else {
-                        theme.text_primary
-                    })
-                    .child(target.clone())
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.qx_rule_target_policy.clone_from(&target);
-                        this.qx_rule_editor_popover = super::QxRuleEditorPopover::None;
-                        this.qx_rule_feedback = QxRuleImportFeedback::Idle;
-                        cx.notify();
-                    })),
-            );
-        }
-        let target_trigger = Button::new("qx-rule-editor-target")
-            .accessibility_label(language.text("Choose target policy", "选择目标策略"))
-            .dropdown_caret(true)
-            .with_variant(ButtonVariant::Default)
-            .with_size(ControlSize::Standard.component_size())
-            .h(ControlSize::Standard.height())
-            .w_full()
-            .child(
-                div()
-                    .w_full()
-                    .text_size(TextRole::Label.size())
-                    .font_weight(TextRole::Label.weight())
-                    .child(self.qx_rule_target_policy.clone()),
-            )
-            .disabled(busy);
-        let target_app = app.clone();
-        let target_select = crate::components::anchored_popover(
-            "qx-rule-editor-target-popover",
-            target_trigger,
-            target_menu,
-            (dialog_width - 40.0).max(240.0),
-            320.0,
-        )
-        .open(self.qx_rule_editor_popover == super::QxRuleEditorPopover::Target)
-        .on_open_change(move |open, _, cx| {
-            target_app.update(cx, |this, cx| {
-                this.qx_rule_editor_popover = if *open {
-                    super::QxRuleEditorPopover::Target
-                } else {
-                    super::QxRuleEditorPopover::None
-                };
-                cx.notify();
-            });
-        });
-
-        let mut interval_menu = div().p_1();
-        for interval in [
-            RemoteSourceRefreshInterval::Manual,
-            RemoteSourceRefreshInterval::Hourly,
-            RemoteSourceRefreshInterval::SixHours,
-            RemoteSourceRefreshInterval::TwelveHours,
-            RemoteSourceRefreshInterval::Daily,
-        ] {
-            let selected = interval == self.qx_rule_editor_refresh_interval;
-            interval_menu = interval_menu.child(
-                div()
-                    .id(format!("qx-rule-editor-interval-{interval:?}"))
-                    .role(Role::Button)
-                    .aria_label(refresh_interval_label(interval, language))
-                    .tab_stop(true)
-                    .focusable()
-                    .cursor_pointer()
-                    .px_3()
-                    .py_2()
-                    .rounded(Radius::Control.px())
-                    .bg(if selected {
-                        theme.action_soft
-                    } else {
-                        theme.surface_high
-                    })
-                    .text_size(TextRole::Label.size())
-                    .font_weight(if selected {
-                        FontWeight::SEMIBOLD
-                    } else {
-                        FontWeight::NORMAL
-                    })
-                    .text_color(if selected {
-                        theme.action_primary
-                    } else {
-                        theme.text_primary
-                    })
-                    .child(refresh_interval_label(interval, language))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.qx_rule_editor_refresh_interval = interval;
-                        this.qx_rule_editor_popover = super::QxRuleEditorPopover::None;
-                        cx.notify();
-                    })),
-            );
-        }
-        let interval_trigger = Button::new("qx-rule-editor-refresh-interval")
-            .accessibility_label(language.text("Choose rule update interval", "选择规则更新间隔"))
-            .dropdown_caret(true)
-            .with_variant(ButtonVariant::Default)
-            .with_size(ControlSize::Standard.component_size())
-            .h(ControlSize::Standard.height())
-            .w_full()
-            .child(
-                div()
-                    .w_full()
-                    .text_size(TextRole::Label.size())
-                    .font_weight(TextRole::Label.weight())
-                    .child(refresh_interval_label(
-                        self.qx_rule_editor_refresh_interval,
-                        language,
-                    )),
-            )
-            .disabled(busy);
-        let interval_app = app.clone();
-        let interval_select = crate::components::anchored_popover(
-            "qx-rule-editor-refresh-popover",
-            interval_trigger,
-            interval_menu,
-            (dialog_width - 40.0).max(240.0),
-            280.0,
-        )
-        .open(self.qx_rule_editor_popover == super::QxRuleEditorPopover::Interval)
-        .on_open_change(move |open, _, cx| {
-            interval_app.update(cx, |this, cx| {
-                this.qx_rule_editor_popover = if *open {
-                    super::QxRuleEditorPopover::Interval
-                } else {
-                    super::QxRuleEditorPopover::None
-                };
-                cx.notify();
-            });
-        });
-
+        let view = QxRuleEditorView {
+            editing: self.qx_rule_editor_source_id.is_some(),
+            busy: self.qx_rule_feedback == QxRuleImportFeedback::Importing,
+            dialog_width: (viewport.width.as_f32() - 32.0).clamp(300.0, 620.0),
+        };
         let body = div()
             .id("qx-rule-source-modal-body")
             .flex_1()
@@ -3020,14 +2868,195 @@ impl ManisApp {
             .px_5()
             .py_4()
             .child(field_label(language.text("Rule URL", "规则 URL"), theme))
-            .child(input)
+            .child(input.clone())
             .child(field_label(language.text("Target policy", "目标策略"), theme).mt_4())
-            .child(target_select)
+            .child(self.qx_rule_target_select(view, language, theme, cx))
             .child(field_label(language.text("Update interval", "更新间隔"), theme).mt_4())
-            .child(interval_select)
+            .child(self.qx_rule_interval_select(view, language, theme, cx))
             .child(self.qx_rule_import_feedback(theme, language));
+        let app = cx.entity();
+        dialog
+            .width(px(view.dialog_width))
+            .max_h(px((viewport.height.as_f32() - 32.0).max(320.0)))
+            .margin_top(px(((viewport.height.as_f32() - 440.0) / 2.0).max(16.0)))
+            .overlay(true)
+            .overlay_closable(true)
+            .keyboard(true)
+            .close_button(false)
+            .p_0()
+            .rounded_md()
+            .bg(theme.surface_high)
+            .overflow_hidden()
+            .title(Self::qx_rule_editor_title(view.editing, language, theme))
+            .child(body)
+            .footer(Self::qx_rule_editor_footer(
+                input, view, language, theme, cx,
+            ))
+            .on_close(move |_, _, cx| {
+                app.update(cx, ManisApp::close_qx_rule_editor);
+            })
+    }
 
-        let footer = div()
+    fn qx_rule_target_select(
+        &self,
+        view: QxRuleEditorView,
+        language: Language,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let mut menu = div().p_1();
+        for target in self.qx_rule_targets() {
+            let selected = target == self.qx_rule_target_policy;
+            menu = menu.child(Self::qx_rule_editor_option(
+                format!("qx-rule-editor-target-{target}"),
+                target.clone(),
+                selected,
+                theme,
+                cx.listener(move |this, _, _, cx| {
+                    this.qx_rule_target_policy.clone_from(&target);
+                    this.qx_rule_editor_popover = super::QxRuleEditorPopover::None;
+                    this.qx_rule_feedback = QxRuleImportFeedback::Idle;
+                    cx.notify();
+                }),
+            ));
+        }
+        let trigger = Button::new("qx-rule-editor-target")
+            .accessibility_label(language.text("Choose target policy", "选择目标策略"))
+            .dropdown_caret(true)
+            .with_variant(ButtonVariant::Default)
+            .with_size(ControlSize::Standard.component_size())
+            .h(ControlSize::Standard.height())
+            .w_full()
+            .child(self.qx_rule_target_policy.clone())
+            .disabled(view.busy);
+        let app = cx.entity();
+        crate::components::anchored_popover(
+            "qx-rule-editor-target-popover",
+            trigger,
+            menu,
+            (view.dialog_width - 40.0).max(240.0),
+            320.0,
+        )
+        .open(self.qx_rule_editor_popover == super::QxRuleEditorPopover::Target)
+        .on_open_change(move |open, _, cx| {
+            app.update(cx, |this, cx| {
+                this.qx_rule_editor_popover = if *open {
+                    super::QxRuleEditorPopover::Target
+                } else {
+                    super::QxRuleEditorPopover::None
+                };
+                cx.notify();
+            });
+        })
+        .into_any_element()
+    }
+
+    fn qx_rule_interval_select(
+        &self,
+        view: QxRuleEditorView,
+        language: Language,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let mut menu = div().p_1();
+        for interval in [
+            RemoteSourceRefreshInterval::Manual,
+            RemoteSourceRefreshInterval::Hourly,
+            RemoteSourceRefreshInterval::SixHours,
+            RemoteSourceRefreshInterval::TwelveHours,
+            RemoteSourceRefreshInterval::Daily,
+        ] {
+            let label = refresh_interval_label(interval, language);
+            menu = menu.child(Self::qx_rule_editor_option(
+                format!("qx-rule-editor-interval-{interval:?}"),
+                label.to_owned(),
+                interval == self.qx_rule_editor_refresh_interval,
+                theme,
+                cx.listener(move |this, _, _, cx| {
+                    this.qx_rule_editor_refresh_interval = interval;
+                    this.qx_rule_editor_popover = super::QxRuleEditorPopover::None;
+                    cx.notify();
+                }),
+            ));
+        }
+        let trigger = Button::new("qx-rule-editor-refresh-interval")
+            .accessibility_label(language.text("Choose rule update interval", "选择规则更新间隔"))
+            .dropdown_caret(true)
+            .with_variant(ButtonVariant::Default)
+            .with_size(ControlSize::Standard.component_size())
+            .h(ControlSize::Standard.height())
+            .w_full()
+            .child(refresh_interval_label(
+                self.qx_rule_editor_refresh_interval,
+                language,
+            ))
+            .disabled(view.busy);
+        let app = cx.entity();
+        crate::components::anchored_popover(
+            "qx-rule-editor-refresh-popover",
+            trigger,
+            menu,
+            (view.dialog_width - 40.0).max(240.0),
+            280.0,
+        )
+        .open(self.qx_rule_editor_popover == super::QxRuleEditorPopover::Interval)
+        .on_open_change(move |open, _, cx| {
+            app.update(cx, |this, cx| {
+                this.qx_rule_editor_popover = if *open {
+                    super::QxRuleEditorPopover::Interval
+                } else {
+                    super::QxRuleEditorPopover::None
+                };
+                cx.notify();
+            });
+        })
+        .into_any_element()
+    }
+
+    fn qx_rule_editor_option(
+        id: impl Into<gpui::ElementId>,
+        label: String,
+        selected: bool,
+        theme: Theme,
+        listener: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
+    ) -> Stateful<Div> {
+        div()
+            .id(id)
+            .role(Role::Button)
+            .aria_label(label.clone())
+            .tab_stop(true)
+            .focusable()
+            .cursor_pointer()
+            .px_3()
+            .py_2()
+            .rounded(Radius::Control.px())
+            .bg(if selected {
+                theme.action_soft
+            } else {
+                theme.surface_high
+            })
+            .font_weight(if selected {
+                FontWeight::SEMIBOLD
+            } else {
+                FontWeight::NORMAL
+            })
+            .text_color(if selected {
+                theme.action_primary
+            } else {
+                theme.text_primary
+            })
+            .child(label)
+            .on_click(listener)
+    }
+
+    fn qx_rule_editor_footer(
+        input: Entity<SubscriptionTextInput>,
+        view: QxRuleEditorView,
+        language: Language,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        div()
             .flex_shrink_0()
             .px_5()
             .py_4()
@@ -3045,9 +3074,6 @@ impl ManisApp {
                 )
                 .px(Space::Lg.px())
                 .cursor_pointer()
-                .border_color(theme.outline_subtle)
-                .bg(theme.surface_high)
-                .text_color(theme.text_primary)
                 .on_click(cx.listener(|this, _, window, cx| {
                     this.close_qx_rule_editor(cx);
                     window.close_dialog(cx);
@@ -3056,80 +3082,63 @@ impl ManisApp {
             .child(
                 style_action_button(
                     Button::new("save-qx-rule-source")
-                        .label(if busy {
+                        .label(if view.busy {
                             language.text("Processing…", "正在处理…")
-                        } else if editing {
+                        } else if view.editing {
                             language.message(Message::SaveChanges)
                         } else {
                             language.text("Add source", "添加来源")
                         })
-                        .loading(busy),
+                        .loading(view.busy),
                     ActionRole::Primary,
                     ControlSize::Standard,
                 )
                 .px(Space::Lg.px())
-                .when(!busy, gpui::Styled::cursor_pointer)
-                .bg(if busy {
+                .when(!view.busy, gpui::Styled::cursor_pointer)
+                .bg(if view.busy {
                     theme.action_soft
                 } else {
                     theme.action_primary
                 })
-                .text_color(if busy {
+                .text_color(if view.busy {
                     theme.action_primary
                 } else {
                     theme.action_on_primary
                 })
                 .on_click(cx.listener(move |this, _, window, cx| {
-                    if !busy && this.submit_qx_rule_import(&save_input, cx) {
+                    if !view.busy && this.submit_qx_rule_import(&input, cx) {
                         window.close_dialog(cx);
                     }
                 })),
-            );
-
-        dialog
-            .width(px(dialog_width))
-            .max_h(px((viewport.height.as_f32() - 32.0).max(320.0)))
-            .margin_top(px(((viewport.height.as_f32() - 440.0) / 2.0).max(16.0)))
-            .overlay(true)
-            .overlay_closable(true)
-            .keyboard(true)
-            .close_button(false)
-            .p_0()
-            .rounded_md()
-            .bg(theme.surface_high)
-            .overflow_hidden()
-            .title(
-                div()
-                    .px_5()
-                    .py_4()
-                    .border_b_1()
-                    .border_color(theme.outline_subtle)
-                    .child(
-                        div()
-                            .text_size(px(17.0))
-                            .font_weight(TextRole::SectionTitle.weight())
-                            .child(if editing {
-                                language.text("Edit rule source", "编辑规则来源")
-                            } else {
-                                language.text("Add rule source", "添加规则来源")
-                            }),
-                    )
-                    .child(
-                        div()
-                            .mt_1()
-                            .text_size(TextRole::Metadata.size())
-                            .text_color(theme.text_secondary)
-                            .child(language.text(
-                                "The target policy is used by every rule in this source.",
-                                "此来源中的全部规则都会使用所选目标策略。",
-                            )),
-                    ),
             )
-            .child(body)
-            .footer(footer)
-            .on_close(move |_, _, cx| {
-                app.update(cx, ManisApp::close_qx_rule_editor);
-            })
+    }
+
+    fn qx_rule_editor_title(editing: bool, language: Language, theme: Theme) -> Div {
+        div()
+            .px_5()
+            .py_4()
+            .border_b_1()
+            .border_color(theme.outline_subtle)
+            .child(
+                div()
+                    .text_size(px(17.0))
+                    .font_weight(TextRole::SectionTitle.weight())
+                    .child(if editing {
+                        language.text("Edit rule source", "编辑规则来源")
+                    } else {
+                        language.text("Add rule source", "添加规则来源")
+                    }),
+            )
+            .child(
+                div()
+                    .mt_1()
+                    .text_size(TextRole::Metadata.size())
+                    .text_color(theme.text_secondary)
+                    .child(language.text(
+                        "The target policy is used by every rule in this source.",
+                        "此来源中的全部规则都会使用所选目标策略。",
+                    )),
+            )
     }
 
     #[allow(clippy::too_many_lines)]
