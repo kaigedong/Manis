@@ -32,7 +32,7 @@ use manis_profile::{
 use ureq::{Agent, ResponseExt as _};
 
 use crate::diagnostics::{LogLevel, record_event};
-use crate::subscription::VlessSource;
+use crate::subscription::SingleNodeSource;
 use crate::{brand, core_update};
 
 const CONTROLLER_ENV: &str = "MANIS_MIHOMO_CONTROLLER";
@@ -59,19 +59,24 @@ const MAX_STORED_SUBSCRIPTION_FILE_BYTES: u64 = 2 * 16 * 1024 + 1024;
 const IMPORTED_SUBSCRIPTION_FILE: &str = "subscription.url";
 const STORED_SUBSCRIPTION_PREFIX: &str = "source-";
 const STORED_SUBSCRIPTION_SUFFIX: &str = ".url";
-const STORED_SUBSCRIPTION_VERSION: &str = "manis-subscription-source-v2";
+const STORED_SUBSCRIPTION_VERSION: &str = "manis-subscription-source-v3";
+const LEGACY_MANIS_STORED_SUBSCRIPTION_VERSION_V2: &str = "manis-subscription-source-v2";
 const LEGACY_MANIS_STORED_SUBSCRIPTION_VERSION: &str = "manis-subscription-source-v1";
 const LEGACY_RELAY_STORED_SUBSCRIPTION_VERSION: &str = "relay-subscription-source-v1";
 const MAX_SUBSCRIPTION_DOCUMENT_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_SUBSCRIPTION_PROXY_DNS_SERVERS: usize = 8;
+const MAX_SUBSCRIPTION_SOURCE_NAME_BYTES: usize = 96;
 const LEGACY_GENERATED_PROXY_GROUP_NAME: &str = "Proxy";
 const SUBSCRIPTION_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(15);
 const SUBSCRIPTION_MAX_REDIRECTS: u32 = 5;
-const SAVED_VLESS_PREFIX: &str = "saved-";
-const SAVED_VLESS_SUFFIX: &str = ".vless";
+const SAVED_SINGLE_NODE_PREFIX: &str = "saved-";
+const SAVED_SINGLE_NODE_SUFFIX: &str = ".vless";
+const SAVED_SINGLE_NODE_VERSION: &str = "manis-single-node-source-v1";
+const LEGACY_SAVED_SINGLE_NODE_VERSION: &str = "manis-vless-source-v1";
 const QX_RULE_SOURCE_PREFIX: &str = "qx-rule-";
 const QX_RULE_SOURCE_SUFFIX: &str = ".qxrules";
-const QX_RULE_SOURCE_VERSION: &str = "manis-qx-rule-source-v1";
+const QX_RULE_SOURCE_VERSION: &str = "manis-qx-rule-source-v2";
+const LEGACY_MANIS_QX_RULE_SOURCE_VERSION: &str = "manis-qx-rule-source-v1";
 const LEGACY_RELAY_QX_RULE_SOURCE_VERSION: &str = "relay-qx-rule-source-v1";
 const MAX_QX_RULE_SOURCE_CONTENT_BYTES: usize = 1024 * 1024;
 const MAX_QX_RULE_SOURCE_FILE_BYTES: u64 = 2 * 1024 * 1024 + 64 * 1024;
@@ -949,6 +954,9 @@ impl ControllerRuntime {
                 Self::Managed { .. } => "托管内核缺少 Manis 生成配置".to_owned(),
             }));
         };
+        if spec.kernel == KernelKind::Mihomo {
+            sync_single_node_provider_files(store_dir, &spec.data_dir)?;
+        }
         let profile = compile_saved_profile(store_dir, None, spec.kernel)?;
         let rendered = render_generated_profile(spec, &profile)?;
         let (candidate_name, final_name) = generated_profile_names(spec.kernel);
@@ -1123,7 +1131,10 @@ fn compile_saved_profile(
 ) -> Result<Profile, LoadError> {
     let mut subscriptions = base_subscription.into_iter().collect::<Vec<_>>();
     let stored_subscriptions = load_subscription_sources_in(store_dir)
-        .map_err(|_error| LoadError::Runtime("无法读取已保存的订阅来源".to_owned()))?;
+        .map_err(|_error| LoadError::Runtime("无法读取已保存的订阅来源".to_owned()))?
+        .into_iter()
+        .filter(|stored| stored.enabled)
+        .collect::<Vec<_>>();
     if kernel == KernelKind::SingBox && !stored_subscriptions.is_empty() {
         return Err(LoadError::Runtime(
             "sing-box 暂不能直接读取 Clash 订阅；请先使用手动 VLESS 节点".to_owned(),
@@ -1150,26 +1161,46 @@ fn compile_saved_profile(
             }
         }
     }
-    let vless_nodes = load_vless_sources_in(store_dir)
-        .map_err(|_error| LoadError::Runtime("无法读取已保存的 VLESS 节点".to_owned()))?
+    let stored_single_nodes = load_single_node_sources_in(store_dir)
+        .map_err(|_error| LoadError::Runtime("无法读取已保存的单节点来源".to_owned()))?
         .into_iter()
-        .map(|stored| {
-            stored
-                .source
-                .expose_to(VlessProxy::parse_share_link)
-                .map_err(|error| LoadError::Runtime(error.to_string()))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+        .filter(|stored| stored.enabled)
+        .collect::<Vec<_>>();
+    let (local_provider_paths, vless_nodes) = if kernel == KernelKind::Mihomo {
+        let paths = stored_single_nodes
+            .iter()
+            .map(|stored| format!("./single_nodes/{}.txt", stored.id))
+            .collect::<Vec<_>>();
+        for (offset, stored) in stored_single_nodes.iter().enumerate() {
+            stored_provider_indexes.insert(stored.id.as_str(), subscriptions.len() + offset);
+        }
+        (paths, Vec::new())
+    } else {
+        let nodes = stored_single_nodes
+            .iter()
+            .map(|stored| {
+                stored
+                    .source
+                    .expose_to(VlessProxy::parse_share_link)
+                    .map_err(|_error| {
+                        LoadError::Runtime("sing-box 当前只支持 VLESS 格式的手动单节点".to_owned())
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        (Vec::new(), nodes)
+    };
     let mixed_port = configured_mixed_port().map_err(LoadError::Runtime)?;
     let policy_groups = load_managed_policy_groups_in(store_dir)
         .map_err(|_error| LoadError::Runtime("无法读取策略组".to_owned()))?;
     let user_groups = compile_managed_policy_groups(
         &policy_groups,
         &stored_provider_indexes,
+        &stored_single_nodes,
         &vless_nodes,
-        subscriptions.len(),
+        subscriptions.len() + local_provider_paths.len(),
     )?;
-    let bootstrap = subscriptions.is_empty() && vless_nodes.is_empty();
+    let bootstrap =
+        subscriptions.is_empty() && local_provider_paths.is_empty() && vless_nodes.is_empty();
     let mut profile = if bootstrap {
         if !user_groups.is_empty() {
             return Err(LoadError::Runtime(
@@ -1178,7 +1209,13 @@ fn compile_saved_profile(
         }
         Profile::managed_empty(mixed_port)
     } else {
-        Profile::qx_sources_with_groups(subscriptions, vless_nodes, user_groups, mixed_port)
+        Profile::qx_sources_with_groups_and_local_providers(
+            subscriptions,
+            local_provider_paths,
+            vless_nodes,
+            user_groups,
+            mixed_port,
+        )
     }
     .map_err(|error| LoadError::Runtime(error.to_string()))?;
     let bootstrap_fallback = if bootstrap { profile.rules.pop() } else { None };
@@ -1216,6 +1253,22 @@ fn compile_saved_profile(
         profile.rules.push(fallback);
     }
     Ok(profile)
+}
+
+fn sync_single_node_provider_files(store_dir: &Path, data_dir: &Path) -> Result<(), LoadError> {
+    let provider_dir = data_dir.join("single_nodes");
+    for stored in load_single_node_sources_in(store_dir)
+        .map_err(|_error| LoadError::Runtime("无法读取已保存的单节点来源".to_owned()))?
+        .into_iter()
+        .filter(|stored| stored.enabled)
+    {
+        let file_name = format!("{}.txt", stored.id);
+        stored.source.expose_to(|value| {
+            write_private_atomic(&provider_dir, &file_name, value.as_bytes())
+                .map_err(|_error| LoadError::Runtime("无法写入单节点运行来源".to_owned()))
+        })?;
+    }
+    Ok(())
 }
 
 fn render_generated_profile(
@@ -1476,6 +1529,7 @@ impl RemoteSourceRefreshInterval {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn next(self) -> Self {
         match self {
             Self::Manual => Self::Hourly,
@@ -1498,7 +1552,9 @@ impl RemoteSourceRefreshInterval {
 #[derive(Clone, Eq, PartialEq)]
 pub(crate) struct StoredSubscription {
     pub id: String,
+    pub name: String,
     pub source: SecretUrl,
+    pub enabled: bool,
     pub refresh_interval: RemoteSourceRefreshInterval,
     pub last_successful_update_unix_secs: u64,
     pub proxy_server_nameservers: Vec<ProxyDnsServer>,
@@ -1509,7 +1565,9 @@ impl fmt::Debug for StoredSubscription {
         formatter
             .debug_struct("StoredSubscription")
             .field("id", &self.id)
+            .field("name", &self.name)
             .field("source", &"<redacted>")
+            .field("enabled", &self.enabled)
             .field("refresh_interval", &self.refresh_interval)
             .field(
                 "last_successful_update_unix_secs",
@@ -1524,17 +1582,21 @@ impl fmt::Debug for StoredSubscription {
 }
 
 #[derive(Clone, Eq, PartialEq)]
-pub(crate) struct StoredVlessNode {
+pub(crate) struct StoredSingleNode {
     pub id: String,
-    pub source: VlessSource,
+    pub name: String,
+    pub source: SingleNodeSource,
+    pub enabled: bool,
 }
 
-impl fmt::Debug for StoredVlessNode {
+impl fmt::Debug for StoredSingleNode {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("StoredVlessNode")
+            .debug_struct("StoredSingleNode")
             .field("id", &self.id)
+            .field("name", &self.name)
             .field("source", &"<redacted>")
+            .field("enabled", &self.enabled)
             .finish()
     }
 }
@@ -1543,6 +1605,7 @@ impl fmt::Debug for StoredVlessNode {
 pub(crate) struct StoredQxRuleSource {
     pub id: String,
     pub source: SecretUrl,
+    pub enabled: bool,
     pub target_policy: Name,
     pub content: String,
     pub rule_count: usize,
@@ -1572,6 +1635,7 @@ impl fmt::Debug for StoredQxRuleSource {
             .debug_struct("StoredQxRuleSource")
             .field("id", &self.id)
             .field("source", &"<redacted>")
+            .field("enabled", &self.enabled)
             .field("target_policy", &self.target_policy)
             .field("content", &"<redacted>")
             .field("rule_count", &self.rule_count)
@@ -1903,6 +1967,54 @@ pub(crate) fn preview_subscription(
     preview_subscription_with_binary(input, &binary)
 }
 
+pub(crate) fn preview_single_node(
+    input: &str,
+) -> Result<Vec<LoadedProvider>, SubscriptionStoreError> {
+    #[cfg(not(unix))]
+    {
+        let _ = input;
+        return Err(SubscriptionStoreError::StoreUnavailable);
+    }
+    #[cfg(unix)]
+    {
+        let binary =
+            discover_preview_binary().map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
+        let workspace = PreviewWorkspace::create()
+            .map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
+        write_private_atomic(workspace.path(), "single-node.txt", input.as_bytes())
+            .map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
+        let mixed_port =
+            reserve_preview_port().map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
+        let profile = Profile::qx_sources_with_groups_and_local_providers(
+            Vec::new(),
+            vec!["./single-node.txt".to_owned()],
+            Vec::new(),
+            Vec::new(),
+            mixed_port,
+        )
+        .map_err(|_error| SubscriptionStoreError::InvalidSource)?;
+        let yaml =
+            render_mihomo_yaml(&profile).map_err(|_error| SubscriptionStoreError::InvalidSource)?;
+        let config_file = write_private_atomic(workspace.path(), "preview.yaml", yaml.as_bytes())
+            .map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
+        let controller = ControllerEndpoint::UnixSocket(workspace.path().join("controller.sock"));
+        let config =
+            ManagedEngineConfig::new(binary, config_file, workspace.path().to_owned(), controller);
+        let mut manager = EngineManager::new(
+            config,
+            ReadinessPolicy::default(),
+            Box::new(MihomoReadinessProbe),
+        );
+        let endpoint = manager
+            .start()
+            .map_err(|_error| SubscriptionStoreError::InvalidSource)?;
+        let providers = wait_for_preview_providers(&endpoint)
+            .map_err(|_error| SubscriptionStoreError::InvalidSource);
+        let _ = manager.stop();
+        providers
+    }
+}
+
 pub(crate) fn preview_imported_subscription(
     subscription: SecretUrl,
 ) -> Result<Vec<LoadedProvider>, SubscriptionPreviewError> {
@@ -1967,17 +2079,50 @@ pub(crate) fn imported_subscription_store_dir() -> Result<PathBuf, SubscriptionS
 }
 
 #[cfg(not(windows))]
+#[allow(dead_code)]
 pub(crate) fn save_subscription_source_in(
     directory: &Path,
     input: &str,
 ) -> Result<StoredSubscription, SubscriptionStoreError> {
     let source = SecretUrl::parse_subscription(input)
         .map_err(|_error| SubscriptionStoreError::InvalidSource)?;
+    let name = source
+        .subscription_name()
+        .unwrap_or_else(|| "Subscription".to_owned());
+    save_subscription_source_with_options_in(
+        directory,
+        input,
+        &name,
+        RemoteSourceRefreshInterval::Manual,
+        true,
+    )
+}
+
+#[cfg(not(windows))]
+pub(crate) fn save_subscription_source_with_options_in(
+    directory: &Path,
+    input: &str,
+    name: &str,
+    refresh_interval: RemoteSourceRefreshInterval,
+    enabled: bool,
+) -> Result<StoredSubscription, SubscriptionStoreError> {
+    let source = SecretUrl::parse_subscription(input)
+        .map_err(|_error| SubscriptionStoreError::InvalidSource)?;
+    let name = validate_subscription_source_name(name)?;
     if let Some(existing) = load_subscription_sources_in(directory)?
         .into_iter()
         .find(|stored| stored.source == source)
     {
-        return Ok(existing);
+        return write_subscription_source_in(
+            directory,
+            &existing.id,
+            input,
+            &name,
+            enabled,
+            refresh_interval,
+            existing.last_successful_update_unix_secs,
+            &existing.proxy_server_nameservers,
+        );
     }
     let id = next_stored_source_id(STORED_SUBSCRIPTION_PREFIX);
     let file_name = format!("{id}{STORED_SUBSCRIPTION_SUFFIX}");
@@ -1985,7 +2130,9 @@ pub(crate) fn save_subscription_source_in(
     let contents = encode_subscription_source(
         &id,
         input,
-        RemoteSourceRefreshInterval::Manual,
+        &name,
+        enabled,
+        refresh_interval,
         last_successful_update_unix_secs,
         &[],
     )?;
@@ -1993,17 +2140,110 @@ pub(crate) fn save_subscription_source_in(
         .map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
     Ok(StoredSubscription {
         id,
+        name,
         source,
-        refresh_interval: RemoteSourceRefreshInterval::Manual,
+        enabled,
+        refresh_interval,
         last_successful_update_unix_secs,
         proxy_server_nameservers: Vec::new(),
     })
 }
 
 #[cfg(windows)]
+#[allow(dead_code)]
 pub(crate) fn save_subscription_source_in(
     _directory: &Path,
     _input: &str,
+) -> Result<StoredSubscription, SubscriptionStoreError> {
+    Err(SubscriptionStoreError::StoreUnavailable)
+}
+
+#[cfg(windows)]
+pub(crate) fn save_subscription_source_with_options_in(
+    _directory: &Path,
+    _input: &str,
+    _name: &str,
+    _refresh_interval: RemoteSourceRefreshInterval,
+    _enabled: bool,
+) -> Result<StoredSubscription, SubscriptionStoreError> {
+    Err(SubscriptionStoreError::StoreUnavailable)
+}
+
+#[cfg(not(windows))]
+pub(crate) fn update_subscription_source_in(
+    directory: &Path,
+    id: &str,
+    input: &str,
+    name: &str,
+    refresh_interval: RemoteSourceRefreshInterval,
+    enabled: bool,
+) -> Result<StoredSubscription, SubscriptionStoreError> {
+    let decoded = read_subscription_source_by_id_in(directory, id)?;
+    let source = SecretUrl::parse_subscription(input)
+        .map_err(|_error| SubscriptionStoreError::InvalidSource)?;
+    if load_subscription_sources_in(directory)?
+        .iter()
+        .any(|stored| stored.id != id && stored.source == source)
+    {
+        return Err(SubscriptionStoreError::InvalidSource);
+    }
+    let source_changed = decoded.stored.source != source;
+    write_subscription_source_in(
+        directory,
+        id,
+        input,
+        &validate_subscription_source_name(name)?,
+        enabled,
+        refresh_interval,
+        if source_changed {
+            current_unix_secs()
+        } else {
+            decoded.stored.last_successful_update_unix_secs
+        },
+        if source_changed {
+            &[]
+        } else {
+            &decoded.stored.proxy_server_nameservers
+        },
+    )
+}
+
+#[cfg(not(windows))]
+pub(crate) fn update_subscription_source_enabled_in(
+    directory: &Path,
+    id: &str,
+    enabled: bool,
+) -> Result<StoredSubscription, SubscriptionStoreError> {
+    let decoded = read_subscription_source_by_id_in(directory, id)?;
+    write_subscription_source_in(
+        directory,
+        id,
+        &decoded.url_input,
+        &decoded.stored.name,
+        enabled,
+        decoded.stored.refresh_interval,
+        decoded.stored.last_successful_update_unix_secs,
+        &decoded.stored.proxy_server_nameservers,
+    )
+}
+
+#[cfg(windows)]
+pub(crate) fn update_subscription_source_enabled_in(
+    _directory: &Path,
+    _id: &str,
+    _enabled: bool,
+) -> Result<StoredSubscription, SubscriptionStoreError> {
+    Err(SubscriptionStoreError::StoreUnavailable)
+}
+
+#[cfg(windows)]
+pub(crate) fn update_subscription_source_in(
+    _directory: &Path,
+    _id: &str,
+    _input: &str,
+    _name: &str,
+    _refresh_interval: RemoteSourceRefreshInterval,
+    _enabled: bool,
 ) -> Result<StoredSubscription, SubscriptionStoreError> {
     Err(SubscriptionStoreError::StoreUnavailable)
 }
@@ -2052,7 +2292,11 @@ pub(crate) fn load_subscription_sources_in(
             .map(|source| {
                 vec![StoredSubscription {
                     id: "subscription:legacy".to_owned(),
+                    name: source
+                        .subscription_name()
+                        .unwrap_or_else(|| "Subscription".to_owned()),
                     source,
+                    enabled: true,
                     refresh_interval: RemoteSourceRefreshInterval::Manual,
                     last_successful_update_unix_secs: 0,
                     proxy_server_nameservers: Vec::new(),
@@ -2074,6 +2318,8 @@ pub(crate) fn update_subscription_source_refresh_interval_in(
         directory,
         id,
         &decoded.url_input,
+        &decoded.stored.name,
+        decoded.stored.enabled,
         refresh_interval,
         decoded.stored.last_successful_update_unix_secs,
         &decoded.stored.proxy_server_nameservers,
@@ -2102,6 +2348,8 @@ pub(crate) fn mark_subscription_source_update_success_in(
         directory,
         id,
         &decoded.url_input,
+        &decoded.stored.name,
+        decoded.stored.enabled,
         decoded.stored.refresh_interval,
         last_successful_update_unix_secs,
         &decoded.stored.proxy_server_nameservers,
@@ -2124,6 +2372,8 @@ pub(crate) fn update_subscription_source_proxy_nameservers_in(
         directory,
         id,
         &decoded.url_input,
+        &decoded.stored.name,
+        decoded.stored.enabled,
         decoded.stored.refresh_interval,
         decoded.stored.last_successful_update_unix_secs,
         proxy_server_nameservers,
@@ -2174,39 +2424,131 @@ pub(crate) fn remove_subscription_source_in(
 }
 
 #[cfg(not(windows))]
-pub(crate) fn save_vless_source_in(
+#[allow(dead_code)]
+pub(crate) fn save_single_node_source_in(
     directory: &Path,
     input: &str,
-) -> Result<StoredVlessNode, SubscriptionStoreError> {
+) -> Result<StoredSingleNode, SubscriptionStoreError> {
     let source =
-        VlessSource::parse(input).map_err(|_error| SubscriptionStoreError::InvalidSource)?;
-    if let Some(existing) = load_vless_sources_in(directory)?
+        SingleNodeSource::parse(input).map_err(|_error| SubscriptionStoreError::InvalidSource)?;
+    let name = source.preview().name.clone();
+    save_single_node_source_with_options_in(directory, input, &name, true)
+}
+
+#[cfg(not(windows))]
+pub(crate) fn save_single_node_source_with_options_in(
+    directory: &Path,
+    input: &str,
+    name: &str,
+    enabled: bool,
+) -> Result<StoredSingleNode, SubscriptionStoreError> {
+    let source =
+        SingleNodeSource::parse(input).map_err(|_error| SubscriptionStoreError::InvalidSource)?;
+    if let Some(existing) = load_single_node_sources_in(directory)?
         .into_iter()
         .find(|stored| stored.source == source)
     {
-        return Ok(existing);
+        if existing.enabled == enabled && existing.name == name.trim() {
+            return Ok(existing);
+        }
+        return update_single_node_source_in(directory, &existing.id, input, name, enabled);
     }
-    let id = next_stored_source_id(SAVED_VLESS_PREFIX);
-    let file_name = format!("{id}{SAVED_VLESS_SUFFIX}");
-    source.expose_to(|value| {
-        write_private_atomic(directory, &file_name, value.as_bytes())
-            .map_err(|_error| SubscriptionStoreError::StoreUnavailable)
-    })?;
-    Ok(StoredVlessNode { id, source })
+    let id = next_stored_source_id(SAVED_SINGLE_NODE_PREFIX);
+    let file_name = format!("{id}{SAVED_SINGLE_NODE_SUFFIX}");
+    let name = validate_subscription_source_name(name)?;
+    let encoded = encode_single_node_source(&id, input, &name, enabled)?;
+    write_private_atomic(directory, &file_name, encoded.as_bytes())
+        .map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
+    Ok(StoredSingleNode {
+        id,
+        name,
+        source,
+        enabled,
+    })
 }
 
 #[cfg(windows)]
-pub(crate) fn save_vless_source_in(
+pub(crate) fn save_single_node_source_in(
     _directory: &Path,
     _input: &str,
-) -> Result<StoredVlessNode, SubscriptionStoreError> {
+) -> Result<StoredSingleNode, SubscriptionStoreError> {
+    Err(SubscriptionStoreError::StoreUnavailable)
+}
+
+#[cfg(windows)]
+pub(crate) fn save_single_node_source_with_options_in(
+    _directory: &Path,
+    _input: &str,
+    _name: &str,
+    _enabled: bool,
+) -> Result<StoredSingleNode, SubscriptionStoreError> {
     Err(SubscriptionStoreError::StoreUnavailable)
 }
 
 #[cfg(not(windows))]
-pub(crate) fn load_vless_sources_in(
+pub(crate) fn update_single_node_source_in(
     directory: &Path,
-) -> Result<Vec<StoredVlessNode>, SubscriptionStoreError> {
+    id: &str,
+    input: &str,
+    name: &str,
+    enabled: bool,
+) -> Result<StoredSingleNode, SubscriptionStoreError> {
+    require_clean_absolute_store(directory)?;
+    if !valid_stored_id(id, SAVED_SINGLE_NODE_PREFIX) {
+        return Err(SubscriptionStoreError::InvalidSource);
+    }
+    let source =
+        SingleNodeSource::parse(input).map_err(|_error| SubscriptionStoreError::InvalidSource)?;
+    if load_single_node_sources_in(directory)?
+        .into_iter()
+        .any(|stored| stored.id != id && stored.source == source)
+    {
+        return Err(SubscriptionStoreError::InvalidSource);
+    }
+    let name = validate_subscription_source_name(name)?;
+    let encoded = encode_single_node_source(id, input, &name, enabled)?;
+    write_private_atomic(
+        directory,
+        &format!("{id}{SAVED_SINGLE_NODE_SUFFIX}"),
+        encoded.as_bytes(),
+    )
+    .map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
+    Ok(StoredSingleNode {
+        id: id.to_owned(),
+        name,
+        source,
+        enabled,
+    })
+}
+
+#[cfg(windows)]
+pub(crate) fn update_single_node_source_in(
+    _directory: &Path,
+    _id: &str,
+    _input: &str,
+    _name: &str,
+    _enabled: bool,
+) -> Result<StoredSingleNode, SubscriptionStoreError> {
+    Err(SubscriptionStoreError::StoreUnavailable)
+}
+
+pub(crate) fn update_single_node_source_enabled_in(
+    directory: &Path,
+    id: &str,
+    enabled: bool,
+) -> Result<StoredSingleNode, SubscriptionStoreError> {
+    let stored = load_single_node_sources_in(directory)?
+        .into_iter()
+        .find(|stored| stored.id == id)
+        .ok_or(SubscriptionStoreError::StoredSourceUnavailable)?;
+    let input = stored.source.expose_to(str::to_owned);
+    update_single_node_source_in(directory, id, &input, &stored.name, enabled)
+}
+
+#[cfg(not(windows))]
+pub(crate) fn load_single_node_sources_in(
+    directory: &Path,
+) -> Result<Vec<StoredSingleNode>, SubscriptionStoreError> {
     let mut nodes = Vec::new();
     let Some(entries) = private_store_entries(directory)? else {
         return Ok(nodes);
@@ -2215,45 +2557,119 @@ pub(crate) fn load_vless_sources_in(
         let Some(file_name) = path.file_name().and_then(std::ffi::OsStr::to_str) else {
             continue;
         };
-        let Some(id) = file_name.strip_suffix(SAVED_VLESS_SUFFIX) else {
+        let Some(id) = file_name.strip_suffix(SAVED_SINGLE_NODE_SUFFIX) else {
             continue;
         };
-        if !valid_stored_id(id, SAVED_VLESS_PREFIX) {
+        if !valid_stored_id(id, SAVED_SINGLE_NODE_PREFIX) {
             continue;
         }
-        let contents = read_private_source(&path)?;
-        let source = VlessSource::parse(&contents)
-            .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
-        nodes.push(StoredVlessNode {
-            id: id.to_owned(),
-            source,
-        });
+        let contents =
+            read_private_source_allow_empty_max(&path, MAX_STORED_SUBSCRIPTION_FILE_BYTES)?;
+        nodes.push(decode_single_node_source(&contents, id)?);
     }
     nodes.sort_by(|left, right| left.id.cmp(&right.id));
     Ok(nodes)
 }
 
 #[cfg(windows)]
-pub(crate) fn load_vless_sources_in(
+pub(crate) fn load_single_node_sources_in(
     _directory: &Path,
-) -> Result<Vec<StoredVlessNode>, SubscriptionStoreError> {
+) -> Result<Vec<StoredSingleNode>, SubscriptionStoreError> {
     Ok(Vec::new())
 }
 
+fn encode_single_node_source(
+    id: &str,
+    input: &str,
+    name: &str,
+    enabled: bool,
+) -> Result<String, SubscriptionStoreError> {
+    if !valid_stored_id(id, SAVED_SINGLE_NODE_PREFIX)
+        || input.len() > crate::subscription::MAX_SUBSCRIPTION_BYTES
+    {
+        return Err(SubscriptionStoreError::InvalidSource);
+    }
+    SingleNodeSource::parse(input).map_err(|_error| SubscriptionStoreError::InvalidSource)?;
+    let name = validate_subscription_source_name(name)?;
+    Ok([
+        SAVED_SINGLE_NODE_VERSION.to_owned(),
+        format!("id\t{id}"),
+        format!("name\t{}", encode_hex(&name)),
+        format!("enabled\t{}", if enabled { "true" } else { "false" }),
+        format!("url\t{}", encode_hex(input)),
+    ]
+    .join("\n"))
+}
+
+fn decode_single_node_source(
+    contents: &str,
+    expected_id: &str,
+) -> Result<StoredSingleNode, SubscriptionStoreError> {
+    if !matches!(
+        contents.lines().next(),
+        Some(SAVED_SINGLE_NODE_VERSION | LEGACY_SAVED_SINGLE_NODE_VERSION)
+    ) {
+        let source = SingleNodeSource::parse(contents)
+            .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
+        return Ok(StoredSingleNode {
+            id: expected_id.to_owned(),
+            name: source.preview().name.clone(),
+            source,
+            enabled: true,
+        });
+    }
+    let mut id = None;
+    let mut name = None;
+    let mut enabled = None;
+    let mut url = None;
+    for line in contents.lines().skip(1) {
+        let fields = line.split('\t').collect::<Vec<_>>();
+        match fields.as_slice() {
+            ["id", value] if id.is_none() => id = Some(*value),
+            ["name", value] if name.is_none() => {
+                name = Some(validate_subscription_source_name(&decode_hex(value)?)?);
+            }
+            ["enabled", value] if enabled.is_none() => {
+                enabled = Some(match *value {
+                    "true" => true,
+                    "false" => false,
+                    _ => return Err(SubscriptionStoreError::StoredSourceUnavailable),
+                });
+            }
+            ["url", value] if url.is_none() => url = Some(decode_hex(value)?),
+            _ => return Err(SubscriptionStoreError::StoredSourceUnavailable),
+        }
+    }
+    if id != Some(expected_id) || !valid_stored_id(expected_id, SAVED_SINGLE_NODE_PREFIX) {
+        return Err(SubscriptionStoreError::StoredSourceUnavailable);
+    }
+    let source = SingleNodeSource::parse(
+        url.as_deref()
+            .ok_or(SubscriptionStoreError::StoredSourceUnavailable)?,
+    )
+    .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
+    Ok(StoredSingleNode {
+        id: expected_id.to_owned(),
+        name: name.unwrap_or_else(|| source.preview().name.clone()),
+        source,
+        enabled: enabled.ok_or(SubscriptionStoreError::StoredSourceUnavailable)?,
+    })
+}
+
 #[cfg(not(windows))]
-pub(crate) fn remove_vless_source_in(
+pub(crate) fn remove_single_node_source_in(
     directory: &Path,
     id: &str,
 ) -> Result<(), SubscriptionStoreError> {
     require_clean_absolute_store(directory)?;
-    if !valid_stored_id(id, SAVED_VLESS_PREFIX) {
+    if !valid_stored_id(id, SAVED_SINGLE_NODE_PREFIX) {
         return Err(SubscriptionStoreError::StoreUnavailable);
     }
-    remove_private_source(&directory.join(format!("{id}{SAVED_VLESS_SUFFIX}")))
+    remove_private_source(&directory.join(format!("{id}{SAVED_SINGLE_NODE_SUFFIX}")))
 }
 
 #[cfg(windows)]
-pub(crate) fn remove_vless_source_in(
+pub(crate) fn remove_single_node_source_in(
     _directory: &Path,
     _id: &str,
 ) -> Result<(), SubscriptionStoreError> {
@@ -2287,6 +2703,7 @@ pub(crate) fn save_qx_rule_source_in(
         url_input,
         &target_policy,
         content,
+        true,
         RemoteSourceRefreshInterval::Manual,
         last_successful_update_unix_secs,
     )?;
@@ -2295,6 +2712,7 @@ pub(crate) fn save_qx_rule_source_in(
     Ok(SaveQxRuleSourceOutcome::Created(StoredQxRuleSource {
         id,
         source,
+        enabled: true,
         target_policy,
         content: content.to_owned(),
         rule_count,
@@ -2508,6 +2926,7 @@ pub(crate) fn update_qx_rule_source_refresh_interval_in(
         &decoded.url_input,
         decoded.stored.target_policy.as_str(),
         &decoded.stored.content,
+        decoded.stored.enabled,
         refresh_interval,
         decoded.stored.last_successful_update_unix_secs,
     )
@@ -2537,6 +2956,7 @@ pub(crate) fn update_qx_rule_source_target_in(
         &decoded.url_input,
         target_policy,
         &decoded.stored.content,
+        decoded.stored.enabled,
         decoded.stored.refresh_interval,
         decoded.stored.last_successful_update_unix_secs,
     )
@@ -2548,6 +2968,70 @@ pub(crate) fn update_qx_rule_source_target_in(
     _directory: &Path,
     _id: &str,
     _target_policy: &str,
+) -> Result<StoredQxRuleSource, SubscriptionStoreError> {
+    Err(SubscriptionStoreError::StoreUnavailable)
+}
+
+#[cfg(not(windows))]
+pub(crate) fn replace_qx_rule_source_definition_in(
+    directory: &Path,
+    id: &str,
+    url_input: &str,
+    target_policy: &str,
+    content: &str,
+    refresh_interval: RemoteSourceRefreshInterval,
+    last_successful_update_unix_secs: u64,
+) -> Result<StoredQxRuleSource, SubscriptionStoreError> {
+    let decoded = read_qx_rule_source_by_id_in(directory, id)?;
+    write_qx_rule_source_in(
+        directory,
+        id,
+        url_input,
+        target_policy,
+        content,
+        decoded.stored.enabled,
+        refresh_interval,
+        last_successful_update_unix_secs,
+    )
+}
+
+#[cfg(not(windows))]
+pub(crate) fn update_qx_rule_source_enabled_in(
+    directory: &Path,
+    id: &str,
+    enabled: bool,
+) -> Result<StoredQxRuleSource, SubscriptionStoreError> {
+    let decoded = read_qx_rule_source_by_id_in(directory, id)?;
+    write_qx_rule_source_in(
+        directory,
+        id,
+        &decoded.url_input,
+        decoded.stored.target_policy.as_str(),
+        &decoded.stored.content,
+        enabled,
+        decoded.stored.refresh_interval,
+        decoded.stored.last_successful_update_unix_secs,
+    )
+}
+
+#[cfg(windows)]
+pub(crate) fn update_qx_rule_source_enabled_in(
+    _directory: &Path,
+    _id: &str,
+    _enabled: bool,
+) -> Result<StoredQxRuleSource, SubscriptionStoreError> {
+    Err(SubscriptionStoreError::StoreUnavailable)
+}
+
+#[cfg(windows)]
+pub(crate) fn replace_qx_rule_source_definition_in(
+    _directory: &Path,
+    _id: &str,
+    _url_input: &str,
+    _target_policy: &str,
+    _content: &str,
+    _refresh_interval: RemoteSourceRefreshInterval,
+    _last_successful_update_unix_secs: u64,
 ) -> Result<StoredQxRuleSource, SubscriptionStoreError> {
     Err(SubscriptionStoreError::StoreUnavailable)
 }
@@ -2568,6 +3052,7 @@ pub(crate) fn replace_qx_rule_source_content_in(
         &decoded.url_input,
         decoded.stored.target_policy.as_str(),
         content,
+        decoded.stored.enabled,
         decoded.stored.refresh_interval,
         last_successful_update_unix_secs,
     )
@@ -2604,6 +3089,9 @@ fn apply_qx_rule_sources(
         .flatten();
     let mut imported_rules = Vec::new();
     for source in sources {
+        if !source.enabled {
+            continue;
+        }
         let target_policy =
             qx_rule_target_policy(&source.target_policy, legacy_proxy_target.as_ref());
         let parsed = QxRuleList::parse(&source.content);
@@ -2824,15 +3312,20 @@ fn write_subscription_source_in(
     directory: &Path,
     id: &str,
     url_input: &str,
+    name: &str,
+    enabled: bool,
     refresh_interval: RemoteSourceRefreshInterval,
     last_successful_update_unix_secs: u64,
     proxy_server_nameservers: &[ProxyDnsServer],
 ) -> Result<StoredSubscription, SubscriptionStoreError> {
     let source = SecretUrl::parse_subscription(url_input)
         .map_err(|_error| SubscriptionStoreError::InvalidSource)?;
+    let name = validate_subscription_source_name(name)?;
     let contents = encode_subscription_source(
         id,
         url_input,
+        &name,
+        enabled,
         refresh_interval,
         last_successful_update_unix_secs,
         proxy_server_nameservers,
@@ -2842,17 +3335,32 @@ fn write_subscription_source_in(
         .map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
     Ok(StoredSubscription {
         id: id.to_owned(),
+        name,
         source,
+        enabled,
         refresh_interval,
         last_successful_update_unix_secs,
         proxy_server_nameservers: proxy_server_nameservers.to_vec(),
     })
 }
 
+fn validate_subscription_source_name(name: &str) -> Result<String, SubscriptionStoreError> {
+    let name = name.trim();
+    if name.is_empty()
+        || name.len() > MAX_SUBSCRIPTION_SOURCE_NAME_BYTES
+        || name.chars().any(char::is_control)
+    {
+        return Err(SubscriptionStoreError::InvalidSource);
+    }
+    Ok(name.to_owned())
+}
+
 #[cfg(not(windows))]
 fn encode_subscription_source(
     id: &str,
     url_input: &str,
+    name: &str,
+    enabled: bool,
     refresh_interval: RemoteSourceRefreshInterval,
     last_successful_update_unix_secs: u64,
     proxy_server_nameservers: &[ProxyDnsServer],
@@ -2865,12 +3373,15 @@ fn encode_subscription_source(
     }
     SecretUrl::parse_subscription(url_input)
         .map_err(|_error| SubscriptionStoreError::InvalidSource)?;
+    let name = validate_subscription_source_name(name)?;
     if proxy_server_nameservers.len() > MAX_SUBSCRIPTION_PROXY_DNS_SERVERS {
         return Err(SubscriptionStoreError::InvalidSource);
     }
     let mut lines = vec![
         STORED_SUBSCRIPTION_VERSION.to_owned(),
         format!("id\t{id}"),
+        format!("name\t{}", encode_hex(&name)),
+        format!("enabled\t{}", if enabled { "true" } else { "false" }),
         format!("url\t{}", encode_hex(url_input)),
         format!("refresh\t{}", refresh_interval.key()),
         format!("last-success\t{last_successful_update_unix_secs}"),
@@ -2896,6 +3407,7 @@ fn decode_subscription_source(
         matches!(
             version,
             STORED_SUBSCRIPTION_VERSION
+                | LEGACY_MANIS_STORED_SUBSCRIPTION_VERSION_V2
                 | LEGACY_MANIS_STORED_SUBSCRIPTION_VERSION
                 | LEGACY_RELAY_STORED_SUBSCRIPTION_VERSION
         )
@@ -2909,7 +3421,11 @@ fn decode_subscription_source(
         return Ok(DecodedSubscriptionSource {
             stored: StoredSubscription {
                 id: expected_id.to_owned(),
+                name: source
+                    .subscription_name()
+                    .unwrap_or_else(|| "Subscription".to_owned()),
                 source,
+                enabled: true,
                 refresh_interval: RemoteSourceRefreshInterval::Manual,
                 last_successful_update_unix_secs: 0,
                 proxy_server_nameservers: Vec::new(),
@@ -2919,6 +3435,8 @@ fn decode_subscription_source(
     }
 
     let mut id = None;
+    let mut name = None;
+    let mut enabled = None;
     let mut url = None;
     let mut refresh_interval = None;
     let mut last_successful_update_unix_secs = None;
@@ -2927,6 +3445,18 @@ fn decode_subscription_source(
         let fields = line.split('\t').collect::<Vec<_>>();
         match fields.as_slice() {
             ["id", value] if id.is_none() => id = Some((*value).to_owned()),
+            ["name", value] if version == Some(STORED_SUBSCRIPTION_VERSION) && name.is_none() => {
+                name = Some(validate_subscription_source_name(&decode_hex(value)?)?);
+            }
+            ["enabled", value]
+                if version == Some(STORED_SUBSCRIPTION_VERSION) && enabled.is_none() =>
+            {
+                enabled = Some(match *value {
+                    "true" => true,
+                    "false" => false,
+                    _ => return Err(SubscriptionStoreError::StoredSourceUnavailable),
+                });
+            }
             ["url", value] if url.is_none() => url = Some(decode_hex(value)?),
             ["refresh", value] if refresh_interval.is_none() => {
                 refresh_interval = Some(
@@ -2942,8 +3472,10 @@ fn decode_subscription_source(
                 );
             }
             ["proxy-dns", value]
-                if version == Some(STORED_SUBSCRIPTION_VERSION)
-                    && proxy_server_nameservers.len() < MAX_SUBSCRIPTION_PROXY_DNS_SERVERS =>
+                if matches!(
+                    version,
+                    Some(STORED_SUBSCRIPTION_VERSION | LEGACY_MANIS_STORED_SUBSCRIPTION_VERSION_V2)
+                ) && proxy_server_nameservers.len() < MAX_SUBSCRIPTION_PROXY_DNS_SERVERS =>
             {
                 let decoded = decode_hex(value)?;
                 let nameserver = ProxyDnsServer::parse_https(&decoded)
@@ -2962,10 +3494,17 @@ fn decode_subscription_source(
     let url_input = url.ok_or(SubscriptionStoreError::StoredSourceUnavailable)?;
     let source = SecretUrl::parse_subscription(&url_input)
         .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
+    let name = name.unwrap_or_else(|| {
+        source
+            .subscription_name()
+            .unwrap_or_else(|| "Subscription".to_owned())
+    });
     Ok(DecodedSubscriptionSource {
         stored: StoredSubscription {
             id,
+            name,
             source,
+            enabled: enabled.unwrap_or(true),
             refresh_interval: refresh_interval.unwrap_or_default(),
             last_successful_update_unix_secs: last_successful_update_unix_secs.unwrap_or_default(),
             proxy_server_nameservers,
@@ -3027,6 +3566,7 @@ fn direct_policy_for_member(
 fn compile_managed_policy_groups(
     groups: &[ManagedPolicyGroup],
     stored_provider_indexes: &HashMap<&str, usize>,
+    stored_single_nodes: &[StoredSingleNode],
     vless_nodes: &[VlessProxy],
     provider_count: usize,
 ) -> Result<Vec<UserPolicyGroup>, LoadError> {
@@ -3069,7 +3609,16 @@ fn compile_managed_policy_groups(
                             continue;
                         }
                         if member.source_id == "saved" {
-                            if let Some(proxy) = vless_nodes
+                            if let Some(stored) = stored_single_nodes
+                                .iter()
+                                .find(|stored| stored.source.preview().name == member.node_name)
+                                && let Some(index) =
+                                    stored_provider_indexes.get(stored.id.as_str()).copied()
+                            {
+                                if !provider_indexes.contains(&index) {
+                                    provider_indexes.push(index);
+                                }
+                            } else if let Some(proxy) = vless_nodes
                                 .iter()
                                 .find(|proxy| proxy.name().as_str() == member.node_name)
                             {
@@ -3537,6 +4086,7 @@ fn write_qx_rule_source_in(
     url_input: &str,
     target_policy: &str,
     content: &str,
+    enabled: bool,
     refresh_interval: RemoteSourceRefreshInterval,
     last_successful_update_unix_secs: u64,
 ) -> Result<StoredQxRuleSource, SubscriptionStoreError> {
@@ -3550,6 +4100,7 @@ fn write_qx_rule_source_in(
         url_input,
         &target_policy,
         content,
+        enabled,
         refresh_interval,
         last_successful_update_unix_secs,
     )?;
@@ -3559,6 +4110,7 @@ fn write_qx_rule_source_in(
     Ok(StoredQxRuleSource {
         id: id.to_owned(),
         source,
+        enabled,
         target_policy,
         content: content.to_owned(),
         rule_count,
@@ -3583,6 +4135,7 @@ fn encode_qx_rule_source(
     url_input: &str,
     target_policy: &Name,
     content: &str,
+    enabled: bool,
     refresh_interval: RemoteSourceRefreshInterval,
     last_successful_update_unix_secs: u64,
 ) -> Result<String, SubscriptionStoreError> {
@@ -3597,6 +4150,7 @@ fn encode_qx_rule_source(
         format!("url\t{}", encode_hex(url_input)),
         format!("target\t{}", encode_hex(target_policy.as_str())),
         format!("content\t{}", encode_hex(content)),
+        format!("enabled\t{}", u8::from(enabled)),
         format!("refresh\t{}", refresh_interval.key()),
         format!("last-success\t{last_successful_update_unix_secs}"),
     ]
@@ -3615,10 +4169,12 @@ fn decode_qx_rule_source_with_url(
     expected_id: &str,
 ) -> Result<DecodedQxRuleSource, SubscriptionStoreError> {
     let mut lines = contents.lines();
-    if !storage_version_supported(
-        lines.next(),
-        QX_RULE_SOURCE_VERSION,
-        LEGACY_RELAY_QX_RULE_SOURCE_VERSION,
+    let version = lines.next();
+    if !matches!(
+        version,
+        Some(QX_RULE_SOURCE_VERSION)
+            | Some(LEGACY_MANIS_QX_RULE_SOURCE_VERSION)
+            | Some(LEGACY_RELAY_QX_RULE_SOURCE_VERSION)
     ) {
         return Err(SubscriptionStoreError::StoredSourceUnavailable);
     }
@@ -3626,6 +4182,7 @@ fn decode_qx_rule_source_with_url(
     let mut url = None;
     let mut target = None;
     let mut content = None;
+    let mut enabled = None;
     let mut refresh_interval = None;
     let mut last_successful_update_unix_secs = None;
     for line in lines {
@@ -3635,6 +4192,13 @@ fn decode_qx_rule_source_with_url(
             ["url", value] if url.is_none() => url = Some(decode_hex(value)?),
             ["target", value] if target.is_none() => target = Some(decode_hex(value)?),
             ["content", value] if content.is_none() => content = Some(decode_hex(value)?),
+            ["enabled", value] if enabled.is_none() => {
+                enabled = Some(match *value {
+                    "0" => false,
+                    "1" => true,
+                    _ => return Err(SubscriptionStoreError::StoredSourceUnavailable),
+                });
+            }
             ["refresh", value] if refresh_interval.is_none() => {
                 refresh_interval = Some(
                     RemoteSourceRefreshInterval::parse_key(value)
@@ -3667,6 +4231,7 @@ fn decode_qx_rule_source_with_url(
         stored: StoredQxRuleSource {
             id,
             source,
+            enabled: enabled.unwrap_or(true),
             target_policy,
             content,
             rule_count,
@@ -3784,6 +4349,7 @@ fn private_store_entries(directory: &Path) -> Result<Option<Vec<PathBuf>>, Subsc
 }
 
 #[cfg(not(windows))]
+#[allow(dead_code)]
 fn read_private_source(path: &Path) -> Result<String, SubscriptionStoreError> {
     let contents = read_private_source_allow_empty(path)?;
     if contents.is_empty() || contents.lines().count() != 1 || contents.trim() != contents {
@@ -4158,6 +4724,7 @@ fn build_saved_sources_mihomo_runtime_in(
     data_dir: &Path,
     controller: &ControllerEndpoint,
 ) -> Result<ControllerRuntime, String> {
+    sync_single_node_provider_files(store_dir, data_dir).map_err(|error| error.to_string())?;
     let profile = compile_saved_profile(store_dir, None, KernelKind::Mihomo)
         .map_err(|error| error.to_string())?;
     let spec = ManagedGeneratedProfile {
@@ -5607,14 +6174,14 @@ mod tests {
             &store,
             "https://first.example.invalid/client?token=fixture-one&name=First",
         )?;
-        let saved = super::save_vless_source_in(
+        let saved = super::save_single_node_source_in(
             &store,
             "vless://00000000-0000-4000-8000-000000000000@edge.example.invalid:443?security=tls#Saved",
         )?;
         super::save_collapsed_groups_in(&store, [first.id.as_str(), "saved", "../../unsafe"])?;
 
         let subscriptions = super::load_subscription_sources_in(&store)?;
-        let nodes = super::load_vless_sources_in(&store)?;
+        let nodes = super::load_single_node_sources_in(&store)?;
         assert_eq!(subscriptions.len(), 2);
         assert_ne!(first.id, second.id);
         assert_eq!(duplicate.id, first.id);
@@ -5633,9 +6200,87 @@ mod tests {
         );
 
         super::remove_subscription_source_in(&store, &first.id)?;
-        super::remove_vless_source_in(&store, &saved.id)?;
+        super::remove_single_node_source_in(&store, &saved.id)?;
         assert_eq!(super::load_subscription_sources_in(&store)?.len(), 1);
-        assert!(super::load_vless_sources_in(&store)?.is_empty());
+        assert!(super::load_single_node_sources_in(&store)?.is_empty());
+
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn subscription_name_and_enabled_state_round_trip_and_control_compilation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = test_temp_dir("manis-subscription-enabled-state");
+        let store = root.join("subscriptions");
+        let stored = super::save_subscription_source_with_options_in(
+            &store,
+            "https://disabled.example.invalid/client?token=private",
+            "备用订阅",
+            super::RemoteSourceRefreshInterval::SixHours,
+            false,
+        )?;
+
+        let loaded = super::load_subscription_sources_in(&store)?;
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].name, "备用订阅");
+        assert!(!loaded[0].enabled);
+        assert_eq!(
+            loaded[0].refresh_interval,
+            super::RemoteSourceRefreshInterval::SixHours
+        );
+        let disabled_profile =
+            super::compile_saved_profile(&store, None, manis_core::KernelKind::Mihomo)?;
+        assert!(disabled_profile.providers.is_empty());
+
+        super::update_subscription_source_enabled_in(&store, &stored.id, true)?;
+        let enabled_profile =
+            super::compile_saved_profile(&store, None, manis_core::KernelKind::Mihomo)?;
+        assert_eq!(enabled_profile.providers.len(), 1);
+
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn single_node_sources_are_protocol_agnostic_editable_and_disableable()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = test_temp_dir("manis-single-node-source");
+        let store = root.join("subscriptions");
+        let stored = super::save_single_node_source_with_options_in(
+            &store,
+            "trojan://fixture-password@example.invalid:443?security=tls#Original",
+            "家庭节点",
+            false,
+        )?;
+
+        let loaded = super::load_single_node_sources_in(&store)?;
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].name, "家庭节点");
+        assert!(!loaded[0].enabled);
+        assert!(
+            super::compile_saved_profile(&store, None, manis_core::KernelKind::Mihomo,)?
+                .providers
+                .is_empty()
+        );
+
+        let updated = super::update_single_node_source_in(
+            &store,
+            &stored.id,
+            "ss://fixture@example.invalid:8388#Edited",
+            "办公节点",
+            true,
+        )?;
+        assert_eq!(updated.name, "办公节点");
+        assert!(updated.enabled);
+        let profile = super::compile_saved_profile(&store, None, manis_core::KernelKind::Mihomo)?;
+        assert_eq!(profile.providers.len(), 1);
+        assert!(matches!(
+            profile.providers[0].source,
+            manis_profile::ProxyProviderSource::File
+        ));
 
         fs::remove_dir_all(root)?;
         Ok(())
@@ -5978,6 +6623,51 @@ IP-CIDR,192.0.2.0/24,DIRECT
 
     #[cfg(not(windows))]
     #[test]
+    fn qx_rule_source_definition_can_be_edited_without_changing_its_identity()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = test_temp_dir("manis-qx-rule-definition-edit");
+        let store = root.join("subscriptions");
+        let stored = super::save_qx_rule_source_in(
+            &store,
+            "https://rules.example.invalid/old.list",
+            "Proxy",
+            "DOMAIN-SUFFIX,old.example,PROXY\n",
+        )?
+        .into_source();
+        let disabled = super::update_qx_rule_source_enabled_in(&store, &stored.id, false)?;
+        assert!(!disabled.enabled);
+
+        let edited = super::replace_qx_rule_source_definition_in(
+            &store,
+            &stored.id,
+            "https://rules.example.invalid/new.list",
+            "DIRECT",
+            "DOMAIN-SUFFIX,new.example,DIRECT\n",
+            super::RemoteSourceRefreshInterval::SixHours,
+            456,
+        )?;
+
+        assert_eq!(edited.id, stored.id);
+        assert!(!edited.enabled);
+        assert_eq!(
+            edited.source.expose_to(str::to_owned),
+            "https://rules.example.invalid/new.list"
+        );
+        assert_eq!(edited.target_policy.as_str(), "DIRECT");
+        assert_eq!(edited.rule_count, 1);
+        assert_eq!(
+            edited.refresh_interval,
+            super::RemoteSourceRefreshInterval::SixHours
+        );
+        assert_eq!(edited.last_successful_update_unix_secs, 456);
+        assert_eq!(super::load_qx_rule_sources_in(&store)?, vec![edited]);
+
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[cfg(not(windows))]
+    #[test]
     fn qx_rule_source_target_update_preserves_source_and_refresh_metadata()
     -> Result<(), Box<dyn std::error::Error>> {
         let root = test_temp_dir("manis-qx-rule-target");
@@ -6022,7 +6712,7 @@ IP-CIDR,192.0.2.0/24,DIRECT
         let id = "qx-rule-feed";
         let content = "DOMAIN-KEYWORD,google,PROXY\n";
         let legacy = [
-            super::QX_RULE_SOURCE_VERSION.to_owned(),
+            super::LEGACY_MANIS_QX_RULE_SOURCE_VERSION.to_owned(),
             format!("id\t{id}"),
             format!(
                 "url\t{}",
@@ -6042,6 +6732,7 @@ IP-CIDR,192.0.2.0/24,DIRECT
             .ok_or("legacy qx source")?;
         assert_eq!(loaded.id, id);
         assert_eq!(loaded.content, content);
+        assert!(loaded.enabled);
         assert_eq!(
             loaded.refresh_interval,
             super::RemoteSourceRefreshInterval::Manual
@@ -6126,6 +6817,7 @@ IP-CIDR,192.0.2.0/24,DIRECT
             source: manis_profile::SecretUrl::parse_https(
                 "https://rules.example.invalid/airports.list?token=fixture-secret",
             )?,
+            enabled: true,
             target_policy: manis_profile::Name::parse("Proxy")?,
             content: "DOMAIN-KEYWORD,google,PROXY\nDOMAIN-SUFFIX,githubusercontent.com,proxy\n"
                 .to_owned(),
@@ -6138,6 +6830,8 @@ IP-CIDR,192.0.2.0/24,DIRECT
             manis_profile::Profile::qx_default(manis_profile::SecretUrl::parse_https(
                 "https://subscription.example.invalid/client?token=fixture-secret",
             )?)?;
+        let mut disabled_source = source.clone();
+        disabled_source.enabled = false;
 
         super::apply_qx_rule_sources(&mut profile, &[source])?;
         let yaml = manis_profile::render_mihomo_yaml(&profile)?;
@@ -6148,6 +6842,13 @@ IP-CIDR,192.0.2.0/24,DIRECT
         );
         assert!(!yaml.contains("GEOIP,CN,DIRECT"));
         assert!(!yaml.contains("MATCH,__MANIS_GLOBAL__"));
+
+        let mut disabled_profile = manis_profile::Profile::qx_default(
+            manis_profile::SecretUrl::parse_https("https://subscription.example.invalid/client")?,
+        )?;
+        super::apply_qx_rule_sources(&mut disabled_profile, &[disabled_source])?;
+        let disabled_yaml = manis_profile::render_mihomo_yaml(&disabled_profile)?;
+        assert!(!disabled_yaml.contains("DOMAIN-KEYWORD,google"));
         Ok(())
     }
 
@@ -6159,6 +6860,7 @@ IP-CIDR,192.0.2.0/24,DIRECT
             source: manis_profile::SecretUrl::parse_https(
                 "https://rules.example.invalid/legacy.list",
             )?,
+            enabled: true,
             target_policy: manis_profile::Name::parse("Proxy")?,
             content: "DOMAIN-SUFFIX,google.com,PROXY\n".to_owned(),
             rule_count: 1,
@@ -6303,7 +7005,7 @@ IP-CIDR,192.0.2.0/24,DIRECT
         explicit.toggle_member(NodeIdentity::new("builtin", "REJECT")?);
 
         let compiled =
-            super::compile_managed_policy_groups(&[latency, explicit], &indexes, &[saved], 2)?;
+            super::compile_managed_policy_groups(&[latency, explicit], &indexes, &[], &[saved], 2)?;
 
         assert_eq!(
             compiled[0].kind,
@@ -6479,7 +7181,7 @@ IP-CIDR,192.0.2.0/24,DIRECT
         let binary = root.join("mihomo");
         fs::write(&binary, "#!/bin/sh\nexit 0\n")?;
         fs::set_permissions(&binary, fs::Permissions::from_mode(0o700))?;
-        super::save_vless_source_in(
+        let saved = super::save_single_node_source_in(
             &store,
             "vless://00000000-0000-4000-8000-000000000000@edge.example.invalid:443?security=tls#Private%20Edge",
         )?;
@@ -6516,7 +7218,16 @@ IP-CIDR,192.0.2.0/24,DIRECT
             _ => panic!("saved sources should build a managed runtime"),
         }
         let generated = fs::read_to_string(data_dir.join(super::GENERATED_PROFILE_FILE))?;
-        assert!(generated.contains("Private Edge"));
+        assert!(generated.contains("type: \"file\""));
+        assert!(generated.contains(&format!("single_nodes/{}.txt", saved.id)));
+        assert!(
+            fs::read_to_string(
+                data_dir
+                    .join("single_nodes")
+                    .join(format!("{}.txt", saved.id))
+            )?
+            .contains("Private%20Edge")
+        );
         assert!(generated.contains("mixed-port: 17890"));
 
         fs::remove_dir_all(root)?;

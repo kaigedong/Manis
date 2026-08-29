@@ -266,17 +266,22 @@ impl ManisApp {
         cx: &mut Context<Self>,
     ) -> Div {
         let compact = size_class == WindowSizeClass::Compact;
-        let has_local_sources =
-            !self.imported_subscriptions.is_empty() || !self.saved_vless_nodes.is_empty();
+        let has_local_sources = self
+            .imported_subscriptions
+            .iter()
+            .any(|subscription| subscription.enabled)
+            || !self.saved_single_nodes.is_empty();
         let language = self.language();
         let groups = self.node_source_groups(has_local_sources, language);
         let counts = NodeCounts::from_groups(&groups);
         let filter = self.node_workspace.filter;
         let loading = self.imported_subscriptions.iter().any(|subscription| {
-            matches!(
-                subscription.state,
-                ImportedSubscriptionState::Pending(_) | ImportedSubscriptionState::Refreshing(_)
-            )
+            subscription.enabled
+                && matches!(
+                    subscription.state,
+                    ImportedSubscriptionState::Pending(_)
+                        | ImportedSubscriptionState::Refreshing(_)
+                )
         });
         let refreshing = loading
             || (!has_local_sources
@@ -284,8 +289,13 @@ impl ManisApp {
                     self.controller,
                     crate::mihomo::ControllerState::Connecting { .. }
                 ));
-        let unavailable = !self.imported_subscriptions.is_empty()
-            && self.imported_subscriptions.iter().all(|subscription| {
+        let enabled_subscriptions = self
+            .imported_subscriptions
+            .iter()
+            .filter(|subscription| subscription.enabled)
+            .collect::<Vec<_>>();
+        let unavailable = !enabled_subscriptions.is_empty()
+            && enabled_subscriptions.iter().all(|subscription| {
                 matches!(
                     subscription.state,
                     ImportedSubscriptionState::Unavailable(_, _)
@@ -339,11 +349,10 @@ impl ManisApp {
             let mut groups: Vec<_> = self
                 .imported_subscriptions
                 .iter()
+                .filter(|subscription| subscription.enabled)
                 .enumerate()
                 .map(|(index, subscription)| {
-                    let name = subscription.source.subscription_name().unwrap_or_else(|| {
-                        format!("{} {}", language.text("Subscription", "订阅"), index + 1)
-                    });
+                    let name = subscription.name.clone();
                     let runtime_provider_name = format!("Subscription {}", index + 1);
                     let providers = subscription_provider_refs(
                         &subscription.providers,
@@ -391,7 +400,7 @@ impl ManisApp {
                     }
                 })
                 .collect();
-            if !self.saved_vless_nodes.is_empty() {
+            if self.saved_single_nodes.iter().any(|saved| saved.enabled) {
                 groups.push(NodeSourceGroup {
                     id: "saved".to_owned(),
                     name: language.text("Saved", "已保存").to_owned(),
@@ -404,8 +413,9 @@ impl ManisApp {
                     providers: Vec::new(),
                     runtime_provider_names: Vec::new(),
                     saved_nodes: self
-                        .saved_vless_nodes
+                        .saved_single_nodes
                         .iter()
+                        .filter(|saved| saved.enabled)
                         .map(|saved| saved.source.preview())
                         .collect(),
                 });
@@ -531,8 +541,8 @@ impl ManisApp {
                 body.child(Self::node_message_panel(
                     language.text("Nodes are temporarily unavailable", "暂时无法读取节点"),
                     language.text(
-                        "Subscriptions remain safely stored locally. Check sources in Configuration; original URLs stay hidden.",
-                        "订阅仍安全保存在本机。请前往配置页检查来源，原链接不会显示。",
+                        "Subscriptions remain stored locally. Check source details in Configuration.",
+                        "订阅仍保存在本机。请前往配置页检查来源详情。",
                     ),
                     theme,
                 ))
@@ -1159,7 +1169,7 @@ impl ManisApp {
     ) -> Stateful<Div> {
         let inventory = self.policy_candidate_inventory();
         let has_local_sources =
-            !self.imported_subscriptions.is_empty() || !self.saved_vless_nodes.is_empty();
+            !self.imported_subscriptions.is_empty() || !self.saved_single_nodes.is_empty();
         let source_labels = self
             .node_source_groups(has_local_sources, language)
             .into_iter()
@@ -1311,7 +1321,7 @@ impl ManisApp {
 
     fn node_inventory(&self) -> Vec<NodeIdentity> {
         let has_local_sources =
-            !self.imported_subscriptions.is_empty() || !self.saved_vless_nodes.is_empty();
+            !self.imported_subscriptions.is_empty() || !self.saved_single_nodes.is_empty();
         let mut inventory = Vec::new();
         let mut seen = BTreeSet::new();
         for group in self.node_source_groups(has_local_sources, self.language()) {
@@ -1891,12 +1901,16 @@ impl ManisApp {
                 return;
             }
             if !this.imported_subscriptions.is_empty() {
-                for subscription in &mut this.imported_subscriptions {
+                for subscription in this
+                    .imported_subscriptions
+                    .iter_mut()
+                    .filter(|subscription| subscription.enabled)
+                {
                     let kind = super::source_kind(&subscription.source);
                     subscription.state = ImportedSubscriptionState::Pending(kind);
                 }
                 this.restore_imported_subscriptions(cx);
-            } else if !this.saved_vless_nodes.is_empty() {
+            } else if !this.saved_single_nodes.is_empty() {
                 this.language()
                     .text(
                         "Saved nodes do not need to be downloaded again",

@@ -6,6 +6,7 @@ use gpui_component::{
     Disableable, IconName, Selectable, Sizable, Size, WindowExt as _,
     accordion::Accordion,
     button::{Button, ButtonVariant, ButtonVariants},
+    checkbox::Checkbox,
     dialog::Dialog,
     menu::{ContextMenuExt, PopupMenuItem},
 };
@@ -13,9 +14,10 @@ use manis_core::{KernelKind, ProxyMode, WindowSizeClass};
 use manis_profile::{QxRuleKind, SecretUrl};
 
 use super::{
-    ImportQxRuleError, ImportQxRuleSuccess, ImportedSubscriptionState, ManisApp, ManualRulePopover,
-    MihomoCoreUpdateState, QxRuleImportFeedback, QxRuleList, QxRuleSourceRefreshState,
-    SourceRuntimeApply, SubscriptionFeedback,
+    ConfigurationSection, ImportQxRuleError, ImportQxRuleSuccess, ImportedSubscriptionState,
+    ManisApp, ManualRulePopover, MihomoCoreUpdateState, ProxySourceEditorKind,
+    QxRuleImportFeedback, QxRuleList, QxRuleSourceRefreshState, SourceRuntimeApply,
+    SubscriptionFeedback, proxy_mode_label, routing_mode_label,
 };
 use crate::{
     components::{
@@ -24,9 +26,15 @@ use crate::{
     },
     diagnostics::{LogLevel, UiEvent, begin_operation, record_event, record_operation, trace_ui},
     localization::{CountNoun, Language, LanguagePreference, Message, save_language_preference_in},
-    mihomo::{self, LoadedProvider, RemoteSourceRefreshInterval, SubscriptionStoreError},
+    mihomo::{
+        self, LoadedProvider, RemoteSourceRefreshInterval, RuntimeProfileSource,
+        SubscriptionStoreError,
+    },
     rule_source::{download_qx_rule_document, download_qx_rule_document_secret},
-    subscription::{SourceKind, SubscriptionPreview, validate_subscription_preview},
+    subscription::{
+        SourceKind, SubscriptionPreview, validate_single_node_preview,
+        validate_subscription_preview,
+    },
     subscription_input::SubscriptionTextInput,
     theme::{ControlSize, Radius, Space, TextRole, Theme},
 };
@@ -93,15 +101,6 @@ fn field_label(label: impl Into<gpui::SharedString>, theme: Theme) -> Div {
         .font_weight(TextRole::Label.weight())
         .text_color(theme.text_secondary)
         .child(label)
-}
-
-fn metadata_text(content: impl Into<gpui::SharedString>, theme: Theme) -> Div {
-    let content = content.into();
-    div()
-        .text_size(TextRole::Metadata.size())
-        .line_height(TextRole::Metadata.line_height())
-        .text_color(theme.text_secondary)
-        .child(content)
 }
 
 fn accordion_content_style() -> StyleRefinement {
@@ -241,7 +240,7 @@ fn source_kind_label(kind: SourceKind, language: Language) -> &'static str {
     match kind {
         SourceKind::HttpSubscription => language.text("HTTP subscription", "HTTP 订阅"),
         SourceKind::HttpsSubscription => language.text("HTTPS subscription", "HTTPS 订阅"),
-        SourceKind::VlessNode => language.text("VLESS node", "VLESS 节点"),
+        SourceKind::SingleNode => language.text("Single node", "单节点"),
     }
 }
 
@@ -308,16 +307,25 @@ fn language_preference_label(preference: LanguagePreference, language: Language)
     }
 }
 
-fn language_preference_detail(preference: LanguagePreference, language: Language) -> &'static str {
-    match preference {
-        LanguagePreference::FollowSystem => language.text(
-            "Use Chinese for Chinese system locales; otherwise English.",
-            "系统语言为中文时使用中文，否则使用英文。",
-        ),
-        LanguagePreference::English => language.text("Always use English.", "始终使用英文。"),
-        LanguagePreference::SimplifiedChinese => {
-            language.text("Always use Simplified Chinese.", "始终使用简体中文。")
+fn configuration_section_label(section: ConfigurationSection, language: Language) -> &'static str {
+    match section {
+        ConfigurationSection::General => language.text("General", "通用"),
+        ConfigurationSection::Runtime => language.text("Runtime", "运行内核"),
+        ConfigurationSection::ProxySources => language.text("Proxy sources", "代理来源"),
+        ConfigurationSection::RuleSources => language.text("Rule sources", "规则来源"),
+        ConfigurationSection::Advanced => language.text("Advanced", "高级设置"),
+    }
+}
+
+fn configuration_section_detail(section: ConfigurationSection, language: Language) -> &'static str {
+    match section {
+        ConfigurationSection::General => language.text("Interface language", "界面语言"),
+        ConfigurationSection::Runtime => language.text("Core and updates", "内核与更新"),
+        ConfigurationSection::ProxySources => {
+            language.text("Subscriptions and nodes", "订阅与单节点")
         }
+        ConfigurationSection::RuleSources => language.text("Remote rule sets", "远程规则集"),
+        ConfigurationSection::Advanced => language.text("Network behavior", "网络行为"),
     }
 }
 
@@ -337,6 +345,34 @@ impl ManisApp {
             .clone();
         let rule_busy =
             self.qx_rule_feedback == QxRuleImportFeedback::Importing || self.source_refresh_busy();
+        let selected_section = self.configuration_section;
+        let detail: AnyElement = match selected_section {
+            ConfigurationSection::General => {
+                self.language_panel(theme, compact, cx).into_any_element()
+            }
+            ConfigurationSection::Runtime => {
+                self.kernel_panel(theme, compact, cx).into_any_element()
+            }
+            ConfigurationSection::ProxySources => {
+                self.source_panel(theme, compact, cx).into_any_element()
+            }
+            ConfigurationSection::RuleSources => self
+                .rule_source_manager(rule_input, rule_busy, theme, compact, cx)
+                .into_any_element(),
+            ConfigurationSection::Advanced => self
+                .advanced_configuration_panel(theme, compact)
+                .into_any_element(),
+        };
+        let navigation = self.configuration_navigation(theme, compact, cx);
+        let content = div()
+            .id("configuration-detail-scroll")
+            .flex_1()
+            .min_w(px(0.0))
+            .min_h(px(0.0))
+            .overflow_y_scroll()
+            .p(if compact { px(12.0) } else { px(24.0) })
+            .pb(px(56.0))
+            .child(div().w_full().max_w(px(900.0)).mx_auto().child(detail));
         div()
             .flex_1()
             .min_w(px(0.0))
@@ -347,35 +383,275 @@ impl ManisApp {
             .child(Self::workspace_header(
                 language.message(Message::Configuration),
                 language.text(
-                    "Manage sources only; nodes and active rules live in their own pages",
-                    "只管理来源；节点与最终生效规则在各自页面查看",
+                    "Manage Manis preferences and data sources",
+                    "管理 Manis 偏好与数据来源",
                 ),
-                language.text("Private", "本机私有"),
+                configuration_section_label(selected_section, language),
+                StatusTone::Neutral,
                 theme,
                 compact,
             ))
             .child(
                 div()
-                    .id("configuration-scroll")
                     .flex_1()
                     .min_h(px(0.0))
-                    .overflow_y_scroll()
-                    .p(if compact { px(12.0) } else { px(20.0) })
-                    .pb(px(56.0))
+                    .flex()
+                    .when(compact, |body| body.flex_col())
+                    .child(navigation)
+                    .child(content),
+            )
+    }
+
+    fn configuration_navigation(&self, theme: Theme, compact: bool, cx: &mut Context<Self>) -> Div {
+        let language = self.language();
+        let navigation = div()
+            .flex_shrink_0()
+            .bg(theme.surface_low)
+            .when(compact, |navigation| {
+                navigation
+                    .w_full()
+                    .px(Space::Md.px())
+                    .py(Space::Sm.px())
+                    .border_b_1()
+            })
+            .when(!compact, |navigation| {
+                navigation
+                    .w(px(228.0))
+                    .h_full()
+                    .p(Space::Md.px())
+                    .border_r_1()
+                    .flex()
+                    .flex_col()
+            })
+            .border_color(theme.outline_subtle)
+            .when(!compact, |navigation| {
+                navigation.child(
+                    div()
+                        .px(Space::Sm.px())
+                        .pb(Space::Sm.px())
+                        .text_size(TextRole::Metadata.size())
+                        .line_height(TextRole::Metadata.line_height())
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(theme.text_tertiary)
+                        .child(language.text("SETTINGS", "设置")),
+                )
+            });
+        let items =
+            div()
+                .id("configuration-navigation-items")
+                .flex()
+                .gap(if compact {
+                    Space::Xs.px()
+                } else {
+                    Space::Sm.px()
+                })
+                .when(compact, gpui::StatefulInteractiveElement::overflow_x_scroll)
+                .when(!compact, |items| items.flex_col())
+                .children(ConfigurationSection::ALL.into_iter().map(|section| {
+                    self.configuration_navigation_item(section, theme, compact, cx)
+                }));
+        navigation.child(items).when(!compact, |navigation| {
+            navigation.child(
+                div()
+                    .mt_auto()
+                    .px(Space::Sm.px())
+                    .pt(Space::Lg.px())
+                    .text_size(TextRole::Metadata.size())
+                    .line_height(TextRole::Metadata.line_height())
+                    .text_color(theme.text_tertiary)
+                    .child(language.text("Changes are stored locally", "更改仅保存在本机")),
+            )
+        })
+    }
+
+    fn configuration_navigation_item(
+        &self,
+        section: ConfigurationSection,
+        theme: Theme,
+        compact: bool,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let language = self.language();
+        let selected = self.configuration_section == section;
+        let metadata = match section {
+            ConfigurationSection::General => self.language().display_name().to_owned(),
+            ConfigurationSection::Runtime => self.runtime.kind().display_name().to_owned(),
+            ConfigurationSection::ProxySources => language.count(
+                CountNoun::Source,
+                self.imported_subscriptions.len() + self.saved_single_nodes.len(),
+            ),
+            ConfigurationSection::RuleSources => {
+                language.count(CountNoun::Source, self.qx_rule_sources.len())
+            }
+            ConfigurationSection::Advanced => language.text("Managed", "托管").to_owned(),
+        };
+        div()
+            .id(format!("configuration-nav-{}", section.key()))
+            .role(Role::Button)
+            .aria_label(configuration_section_label(section, language))
+            .aria_toggled(if selected {
+                gpui::Toggled::True
+            } else {
+                gpui::Toggled::False
+            })
+            .tab_stop(true)
+            .focusable()
+            .cursor_pointer()
+            .min_w(if compact { px(104.0) } else { px(0.0) })
+            .px(Space::Md.px())
+            .py(Space::Sm.px())
+            .rounded(Radius::Control.px())
+            .border_1()
+            .border_color(if selected {
+                theme.action_primary
+            } else {
+                theme.surface_low
+            })
+            .bg(if selected {
+                theme.action_soft
+            } else {
+                theme.surface_low
+            })
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap(Space::Sm.px())
                     .child(
                         div()
-                            .w_full()
-                            .max_w(px(880.0))
-                            .mx_auto()
-                            .child(self.language_panel(theme, compact, cx))
-                            .child(self.kernel_panel(theme, compact, cx).mt_4())
-                            .child(self.source_panel(theme, compact, cx).mt_4())
-                            .child(
-                                self.rule_source_manager(rule_input, rule_busy, theme, compact, cx)
-                                    .mt_4(),
-                            ),
+                            .text_size(TextRole::Label.size())
+                            .line_height(TextRole::Label.line_height())
+                            .font_weight(if selected {
+                                FontWeight::SEMIBOLD
+                            } else {
+                                FontWeight::NORMAL
+                            })
+                            .text_color(if selected {
+                                theme.action_primary
+                            } else {
+                                theme.text_primary
+                            })
+                            .child(configuration_section_label(section, language)),
+                    )
+                    .when(!compact, |row| {
+                        row.child(
+                            div()
+                                .text_size(TextRole::Metadata.size())
+                                .line_height(TextRole::Metadata.line_height())
+                                .text_color(theme.text_tertiary)
+                                .child(metadata),
+                        )
+                    }),
+            )
+            .when(!compact, |item| {
+                item.child(
+                    div()
+                        .mt(px(2.0))
+                        .text_size(TextRole::Metadata.size())
+                        .line_height(TextRole::Metadata.line_height())
+                        .text_color(theme.text_secondary)
+                        .child(configuration_section_detail(section, language)),
+                )
+            })
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.configuration_section = section;
+                cx.notify();
+            }))
+    }
+
+    fn advanced_configuration_panel(&self, theme: Theme, compact: bool) -> Stateful<Div> {
+        let language = self.language();
+        let profile_source = self.runtime.profile_source();
+        let profile_detail = if language == Language::SimplifiedChinese {
+            profile_source.detail()
+        } else {
+            match profile_source {
+                #[cfg(any(test, feature = "snapshot-fixtures"))]
+                RuntimeProfileSource::FixtureController => "Test snapshot only",
+                RuntimeProfileSource::SavedSources => "Compiled from private local sources",
+                RuntimeProfileSource::Invalid => "Check local startup arguments",
+            }
+        };
+        panel_surface("configuration-advanced", compact, theme)
+            .child(section_heading(
+                language.text("Advanced settings", "高级设置"),
+                language.text("Current managed network behavior", "当前托管网络行为"),
+                Some(
+                    status_badge(
+                        language.text("Managed", "Manis 托管"),
+                        StatusTone::Neutral,
+                        theme,
+                    )
+                    .into_any_element(),
+                ),
+                theme,
+            ))
+            .child(Self::advanced_configuration_row(
+                language.text("Proxy mode", "代理模式"),
+                proxy_mode_label(language, self.proxy_mode),
+                language.text("Changed from the main toolbar", "可在主工具栏中切换"),
+                theme,
+            ))
+            .child(Self::advanced_configuration_row(
+                language.text("Routing mode", "路由模式"),
+                routing_mode_label(language, self.routing_mode),
+                language.text("Direct, global, or ordered rules", "直连、全局或有序规则"),
+                theme,
+            ))
+            .child(Self::advanced_configuration_row(
+                language.text("Process identification", "进程识别"),
+                language.text("Always", "始终识别"),
+                language.text(
+                    "Used to improve Network Activity",
+                    "用于改善网络活动中的进程信息",
+                ),
+                theme,
+            ))
+            .child(Self::advanced_configuration_row(
+                language.text("DNS and TUN", "DNS 与 TUN"),
+                language.text("Automatic", "自动管理"),
+                profile_detail,
+                theme,
+            ))
+    }
+
+    fn advanced_configuration_row(
+        label: &'static str,
+        value: &'static str,
+        detail: &'static str,
+        theme: Theme,
+    ) -> Div {
+        div()
+            .mt(Space::Md.px())
+            .pt(Space::Md.px())
+            .border_t_1()
+            .border_color(theme.outline_subtle)
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap(Space::Lg.px())
+            .child(
+                div()
+                    .min_w(px(0.0))
+                    .child(
+                        div()
+                            .text_size(TextRole::Label.size())
+                            .line_height(TextRole::Label.line_height())
+                            .font_weight(TextRole::Label.weight())
+                            .text_color(theme.text_primary)
+                            .child(label),
+                    )
+                    .child(
+                        div()
+                            .mt(Space::Xs.px())
+                            .text_size(TextRole::Metadata.size())
+                            .line_height(TextRole::Metadata.line_height())
+                            .text_color(theme.text_secondary)
+                            .child(detail),
                     ),
             )
+            .child(status_badge(value, StatusTone::Neutral, theme))
     }
 
     fn language_panel(&self, theme: Theme, compact: bool, cx: &mut Context<Self>) -> Stateful<Div> {
@@ -385,10 +661,7 @@ impl ManisApp {
         panel_surface("configuration-language", compact, theme)
             .child(section_heading(
                 language.text("Interface language", "界面语言"),
-                language.text(
-                    "Follows the operating system by default and falls back to English.",
-                    "默认跟随系统语言，检测不到时回退到英文。",
-                ),
+                "",
                 Some(
                     status_badge(
                         format!("{} · {current_language}", language.text("Current", "当前")),
@@ -451,8 +724,9 @@ impl ManisApp {
             .tab_stop(true)
             .focusable()
             .cursor_pointer()
-            .min_h(px(68.0))
-            .p(Space::Md.px())
+            .min_h(px(52.0))
+            .px(Space::Md.px())
+            .py(Space::Sm.px())
             .rounded(Radius::Row.px())
             .border_1()
             .border_color(if selected {
@@ -494,14 +768,6 @@ impl ManisApp {
                         )
                     }),
             )
-            .child(
-                div()
-                    .mt(Space::Sm.px())
-                    .text_size(TextRole::Metadata.size())
-                    .line_height(TextRole::Metadata.line_height())
-                    .text_color(theme.text_secondary)
-                    .child(language_preference_detail(preference, language)),
-            )
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.set_language_preference(preference, cx);
             }))
@@ -541,6 +807,14 @@ impl ManisApp {
         if let Some(input) = self.subscription_input.as_ref() {
             input.update(cx, |input, cx| input.set_language(language, cx));
         }
+        if let Some(input) = self.subscription_name_input.as_ref() {
+            input.update(cx, |input, cx| {
+                input.set_placeholder(
+                    language.text("For example: My subscription", "例如：我的订阅"),
+                    cx,
+                );
+            });
+        }
         if let Some(input) = self.policy_group_name_input.as_ref() {
             input.update(cx, |input, cx| {
                 input.set_placeholder(
@@ -564,21 +838,23 @@ impl ManisApp {
     fn kernel_panel(&self, theme: Theme, compact: bool, cx: &mut Context<Self>) -> Stateful<Div> {
         let language = self.language();
         let active = self.runtime.kind();
-        let capabilities = self.runtime.capabilities();
         let sing_box_installed = mihomo::sing_box_binary_available();
-        let sing_box_has_sources =
-            self.imported_subscriptions.is_empty() && !self.saved_vless_nodes.is_empty();
+        let has_enabled_subscription = self
+            .imported_subscriptions
+            .iter()
+            .any(|subscription| subscription.enabled);
+        let sing_box_has_sources = !has_enabled_subscription && !self.saved_single_nodes.is_empty();
         let sing_box_reason = if !sing_box_installed {
             language.text(
                 "sing-box was not found on this device",
                 "本机未检测到 sing-box",
             )
-        } else if !self.imported_subscriptions.is_empty() {
+        } else if has_enabled_subscription {
             language.text(
                 "Clash subscriptions are present; Manis needs its native parser first",
                 "当前包含 Clash 订阅，需等待 Manis 原生订阅解析器",
             )
-        } else if self.saved_vless_nodes.is_empty() {
+        } else if self.saved_single_nodes.is_empty() {
             language.text(
                 "At least one saved VLESS node is required",
                 "至少需要一个已保存的 VLESS 节点",
@@ -611,10 +887,7 @@ impl ManisApp {
         panel_surface("configuration-kernel", compact, theme)
             .child(section_heading(
                 language.text("Runtime kernel", "运行内核"),
-                language.text(
-                    "Manis compiles and validates the target config before switching; failures keep the current kernel.",
-                    "切换前先编译并校验目标配置；失败不会替换当前内核。",
-                ),
+                "",
                 Some(
                     status_badge(
                         if self.kernel_switch_state.is_busy() {
@@ -636,8 +909,8 @@ impl ManisApp {
             .child(Self::kernel_option_row(
                 KernelKind::Mihomo,
                 language.text(
-                    "Fully supports current subscriptions, policy groups, latency tests, and Clash API.",
-                    "完整兼容当前订阅、策略组、测速与 Clash API",
+                    "Subscriptions, policy groups, and latency tests",
+                    "支持订阅、策略组与测速",
                 ),
                 !self.kernel_switch_state.is_busy() && active != KernelKind::Mihomo,
                 active == KernelKind::Mihomo,
@@ -667,29 +940,28 @@ impl ManisApp {
                     .child(
                         style_action_button(
                             Button::new("mihomo-core-update")
-                            .accessibility_label(language.text(
-                                "Download or update the Manis-managed Mihomo core",
-                                "下载或更新 Manis 托管的 Mihomo 内核",
-                            ))
-                            .label(if core_updating {
-                                language.text("Updating…", "更新中…")
-                            } else if core_missing {
-                                language.text("Download stable", "下载稳定版")
-                            } else {
-                                language.text("Check for update", "检查更新")
-                            })
-                            .icon(IconName::Redo2)
-                            .loading(core_updating)
-                            .disabled(!core_update_enabled)
-                            .tab_stop(core_update_enabled)
-                            ,
+                                .accessibility_label(language.text(
+                                    "Download or update the Manis-managed Mihomo core",
+                                    "下载或更新 Manis 托管的 Mihomo 内核",
+                                ))
+                                .label(if core_updating {
+                                    language.text("Updating…", "更新中…")
+                                } else if core_missing {
+                                    language.text("Download stable", "下载稳定版")
+                                } else {
+                                    language.text("Check for update", "检查更新")
+                                })
+                                .icon(IconName::Redo2)
+                                .loading(core_updating)
+                                .disabled(!core_update_enabled)
+                                .tab_stop(core_update_enabled),
                             ActionRole::Quiet,
                             ControlSize::Compact,
                         )
-                            .when(core_update_enabled, gpui::Styled::cursor_pointer)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.update_mihomo_core(cx);
-                            })),
+                        .when(core_update_enabled, gpui::Styled::cursor_pointer)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.update_mihomo_core(cx);
+                        })),
                     ),
             )
             .child(Self::kernel_option_row(
@@ -701,31 +973,6 @@ impl ManisApp {
                 theme,
                 cx,
             ))
-            .child(
-                div()
-                    .mt(Space::Md.px())
-                    .pt(Space::Md.px())
-                    .border_t_1()
-                    .border_color(theme.outline_subtle)
-                    .text_size(TextRole::Metadata.size())
-                    .line_height(TextRole::Metadata.line_height())
-                    .text_color(theme.text_tertiary)
-                    .child(if language == Language::English {
-                        format!(
-                            "Current capability · Subscriptions {} · Manual VLESS {} · URL test {} · Selection saved locally in kernel.kind",
-                            if capabilities.subscription_providers { "available" } else { "not available" },
-                            if capabilities.manual_vless { "available" } else { "not available" },
-                            if capabilities.url_test { "available" } else { "not available" },
-                        )
-                    } else {
-                        format!(
-                            "当前能力 · 订阅{} · 手动 VLESS{} · 自动测速{} · 选择保存在本机 kernel.kind",
-                            if capabilities.subscription_providers { "可用" } else { "暂不可用" },
-                            if capabilities.manual_vless { "可用" } else { "暂不可用" },
-                            if capabilities.url_test { "可用" } else { "暂不可用" },
-                        )
-                    }),
-            )
     }
 
     fn kernel_option_row(
@@ -836,6 +1083,7 @@ impl ManisApp {
                     "查看最终参与匹配的有序规则；来源请前往配置页管理",
                 ),
                 language.text("Top-down", "从上到下匹配"),
+                StatusTone::Route,
                 theme,
                 compact,
             ))
@@ -860,6 +1108,7 @@ impl ManisApp {
         title: &'static str,
         detail: &'static str,
         badge: &'static str,
+        badge_tone: StatusTone,
         theme: Theme,
         compact: bool,
     ) -> Div {
@@ -881,7 +1130,7 @@ impl ManisApp {
             .child(page_heading(
                 title,
                 if compact { "" } else { detail },
-                Some(status_badge(badge, StatusTone::Route, theme).into_any_element()),
+                Some(status_badge(badge, badge_tone, theme).into_any_element()),
                 theme,
             ))
     }
@@ -889,65 +1138,25 @@ impl ManisApp {
     #[allow(clippy::too_many_lines)]
     fn source_panel(&self, theme: Theme, compact: bool, cx: &mut Context<Self>) -> Div {
         let language = self.language();
-        let input = self
-            .subscription_input
-            .as_ref()
-            .expect("subscription input is initialized before rendering")
-            .clone();
-        let feedback = &self.subscription_feedback;
-        let has_imported_subscription = !self.imported_subscriptions.is_empty();
-        let saved_source_count = self.imported_subscriptions.len() + self.saved_vless_nodes.len();
-        let direct_input = input.read(cx).value().starts_with("vless://");
-        let busy = matches!(feedback, SubscriptionFeedback::Importing(_))
-            || self.imported_subscriptions.iter().any(|subscription| {
-                matches!(subscription.state, ImportedSubscriptionState::Removing(_))
-            })
-            || self.source_refresh_busy();
+        let saved_source_count = self.imported_subscriptions.len() + self.saved_single_nodes.len();
+        let add_action = action_button(
+            "configuration-add-proxy-source",
+            language.text("Add source", "添加来源"),
+            ActionRole::Primary,
+            ControlSize::Compact,
+        )
+        .bg(theme.action_primary)
+        .text_color(theme.action_on_primary)
+        .on_click(cx.listener(|this, _, window, cx| {
+            this.open_new_subscription_editor(cx);
+            this.open_proxy_source_dialog(window, cx);
+        }));
 
         let panel = panel_surface("configuration-source", compact, theme)
-            .min_h(px(330.0))
             .child(section_heading(
-                language.text("Add proxy source", "添加代理来源"),
-                if compact {
-                        language.text(
-                            "HTTP/HTTPS subscription or one vless:// node",
-                            "HTTP/HTTPS 订阅或单个 vless:// 节点",
-                        )
-                    } else {
-                        language.text(
-                            "Supports HTTP/HTTPS subscriptions and single vless:// node links.",
-                            "支持 HTTP/HTTPS 订阅，也支持单个 vless:// 节点链接。",
-                        )
-                    },
-                None,
-                theme,
-            ))
-            .child(
-                div()
-                    .mt(if compact {
-                        Space::Md.px()
-                    } else {
-                        Space::Lg.px()
-                    })
-                    .child(field_label(
-                        language.text("Source address", "来源地址"),
-                        theme,
-                    )),
-            )
-            .child(input.clone())
-            .child(Self::subscription_actions(
-                input,
-                busy,
-                direct_input,
-                language,
-                theme,
-                cx,
-            ))
-            .child(Self::subscription_feedback(
-                feedback,
-                &self.subscription_preview_providers,
-                has_imported_subscription,
-                language,
+                language.text("Proxy sources", "代理来源"),
+                language.count(CountNoun::Source, saved_source_count),
+                Some(add_action.into_any_element()),
                 theme,
             ))
             .when_some(self.source_store_error, |panel, error| {
@@ -963,12 +1172,8 @@ impl ManisApp {
             })
             .child(
                 div()
-                    .mt(if compact {
-                        Space::Lg.px()
-                    } else {
-                        Space::Xl.px()
-                    })
-                    .pt(Space::Lg.px())
+                    .mt(Space::Lg.px())
+                    .pt(Space::Md.px())
                     .border_t_1()
                     .border_color(theme.outline_subtle)
                     .flex()
@@ -979,14 +1184,7 @@ impl ManisApp {
                             .text_size(TextRole::Label.size())
                             .line_height(TextRole::Label.line_height())
                             .font_weight(TextRole::Label.weight())
-                            .child(language.text("Saved sources", "已保存来源")),
-                    )
-                    .child(
-                        status_badge(
-                            language.count(CountNoun::Source, saved_source_count),
-                            StatusTone::Neutral,
-                            theme,
-                        )
+                            .child(language.text("Saved", "已保存")),
                     ),
             )
             .when(saved_source_count == 0, |panel| {
@@ -994,87 +1192,408 @@ impl ManisApp {
                     empty_state(
                         language.text("No proxy sources", "暂无代理来源"),
                         language.text(
-                            "No proxy sources yet. Nodes will appear on the Nodes page after adding one.",
-                            "还没有代理来源。添加后可在节点页查看其中的节点。",
+                            "Add a subscription or a single-node source.",
+                            "添加订阅或单节点来源。",
                         ),
-                        None,
+                        Some(
+                            action_button(
+                                "configuration-empty-add-proxy-source",
+                                language.text("Add source", "添加来源"),
+                                ActionRole::Primary,
+                                ControlSize::Compact,
+                            )
+                            .bg(theme.action_primary)
+                            .text_color(theme.action_on_primary)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.open_new_subscription_editor(cx);
+                                this.open_proxy_source_dialog(window, cx);
+                            }))
+                            .into_any_element(),
+                        ),
                         theme,
                     )
                     .mt(Space::Md.px()),
                 )
             })
             .child(self.imported_subscription_cards(theme, cx))
-            .child(self.saved_vless_cards(theme, cx))
-            .child(self.source_panel_footer(theme, compact));
+            .child(self.saved_single_node_cards(theme, cx));
         div().w_full().child(panel)
     }
 
-    fn source_panel_footer(&self, theme: Theme, compact: bool) -> Div {
-        let language = self.language();
-        let source = self.runtime.profile_source();
-        div()
-            .mt(Space::Md.px())
-            .pt(Space::Md.px())
-            .border_t_1()
-            .border_color(theme.outline_subtle)
-            .text_size(TextRole::Metadata.size())
-            .line_height(TextRole::Metadata.line_height())
-            .text_color(theme.text_tertiary)
-            .child(language.text(
-                "Links are saved in a private local directory; the UI and logs never show full addresses.",
-                "链接保存在本机私有目录；界面和日志不会显示完整地址。",
-            ))
-            .when(!compact, |footer| {
-                footer.child(if language == Language::English {
-                    div().mt_1().child(format!(
-                        "Current apply mode · {} · {}",
-                        source.label(),
-                        source.detail()
-                    ))
-                } else {
-                    div().mt_1().child(format!(
-                        "当前应用方式 · {} · {}",
-                        source.label(),
-                        source.detail()
-                    ))
-                })
-            })
+    fn open_new_subscription_editor(&mut self, cx: &mut Context<Self>) {
+        self.subscription_editor_source_id = None;
+        self.single_node_editor_source_id = None;
+        self.proxy_source_editor_kind = ProxySourceEditorKind::Subscription;
+        self.subscription_editor_refresh_interval = RemoteSourceRefreshInterval::Manual;
+        self.subscription_editor_interval_popover = false;
+        self.subscription_editor_enabled = true;
+        self.subscription_editor_error = None;
+        self.subscription_feedback = SubscriptionFeedback::Idle;
+        if let Some(input) = self.subscription_name_input.as_ref() {
+            input.update(cx, SubscriptionTextInput::clear_without_event);
+        }
+        if let Some(input) = self.subscription_input.as_ref() {
+            input.update(cx, SubscriptionTextInput::clear_without_event);
+        }
+        cx.notify();
     }
 
-    fn subscription_actions(
-        input: Entity<SubscriptionTextInput>,
-        busy: bool,
-        direct_input: bool,
-        language: Language,
+    fn open_subscription_editor(&mut self, id: String, cx: &mut Context<Self>) {
+        let Some(subscription) = self
+            .imported_subscriptions
+            .iter()
+            .find(|subscription| subscription.id == id)
+        else {
+            return;
+        };
+        let name = subscription.name.clone();
+        let url = subscription.source.expose_to(str::to_owned);
+        self.subscription_editor_source_id = Some(id);
+        self.single_node_editor_source_id = None;
+        self.proxy_source_editor_kind = ProxySourceEditorKind::Subscription;
+        self.subscription_editor_refresh_interval = subscription.refresh_interval;
+        self.subscription_editor_interval_popover = false;
+        self.subscription_editor_enabled = subscription.enabled;
+        self.subscription_editor_error = None;
+        self.subscription_feedback = SubscriptionFeedback::Idle;
+        if let Some(input) = self.subscription_name_input.as_ref() {
+            input.update(cx, |input, cx| input.set_value_without_event(name, cx));
+        }
+        if let Some(input) = self.subscription_input.as_ref() {
+            input.update(cx, |input, cx| input.set_value_without_event(url, cx));
+        }
+        cx.notify();
+    }
+
+    fn open_single_node_editor(&mut self, id: String, cx: &mut Context<Self>) {
+        let Some(saved) = self.saved_single_nodes.iter().find(|saved| saved.id == id) else {
+            return;
+        };
+        let name = saved.name.clone();
+        let url = saved.source.expose_to(str::to_owned);
+        self.subscription_editor_source_id = None;
+        self.single_node_editor_source_id = Some(id);
+        self.proxy_source_editor_kind = ProxySourceEditorKind::SingleNode;
+        self.subscription_editor_refresh_interval = RemoteSourceRefreshInterval::Manual;
+        self.subscription_editor_interval_popover = false;
+        self.subscription_editor_enabled = saved.enabled;
+        self.subscription_editor_error = None;
+        self.subscription_feedback = SubscriptionFeedback::Idle;
+        if let Some(input) = self.subscription_name_input.as_ref() {
+            input.update(cx, |input, cx| input.set_value_without_event(name, cx));
+        }
+        if let Some(input) = self.subscription_input.as_ref() {
+            input.update(cx, |input, cx| input.set_value_without_event(url, cx));
+        }
+        cx.notify();
+    }
+
+    fn open_proxy_source_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let app = cx.entity();
+        window.open_dialog(cx, move |dialog, window, cx| {
+            app.update(cx, |this, cx| {
+                let theme = this.theme();
+                this.proxy_source_editor_modal(dialog, theme, this.language(), window, cx)
+            })
+        });
+        if let Some(input) = self.subscription_name_input.as_ref() {
+            input.focus_handle(cx).focus(window, cx);
+        }
+        cx.notify();
+    }
+
+    fn close_subscription_editor(&mut self, cx: &mut Context<Self>) {
+        self.configuration_add_section = None;
+        self.subscription_editor_source_id = None;
+        self.single_node_editor_source_id = None;
+        self.subscription_editor_interval_popover = false;
+        self.subscription_editor_error = None;
+        self.subscription_feedback = SubscriptionFeedback::Idle;
+        if let Some(input) = self.subscription_name_input.as_ref() {
+            input.update(cx, SubscriptionTextInput::clear_without_event);
+        }
+        if let Some(input) = self.subscription_input.as_ref() {
+            input.update(cx, SubscriptionTextInput::clear_without_event);
+        }
+        cx.notify();
+    }
+
+    fn proxy_source_editor_modal(
+        &self,
+        dialog: Dialog,
         theme: Theme,
+        language: Language,
+        window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Div {
-        let clear_input = input.clone();
-        div()
-            .mt_2()
+    ) -> Dialog {
+        let input = self
+            .subscription_input
+            .as_ref()
+            .expect("subscription input is initialized before rendering")
+            .clone();
+        let name_input = self
+            .subscription_name_input
+            .as_ref()
+            .expect("subscription name input is initialized before rendering")
+            .clone();
+        let direct_input = self.proxy_source_editor_kind == ProxySourceEditorKind::SingleNode;
+        let editing = self.subscription_editor_source_id.is_some()
+            || self.single_node_editor_source_id.is_some();
+        let busy = matches!(
+            self.subscription_feedback,
+            SubscriptionFeedback::Importing(_)
+        );
+        let enabled = self.subscription_editor_enabled;
+        let save_input = input.clone();
+        let app = cx.entity();
+        let viewport = window.viewport_size();
+        let dialog_width = (viewport.width.as_f32() - 32.0).clamp(300.0, 620.0);
+        let interval_open = self.subscription_editor_interval_popover;
+        let mut interval_menu = div().p_1();
+        for interval in [
+            RemoteSourceRefreshInterval::Manual,
+            RemoteSourceRefreshInterval::Hourly,
+            RemoteSourceRefreshInterval::SixHours,
+            RemoteSourceRefreshInterval::TwelveHours,
+            RemoteSourceRefreshInterval::Daily,
+        ] {
+            let selected = interval == self.subscription_editor_refresh_interval;
+            interval_menu = interval_menu.child(
+                div()
+                    .id(format!("subscription-refresh-option-{interval:?}"))
+                    .role(Role::Button)
+                    .aria_label(refresh_interval_label(interval, language))
+                    .tab_stop(true)
+                    .focusable()
+                    .cursor_pointer()
+                    .px_3()
+                    .py_2()
+                    .rounded(Radius::Control.px())
+                    .bg(if selected {
+                        theme.action_soft
+                    } else {
+                        theme.surface_high
+                    })
+                    .text_size(TextRole::Label.size())
+                    .line_height(TextRole::Label.line_height())
+                    .font_weight(if selected {
+                        FontWeight::SEMIBOLD
+                    } else {
+                        FontWeight::NORMAL
+                    })
+                    .text_color(if selected {
+                        theme.action_primary
+                    } else {
+                        theme.text_primary
+                    })
+                    .child(refresh_interval_label(interval, language))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.subscription_editor_refresh_interval = interval;
+                        this.subscription_editor_interval_popover = false;
+                        cx.notify();
+                    })),
+            );
+        }
+        let interval_trigger = Button::new("subscription-editor-refresh-interval")
+            .accessibility_label(
+                language.text("Choose subscription update interval", "选择订阅更新间隔"),
+            )
+            .dropdown_caret(true)
+            .with_variant(ButtonVariant::Default)
+            .with_size(ControlSize::Standard.component_size())
+            .h(ControlSize::Standard.height())
+            .w_full()
+            .child(
+                div()
+                    .w_full()
+                    .text_size(TextRole::Label.size())
+                    .line_height(TextRole::Label.line_height())
+                    .font_weight(TextRole::Label.weight())
+                    .child(refresh_interval_label(
+                        self.subscription_editor_refresh_interval,
+                        language,
+                    )),
+            )
+            .disabled(busy);
+        let interval_app = app.clone();
+        let interval_select = crate::components::anchored_popover(
+            "subscription-editor-refresh-popover",
+            interval_trigger,
+            interval_menu,
+            (dialog_width - 40.0).max(240.0),
+            280.0,
+        )
+        .open(interval_open)
+        .on_open_change(move |open, _, cx| {
+            interval_app.update(cx, |this, cx| {
+                this.subscription_editor_interval_popover = *open;
+                cx.notify();
+            });
+        });
+
+        let body = div()
+            .id("proxy-source-modal-body")
+            .flex_1()
+            .min_h(px(0.0))
+            .overflow_y_scroll()
+            .px_5()
+            .py_4()
+            .when(!editing, |body| {
+                body.child(field_label(language.text("Source type", "来源类型"), theme))
+                    .child(
+                        div()
+                            .mt_1()
+                            .flex()
+                            .gap_2()
+                            .child(
+                                action_button(
+                                    "proxy-source-kind-subscription",
+                                    language.text("Subscription", "订阅来源"),
+                                    if direct_input {
+                                        ActionRole::Secondary
+                                    } else {
+                                        ActionRole::Primary
+                                    },
+                                    ControlSize::Compact,
+                                )
+                                .cursor_pointer()
+                                .bg(if direct_input {
+                                    theme.surface_high
+                                } else {
+                                    theme.action_primary
+                                })
+                                .text_color(if direct_input {
+                                    theme.text_secondary
+                                } else {
+                                    theme.action_on_primary
+                                })
+                                .on_click(cx.listener(
+                                    |this, _, _, cx| {
+                                        this.proxy_source_editor_kind =
+                                            ProxySourceEditorKind::Subscription;
+                                        this.subscription_editor_error = None;
+                                        cx.notify();
+                                    },
+                                )),
+                            )
+                            .child(
+                                action_button(
+                                    "proxy-source-kind-single-node",
+                                    language.text("Single node", "单节点来源"),
+                                    if direct_input {
+                                        ActionRole::Primary
+                                    } else {
+                                        ActionRole::Secondary
+                                    },
+                                    ControlSize::Compact,
+                                )
+                                .cursor_pointer()
+                                .bg(if direct_input {
+                                    theme.action_primary
+                                } else {
+                                    theme.surface_high
+                                })
+                                .text_color(if direct_input {
+                                    theme.action_on_primary
+                                } else {
+                                    theme.text_secondary
+                                })
+                                .on_click(cx.listener(
+                                    |this, _, _, cx| {
+                                        this.proxy_source_editor_kind =
+                                            ProxySourceEditorKind::SingleNode;
+                                        this.subscription_editor_error = None;
+                                        cx.notify();
+                                    },
+                                )),
+                            ),
+                    )
+            })
+            .child(field_label(
+                if direct_input {
+                    language.text("Node name", "节点名称")
+                } else {
+                    language.text("Source name", "来源名称")
+                },
+                theme,
+            ))
+            .child(name_input)
+            .child(field_label(language.text("Source URL", "来源 URL"), theme).mt_4())
+            .child(input)
+            .when(!direct_input, |body| {
+                body.child(field_label(language.text("Update interval", "更新间隔"), theme).mt_4())
+                    .child(interval_select)
+            })
+            .child(
+                Checkbox::new("proxy-source-editor-enabled")
+                    .label(language.text("Use this source", "使用此来源"))
+                    .checked(enabled)
+                    .disabled(busy)
+                    .tab_stop(!busy)
+                    .cursor_pointer()
+                    .mt_4()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if !busy {
+                            this.subscription_editor_enabled = !enabled;
+                            cx.notify();
+                        }
+                    })),
+            )
+            .when_some(self.subscription_editor_error.clone(), |body, error| {
+                body.child(
+                    div()
+                        .mt_3()
+                        .text_size(TextRole::Metadata.size())
+                        .text_color(theme.status_error)
+                        .child(error),
+                )
+            });
+
+        let footer = div()
+            .flex_shrink_0()
+            .px_5()
+            .py_4()
+            .border_t_1()
+            .border_color(theme.outline_subtle)
             .flex()
-            .gap(Space::Sm.px())
+            .items_center()
+            .justify_end()
+            .gap_2()
             .child(
                 style_action_button(
-                    Button::new("subscription-preview")
-                        .accessibility_label(if direct_input {
-                            language.text("Save VLESS node", "保存 VLESS 节点")
-                        } else {
-                            language.text("Validate and import subscription", "验证并导入订阅")
-                        })
+                    Button::new("cancel-proxy-source")
+                        .accessibility_label(language.text("Cancel source editing", "取消编辑来源"))
+                        .label(language.message(Message::Cancel)),
+                    ActionRole::Secondary,
+                    ControlSize::Standard,
+                )
+                .px(Space::Lg.px())
+                .cursor_pointer()
+                .border_color(theme.outline_subtle)
+                .bg(theme.surface_high)
+                .text_color(theme.text_primary)
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.close_subscription_editor(cx);
+                    window.close_dialog(cx);
+                })),
+            )
+            .child(
+                style_action_button(
+                    Button::new("save-proxy-source")
+                        .accessibility_label(language.text("Save proxy source", "保存代理来源"))
                         .label(if busy {
                             language.text("Processing…", "正在处理…")
-                        } else if direct_input {
-                            language.text("Save VLESS node", "保存 VLESS 节点")
+                        } else if editing {
+                            language.message(Message::SaveChanges)
                         } else {
-                            language.message(Message::ImportSubscription)
+                            language.text("Add source", "添加来源")
                         })
                         .loading(busy),
                     ActionRole::Primary,
                     ControlSize::Standard,
                 )
+                .px(Space::Lg.px())
                 .when(!busy, gpui::Styled::cursor_pointer)
-                .px(Space::Md.px())
                 .bg(if busy {
                     theme.action_soft
                 } else {
@@ -1085,44 +1604,64 @@ impl ManisApp {
                 } else {
                     theme.action_on_primary
                 })
-                .font_weight(FontWeight::SEMIBOLD)
-                .min_w(px(180.0))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    if busy {
-                        return;
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    if !busy && this.submit_source_import(&save_input, cx) {
+                        window.close_dialog(cx);
                     }
-                    this.submit_source_import(&input, cx);
                 })),
+            );
+
+        dialog
+            .width(px(dialog_width))
+            .max_h(px((viewport.height.as_f32() - 32.0).max(320.0)))
+            .margin_top(px(((viewport.height.as_f32() - 480.0) / 2.0).max(16.0)))
+            .overlay(true)
+            .overlay_closable(true)
+            .keyboard(true)
+            .close_button(false)
+            .p_0()
+            .rounded_md()
+            .bg(theme.surface_high)
+            .overflow_hidden()
+            .title(
+                div()
+                    .px_5()
+                    .py_4()
+                    .border_b_1()
+                    .border_color(theme.outline_subtle)
+                    .child(
+                        div()
+                            .text_size(px(17.0))
+                            .font_weight(TextRole::SectionTitle.weight())
+                            .child(if editing {
+                                language.text("Edit proxy source", "编辑代理来源")
+                            } else {
+                                language.text("Add proxy source", "添加代理来源")
+                            }),
+                    )
+                    .child(
+                        div()
+                            .mt_1()
+                            .text_size(TextRole::Metadata.size())
+                            .text_color(theme.text_secondary)
+                            .child(if direct_input {
+                                language.text(
+                                    "A single-node source does not need an update interval.",
+                                    "单节点来源不需要更新间隔。",
+                                )
+                            } else {
+                                language.text(
+                                    "Choose a subscription or a single-node share link.",
+                                    "请选择订阅来源或单节点分享链接。",
+                                )
+                            }),
+                    ),
             )
-            .child(
-                style_action_button(
-                    Button::new("subscription-clear")
-                        .accessibility_label(
-                            language.text("Clear subscription link draft", "清除订阅链接草稿"),
-                        )
-                        .label(language.message(Message::Clear))
-                        .loading(busy),
-                    ActionRole::Secondary,
-                    ControlSize::Standard,
-                )
-                .when(!busy, gpui::Styled::cursor_pointer)
-                .px(Space::Md.px())
-                .border_color(theme.outline_subtle)
-                .bg(theme.surface_high)
-                .text_color(theme.text_secondary)
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    if busy {
-                        return;
-                    }
-                    clear_input.update(cx, SubscriptionTextInput::clear);
-                    this.subscription_feedback = SubscriptionFeedback::Idle;
-                    this.language()
-                        .text("Subscription link draft cleared", "已清除订阅链接草稿")
-                        .clone_into(&mut this.status);
-                    trace_ui(UiEvent::SubscriptionDraftCleared);
-                    cx.notify();
-                })),
-            )
+            .child(body)
+            .footer(footer)
+            .on_close(move |_, _, cx| {
+                app.update(cx, ManisApp::close_subscription_editor);
+            })
     }
 
     #[allow(clippy::too_many_lines)]
@@ -1130,16 +1669,50 @@ impl ManisApp {
         &mut self,
         input: &Entity<SubscriptionTextInput>,
         cx: &mut Context<Self>,
-    ) {
+    ) -> bool {
+        let name = self
+            .subscription_name_input
+            .as_ref()
+            .map(|input| input.read(cx).value().trim().to_owned())
+            .unwrap_or_default();
+        if name.is_empty() {
+            self.subscription_editor_error = Some(
+                self.language()
+                    .text("Enter a source name", "请输入来源名称")
+                    .to_owned(),
+            );
+            cx.notify();
+            return false;
+        }
+        self.subscription_editor_error = None;
         let (input_value, result) = {
             let input = input.read(cx);
             (
                 input.value().to_owned(),
-                validate_subscription_preview(input.value()),
+                match self.proxy_source_editor_kind {
+                    ProxySourceEditorKind::Subscription => {
+                        validate_subscription_preview(input.value())
+                    }
+                    ProxySourceEditorKind::SingleNode => {
+                        validate_single_node_preview(input.value())
+                    }
+                },
             )
         };
         match result {
-            Ok(preview) if preview.kind == SourceKind::VlessNode => {
+            Ok(preview) if preview.kind == SourceKind::SingleNode => {
+                if self.subscription_editor_source_id.is_some() {
+                    self.subscription_editor_error = Some(
+                        self.language()
+                            .text(
+                                "An existing subscription must keep an HTTP/HTTPS URL",
+                                "现有订阅必须使用 HTTP/HTTPS URL",
+                            )
+                            .to_owned(),
+                    );
+                    cx.notify();
+                    return false;
+                }
                 let Some(store_dir) = self.subscription_store_dir.clone() else {
                     self.subscription_feedback = SubscriptionFeedback::StoreFailed(
                         SubscriptionStoreError::DataDirectoryUnavailable,
@@ -1152,31 +1725,50 @@ impl ManisApp {
                         .clone_into(&mut self.status);
                     trace_ui(UiEvent::SourceImportFailed);
                     cx.notify();
-                    return;
+                    return false;
                 };
                 self.subscription_preview_generation =
                     self.subscription_preview_generation.wrapping_add(1);
                 let generation = self.subscription_preview_generation;
-                self.subscription_feedback = SubscriptionFeedback::Importing(SourceKind::VlessNode);
+                self.subscription_feedback =
+                    SubscriptionFeedback::Importing(SourceKind::SingleNode);
                 self.language()
                     .text(
-                        "Saving and compiling VLESS node",
-                        "正在保存并编译 VLESS 节点",
+                        "Validating and saving single-node source",
+                        "正在验证并保存单节点来源",
                     )
                     .clone_into(&mut self.status);
                 if let Some(input) = self.subscription_input.as_ref() {
                     input.update(cx, |input, cx| input.set_enabled(false, cx));
                 }
                 let runtime = self.runtime.clone();
+                let editing_id = self.single_node_editor_source_id.clone();
+                let enabled = self.subscription_editor_enabled;
                 let executor = cx.background_executor().clone();
                 cx.spawn(async move |this, cx| {
                     let result = executor
                         .spawn(async move {
-                            let stored = mihomo::save_vless_source_in(&store_dir, &input_value)?;
+                            let providers = mihomo::preview_single_node(&input_value)?;
+                            let stored = if let Some(id) = editing_id {
+                                mihomo::update_single_node_source_in(
+                                    &store_dir,
+                                    &id,
+                                    &input_value,
+                                    &name,
+                                    enabled,
+                                )?
+                            } else {
+                                mihomo::save_single_node_source_with_options_in(
+                                    &store_dir,
+                                    &input_value,
+                                    &name,
+                                    enabled,
+                                )?
+                            };
                             let apply = SourceRuntimeApply::from_result(
                                 runtime.apply_saved_sources(&store_dir),
                             );
-                            Ok::<_, SubscriptionStoreError>((stored, apply))
+                            Ok::<_, SubscriptionStoreError>((stored, providers, apply))
                         })
                         .await;
                     this.update(cx, |this, cx| {
@@ -1187,28 +1779,35 @@ impl ManisApp {
                             input.update(cx, |input, cx| input.set_enabled(true, cx));
                         }
                         match result {
-                            Ok((stored, apply)) => {
+                            Ok((stored, providers, apply)) => {
                                 let language = this.language();
-                                if !this
-                                    .saved_vless_nodes
-                                    .iter()
-                                    .any(|node| node.id == stored.id)
+                                if let Some(existing) = this
+                                    .saved_single_nodes
+                                    .iter_mut()
+                                    .find(|node| node.id == stored.id)
                                 {
-                                    this.saved_vless_nodes.push(stored);
+                                    *existing = stored;
+                                } else {
+                                    this.saved_single_nodes.push(stored);
                                 }
+                                this.subscription_preview_providers = providers;
                                 this.subscription_feedback = SubscriptionFeedback::Valid(preview);
                                 if let Some(input) = this.subscription_input.as_ref() {
                                     input.update(cx, SubscriptionTextInput::clear_without_event);
                                 }
+                                if let Some(input) = this.subscription_name_input.as_ref() {
+                                    input.update(cx, SubscriptionTextInput::clear_without_event);
+                                }
+                                this.configuration_add_section = None;
                                 apply.reconcile_proxy_mode(&mut this.proxy_mode);
                                 this.status = if language == Language::English {
                                     format!(
-                                        "VLESS node saved · Added to Saved group{}",
+                                        "Single-node source saved · Added to Saved group{}",
                                         apply.status_suffix(language)
                                     )
                                 } else {
                                     format!(
-                                        "VLESS 节点已保存 · 已加入“已保存”分组{}",
+                                        "单节点来源已保存 · 已加入“已保存”分组{}",
                                         apply.status_suffix(language)
                                     )
                                 };
@@ -1219,8 +1818,10 @@ impl ManisApp {
                                     SubscriptionFeedback::StoreFailed(error);
                                 this.status = format!(
                                     "{}: {error}",
-                                    this.language()
-                                        .text("VLESS node save failed", "VLESS 节点保存失败")
+                                    this.language().text(
+                                        "Single-node source save failed",
+                                        "单节点来源保存失败"
+                                    )
                                 );
                                 trace_ui(UiEvent::SourceImportFailed);
                             }
@@ -1231,10 +1832,32 @@ impl ManisApp {
                 })
                 .detach();
                 cx.notify();
+                true
             }
             Ok(preview) => {
+                if self.single_node_editor_source_id.is_some() {
+                    self.subscription_editor_error = Some(
+                        self.language()
+                            .text(
+                                "This source must remain a single-node share link",
+                                "此来源必须保持为单节点分享链接",
+                            )
+                            .to_owned(),
+                    );
+                    cx.notify();
+                    return false;
+                }
                 trace_ui(UiEvent::SourceRecognitionSucceeded);
-                self.import_remote_subscription(input_value, preview.kind, cx);
+                self.import_remote_subscription(
+                    input_value,
+                    name,
+                    self.subscription_editor_refresh_interval,
+                    self.subscription_editor_enabled,
+                    self.subscription_editor_source_id.clone(),
+                    preview.kind,
+                    cx,
+                );
+                true
             }
             Err(error) => {
                 self.subscription_feedback = SubscriptionFeedback::InvalidInput(error);
@@ -1245,32 +1868,20 @@ impl ManisApp {
                 );
                 trace_ui(UiEvent::SourceRecognitionFailed);
                 cx.notify();
+                false
             }
         }
     }
 
+    #[allow(dead_code)]
     fn subscription_feedback(
         feedback: &SubscriptionFeedback,
         providers: &[LoadedProvider],
-        has_imported_subscription: bool,
         language: Language,
         theme: Theme,
     ) -> Div {
         match feedback {
-            SubscriptionFeedback::Idle => div().mt(Space::Md.px()).child(metadata_text(
-                if has_imported_subscription {
-                    language.text(
-                        "You can keep adding HTTP/HTTPS subscriptions or save one vless:// node.",
-                        "可继续添加 HTTP/HTTPS 订阅，或保存单个 vless:// 节点",
-                    )
-                } else {
-                    language.text(
-                        "Waiting for input · HTTP/HTTPS subscription or vless:// node",
-                        "等待输入 · HTTP/HTTPS 订阅或 vless:// 节点",
-                    )
-                },
-                theme,
-            )),
+            SubscriptionFeedback::Idle => div(),
             SubscriptionFeedback::Importing(kind) => {
                 Self::subscription_loading(*kind, language, theme)
             }
@@ -1317,7 +1928,7 @@ impl ManisApp {
                 "Validating and importing HTTPS subscription",
                 "正在验证并导入 HTTPS 订阅",
             ),
-            SourceKind::VlessNode => language.text("Saving VLESS node", "正在保存 VLESS 节点"),
+            SourceKind::SingleNode => language.text("Saving single node", "正在保存单节点"),
         };
         div()
             .mt(Space::Md.px())
@@ -1366,8 +1977,8 @@ impl ManisApp {
                     "节点已由 Mihomo 实际下载并解析；可前往节点页查看",
                 ),
             ),
-            SourceKind::VlessNode => (
-                language.text("VLESS node saved", "VLESS 节点已保存"),
+            SourceKind::SingleNode => (
+                language.text("Single node saved", "单节点已保存"),
                 language.text(
                     "Added to the Saved group on Nodes.",
                     "已加入节点页的“已保存”分组",
@@ -1397,7 +2008,7 @@ impl ManisApp {
                     .text_color(theme.text_secondary)
                     .child(detail),
             )
-            .when(preview.kind != SourceKind::VlessNode, |card| {
+            .when(preview.kind != SourceKind::SingleNode, |card| {
                 card.child(
                     div()
                         .mt(Space::Sm.px())
@@ -1413,26 +2024,265 @@ impl ManisApp {
             })
     }
 
-    #[allow(clippy::too_many_lines)]
     fn imported_subscription_cards(&self, theme: Theme, cx: &mut Context<Self>) -> Div {
         let language = self.language();
         let mut list = div();
         let now = mihomo::current_unix_secs();
-        for (index, subscription) in self.imported_subscriptions.iter().enumerate() {
+        for subscription in &self.imported_subscriptions {
+            let node_count = subscription
+                .providers
+                .iter()
+                .map(|provider| provider.nodes.len())
+                .sum::<usize>();
+            let (state, busy, healthy) = match &subscription.state {
+                ImportedSubscriptionState::None => {
+                    (language.text("Disabled", "未启用").to_owned(), false, true)
+                }
+                ImportedSubscriptionState::Pending(_)
+                | ImportedSubscriptionState::Refreshing(_) => (
+                    language.text("Updating…", "正在更新…").to_owned(),
+                    true,
+                    true,
+                ),
+                ImportedSubscriptionState::Ready(kind) => (
+                    if language == Language::English {
+                        format!(
+                            "{} · {node_count} nodes",
+                            source_kind_label(*kind, language)
+                        )
+                    } else {
+                        format!(
+                            "{} · {node_count} 个节点",
+                            source_kind_label(*kind, language)
+                        )
+                    },
+                    false,
+                    true,
+                ),
+                ImportedSubscriptionState::Unavailable(_, _)
+                | ImportedSubscriptionState::StoreError(_) => (
+                    language.text("Update failed", "更新失败").to_owned(),
+                    false,
+                    false,
+                ),
+                ImportedSubscriptionState::Removing(_) => (
+                    language.text("Removing…", "正在移除…").to_owned(),
+                    true,
+                    true,
+                ),
+            };
+            let controls_enabled = !busy
+                && !matches!(
+                    self.subscription_feedback,
+                    SubscriptionFeedback::Importing(_)
+                )
+                && !self.source_refresh_busy();
+            let enabled = subscription.enabled;
+            let id = subscription.id.clone();
+            let edit_id = id.clone();
+            let card_edit_id = id.clone();
+            let toggle_id = id.clone();
+            let refresh_id = id.clone();
+            let remove_id = id.clone();
+            let url = subscription.source.expose_to(str::to_owned);
+            let refresh_enabled = controls_enabled && enabled;
+            let updated =
+                source_update_label(subscription.last_successful_update_unix_secs, now, language);
+
+            list = list.child(
+                div()
+                    .id(format!("subscription-card-{card_edit_id}"))
+                    .role(Role::Button)
+                    .aria_label(language.text("Edit this subscription", "编辑这个订阅"))
+                    .tab_stop(controls_enabled)
+                    .focusable()
+                    .when(controls_enabled, gpui::Styled::cursor_pointer)
+                    .mt_2()
+                    .px_3()
+                    .py_2()
+                    .rounded(Radius::Row.px())
+                    .border_1()
+                    .border_color(theme.outline_subtle)
+                    .bg(theme.surface_low)
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                Checkbox::new(format!("subscription-enabled-{toggle_id}"))
+                                    .label("")
+                                    .checked(enabled)
+                                    .disabled(!controls_enabled)
+                                    .tab_stop(controls_enabled)
+                                    .cursor_pointer()
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        cx.stop_propagation();
+                                        if controls_enabled {
+                                            this.set_subscription_enabled(
+                                                toggle_id.clone(),
+                                                !enabled,
+                                                cx,
+                                            );
+                                        }
+                                    })),
+                            )
+                            .child(
+                                div()
+                                    .id(format!("subscription-edit-{edit_id}"))
+                                    .flex_1()
+                                    .min_w(px(0.0))
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .min_w(px(0.0))
+                                            .overflow_x_hidden()
+                                            .whitespace_nowrap()
+                                            .text_ellipsis()
+                                            .text_size(TextRole::Label.size())
+                                            .font_weight(TextRole::Label.weight())
+                                            .text_color(if !enabled {
+                                                theme.text_secondary
+                                            } else if healthy {
+                                                theme.text_primary
+                                            } else {
+                                                theme.status_error
+                                            })
+                                            .child(subscription.name.clone()),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex_shrink_0()
+                                            .text_size(TextRole::Metadata.size())
+                                            .text_color(theme.text_tertiary)
+                                            .child(state),
+                                    ),
+                            )
+                            .when(busy, |row| {
+                                row.child(Self::benchmark_latency_spinner(
+                                    format!("source-refresh-{id}"),
+                                    theme,
+                                ))
+                            }),
+                    )
+                    .child(
+                        div()
+                            .mt_1()
+                            .ml_7()
+                            .overflow_x_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .text_size(TextRole::Metadata.size())
+                            .text_color(theme.text_tertiary)
+                            .child(url),
+                    )
+                    .child(
+                        div()
+                            .mt_1()
+                            .ml_7()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .text_size(TextRole::Metadata.size())
+                            .text_color(theme.text_secondary)
+                            .child(refresh_interval_label(
+                                subscription.refresh_interval,
+                                language,
+                            ))
+                            .child("·")
+                            .child(updated)
+                            .child(div().flex_1())
+                            .child(
+                                action_button(
+                                    format!("subscription-refresh-{refresh_id}"),
+                                    if busy {
+                                        language.text("Updating…", "更新中…")
+                                    } else {
+                                        language.text("Update now", "立即更新")
+                                    },
+                                    ActionRole::Quiet,
+                                    ControlSize::Compact,
+                                )
+                                .accessibility_label(
+                                    language
+                                        .text("Update this subscription now", "立即更新这个订阅"),
+                                )
+                                .disabled(!refresh_enabled)
+                                .loading(busy)
+                                .when(refresh_enabled, gpui::Styled::cursor_pointer)
+                                .px_3()
+                                .border_1()
+                                .border_color(theme.outline_subtle)
+                                .bg(theme.surface_high)
+                                .text_color(theme.action_primary)
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| {
+                                        cx.stop_propagation();
+                                        if refresh_enabled {
+                                            this.refresh_imported_subscription(
+                                                refresh_id.clone(),
+                                                cx,
+                                            );
+                                        }
+                                    },
+                                )),
+                            )
+                            .when(controls_enabled, |row| {
+                                row.child(
+                                    action_button(
+                                        format!("remove-{remove_id}"),
+                                        language.text("Remove", "移除"),
+                                        ActionRole::Quiet,
+                                        ControlSize::Compact,
+                                    )
+                                    .accessibility_label(
+                                        language.text("Remove this subscription", "移除这个订阅"),
+                                    )
+                                    .cursor_pointer()
+                                    .px_3()
+                                    .text_color(theme.status_error)
+                                    .on_click(cx.listener(
+                                        move |this, _, _, cx| {
+                                            cx.stop_propagation();
+                                            this.remove_imported_subscription(
+                                                remove_id.clone(),
+                                                cx,
+                                            );
+                                        },
+                                    )),
+                                )
+                            }),
+                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        if controls_enabled {
+                            this.open_subscription_editor(card_edit_id.clone(), cx);
+                            this.open_proxy_source_dialog(window, cx);
+                        }
+                    })),
+            );
+        }
+        list
+    }
+
+    #[allow(dead_code, clippy::too_many_lines)]
+    fn imported_subscription_cards_legacy(&self, theme: Theme, cx: &mut Context<Self>) -> Div {
+        let language = self.language();
+        let mut list = div();
+        let now = mihomo::current_unix_secs();
+        for subscription in &self.imported_subscriptions {
             let node_count: usize = subscription
                 .providers
                 .iter()
                 .map(|provider| provider.nodes.len())
                 .sum();
-            let name = subscription.source.subscription_name().unwrap_or_else(|| {
-                if language == Language::English {
-                    format!("Subscription {}", index + 1)
-                } else {
-                    format!("订阅 {}", index + 1)
-                }
-            });
+            let name = subscription.name.clone();
+            let url = subscription.source.expose_to(str::to_owned);
             let (detail, busy, healthy) = match subscription.state {
-                ImportedSubscriptionState::None => continue,
+                ImportedSubscriptionState::None => {
+                    (language.text("Disabled", "未启用").to_owned(), false, true)
+                }
                 ImportedSubscriptionState::Pending(_)
                 | ImportedSubscriptionState::Refreshing(_) => (
                     if language == Language::English {
@@ -1537,8 +2387,11 @@ impl ManisApp {
             let controls_enabled = removable && !self.source_refresh_busy();
             let id = subscription.id.clone();
             let refresh_id = id.clone();
-            let interval_id = id.clone();
-            let next_interval = subscription.refresh_interval.next();
+            let remove_id = id.clone();
+            let edit_id = id.clone();
+            let toggle_id = id.clone();
+            let enabled = subscription.enabled;
+            let refresh_enabled = controls_enabled && enabled;
             list = list.child(
                 div()
                     .mt(Space::Md.px())
@@ -1550,24 +2403,78 @@ impl ManisApp {
                     .child(
                         div()
                             .flex()
-                            .items_center()
-                            .justify_between()
+                            .items_start()
                             .gap(Space::Md.px())
                             .child(
+                                Checkbox::new(format!("subscription-enabled-{toggle_id}"))
+                                    .label(language.text("Enabled", "启用"))
+                                    .checked(enabled)
+                                    .disabled(!controls_enabled)
+                                    .tab_stop(controls_enabled)
+                                    .cursor_pointer()
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        if controls_enabled {
+                                            this.set_subscription_enabled(
+                                                toggle_id.clone(),
+                                                !enabled,
+                                                cx,
+                                            );
+                                        }
+                                    })),
+                            )
+                            .child(
                                 div()
+                                    .id(format!("subscription-edit-{edit_id}"))
+                                    .role(Role::Button)
+                                    .aria_label(
+                                        language.text("Edit this subscription", "编辑这个订阅"),
+                                    )
+                                    .tab_stop(controls_enabled)
+                                    .focusable()
+                                    .when(controls_enabled, gpui::Styled::cursor_pointer)
+                                    .flex_1()
                                     .min_w(px(0.0))
-                                    .overflow_x_hidden()
-                                    .whitespace_nowrap()
-                                    .text_ellipsis()
-                                    .text_size(TextRole::Label.size())
-                                    .line_height(TextRole::Label.line_height())
-                                    .font_weight(TextRole::Label.weight())
-                                    .text_color(if healthy {
-                                        theme.status_success
-                                    } else {
-                                        theme.route_trace
-                                    })
-                                    .child(name),
+                                    .child(
+                                        div()
+                                            .overflow_x_hidden()
+                                            .whitespace_nowrap()
+                                            .text_ellipsis()
+                                            .text_size(TextRole::Label.size())
+                                            .line_height(TextRole::Label.line_height())
+                                            .font_weight(TextRole::Label.weight())
+                                            .text_color(if !enabled {
+                                                theme.text_secondary
+                                            } else if healthy {
+                                                theme.status_success
+                                            } else {
+                                                theme.route_trace
+                                            })
+                                            .child(name),
+                                    )
+                                    .child(
+                                        div()
+                                            .mt(Space::Xs.px())
+                                            .text_size(TextRole::Metadata.size())
+                                            .line_height(TextRole::Metadata.line_height())
+                                            .text_color(theme.text_secondary)
+                                            .child(detail),
+                                    )
+                                    .child(
+                                        div()
+                                            .mt(Space::Xs.px())
+                                            .overflow_x_hidden()
+                                            .whitespace_nowrap()
+                                            .text_ellipsis()
+                                            .text_size(TextRole::Metadata.size())
+                                            .line_height(TextRole::Metadata.line_height())
+                                            .text_color(theme.text_tertiary)
+                                            .child(url),
+                                    )
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        if controls_enabled {
+                                            this.open_subscription_editor(edit_id.clone(), cx);
+                                        }
+                                    })),
                             )
                             .when(busy, |header| {
                                 header.child(Self::benchmark_latency_spinner(
@@ -1578,14 +2485,6 @@ impl ManisApp {
                     )
                     .child(
                         div()
-                            .mt(Space::Xs.px())
-                            .text_size(TextRole::Metadata.size())
-                            .line_height(TextRole::Metadata.line_height())
-                            .text_color(theme.text_secondary)
-                            .child(detail),
-                    )
-                    .child(
-                        div()
                             .mt(Space::Md.px())
                             .flex()
                             .flex_wrap()
@@ -1593,22 +2492,6 @@ impl ManisApp {
                             .gap_2()
                             .child(
                                 div()
-                                    .id(format!("subscription-interval-{interval_id}"))
-                                    .role(Role::Button)
-                                    .aria_label(format!(
-                                        "{}{}",
-                                        language.text(
-                                            "Change automatic update interval, current ",
-                                            "更改自动更新间隔，当前"
-                                        ),
-                                        refresh_interval_label(
-                                            subscription.refresh_interval,
-                                            language
-                                        )
-                                    ))
-                                    .tab_stop(controls_enabled)
-                                    .focusable()
-                                    .when(controls_enabled, gpui::Styled::cursor_pointer)
                                     .h(ControlSize::Compact.height())
                                     .px(Space::Sm.px())
                                     .rounded(Radius::Control.px())
@@ -1625,16 +2508,7 @@ impl ManisApp {
                                             subscription.refresh_interval,
                                             language
                                         )
-                                    ))
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        if controls_enabled {
-                                            this.set_subscription_refresh_interval(
-                                                interval_id.clone(),
-                                                next_interval,
-                                                cx,
-                                            );
-                                        }
-                                    })),
+                                    )),
                             )
                             .child(
                                 Button::new(format!("subscription-refresh-{refresh_id}"))
@@ -1650,11 +2524,11 @@ impl ManisApp {
                                         language.text("Update now", "立即更新")
                                     })
                                     .icon(IconName::Redo2)
-                                    .tab_stop(controls_enabled)
-                                    .disabled(!controls_enabled)
+                                    .tab_stop(refresh_enabled)
+                                    .disabled(!refresh_enabled)
                                     .loading(busy)
                                     .with_variant(ButtonVariant::Text)
-                                    .when(controls_enabled, gpui::Styled::cursor_pointer)
+                                    .when(refresh_enabled, gpui::Styled::cursor_pointer)
                                     .px(Space::Sm.px())
                                     .rounded(Radius::Control.px())
                                     .border_1()
@@ -1665,7 +2539,7 @@ impl ManisApp {
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(theme.action_primary)
                                     .on_click(cx.listener(move |this, _, _, cx| {
-                                        if controls_enabled {
+                                        if refresh_enabled {
                                             this.refresh_imported_subscription(
                                                 refresh_id.clone(),
                                                 cx,
@@ -1676,7 +2550,7 @@ impl ManisApp {
                             .child(div().flex_1())
                             .when(controls_enabled, |controls| {
                                 controls.child(
-                                    Button::new(format!("remove-{id}"))
+                                    Button::new(format!("remove-{remove_id}"))
                                         .accessibility_label(
                                             language
                                                 .text("Remove this subscription", "移除这个订阅"),
@@ -1690,7 +2564,10 @@ impl ManisApp {
                                         .line_height(TextRole::Metadata.line_height())
                                         .text_color(theme.route_trace)
                                         .on_click(cx.listener(move |this, _, _, cx| {
-                                            this.remove_imported_subscription(id.clone(), cx);
+                                            this.remove_imported_subscription(
+                                                remove_id.clone(),
+                                                cx,
+                                            );
                                         })),
                                 )
                             }),
@@ -1700,11 +2577,239 @@ impl ManisApp {
         list
     }
 
-    #[allow(clippy::too_many_lines)]
-    fn saved_vless_cards(&self, theme: Theme, cx: &mut Context<Self>) -> Div {
+    fn saved_single_node_cards(&self, theme: Theme, cx: &mut Context<Self>) -> Div {
         let language = self.language();
         let mut list = div();
-        for saved in &self.saved_vless_nodes {
+        let controls_enabled = !matches!(
+            self.subscription_feedback,
+            SubscriptionFeedback::Importing(_)
+        ) && !self.source_refresh_busy();
+        for saved in &self.saved_single_nodes {
+            let id = saved.id.clone();
+            let edit_id = id.clone();
+            let card_edit_id = id.clone();
+            let toggle_id = id.clone();
+            let remove_id = id.clone();
+            let node = saved.source.preview();
+            let enabled = saved.enabled;
+            let url = saved.source.expose_to(str::to_owned);
+            list = list.child(
+                div()
+                    .id(format!("single-node-card-{card_edit_id}"))
+                    .role(Role::Button)
+                    .aria_label(language.text("Edit this single-node source", "编辑这个单节点来源"))
+                    .tab_stop(controls_enabled)
+                    .focusable()
+                    .when(controls_enabled, gpui::Styled::cursor_pointer)
+                    .mt_2()
+                    .px_3()
+                    .py_2()
+                    .rounded(Radius::Row.px())
+                    .border_1()
+                    .border_color(theme.outline_subtle)
+                    .bg(theme.surface_low)
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                Checkbox::new(format!("single-node-enabled-{toggle_id}"))
+                                    .label("")
+                                    .checked(enabled)
+                                    .disabled(!controls_enabled)
+                                    .tab_stop(controls_enabled)
+                                    .cursor_pointer()
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        cx.stop_propagation();
+                                        if controls_enabled {
+                                            this.set_single_node_enabled(
+                                                toggle_id.clone(),
+                                                !enabled,
+                                                cx,
+                                            );
+                                        }
+                                    })),
+                            )
+                            .child(
+                                div()
+                                    .id(format!("single-node-edit-{edit_id}"))
+                                    .flex_1()
+                                    .min_w(px(0.0))
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .min_w(px(0.0))
+                                            .overflow_x_hidden()
+                                            .whitespace_nowrap()
+                                            .text_ellipsis()
+                                            .text_size(TextRole::Label.size())
+                                            .font_weight(TextRole::Label.weight())
+                                            .text_color(if enabled {
+                                                theme.text_primary
+                                            } else {
+                                                theme.text_secondary
+                                            })
+                                            .child(saved.name.clone()),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex_shrink_0()
+                                            .text_size(TextRole::Metadata.size())
+                                            .text_color(theme.text_tertiary)
+                                            .child(node.protocol),
+                                    ),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .mt_1()
+                            .ml_7()
+                            .overflow_x_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .text_size(TextRole::Metadata.size())
+                            .text_color(theme.text_tertiary)
+                            .child(url),
+                    )
+                    .child(
+                        div()
+                            .mt_1()
+                            .ml_7()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .text_size(TextRole::Metadata.size())
+                            .text_color(theme.text_secondary)
+                            .child(format!("{} · {}", node.endpoint, node.detail))
+                            .child(div().flex_1())
+                            .when(controls_enabled, |row| {
+                                row.child(
+                                    action_button(
+                                        format!("remove-single-node-{remove_id}"),
+                                        language.text("Remove", "移除"),
+                                        ActionRole::Quiet,
+                                        ControlSize::Compact,
+                                    )
+                                    .accessibility_label(
+                                        language
+                                            .text("Remove single-node source", "移除单节点来源"),
+                                    )
+                                    .cursor_pointer()
+                                    .px_3()
+                                    .text_color(theme.status_error)
+                                    .on_click(cx.listener(
+                                        move |this, _, _, cx| {
+                                            cx.stop_propagation();
+                                            this.remove_saved_single_node(remove_id.clone(), cx);
+                                        },
+                                    )),
+                                )
+                            }),
+                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        if controls_enabled {
+                            this.open_single_node_editor(card_edit_id.clone(), cx);
+                            this.open_proxy_source_dialog(window, cx);
+                        }
+                    })),
+            );
+        }
+        list
+    }
+
+    fn set_single_node_enabled(&mut self, id: String, enabled: bool, cx: &mut Context<Self>) {
+        let Some(store_dir) = self.subscription_store_dir.clone() else {
+            return;
+        };
+        let runtime = self.runtime.clone();
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let result = executor
+                .spawn(async move {
+                    let stored =
+                        mihomo::update_single_node_source_enabled_in(&store_dir, &id, enabled)?;
+                    let apply =
+                        SourceRuntimeApply::from_result(runtime.apply_saved_sources(&store_dir));
+                    Ok::<_, SubscriptionStoreError>((stored, apply))
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                match result {
+                    Ok((stored, apply)) => {
+                        if let Some(existing) = this
+                            .saved_single_nodes
+                            .iter_mut()
+                            .find(|existing| existing.id == stored.id)
+                        {
+                            *existing = stored;
+                        }
+                        apply.reconcile_proxy_mode(&mut this.proxy_mode);
+                        this.language()
+                            .text("Single-node source updated", "单节点来源已更新")
+                            .clone_into(&mut this.status);
+                    }
+                    Err(error) => {
+                        this.status = format!(
+                            "{}: {error}",
+                            this.language()
+                                .text("Could not update source", "无法更新来源")
+                        );
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn remove_saved_single_node(&mut self, id: String, cx: &mut Context<Self>) {
+        let Some(store_dir) = self.subscription_store_dir.clone() else {
+            return;
+        };
+        let runtime = self.runtime.clone();
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let result = executor
+                .spawn(async move {
+                    mihomo::remove_single_node_source_in(&store_dir, &id)?;
+                    let apply =
+                        SourceRuntimeApply::from_result(runtime.apply_saved_sources(&store_dir));
+                    Ok::<_, SubscriptionStoreError>((id, apply))
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                match result {
+                    Ok((deleted_id, apply)) => {
+                        this.saved_single_nodes.retain(|node| node.id != deleted_id);
+                        apply.reconcile_proxy_mode(&mut this.proxy_mode);
+                        this.language()
+                            .text("Single-node source removed", "单节点来源已移除")
+                            .clone_into(&mut this.status);
+                    }
+                    Err(error) => {
+                        this.status = format!(
+                            "{}: {error}",
+                            this.language()
+                                .text("Failed to remove source", "移除来源失败")
+                        );
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    #[allow(dead_code, clippy::too_many_lines)]
+    fn saved_single_node_cards_legacy(&self, theme: Theme, cx: &mut Context<Self>) -> Div {
+        let language = self.language();
+        let mut list = div();
+        for saved in &self.saved_single_nodes {
             let id = saved.id.clone();
             let node = saved.source.preview();
             list = list.child(
@@ -1772,7 +2877,7 @@ impl ManisApp {
                                         cx.spawn(async move |this, cx| {
                                             let result = executor
                                                 .spawn(async move {
-                                                    mihomo::remove_vless_source_in(
+                                                    mihomo::remove_single_node_source_in(
                                                         &store_dir, &remove_id,
                                                     )?;
                                                     Ok::<_, SubscriptionStoreError>((
@@ -1786,7 +2891,7 @@ impl ManisApp {
                                             this.update(cx, |this, cx| {
                                                 match result {
                                                     Ok((deleted_id, apply)) => {
-                                                        this.saved_vless_nodes
+                                                        this.saved_single_nodes
                                                             .retain(|node| node.id != deleted_id);
                                                         let language = this.language();
                                                         apply.reconcile_proxy_mode(
@@ -1880,117 +2985,36 @@ impl ManisApp {
     #[allow(clippy::too_many_lines)]
     fn rule_source_manager(
         &self,
-        input: Entity<SubscriptionTextInput>,
+        _input: Entity<SubscriptionTextInput>,
         busy: bool,
         theme: Theme,
         compact: bool,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let language = self.language();
+        let add_action = action_button(
+            "configuration-add-rule-source",
+            language.text("Add source", "添加来源"),
+            ActionRole::Primary,
+            ControlSize::Compact,
+        )
+        .bg(theme.action_primary)
+        .text_color(theme.action_on_primary)
+        .on_click(cx.listener(move |this, _, window, cx| {
+            this.open_new_qx_rule_editor(cx);
+            this.open_qx_rule_source_dialog(window, cx);
+        }));
         let mut panel = panel_surface("configuration-rule-sources", compact, theme)
             .child(section_heading(
-                language.text("Rule subscriptions", "规则订阅"),
-                language.text(
-                    "Add QX rule URLs and choose the target policy used after a match.",
-                    "添加 QX 规则地址，并选择命中后使用的目标策略。",
-                ),
-                None,
+                language.text("Rule sources", "规则来源"),
+                language.count(CountNoun::Source, self.qx_rule_sources.len()),
+                Some(add_action.into_any_element()),
                 theme,
             ))
-            .child(div().mt(Space::Lg.px()).child(field_label(
-                language.text("HTTPS rule URL", "HTTPS 规则地址"),
-                theme,
-            )))
-            .child(input.clone())
             .child(
                 div()
-                    .mt(Space::Sm.px())
-                    .flex()
-                    .gap(Space::Sm.px())
-                    .child(
-                        div()
-                            .id("qx-rule-target-policy")
-                            .role(Role::Button)
-                            .aria_label(
-                                language
-                                    .text("Change QX rule target policy", "切换 QX 规则目标策略"),
-                            )
-                            .tab_stop(true)
-                            .focusable()
-                            .when(!busy, gpui::Styled::cursor_pointer)
-                            .h(ControlSize::Standard.height())
-                            .px(Space::Md.px())
-                            .rounded(Radius::Control.px())
-                            .border_1()
-                            .border_color(theme.outline_strong)
-                            .bg(theme.surface_high)
-                            .text_size(TextRole::Label.size())
-                            .line_height(TextRole::Label.line_height())
-                            .text_color(theme.action_primary)
-                            .font_weight(TextRole::Label.weight())
-                            .flex()
-                            .items_center()
-                            .child(format!(
-                                "{} · {}",
-                                language.text("Target", "目标"),
-                                self.qx_rule_target_policy
-                            ))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                if !busy {
-                                    this.cycle_qx_rule_target();
-                                    cx.notify();
-                                }
-                            })),
-                    )
-                    .child(
-                        style_action_button(
-                            Button::new("qx-rule-import")
-                                .accessibility_label(language.text(
-                                    "Download, validate, and import QX rules",
-                                    "下载、校验并导入 QX 规则",
-                                ))
-                                .loading(busy),
-                            ActionRole::Primary,
-                            ControlSize::Standard,
-                        )
-                        .when(!busy, gpui::Styled::cursor_pointer)
-                        .px(Space::Md.px())
-                        .bg(if busy {
-                            theme.action_soft
-                        } else {
-                            theme.action_primary
-                        })
-                        .text_color(if busy {
-                            theme.action_primary
-                        } else {
-                            theme.action_on_primary
-                        })
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .gap(Space::Sm.px())
-                        .flex_1()
-                        .when(busy, |button| {
-                            button.child(Self::benchmark_latency_spinner(
-                                "qx-rule-import-spinner".to_owned(),
-                                theme,
-                            ))
-                        })
-                        .child(if busy {
-                            language.text("Processing…", "处理中…")
-                        } else {
-                            language.text("Add rule source", "添加规则源")
-                        })
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            if !busy {
-                                this.submit_qx_rule_import(&input, cx);
-                            }
-                        })),
-                    ),
-            )
-            .child(self.qx_rule_import_feedback(theme, language))
-            .child(
-                div()
-                    .mt(Space::Xl.px())
-                    .pt(Space::Lg.px())
+                    .mt(Space::Lg.px())
+                    .pt(Space::Md.px())
                     .border_t_1()
                     .border_color(theme.outline_subtle)
                     .flex()
@@ -2001,24 +3025,30 @@ impl ManisApp {
                             .text_size(TextRole::Label.size())
                             .line_height(TextRole::Label.line_height())
                             .font_weight(TextRole::Label.weight())
-                            .child(language.text("Added rule sources", "已添加规则源")),
-                    )
-                    .child(status_badge(
-                        language.count(CountNoun::Source, self.qx_rule_sources.len()),
-                        StatusTone::Neutral,
-                        theme,
-                    )),
+                            .child(language.text("Saved", "已保存")),
+                    ),
             );
 
         if self.qx_rule_sources.is_empty() {
             panel = panel.child(
                 empty_state(
                     language.text("No rule sources", "暂无规则源"),
-                    language.text(
-                        "No rule subscription sources yet. After adding one, Routing rules will show the rules that actually participate in matching.",
-                        "还没有规则订阅源。添加后，分流规则页会显示实际参与匹配的规则。",
+                    language.text("Add a remote QX rule set.", "添加一个远程 QX 规则集。"),
+                    Some(
+                        action_button(
+                            "configuration-empty-add-rule-source",
+                            language.text("Add source", "添加来源"),
+                            ActionRole::Primary,
+                            ControlSize::Compact,
+                        )
+                        .bg(theme.action_primary)
+                        .text_color(theme.action_on_primary)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.open_new_qx_rule_editor(cx);
+                            this.open_qx_rule_source_dialog(window, cx);
+                        }))
+                        .into_any_element(),
                     ),
-                    None,
                     theme,
                 )
                 .mt(Space::Md.px()),
@@ -2027,17 +3057,355 @@ impl ManisApp {
         for (index, source) in self.qx_rule_sources.iter().enumerate() {
             panel = panel.child(self.rule_source_card(index, source, busy, theme, cx));
         }
-        panel.child(
-            div()
-                .mt(Space::Md.px())
-                .text_size(TextRole::Metadata.size())
-                .line_height(TextRole::Metadata.line_height())
-                .text_color(theme.text_tertiary)
-                .child(language.text(
-                    "Rule URLs and content are stored only in the private local directory; logs never record links.",
-                    "规则地址和正文仅保存在本机私有目录；日志不会记录链接。",
-                )),
+        panel
+    }
+
+    fn open_new_qx_rule_editor(&mut self, cx: &mut Context<Self>) {
+        self.qx_rule_editor_source_id = None;
+        self.qx_rule_editor_refresh_interval = RemoteSourceRefreshInterval::Manual;
+        self.qx_rule_editor_target_popover = false;
+        self.qx_rule_editor_interval_popover = false;
+        self.qx_rule_feedback = QxRuleImportFeedback::Idle;
+        if !self.qx_rule_targets().contains(&self.qx_rule_target_policy)
+            && let Some(target) = self.qx_rule_targets().into_iter().next()
+        {
+            self.qx_rule_target_policy = target;
+        }
+        if let Some(input) = self.qx_rule_input.as_ref() {
+            input.update(cx, SubscriptionTextInput::clear_without_event);
+        }
+        cx.notify();
+    }
+
+    fn open_qx_rule_editor(&mut self, id: String, cx: &mut Context<Self>) {
+        let Some(source) = self.qx_rule_sources.iter().find(|source| source.id == id) else {
+            return;
+        };
+        let url = source.source.expose_to(str::to_owned);
+        let target = self.effective_rule_target(source.target_policy.as_str(), self.language());
+        self.qx_rule_editor_source_id = Some(id);
+        self.qx_rule_editor_refresh_interval = source.refresh_interval;
+        self.qx_rule_editor_target_popover = false;
+        self.qx_rule_editor_interval_popover = false;
+        self.qx_rule_target_policy = target;
+        self.qx_rule_feedback = QxRuleImportFeedback::Idle;
+        if let Some(input) = self.qx_rule_input.as_ref() {
+            input.update(cx, |input, cx| input.set_value_without_event(url, cx));
+        }
+        cx.notify();
+    }
+
+    fn open_qx_rule_source_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let app = cx.entity();
+        window.open_dialog(cx, move |dialog, window, cx| {
+            app.update(cx, |this, cx| {
+                this.qx_rule_source_editor_modal(dialog, this.theme(), this.language(), window, cx)
+            })
+        });
+        if let Some(input) = self.qx_rule_input.as_ref() {
+            input.focus_handle(cx).focus(window, cx);
+        }
+        cx.notify();
+    }
+
+    fn close_qx_rule_editor(&mut self, cx: &mut Context<Self>) {
+        self.qx_rule_editor_source_id = None;
+        self.qx_rule_editor_target_popover = false;
+        self.qx_rule_editor_interval_popover = false;
+        self.qx_rule_feedback = QxRuleImportFeedback::Idle;
+        if let Some(input) = self.qx_rule_input.as_ref() {
+            input.update(cx, SubscriptionTextInput::clear_without_event);
+        }
+        cx.notify();
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn qx_rule_source_editor_modal(
+        &self,
+        dialog: Dialog,
+        theme: Theme,
+        language: Language,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Dialog {
+        let input = self
+            .qx_rule_input
+            .as_ref()
+            .expect("QX rule input is initialized before rendering")
+            .clone();
+        let save_input = input.clone();
+        let editing = self.qx_rule_editor_source_id.is_some();
+        let busy = self.qx_rule_feedback == QxRuleImportFeedback::Importing;
+        let app = cx.entity();
+        let viewport = window.viewport_size();
+        let dialog_width = (viewport.width.as_f32() - 32.0).clamp(300.0, 620.0);
+
+        let mut target_menu = div().p_1();
+        for target in self.qx_rule_targets() {
+            let selected = target == self.qx_rule_target_policy;
+            target_menu = target_menu.child(
+                div()
+                    .id(format!("qx-rule-editor-target-{target}"))
+                    .role(Role::Button)
+                    .aria_label(target.clone())
+                    .tab_stop(true)
+                    .focusable()
+                    .cursor_pointer()
+                    .px_3()
+                    .py_2()
+                    .rounded(Radius::Control.px())
+                    .bg(if selected {
+                        theme.action_soft
+                    } else {
+                        theme.surface_high
+                    })
+                    .text_size(TextRole::Label.size())
+                    .font_weight(if selected {
+                        FontWeight::SEMIBOLD
+                    } else {
+                        FontWeight::NORMAL
+                    })
+                    .text_color(if selected {
+                        theme.action_primary
+                    } else {
+                        theme.text_primary
+                    })
+                    .child(target.clone())
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.qx_rule_target_policy = target.clone();
+                        this.qx_rule_editor_target_popover = false;
+                        this.qx_rule_feedback = QxRuleImportFeedback::Idle;
+                        cx.notify();
+                    })),
+            );
+        }
+        let target_trigger = Button::new("qx-rule-editor-target")
+            .accessibility_label(language.text("Choose target policy", "选择目标策略"))
+            .dropdown_caret(true)
+            .with_variant(ButtonVariant::Default)
+            .with_size(ControlSize::Standard.component_size())
+            .h(ControlSize::Standard.height())
+            .w_full()
+            .child(
+                div()
+                    .w_full()
+                    .text_size(TextRole::Label.size())
+                    .font_weight(TextRole::Label.weight())
+                    .child(self.qx_rule_target_policy.clone()),
+            )
+            .disabled(busy);
+        let target_app = app.clone();
+        let target_select = crate::components::anchored_popover(
+            "qx-rule-editor-target-popover",
+            target_trigger,
+            target_menu,
+            (dialog_width - 40.0).max(240.0),
+            320.0,
         )
+        .open(self.qx_rule_editor_target_popover)
+        .on_open_change(move |open, _, cx| {
+            target_app.update(cx, |this, cx| {
+                this.qx_rule_editor_target_popover = *open;
+                cx.notify();
+            });
+        });
+
+        let mut interval_menu = div().p_1();
+        for interval in [
+            RemoteSourceRefreshInterval::Manual,
+            RemoteSourceRefreshInterval::Hourly,
+            RemoteSourceRefreshInterval::SixHours,
+            RemoteSourceRefreshInterval::TwelveHours,
+            RemoteSourceRefreshInterval::Daily,
+        ] {
+            let selected = interval == self.qx_rule_editor_refresh_interval;
+            interval_menu = interval_menu.child(
+                div()
+                    .id(format!("qx-rule-editor-interval-{interval:?}"))
+                    .role(Role::Button)
+                    .aria_label(refresh_interval_label(interval, language))
+                    .tab_stop(true)
+                    .focusable()
+                    .cursor_pointer()
+                    .px_3()
+                    .py_2()
+                    .rounded(Radius::Control.px())
+                    .bg(if selected {
+                        theme.action_soft
+                    } else {
+                        theme.surface_high
+                    })
+                    .text_size(TextRole::Label.size())
+                    .font_weight(if selected {
+                        FontWeight::SEMIBOLD
+                    } else {
+                        FontWeight::NORMAL
+                    })
+                    .text_color(if selected {
+                        theme.action_primary
+                    } else {
+                        theme.text_primary
+                    })
+                    .child(refresh_interval_label(interval, language))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.qx_rule_editor_refresh_interval = interval;
+                        this.qx_rule_editor_interval_popover = false;
+                        cx.notify();
+                    })),
+            );
+        }
+        let interval_trigger = Button::new("qx-rule-editor-refresh-interval")
+            .accessibility_label(language.text("Choose rule update interval", "选择规则更新间隔"))
+            .dropdown_caret(true)
+            .with_variant(ButtonVariant::Default)
+            .with_size(ControlSize::Standard.component_size())
+            .h(ControlSize::Standard.height())
+            .w_full()
+            .child(
+                div()
+                    .w_full()
+                    .text_size(TextRole::Label.size())
+                    .font_weight(TextRole::Label.weight())
+                    .child(refresh_interval_label(
+                        self.qx_rule_editor_refresh_interval,
+                        language,
+                    )),
+            )
+            .disabled(busy);
+        let interval_app = app.clone();
+        let interval_select = crate::components::anchored_popover(
+            "qx-rule-editor-refresh-popover",
+            interval_trigger,
+            interval_menu,
+            (dialog_width - 40.0).max(240.0),
+            280.0,
+        )
+        .open(self.qx_rule_editor_interval_popover)
+        .on_open_change(move |open, _, cx| {
+            interval_app.update(cx, |this, cx| {
+                this.qx_rule_editor_interval_popover = *open;
+                cx.notify();
+            });
+        });
+
+        let body = div()
+            .id("qx-rule-source-modal-body")
+            .flex_1()
+            .min_h(px(0.0))
+            .overflow_y_scroll()
+            .px_5()
+            .py_4()
+            .child(field_label(language.text("Rule URL", "规则 URL"), theme))
+            .child(input)
+            .child(field_label(language.text("Target policy", "目标策略"), theme).mt_4())
+            .child(target_select)
+            .child(field_label(language.text("Update interval", "更新间隔"), theme).mt_4())
+            .child(interval_select)
+            .child(self.qx_rule_import_feedback(theme, language));
+
+        let footer = div()
+            .flex_shrink_0()
+            .px_5()
+            .py_4()
+            .border_t_1()
+            .border_color(theme.outline_subtle)
+            .flex()
+            .items_center()
+            .justify_end()
+            .gap_2()
+            .child(
+                style_action_button(
+                    Button::new("cancel-qx-rule-source").label(language.message(Message::Cancel)),
+                    ActionRole::Secondary,
+                    ControlSize::Standard,
+                )
+                .px(Space::Lg.px())
+                .cursor_pointer()
+                .border_color(theme.outline_subtle)
+                .bg(theme.surface_high)
+                .text_color(theme.text_primary)
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.close_qx_rule_editor(cx);
+                    window.close_dialog(cx);
+                })),
+            )
+            .child(
+                style_action_button(
+                    Button::new("save-qx-rule-source")
+                        .label(if busy {
+                            language.text("Processing…", "正在处理…")
+                        } else if editing {
+                            language.message(Message::SaveChanges)
+                        } else {
+                            language.text("Add source", "添加来源")
+                        })
+                        .loading(busy),
+                    ActionRole::Primary,
+                    ControlSize::Standard,
+                )
+                .px(Space::Lg.px())
+                .when(!busy, gpui::Styled::cursor_pointer)
+                .bg(if busy {
+                    theme.action_soft
+                } else {
+                    theme.action_primary
+                })
+                .text_color(if busy {
+                    theme.action_primary
+                } else {
+                    theme.action_on_primary
+                })
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    if !busy && this.submit_qx_rule_import(&save_input, cx) {
+                        window.close_dialog(cx);
+                    }
+                })),
+            );
+
+        dialog
+            .width(px(dialog_width))
+            .max_h(px((viewport.height.as_f32() - 32.0).max(320.0)))
+            .margin_top(px(((viewport.height.as_f32() - 440.0) / 2.0).max(16.0)))
+            .overlay(true)
+            .overlay_closable(true)
+            .keyboard(true)
+            .close_button(false)
+            .p_0()
+            .rounded_md()
+            .bg(theme.surface_high)
+            .overflow_hidden()
+            .title(
+                div()
+                    .px_5()
+                    .py_4()
+                    .border_b_1()
+                    .border_color(theme.outline_subtle)
+                    .child(
+                        div()
+                            .text_size(px(17.0))
+                            .font_weight(TextRole::SectionTitle.weight())
+                            .child(if editing {
+                                language.text("Edit rule source", "编辑规则来源")
+                            } else {
+                                language.text("Add rule source", "添加规则来源")
+                            }),
+                    )
+                    .child(
+                        div()
+                            .mt_1()
+                            .text_size(TextRole::Metadata.size())
+                            .text_color(theme.text_secondary)
+                            .child(language.text(
+                                "The target policy is used by every rule in this source.",
+                                "此来源中的全部规则都会使用所选目标策略。",
+                            )),
+                    ),
+            )
+            .child(body)
+            .footer(footer)
+            .on_close(move |_, _, cx| {
+                app.update(cx, ManisApp::close_qx_rule_editor);
+            })
     }
 
     #[allow(clippy::too_many_lines)]
@@ -2048,11 +3416,13 @@ impl ManisApp {
         busy: bool,
         theme: Theme,
         cx: &mut Context<Self>,
-    ) -> Div {
+    ) -> Stateful<Div> {
         let language = self.language();
         let id = source.id.clone();
+        let toggle_id = id.clone();
         let refresh_id = id.clone();
-        let interval_id = id.clone();
+        let remove_id = id.clone();
+        let edit_id = id.clone();
         let refresh_state = self.qx_rule_source_refreshes.get(&source.id);
         let refreshing = refresh_state.is_some_and(QxRuleSourceRefreshState::is_refreshing);
         let duplicate = matches!(
@@ -2060,7 +3430,8 @@ impl ManisApp {
             QxRuleImportFeedback::AlreadyExists { source_id, .. } if source_id == &source.id
         );
         let controls_enabled = !busy && !self.source_refresh_busy();
-        let next_interval = source.refresh_interval.next();
+        let enabled = source.enabled;
+        let refresh_enabled = controls_enabled && enabled;
         let name = source.source.subscription_name().unwrap_or_else(|| {
             if language == Language::English {
                 format!("Rule source {}", index + 1)
@@ -2079,6 +3450,12 @@ impl ManisApp {
         };
         let target_policy = self.effective_rule_target(source.target_policy.as_str(), language);
         div()
+            .id(format!("qx-rule-source-card-{id}"))
+            .role(Role::Button)
+            .aria_label(language.text("Edit this rule source", "编辑这个规则来源"))
+            .tab_stop(controls_enabled)
+            .focusable()
+            .when(controls_enabled, gpui::Styled::cursor_pointer)
             .mt(Space::Sm.px())
             .p(Space::Md.px())
             .rounded(Radius::Row.px())
@@ -2093,7 +3470,25 @@ impl ManisApp {
                 div()
                     .flex()
                     .items_center()
-                    .gap(Space::Md.px())
+                    .gap_2()
+                    .child(
+                        Checkbox::new(format!("qx-rule-enabled-{toggle_id}"))
+                            .label("")
+                            .checked(enabled)
+                            .disabled(!controls_enabled)
+                            .tab_stop(controls_enabled)
+                            .cursor_pointer()
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                cx.stop_propagation();
+                                if controls_enabled {
+                                    this.set_qx_rule_source_enabled(
+                                        toggle_id.clone(),
+                                        !enabled,
+                                        cx,
+                                    );
+                                }
+                            })),
+                    )
                     .child(
                         div()
                             .flex_1()
@@ -2104,6 +3499,11 @@ impl ManisApp {
                             .text_size(TextRole::Label.size())
                             .line_height(TextRole::Label.line_height())
                             .font_weight(TextRole::Label.weight())
+                            .text_color(if enabled {
+                                theme.text_primary
+                            } else {
+                                theme.text_secondary
+                            })
                             .child(name),
                     )
                     .when(refreshing, |header| {
@@ -2122,30 +3522,33 @@ impl ManisApp {
                                 .text_color(theme.status_warning)
                                 .child(language.text("Already added", "已添加")),
                         )
+                    })
+                    .when(!enabled, |header| {
+                        header.child(
+                            div()
+                                .flex_shrink_0()
+                                .text_size(TextRole::Metadata.size())
+                                .text_color(theme.text_tertiary)
+                                .child(language.text("Disabled", "未启用")),
+                        )
                     }),
             )
             .child(
                 div()
-                    .mt(Space::Xs.px())
+                    .mt_1()
+                    .ml_7()
+                    .overflow_x_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
                     .text_size(TextRole::Metadata.size())
-                    .line_height(TextRole::Metadata.line_height())
-                    .text_color(theme.text_secondary)
-                    .child(if language == Language::English {
-                        format!(
-                            "{} rules · {} skipped · → {} · {last_update}",
-                            source.rule_count, source.diagnostic_count, target_policy
-                        )
-                    } else {
-                        format!(
-                            "{} 条 · 跳过 {} 条 · → {} · {last_update}",
-                            source.rule_count, source.diagnostic_count, target_policy
-                        )
-                    }),
+                    .text_color(theme.text_tertiary)
+                    .child(source.source.expose_to(str::to_owned)),
             )
             .when_some(refresh_error, |card, error| {
                 card.child(
                     div()
-                        .mt(Space::Sm.px())
+                        .mt_1()
+                        .ml_7()
                         .text_size(TextRole::Metadata.size())
                         .line_height(TextRole::Metadata.line_height())
                         .text_color(theme.route_trace)
@@ -2157,108 +3560,92 @@ impl ManisApp {
             })
             .child(
                 div()
-                    .mt(Space::Md.px())
+                    .mt_1()
+                    .ml_7()
                     .flex()
-                    .flex_wrap()
                     .items_center()
                     .gap_2()
-                    .child(self.qx_rule_source_target_select(source, controls_enabled, theme, cx))
+                    .text_size(TextRole::Metadata.size())
+                    .text_color(theme.text_secondary)
+                    .child(if language == Language::English {
+                        format!(
+                            "{} rules · {} skipped",
+                            source.rule_count, source.diagnostic_count
+                        )
+                    } else {
+                        format!(
+                            "{} 条 · 跳过 {} 条",
+                            source.rule_count, source.diagnostic_count
+                        )
+                    })
+                    .child("·")
+                    .child(format!(
+                        "{} {target_policy}",
+                        language.text("Target", "目标")
+                    ))
+                    .child("·")
+                    .child(refresh_interval_label(source.refresh_interval, language))
+                    .child("·")
+                    .child(last_update)
+                    .child(div().flex_1())
                     .child(
-                        div()
-                            .id(format!("qx-rule-interval-{interval_id}"))
-                            .role(Role::Button)
-                            .aria_label(format!(
-                                "{}{}",
-                                language.text(
-                                    "Change rule automatic update interval, current ",
-                                    "更改规则自动更新间隔，当前"
-                                ),
-                                refresh_interval_label(source.refresh_interval, language)
-                            ))
-                            .tab_stop(controls_enabled)
-                            .focusable()
-                            .when(controls_enabled, gpui::Styled::cursor_pointer)
-                            .h(ControlSize::Compact.height())
-                            .px(Space::Sm.px())
-                            .rounded(Radius::Control.px())
-                            .border_1()
-                            .border_color(theme.outline_subtle)
-                            .bg(theme.surface_high)
-                            .text_size(TextRole::Metadata.size())
-                            .line_height(TextRole::Metadata.line_height())
-                            .text_color(theme.text_secondary)
-                            .child(format!(
-                                "{} · {}",
-                                language.text("Update interval", "更新间隔"),
-                                refresh_interval_label(source.refresh_interval, language)
-                            ))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                if controls_enabled {
-                                    this.set_qx_rule_refresh_interval(
-                                        interval_id.clone(),
-                                        next_interval,
-                                        cx,
-                                    );
-                                }
-                            })),
-                    )
-                    .child(
-                        Button::new(format!("qx-rule-refresh-{refresh_id}"))
-                            .accessibility_label(
-                                language.text(
-                                    "Update this remote QX rule now",
-                                    "立即更新这份远程 QX 规则",
-                                ),
-                            )
-                            .label(if refreshing {
+                        action_button(
+                            format!("qx-rule-refresh-{refresh_id}"),
+                            if refreshing {
                                 language.text("Updating…", "更新中…")
                             } else {
                                 language.text("Update now", "立即更新")
-                            })
-                            .icon(IconName::Redo2)
-                            .tab_stop(controls_enabled)
-                            .disabled(!controls_enabled)
-                            .loading(refreshing)
-                            .with_variant(ButtonVariant::Text)
-                            .when(controls_enabled, gpui::Styled::cursor_pointer)
-                            .px(Space::Sm.px())
-                            .rounded(Radius::Control.px())
-                            .border_1()
-                            .border_color(theme.action_primary)
-                            .bg(theme.surface_high)
-                            .text_size(TextRole::Metadata.size())
-                            .line_height(TextRole::Metadata.line_height())
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(theme.action_primary)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                if controls_enabled {
-                                    this.refresh_qx_rule_source(refresh_id.clone(), cx);
-                                }
-                            })),
+                            },
+                            ActionRole::Quiet,
+                            ControlSize::Compact,
+                        )
+                        .accessibility_label(
+                            language
+                                .text("Update this remote QX rule now", "立即更新这份远程 QX 规则"),
+                        )
+                        .disabled(!refresh_enabled)
+                        .loading(refreshing)
+                        .when(refresh_enabled, gpui::Styled::cursor_pointer)
+                        .px_3()
+                        .border_1()
+                        .border_color(theme.outline_subtle)
+                        .bg(theme.surface_high)
+                        .text_color(theme.action_primary)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            if refresh_enabled {
+                                this.refresh_qx_rule_source(refresh_id.clone(), cx);
+                            }
+                        })),
                     )
-                    .child(div().flex_1())
                     .child(
-                        Button::new(format!("qx-rule-remove-{index}"))
-                            .accessibility_label(
-                                language.text("Delete this remote QX rule", "删除这份远程 QX 规则"),
-                            )
-                            .label(language.message(Message::Delete))
-                            .tab_stop(controls_enabled)
-                            .disabled(!controls_enabled)
-                            .with_variant(ButtonVariant::Text)
-                            .when(controls_enabled, gpui::Styled::cursor_pointer)
-                            .px(Space::Sm.px())
-                            .rounded(Radius::Control.px())
-                            .text_size(TextRole::Metadata.size())
-                            .line_height(TextRole::Metadata.line_height())
-                            .text_color(theme.route_trace)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                if controls_enabled {
-                                    this.remove_qx_rule_source(id.clone(), cx);
-                                }
-                            })),
+                        action_button(
+                            format!("qx-rule-remove-{index}"),
+                            language.text("Remove", "移除"),
+                            ActionRole::Quiet,
+                            ControlSize::Compact,
+                        )
+                        .accessibility_label(
+                            language.text("Delete this remote QX rule", "删除这份远程 QX 规则"),
+                        )
+                        .disabled(!controls_enabled)
+                        .when(controls_enabled, gpui::Styled::cursor_pointer)
+                        .px_3()
+                        .text_color(theme.status_error)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            if controls_enabled {
+                                this.remove_qx_rule_source(remove_id.clone(), cx);
+                            }
+                        })),
                     ),
             )
+            .on_click(cx.listener(move |this, _, window, cx| {
+                if controls_enabled {
+                    this.open_qx_rule_editor(edit_id.clone(), cx);
+                    this.open_qx_rule_source_dialog(window, cx);
+                }
+            }))
     }
 
     fn qx_rule_source_target_menu(
@@ -3682,6 +5069,13 @@ impl ManisApp {
         let remote_count = self
             .qx_rule_sources
             .iter()
+            .filter(|source| source.enabled)
+            .map(|source| source.rule_count)
+            .sum::<usize>();
+        let disabled_remote_count = self
+            .qx_rule_sources
+            .iter()
+            .filter(|source| !source.enabled)
             .map(|source| source.rule_count)
             .sum::<usize>();
         let enabled_manual_count = self
@@ -3690,6 +5084,7 @@ impl ManisApp {
             .filter(|rule| rule.is_enabled())
             .count();
         let disabled_manual_count = self.manual_rules.len() - enabled_manual_count;
+        let disabled_count = disabled_manual_count + disabled_remote_count;
         let active_count = enabled_manual_count + remote_count;
         let mut list = div()
             .id("active-routing-rules")
@@ -3727,16 +5122,12 @@ impl ManisApp {
                             .items_center()
                             .gap(Space::Sm.px())
                             .child(status_badge(
-                                if disabled_manual_count == 0 {
+                                if disabled_count == 0 {
                                     language.count(CountNoun::Rule, active_count)
                                 } else if language == Language::English {
-                                    format!(
-                                        "{active_count} active · {disabled_manual_count} disabled"
-                                    )
+                                    format!("{active_count} active · {disabled_count} disabled")
                                 } else {
-                                    format!(
-                                        "{active_count} 条生效 · {disabled_manual_count} 条已禁用"
-                                    )
+                                    format!("{active_count} 条生效 · {disabled_count} 条已禁用")
                                 },
                                 StatusTone::Route,
                                 theme,
@@ -3936,7 +5327,11 @@ impl ManisApp {
                 language,
             );
             let target_policy = self.effective_rule_target(source.target_policy.as_str(), language);
-            let detail = if language == Language::English {
+            let detail = if !source.enabled && language == Language::English {
+                format!("{rule_count} rules · Disabled")
+            } else if !source.enabled {
+                format!("{rule_count} 条规则 · 已停用")
+            } else if language == Language::English {
                 format!("{rule_count} rules · Target {target_policy} · {update}")
             } else {
                 format!("{rule_count} 条规则 · 目标 {target_policy} · {update}")
@@ -3953,6 +5348,11 @@ impl ManisApp {
                         .text_size(TextRole::Label.size())
                         .line_height(TextRole::Label.line_height())
                         .font_weight(TextRole::Label.weight())
+                        .text_color(if source.enabled {
+                            theme.text_primary
+                        } else {
+                            theme.text_tertiary
+                        })
                         .child(name.clone()),
                 )
                 .child(
@@ -3975,7 +5375,7 @@ impl ManisApp {
                 .child(title_detail)
                 .child(self.qx_rule_source_target_select(
                     source,
-                    !self.source_refresh_busy(),
+                    source.enabled && !self.source_refresh_busy(),
                     theme,
                     cx,
                 ))
@@ -4224,6 +5624,7 @@ impl ManisApp {
         )
     }
 
+    #[allow(dead_code)]
     fn cycle_qx_rule_target(&mut self) {
         let targets = self.qx_rule_targets();
         let next = targets
@@ -4245,16 +5646,31 @@ impl ManisApp {
         &mut self,
         input: &Entity<SubscriptionTextInput>,
         cx: &mut Context<Self>,
-    ) {
+    ) -> bool {
         let url = input.read(cx).value().trim().to_owned();
         let target = self.qx_rule_target_policy.clone();
+        let editing_id = self.qx_rule_editor_source_id.clone();
+        let refresh_interval = self.qx_rule_editor_refresh_interval;
         let operation_id = begin_operation(
-            "configuration.rule_source.add.requested",
+            "configuration.rule_source.save.requested",
             format!(
-                "target={target} known_sources={}",
+                "editing={} target={target} known_sources={}",
+                editing_id.is_some(),
                 self.qx_rule_sources.len()
             ),
         );
+        let Ok(parsed_source) = SecretUrl::parse_https(&url) else {
+            self.qx_rule_feedback =
+                QxRuleImportFeedback::StoreFailed(SubscriptionStoreError::InvalidSource);
+            self.language()
+                .text(
+                    "Enter a valid HTTPS rule URL",
+                    "请输入有效的 HTTPS 规则地址",
+                )
+                .clone_into(&mut self.status);
+            cx.notify();
+            return false;
+        };
         let Some(store_dir) = self.subscription_store_dir.clone() else {
             self.qx_rule_feedback =
                 QxRuleImportFeedback::StoreFailed(SubscriptionStoreError::DataDirectoryUnavailable);
@@ -4271,14 +5687,11 @@ impl ManisApp {
                 "phase=store reason=data_directory_unavailable",
             );
             cx.notify();
-            return;
+            return false;
         };
-        if let Ok(source) = SecretUrl::parse_https(&url)
-            && let Some(existing) = self
-                .qx_rule_sources
-                .iter()
-                .find(|existing| existing.source == source)
-        {
+        if let Some(existing) = self.qx_rule_sources.iter().find(|existing| {
+            existing.source == parsed_source && editing_id.as_deref() != Some(existing.id.as_str())
+        }) {
             let target_policy =
                 self.effective_rule_target(existing.target_policy.as_str(), self.language());
             self.qx_rule_feedback = QxRuleImportFeedback::AlreadyExists {
@@ -4302,7 +5715,7 @@ impl ManisApp {
                 ),
             );
             cx.notify();
-            return;
+            return false;
         }
         self.qx_rule_import_generation = self.qx_rule_import_generation.wrapping_add(1);
         let generation = self.qx_rule_import_generation;
@@ -4322,11 +5735,42 @@ impl ManisApp {
                     if parsed.rules.is_empty() {
                         return Err(ImportQxRuleError::InvalidDocument);
                     }
-                    let saved =
-                        mihomo::save_qx_rule_source_in(&store_dir, &url, &target, &content)
-                            .map_err(ImportQxRuleError::Store)?;
+                    if let Some(editing_id) = editing_id {
+                        let stored = mihomo::replace_qx_rule_source_definition_in(
+                            &store_dir,
+                            &editing_id,
+                            &url,
+                            &target,
+                            &content,
+                            refresh_interval,
+                            mihomo::current_unix_secs(),
+                        )
+                        .map_err(ImportQxRuleError::Store)?;
+                        let apply = SourceRuntimeApply::from_result(
+                            runtime.apply_saved_sources(&store_dir),
+                        );
+                        return Ok::<_, ImportQxRuleError>(ImportQxRuleSuccess::Imported {
+                            stored,
+                            apply,
+                        });
+                    }
+                    let saved = mihomo::save_qx_rule_source_in(
+                        &store_dir,
+                        &url,
+                        &target,
+                        &content,
+                    )
+                    .map_err(ImportQxRuleError::Store)?;
                     Ok::<_, ImportQxRuleError>(match saved {
-                        mihomo::SaveQxRuleSourceOutcome::Created(stored) => {
+                        mihomo::SaveQxRuleSourceOutcome::Created(mut stored) => {
+                            if refresh_interval != RemoteSourceRefreshInterval::Manual {
+                                stored = mihomo::update_qx_rule_source_refresh_interval_in(
+                                    &store_dir,
+                                    &stored.id,
+                                    refresh_interval,
+                                )
+                                .map_err(ImportQxRuleError::Store)?;
+                            }
                             let apply = SourceRuntimeApply::from_result(
                                 runtime.apply_saved_sources(&store_dir),
                             );
@@ -4487,6 +5931,7 @@ impl ManisApp {
         })
         .detach();
         cx.notify();
+        true
     }
 
     fn remove_qx_rule_source(&mut self, id: String, cx: &mut Context<Self>) {
@@ -4553,12 +5998,7 @@ impl ManisApp {
         cx.notify();
     }
 
-    fn set_subscription_refresh_interval(
-        &mut self,
-        id: String,
-        refresh_interval: RemoteSourceRefreshInterval,
-        cx: &mut Context<Self>,
-    ) {
+    fn set_subscription_enabled(&mut self, id: String, enabled: bool, cx: &mut Context<Self>) {
         if self.source_refresh_busy() {
             return;
         }
@@ -4573,33 +6013,32 @@ impl ManisApp {
             return;
         };
         let previous_state = source.state;
+        let previous_enabled = source.enabled;
         let kind = super::source_kind(&source.source);
         self.subscription_preview_generation = self.subscription_preview_generation.wrapping_add(1);
         let generation = self.subscription_preview_generation;
         source.generation = generation;
         source.state = ImportedSubscriptionState::Refreshing(kind);
-        self.status = format!(
-            "{}: {}",
-            self.language().text(
-                "Saving subscription update interval",
-                "正在保存订阅更新间隔"
-            ),
-            refresh_interval_label(refresh_interval, self.language())
-        );
+        self.language()
+            .text("Applying subscription state", "正在应用订阅状态")
+            .clone_into(&mut self.status);
+        let runtime = self.runtime.clone();
         let executor = cx.background_executor().clone();
         let task_id = id.clone();
         cx.spawn(async move |this, cx| {
             let result = executor
                 .spawn(async move {
-                    mihomo::update_subscription_source_refresh_interval_in(
-                        &store_dir,
-                        &task_id,
-                        refresh_interval,
-                    )
+                    let stored = mihomo::update_subscription_source_enabled_in(
+                        &store_dir, &task_id, enabled,
+                    )?;
+                    let apply =
+                        SourceRuntimeApply::from_result(runtime.apply_saved_sources(&store_dir));
+                    Ok::<_, SubscriptionStoreError>((stored, apply))
                 })
                 .await;
             this.update(cx, |this, cx| {
                 let language = this.language();
+                let mut refresh_after_enable = false;
                 let Some(source) = this
                     .imported_subscriptions
                     .iter_mut()
@@ -4611,26 +6050,105 @@ impl ManisApp {
                     return;
                 }
                 match result {
-                    Ok(stored) => {
-                        source.refresh_interval = stored.refresh_interval;
-                        source.last_successful_update_unix_secs =
-                            stored.last_successful_update_unix_secs;
-                        source.state = previous_state;
+                    Ok((stored, apply)) => {
+                        source.enabled = stored.enabled;
+                        source.state = if stored.enabled {
+                            refresh_after_enable = true;
+                            ImportedSubscriptionState::Pending(kind)
+                        } else {
+                            ImportedSubscriptionState::None
+                        };
+                        apply.reconcile_proxy_mode(&mut this.proxy_mode);
                         this.status = format!(
-                            "{} {}",
-                            language
-                                .text("Subscription update interval set to", "订阅更新间隔已设为"),
-                            refresh_interval_label(stored.refresh_interval, language)
+                            "{}{}",
+                            if stored.enabled {
+                                language.text("Subscription enabled", "订阅已启用")
+                            } else {
+                                language.text("Subscription disabled", "订阅已停用")
+                            },
+                            apply.status_suffix(language)
                         );
                     }
                     Err(error) => {
-                        source.state = ImportedSubscriptionState::StoreError(error);
+                        source.enabled = previous_enabled;
+                        source.state = previous_state;
                         this.status = format!(
                             "{}: {error}",
-                            this.language().text(
-                                "Failed to save subscription update interval",
-                                "订阅更新间隔保存失败"
-                            )
+                            language
+                                .text("Failed to change subscription state", "订阅状态修改失败")
+                        );
+                    }
+                }
+                if refresh_after_enable {
+                    this.refresh_imported_subscription(id.clone(), cx);
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn set_qx_rule_source_enabled(&mut self, id: String, enabled: bool, cx: &mut Context<Self>) {
+        if self.source_refresh_busy() {
+            return;
+        }
+        let Some(store_dir) = self.subscription_store_dir.clone() else {
+            return;
+        };
+        self.qx_rule_import_generation = self.qx_rule_import_generation.wrapping_add(1);
+        let generation = self.qx_rule_import_generation;
+        self.qx_rule_source_target_updates
+            .insert(id.clone(), generation);
+        self.language()
+            .text("Applying rule source state", "正在应用规则来源状态")
+            .clone_into(&mut self.status);
+        let runtime = self.runtime.clone();
+        let executor = cx.background_executor().clone();
+        let task_id = id.clone();
+        cx.spawn(async move |this, cx| {
+            let result = executor
+                .spawn(async move {
+                    let stored =
+                        mihomo::update_qx_rule_source_enabled_in(&store_dir, &task_id, enabled)?;
+                    let apply =
+                        SourceRuntimeApply::from_result(runtime.apply_saved_sources(&store_dir));
+                    Ok::<_, SubscriptionStoreError>((stored, apply))
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                if this.qx_rule_source_target_updates.get(&id) != Some(&generation) {
+                    return;
+                }
+                this.qx_rule_source_target_updates.remove(&id);
+                match result {
+                    Ok((stored, apply)) => {
+                        let language = this.language();
+                        let enabled = stored.enabled;
+                        if let Some(source) = this
+                            .qx_rule_sources
+                            .iter_mut()
+                            .find(|source| source.id == id)
+                        {
+                            *source = stored;
+                        }
+                        apply.reconcile_proxy_mode(&mut this.proxy_mode);
+                        this.status = format!(
+                            "{}{}",
+                            if enabled {
+                                language.text("Rule source enabled", "规则来源已启用")
+                            } else {
+                                language.text("Rule source disabled", "规则来源已停用")
+                            },
+                            apply.status_suffix(language)
+                        );
+                    }
+                    Err(error) => {
+                        this.status = format!(
+                            "{}: {error}",
+                            this.language()
+                                .text("Failed to change rule source state", "规则来源状态修改失败")
                         );
                     }
                 }
@@ -4642,6 +6160,7 @@ impl ManisApp {
         cx.notify();
     }
 
+    #[allow(dead_code)]
     fn set_qx_rule_refresh_interval(
         &mut self,
         id: String,
