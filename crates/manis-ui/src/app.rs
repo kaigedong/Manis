@@ -227,8 +227,19 @@ enum ImportSubscriptionError {
     Store(SubscriptionStoreError),
 }
 
+struct SubscriptionImportRequest {
+    input: String,
+    name: String,
+    refresh_interval: RemoteSourceRefreshInterval,
+    enabled: bool,
+    editing_id: Option<String>,
+    kind: SourceKind,
+}
+
 type SubscriptionRefreshResult =
     Result<(Vec<LoadedProvider>, SourceMutation<StoredSubscription>), ImportSubscriptionError>;
+type SubscriptionImportResult =
+    Result<(SourceMutation<StoredSubscription>, Vec<LoadedProvider>), ImportSubscriptionError>;
 type RoutingModeApplyResult = Result<Result<Option<()>, SubscriptionStoreError>, mihomo::LoadError>;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -286,6 +297,17 @@ struct PolicySelectionRequest {
     group_name: String,
     node_id: ProxyId,
     node_name: String,
+}
+
+struct PolicyNodeRowContext {
+    source: String,
+    selection: PolicySelectionRequest,
+    current: bool,
+    manually_selectable: bool,
+    selection_busy: bool,
+    benchmark_state: GroupBenchmarkNodeState,
+    language: Language,
+    theme: Theme,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1333,17 +1355,19 @@ impl ManisApp {
         }
     }
 
-    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
     fn import_remote_subscription(
         &mut self,
-        input: String,
-        name: String,
-        refresh_interval: RemoteSourceRefreshInterval,
-        enabled: bool,
-        editing_id: Option<String>,
-        kind: SourceKind,
+        request: SubscriptionImportRequest,
         cx: &mut Context<Self>,
     ) {
+        let SubscriptionImportRequest {
+            input,
+            name,
+            refresh_interval,
+            enabled,
+            editing_id,
+            kind,
+        } = request;
         let language = self.language();
         let Some(store_dir) = self.subscription_store_dir.clone() else {
             self.subscription_feedback =
@@ -1404,12 +1428,11 @@ impl ManisApp {
                         let proxy_nameservers =
                             mihomo::discover_subscription_proxy_nameservers(&subscription.source);
                         if !proxy_nameservers.is_empty() {
-                            subscription =
-                                mihomo::update_subscription_source_proxy_nameservers_in(
-                                    &store_dir,
-                                    &subscription.id,
-                                    &proxy_nameservers,
-                                )?;
+                            subscription = mihomo::update_subscription_source_proxy_nameservers_in(
+                                &store_dir,
+                                &subscription.id,
+                                &proxy_nameservers,
+                            )?;
                         }
                         Ok(subscription)
                     })
@@ -1418,7 +1441,6 @@ impl ManisApp {
                 })
                 .await;
             this.update(cx, |this, cx| {
-                let language = this.language();
                 if this.subscription_preview_generation != generation {
                     return;
                 }
@@ -1428,116 +1450,128 @@ impl ManisApp {
                 if let Some(input) = this.subscription_name_input.as_ref() {
                     input.update(cx, |input, cx| input.set_enabled(true, cx));
                 }
-                match result {
-                    Ok((transaction, providers)) if transaction.value.is_some() => {
-                        let subscription = transaction.value.expect("checked committed mutation");
-                        let node_count: usize =
-                            providers.iter().map(|provider| provider.nodes.len()).sum();
-                        let provider_count = providers.len();
-                        let stored_id = subscription.id.clone();
-                        if let Some(existing) = this
-                            .imported_subscriptions
-                            .iter_mut()
-                            .find(|existing| existing.id == stored_id)
-                        {
-                            existing.name.clone_from(&subscription.name);
-                            existing.source = subscription.source;
-                            existing.enabled = subscription.enabled;
-                            existing.state = if subscription.enabled {
-                                ImportedSubscriptionState::Ready(kind)
-                            } else {
-                                ImportedSubscriptionState::None
-                            };
-                            existing.providers.clone_from(&providers);
-                            existing.refresh_interval = subscription.refresh_interval;
-                            existing.last_successful_update_unix_secs =
-                                subscription.last_successful_update_unix_secs;
-                        } else {
-                            this.imported_subscriptions.push(ImportedSubscription {
-                                id: stored_id,
-                                name: subscription.name,
-                                source: subscription.source,
-                                enabled: subscription.enabled,
-                                state: if subscription.enabled {
-                                    ImportedSubscriptionState::Ready(kind)
-                                } else {
-                                    ImportedSubscriptionState::None
-                                },
-                                providers: providers.clone(),
-                                generation,
-                                refresh_interval: subscription.refresh_interval,
-                                last_successful_update_unix_secs: subscription
-                                    .last_successful_update_unix_secs,
-                            });
-                        }
-                        this.subscription_preview_providers = providers;
-                        this.subscription_feedback = SubscriptionFeedback::Idle;
-                        if let Some(input) = this.subscription_input.as_ref() {
-                            input.update(cx, SubscriptionTextInput::clear_without_event);
-                        }
-                        if let Some(input) = this.subscription_name_input.as_ref() {
-                            input.update(cx, SubscriptionTextInput::clear_without_event);
-                        }
-                        this.configuration_add_section = None;
-                        this.subscription_editor_source_id = None;
-                        this.subscription_editor_error = None;
-                        transaction
-                            .apply
-                            .reconcile_proxy_mode(&mut this.proxy_mode);
-                        this.status = if language == Language::English {
-                            format!(
-                                "Subscription imported · {} groups · {provider_count} sources · {node_count} nodes{}",
-                                this.imported_subscriptions.len(),
-                                transaction.apply.status_suffix(language)
-                            )
-                        } else {
-                            format!(
-                                "订阅已导入 · 共 {} 个订阅组 · {provider_count} 个来源 · {node_count} 个节点{}",
-                                this.imported_subscriptions.len(),
-                                transaction.apply.status_suffix(language)
-                            )
-                        };
-                        trace_ui(UiEvent::SourceImportSucceeded);
-                    }
-                    Ok((transaction, _providers)) => {
-                        this.subscription_feedback = SubscriptionFeedback::StoreFailed(
-                            SubscriptionStoreError::StoreUnavailable,
-                        );
-                        this.status = format!(
-                            "{}{}",
-                            language.text("Could not save subscription", "订阅保存失败"),
-                            transaction
-                                .apply
-                                .status_suffix_after_source_rollback(language)
-                        );
-                        trace_ui(UiEvent::SourceImportFailed);
-                    }
-                    Err(ImportSubscriptionError::Preview(error)) => {
-                        this.subscription_feedback = SubscriptionFeedback::PreviewFailed(error);
-                        this.status = format!(
-                            "{}{error}",
-                            language.text(
-                                "Subscription import failed: ",
-                                "订阅导入失败："
-                            )
-                        );
-                        trace_ui(UiEvent::SourceImportFailed);
-                    }
-                    Err(ImportSubscriptionError::Store(error)) => {
-                        this.subscription_feedback = SubscriptionFeedback::StoreFailed(error);
-                        this.status = format!(
-                            "{}{error}",
-                            language.text("Could not save subscription: ", "订阅保存失败：")
-                        );
-                        trace_ui(UiEvent::SourceImportFailed);
-                    }
-                }
-                cx.notify();
+                this.finish_subscription_import(generation, kind, result, cx);
             })
             .ok();
         })
         .detach();
         cx.notify();
+    }
+
+    fn finish_subscription_import(
+        &mut self,
+        generation: u64,
+        kind: SourceKind,
+        result: SubscriptionImportResult,
+        cx: &mut Context<Self>,
+    ) {
+        let language = self.language();
+        match result {
+            Ok((transaction, providers)) if transaction.value.is_some() => {
+                let subscription = transaction.value.expect("checked committed mutation");
+                let node_count: usize = providers.iter().map(|provider| provider.nodes.len()).sum();
+                let provider_count = providers.len();
+                self.merge_imported_subscription(subscription, &providers, generation, kind);
+                self.subscription_preview_providers = providers;
+                self.subscription_feedback = SubscriptionFeedback::Idle;
+                if let Some(input) = self.subscription_input.as_ref() {
+                    input.update(cx, SubscriptionTextInput::clear_without_event);
+                }
+                if let Some(input) = self.subscription_name_input.as_ref() {
+                    input.update(cx, SubscriptionTextInput::clear_without_event);
+                }
+                self.configuration_add_section = None;
+                self.subscription_editor_source_id = None;
+                self.subscription_editor_error = None;
+                transaction.apply.reconcile_proxy_mode(&mut self.proxy_mode);
+                self.status = match language {
+                    Language::English => format!(
+                        "Subscription imported · {} groups · {provider_count} sources · {node_count} nodes{}",
+                        self.imported_subscriptions.len(),
+                        transaction.apply.status_suffix(language)
+                    ),
+                    Language::SimplifiedChinese => format!(
+                        "订阅已导入 · 共 {} 个订阅组 · {provider_count} 个来源 · {node_count} 个节点{}",
+                        self.imported_subscriptions.len(),
+                        transaction.apply.status_suffix(language)
+                    ),
+                };
+                trace_ui(UiEvent::SourceImportSucceeded);
+            }
+            Ok((transaction, _providers)) => {
+                self.subscription_feedback =
+                    SubscriptionFeedback::StoreFailed(SubscriptionStoreError::StoreUnavailable);
+                self.status = format!(
+                    "{}{}",
+                    language.text("Could not save subscription", "订阅保存失败"),
+                    transaction.apply.status_suffix_after_rollback_attempt(
+                        language,
+                        transaction.rollback_error.as_ref(),
+                    )
+                );
+                trace_ui(UiEvent::SourceImportFailed);
+            }
+            Err(ImportSubscriptionError::Preview(error)) => {
+                self.subscription_feedback = SubscriptionFeedback::PreviewFailed(error);
+                self.status = format!(
+                    "{}{error}",
+                    language.text("Subscription import failed: ", "订阅导入失败：")
+                );
+                trace_ui(UiEvent::SourceImportFailed);
+            }
+            Err(ImportSubscriptionError::Store(error)) => {
+                self.subscription_feedback = SubscriptionFeedback::StoreFailed(error);
+                self.status = format!(
+                    "{}{error}",
+                    language.text("Could not save subscription: ", "订阅保存失败：")
+                );
+                trace_ui(UiEvent::SourceImportFailed);
+            }
+        }
+        cx.notify();
+    }
+
+    fn merge_imported_subscription(
+        &mut self,
+        subscription: StoredSubscription,
+        providers: &[LoadedProvider],
+        generation: u64,
+        kind: SourceKind,
+    ) {
+        if let Some(existing) = self
+            .imported_subscriptions
+            .iter_mut()
+            .find(|existing| existing.id == subscription.id)
+        {
+            existing.name.clone_from(&subscription.name);
+            existing.source = subscription.source;
+            existing.enabled = subscription.enabled;
+            existing.state = if subscription.enabled {
+                ImportedSubscriptionState::Ready(kind)
+            } else {
+                ImportedSubscriptionState::None
+            };
+            existing.providers = providers.to_vec();
+            existing.refresh_interval = subscription.refresh_interval;
+            existing.last_successful_update_unix_secs =
+                subscription.last_successful_update_unix_secs;
+            return;
+        }
+        self.imported_subscriptions.push(ImportedSubscription {
+            id: subscription.id,
+            name: subscription.name,
+            source: subscription.source,
+            enabled: subscription.enabled,
+            state: if subscription.enabled {
+                ImportedSubscriptionState::Ready(kind)
+            } else {
+                ImportedSubscriptionState::None
+            },
+            providers: providers.to_vec(),
+            generation,
+            refresh_interval: subscription.refresh_interval,
+            last_successful_update_unix_secs: subscription.last_successful_update_unix_secs,
+        });
     }
 
     fn restore_imported_subscriptions(&mut self, cx: &mut Context<Self>) {
@@ -5188,22 +5222,27 @@ impl ManisApp {
         .on_click(cx.listener(|this, _, _, cx| this.connect_mihomo(cx)))
     }
 
-    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
     fn node_row(
         item: PolicyNode,
-        source: String,
-        policy_id: PolicyGroupId,
-        policy_name: String,
-        current: bool,
-        manually_selectable: bool,
-        selection_busy: bool,
-        benchmark_state: GroupBenchmarkNodeState,
-        language: Language,
-        theme: Theme,
+        context: PolicyNodeRowContext,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let node_id = item.id.clone();
-        let node_name = item.name.clone();
+        let PolicyNodeRowContext {
+            source,
+            selection,
+            current,
+            manually_selectable,
+            selection_busy,
+            benchmark_state,
+            language,
+            theme,
+        } = context;
+        let PolicySelectionRequest {
+            group_id: policy_id,
+            group_name: policy_name,
+            node_id,
+            node_name,
+        } = selection;
         let detail = if item.detail.trim().is_empty() {
             language.text("Unknown type", "类型未知").to_owned()
         } else {
@@ -5213,37 +5252,17 @@ impl ManisApp {
             .latency_ms
             .map_or_else(|| "—".to_owned(), |latency| format!("{latency} ms"));
         let spinner_id = format!("policy-node-{}-latency", item.id.as_str());
-        let leading = if manually_selectable {
-            div()
-                .size(px(18.0))
-                .rounded_full()
-                .border_2()
-                .border_color(if current {
-                    theme.action_primary
-                } else {
-                    theme.outline_strong
-                })
-                .when(current, |dot| dot.bg(theme.action_primary))
-        } else {
-            div()
-                .size(px(22.0))
-                .rounded(Radius::Control.px())
-                .bg(theme.surface_high)
-                .text_size(TextRole::Metadata.size())
-                .line_height(TextRole::Metadata.line_height())
-                .font_weight(TextRole::Label.weight())
-                .text_color(theme.text_tertiary)
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(
-                    if item.kind == manis_core::PolicyCandidateKind::PolicyGroup {
-                        language.text("G", "组")
-                    } else {
-                        language.text("N", "点")
-                    },
-                )
-        };
+        let leading =
+            Self::policy_node_leading(item.kind, manually_selectable, current, language, theme);
+        let description = Self::policy_node_description(
+            item.name,
+            detail,
+            current,
+            manually_selectable,
+            language,
+            theme,
+        );
+        let source = Self::policy_node_source(source, manually_selectable, theme);
         div()
             .id(format!("node-{}", item.id.as_str()))
             .tab_stop(manually_selectable && !selection_busy)
@@ -5259,59 +5278,8 @@ impl ManisApp {
                 theme.surface_low
             })
             .child(leading)
-            .child(
-                div()
-                    .flex_1()
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(Space::Sm.px())
-                            .min_w(px(0.0))
-                            .overflow_x_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
-                            .text_size(TextRole::Body.size())
-                            .line_height(TextRole::Body.line_height())
-                            .font_weight(TextRole::Label.weight())
-                            .text_color(if manually_selectable {
-                                theme.text_primary
-                            } else {
-                                theme.text_secondary
-                            })
-                            .child(item.name)
-                            .when(current && !manually_selectable, |name| {
-                                name.child(div().child(status_badge(
-                                    language.text("Current", "当前出口"),
-                                    StatusTone::Neutral,
-                                    theme,
-                                )))
-                            }),
-                    )
-                    .child(
-                        div()
-                            .mt(Space::Xs.px())
-                            .text_size(TextRole::Metadata.size())
-                            .line_height(TextRole::Metadata.line_height())
-                            .text_color(theme.text_tertiary)
-                            .child(detail),
-                    ),
-            )
-            .child(
-                div()
-                    .w(px(100.0))
-                    .overflow_x_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .text_size(TextRole::Metadata.size())
-                    .line_height(TextRole::Metadata.line_height())
-                    .text_color(if manually_selectable {
-                        theme.text_secondary
-                    } else {
-                        theme.text_tertiary
-                    })
-                    .child(source),
-            )
+            .child(description)
+            .child(source)
             .child(
                 div()
                     .w(px(64.0))
@@ -5348,6 +5316,105 @@ impl ManisApp {
                             );
                         }
                     }))
+            })
+    }
+
+    fn policy_node_source(source: String, manually_selectable: bool, theme: Theme) -> Div {
+        div()
+            .w(px(100.0))
+            .overflow_x_hidden()
+            .whitespace_nowrap()
+            .text_ellipsis()
+            .text_size(TextRole::Metadata.size())
+            .line_height(TextRole::Metadata.line_height())
+            .text_color(if manually_selectable {
+                theme.text_secondary
+            } else {
+                theme.text_tertiary
+            })
+            .child(source)
+    }
+
+    fn policy_node_description(
+        name: String,
+        detail: String,
+        current: bool,
+        manually_selectable: bool,
+        language: Language,
+        theme: Theme,
+    ) -> Div {
+        div()
+            .flex_1()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(Space::Sm.px())
+                    .min_w(px(0.0))
+                    .overflow_x_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .text_size(TextRole::Body.size())
+                    .line_height(TextRole::Body.line_height())
+                    .font_weight(TextRole::Label.weight())
+                    .text_color(if manually_selectable {
+                        theme.text_primary
+                    } else {
+                        theme.text_secondary
+                    })
+                    .child(name)
+                    .when(current && !manually_selectable, |name| {
+                        name.child(div().child(status_badge(
+                            language.text("Current", "当前出口"),
+                            StatusTone::Neutral,
+                            theme,
+                        )))
+                    }),
+            )
+            .child(
+                div()
+                    .mt(Space::Xs.px())
+                    .text_size(TextRole::Metadata.size())
+                    .line_height(TextRole::Metadata.line_height())
+                    .text_color(theme.text_tertiary)
+                    .child(detail),
+            )
+    }
+
+    fn policy_node_leading(
+        kind: manis_core::PolicyCandidateKind,
+        manually_selectable: bool,
+        current: bool,
+        language: Language,
+        theme: Theme,
+    ) -> Div {
+        if manually_selectable {
+            return div()
+                .size(px(18.0))
+                .rounded_full()
+                .border_2()
+                .border_color(if current {
+                    theme.action_primary
+                } else {
+                    theme.outline_strong
+                })
+                .when(current, |dot| dot.bg(theme.action_primary));
+        }
+        div()
+            .size(px(22.0))
+            .rounded(Radius::Control.px())
+            .bg(theme.surface_high)
+            .text_size(TextRole::Metadata.size())
+            .line_height(TextRole::Metadata.line_height())
+            .font_weight(TextRole::Label.weight())
+            .text_color(theme.text_tertiary)
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(if kind == manis_core::PolicyCandidateKind::PolicyGroup {
+                language.text("G", "组")
+            } else {
+                language.text("N", "点")
             })
     }
 
@@ -5513,6 +5580,8 @@ impl ManisApp {
             );
             for item in selected_policy.nodes.iter().cloned() {
                 let current = item.id == selected_node.id;
+                let item_id = item.id.clone();
+                let item_name = item.name.clone();
                 let source = self.policy_node_source_label(&item, language);
                 let benchmark_state = self
                     .group_benchmarks
@@ -5522,15 +5591,21 @@ impl ManisApp {
                     });
                 body = body.child(Self::node_row(
                     item,
-                    source,
-                    selected_policy.id.clone(),
-                    selected_policy.name.clone(),
-                    current,
-                    manually_selectable,
-                    self.policy_selection_busy.is_some(),
-                    benchmark_state,
-                    language,
-                    theme,
+                    PolicyNodeRowContext {
+                        source,
+                        selection: PolicySelectionRequest {
+                            group_id: selected_policy.id.clone(),
+                            group_name: selected_policy.name.clone(),
+                            node_id: item_id,
+                            node_name: item_name,
+                        },
+                        current,
+                        manually_selectable,
+                        selection_busy: self.policy_selection_busy.is_some(),
+                        benchmark_state,
+                        language,
+                        theme,
+                    },
                     cx,
                 ));
             }

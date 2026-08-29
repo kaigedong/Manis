@@ -1862,12 +1862,14 @@ impl ManisApp {
                 }
                 trace_ui(UiEvent::SourceRecognitionSucceeded);
                 self.import_remote_subscription(
-                    input_value,
-                    name,
-                    self.subscription_editor_refresh_interval,
-                    self.subscription_editor_enabled,
-                    self.subscription_editor_source_id.clone(),
-                    preview.kind,
+                    super::SubscriptionImportRequest {
+                        input: input_value,
+                        name,
+                        refresh_interval: self.subscription_editor_refresh_interval,
+                        enabled: self.subscription_editor_enabled,
+                        editing_id: self.subscription_editor_source_id.clone(),
+                        kind: preview.kind,
+                    },
                     cx,
                 );
                 true
