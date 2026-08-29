@@ -18,10 +18,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         capture_routing_rules(&mut cx)?;
         return Ok(());
     }
-    if std::env::args().any(|argument| argument == "--route-prediction") {
-        capture_route_prediction(&mut cx)?;
-        return Ok(());
-    }
     if std::env::args().any(|argument| argument == "--medium-sheet") {
         capture_medium_sheet(&mut cx)?;
         return Ok(());
@@ -987,37 +983,6 @@ fn capture_configuration_dark(
     save_screenshot(cx, window, "configuration-wide-dark.png")?;
 
     close_window(cx, window)
-}
-
-#[cfg(target_os = "macos")]
-fn capture_route_prediction(
-    cx: &mut gpui::VisualTestAppContext,
-) -> Result<(), Box<dyn std::error::Error>> {
-    use gpui::{AnyWindowHandle, Modifiers, point, px, size};
-    use manis_ui::ManisApp;
-
-    let (endpoint, server) = spawn_mihomo_fixture()?;
-    let window = cx.open_offscreen_window(size(px(1420.0), px(900.0)), |window, cx| {
-        manis_root(window, cx, |_| ManisApp::with_fixture_controller(endpoint))
-    })?;
-    let window: AnyWindowHandle = window.into();
-
-    refresh(cx, window)?;
-    cx.simulate_click(window, point(px(1_350.0), px(82.0)), Modifiers::none());
-    for _ in 0..24 {
-        std::thread::sleep(std::time::Duration::from_millis(25));
-        refresh(cx, window)?;
-    }
-    cx.simulate_click(window, point(px(110.0), px(155.0)), Modifiers::none());
-    refresh(cx, window)?;
-    cx.simulate_click(window, point(px(1_190.0), px(175.0)), Modifiers::none());
-    cx.simulate_input(window, "openai.com");
-    refresh(cx, window)?;
-    cx.simulate_click(window, point(px(1_365.0), px(175.0)), Modifiers::none());
-    refresh(cx, window)?;
-    save_screenshot(cx, window, "native-wide-route-prediction.png")?;
-    close_window(cx, window)?;
-    server.stop()
 }
 
 #[cfg(target_os = "macos")]

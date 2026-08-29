@@ -5137,23 +5137,6 @@ impl ManisApp {
                             ))
                             .child(
                                 action_button(
-                                    "open-route-test",
-                                    language.message(Message::TestRules),
-                                    ActionRole::Secondary,
-                                    ControlSize::Compact,
-                                )
-                                .accessibility_label(
-                                    language.text("Test routing rules", "测试分流规则"),
-                                )
-                                .border_color(theme.outline_subtle)
-                                .on_click(cx.listener(
-                                    |this, _, window, cx| {
-                                        this.open_route_inspector(window, cx);
-                                    },
-                                )),
-                            )
-                            .child(
-                                action_button(
                                     "open-manual-rule-editor",
                                     language.message(Message::AddRule),
                                     ActionRole::Primary,

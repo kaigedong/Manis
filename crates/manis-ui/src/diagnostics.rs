@@ -90,9 +90,6 @@ pub(crate) enum UiEvent {
     RoutingModeFailed,
     GlobalNodeSelected,
     GlobalNodeSelectionFailed,
-    RouteInspectorOpened,
-    RouteInspectorClosed,
-    RoutePredictionRequested,
 }
 
 impl UiEvent {
@@ -133,9 +130,6 @@ impl UiEvent {
             Self::RoutingModeFailed => "routing_mode.failed",
             Self::GlobalNodeSelected => "global_node.selected",
             Self::GlobalNodeSelectionFailed => "global_node.selection_failed",
-            Self::RouteInspectorOpened => "route_inspector.opened",
-            Self::RouteInspectorClosed => "route_inspector.closed",
-            Self::RoutePredictionRequested => "route_prediction.requested",
         }
     }
 }
