@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use gpui::{
     AnyElement, Context, Div, Entity, Focusable, FontWeight, KeyDownEvent, ParentElement, Role,
     Stateful, StyleRefinement, Styled, Window, div, prelude::*, px,
@@ -35,6 +37,120 @@ use crate::{
 
 const MAX_MANUAL_RULE_INPUT_BYTES: usize = 1_024;
 const MANUAL_RULES_EXPANSION_KEY: &str = "routing-manual-rules";
+
+struct QxRuleSaveRequest {
+    url: String,
+    target: String,
+    editing_id: Option<String>,
+    refresh_interval: RemoteSourceRefreshInterval,
+}
+
+fn save_qx_rule_source(
+    runtime: &super::KernelRuntime,
+    store_dir: &Path,
+    request: QxRuleSaveRequest,
+) -> super::QxRuleImportResult {
+    let QxRuleSaveRequest {
+        url,
+        target,
+        editing_id,
+        refresh_interval,
+    } = request;
+    let content = download_qx_rule_document(&url).map_err(ImportQxRuleError::Download)?;
+    if QxRuleList::parse(&content).rules.is_empty() {
+        return Err(ImportQxRuleError::InvalidDocument);
+    }
+    if let Some(editing_id) = editing_id {
+        return replace_qx_rule_source(
+            runtime,
+            store_dir,
+            &editing_id,
+            &url,
+            &target,
+            &content,
+            refresh_interval,
+        );
+    }
+    create_qx_rule_source(
+        runtime,
+        store_dir,
+        &url,
+        &target,
+        &content,
+        refresh_interval,
+    )
+}
+
+fn replace_qx_rule_source(
+    runtime: &super::KernelRuntime,
+    store_dir: &Path,
+    id: &str,
+    url: &str,
+    target: &str,
+    content: &str,
+    refresh_interval: RemoteSourceRefreshInterval,
+) -> super::QxRuleImportResult {
+    let transaction = super::mutate_saved_sources(runtime, store_dir, || {
+        mihomo::replace_qx_rule_source_definition_in(
+            store_dir,
+            id,
+            url,
+            target,
+            content,
+            refresh_interval,
+            mihomo::current_unix_secs(),
+        )
+    })
+    .map_err(ImportQxRuleError::Store)?;
+    Ok(match transaction.value {
+        Some(stored) => ImportQxRuleSuccess::Imported {
+            stored,
+            apply: transaction.apply,
+        },
+        None => ImportQxRuleSuccess::RolledBack {
+            apply: transaction.apply,
+            rollback_error: transaction.rollback_error,
+        },
+    })
+}
+
+fn create_qx_rule_source(
+    runtime: &super::KernelRuntime,
+    store_dir: &Path,
+    url: &str,
+    target: &str,
+    content: &str,
+    refresh_interval: RemoteSourceRefreshInterval,
+) -> super::QxRuleImportResult {
+    let transaction = super::mutate_saved_sources(runtime, store_dir, || {
+        let outcome = mihomo::save_qx_rule_source_in(store_dir, url, target, content)?;
+        let mihomo::SaveQxRuleSourceOutcome::Created(mut stored) = outcome else {
+            return Ok(outcome);
+        };
+        if refresh_interval != RemoteSourceRefreshInterval::Manual {
+            stored = mihomo::update_qx_rule_source_refresh_interval_in(
+                store_dir,
+                &stored.id,
+                refresh_interval,
+            )?;
+        }
+        Ok(mihomo::SaveQxRuleSourceOutcome::Created(stored))
+    })
+    .map_err(ImportQxRuleError::Store)?;
+    Ok(match transaction.value {
+        Some(mihomo::SaveQxRuleSourceOutcome::Created(stored)) => ImportQxRuleSuccess::Imported {
+            stored,
+            apply: transaction.apply,
+        },
+        Some(mihomo::SaveQxRuleSourceOutcome::Existing(stored)) => {
+            ImportQxRuleSuccess::AlreadyExists { stored }
+        }
+        None => ImportQxRuleSuccess::RolledBack {
+            apply: transaction.apply,
+            rollback_error: transaction.rollback_error,
+        },
+    })
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ManualRuleKeyboardAction {
@@ -5677,7 +5793,6 @@ impl ManisApp {
         )
     }
 
-    #[allow(clippy::too_many_lines)]
     fn submit_qx_rule_import(
         &mut self,
         input: &Entity<SubscriptionTextInput>,
@@ -5725,32 +5840,12 @@ impl ManisApp {
             cx.notify();
             return false;
         };
-        if let Some(existing) = self.qx_rule_sources.iter().find(|existing| {
-            existing.source == parsed_source && editing_id.as_deref() != Some(existing.id.as_str())
-        }) {
-            let target_policy =
-                self.effective_rule_target(existing.target_policy.as_str(), self.language());
-            self.qx_rule_feedback = QxRuleImportFeedback::AlreadyExists {
-                source_id: existing.id.clone(),
-                rule_count: existing.rule_count,
-                target_policy: target_policy.clone(),
-            };
-            self.language()
-                .text(
-                    "Rule source already exists; no duplicate was added",
-                    "规则源已存在，未重复添加",
-                )
-                .clone_into(&mut self.status);
-            record_operation(
-                operation_id,
-                LogLevel::Warn,
-                "configuration.rule_source.add.duplicate",
-                format!(
-                    "existing_id={} rules={} target={target_policy}",
-                    existing.id, existing.rule_count
-                ),
-            );
-            cx.notify();
+        if self.reject_duplicate_qx_rule_source(
+            &parsed_source,
+            editing_id.as_deref(),
+            operation_id,
+            cx,
+        ) {
             return false;
         }
         self.qx_rule_import_generation = self.qx_rule_import_generation.wrapping_add(1);
@@ -5765,247 +5860,244 @@ impl ManisApp {
         cx.spawn(async move |this, cx| {
             let result = executor
                 .spawn(async move {
-                    let content =
-                        download_qx_rule_document(&url).map_err(ImportQxRuleError::Download)?;
-                    let parsed = QxRuleList::parse(&content);
-                    if parsed.rules.is_empty() {
-                        return Err(ImportQxRuleError::InvalidDocument);
-                    }
-                    if let Some(editing_id) = editing_id {
-                        let transaction = super::mutate_saved_sources(
-                            &runtime,
-                            &store_dir,
-                            || {
-                                mihomo::replace_qx_rule_source_definition_in(
-                                    &store_dir,
-                                    &editing_id,
-                                    &url,
-                                    &target,
-                                    &content,
-                                    refresh_interval,
-                                    mihomo::current_unix_secs(),
-                                )
-                            },
-                        )
-                        .map_err(ImportQxRuleError::Store)?;
-                        return Ok::<_, ImportQxRuleError>(match transaction.value {
-                            Some(stored) => ImportQxRuleSuccess::Imported {
-                                stored,
-                                apply: transaction.apply,
-                            },
-                            None => ImportQxRuleSuccess::RolledBack {
-                                apply: transaction.apply,
-                                rollback_error: transaction.rollback_error,
-                            },
-                        });
-                    }
-                    let transaction = super::mutate_saved_sources(
+                    save_qx_rule_source(
                         &runtime,
                         &store_dir,
-                        || {
-                            match mihomo::save_qx_rule_source_in(
-                                &store_dir,
-                                &url,
-                                &target,
-                                &content,
-                            )? {
-                                mihomo::SaveQxRuleSourceOutcome::Created(mut stored) => {
-                                    if refresh_interval
-                                        != RemoteSourceRefreshInterval::Manual
-                                    {
-                                        stored = mihomo::update_qx_rule_source_refresh_interval_in(
-                                            &store_dir,
-                                            &stored.id,
-                                            refresh_interval,
-                                        )?;
-                                    }
-                                    Ok(mihomo::SaveQxRuleSourceOutcome::Created(stored))
-                                }
-                                mihomo::SaveQxRuleSourceOutcome::Existing(stored) => {
-                                    Ok(mihomo::SaveQxRuleSourceOutcome::Existing(stored))
-                                }
-                            }
+                        QxRuleSaveRequest {
+                            url,
+                            target,
+                            editing_id,
+                            refresh_interval,
                         },
                     )
-                    .map_err(ImportQxRuleError::Store)?;
-                    Ok::<_, ImportQxRuleError>(match transaction.value {
-                        Some(mihomo::SaveQxRuleSourceOutcome::Created(stored)) => {
-                            ImportQxRuleSuccess::Imported {
-                                stored,
-                                apply: transaction.apply,
-                            }
-                        }
-                        Some(mihomo::SaveQxRuleSourceOutcome::Existing(stored)) => {
-                            ImportQxRuleSuccess::AlreadyExists { stored }
-                        }
-                        None => ImportQxRuleSuccess::RolledBack {
-                            apply: transaction.apply,
-                            rollback_error: transaction.rollback_error,
-                        },
-                    })
                 })
                 .await;
             this.update(cx, |this, cx| {
-                if this.qx_rule_import_generation != generation {
-                    return;
-                }
-                if let Some(input) = this.qx_rule_input.as_ref() {
-                    input.update(cx, |input, cx| input.set_enabled(true, cx));
-                }
-                match result {
-                    Ok(ImportQxRuleSuccess::Imported { stored, apply }) => {
-                        let language = this.language();
-                        let rule_count = stored.rule_count;
-                        let diagnostic_count = stored.diagnostic_count;
-                        let stored_id = stored.id.clone();
-                        let target_policy = this
-                            .effective_rule_target(stored.target_policy.as_str(), this.language());
-                        if let Some(existing) = this
-                            .qx_rule_sources
-                            .iter_mut()
-                            .find(|source| source.id == stored_id)
-                        {
-                            *existing = stored;
-                        } else {
-                            this.qx_rule_sources.push(stored);
-                        }
-                        this.sync_routing_rule_group_order();
-                        if let Some(store_dir) = this.subscription_store_dir.as_ref() {
-                            let _ = mihomo::save_routing_rule_group_order_in(
-                                store_dir,
-                                &this.routing_rule_group_order,
-                            );
-                        }
-                        this.qx_rule_source_refreshes.remove(&stored_id);
-                        this.qx_rule_feedback = QxRuleImportFeedback::Imported {
-                            rule_count,
-                            diagnostic_count,
-                        };
-                        if let Some(input) = this.qx_rule_input.as_ref() {
-                            input.update(cx, SubscriptionTextInput::clear_without_event);
-                        }
-                        apply.reconcile_proxy_mode(&mut this.proxy_mode);
-                        this.status = if language == Language::English {
-                            format!(
-                                "QX rules imported · {rule_count} active rules{}",
-                                apply.status_suffix(language)
-                            )
-                        } else {
-                            format!(
-                                "QX 规则已导入 · {rule_count} 条生效{}",
-                                apply.status_suffix(language)
-                            )
-                        };
-                        record_operation(
-                            operation_id,
-                            LogLevel::Info,
-                            "configuration.rule_source.add.succeeded",
-                            format!(
-                                "id={stored_id} rules={rule_count} skipped={diagnostic_count} target={target_policy}"
-                            ),
-                        );
-                    }
-                    Ok(ImportQxRuleSuccess::AlreadyExists { stored }) => {
-                        let target_policy = this
-                            .effective_rule_target(stored.target_policy.as_str(), this.language());
-                        let source_id = stored.id.clone();
-                        let rule_count = stored.rule_count;
-                        if !this
-                            .qx_rule_sources
-                            .iter()
-                            .any(|source| source.id == source_id)
-                        {
-                            this.qx_rule_sources.push(stored);
-                        }
-                        this.sync_routing_rule_group_order();
-                        if let Some(store_dir) = this.subscription_store_dir.as_ref() {
-                            let _ = mihomo::save_routing_rule_group_order_in(
-                                store_dir,
-                                &this.routing_rule_group_order,
-                            );
-                        }
-                        this.qx_rule_feedback = QxRuleImportFeedback::AlreadyExists {
-                            source_id: source_id.clone(),
-                            rule_count,
-                            target_policy: target_policy.clone(),
-                        };
-                        this.language()
-                            .text(
-                                "Rule source already exists; no duplicate was added",
-                                "规则源已存在，未重复添加",
-                            )
-                            .clone_into(&mut this.status);
-                        record_operation(
-                            operation_id,
-                            LogLevel::Warn,
-                            "configuration.rule_source.add.duplicate",
-                            format!(
-                                "existing_id={source_id} rules={rule_count} target={target_policy}"
-                            ),
-                        );
-                    }
-                    Ok(ImportQxRuleSuccess::RolledBack {
-                        apply,
-                        rollback_error,
-                    }) => {
-                        let language = this.language();
-                        this.qx_rule_feedback = QxRuleImportFeedback::Idle;
-                        this.status = apply.status_suffix_after_rollback_attempt(
-                            language,
-                            rollback_error.as_ref(),
-                        );
-                    }
-                    Err(ImportQxRuleError::Download(error)) => {
-                        this.qx_rule_feedback = QxRuleImportFeedback::DownloadFailed(error);
-                        this.status = format!(
-                            "{}: {error}",
-                            this.language()
-                                .text("QX rule download failed", "QX 规则下载失败")
-                        );
-                        record_operation(
-                            operation_id,
-                            LogLevel::Error,
-                            "configuration.rule_source.add.failed",
-                            format!("phase=download error={error}"),
-                        );
-                    }
-                    Err(ImportQxRuleError::InvalidDocument) => {
-                        this.qx_rule_feedback = QxRuleImportFeedback::InvalidDocument;
-                        this.language()
-                            .text(
-                                "QX rules not imported: no recognizable domain rules",
-                                "QX 规则未导入：没有可识别的域名规则",
-                            )
-                            .clone_into(&mut this.status);
-                        record_operation(
-                            operation_id,
-                            LogLevel::Error,
-                            "configuration.rule_source.add.failed",
-                            "phase=parse reason=no_recognizable_domain_rules",
-                        );
-                    }
-                    Err(ImportQxRuleError::Store(error)) => {
-                        this.qx_rule_feedback = QxRuleImportFeedback::StoreFailed(error);
-                        this.status = format!(
-                            "{}: {error}",
-                            this.language()
-                                .text("QX rule save failed", "QX 规则保存失败")
-                        );
-                        record_operation(
-                            operation_id,
-                            LogLevel::Error,
-                            "configuration.rule_source.add.failed",
-                            format!("phase=store error={error}"),
-                        );
-                    }
-                }
-                cx.notify();
+                this.finish_qx_rule_import(generation, operation_id, result, cx);
             })
             .ok();
         })
         .detach();
         cx.notify();
         true
+    }
+
+    fn reject_duplicate_qx_rule_source(
+        &mut self,
+        parsed_source: &SecretUrl,
+        editing_id: Option<&str>,
+        operation_id: u64,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some((source_id, rule_count, stored_target)) = self
+            .qx_rule_sources
+            .iter()
+            .find(|source| {
+                source.source == *parsed_source && editing_id != Some(source.id.as_str())
+            })
+            .map(|source| {
+                (
+                    source.id.clone(),
+                    source.rule_count,
+                    source.target_policy.clone(),
+                )
+            })
+        else {
+            return false;
+        };
+        let target_policy = self.effective_rule_target(stored_target.as_str(), self.language());
+        self.qx_rule_feedback = QxRuleImportFeedback::AlreadyExists {
+            source_id: source_id.clone(),
+            rule_count,
+            target_policy: target_policy.clone(),
+        };
+        self.language()
+            .text(
+                "Rule source already exists; no duplicate was added",
+                "规则源已存在，未重复添加",
+            )
+            .clone_into(&mut self.status);
+        record_operation(
+            operation_id,
+            LogLevel::Warn,
+            "configuration.rule_source.add.duplicate",
+            format!("existing_id={source_id} rules={rule_count} target={target_policy}"),
+        );
+        cx.notify();
+        true
+    }
+
+    fn finish_qx_rule_import(
+        &mut self,
+        generation: u64,
+        operation_id: u64,
+        result: super::QxRuleImportResult,
+        cx: &mut Context<Self>,
+    ) {
+        if self.qx_rule_import_generation != generation {
+            return;
+        }
+        if let Some(input) = self.qx_rule_input.as_ref() {
+            input.update(cx, |input, cx| input.set_enabled(true, cx));
+        }
+        match result {
+            Ok(ImportQxRuleSuccess::Imported { stored, apply }) => {
+                self.finish_imported_qx_rule(operation_id, stored, &apply, cx);
+            }
+            Ok(ImportQxRuleSuccess::AlreadyExists { stored }) => {
+                self.finish_existing_qx_rule(operation_id, stored);
+            }
+            Ok(ImportQxRuleSuccess::RolledBack {
+                apply,
+                rollback_error,
+            }) => {
+                self.qx_rule_feedback = QxRuleImportFeedback::Idle;
+                self.status = apply
+                    .status_suffix_after_rollback_attempt(self.language(), rollback_error.as_ref());
+            }
+            Err(error) => self.finish_failed_qx_rule_import(operation_id, &error),
+        }
+        cx.notify();
+    }
+
+    fn finish_imported_qx_rule(
+        &mut self,
+        operation_id: u64,
+        stored: mihomo::StoredQxRuleSource,
+        apply: &SourceRuntimeApply,
+        cx: &mut Context<Self>,
+    ) {
+        let language = self.language();
+        let rule_count = stored.rule_count;
+        let diagnostic_count = stored.diagnostic_count;
+        let stored_id = stored.id.clone();
+        let target_policy = self.effective_rule_target(stored.target_policy.as_str(), language);
+        if let Some(existing) = self
+            .qx_rule_sources
+            .iter_mut()
+            .find(|source| source.id == stored_id)
+        {
+            *existing = stored;
+        } else {
+            self.qx_rule_sources.push(stored);
+        }
+        self.persist_routing_rule_group_order();
+        self.qx_rule_source_refreshes.remove(&stored_id);
+        self.qx_rule_feedback = QxRuleImportFeedback::Imported {
+            rule_count,
+            diagnostic_count,
+        };
+        if let Some(input) = self.qx_rule_input.as_ref() {
+            input.update(cx, SubscriptionTextInput::clear_without_event);
+        }
+        apply.reconcile_proxy_mode(&mut self.proxy_mode);
+        self.status = if language == Language::English {
+            format!(
+                "QX rules imported · {rule_count} active rules{}",
+                apply.status_suffix(language)
+            )
+        } else {
+            format!(
+                "QX 规则已导入 · {rule_count} 条生效{}",
+                apply.status_suffix(language)
+            )
+        };
+        record_operation(
+            operation_id,
+            LogLevel::Info,
+            "configuration.rule_source.add.succeeded",
+            format!(
+                "id={stored_id} rules={rule_count} skipped={diagnostic_count} target={target_policy}"
+            ),
+        );
+    }
+
+    fn finish_existing_qx_rule(&mut self, operation_id: u64, stored: mihomo::StoredQxRuleSource) {
+        let target_policy =
+            self.effective_rule_target(stored.target_policy.as_str(), self.language());
+        let source_id = stored.id.clone();
+        let rule_count = stored.rule_count;
+        if !self
+            .qx_rule_sources
+            .iter()
+            .any(|source| source.id == source_id)
+        {
+            self.qx_rule_sources.push(stored);
+        }
+        self.persist_routing_rule_group_order();
+        self.qx_rule_feedback = QxRuleImportFeedback::AlreadyExists {
+            source_id: source_id.clone(),
+            rule_count,
+            target_policy: target_policy.clone(),
+        };
+        self.language()
+            .text(
+                "Rule source already exists; no duplicate was added",
+                "规则源已存在，未重复添加",
+            )
+            .clone_into(&mut self.status);
+        record_operation(
+            operation_id,
+            LogLevel::Warn,
+            "configuration.rule_source.add.duplicate",
+            format!("existing_id={source_id} rules={rule_count} target={target_policy}"),
+        );
+    }
+
+    fn persist_routing_rule_group_order(&mut self) {
+        self.sync_routing_rule_group_order();
+        if let Some(store_dir) = self.subscription_store_dir.as_ref() {
+            let _ =
+                mihomo::save_routing_rule_group_order_in(store_dir, &self.routing_rule_group_order);
+        }
+    }
+
+    fn finish_failed_qx_rule_import(&mut self, operation_id: u64, error: &ImportQxRuleError) {
+        match error {
+            ImportQxRuleError::Download(error) => {
+                self.status = format!(
+                    "{}: {error}",
+                    self.language()
+                        .text("QX rule download failed", "QX 规则下载失败")
+                );
+                self.qx_rule_feedback = QxRuleImportFeedback::DownloadFailed(*error);
+                record_operation(
+                    operation_id,
+                    LogLevel::Error,
+                    "configuration.rule_source.add.failed",
+                    "phase=download",
+                );
+            }
+            ImportQxRuleError::InvalidDocument => {
+                self.qx_rule_feedback = QxRuleImportFeedback::InvalidDocument;
+                self.language()
+                    .text(
+                        "QX rules not imported: no recognizable domain rules",
+                        "QX 规则未导入：没有可识别的域名规则",
+                    )
+                    .clone_into(&mut self.status);
+                record_operation(
+                    operation_id,
+                    LogLevel::Error,
+                    "configuration.rule_source.add.failed",
+                    "phase=parse reason=no_recognizable_domain_rules",
+                );
+            }
+            ImportQxRuleError::Store(error) => {
+                self.status = format!(
+                    "{}: {error}",
+                    self.language()
+                        .text("QX rule save failed", "QX 规则保存失败")
+                );
+                self.qx_rule_feedback = QxRuleImportFeedback::StoreFailed(*error);
+                record_operation(
+                    operation_id,
+                    LogLevel::Error,
+                    "configuration.rule_source.add.failed",
+                    "phase=store",
+                );
+            }
+        }
     }
 
     fn remove_qx_rule_source(&mut self, id: String, cx: &mut Context<Self>) {

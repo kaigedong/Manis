@@ -292,6 +292,8 @@ enum ImportQxRuleSuccess {
     },
 }
 
+type QxRuleImportResult = Result<ImportQxRuleSuccess, ImportQxRuleError>;
+
 struct PolicyCandidateRowContext {
     policy_id: PolicyGroupId,
     policy_name: String,
