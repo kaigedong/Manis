@@ -1,5 +1,8 @@
 use crate::localization::LocalizedText;
 
+mod format;
+pub(crate) use format::*;
+
 pub(crate) const CLEAR_THE_FILTER_OR_SEARCH_BY_OPERATION_ERROR_MESSAGE_OR: LocalizedText =
     LocalizedText::new(
         "Clear the filter or search by operation, error message, or log level.",

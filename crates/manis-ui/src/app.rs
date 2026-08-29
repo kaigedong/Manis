@@ -1564,18 +1564,13 @@ impl ManisApp {
                 self.proxy_source_editor.subscription_source_id = None;
                 self.proxy_source_editor.error = None;
                 transaction.apply.reconcile_proxy_mode(&mut self.proxy_mode);
-                self.status = match language {
-                    Language::English => format!(
-                        "Subscription imported · {} groups · {provider_count} sources · {node_count} nodes{}",
-                        self.imported_subscriptions.len(),
-                        transaction.apply.status_suffix(language)
-                    ),
-                    Language::SimplifiedChinese => format!(
-                        "订阅已导入 · 共 {} 个订阅组 · {provider_count} 个来源 · {node_count} 个节点{}",
-                        self.imported_subscriptions.len(),
-                        transaction.apply.status_suffix(language)
-                    ),
-                };
+                self.status = copy::app::subscription_imported(
+                    language,
+                    self.imported_subscriptions.len(),
+                    provider_count,
+                    node_count,
+                    &transaction.apply.status_suffix(language),
+                );
                 trace_ui(UiEvent::SourceImportSucceeded);
             }
             Ok((transaction, _providers)) => {
@@ -1769,17 +1764,11 @@ impl ManisApp {
                     .refresh_retry_not_before
                     .remove(&DueRemoteSource::Subscription(id.to_owned()).scheduler_key());
                 transaction.apply.reconcile_proxy_mode(&mut self.proxy_mode);
-                self.status = if language == Language::English {
-                    format!(
-                        "Subscription updated · {node_count} nodes{}",
-                        transaction.apply.status_suffix(language)
-                    )
-                } else {
-                    format!(
-                        "订阅更新完成 · {node_count} 个节点{}",
-                        transaction.apply.status_suffix(language)
-                    )
-                };
+                self.status = copy::app::subscription_updated(
+                    language,
+                    node_count,
+                    &transaction.apply.status_suffix(language),
+                );
                 trace_ui(UiEvent::SourceRestoreSucceeded);
             }
             Ok((_providers, transaction)) => {
@@ -2341,32 +2330,13 @@ impl ManisApp {
         current: Option<&str>,
         summary: GroupBenchmarkSummary,
     ) -> String {
-        match (language, kind.is_automatic(), current) {
-            (Language::English, true, Some(current)) => format!(
-                "Policy benchmark complete: {}/{} succeeded · current optimum {current}",
-                summary.succeeded, summary.total
-            ),
-            (Language::English, true, None) => format!(
-                "Policy benchmark complete: {}/{} succeeded · no single fixed exit",
-                summary.succeeded, summary.total
-            ),
-            (Language::English, false, _) => format!(
-                "Policy benchmark complete: {}/{} candidates succeeded",
-                summary.succeeded, summary.total
-            ),
-            (Language::SimplifiedChinese, true, Some(current)) => format!(
-                "策略组测速完成：{}/{} 成功 · 当前优选 {current}",
-                summary.succeeded, summary.total
-            ),
-            (Language::SimplifiedChinese, true, None) => format!(
-                "策略组测速完成：{}/{} 成功 · 该策略没有单一固定出口",
-                summary.succeeded, summary.total
-            ),
-            (Language::SimplifiedChinese, false, _) => format!(
-                "策略组测速完成：{}/{} 个候选项成功",
-                summary.succeeded, summary.total
-            ),
-        }
+        copy::app::policy_benchmark_complete(
+            language,
+            kind.is_automatic(),
+            current,
+            summary.succeeded,
+            summary.total,
+        )
     }
 
     fn policy_group_benchmark_feedback(
@@ -2378,42 +2348,19 @@ impl ManisApp {
         let (label, color) = match state {
             GroupBenchmarkState::Idle => return None,
             GroupBenchmarkState::Running { results, .. } => (
-                if language == Language::English {
-                    format!(
-                        "Testing latency · {} of {} candidates returned",
-                        results.len(),
-                        total
-                    )
-                } else {
-                    format!("正在测速 · {}/{} 个候选项已返回", results.len(), total)
-                },
+                copy::app::benchmark_progress(language, results.len(), total),
                 theme.action_primary,
             ),
-            GroupBenchmarkState::Complete { summary, .. } => {
-                let latency = match (summary.minimum_ms, summary.average_ms) {
-                    (Some(minimum), Some(average)) if language == Language::English => {
-                        format!(" · min {minimum} ms · avg {average} ms")
-                    }
-                    (Some(minimum), Some(average)) => {
-                        format!(" · 最低 {minimum} ms · 平均 {average} ms")
-                    }
-                    _ => String::new(),
-                };
-                (
-                    if language == Language::English {
-                        format!(
-                            "Latency test complete · {}/{} candidates succeeded{latency}",
-                            summary.succeeded, summary.total
-                        )
-                    } else {
-                        format!(
-                            "测速完成 · {}/{} 个候选项成功{latency}",
-                            summary.succeeded, summary.total
-                        )
-                    },
-                    theme.status_success,
-                )
-            }
+            GroupBenchmarkState::Complete { summary, .. } => (
+                copy::app::benchmark_complete(
+                    language,
+                    summary.succeeded,
+                    summary.total,
+                    summary.minimum_ms,
+                    summary.average_ms,
+                ),
+                theme.status_success,
+            ),
             GroupBenchmarkState::Failed { .. } => (
                 language
                     .localized(
@@ -2570,27 +2517,15 @@ impl ManisApp {
                         this.live_generation = this.live_generation.wrapping_add(1);
                         this.live_runtime = None;
                         this.proxy_mode = ProxyMode::Off;
-                        this.status = if language == Language::English {
-                            format!(
-                                "Switched to {} · configuration valid; connect to start",
-                                requested.display_name()
-                            )
-                        } else {
-                            format!(
-                                "已切换到 {} · 配置校验通过，点击连接启动",
-                                requested.display_name()
-                            )
-                        };
+                        this.status =
+                            copy::app::switched_kernel(language, requested.display_name());
                     }
                     Err(message) => {
-                        this.status = if language == Language::English {
-                            format!(
-                                "Could not switch to {}: {message}",
-                                requested.display_name()
-                            )
-                        } else {
-                            format!("无法切换到 {}：{message}", requested.display_name())
-                        };
+                        this.status = copy::app::kernel_switch_failed(
+                            language,
+                            requested.display_name(),
+                            &message,
+                        );
                     }
                 }
                 cx.notify();
@@ -2664,11 +2599,7 @@ impl ManisApp {
                 self.runtime = runtime;
                 self.mihomo_core_update_state = MihomoCoreUpdateState::Ready(version.clone());
                 self.apply_core_update_snapshot(snapshot, cx);
-                self.status = if language == Language::English {
-                    format!("Mihomo {version} installed and verified")
-                } else {
-                    format!("Mihomo {version} 已安装并校验")
-                };
+                self.status = copy::app::mihomo_installed(language, &version);
             }
             MihomoCoreUpdateOutcome::Failed { message, recovered } => {
                 self.mihomo_core_update_state = core_update::managed_core_binary_path()
@@ -2728,11 +2659,7 @@ impl ManisApp {
         self.controller = ControllerState::Connecting {
             endpoint: endpoint.clone(),
         };
-        self.status = if language == Language::English {
-            format!("Loading {kernel_name} data from {endpoint}")
-        } else {
-            format!("正在从 {endpoint} 读取 {kernel_name} 数据")
-        };
+        self.status = copy::app::loading_kernel_data(language, kernel_name, &endpoint);
         trace_ui(UiEvent::MihomoConnectStarted);
 
         let executor = cx.background_executor().clone();
@@ -2778,11 +2705,8 @@ impl ManisApp {
                             endpoint,
                             message: message.clone(),
                         };
-                        this.status = if language == Language::English {
-                            format!("{kernel_name} connection failed: {message}")
-                        } else {
-                            format!("{kernel_name} 连接失败：{message}")
-                        };
+                        this.status =
+                            copy::app::kernel_connection_failed(language, kernel_name, &message);
                     }
                 }
                 cx.notify();
@@ -2802,11 +2726,7 @@ impl ManisApp {
             .find(|group| group.name == policy_name)
             .map(|group| group.id.clone())
         else {
-            self.status = if self.language() == Language::English {
-                format!("Policy group “{policy_name}” is not present in the active kernel")
-            } else {
-                format!("当前内核中没有策略组“{policy_name}”")
-            };
+            self.status = copy::app::policy_missing_from_kernel(self.language(), &policy_name);
             cx.notify();
             return;
         };
@@ -2856,17 +2776,11 @@ impl ManisApp {
         };
         self.routing_mode = snapshot.runtime.mode;
         self.proxy_runtime = snapshot.runtime;
-        self.status = if self.language() == Language::English {
-            format!(
-                "Loaded {} policy groups · {} active connections",
-                policy_group_count, snapshot.active_connections
-            )
-        } else {
-            format!(
-                "已读取 {} 个策略组 · {} 条活动连接",
-                policy_group_count, snapshot.active_connections
-            )
-        };
+        self.status = copy::app::snapshot_loaded(
+            self.language(),
+            policy_group_count,
+            snapshot.active_connections,
+        );
         self.controller = ControllerState::Connected {
             endpoint,
             version: snapshot.version,
@@ -2928,7 +2842,8 @@ impl ManisApp {
                                 let _ = catalog.apply_selector_target(&group, current);
                             }
                             if let Some(stored_group) = this
-                                .managed_policies.groups
+                                .managed_policies
+                                .groups
                                 .iter()
                                 .find(|candidate| candidate.name == group)
                             {
@@ -2961,13 +2876,7 @@ impl ManisApp {
                     }
                 }
                 if applied > 0 || failed > 0 {
-                    this.status = if this.language() == Language::English {
-                        format!(
-                            "Restored {applied} saved node selections · {failed} could not be applied"
-                        )
-                    } else {
-                        format!("已恢复 {applied} 个节点选择 · {failed} 个暂时无法应用")
-                    };
+                    this.status = copy::app::selections_restored(this.language(), applied, failed);
                 }
                 cx.notify();
             })
@@ -3018,19 +2927,8 @@ impl ManisApp {
             cx.notify();
             return;
         };
-        self.status = if language == Language::English {
-            format!(
-                "Testing {} candidates in policy group “{}”",
-                candidate_names.len(),
-                group.name
-            )
-        } else {
-            format!(
-                "正在测试策略组“{}”的 {} 个候选项",
-                group.name,
-                candidate_names.len()
-            )
-        };
+        self.status =
+            copy::app::testing_policy_candidates(language, &group.name, candidate_names.len());
         trace_ui(UiEvent::GroupBenchmarkStarted);
 
         let runtime = self.runtime.clone();
@@ -3605,14 +3503,7 @@ impl ManisApp {
                                 .localized(copy::app::GLOBAL_MODE_ENABLED_CHOOSE_THE_GLOBAL_EXIT_ON_THE_NODES)
                                 .to_owned()
                         },
-                        |target| match language {
-                            Language::English => {
-                                format!("Global mode enabled · current exit {target}")
-                            }
-                            Language::SimplifiedChinese => {
-                                format!("全局模式已生效 · 当前出口 {target}")
-                            }
-                        },
+                        |target| copy::app::global_mode_current_exit(language, target),
                     ),
                     _ => format!(
                         "{}{}",
@@ -3703,21 +3594,13 @@ impl ManisApp {
                 "global.node.deferred",
                 "reason=managed_controller_not_connected",
             );
-            self.status = if language == Language::English {
-                format!("Saved global exit “{selected_name}”; it applies in Global mode")
-            } else {
-                format!("已保存全局出口“{selected_name}”；全局模式将使用此节点")
-            };
+            self.status = copy::app::saved_global_exit(language, &selected_name, false);
             cx.notify();
             return;
         }
 
         self.global_selection_busy = Some(selected_name.clone());
-        self.status = if language == Language::English {
-            format!("Selecting global node “{selected_name}”…")
-        } else {
-            format!("正在选择全局节点“{selected_name}”…")
-        };
+        self.status = copy::app::selecting_global_node(language, &selected_name);
         let runtime = self.runtime.clone();
         let executor = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
@@ -3755,20 +3638,11 @@ impl ManisApp {
                 );
                 let current = snapshot.current.as_deref().unwrap_or(selected_name);
                 trace_ui(UiEvent::GlobalNodeSelected);
-                self.status = match (language, self.routing_mode) {
-                    (Language::English, RoutingMode::Global) => {
-                        format!("Global exit switched to “{current}”")
-                    }
-                    (Language::English, _) => {
-                        format!("Saved global exit “{current}”; it applies in Global mode")
-                    }
-                    (Language::SimplifiedChinese, RoutingMode::Global) => {
-                        format!("全局出口已切换到“{current}”")
-                    }
-                    (Language::SimplifiedChinese, _) => {
-                        format!("已保存全局出口“{current}”；切换到全局模式后生效")
-                    }
-                };
+                self.status = copy::app::saved_global_exit(
+                    language,
+                    current,
+                    self.routing_mode == RoutingMode::Global,
+                );
             }
             Err(error) => {
                 record_operation(
@@ -3777,14 +3651,11 @@ impl ManisApp {
                     "global.node.failed",
                     error.to_string(),
                 );
-                self.status = match language {
-                    Language::English => format!(
-                        "Saved global exit “{selected_name}”, but it could not be applied now: {error}"
-                    ),
-                    Language::SimplifiedChinese => {
-                        format!("已保存全局出口“{selected_name}”，但暂时无法应用：{error}")
-                    }
-                };
+                self.status = copy::app::global_exit_apply_failed(
+                    language,
+                    selected_name,
+                    &error.to_string(),
+                );
             }
         }
         cx.notify();
@@ -3820,13 +3691,7 @@ impl ManisApp {
         let can_apply_now = matches!(self.controller, ControllerState::Connected { .. })
             && matches!(&*self.runtime, ControllerRuntime::Managed { .. });
         if !can_apply_now {
-            self.status = if language == Language::English {
-                format!(
-                    "Saved “{node_name}” for manual policy “{group_name}”; it will apply when the managed kernel connects"
-                )
-            } else {
-                format!("已为手动策略组“{group_name}”选择“{node_name}”；托管内核连接后生效")
-            };
+            self.status = copy::app::deferred_policy_selection(language, &group_name, &node_name);
             cx.notify();
             return;
         }
@@ -3863,11 +3728,7 @@ impl ManisApp {
             }
         }
         self.policy_selection_busy = Some(node_name.clone());
-        self.status = if language == Language::English {
-            format!("Setting “{group_name}” to “{node_name}”…")
-        } else {
-            format!("正在将“{group_name}”设为“{node_name}”…")
-        };
+        self.status = copy::app::setting_policy_node(language, &group_name, &node_name);
         let completion = PolicySelectionRequest {
             group_id,
             group_name: group_name.clone(),
@@ -4089,14 +3950,8 @@ impl ManisApp {
                     "policy.node.succeeded",
                     format!("group={group_name}"),
                 );
-                self.status = match self.language() {
-                    Language::English => format!(
-                        "“{group_name}” now uses “{current}” when a rule selects this policy"
-                    ),
-                    Language::SimplifiedChinese => {
-                        format!("规则命中“{group_name}”时将使用“{current}”")
-                    }
-                };
+                self.status =
+                    copy::app::policy_selection_applied(self.language(), &group_name, &current);
             }
             Err(error) => {
                 record_operation(
@@ -4105,14 +3960,12 @@ impl ManisApp {
                     "policy.node.failed",
                     error.to_string(),
                 );
-                self.status = match self.language() {
-                    Language::English => format!(
-                        "Saved “{node_name}” for “{group_name}”, but it could not be applied now: {error}"
-                    ),
-                    Language::SimplifiedChinese => {
-                        format!("已为“{group_name}”保存“{node_name}”，但暂时无法应用：{error}")
-                    }
-                };
+                self.status = copy::app::policy_selection_apply_failed(
+                    self.language(),
+                    &group_name,
+                    &node_name,
+                    &error.to_string(),
+                );
             }
         }
         cx.notify();
@@ -5120,29 +4973,17 @@ impl ManisApp {
                     this.workspace.select_node(target);
                 }
                 trace_ui(UiEvent::PolicyPreviewOpened);
-                this.status = if this.language() == Language::English {
-                    format!("Policy group “{item_name}” {action}")
-                } else {
-                    format!("策略组“{item_name}”已{action}")
-                };
+                this.status = copy::app::policy_group_action(this.language(), &item_name, action);
                 cx.notify();
             }))
     }
 
     fn policy_list_identity(item: &PolicyGroup, language: Language, theme: Theme) -> Div {
-        let target = if language == Language::English {
-            format!(
-                "{} · current {}",
-                policy_kind_label(language, item.kind),
-                item.target
-            )
-        } else {
-            format!(
-                "{} · 当前 {}",
-                policy_kind_label(language, item.kind),
-                item.target
-            )
-        };
+        let target = copy::app::policy_identity(
+            language,
+            policy_kind_label(language, item.kind),
+            &item.target,
+        );
         div()
             .min_w(px(0.0))
             .flex_1()

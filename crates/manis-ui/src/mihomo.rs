@@ -242,15 +242,6 @@ impl RuntimeProfileSource {
             Self::Invalid => "尚未准备好",
         }
     }
-
-    pub(crate) fn detail(self) -> &'static str {
-        match self {
-            #[cfg(any(test, feature = "snapshot-fixtures"))]
-            Self::FixtureController => "仅用于测试快照",
-            Self::SavedSources => "从本机私有来源编译",
-            Self::Invalid => "请检查来源设置",
-        }
-    }
 }
 
 impl ControllerRuntime {

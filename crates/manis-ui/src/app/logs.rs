@@ -5,7 +5,7 @@ use super::ManisApp;
 use crate::{
     components::{ActionRole, action_button, empty_state, page_heading},
     diagnostics::{UiLogEntry, recent_ui_logs},
-    localization::{CountNoun, Language, Message, copy},
+    localization::{Language, Message, copy},
     mihomo::KernelLogEntry,
     theme::{ControlSize, Radius, Space, TextRole, Theme},
 };
@@ -285,24 +285,7 @@ fn kernel_log_matches_query(entry: &KernelLogEntry, query: &str) -> bool {
 }
 
 fn logs_summary(language: Language, count: usize, live_status: &str, dropped: u64) -> String {
-    let count = language.count(CountNoun::Log, count);
-    match language {
-        Language::English => {
-            let dropped = if dropped == 1 {
-                "1 log".to_owned()
-            } else {
-                format!("{dropped} logs")
-            };
-            format!(
-                "{count} · Mihomo {live_status} · {dropped} dropped under load · sensitive data hidden"
-            )
-        }
-        Language::SimplifiedChinese => {
-            format!(
-                "{count} · Mihomo {live_status} · 高负载时丢弃 {dropped} 条日志 · 敏感信息已隐藏"
-            )
-        }
-    }
+    copy::logs::summary(language, count, live_status, dropped)
 }
 
 fn format_log_time(timestamp_ms: u128) -> String {

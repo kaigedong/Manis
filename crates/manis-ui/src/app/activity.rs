@@ -220,13 +220,11 @@ impl ManisApp {
                 continue;
             };
             if qx_source_matches_connection(&source.content, connection) {
-                return Some(source.source.subscription_name().unwrap_or_else(|| {
-                    if language == Language::English {
-                        format!("Rule source {}", index + 1)
-                    } else {
-                        format!("规则源 {}", index + 1)
-                    }
-                }));
+                return Some(
+                    source.source.subscription_name().unwrap_or_else(|| {
+                        copy::activity::numbered_rule_source(language, index + 1)
+                    }),
+                );
             }
         }
         None
@@ -502,10 +500,7 @@ fn connection_target(connection: &Connection, language: Language) -> String {
         }
         (Some(host), Some(port)) => format!("{host}:{port}"),
         (Some(host), None) => host.to_owned(),
-        (None, Some(port)) => match language {
-            Language::English => format!("Unknown target · port {port}"),
-            Language::SimplifiedChinese => format!("未知目标 · 端口 {port}"),
-        },
+        (None, Some(port)) => copy::activity::unknown_target_port(language, port),
         (None, None) => language
             .localized(copy::activity::UNKNOWN_TARGET)
             .to_owned(),

@@ -1,5 +1,8 @@
 use crate::localization::LocalizedText;
 
+mod format;
+pub(crate) use format::*;
+
 pub(crate) const MANUAL_RULE_ENABLED: LocalizedText =
     LocalizedText::new("Manual rule enabled", "手动规则已启用");
 pub(crate) const MANUAL_RULE_DISABLED: LocalizedText =

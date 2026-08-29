@@ -1,5 +1,8 @@
 use crate::localization::LocalizedText;
 
+mod format;
+pub(crate) use format::*;
+
 pub(crate) const INTERVAL_1_MINUTE: LocalizedText = LocalizedText::new("1 min", "1 分钟");
 pub(crate) const INTERVAL_5_MINUTES: LocalizedText = LocalizedText::new("5 min", "5 分钟");
 pub(crate) const INTERVAL_10_MINUTES: LocalizedText = LocalizedText::new("10 min", "10 分钟");

@@ -30,7 +30,7 @@ use crate::{
     localization::{
         CountNoun, Language, LanguagePreference, Message, copy, save_language_preference_in,
     },
-    mihomo::{self, RemoteSourceRefreshInterval, RuntimeProfileSource, SubscriptionStoreError},
+    mihomo::{self, RemoteSourceRefreshInterval, SubscriptionStoreError},
     rule_source::{download_qx_rule_document, download_qx_rule_document_secret},
     subscription::{SourceKind, validate_single_node_preview, validate_subscription_preview},
     subscription_input::{SubscriptionTextInput, TextInputSpec},
@@ -455,27 +455,15 @@ fn source_update_label(
             .to_owned(),
         60..=3_599 => {
             let minutes = elapsed / 60;
-            if language == Language::English {
-                format!("Updated {minutes} min ago")
-            } else {
-                format!("{minutes} 分钟前更新")
-            }
+            copy::configuration::updated_minutes_ago(language, minutes)
         }
         3_600..=86_399 => {
             let hours = elapsed / 3_600;
-            if language == Language::English {
-                format!("Updated {hours} hr ago")
-            } else {
-                format!("{hours} 小时前更新")
-            }
+            copy::configuration::updated_hours_ago(language, hours)
         }
         _ => {
             let days = elapsed / 86_400;
-            if language == Language::English {
-                format!("Updated {days} d ago")
-            } else {
-                format!("{days} 天前更新")
-            }
+            copy::configuration::updated_days_ago(language, days)
         }
     }
 }
@@ -773,16 +761,7 @@ impl ManisApp {
     fn advanced_configuration_panel(&self, theme: Theme, compact: bool) -> Stateful<Div> {
         let language = self.language();
         let profile_source = self.runtime.profile_source();
-        let profile_detail = if language == Language::SimplifiedChinese {
-            profile_source.detail()
-        } else {
-            match profile_source {
-                #[cfg(any(test, feature = "snapshot-fixtures"))]
-                RuntimeProfileSource::FixtureController => "Test snapshot only",
-                RuntimeProfileSource::SavedSources => "Compiled from private local sources",
-                RuntimeProfileSource::Invalid => "Check local startup arguments",
-            }
-        };
+        let profile_detail = copy::configuration::profile_source_detail(language, profile_source);
         panel_surface("configuration-advanced", compact, theme)
             .child(section_heading(
                 language.localized(copy::configuration::ADVANCED_SETTINGS),
@@ -1154,11 +1133,7 @@ impl ManisApp {
                     .text_size(TextRole::Metadata.size())
                     .line_height(TextRole::Metadata.line_height())
                     .text_color(theme.text_secondary)
-                    .child(if language == Language::English {
-                        format!("Manis-managed stable core · {version}")
-                    } else {
-                        format!("Manis 托管稳定版内核 · {version}")
-                    }),
+                    .child(copy::configuration::managed_core_version(language, version)),
             )
             .child(
                 style_action_button(
@@ -2114,17 +2089,10 @@ impl ManisApp {
             input.update(cx, SubscriptionTextInput::clear_without_event);
         }
         self.configuration_add_section = None;
-        self.status = if language == Language::English {
-            format!(
-                "Single-node source saved · Added to Saved group{}",
-                transaction.apply.status_suffix(language)
-            )
-        } else {
-            format!(
-                "单节点来源已保存 · 已加入“已保存”分组{}",
-                transaction.apply.status_suffix(language)
-            )
-        };
+        self.status = copy::configuration::single_node_saved(
+            language,
+            &transaction.apply.status_suffix(language),
+        );
         trace_ui(UiEvent::SourceImportSucceeded);
         cx.notify();
     }
@@ -2163,17 +2131,11 @@ impl ManisApp {
                 SubscriptionCardActivity::Busy,
             ),
             ImportedSubscriptionState::Ready(kind) => (
-                if language == Language::English {
-                    format!(
-                        "{} · {node_count} nodes",
-                        source_kind_label(*kind, language)
-                    )
-                } else {
-                    format!(
-                        "{} · {node_count} 个节点",
-                        source_kind_label(*kind, language)
-                    )
-                },
+                copy::configuration::source_nodes(
+                    language,
+                    source_kind_label(*kind, language),
+                    node_count,
+                ),
                 SubscriptionCardActivity::Idle { healthy: true },
             ),
             ImportedSubscriptionState::Unavailable(_, _)
@@ -3267,13 +3229,10 @@ impl ManisApp {
             None => RuleSourceRefreshPresentation::Idle,
         };
         RuleSourceCardPresentation {
-            name: source.source.subscription_name().unwrap_or_else(|| {
-                if language == Language::English {
-                    format!("Rule source {}", index + 1)
-                } else {
-                    format!("规则源 {}", index + 1)
-                }
-            }),
+            name: source
+                .source
+                .subscription_name()
+                .unwrap_or_else(|| copy::configuration::numbered_rule_source(language, index + 1)),
             refresh,
             duplicate: matches!(
                 &self.rule_sources.feedback,
@@ -3403,17 +3362,11 @@ impl ManisApp {
             .gap_2()
             .text_size(TextRole::Metadata.size())
             .text_color(theme.text_secondary)
-            .child(if language == Language::English {
-                format!(
-                    "{} rules · {} skipped",
-                    source.rule_count, source.diagnostic_count
-                )
-            } else {
-                format!(
-                    "{} 条 · 跳过 {} 条",
-                    source.rule_count, source.diagnostic_count
-                )
-            })
+            .child(copy::configuration::rule_source_counts(
+                language,
+                source.rule_count,
+                source.diagnostic_count,
+            ))
             .child("·")
             .child(format!(
                 "{} {}",
@@ -4460,10 +4413,8 @@ impl ManisApp {
             .child(div().child(field_label(
                 if condition_index == 0 {
                     language.localized(copy::configuration::CONDITION_1).to_owned()
-                } else if language == Language::English {
-                    format!("AND · Condition {}", condition_index + 1)
                 } else {
-                    format!("并且 · 条件 {}", condition_index + 1)
+                    copy::configuration::condition_title(language, condition_index + 1)
                 },
                 theme,
             )))
@@ -4785,11 +4736,7 @@ impl ManisApp {
         let enabled = rule.is_enabled();
         let target = self.effective_rule_target(rule.target(), language);
         let matchers = Self::manual_rule_matchers(rule, enabled, theme, language);
-        let edit_label = if language == Language::English {
-            format!("Manual rule {order}. Enter edits, Space toggles, Delete removes the rule")
-        } else {
-            format!("第 {order} 条手动规则。回车编辑，空格启用或禁用，Delete 删除")
-        };
+        let edit_label = copy::configuration::manual_rule_accessibility(language, order);
         let row = div()
             .id(format!("manual-routing-rule-{index}"))
             .mt_1()
@@ -5013,11 +4960,9 @@ impl ManisApp {
             .gap(Space::Xs.px())
             .child(
                 Button::new(format!("move-rule-group-up-{group_id}"))
-                    .accessibility_label(if language == Language::English {
-                        format!("Move {group_name} up")
-                    } else {
-                        format!("上移{group_name}")
-                    })
+                    .accessibility_label(copy::configuration::move_rule_group(
+                        language, group_name, true,
+                    ))
                     .icon(IconName::ArrowUp)
                     .text()
                     .with_size(ControlSize::Icon.component_size())
@@ -5030,11 +4975,9 @@ impl ManisApp {
             )
             .child(
                 Button::new(format!("move-rule-group-down-{group_id}"))
-                    .accessibility_label(if language == Language::English {
-                        format!("Move {group_name} down")
-                    } else {
-                        format!("下移{group_name}")
-                    })
+                    .accessibility_label(copy::configuration::move_rule_group(
+                        language, group_name, false,
+                    ))
                     .icon(IconName::ArrowDown)
                     .text()
                     .with_size(ControlSize::Icon.component_size())
@@ -5148,13 +5091,8 @@ impl ManisApp {
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let summary = if disabled_count == 0 {
-            language.count(CountNoun::Rule, active_count)
-        } else if language == Language::English {
-            format!("{active_count} active · {disabled_count} disabled")
-        } else {
-            format!("{active_count} 条生效 · {disabled_count} 条已禁用")
-        };
+        let summary =
+            copy::configuration::active_rule_summary(language, active_count, disabled_count);
         div()
             .id("active-routing-rules")
             .w_full()
@@ -5224,24 +5162,11 @@ impl ManisApp {
             ..
         } = view;
         let group_name = language.localized(copy::common::MANUAL_RULES);
-        let detail = match (disabled_count, language) {
-            (0, Language::English) => format!(
-                "{} · Saved locally",
-                language.count(CountNoun::Rule, self.manual_rules.len())
-            ),
-            (0, Language::SimplifiedChinese) => format!(
-                "{} · 本地保存",
-                language.count(CountNoun::Rule, self.manual_rules.len())
-            ),
-            (_, Language::English) => format!(
-                "{} · {disabled_count} disabled · Saved locally",
-                language.count(CountNoun::Rule, self.manual_rules.len())
-            ),
-            (_, Language::SimplifiedChinese) => format!(
-                "{} · {disabled_count} 条已禁用 · 本地保存",
-                language.count(CountNoun::Rule, self.manual_rules.len())
-            ),
-        };
+        let detail = copy::configuration::manual_group_detail(
+            language,
+            self.manual_rules.len(),
+            disabled_count,
+        );
         let title = self.rule_group_title(
             mihomo::MANUAL_ROUTING_RULE_GROUP_ID,
             group_name,
@@ -5307,11 +5232,7 @@ impl ManisApp {
         let parsed = QxRuleList::parse(&source.content);
         let target = self.effective_rule_target(source.target_policy.as_str(), language);
         let name = source.source.subscription_name().unwrap_or_else(|| {
-            if language == Language::English {
-                format!("Rule source {}", source_index + 1)
-            } else {
-                format!("规则源 {}", source_index + 1)
-            }
+            copy::configuration::numbered_rule_source(language, source_index + 1)
         });
         let detail = Self::remote_rule_group_detail(source, parsed.rules.len(), &target, language);
         let target_select = self.qx_rule_source_target_select(
@@ -5417,22 +5338,18 @@ impl ManisApp {
         target: &str,
         language: Language,
     ) -> String {
-        if !source.enabled && language == Language::English {
-            format!("{rule_count} rules · Disabled")
-        } else if !source.enabled {
-            format!("{rule_count} 条规则 · 已停用")
-        } else {
-            let update = source_update_label(
-                source.last_successful_update_unix_secs,
-                mihomo::current_unix_secs(),
-                language,
-            );
-            if language == Language::English {
-                format!("{rule_count} rules · Target {target} · {update}")
-            } else {
-                format!("{rule_count} 条规则 · 目标 {target} · {update}")
-            }
-        }
+        let update = source_update_label(
+            source.last_successful_update_unix_secs,
+            mihomo::current_unix_secs(),
+            language,
+        );
+        copy::configuration::remote_group_detail(
+            language,
+            rule_count,
+            source.enabled,
+            target,
+            &update,
+        )
     }
 
     fn rule_group_rows(compact: bool, theme: Theme) -> Div {
@@ -5540,36 +5457,24 @@ impl ManisApp {
             QxRuleImportFeedback::Imported {
                 rule_count,
                 diagnostic_count,
-            } => {
-                let message = if language == Language::English {
-                    if *diagnostic_count == 0 {
-                        format!("Imported {rule_count} rules")
-                    } else {
-                        format!(
-                            "Imported {rule_count} rules · Skipped {diagnostic_count} invalid lines"
-                        )
-                    }
-                } else if *diagnostic_count == 0 {
-                    format!("已导入 {rule_count} 条规则")
-                } else {
-                    format!("已导入 {rule_count} 条规则 · 跳过 {diagnostic_count} 条无效行")
-                };
-                (message, theme.status_success)
-            }
+            } => (
+                copy::configuration::imported_rules(
+                    language,
+                    *rule_count,
+                    *diagnostic_count,
+                ),
+                theme.status_success,
+            ),
             QxRuleImportFeedback::AlreadyExists {
                 rule_count,
                 target_policy,
                 ..
             } => (
-                if language == Language::English {
-                    format!(
-                        "This rule source already exists · {rule_count} rules · Target {target_policy}. Manage or update the highlighted source below."
-                    )
-                } else {
-                    format!(
-                        "该规则源已存在 · {rule_count} 条规则 · 目标 {target_policy}。请在下方管理或更新已标出的规则源。"
-                    )
-                },
+                copy::configuration::duplicate_rule_source(
+                    language,
+                    *rule_count,
+                    target_policy,
+                ),
                 theme.status_warning,
             ),
             QxRuleImportFeedback::InvalidDocument => (
@@ -5811,17 +5716,12 @@ impl ManisApp {
             input.update(cx, SubscriptionTextInput::clear_without_event);
         }
         apply.reconcile_proxy_mode(&mut self.proxy_mode);
-        self.status = if language == Language::English {
-            format!(
-                "QX rules imported · {rule_count} active rules{}",
-                apply.status_suffix(language)
-            )
-        } else {
-            format!(
-                "QX 规则已导入 · {rule_count} 条生效{}",
-                apply.status_suffix(language)
-            )
-        };
+        self.status = copy::configuration::qx_rules_applied(
+            language,
+            copy::configuration::QxRuleAction::Imported,
+            rule_count,
+            &apply.status_suffix(language),
+        );
         record_operation(
             operation_id,
             LogLevel::Info,
@@ -5959,17 +5859,10 @@ impl ManisApp {
                         this.rule_sources.feedback = QxRuleImportFeedback::Idle;
                         let language = this.language();
                         transaction.apply.reconcile_proxy_mode(&mut this.proxy_mode);
-                        this.status = if language == Language::English {
-                            format!(
-                                "Remote QX rules removed{}",
-                                transaction.apply.status_suffix(language)
-                            )
-                        } else {
-                            format!(
-                                "远程 QX 规则已移除{}",
-                                transaction.apply.status_suffix(language)
-                            )
-                        };
+                        this.status = copy::configuration::qx_rules_removed(
+                            language,
+                            &transaction.apply.status_suffix(language),
+                        );
                     }
                     Ok(transaction) => {
                         this.rule_sources.feedback = QxRuleImportFeedback::StoreFailed(
@@ -6446,17 +6339,12 @@ impl ManisApp {
             .refresh_retry_not_before
             .remove(&super::DueRemoteSource::QxRule(id.to_owned()).scheduler_key());
         transaction.apply.reconcile_proxy_mode(&mut self.proxy_mode);
-        self.status = if language == Language::English {
-            format!(
-                "QX rules updated · {rule_count} active rules{}",
-                transaction.apply.status_suffix(language)
-            )
-        } else {
-            format!(
-                "QX 规则更新完成 · {rule_count} 条生效{}",
-                transaction.apply.status_suffix(language)
-            )
-        };
+        self.status = copy::configuration::qx_rules_applied(
+            language,
+            copy::configuration::QxRuleAction::Updated,
+            rule_count,
+            &transaction.apply.status_suffix(language),
+        );
     }
 
     fn finish_failed_qx_rule_refresh(

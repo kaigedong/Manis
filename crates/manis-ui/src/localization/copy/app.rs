@@ -1,5 +1,8 @@
 use crate::localization::LocalizedText;
 
+mod format;
+pub(crate) use format::*;
+
 pub(crate) const ACTIVITY: LocalizedText = LocalizedText::new("Activity", "活动");
 pub(crate) const ADD_A_SOURCE_OR_CREATE_A_POLICY_GROUP_TO_CHOOSE: LocalizedText =
     LocalizedText::new(

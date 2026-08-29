@@ -1,5 +1,8 @@
 use crate::localization::LocalizedText;
 
+mod format;
+pub(crate) use format::*;
+
 pub(crate) const CONNECTIONS: LocalizedText = LocalizedText::new("connections", "条连接");
 pub(crate) const LIVE_TRAFFIC_APPEARS_HERE_AS_SOON_AS_THE_KERNEL_REPORTS: LocalizedText =
     LocalizedText::new(

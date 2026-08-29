@@ -271,24 +271,15 @@ impl ManisApp {
     }
 
     fn success_fraction_label(succeeded: usize, total: usize, language: Language) -> String {
-        match language {
-            Language::English => format!("{succeeded}/{total} succeeded"),
-            Language::SimplifiedChinese => format!("{succeeded}/{total} 成功"),
-        }
+        copy::nodes::success_fraction(language, succeeded, total)
     }
 
     fn group_limit_label(count: usize, language: Language) -> String {
-        match language {
-            Language::English => format!("group contains {count} nodes"),
-            Language::SimplifiedChinese => format!("分组包含 {count} 个节点"),
-        }
+        copy::nodes::group_limit(language, count)
     }
 
     fn single_test_limit_label(limit: usize, language: Language) -> String {
-        match language {
-            Language::English => format!("a single test supports up to {limit}"),
-            Language::SimplifiedChinese => format!("单次最多测试 {limit} 个"),
-        }
+        copy::nodes::single_test_limit(language, limit)
     }
 
     pub(super) fn node_workspace(
@@ -874,10 +865,7 @@ impl ManisApp {
         popover_width: f32,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let selected = match language {
-            Language::English => format!("{} selected", draft.explicit_members.len()),
-            Language::SimplifiedChinese => format!("已选 {} 项", draft.explicit_members.len()),
-        };
+        let selected = copy::nodes::selected_count(language, draft.explicit_members.len());
         Self::policy_editor_popup_row(
             "policy-editor-selected-nodes",
             language.localized(copy::nodes::SELECTED_CANDIDATES),
@@ -904,18 +892,7 @@ impl ManisApp {
         popover_width: f32,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let interval = match (draft.test_interval_secs, language) {
-            (60, Language::English) => "1 min".to_owned(),
-            (60, Language::SimplifiedChinese) => "1 分钟".to_owned(),
-            (300, Language::English) => "5 min".to_owned(),
-            (300, Language::SimplifiedChinese) => "5 分钟".to_owned(),
-            (600, Language::English) => "10 min".to_owned(),
-            (600, Language::SimplifiedChinese) => "10 分钟".to_owned(),
-            (1_800, Language::English) => "30 min".to_owned(),
-            (1_800, Language::SimplifiedChinese) => "30 分钟".to_owned(),
-            (seconds, Language::English) => format!("{seconds} sec"),
-            (seconds, Language::SimplifiedChinese) => format!("{seconds} 秒"),
-        };
+        let interval = copy::nodes::interval(language, draft.test_interval_secs);
         Self::policy_editor_popup_row(
             "policy-editor-interval",
             language.localized(copy::nodes::RETEST_INTERVAL),
@@ -1320,18 +1297,9 @@ impl ManisApp {
             .flex()
             .items_center()
             .justify_between()
-            .child(
-                div()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(match language {
-                        Language::English => {
-                            format!("Select candidates · {selected_count} selected")
-                        }
-                        Language::SimplifiedChinese => {
-                            format!("选择候选项 · 已选 {selected_count} 项")
-                        }
-                    }),
-            )
+            .child(div().font_weight(FontWeight::SEMIBOLD).child(
+                copy::nodes::candidate_selection_title(language, selected_count),
+            ))
             .child(
                 action_button(
                     "policy-editor-node-menu-done",
