@@ -41,11 +41,18 @@ case "$OS_NAME:$ARCH_NAME" in
 esac
 
 METADATA="$WORK_DIR/release.json"
+metadata_headers=(
+  -H "Accept: application/vnd.github+json"
+  -H "User-Agent: Manis-packager"
+)
+if [[ -n "${MANIS_GITHUB_TOKEN:-}" ]]; then
+  metadata_headers+=(-H "Authorization: Bearer $MANIS_GITHUB_TOKEN")
+fi
+echo "Resolving the latest Mihomo release" >&2
 curl --fail --silent --show-error --location \
   --retry 5 --retry-all-errors --retry-delay 5 --retry-max-time 120 \
   --max-filesize 1048576 \
-  -H "Accept: application/vnd.github+json" \
-  -H "User-Agent: Manis-packager" \
+  "${metadata_headers[@]}" \
   "$API_URL" > "$METADATA"
 if (( $(wc -c < "$METADATA") > 1048576 )); then
   echo "Mihomo release metadata exceeds 1 MiB" >&2
@@ -74,6 +81,7 @@ PY
 )
 
 ARCHIVE="$WORK_DIR/$asset_name"
+echo "Downloading $asset_name" >&2
 curl --fail --silent --show-error --location \
   --retry 5 --retry-all-errors --retry-delay 5 --retry-max-time 120 \
   --max-filesize 67108864 \
@@ -101,10 +109,12 @@ if (( $(wc -c < "$STAGED") == 0 || $(wc -c < "$STAGED") > 134217728 )); then
   exit 1
 fi
 chmod 0755 "$STAGED"
-version_output="$("$STAGED" -v 2>&1)"
-if [[ "$version_output" != *"$version"* ]]; then
-  echo "downloaded Mihomo did not report expected version $version" >&2
-  exit 1
+if [[ "${MANIS_MIHOMO_SKIP_VERSION_CHECK:-0}" != "1" ]]; then
+  version_output="$("$STAGED" -v 2>&1)"
+  if [[ "$version_output" != *"$version"* ]]; then
+    echo "downloaded Mihomo did not report expected version $version" >&2
+    exit 1
+  fi
 fi
 mv "$STAGED" "$OUTPUT"
 echo "$version"
