@@ -4116,7 +4116,11 @@ impl ManisApp {
             let final_rule = self.manual_rules.remove(index);
             self.manual_rules.push(final_rule);
         }
-        if !self.persist_manual_rules(cx) {
+        let completion = self
+            .language()
+            .text("Manual rules updated", "手动分流规则已更新")
+            .to_owned();
+        if !self.persist_manual_rules(completion, cx) {
             self.manual_rules = previous_rules;
             return false;
         }
@@ -4144,7 +4148,11 @@ impl ManisApp {
             return;
         }
         let removed = self.manual_rules.remove(index);
-        if !self.persist_manual_rules(cx) {
+        let completion = self
+            .language()
+            .text("Manual rule removed", "手动规则已删除")
+            .to_owned();
+        if !self.persist_manual_rules(completion, cx) {
             self.manual_rules.insert(index, removed);
             return;
         }
@@ -4168,13 +4176,8 @@ impl ManisApp {
             return;
         }
         rule.set_enabled(enabled);
-        if !self.persist_manual_rules(cx) {
-            if let Some(rule) = self.manual_rules.get_mut(index) {
-                rule.set_enabled(!enabled);
-            }
-            return;
-        }
-        self.language()
+        let completion = self
+            .language()
             .text(
                 if enabled {
                     "Manual rule enabled"
@@ -4187,7 +4190,13 @@ impl ManisApp {
                     "手动规则已禁用"
                 },
             )
-            .clone_into(&mut self.status);
+            .to_owned();
+        if !self.persist_manual_rules(completion, cx) {
+            if let Some(rule) = self.manual_rules.get_mut(index) {
+                rule.set_enabled(!enabled);
+            }
+            return;
+        }
         record_event(
             LogLevel::Info,
             if enabled {
@@ -4200,8 +4209,18 @@ impl ManisApp {
         cx.notify();
     }
 
-    fn persist_manual_rules(&mut self, cx: &mut Context<Self>) -> bool {
+    fn persist_manual_rules(&mut self, completion: String, cx: &mut Context<Self>) -> bool {
         let language = self.language();
+        if self.routing_apply_state.is_busy() {
+            language
+                .text(
+                    "Wait for the current routing changes to finish applying",
+                    "请等待当前分流更改应用完成",
+                )
+                .clone_into(&mut self.status);
+            cx.notify();
+            return false;
+        }
         let Some(store_dir) = self.subscription_store_dir.clone() else {
             language
                 .text(
@@ -4234,15 +4253,44 @@ impl ManisApp {
             cx.notify();
             return false;
         }
-        let apply = SourceRuntimeApply::from_result(self.runtime.apply_saved_sources(&store_dir));
-        apply.reconcile_proxy_mode(&mut self.proxy_mode);
-        self.status = format!(
-            "{}{}",
-            language.text("Manual rules updated", "手动分流规则已更新"),
-            apply.status_suffix(language)
-        );
-        cx.notify();
+        self.start_routing_runtime_apply(store_dir, completion, cx);
         true
+    }
+
+    fn start_routing_runtime_apply(
+        &mut self,
+        store_dir: std::path::PathBuf,
+        completion: String,
+        cx: &mut Context<Self>,
+    ) {
+        let started = self.routing_apply_state.begin();
+        debug_assert!(started, "routing apply must be idle before spawning");
+        if !started {
+            return;
+        }
+        self.status = format!(
+            "{} · {}",
+            completion,
+            self.language().text("applying changes…", "正在应用更改…")
+        );
+        let runtime = self.runtime.clone();
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let apply = executor
+                .spawn(async move {
+                    SourceRuntimeApply::from_result(runtime.apply_saved_sources(&store_dir))
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                this.routing_apply_state.finish();
+                apply.reconcile_proxy_mode(&mut this.proxy_mode);
+                this.status = format!("{}{}", completion, apply.status_suffix(this.language()));
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
     }
 
     fn sync_routing_rule_group_order(&mut self) {
@@ -4254,6 +4302,16 @@ impl ManisApp {
     }
 
     fn move_routing_rule_group(&mut self, group_id: &str, direction: i8, cx: &mut Context<Self>) {
+        if self.routing_apply_state.is_busy() {
+            self.language()
+                .text(
+                    "Wait for the current routing changes to finish applying",
+                    "请等待当前分流更改应用完成",
+                )
+                .clone_into(&mut self.status);
+            cx.notify();
+            return;
+        }
         self.sync_routing_rule_group_order();
         let previous = self.routing_rule_group_order.clone();
         if !mihomo::move_routing_rule_group(&mut self.routing_rule_group_order, group_id, direction)
@@ -4278,18 +4336,13 @@ impl ManisApp {
             return;
         }
         let language = self.language();
-        let apply = SourceRuntimeApply::from_result(self.runtime.apply_saved_sources(&store_dir));
-        apply.reconcile_proxy_mode(&mut self.proxy_mode);
-        self.status = format!(
-            "{}{}",
-            if direction < 0 {
-                language.text("Rule group moved up", "规则分组已上移")
-            } else {
-                language.text("Rule group moved down", "规则分组已下移")
-            },
-            apply.status_suffix(language)
-        );
-        cx.notify();
+        let completion = if direction < 0 {
+            language.text("Rule group moved up", "规则分组已上移")
+        } else {
+            language.text("Rule group moved down", "规则分组已下移")
+        }
+        .to_owned();
+        self.start_routing_runtime_apply(store_dir, completion, cx);
     }
 
     fn manual_rule_kind_menu(
@@ -4676,7 +4729,8 @@ impl ManisApp {
                             language.message(Message::SaveChanges)
                         } else {
                             language.message(Message::AddRule)
-                        }),
+                        })
+                        .disabled(self.routing_apply_state.is_busy()),
                     ActionRole::Primary,
                     ControlSize::Standard,
                 )
@@ -5010,14 +5064,15 @@ impl ManisApp {
     }
 
     fn rule_group_order_controls(
+        &self,
         group_id: &str,
         group_name: &str,
-        position: usize,
-        group_count: usize,
+        position: (usize, usize),
         theme: Theme,
         language: Language,
         cx: &mut Context<Self>,
     ) -> Div {
+        let (position, group_count) = position;
         let up_id = group_id.to_owned();
         let down_id = group_id.to_owned();
         div()
@@ -5036,7 +5091,7 @@ impl ManisApp {
                     .text()
                     .with_size(ControlSize::Icon.component_size())
                     .text_color(theme.text_secondary)
-                    .disabled(position == 0)
+                    .disabled(position == 0 || self.routing_apply_state.is_busy())
                     .on_click(cx.listener(move |this, _, _, cx| {
                         cx.stop_propagation();
                         this.move_routing_rule_group(&up_id, -1, cx);
@@ -5053,7 +5108,7 @@ impl ManisApp {
                     .text()
                     .with_size(ControlSize::Icon.component_size())
                     .text_color(theme.text_secondary)
-                    .disabled(position + 1 >= group_count)
+                    .disabled(position + 1 >= group_count || self.routing_apply_state.is_busy())
                     .on_click(cx.listener(move |this, _, _, cx| {
                         cx.stop_propagation();
                         this.move_routing_rule_group(&down_id, 1, cx);
@@ -5229,11 +5284,10 @@ impl ManisApp {
                     .justify_between()
                     .gap(Space::Sm.px())
                     .child(title_detail)
-                    .child(Self::rule_group_order_controls(
+                    .child(self.rule_group_order_controls(
                         group_id,
                         group_name,
-                        group_position,
-                        group_count,
+                        (group_position, group_count),
                         theme,
                         language,
                         cx,
@@ -5365,11 +5419,10 @@ impl ManisApp {
                     theme,
                     cx,
                 ))
-                .child(Self::rule_group_order_controls(
+                .child(self.rule_group_order_controls(
                     group_id,
                     &name,
-                    group_position,
-                    group_count,
+                    (group_position, group_count),
                     theme,
                     language,
                     cx,

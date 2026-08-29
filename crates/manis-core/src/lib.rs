@@ -5,13 +5,6 @@ use std::{
     sync::Arc,
 };
 
-mod route_prediction;
-
-pub use route_prediction::{
-    DomainRoutePrediction, RouteDomain, RouteDomainError, RoutePredictionReason, RouteQuery,
-    RouteQueryError, RouteTarget, RoutingRule,
-};
-
 /// A proxy core supported by Manis's kernel-neutral configuration boundary.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub enum KernelKind {
@@ -253,6 +246,15 @@ impl fmt::Display for EmptyPolicyCatalog {
 }
 
 impl Error for EmptyPolicyCatalog {}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RoutingRule {
+    pub index: u32,
+    pub kind: String,
+    pub payload: String,
+    pub target: String,
+    pub disabled: bool,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PolicyCatalog {
@@ -904,26 +906,6 @@ fn valid_plain_policy_value(value: &str, max_bytes: usize) -> bool {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum RouteEvidence {
-    Predicted {
-        domain: String,
-        rule: &'static str,
-        policy: PolicyGroupId,
-        proxy: ProxyId,
-    },
-    Observed {
-        domain: String,
-        rule: String,
-        policy: PolicyGroupId,
-        chain: Vec<ProxyId>,
-    },
-    NeedsConnection {
-        domain: String,
-        reason: &'static str,
-    },
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PolicyWorkspaceState {
     pub size_class: WindowSizeClass,
     pub selected_group: Option<PolicyGroupId>,
@@ -1007,38 +989,5 @@ impl PolicyWorkspaceState {
         self.selected_group = None;
         self.selected_node = None;
         self.compact_navigation = CompactNavigation::GroupList;
-    }
-
-    #[must_use]
-    pub fn predict(&self, domain: &str) -> RouteEvidence {
-        if domain == "process-dependent.example" {
-            return RouteEvidence::NeedsConnection {
-                domain: domain.to_owned(),
-                reason: "该规则依赖进程信息，需要实际连接才能确认",
-            };
-        }
-
-        let (policy, fallback_proxy) =
-            if domain.ends_with("youtube.com") || domain.ends_with("netflix.com") {
-                (PolicyGroupId::new("streaming"), ProxyId::new("hk-01"))
-            } else if domain.ends_with("openai.com") || domain.ends_with("google.com") {
-                (PolicyGroupId::new("search"), ProxyId::new("sg-02"))
-            } else {
-                return RouteEvidence::NeedsConnection {
-                    domain: domain.to_owned(),
-                    reason: "缺少可确定的域名规则，需要实际连接才能确认",
-                };
-            };
-
-        RouteEvidence::Predicted {
-            domain: domain.to_owned(),
-            rule: "DOMAIN-SUFFIX",
-            policy: policy.clone(),
-            proxy: self
-                .selections
-                .get(&policy)
-                .cloned()
-                .unwrap_or(fallback_proxy),
-        }
     }
 }

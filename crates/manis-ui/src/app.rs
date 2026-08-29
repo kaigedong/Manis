@@ -106,6 +106,31 @@ enum SourceRuntimeApply {
     ProxyModeLost(String),
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum RoutingApplyState {
+    #[default]
+    Idle,
+    Applying,
+}
+
+impl RoutingApplyState {
+    const fn is_busy(self) -> bool {
+        matches!(self, Self::Applying)
+    }
+
+    fn begin(&mut self) -> bool {
+        if self.is_busy() {
+            return false;
+        }
+        *self = Self::Applying;
+        true
+    }
+
+    fn finish(&mut self) {
+        *self = Self::Idle;
+    }
+}
+
 impl SourceRuntimeApply {
     fn from_result(result: Result<GeneratedProfileApply, mihomo::LoadError>) -> Self {
         match result {
@@ -723,6 +748,7 @@ pub struct ManisApp {
     proxy_mode_busy: Option<ProxyMode>,
     routing_mode: RoutingMode,
     routing_mode_busy: Option<RoutingMode>,
+    routing_apply_state: RoutingApplyState,
     global_selection_busy: Option<String>,
     policy_selection_busy: Option<String>,
     proxy_runtime: RuntimeConfig,
@@ -1032,6 +1058,7 @@ impl ManisApp {
             proxy_mode_busy: None,
             routing_mode,
             routing_mode_busy: None,
+            routing_apply_state: RoutingApplyState::default(),
             global_selection_busy: None,
             policy_selection_busy: None,
             proxy_runtime: RuntimeConfig::default(),
@@ -6250,14 +6277,27 @@ mod tests {
 
     use super::{
         ControllerReadiness, DueRemoteSource, ImportedSubscription, ImportedSubscriptionState,
-        ManisApp, PolicyDetailTab, ProxyModeBlock, SourceRuntimeApply, TunSupport,
-        proxy_mode_block,
+        ManisApp, PolicyDetailTab, ProxyModeBlock, RoutingApplyState, SourceRuntimeApply,
+        TunSupport, proxy_mode_block,
     };
     use crate::subscription::SourceKind;
     use crate::{
         localization::Language,
         mihomo::{self, ControllerState},
     };
+
+    #[test]
+    fn routing_apply_state_rejects_overlapping_operations() {
+        let mut state = RoutingApplyState::default();
+
+        assert!(state.begin());
+        assert!(state.is_busy());
+        assert!(!state.begin());
+
+        state.finish();
+        assert!(!state.is_busy());
+        assert!(state.begin());
+    }
 
     #[test]
     fn policy_detail_tabs_round_trip_through_component_indices() {

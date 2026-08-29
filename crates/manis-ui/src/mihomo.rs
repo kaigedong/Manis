@@ -167,6 +167,7 @@ pub(crate) enum ControllerRuntime {
     },
     Managed {
         manager: Arc<Mutex<EngineManager>>,
+        apply_lock: Arc<Mutex<()>>,
         profile_source: RuntimeProfileSource,
         generated_profile: Option<ManagedGeneratedProfile>,
         privileged: Arc<AtomicBool>,
@@ -941,6 +942,7 @@ impl ControllerRuntime {
     ) -> Result<GeneratedProfileApply, LoadError> {
         let Self::Managed {
             manager,
+            apply_lock,
             generated_profile: Some(spec),
             privileged,
             ..
@@ -953,6 +955,9 @@ impl ControllerRuntime {
                 Self::Managed { .. } => "托管内核缺少 Manis 生成配置".to_owned(),
             }));
         };
+        let _apply_guard = apply_lock
+            .lock()
+            .map_err(|_poisoned| LoadError::Runtime("配置应用锁已损坏".to_owned()))?;
         if spec.kernel == KernelKind::Mihomo {
             sync_single_node_provider_files(store_dir, &spec.data_dir)?;
         }
@@ -4748,6 +4753,7 @@ fn build_saved_sources_mihomo_runtime_in(
     let manager = EngineManager::new(config, ReadinessPolicy::default(), readiness_probe(&spec));
     Ok(ControllerRuntime::Managed {
         manager: Arc::new(Mutex::new(manager)),
+        apply_lock: Arc::new(Mutex::new(())),
         profile_source: RuntimeProfileSource::SavedSources,
         generated_profile: Some(spec),
         privileged: Arc::new(AtomicBool::new(false)),
@@ -4788,6 +4794,7 @@ fn build_sing_box_runtime(store_dir: &Path) -> Result<ControllerRuntime, String>
     let manager = EngineManager::new(config, ReadinessPolicy::default(), readiness_probe(&spec));
     Ok(ControllerRuntime::Managed {
         manager: Arc::new(Mutex::new(manager)),
+        apply_lock: Arc::new(Mutex::new(())),
         profile_source: RuntimeProfileSource::SavedSources,
         generated_profile: Some(spec),
         privileged: Arc::new(AtomicBool::new(false)),
@@ -7192,6 +7199,19 @@ IP-CIDR,192.0.2.0/24,DIRECT
             &data_dir,
             &ControllerEndpoint::UnixSocket(data_dir.join("controller.sock")),
         )?;
+        let cloned_runtime = runtime.clone();
+
+        match (&runtime, &cloned_runtime) {
+            (
+                super::ControllerRuntime::Managed {
+                    apply_lock: left, ..
+                },
+                super::ControllerRuntime::Managed {
+                    apply_lock: right, ..
+                },
+            ) => assert!(std::sync::Arc::ptr_eq(left, right)),
+            _ => panic!("saved sources should share a managed apply lock"),
+        }
 
         assert_eq!(
             runtime.managed_health()?,
