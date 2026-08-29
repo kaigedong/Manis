@@ -536,12 +536,13 @@ impl ManisApp {
         let compact = size_class == WindowSizeClass::Compact;
         let language = self.language();
         let rule_input = self
-            .qx_rule_input
+            .inputs
+            .qx_rule
             .as_ref()
             .expect("QX rule input is initialized before rendering")
             .clone();
-        let rule_busy =
-            self.qx_rule_feedback == QxRuleImportFeedback::Importing || self.source_refresh_busy();
+        let rule_busy = self.rule_sources.feedback == QxRuleImportFeedback::Importing
+            || self.source_refresh_busy();
         let selected_section = self.configuration_section;
         let detail: AnyElement = match selected_section {
             ConfigurationSection::General => {
@@ -678,7 +679,7 @@ impl ManisApp {
                 self.imported_subscriptions.len() + self.saved_single_nodes.len(),
             ),
             ConfigurationSection::RuleSources => {
-                language.count(CountNoun::Source, self.qx_rule_sources.len())
+                language.count(CountNoun::Source, self.rule_sources.sources.len())
             }
             ConfigurationSection::Advanced => language.text("Managed", "托管").to_owned(),
         };
@@ -1001,10 +1002,10 @@ impl ManisApp {
                     .clone_into(&mut self.status);
             }
         }
-        if let Some(input) = self.subscription_input.as_ref() {
+        if let Some(input) = self.proxy_source_editor.input.as_ref() {
             input.update(cx, |input, cx| input.set_language(language, cx));
         }
-        if let Some(input) = self.subscription_name_input.as_ref() {
+        if let Some(input) = self.proxy_source_editor.name_input.as_ref() {
             input.update(cx, |input, cx| {
                 input.set_placeholder(
                     language.text("For example: My subscription", "例如：我的订阅"),
@@ -1012,7 +1013,7 @@ impl ManisApp {
                 );
             });
         }
-        if let Some(input) = self.policy_group_name_input.as_ref() {
+        if let Some(input) = self.inputs.policy_group_name.as_ref() {
             input.update(cx, |input, cx| {
                 input.set_placeholder(
                     language.text("For example: Hong Kong Auto", "例如：香港自动优选"),
@@ -1020,7 +1021,7 @@ impl ManisApp {
                 );
             });
         }
-        if let Some(input) = self.policy_group_filter_input.as_ref() {
+        if let Some(input) = self.inputs.policy_group_filter.as_ref() {
             input.update(cx, |input, cx| {
                 input.set_placeholder(
                     language.text("For example: Hong Kong", "例如：Hong Kong"),
@@ -1435,18 +1436,18 @@ impl ManisApp {
     }
 
     fn open_new_subscription_editor(&mut self, cx: &mut Context<Self>) {
-        self.subscription_editor_source_id = None;
-        self.single_node_editor_source_id = None;
-        self.proxy_source_editor_kind = ProxySourceEditorKind::Subscription;
-        self.subscription_editor_refresh_interval = RemoteSourceRefreshInterval::Manual;
-        self.subscription_editor_interval_popover = false;
-        self.subscription_editor_enabled = true;
-        self.subscription_editor_error = None;
-        self.subscription_feedback = SubscriptionFeedback::Idle;
-        if let Some(input) = self.subscription_name_input.as_ref() {
+        self.proxy_source_editor.subscription_source_id = None;
+        self.proxy_source_editor.single_node_source_id = None;
+        self.proxy_source_editor.kind = ProxySourceEditorKind::Subscription;
+        self.proxy_source_editor.refresh_interval = RemoteSourceRefreshInterval::Manual;
+        self.proxy_source_editor.interval_popover = false;
+        self.proxy_source_editor.enabled = true;
+        self.proxy_source_editor.error = None;
+        self.proxy_source_editor.feedback = SubscriptionFeedback::Idle;
+        if let Some(input) = self.proxy_source_editor.name_input.as_ref() {
             input.update(cx, SubscriptionTextInput::clear_without_event);
         }
-        if let Some(input) = self.subscription_input.as_ref() {
+        if let Some(input) = self.proxy_source_editor.input.as_ref() {
             input.update(cx, SubscriptionTextInput::clear_without_event);
         }
         cx.notify();
@@ -1462,18 +1463,18 @@ impl ManisApp {
         };
         let name = subscription.name.clone();
         let url = subscription.source.expose_to(str::to_owned);
-        self.subscription_editor_source_id = Some(id);
-        self.single_node_editor_source_id = None;
-        self.proxy_source_editor_kind = ProxySourceEditorKind::Subscription;
-        self.subscription_editor_refresh_interval = subscription.refresh_interval;
-        self.subscription_editor_interval_popover = false;
-        self.subscription_editor_enabled = subscription.enabled;
-        self.subscription_editor_error = None;
-        self.subscription_feedback = SubscriptionFeedback::Idle;
-        if let Some(input) = self.subscription_name_input.as_ref() {
+        self.proxy_source_editor.subscription_source_id = Some(id);
+        self.proxy_source_editor.single_node_source_id = None;
+        self.proxy_source_editor.kind = ProxySourceEditorKind::Subscription;
+        self.proxy_source_editor.refresh_interval = subscription.refresh_interval;
+        self.proxy_source_editor.interval_popover = false;
+        self.proxy_source_editor.enabled = subscription.enabled;
+        self.proxy_source_editor.error = None;
+        self.proxy_source_editor.feedback = SubscriptionFeedback::Idle;
+        if let Some(input) = self.proxy_source_editor.name_input.as_ref() {
             input.update(cx, |input, cx| input.set_value_without_event(name, cx));
         }
-        if let Some(input) = self.subscription_input.as_ref() {
+        if let Some(input) = self.proxy_source_editor.input.as_ref() {
             input.update(cx, |input, cx| input.set_value_without_event(url, cx));
         }
         cx.notify();
@@ -1485,18 +1486,18 @@ impl ManisApp {
         };
         let name = saved.name.clone();
         let url = saved.source.expose_to(str::to_owned);
-        self.subscription_editor_source_id = None;
-        self.single_node_editor_source_id = Some(id);
-        self.proxy_source_editor_kind = ProxySourceEditorKind::SingleNode;
-        self.subscription_editor_refresh_interval = RemoteSourceRefreshInterval::Manual;
-        self.subscription_editor_interval_popover = false;
-        self.subscription_editor_enabled = saved.enabled;
-        self.subscription_editor_error = None;
-        self.subscription_feedback = SubscriptionFeedback::Idle;
-        if let Some(input) = self.subscription_name_input.as_ref() {
+        self.proxy_source_editor.subscription_source_id = None;
+        self.proxy_source_editor.single_node_source_id = Some(id);
+        self.proxy_source_editor.kind = ProxySourceEditorKind::SingleNode;
+        self.proxy_source_editor.refresh_interval = RemoteSourceRefreshInterval::Manual;
+        self.proxy_source_editor.interval_popover = false;
+        self.proxy_source_editor.enabled = saved.enabled;
+        self.proxy_source_editor.error = None;
+        self.proxy_source_editor.feedback = SubscriptionFeedback::Idle;
+        if let Some(input) = self.proxy_source_editor.name_input.as_ref() {
             input.update(cx, |input, cx| input.set_value_without_event(name, cx));
         }
-        if let Some(input) = self.subscription_input.as_ref() {
+        if let Some(input) = self.proxy_source_editor.input.as_ref() {
             input.update(cx, |input, cx| input.set_value_without_event(url, cx));
         }
         cx.notify();
@@ -1510,7 +1511,7 @@ impl ManisApp {
                 this.proxy_source_editor_modal(dialog, theme, this.language(), window, cx)
             })
         });
-        if let Some(input) = self.subscription_name_input.as_ref() {
+        if let Some(input) = self.proxy_source_editor.name_input.as_ref() {
             input.focus_handle(cx).focus(window, cx);
         }
         cx.notify();
@@ -1518,15 +1519,15 @@ impl ManisApp {
 
     fn close_subscription_editor(&mut self, cx: &mut Context<Self>) {
         self.configuration_add_section = None;
-        self.subscription_editor_source_id = None;
-        self.single_node_editor_source_id = None;
-        self.subscription_editor_interval_popover = false;
-        self.subscription_editor_error = None;
-        self.subscription_feedback = SubscriptionFeedback::Idle;
-        if let Some(input) = self.subscription_name_input.as_ref() {
+        self.proxy_source_editor.subscription_source_id = None;
+        self.proxy_source_editor.single_node_source_id = None;
+        self.proxy_source_editor.interval_popover = false;
+        self.proxy_source_editor.error = None;
+        self.proxy_source_editor.feedback = SubscriptionFeedback::Idle;
+        if let Some(input) = self.proxy_source_editor.name_input.as_ref() {
             input.update(cx, SubscriptionTextInput::clear_without_event);
         }
-        if let Some(input) = self.subscription_input.as_ref() {
+        if let Some(input) = self.proxy_source_editor.input.as_ref() {
             input.update(cx, SubscriptionTextInput::clear_without_event);
         }
         cx.notify();
@@ -1541,29 +1542,31 @@ impl ManisApp {
         cx: &mut Context<Self>,
     ) -> Dialog {
         let input = self
-            .subscription_input
+            .proxy_source_editor
+            .input
             .as_ref()
             .expect("subscription input is initialized before rendering")
             .clone();
         let name_input = self
-            .subscription_name_input
+            .proxy_source_editor
+            .name_input
             .as_ref()
             .expect("subscription name input is initialized before rendering")
             .clone();
         let viewport = window.viewport_size();
         let view = ProxySourceEditorView {
-            direct_input: self.proxy_source_editor_kind == ProxySourceEditorKind::SingleNode,
-            editing: self.subscription_editor_source_id.is_some()
-                || self.single_node_editor_source_id.is_some(),
+            direct_input: self.proxy_source_editor.kind == ProxySourceEditorKind::SingleNode,
+            editing: self.proxy_source_editor.subscription_source_id.is_some()
+                || self.proxy_source_editor.single_node_source_id.is_some(),
             activity: if matches!(
-                self.subscription_feedback,
+                self.proxy_source_editor.feedback,
                 SubscriptionFeedback::Importing(_)
             ) {
                 ProxySourceEditorActivity::Busy
             } else {
                 ProxySourceEditorActivity::Idle
             },
-            enabled: self.subscription_editor_enabled,
+            enabled: self.proxy_source_editor.enabled,
             dialog_width: (viewport.width.as_f32() - 32.0).clamp(300.0, 620.0),
         };
         let interval_select = self.proxy_source_interval_select(view, language, theme, cx);
@@ -1615,7 +1618,7 @@ impl ManisApp {
             RemoteSourceRefreshInterval::TwelveHours,
             RemoteSourceRefreshInterval::Daily,
         ] {
-            let selected = interval == self.subscription_editor_refresh_interval;
+            let selected = interval == self.proxy_source_editor.refresh_interval;
             menu = menu.child(
                 div()
                     .id(format!("subscription-refresh-option-{interval:?}"))
@@ -1644,8 +1647,8 @@ impl ManisApp {
                     })
                     .child(refresh_interval_label(interval, language))
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        this.subscription_editor_refresh_interval = interval;
-                        this.subscription_editor_interval_popover = false;
+                        this.proxy_source_editor.refresh_interval = interval;
+                        this.proxy_source_editor.interval_popover = false;
                         cx.notify();
                     })),
             );
@@ -1660,7 +1663,7 @@ impl ManisApp {
             .h(ControlSize::Standard.height())
             .w_full()
             .child(refresh_interval_label(
-                self.subscription_editor_refresh_interval,
+                self.proxy_source_editor.refresh_interval,
                 language,
             ))
             .disabled(view.busy());
@@ -1672,10 +1675,10 @@ impl ManisApp {
             (view.dialog_width - 40.0).max(240.0),
             280.0,
         )
-        .open(self.subscription_editor_interval_popover)
+        .open(self.proxy_source_editor.interval_popover)
         .on_open_change(move |open, _, cx| {
             app.update(cx, |this, cx| {
-                this.subscription_editor_interval_popover = *open;
+                this.proxy_source_editor.interval_popover = *open;
                 cx.notify();
             });
         })
@@ -1726,12 +1729,12 @@ impl ManisApp {
                     .mt_4()
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if !view.busy() {
-                            this.subscription_editor_enabled = !view.enabled;
+                            this.proxy_source_editor.enabled = !view.enabled;
                             cx.notify();
                         }
                     })),
             )
-            .when_some(self.subscription_editor_error.clone(), |body, error| {
+            .when_some(self.proxy_source_editor.error.clone(), |body, error| {
                 body.child(
                     div()
                         .mt_3()
@@ -1790,8 +1793,8 @@ impl ManisApp {
                     theme.text_secondary
                 })
                 .on_click(cx.listener(move |this, _, _, cx| {
-                    this.proxy_source_editor_kind = kind;
-                    this.subscription_editor_error = None;
+                    this.proxy_source_editor.kind = kind;
+                    this.proxy_source_editor.error = None;
                     cx.notify();
                 }))
             }),
@@ -1907,12 +1910,13 @@ impl ManisApp {
         cx: &mut Context<Self>,
     ) -> bool {
         let name = self
-            .subscription_name_input
+            .proxy_source_editor
+            .name_input
             .as_ref()
             .map(|input| input.read(cx).value().trim().to_owned())
             .unwrap_or_default();
         if name.is_empty() {
-            self.subscription_editor_error = Some(
+            self.proxy_source_editor.error = Some(
                 self.language()
                     .text("Enter a source name", "请输入来源名称")
                     .to_owned(),
@@ -1920,12 +1924,12 @@ impl ManisApp {
             cx.notify();
             return false;
         }
-        self.subscription_editor_error = None;
+        self.proxy_source_editor.error = None;
         let (input_value, result) = {
             let input = input.read(cx);
             (
                 input.value().to_owned(),
-                match self.proxy_source_editor_kind {
+                match self.proxy_source_editor.kind {
                     ProxySourceEditorKind::Subscription => {
                         validate_subscription_preview(input.value())
                     }
@@ -1937,8 +1941,8 @@ impl ManisApp {
         };
         match result {
             Ok(preview) if preview.kind == SourceKind::SingleNode => {
-                if self.subscription_editor_source_id.is_some() {
-                    self.subscription_editor_error = Some(
+                if self.proxy_source_editor.subscription_source_id.is_some() {
+                    self.proxy_source_editor.error = Some(
                         self.language()
                             .text(
                                 "An existing subscription must keep an HTTP/HTTPS URL",
@@ -1952,8 +1956,8 @@ impl ManisApp {
                 self.import_single_node(input_value, name, preview, cx)
             }
             Ok(preview) => {
-                if self.single_node_editor_source_id.is_some() {
-                    self.subscription_editor_error = Some(
+                if self.proxy_source_editor.single_node_source_id.is_some() {
+                    self.proxy_source_editor.error = Some(
                         self.language()
                             .text(
                                 "This source must remain a single-node share link",
@@ -1969,9 +1973,9 @@ impl ManisApp {
                     super::SubscriptionImportRequest {
                         input: input_value,
                         name,
-                        refresh_interval: self.subscription_editor_refresh_interval,
-                        enabled: self.subscription_editor_enabled,
-                        editing_id: self.subscription_editor_source_id.clone(),
+                        refresh_interval: self.proxy_source_editor.refresh_interval,
+                        enabled: self.proxy_source_editor.enabled,
+                        editing_id: self.proxy_source_editor.subscription_source_id.clone(),
                         kind: preview.kind,
                     },
                     cx,
@@ -1979,7 +1983,7 @@ impl ManisApp {
                 true
             }
             Err(error) => {
-                self.subscription_feedback = SubscriptionFeedback::InvalidInput(error);
+                self.proxy_source_editor.feedback = SubscriptionFeedback::InvalidInput(error);
                 self.status = format!(
                     "{}: {error}",
                     self.language()
@@ -2000,7 +2004,7 @@ impl ManisApp {
         cx: &mut Context<Self>,
     ) -> bool {
         let Some(store_dir) = self.subscription_store_dir.clone() else {
-            self.subscription_feedback =
+            self.proxy_source_editor.feedback =
                 SubscriptionFeedback::StoreFailed(SubscriptionStoreError::DataDirectoryUnavailable);
             self.language()
                 .text(
@@ -2014,19 +2018,19 @@ impl ManisApp {
         };
         self.subscription_preview_generation = self.subscription_preview_generation.wrapping_add(1);
         let generation = self.subscription_preview_generation;
-        self.subscription_feedback = SubscriptionFeedback::Importing(SourceKind::SingleNode);
+        self.proxy_source_editor.feedback = SubscriptionFeedback::Importing(SourceKind::SingleNode);
         self.language()
             .text(
                 "Validating and saving single-node source",
                 "正在验证并保存单节点来源",
             )
             .clone_into(&mut self.status);
-        if let Some(input) = self.subscription_input.as_ref() {
+        if let Some(input) = self.proxy_source_editor.input.as_ref() {
             input.update(cx, |input, cx| input.set_enabled(false, cx));
         }
         let runtime = self.runtime.clone();
-        let editing_id = self.single_node_editor_source_id.clone();
-        let enabled = self.subscription_editor_enabled;
+        let editing_id = self.proxy_source_editor.single_node_source_id.clone();
+        let enabled = self.proxy_source_editor.enabled;
         let executor = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
             let result = executor
@@ -2073,7 +2077,7 @@ impl ManisApp {
         if self.subscription_preview_generation != generation {
             return;
         }
-        if let Some(input) = self.subscription_input.as_ref() {
+        if let Some(input) = self.proxy_source_editor.input.as_ref() {
             input.update(cx, |input, cx| input.set_enabled(true, cx));
         }
         match result {
@@ -2081,7 +2085,7 @@ impl ManisApp {
                 self.finish_saved_single_node(transaction, providers, preview, cx);
             }
             Err(error) => {
-                self.subscription_feedback = SubscriptionFeedback::StoreFailed(error);
+                self.proxy_source_editor.feedback = SubscriptionFeedback::StoreFailed(error);
                 self.status = format!(
                     "{}: {error}",
                     self.language()
@@ -2103,7 +2107,7 @@ impl ManisApp {
         let language = self.language();
         transaction.apply.reconcile_proxy_mode(&mut self.proxy_mode);
         let Some(stored) = transaction.value.take() else {
-            self.subscription_feedback =
+            self.proxy_source_editor.feedback =
                 SubscriptionFeedback::StoreFailed(SubscriptionStoreError::StoreUnavailable);
             self.status = format!(
                 "{}{}",
@@ -2126,11 +2130,11 @@ impl ManisApp {
             self.saved_single_nodes.push(stored);
         }
         self.subscription_preview_providers = providers;
-        self.subscription_feedback = SubscriptionFeedback::Valid(preview);
-        if let Some(input) = self.subscription_input.as_ref() {
+        self.proxy_source_editor.feedback = SubscriptionFeedback::Valid(preview);
+        if let Some(input) = self.proxy_source_editor.input.as_ref() {
             input.update(cx, SubscriptionTextInput::clear_without_event);
         }
-        if let Some(input) = self.subscription_name_input.as_ref() {
+        if let Some(input) = self.proxy_source_editor.name_input.as_ref() {
             input.update(cx, SubscriptionTextInput::clear_without_event);
         }
         self.configuration_add_section = None;
@@ -2204,7 +2208,7 @@ impl ManisApp {
         };
         let controls_enabled = !activity.is_busy()
             && !matches!(
-                self.subscription_feedback,
+                self.proxy_source_editor.feedback,
                 SubscriptionFeedback::Importing(_)
             )
             && !self.source_refresh_busy();
@@ -2423,7 +2427,7 @@ impl ManisApp {
     fn saved_single_node_cards(&self, theme: Theme, cx: &mut Context<Self>) -> Div {
         let language = self.language();
         let controls_enabled = !matches!(
-            self.subscription_feedback,
+            self.proxy_source_editor.feedback,
             SubscriptionFeedback::Importing(_)
         ) && !self.source_refresh_busy();
         div().children(self.saved_single_nodes.iter().map(|saved| {
@@ -2762,7 +2766,7 @@ impl ManisApp {
         let mut panel = panel_surface("configuration-rule-sources", compact, theme)
             .child(section_heading(
                 language.text("Rule sources", "规则来源"),
-                language.count(CountNoun::Source, self.qx_rule_sources.len()),
+                language.count(CountNoun::Source, self.rule_sources.sources.len()),
                 Some(add_action.into_any_element()),
                 theme,
             ))
@@ -2784,7 +2788,7 @@ impl ManisApp {
                     ),
             );
 
-        if self.qx_rule_sources.is_empty() {
+        if self.rule_sources.sources.is_empty() {
             panel = panel.child(
                 empty_state(
                     language.text("No rule sources", "暂无规则源"),
@@ -2809,40 +2813,47 @@ impl ManisApp {
                 .mt(Space::Md.px()),
             );
         }
-        for (index, source) in self.qx_rule_sources.iter().enumerate() {
+        for (index, source) in self.rule_sources.sources.iter().enumerate() {
             panel = panel.child(self.rule_source_card(index, source, busy, theme, cx));
         }
         panel
     }
 
     fn open_new_qx_rule_editor(&mut self, cx: &mut Context<Self>) {
-        self.qx_rule_editor_source_id = None;
-        self.qx_rule_editor_refresh_interval = RemoteSourceRefreshInterval::Manual;
-        self.qx_rule_editor_popover = super::QxRuleEditorPopover::None;
-        self.qx_rule_feedback = QxRuleImportFeedback::Idle;
-        if !self.qx_rule_targets().contains(&self.qx_rule_target_policy)
+        self.rule_sources.editor_source_id = None;
+        self.rule_sources.editor_refresh_interval = RemoteSourceRefreshInterval::Manual;
+        self.rule_sources.editor_popover = super::QxRuleEditorPopover::None;
+        self.rule_sources.feedback = QxRuleImportFeedback::Idle;
+        if !self
+            .qx_rule_targets()
+            .contains(&self.rule_sources.target_policy)
             && let Some(target) = self.qx_rule_targets().into_iter().next()
         {
-            self.qx_rule_target_policy = target;
+            self.rule_sources.target_policy = target;
         }
-        if let Some(input) = self.qx_rule_input.as_ref() {
+        if let Some(input) = self.inputs.qx_rule.as_ref() {
             input.update(cx, SubscriptionTextInput::clear_without_event);
         }
         cx.notify();
     }
 
     fn open_qx_rule_editor(&mut self, id: String, cx: &mut Context<Self>) {
-        let Some(source) = self.qx_rule_sources.iter().find(|source| source.id == id) else {
+        let Some(source) = self
+            .rule_sources
+            .sources
+            .iter()
+            .find(|source| source.id == id)
+        else {
             return;
         };
         let url = source.source.expose_to(str::to_owned);
         let target = self.effective_rule_target(source.target_policy.as_str(), self.language());
-        self.qx_rule_editor_source_id = Some(id);
-        self.qx_rule_editor_refresh_interval = source.refresh_interval;
-        self.qx_rule_editor_popover = super::QxRuleEditorPopover::None;
-        self.qx_rule_target_policy = target;
-        self.qx_rule_feedback = QxRuleImportFeedback::Idle;
-        if let Some(input) = self.qx_rule_input.as_ref() {
+        self.rule_sources.editor_source_id = Some(id);
+        self.rule_sources.editor_refresh_interval = source.refresh_interval;
+        self.rule_sources.editor_popover = super::QxRuleEditorPopover::None;
+        self.rule_sources.target_policy = target;
+        self.rule_sources.feedback = QxRuleImportFeedback::Idle;
+        if let Some(input) = self.inputs.qx_rule.as_ref() {
             input.update(cx, |input, cx| input.set_value_without_event(url, cx));
         }
         cx.notify();
@@ -2855,17 +2866,17 @@ impl ManisApp {
                 this.qx_rule_source_editor_modal(dialog, this.theme(), this.language(), window, cx)
             })
         });
-        if let Some(input) = self.qx_rule_input.as_ref() {
+        if let Some(input) = self.inputs.qx_rule.as_ref() {
             input.focus_handle(cx).focus(window, cx);
         }
         cx.notify();
     }
 
     fn close_qx_rule_editor(&mut self, cx: &mut Context<Self>) {
-        self.qx_rule_editor_source_id = None;
-        self.qx_rule_editor_popover = super::QxRuleEditorPopover::None;
-        self.qx_rule_feedback = QxRuleImportFeedback::Idle;
-        if let Some(input) = self.qx_rule_input.as_ref() {
+        self.rule_sources.editor_source_id = None;
+        self.rule_sources.editor_popover = super::QxRuleEditorPopover::None;
+        self.rule_sources.feedback = QxRuleImportFeedback::Idle;
+        if let Some(input) = self.inputs.qx_rule.as_ref() {
             input.update(cx, SubscriptionTextInput::clear_without_event);
         }
         cx.notify();
@@ -2880,14 +2891,15 @@ impl ManisApp {
         cx: &mut Context<Self>,
     ) -> Dialog {
         let input = self
-            .qx_rule_input
+            .inputs
+            .qx_rule
             .as_ref()
             .expect("QX rule input is initialized before rendering")
             .clone();
         let viewport = window.viewport_size();
         let view = QxRuleEditorView {
-            editing: self.qx_rule_editor_source_id.is_some(),
-            busy: self.qx_rule_feedback == QxRuleImportFeedback::Importing,
+            editing: self.rule_sources.editor_source_id.is_some(),
+            busy: self.rule_sources.feedback == QxRuleImportFeedback::Importing,
             dialog_width: (viewport.width.as_f32() - 32.0).clamp(300.0, 620.0),
         };
         let body = div()
@@ -2936,16 +2948,16 @@ impl ManisApp {
     ) -> AnyElement {
         let mut menu = div().p_1();
         for target in self.qx_rule_targets() {
-            let selected = target == self.qx_rule_target_policy;
+            let selected = target == self.rule_sources.target_policy;
             menu = menu.child(Self::qx_rule_editor_option(
                 format!("qx-rule-editor-target-{target}"),
                 target.clone(),
                 selected,
                 theme,
                 cx.listener(move |this, _, _, cx| {
-                    this.qx_rule_target_policy.clone_from(&target);
-                    this.qx_rule_editor_popover = super::QxRuleEditorPopover::None;
-                    this.qx_rule_feedback = QxRuleImportFeedback::Idle;
+                    this.rule_sources.target_policy.clone_from(&target);
+                    this.rule_sources.editor_popover = super::QxRuleEditorPopover::None;
+                    this.rule_sources.feedback = QxRuleImportFeedback::Idle;
                     cx.notify();
                 }),
             ));
@@ -2957,7 +2969,7 @@ impl ManisApp {
             .with_size(ControlSize::Standard.component_size())
             .h(ControlSize::Standard.height())
             .w_full()
-            .child(self.qx_rule_target_policy.clone())
+            .child(self.rule_sources.target_policy.clone())
             .disabled(view.busy);
         let app = cx.entity();
         crate::components::anchored_popover(
@@ -2967,10 +2979,10 @@ impl ManisApp {
             (view.dialog_width - 40.0).max(240.0),
             320.0,
         )
-        .open(self.qx_rule_editor_popover == super::QxRuleEditorPopover::Target)
+        .open(self.rule_sources.editor_popover == super::QxRuleEditorPopover::Target)
         .on_open_change(move |open, _, cx| {
             app.update(cx, |this, cx| {
-                this.qx_rule_editor_popover = if *open {
+                this.rule_sources.editor_popover = if *open {
                     super::QxRuleEditorPopover::Target
                 } else {
                     super::QxRuleEditorPopover::None
@@ -3000,11 +3012,11 @@ impl ManisApp {
             menu = menu.child(Self::qx_rule_editor_option(
                 format!("qx-rule-editor-interval-{interval:?}"),
                 label.to_owned(),
-                interval == self.qx_rule_editor_refresh_interval,
+                interval == self.rule_sources.editor_refresh_interval,
                 theme,
                 cx.listener(move |this, _, _, cx| {
-                    this.qx_rule_editor_refresh_interval = interval;
-                    this.qx_rule_editor_popover = super::QxRuleEditorPopover::None;
+                    this.rule_sources.editor_refresh_interval = interval;
+                    this.rule_sources.editor_popover = super::QxRuleEditorPopover::None;
                     cx.notify();
                 }),
             ));
@@ -3017,7 +3029,7 @@ impl ManisApp {
             .h(ControlSize::Standard.height())
             .w_full()
             .child(refresh_interval_label(
-                self.qx_rule_editor_refresh_interval,
+                self.rule_sources.editor_refresh_interval,
                 language,
             ))
             .disabled(view.busy);
@@ -3029,10 +3041,10 @@ impl ManisApp {
             (view.dialog_width - 40.0).max(240.0),
             280.0,
         )
-        .open(self.qx_rule_editor_popover == super::QxRuleEditorPopover::Interval)
+        .open(self.rule_sources.editor_popover == super::QxRuleEditorPopover::Interval)
         .on_open_change(move |open, _, cx| {
             app.update(cx, |this, cx| {
-                this.qx_rule_editor_popover = if *open {
+                this.rule_sources.editor_popover = if *open {
                     super::QxRuleEditorPopover::Interval
                 } else {
                     super::QxRuleEditorPopover::None
@@ -3245,7 +3257,7 @@ impl ManisApp {
         busy: bool,
         language: Language,
     ) -> RuleSourceCardPresentation {
-        let refresh = match self.qx_rule_source_refreshes.get(&source.id) {
+        let refresh = match self.rule_sources.refreshes.get(&source.id) {
             Some(QxRuleSourceRefreshState::Refreshing { .. }) => {
                 RuleSourceRefreshPresentation::Refreshing
             }
@@ -3264,7 +3276,7 @@ impl ManisApp {
             }),
             refresh,
             duplicate: matches!(
-                &self.qx_rule_feedback,
+                &self.rule_sources.feedback,
                 QxRuleImportFeedback::AlreadyExists { source_id, .. } if source_id == &source.id
             ),
             controls_enabled: !busy && !self.source_refresh_busy(),
@@ -3536,8 +3548,8 @@ impl ManisApp {
         let language = self.language();
         let source_id = source.id.clone();
         let selected_target = self.effective_rule_target(source.target_policy.as_str(), language);
-        let open = self.qx_rule_target_popover.as_deref() == Some(source.id.as_str());
-        let updating = self.qx_rule_source_target_updates.contains_key(&source.id);
+        let open = self.rule_sources.target_popover.as_deref() == Some(source.id.as_str());
+        let updating = self.rule_sources.target_updates.contains_key(&source.id);
         let menu = self.qx_rule_source_target_menu(&source.id, &selected_target, theme, cx);
         let display_value = if updating {
             language.text("Saving…", "保存中…").to_owned()
@@ -3579,7 +3591,7 @@ impl ManisApp {
         .open(open)
         .on_open_change(move |open, _, cx| {
             app.update(cx, |this, cx| {
-                this.qx_rule_target_popover = open.then(|| source_id.clone());
+                this.rule_sources.target_popover = open.then(|| source_id.clone());
                 cx.notify();
             });
         })
@@ -3656,7 +3668,8 @@ impl ManisApp {
         self.manual_rule_target = if targets.iter().any(|target| target == rule.target()) {
             rule.target().to_owned()
         } else if rule.target() == "Proxy" {
-            self.managed_policy_groups
+            self.managed_policies
+                .groups
                 .first()
                 .map_or_else(|| "DIRECT".to_owned(), |group| group.name.clone())
         } else {
@@ -3770,7 +3783,8 @@ impl ManisApp {
 
     fn manual_rule_targets(&self) -> Vec<String> {
         let mut targets = self
-            .managed_policy_groups
+            .managed_policies
+            .groups
             .iter()
             .map(|group| group.name.clone())
             .collect::<Vec<_>>();
@@ -4074,12 +4088,12 @@ impl ManisApp {
                 return false;
             }
         };
-        let previous_order = self.routing_rule_group_order.clone();
+        let previous_order = self.rule_sources.group_order.clone();
         self.sync_routing_rule_group_order();
-        if mihomo::save_routing_rule_group_order_in(&store_dir, &self.routing_rule_group_order)
+        if mihomo::save_routing_rule_group_order_in(&store_dir, &self.rule_sources.group_order)
             .is_err()
         {
-            self.routing_rule_group_order = previous_order;
+            self.rule_sources.group_order = previous_order;
             let _ = store_snapshot.restore(&store_dir);
             language
                 .message(Message::RuleGroupOrderSaveFailed)
@@ -4151,7 +4165,7 @@ impl ManisApp {
                 this.routing_apply_state.finish();
                 if apply.requires_source_rollback() {
                     this.manual_rules = rollback.manual_rules;
-                    this.routing_rule_group_order = rollback.group_order;
+                    this.rule_sources.group_order = rollback.group_order;
                 }
                 apply.reconcile_proxy_mode(&mut this.proxy_mode);
                 this.status = if let Some(rollback_error) = rollback_error {
@@ -4184,10 +4198,10 @@ impl ManisApp {
     }
 
     fn sync_routing_rule_group_order(&mut self) {
-        self.routing_rule_group_order = mihomo::normalized_routing_rule_group_order(
-            &self.routing_rule_group_order,
+        self.rule_sources.group_order = mihomo::normalized_routing_rule_group_order(
+            &self.rule_sources.group_order,
             !self.manual_rules.is_empty(),
-            &self.qx_rule_sources,
+            &self.rule_sources.sources,
         );
     }
 
@@ -4200,19 +4214,19 @@ impl ManisApp {
             return;
         }
         self.sync_routing_rule_group_order();
-        let previous = self.routing_rule_group_order.clone();
-        if !mihomo::move_routing_rule_group(&mut self.routing_rule_group_order, group_id, direction)
+        let previous = self.rule_sources.group_order.clone();
+        if !mihomo::move_routing_rule_group(&mut self.rule_sources.group_order, group_id, direction)
         {
             return;
         }
         let Some(store_dir) = self.subscription_store_dir.clone() else {
-            self.routing_rule_group_order = previous;
+            self.rule_sources.group_order = previous;
             return;
         };
         let store_snapshot = match mihomo::SubscriptionStoreSnapshot::capture(&store_dir) {
             Ok(snapshot) => snapshot,
             Err(_error) => {
-                self.routing_rule_group_order = previous;
+                self.rule_sources.group_order = previous;
                 self.language()
                     .message(Message::StoreTransactionUnavailable)
                     .clone_into(&mut self.status);
@@ -4220,10 +4234,10 @@ impl ManisApp {
                 return;
             }
         };
-        if mihomo::save_routing_rule_group_order_in(&store_dir, &self.routing_rule_group_order)
+        if mihomo::save_routing_rule_group_order_in(&store_dir, &self.rule_sources.group_order)
             .is_err()
         {
-            self.routing_rule_group_order = previous;
+            self.rule_sources.group_order = previous;
             self.language()
                 .message(Message::RuleGroupOrderSaveFailed)
                 .clone_into(&mut self.status);
@@ -5057,13 +5071,15 @@ impl ManisApp {
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let remote_count = self
-            .qx_rule_sources
+            .rule_sources
+            .sources
             .iter()
             .filter(|source| source.enabled)
             .map(|source| source.rule_count)
             .sum::<usize>();
         let disabled_remote_count = self
-            .qx_rule_sources
+            .rule_sources
+            .sources
             .iter()
             .filter(|source| !source.enabled)
             .map(|source| source.rule_count)
@@ -5077,9 +5093,9 @@ impl ManisApp {
         let active_count = enabled_manual_count + remote_count;
         let disabled_count = disabled_manual_count + disabled_remote_count;
         let group_order = mihomo::normalized_routing_rule_group_order(
-            &self.routing_rule_group_order,
+            &self.rule_sources.group_order,
             !self.manual_rules.is_empty(),
-            &self.qx_rule_sources,
+            &self.rule_sources.sources,
         );
         let mut list = Self::active_rules_panel_shell(
             active_count,
@@ -5105,7 +5121,8 @@ impl ManisApp {
                     cx,
                 ));
             } else if let Some((source_index, source)) = self
-                .qx_rule_sources
+                .rule_sources
+                .sources
                 .iter()
                 .enumerate()
                 .find(|(_, source)| source.id == *group_id)
@@ -5527,7 +5544,7 @@ impl ManisApp {
     }
 
     fn qx_rule_import_feedback(&self, theme: Theme, language: Language) -> Div {
-        let (message, color) = match &self.qx_rule_feedback {
+        let (message, color) = match &self.rule_sources.feedback {
             QxRuleImportFeedback::Idle => (
                 language
                     .text(
@@ -5603,7 +5620,8 @@ impl ManisApp {
 
     fn qx_rule_targets(&self) -> Vec<String> {
         let mut targets = self
-            .managed_policy_groups
+            .managed_policies
+            .groups
             .iter()
             .map(|group| group.name.clone())
             .collect::<Vec<_>>();
@@ -5614,13 +5632,14 @@ impl ManisApp {
     fn effective_rule_target(&self, target: &str, language: Language) -> String {
         if target != "Proxy"
             || self
-                .managed_policy_groups
+                .managed_policies
+                .groups
                 .iter()
                 .any(|group| group.name == target)
         {
             return target.to_owned();
         }
-        self.managed_policy_groups.first().map_or_else(
+        self.managed_policies.groups.first().map_or_else(
             || language.text("Global exit", "全局出口").to_owned(),
             |group| group.name.clone(),
         )
@@ -5632,19 +5651,19 @@ impl ManisApp {
         cx: &mut Context<Self>,
     ) -> bool {
         let url = input.read(cx).value().trim().to_owned();
-        let target = self.qx_rule_target_policy.clone();
-        let editing_id = self.qx_rule_editor_source_id.clone();
-        let refresh_interval = self.qx_rule_editor_refresh_interval;
+        let target = self.rule_sources.target_policy.clone();
+        let editing_id = self.rule_sources.editor_source_id.clone();
+        let refresh_interval = self.rule_sources.editor_refresh_interval;
         let operation_id = begin_operation(
             "configuration.rule_source.save.requested",
             format!(
                 "editing={} target={target} known_sources={}",
                 editing_id.is_some(),
-                self.qx_rule_sources.len()
+                self.rule_sources.sources.len()
             ),
         );
         let Ok(parsed_source) = SecretUrl::parse_https(&url) else {
-            self.qx_rule_feedback =
+            self.rule_sources.feedback =
                 QxRuleImportFeedback::StoreFailed(SubscriptionStoreError::InvalidSource);
             self.language()
                 .text(
@@ -5656,7 +5675,7 @@ impl ManisApp {
             return false;
         };
         let Some(store_dir) = self.subscription_store_dir.clone() else {
-            self.qx_rule_feedback =
+            self.rule_sources.feedback =
                 QxRuleImportFeedback::StoreFailed(SubscriptionStoreError::DataDirectoryUnavailable);
             self.language()
                 .text(
@@ -5681,9 +5700,9 @@ impl ManisApp {
         ) {
             return false;
         }
-        self.qx_rule_import_generation = self.qx_rule_import_generation.wrapping_add(1);
-        let generation = self.qx_rule_import_generation;
-        self.qx_rule_feedback = QxRuleImportFeedback::Importing;
+        self.rule_sources.import_generation = self.rule_sources.import_generation.wrapping_add(1);
+        let generation = self.rule_sources.import_generation;
+        self.rule_sources.feedback = QxRuleImportFeedback::Importing;
         self.language()
             .text("Downloading and parsing QX rules", "正在下载并解析 QX 规则")
             .clone_into(&mut self.status);
@@ -5723,7 +5742,8 @@ impl ManisApp {
         cx: &mut Context<Self>,
     ) -> bool {
         let Some((source_id, rule_count, stored_target)) = self
-            .qx_rule_sources
+            .rule_sources
+            .sources
             .iter()
             .find(|source| {
                 source.source == *parsed_source && editing_id != Some(source.id.as_str())
@@ -5739,7 +5759,7 @@ impl ManisApp {
             return false;
         };
         let target_policy = self.effective_rule_target(stored_target.as_str(), self.language());
-        self.qx_rule_feedback = QxRuleImportFeedback::AlreadyExists {
+        self.rule_sources.feedback = QxRuleImportFeedback::AlreadyExists {
             source_id: source_id.clone(),
             rule_count,
             target_policy: target_policy.clone(),
@@ -5767,10 +5787,10 @@ impl ManisApp {
         result: super::QxRuleImportResult,
         cx: &mut Context<Self>,
     ) {
-        if self.qx_rule_import_generation != generation {
+        if self.rule_sources.import_generation != generation {
             return;
         }
-        if let Some(input) = self.qx_rule_input.as_ref() {
+        if let Some(input) = self.inputs.qx_rule.as_ref() {
             input.update(cx, |input, cx| input.set_enabled(true, cx));
         }
         match result {
@@ -5784,7 +5804,7 @@ impl ManisApp {
                 apply,
                 rollback_error,
             }) => {
-                self.qx_rule_feedback = QxRuleImportFeedback::Idle;
+                self.rule_sources.feedback = QxRuleImportFeedback::Idle;
                 self.status = apply
                     .status_suffix_after_rollback_attempt(self.language(), rollback_error.as_ref());
             }
@@ -5806,21 +5826,22 @@ impl ManisApp {
         let stored_id = stored.id.clone();
         let target_policy = self.effective_rule_target(stored.target_policy.as_str(), language);
         if let Some(existing) = self
-            .qx_rule_sources
+            .rule_sources
+            .sources
             .iter_mut()
             .find(|source| source.id == stored_id)
         {
             *existing = stored;
         } else {
-            self.qx_rule_sources.push(stored);
+            self.rule_sources.sources.push(stored);
         }
         self.persist_routing_rule_group_order();
-        self.qx_rule_source_refreshes.remove(&stored_id);
-        self.qx_rule_feedback = QxRuleImportFeedback::Imported {
+        self.rule_sources.refreshes.remove(&stored_id);
+        self.rule_sources.feedback = QxRuleImportFeedback::Imported {
             rule_count,
             diagnostic_count,
         };
-        if let Some(input) = self.qx_rule_input.as_ref() {
+        if let Some(input) = self.inputs.qx_rule.as_ref() {
             input.update(cx, SubscriptionTextInput::clear_without_event);
         }
         apply.reconcile_proxy_mode(&mut self.proxy_mode);
@@ -5851,14 +5872,15 @@ impl ManisApp {
         let source_id = stored.id.clone();
         let rule_count = stored.rule_count;
         if !self
-            .qx_rule_sources
+            .rule_sources
+            .sources
             .iter()
             .any(|source| source.id == source_id)
         {
-            self.qx_rule_sources.push(stored);
+            self.rule_sources.sources.push(stored);
         }
         self.persist_routing_rule_group_order();
-        self.qx_rule_feedback = QxRuleImportFeedback::AlreadyExists {
+        self.rule_sources.feedback = QxRuleImportFeedback::AlreadyExists {
             source_id: source_id.clone(),
             rule_count,
             target_policy: target_policy.clone(),
@@ -5881,7 +5903,7 @@ impl ManisApp {
         self.sync_routing_rule_group_order();
         if let Some(store_dir) = self.subscription_store_dir.as_ref() {
             let _ =
-                mihomo::save_routing_rule_group_order_in(store_dir, &self.routing_rule_group_order);
+                mihomo::save_routing_rule_group_order_in(store_dir, &self.rule_sources.group_order);
         }
     }
 
@@ -5893,7 +5915,7 @@ impl ManisApp {
                     self.language()
                         .text("QX rule download failed", "QX 规则下载失败")
                 );
-                self.qx_rule_feedback = QxRuleImportFeedback::DownloadFailed(*error);
+                self.rule_sources.feedback = QxRuleImportFeedback::DownloadFailed(*error);
                 record_operation(
                     operation_id,
                     LogLevel::Error,
@@ -5902,7 +5924,7 @@ impl ManisApp {
                 );
             }
             ImportQxRuleError::InvalidDocument => {
-                self.qx_rule_feedback = QxRuleImportFeedback::InvalidDocument;
+                self.rule_sources.feedback = QxRuleImportFeedback::InvalidDocument;
                 self.language()
                     .text(
                         "QX rules not imported: no recognizable domain rules",
@@ -5922,7 +5944,7 @@ impl ManisApp {
                     self.language()
                         .text("QX rule save failed", "QX 规则保存失败")
                 );
-                self.qx_rule_feedback = QxRuleImportFeedback::StoreFailed(*error);
+                self.rule_sources.feedback = QxRuleImportFeedback::StoreFailed(*error);
                 record_operation(
                     operation_id,
                     LogLevel::Error,
@@ -5937,9 +5959,9 @@ impl ManisApp {
         let Some(store_dir) = self.subscription_store_dir.clone() else {
             return;
         };
-        self.qx_rule_import_generation = self.qx_rule_import_generation.wrapping_add(1);
-        let generation = self.qx_rule_import_generation;
-        self.qx_rule_feedback = QxRuleImportFeedback::Importing;
+        self.rule_sources.import_generation = self.rule_sources.import_generation.wrapping_add(1);
+        let generation = self.rule_sources.import_generation;
+        self.rule_sources.feedback = QxRuleImportFeedback::Importing;
         self.language()
             .text("Removing remote QX rules", "正在移除远程 QX 规则")
             .clone_into(&mut self.status);
@@ -5954,24 +5976,25 @@ impl ManisApp {
                 })
                 .await;
             this.update(cx, |this, cx| {
-                if this.qx_rule_import_generation != generation {
+                if this.rule_sources.import_generation != generation {
                     return;
                 }
                 match result {
                     Ok(transaction) if transaction.value.is_some() => {
                         let id = transaction.value.expect("checked committed mutation");
-                        this.qx_rule_sources.retain(|source| source.id != id);
+                        this.rule_sources.sources.retain(|source| source.id != id);
                         this.sync_routing_rule_group_order();
                         if let Some(store_dir) = this.subscription_store_dir.as_ref() {
                             let _ = mihomo::save_routing_rule_group_order_in(
                                 store_dir,
-                                &this.routing_rule_group_order,
+                                &this.rule_sources.group_order,
                             );
                         }
-                        this.qx_rule_source_refreshes.remove(&id);
-                        this.source_refresh_retry_not_before
+                        this.rule_sources.refreshes.remove(&id);
+                        this.rule_sources
+                            .refresh_retry_not_before
                             .remove(&super::DueRemoteSource::QxRule(id.clone()).scheduler_key());
-                        this.qx_rule_feedback = QxRuleImportFeedback::Idle;
+                        this.rule_sources.feedback = QxRuleImportFeedback::Idle;
                         let language = this.language();
                         transaction.apply.reconcile_proxy_mode(&mut this.proxy_mode);
                         this.status = if language == Language::English {
@@ -5987,7 +6010,7 @@ impl ManisApp {
                         };
                     }
                     Ok(transaction) => {
-                        this.qx_rule_feedback = QxRuleImportFeedback::StoreFailed(
+                        this.rule_sources.feedback = QxRuleImportFeedback::StoreFailed(
                             SubscriptionStoreError::StoreUnavailable,
                         );
                         this.status = format!(
@@ -6000,7 +6023,7 @@ impl ManisApp {
                         );
                     }
                     Err(error) => {
-                        this.qx_rule_feedback = QxRuleImportFeedback::StoreFailed(error);
+                        this.rule_sources.feedback = QxRuleImportFeedback::StoreFailed(error);
                         this.status = format!(
                             "{}: {error}",
                             this.language()
@@ -6125,9 +6148,10 @@ impl ManisApp {
         let Some(store_dir) = self.subscription_store_dir.clone() else {
             return;
         };
-        self.qx_rule_import_generation = self.qx_rule_import_generation.wrapping_add(1);
-        let generation = self.qx_rule_import_generation;
-        self.qx_rule_source_target_updates
+        self.rule_sources.import_generation = self.rule_sources.import_generation.wrapping_add(1);
+        let generation = self.rule_sources.import_generation;
+        self.rule_sources
+            .target_updates
             .insert(id.clone(), generation);
         self.language()
             .text("Applying rule source state", "正在应用规则来源状态")
@@ -6144,17 +6168,18 @@ impl ManisApp {
                 })
                 .await;
             this.update(cx, |this, cx| {
-                if this.qx_rule_source_target_updates.get(&id) != Some(&generation) {
+                if this.rule_sources.target_updates.get(&id) != Some(&generation) {
                     return;
                 }
-                this.qx_rule_source_target_updates.remove(&id);
+                this.rule_sources.target_updates.remove(&id);
                 match result {
                     Ok(transaction) if transaction.value.is_some() => {
                         let stored = transaction.value.expect("checked committed mutation");
                         let language = this.language();
                         let enabled = stored.enabled;
                         if let Some(source) = this
-                            .qx_rule_sources
+                            .rule_sources
+                            .sources
                             .iter_mut()
                             .find(|source| source.id == id)
                         {
@@ -6211,20 +6236,26 @@ impl ManisApp {
             cx.notify();
             return;
         };
-        let Some(source) = self.qx_rule_sources.iter().find(|source| source.id == id) else {
+        let Some(source) = self
+            .rule_sources
+            .sources
+            .iter()
+            .find(|source| source.id == id)
+        else {
             return;
         };
         if self.effective_rule_target(source.target_policy.as_str(), self.language()) == target {
-            self.qx_rule_target_popover = None;
+            self.rule_sources.target_popover = None;
             cx.notify();
             return;
         }
 
-        self.qx_rule_import_generation = self.qx_rule_import_generation.wrapping_add(1);
-        let generation = self.qx_rule_import_generation;
-        self.qx_rule_source_target_updates
+        self.rule_sources.import_generation = self.rule_sources.import_generation.wrapping_add(1);
+        let generation = self.rule_sources.import_generation;
+        self.rule_sources
+            .target_updates
             .insert(id.clone(), generation);
-        self.qx_rule_target_popover = None;
+        self.rule_sources.target_popover = None;
         self.status = format!(
             "{} {target}",
             self.language()
@@ -6242,58 +6273,80 @@ impl ManisApp {
                 })
                 .await;
             this.update(cx, |this, cx| {
-                if this.qx_rule_source_target_updates.get(&id) != Some(&generation) {
-                    return;
-                }
-                this.qx_rule_source_target_updates.remove(&id);
-                match result {
-                    Ok(transaction) if transaction.value.is_some() => {
-                        let stored = transaction.value.expect("checked committed mutation");
-                        let language = this.language();
-                        let target = stored.target_policy.as_str().to_owned();
-                        if let Some(source) = this
-                            .qx_rule_sources
-                            .iter_mut()
-                            .find(|source| source.id == id)
-                        {
-                            *source = stored;
-                        }
-                        transaction.apply.reconcile_proxy_mode(&mut this.proxy_mode);
-                        this.status = format!(
-                            "{} {target}{}",
-                            language.text("Rule source policy set to", "规则源策略已设为"),
-                            transaction.apply.status_suffix(language)
-                        );
-                        record_event(
-                            LogLevel::Info,
-                            "routing.rule_source.target.updated",
-                            format!("source_id={id} target={target}"),
-                        );
-                    }
-                    Ok(transaction) => {
-                        this.status = format!(
-                            "{}{}",
-                            this.language()
-                                .text("Failed to save rule source policy", "规则源策略保存失败"),
-                            transaction
-                                .apply
-                                .status_suffix_after_source_rollback(this.language())
-                        );
-                    }
-                    Err(error) => {
-                        this.status = format!(
-                            "{}: {error}",
-                            this.language()
-                                .text("Failed to save rule source policy", "规则源策略保存失败")
-                        );
-                    }
-                }
-                cx.notify();
+                this.finish_qx_rule_target_update(&id, generation, result, cx);
             })
             .ok();
         })
         .detach();
         cx.notify();
+    }
+
+    fn finish_qx_rule_target_update(
+        &mut self,
+        id: &str,
+        generation: u64,
+        result: Result<super::SourceMutation<mihomo::StoredQxRuleSource>, SubscriptionStoreError>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.rule_sources.target_updates.get(id) != Some(&generation) {
+            return;
+        }
+        self.rule_sources.target_updates.remove(id);
+        match result {
+            Ok(transaction) if transaction.value.is_some() => {
+                self.finish_successful_qx_rule_target_update(id, transaction);
+            }
+            Ok(transaction) => {
+                self.status = format!(
+                    "{}{}",
+                    self.language()
+                        .text("Failed to save rule source policy", "规则源策略保存失败"),
+                    transaction
+                        .apply
+                        .status_suffix_after_source_rollback(self.language())
+                );
+            }
+            Err(error) => {
+                self.status = format!(
+                    "{}: {error}",
+                    self.language()
+                        .text("Failed to save rule source policy", "规则源策略保存失败")
+                );
+            }
+        }
+        cx.notify();
+    }
+
+    fn finish_successful_qx_rule_target_update(
+        &mut self,
+        id: &str,
+        mut transaction: super::SourceMutation<mihomo::StoredQxRuleSource>,
+    ) {
+        let stored = transaction
+            .value
+            .take()
+            .expect("checked committed mutation");
+        let language = self.language();
+        let target = stored.target_policy.as_str().to_owned();
+        if let Some(source) = self
+            .rule_sources
+            .sources
+            .iter_mut()
+            .find(|source| source.id == id)
+        {
+            *source = stored;
+        }
+        transaction.apply.reconcile_proxy_mode(&mut self.proxy_mode);
+        self.status = format!(
+            "{} {target}{}",
+            language.text("Rule source policy set to", "规则源策略已设为"),
+            transaction.apply.status_suffix(language)
+        );
+        record_event(
+            LogLevel::Info,
+            "routing.rule_source.target.updated",
+            format!("source_id={id} target={target}"),
+        );
     }
 
     pub(super) fn refresh_qx_rule_source(&mut self, id: String, cx: &mut Context<Self>) {
@@ -6303,13 +6356,18 @@ impl ManisApp {
         let Some(store_dir) = self.subscription_store_dir.clone() else {
             return;
         };
-        let Some(source) = self.qx_rule_sources.iter().find(|source| source.id == id) else {
+        let Some(source) = self
+            .rule_sources
+            .sources
+            .iter()
+            .find(|source| source.id == id)
+        else {
             return;
         };
         let url = source.source.clone();
-        self.qx_rule_import_generation = self.qx_rule_import_generation.wrapping_add(1);
-        let generation = self.qx_rule_import_generation;
-        self.qx_rule_source_refreshes.insert(
+        self.rule_sources.import_generation = self.rule_sources.import_generation.wrapping_add(1);
+        let generation = self.rule_sources.import_generation;
+        self.rule_sources.refreshes.insert(
             id.clone(),
             QxRuleSourceRefreshState::Refreshing { generation },
         );
@@ -6357,7 +6415,7 @@ impl ManisApp {
         cx: &mut Context<Self>,
     ) {
         if !matches!(
-            self.qx_rule_source_refreshes.get(id),
+            self.rule_sources.refreshes.get(id),
             Some(QxRuleSourceRefreshState::Refreshing { generation: active })
                 if *active == generation
         ) {
@@ -6370,7 +6428,7 @@ impl ManisApp {
             Err(error) => self.finish_failed_qx_rule_refresh(id, generation, &error),
             Ok(transaction) => {
                 let message = "runtime apply failed".to_owned();
-                self.qx_rule_source_refreshes.insert(
+                self.rule_sources.refreshes.insert(
                     id.to_owned(),
                     QxRuleSourceRefreshState::Failed {
                         generation,
@@ -6402,14 +6460,16 @@ impl ManisApp {
         let language = self.language();
         let rule_count = stored.rule_count;
         if let Some(source) = self
-            .qx_rule_sources
+            .rule_sources
+            .sources
             .iter_mut()
             .find(|source| source.id == id)
         {
             *source = stored;
         }
-        self.qx_rule_source_refreshes.remove(id);
-        self.source_refresh_retry_not_before
+        self.rule_sources.refreshes.remove(id);
+        self.rule_sources
+            .refresh_retry_not_before
             .remove(&super::DueRemoteSource::QxRule(id.to_owned()).scheduler_key());
         transaction.apply.reconcile_proxy_mode(&mut self.proxy_mode);
         self.status = if language == Language::English {
@@ -6439,7 +6499,7 @@ impl ManisApp {
                 .to_owned(),
             ImportQxRuleError::Store(error) => error.to_string(),
         };
-        self.qx_rule_source_refreshes.insert(
+        self.rule_sources.refreshes.insert(
             id.to_owned(),
             QxRuleSourceRefreshState::Failed {
                 generation,

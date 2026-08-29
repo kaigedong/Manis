@@ -637,8 +637,8 @@ impl ManisApp {
             language.message(Message::Cancel),
             false,
             cx.listener(|this, _, _, cx| {
-                this.managed_policy_draft = None;
-                this.managed_policy_editor_popover = None;
+                this.managed_policies.draft = None;
+                this.managed_policies.editor_popover = None;
                 this.language()
                     .text("Policy editing cancelled", "已取消编辑策略")
                     .clone_into(&mut this.status);
@@ -766,7 +766,8 @@ impl ManisApp {
             ManagedPolicyStrategy::LowestLatency => "url-latency-benchmark".to_owned(),
         };
         let policy_name = self
-            .policy_group_name_input
+            .inputs
+            .policy_group_name
             .as_ref()
             .map_or_else(String::new, |input| input.read(cx).value().to_owned());
         div()
@@ -783,7 +784,7 @@ impl ManisApp {
                 theme,
                 PolicyEditorPopup::new(
                     PolicyEditorPopover::Strategy,
-                    self.managed_policy_editor_popover == Some(PolicyEditorPopover::Strategy),
+                    self.managed_policies.editor_popover == Some(PolicyEditorPopover::Strategy),
                     Self::policy_strategy_menu(draft, language, theme, cx),
                     popover_width,
                     220.0,
@@ -793,7 +794,7 @@ impl ManisApp {
             .child(Self::policy_editor_input_row(
                 language.text("Policy group name", "策略组名称"),
                 true,
-                self.policy_group_name_input.clone(),
+                self.inputs.policy_group_name.clone(),
                 true,
                 theme,
             ))
@@ -810,7 +811,7 @@ impl ManisApp {
                 theme,
                 PolicyEditorPopup::new(
                     PolicyEditorPopover::Icon,
-                    self.managed_policy_editor_popover == Some(PolicyEditorPopover::Icon),
+                    self.managed_policies.editor_popover == Some(PolicyEditorPopover::Icon),
                     Self::policy_icon_menu(draft, language, theme, cx),
                     popover_width,
                     320.0,
@@ -853,7 +854,8 @@ impl ManisApp {
                 theme,
                 PolicyEditorPopup::new(
                     PolicyEditorPopover::CandidateMode,
-                    self.managed_policy_editor_popover == Some(PolicyEditorPopover::CandidateMode),
+                    self.managed_policies.editor_popover
+                        == Some(PolicyEditorPopover::CandidateMode),
                     Self::policy_candidate_mode_menu(draft, language, theme, cx),
                     popover_width,
                     280.0,
@@ -865,7 +867,7 @@ impl ManisApp {
             nodes = nodes.child(Self::policy_editor_input_row(
                 language.text("Node name contains", "节点名称包含"),
                 false,
-                self.policy_group_filter_input.clone(),
+                self.inputs.policy_group_filter.clone(),
                 draft.strategy == ManagedPolicyStrategy::LowestLatency,
                 theme,
             ));
@@ -911,7 +913,7 @@ impl ManisApp {
             theme,
             PolicyEditorPopup::new(
                 PolicyEditorPopover::CandidateNodes,
-                self.managed_policy_editor_popover == Some(PolicyEditorPopover::CandidateNodes),
+                self.managed_policies.editor_popover == Some(PolicyEditorPopover::CandidateNodes),
                 self.policy_candidate_menu(draft, language, theme, cx),
                 popover_width.max(480.0),
                 420.0,
@@ -949,7 +951,7 @@ impl ManisApp {
             theme,
             PolicyEditorPopup::new(
                 PolicyEditorPopover::Interval,
-                self.managed_policy_editor_popover == Some(PolicyEditorPopover::Interval),
+                self.managed_policies.editor_popover == Some(PolicyEditorPopover::Interval),
                 Self::policy_interval_menu(draft, language, theme, cx),
                 popover_width,
                 320.0,
@@ -1028,7 +1030,7 @@ impl ManisApp {
         .open(open)
         .on_open_change(move |open, _, cx| {
             app.update(cx, |this, cx| {
-                this.managed_policy_editor_popover = open.then_some(kind);
+                this.managed_policies.editor_popover = open.then_some(kind);
                 cx.notify();
             });
         });
@@ -1165,10 +1167,10 @@ impl ManisApp {
                 selected,
                 theme,
                 cx.listener(move |this, _, _, cx| {
-                    if let Some(draft) = this.managed_policy_draft.as_mut() {
+                    if let Some(draft) = this.managed_policies.draft.as_mut() {
                         draft.strategy = strategy;
                     }
-                    this.managed_policy_editor_popover = None;
+                    this.managed_policies.editor_popover = None;
                     cx.notify();
                 }),
             ));
@@ -1198,10 +1200,10 @@ impl ManisApp {
                 selected,
                 theme,
                 cx.listener(move |this, _, _, cx| {
-                    if let Some(draft) = this.managed_policy_draft.as_mut() {
+                    if let Some(draft) = this.managed_policies.draft.as_mut() {
                         draft.icon = icon;
                     }
-                    this.managed_policy_editor_popover = None;
+                    this.managed_policies.editor_popover = None;
                     cx.notify();
                 }),
             ));
@@ -1237,10 +1239,10 @@ impl ManisApp {
                 selected,
                 theme,
                 cx.listener(move |this, _, _, cx| {
-                    if let Some(draft) = this.managed_policy_draft.as_mut() {
+                    if let Some(draft) = this.managed_policies.draft.as_mut() {
                         draft.matcher_kind = matcher;
                     }
-                    this.managed_policy_editor_popover = (matcher
+                    this.managed_policies.editor_popover = (matcher
                         == PolicyCandidateMatcherKind::Explicit)
                         .then_some(PolicyEditorPopover::CandidateNodes);
                     cx.notify();
@@ -1323,7 +1325,7 @@ impl ManisApp {
                     ),
                 )
                 .on_click(cx.listener(move |this, _, _, cx| {
-                    if let Some(draft) = this.managed_policy_draft.as_mut()
+                    if let Some(draft) = this.managed_policies.draft.as_mut()
                         && !draft.explicit_members.remove(&member_for_click)
                     {
                         draft.explicit_members.insert(member_for_click.clone());
@@ -1373,7 +1375,7 @@ impl ManisApp {
                 .cursor_pointer()
                 .font_weight(FontWeight::SEMIBOLD)
                 .on_click(cx.listener(|this, _, _, cx| {
-                    this.managed_policy_editor_popover = None;
+                    this.managed_policies.editor_popover = None;
                     cx.notify();
                 })),
             )
@@ -1398,10 +1400,10 @@ impl ManisApp {
                 draft.test_interval_secs == seconds,
                 theme,
                 cx.listener(move |this, _, _, cx| {
-                    if let Some(draft) = this.managed_policy_draft.as_mut() {
+                    if let Some(draft) = this.managed_policies.draft.as_mut() {
                         draft.test_interval_secs = seconds;
                     }
-                    this.managed_policy_editor_popover = None;
+                    this.managed_policies.editor_popover = None;
                     cx.notify();
                 }),
             ));
@@ -1442,10 +1444,11 @@ impl ManisApp {
             .collect::<Vec<_>>();
         inventory.extend(self.node_inventory());
         let editing_id = self
-            .managed_policy_draft
+            .managed_policies
+            .draft
             .as_ref()
             .and_then(|draft| draft.editing_id.as_deref());
-        for group in &self.managed_policy_groups {
+        for group in &self.managed_policies.groups {
             if editing_id != Some(group.id.as_str())
                 && let Ok(identity) =
                     NodeIdentity::new(&format!("policy:{}", group.id), &group.name)
@@ -1482,7 +1485,7 @@ impl ManisApp {
     ) {
         let key = Self::source_group_benchmark_key(id);
         if matches!(
-            self.group_benchmarks.get(&key),
+            self.managed_policies.benchmarks.get(&key),
             Some(GroupBenchmarkState::Running { .. })
         ) {
             return;
@@ -1560,11 +1563,11 @@ impl ManisApp {
         cx: &mut Context<Self>,
     ) {
         let language = self.language();
-        if self.group_benchmark_active_generation != Some(generation) {
+        if self.managed_policies.active_benchmark_generation != Some(generation) {
             return;
         }
-        self.group_benchmark_active_generation = None;
-        let Some(state) = self.group_benchmarks.get_mut(key) else {
+        self.managed_policies.active_benchmark_generation = None;
+        let Some(state) = self.managed_policies.benchmarks.get_mut(key) else {
             cx.notify();
             return;
         };
@@ -1601,8 +1604,8 @@ impl ManisApp {
     }
 
     pub(super) fn start_managed_policy_create(&mut self, cx: &mut Context<Self>) {
-        self.managed_policy_editor_popover = None;
-        self.managed_policy_draft = Some(ManagedPolicyDraft {
+        self.managed_policies.editor_popover = None;
+        self.managed_policies.draft = Some(ManagedPolicyDraft {
             editing_id: None,
             icon: ManagedPolicyIcon::None,
             strategy: ManagedPolicyStrategy::Manual,
@@ -1610,13 +1613,13 @@ impl ManisApp {
             matcher_kind: PolicyCandidateMatcherKind::All,
             explicit_members: BTreeSet::new(),
         });
-        if let Some(input) = self.policy_group_name_input.as_ref() {
+        if let Some(input) = self.inputs.policy_group_name.as_ref() {
             input.update(
                 cx,
                 crate::subscription_input::SubscriptionTextInput::clear_without_event,
             );
         }
-        if let Some(input) = self.policy_group_filter_input.as_ref() {
+        if let Some(input) = self.inputs.policy_group_filter.as_ref() {
             input.update(
                 cx,
                 crate::subscription_input::SubscriptionTextInput::clear_without_event,
@@ -1630,7 +1633,8 @@ impl ManisApp {
 
     pub(super) fn start_managed_policy_edit(&mut self, id: &str, cx: &mut Context<Self>) {
         let Some(group) = self
-            .managed_policy_groups
+            .managed_policies
+            .groups
             .iter()
             .find(|group| group.id == id)
             .cloned()
@@ -1648,8 +1652,8 @@ impl ManisApp {
                 (PolicyCandidateMatcherKind::Explicit, "", members.clone())
             }
         };
-        self.managed_policy_editor_popover = None;
-        self.managed_policy_draft = Some(ManagedPolicyDraft {
+        self.managed_policies.editor_popover = None;
+        self.managed_policies.draft = Some(ManagedPolicyDraft {
             editing_id: Some(group.id),
             icon: group.icon,
             strategy: group.strategy,
@@ -1657,12 +1661,12 @@ impl ManisApp {
             matcher_kind,
             explicit_members,
         });
-        if let Some(input) = self.policy_group_name_input.as_ref() {
+        if let Some(input) = self.inputs.policy_group_name.as_ref() {
             input.update(cx, |input, cx| {
                 input.set_value_without_event(group.name.clone(), cx);
             });
         }
-        if let Some(input) = self.policy_group_filter_input.as_ref() {
+        if let Some(input) = self.inputs.policy_group_filter.as_ref() {
             input.update(cx, |input, cx| {
                 input.set_value_without_event(filter.to_owned(), cx);
             });
@@ -1689,7 +1693,8 @@ impl ManisApp {
         let mut group =
             ManagedPolicyGroup::new(&id, name).map_err(|_| ManagedPolicyDraftError::InvalidName)?;
         if self
-            .managed_policy_groups
+            .managed_policies
+            .groups
             .iter()
             .any(|existing| existing.id != id && existing.name == name)
         {
@@ -1726,7 +1731,7 @@ impl ManisApp {
         if !explicit && self.managed_policy_candidate_count(&group) == 0 {
             return Err(ManagedPolicyDraftError::NoCandidates);
         }
-        let mut proposed = self.managed_policy_groups.clone();
+        let mut proposed = self.managed_policies.groups.clone();
         if let Some(existing) = proposed.iter_mut().find(|existing| existing.id == group.id) {
             existing.clone_from(&group);
         } else {
@@ -1738,16 +1743,18 @@ impl ManisApp {
     }
 
     pub(super) fn save_managed_policy(&mut self, cx: &mut Context<Self>) {
-        let Some(draft) = self.managed_policy_draft.clone() else {
+        let Some(draft) = self.managed_policies.draft.clone() else {
             return;
         };
         let name = self
-            .policy_group_name_input
+            .inputs
+            .policy_group_name
             .as_ref()
             .map(|input| input.read(cx).value().trim().to_owned())
             .unwrap_or_default();
         let filter = self
-            .policy_group_filter_input
+            .inputs
+            .policy_group_filter
             .as_ref()
             .map(|input| input.read(cx).value().trim().to_owned())
             .unwrap_or_default();
@@ -1807,21 +1814,24 @@ impl ManisApp {
                 transaction.apply.reconcile_proxy_mode(&mut self.proxy_mode);
                 if let Some(group) = transaction.value {
                     if let Some(existing) = self
-                        .managed_policy_groups
+                        .managed_policies
+                        .groups
                         .iter_mut()
                         .find(|existing| existing.id == group.id)
                     {
                         existing.clone_from(&group);
                     } else {
-                        self.managed_policy_groups.push(group.clone());
-                        self.managed_policy_groups
+                        self.managed_policies.groups.push(group.clone());
+                        self.managed_policies
+                            .groups
                             .sort_by(|left, right| left.id.cmp(&right.id));
                     }
-                    self.group_benchmarks
+                    self.managed_policies
+                        .benchmarks
                         .remove(&Self::managed_policy_benchmark_key(&group.id));
-                    self.managed_policy_runtime_states.remove(&group.id);
-                    self.managed_policy_draft = None;
-                    self.managed_policy_editor_popover = None;
+                    self.managed_policies.runtime_states.remove(&group.id);
+                    self.managed_policies.draft = None;
+                    self.managed_policies.editor_popover = None;
                     self.status = format!(
                         "{} “{}”{}",
                         language.text("Group saved", "分组已保存"),
@@ -1852,7 +1862,7 @@ impl ManisApp {
 
     pub(super) fn remove_managed_policy(&mut self, id: &str, cx: &mut Context<Self>) {
         let reference = format!("policy:{id}");
-        if self.managed_policy_groups.iter().any(|group| {
+        if self.managed_policies.groups.iter().any(|group| {
             matches!(
                 &group.matcher,
                 PolicyCandidateMatcher::Explicit(members)
@@ -1872,14 +1882,15 @@ impl ManisApp {
             return;
         };
         let Some(index) = self
-            .managed_policy_groups
+            .managed_policies
+            .groups
             .iter()
             .position(|group| group.id == id)
         else {
             return;
         };
         let language = self.language();
-        let group = self.managed_policy_groups[index].clone();
+        let group = self.managed_policies.groups[index].clone();
         let remove_id = id.to_owned();
         self.status = format!(
             "{} “{}”; {}",
@@ -1899,56 +1910,78 @@ impl ManisApp {
                 })
                 .await;
             this.update(cx, |this, cx| {
-                match result {
-                    Ok(transaction) => {
-                        let language = this.language();
-                        transaction.apply.reconcile_proxy_mode(&mut this.proxy_mode);
-                        if let Some((deleted_id, group)) = transaction.value {
-                            this.managed_policy_groups
-                                .retain(|candidate| candidate.id != deleted_id);
-                            this.group_benchmarks
-                                .remove(&Self::managed_policy_benchmark_key(&deleted_id));
-                            this.managed_policy_runtime_states.remove(&deleted_id);
-                            if this
-                                .managed_policy_draft
-                                .as_ref()
-                                .and_then(|draft| draft.editing_id.as_deref())
-                                == Some(deleted_id.as_str())
-                            {
-                                this.managed_policy_draft = None;
-                                this.managed_policy_editor_popover = None;
-                            }
-                            this.status = format!(
-                                "{} “{}”{}",
-                                language.text("Group deleted", "分组已删除"),
-                                group.name,
-                                transaction.apply.status_suffix(language)
-                            );
-                        } else {
-                            this.status = format!(
-                                "{}{}",
-                                language.text("Failed to delete policy group", "策略组删除失败"),
-                                transaction.apply.status_suffix_after_rollback_attempt(
-                                    language,
-                                    transaction.rollback_error.as_ref(),
-                                )
-                            );
-                        }
-                    }
-                    Err(error) => {
-                        this.status = format!(
-                            "{}: {error}",
-                            this.language()
-                                .text("Failed to delete policy group", "策略组删除失败")
-                        );
-                    }
-                }
-                cx.notify();
+                this.finish_managed_policy_removal(result, cx);
             })
             .ok();
         })
         .detach();
         cx.notify();
+    }
+
+    fn finish_managed_policy_removal(
+        &mut self,
+        result: Result<super::SourceMutation<(String, ManagedPolicyGroup)>, SubscriptionStoreError>,
+        cx: &mut Context<Self>,
+    ) {
+        match result {
+            Ok(transaction) if transaction.value.is_some() => {
+                self.finish_successful_managed_policy_removal(transaction);
+            }
+            Ok(transaction) => {
+                let language = self.language();
+                self.status = format!(
+                    "{}{}",
+                    language.text("Failed to delete policy group", "策略组删除失败"),
+                    transaction.apply.status_suffix_after_rollback_attempt(
+                        language,
+                        transaction.rollback_error.as_ref(),
+                    )
+                );
+            }
+            Err(error) => {
+                self.status = format!(
+                    "{}: {error}",
+                    self.language()
+                        .text("Failed to delete policy group", "策略组删除失败")
+                );
+            }
+        }
+        cx.notify();
+    }
+
+    fn finish_successful_managed_policy_removal(
+        &mut self,
+        mut transaction: super::SourceMutation<(String, ManagedPolicyGroup)>,
+    ) {
+        let (deleted_id, group) = transaction
+            .value
+            .take()
+            .expect("checked committed mutation");
+        let language = self.language();
+        transaction.apply.reconcile_proxy_mode(&mut self.proxy_mode);
+        self.managed_policies
+            .groups
+            .retain(|candidate| candidate.id != deleted_id);
+        self.managed_policies
+            .benchmarks
+            .remove(&Self::managed_policy_benchmark_key(&deleted_id));
+        self.managed_policies.runtime_states.remove(&deleted_id);
+        if self
+            .managed_policies
+            .draft
+            .as_ref()
+            .and_then(|draft| draft.editing_id.as_deref())
+            == Some(deleted_id.as_str())
+        {
+            self.managed_policies.draft = None;
+            self.managed_policies.editor_popover = None;
+        }
+        self.status = format!(
+            "{} “{}”{}",
+            language.text("Group deleted", "分组已删除"),
+            group.name,
+            transaction.apply.status_suffix(language)
+        );
     }
 
     fn node_configuration_link(language: Language, cx: &mut Context<Self>) -> Button {
@@ -2244,7 +2277,8 @@ impl ManisApp {
         counts.untested += group.saved_nodes.len();
         let benchmark_key = Self::source_group_benchmark_key(&group.id);
         let benchmark = self
-            .group_benchmarks
+            .managed_policies
+            .benchmarks
             .get(&benchmark_key)
             .cloned()
             .unwrap_or_default();

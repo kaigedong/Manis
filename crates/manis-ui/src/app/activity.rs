@@ -19,7 +19,8 @@ impl ManisApp {
     ) -> Div {
         let compact = size_class == WindowSizeClass::Compact;
         let query = self
-            .activity_search_input
+            .inputs
+            .activity_search
             .as_ref()
             .map(|input| input.read(cx).value().trim().to_owned())
             .unwrap_or_default();
@@ -106,7 +107,7 @@ impl ManisApp {
                                 StatusTone::Neutral,
                                 theme,
                             ))
-                            .when_some(self.activity_search_input.clone(), |tools, input| {
+                            .when_some(self.inputs.activity_search.clone(), |tools, input| {
                                 tools.child(
                                     div()
                                         .w(if compact { px(210.0) } else { px(320.0) })
@@ -198,9 +199,9 @@ impl ManisApp {
         language: Language,
     ) -> Option<String> {
         let group_order = crate::mihomo::normalized_routing_rule_group_order(
-            &self.routing_rule_group_order,
+            &self.rule_sources.group_order,
             !self.manual_rules.is_empty(),
-            &self.qx_rule_sources,
+            &self.rule_sources.sources,
         );
         for group_id in group_order {
             if group_id == crate::mihomo::MANUAL_ROUTING_RULE_GROUP_ID {
@@ -214,7 +215,8 @@ impl ManisApp {
                 continue;
             }
             let Some((index, source)) = self
-                .qx_rule_sources
+                .rule_sources
+                .sources
                 .iter()
                 .enumerate()
                 .find(|(_, source)| source.enabled && source.id == group_id)

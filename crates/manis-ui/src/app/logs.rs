@@ -19,7 +19,8 @@ impl ManisApp {
     ) -> Div {
         let compact = size_class == WindowSizeClass::Compact;
         let query = self
-            .logs_search_input
+            .inputs
+            .logs_search
             .as_ref()
             .map(|input| input.read(cx).value().trim().to_owned())
             .unwrap_or_default();
@@ -78,7 +79,7 @@ impl ManisApp {
                     .items_center()
                     .gap(Space::Sm.px())
                     .when(compact, gpui::Styled::w_full)
-                    .when_some(self.logs_search_input.clone(), |tools, input| {
+                    .when_some(self.inputs.logs_search.clone(), |tools, input| {
                         tools.child(
                             div()
                                 .w(if compact { px(240.0) } else { px(320.0) })

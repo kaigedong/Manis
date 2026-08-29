@@ -697,6 +697,129 @@ impl ManagedPolicyRuntimeState {
     }
 }
 
+struct ProxySourceEditorState {
+    input: Option<Entity<SubscriptionTextInput>>,
+    name_input: Option<Entity<SubscriptionTextInput>>,
+    subscription_source_id: Option<String>,
+    single_node_source_id: Option<String>,
+    kind: ProxySourceEditorKind,
+    refresh_interval: RemoteSourceRefreshInterval,
+    interval_popover: bool,
+    enabled: bool,
+    error: Option<String>,
+    feedback: SubscriptionFeedback,
+    input_events: Option<Subscription>,
+}
+
+impl Default for ProxySourceEditorState {
+    fn default() -> Self {
+        Self {
+            input: None,
+            name_input: None,
+            subscription_source_id: None,
+            single_node_source_id: None,
+            kind: ProxySourceEditorKind::default(),
+            refresh_interval: RemoteSourceRefreshInterval::Manual,
+            interval_popover: false,
+            enabled: true,
+            error: None,
+            feedback: SubscriptionFeedback::default(),
+            input_events: None,
+        }
+    }
+}
+
+#[derive(Default)]
+struct WorkspaceInputs {
+    qx_rule: Option<Entity<SubscriptionTextInput>>,
+    qx_rule_events: Option<Subscription>,
+    policy_group_name: Option<Entity<SubscriptionTextInput>>,
+    policy_group_filter: Option<Entity<SubscriptionTextInput>>,
+    activity_search: Option<Entity<SubscriptionTextInput>>,
+    activity_search_events: Option<Subscription>,
+    logs_search: Option<Entity<SubscriptionTextInput>>,
+    logs_search_events: Option<Subscription>,
+}
+
+#[derive(Default)]
+struct LifecycleSubscriptions {
+    window_bounds: Option<Subscription>,
+    app_lifecycle: Option<Subscription>,
+}
+
+struct RuleSourceState {
+    sources: Vec<StoredQxRuleSource>,
+    group_order: Vec<String>,
+    feedback: QxRuleImportFeedback,
+    target_policy: String,
+    editor_source_id: Option<String>,
+    editor_refresh_interval: RemoteSourceRefreshInterval,
+    editor_popover: QxRuleEditorPopover,
+    import_generation: u64,
+    refreshes: BTreeMap<String, QxRuleSourceRefreshState>,
+    target_updates: BTreeMap<String, u64>,
+    target_popover: Option<String>,
+    refresh_retry_not_before: BTreeMap<String, u64>,
+    refresh_scheduler: SourceRefreshSchedulerState,
+}
+
+impl RuleSourceState {
+    fn restored(
+        sources: Vec<StoredQxRuleSource>,
+        group_order: Vec<String>,
+        target_policy: String,
+    ) -> Self {
+        Self {
+            sources,
+            group_order,
+            feedback: QxRuleImportFeedback::Idle,
+            target_policy,
+            editor_source_id: None,
+            editor_refresh_interval: RemoteSourceRefreshInterval::Manual,
+            editor_popover: QxRuleEditorPopover::None,
+            import_generation: 0,
+            refreshes: BTreeMap::new(),
+            target_updates: BTreeMap::new(),
+            target_popover: None,
+            refresh_retry_not_before: BTreeMap::new(),
+            refresh_scheduler: SourceRefreshSchedulerState::Stopped,
+        }
+    }
+}
+
+struct ManagedPolicyState {
+    groups: Vec<ManagedPolicyGroup>,
+    node_selections: mihomo::NodeSelectionPreferences,
+    draft: Option<ManagedPolicyDraft>,
+    editor_popover: Option<PolicyEditorPopover>,
+    pending_benchmark_name: Option<String>,
+    benchmarks: BTreeMap<String, GroupBenchmarkState>,
+    benchmark_generation: u64,
+    active_benchmark_generation: Option<u64>,
+    runtime_states: BTreeMap<String, ManagedPolicyRuntimeState>,
+    runtime_generation: u64,
+}
+
+impl ManagedPolicyState {
+    fn restored(
+        groups: Vec<ManagedPolicyGroup>,
+        node_selections: mihomo::NodeSelectionPreferences,
+    ) -> Self {
+        Self {
+            groups,
+            node_selections,
+            draft: None,
+            editor_popover: None,
+            pending_benchmark_name: None,
+            benchmarks: BTreeMap::new(),
+            benchmark_generation: 0,
+            active_benchmark_generation: None,
+            runtime_states: BTreeMap::new(),
+            runtime_generation: 0,
+        }
+    }
+}
+
 pub struct ManisApp {
     localizer: Localizer,
     primary_workspace: PrimaryWorkspace,
@@ -718,29 +841,8 @@ pub struct ManisApp {
     subscription_store_dir: Option<PathBuf>,
     imported_subscriptions: Vec<ImportedSubscription>,
     saved_single_nodes: Vec<StoredSingleNode>,
-    qx_rule_sources: Vec<StoredQxRuleSource>,
-    routing_rule_group_order: Vec<String>,
-    qx_rule_feedback: QxRuleImportFeedback,
-    qx_rule_target_policy: String,
-    qx_rule_editor_source_id: Option<String>,
-    qx_rule_editor_refresh_interval: RemoteSourceRefreshInterval,
-    qx_rule_editor_popover: QxRuleEditorPopover,
-    qx_rule_import_generation: u64,
-    qx_rule_source_refreshes: BTreeMap<String, QxRuleSourceRefreshState>,
-    qx_rule_source_target_updates: BTreeMap<String, u64>,
-    qx_rule_target_popover: Option<String>,
-    source_refresh_retry_not_before: BTreeMap<String, u64>,
-    source_refresh_scheduler: SourceRefreshSchedulerState,
-    managed_policy_groups: Vec<ManagedPolicyGroup>,
-    node_selection_preferences: mihomo::NodeSelectionPreferences,
-    managed_policy_draft: Option<ManagedPolicyDraft>,
-    managed_policy_editor_popover: Option<PolicyEditorPopover>,
-    pending_policy_benchmark_name: Option<String>,
-    group_benchmarks: BTreeMap<String, GroupBenchmarkState>,
-    group_benchmark_generation: u64,
-    group_benchmark_active_generation: Option<u64>,
-    managed_policy_runtime_states: BTreeMap<String, ManagedPolicyRuntimeState>,
-    managed_policy_runtime_generation: u64,
+    rule_sources: RuleSourceState,
+    managed_policies: ManagedPolicyState,
     source_store_error: Option<SubscriptionStoreError>,
     proxy_mode: ProxyMode,
     proxy_mode_busy: Option<ProxyMode>,
@@ -761,19 +863,8 @@ pub struct ManisApp {
     dropped_kernel_logs: u64,
     dark: bool,
     status: String,
-    subscription_input: Option<Entity<SubscriptionTextInput>>,
-    subscription_name_input: Option<Entity<SubscriptionTextInput>>,
-    subscription_editor_source_id: Option<String>,
-    single_node_editor_source_id: Option<String>,
-    proxy_source_editor_kind: ProxySourceEditorKind,
-    subscription_editor_refresh_interval: RemoteSourceRefreshInterval,
-    subscription_editor_interval_popover: bool,
-    subscription_editor_enabled: bool,
-    subscription_editor_error: Option<String>,
-    subscription_feedback: SubscriptionFeedback,
-    subscription_input_events: Option<Subscription>,
-    qx_rule_input: Option<Entity<SubscriptionTextInput>>,
-    qx_rule_input_events: Option<Subscription>,
+    proxy_source_editor: ProxySourceEditorState,
+    inputs: WorkspaceInputs,
     manual_rules: Vec<crate::manual_rule::ManualRule>,
     manual_rule_conditions: Vec<ManualRuleConditionEditor>,
     manual_rule_condition_count: usize,
@@ -781,14 +872,7 @@ pub struct ManisApp {
     manual_rule_editor_state: ManualRuleEditorState,
     manual_rule_popover: Option<ManualRulePopover>,
     manual_rule_error: Option<crate::manual_rule::ManualRuleError>,
-    policy_group_name_input: Option<Entity<SubscriptionTextInput>>,
-    policy_group_filter_input: Option<Entity<SubscriptionTextInput>>,
-    activity_search_input: Option<Entity<SubscriptionTextInput>>,
-    activity_search_events: Option<Subscription>,
-    logs_search_input: Option<Entity<SubscriptionTextInput>>,
-    logs_search_events: Option<Subscription>,
-    window_bounds_events: Option<Subscription>,
-    app_lifecycle_events: Option<Subscription>,
+    lifecycle_subscriptions: LifecycleSubscriptions,
 }
 
 impl ManisApp {
@@ -841,7 +925,7 @@ impl ManisApp {
     #[must_use]
     pub fn new_with_lifecycle(cx: &mut Context<Self>) -> Self {
         let mut app = Self::new();
-        app.app_lifecycle_events = Some(cx.on_app_quit(Self::shutdown_for_quit));
+        app.lifecycle_subscriptions.app_lifecycle = Some(cx.on_app_quit(Self::shutdown_for_quit));
         app.restore_imported_subscriptions(cx);
         if matches!(app.mihomo_core_update_state, MihomoCoreUpdateState::Missing) {
             app.update_mihomo_core(cx);
@@ -877,14 +961,19 @@ impl ManisApp {
         )
     }
 
-    #[allow(clippy::too_many_lines)]
     fn with_runtime_and_store(
         runtime: KernelRuntime,
         subscription_store_dir: Option<PathBuf>,
     ) -> Self {
         let localizer = Localizer::load(subscription_store_dir.as_deref());
         let language = localizer.language();
-        let mut status = runtime.initial_status_in(language);
+        let stored_workspace = StoredWorkspace::load(subscription_store_dir.as_ref());
+        let status = Self::restored_workspace_status(
+            &runtime,
+            subscription_store_dir.as_ref(),
+            &stored_workspace,
+            language,
+        );
         let StoredWorkspace {
             imported_subscriptions,
             saved_single_nodes,
@@ -895,36 +984,10 @@ impl ManisApp {
             node_selection_preferences,
             routing_mode,
             error: source_store_error,
-        } = StoredWorkspace::load(subscription_store_dir.as_ref());
+        } = stored_workspace;
         let default_rule_target = managed_policy_groups
             .first()
             .map_or_else(|| "DIRECT".to_owned(), |group| group.name.clone());
-        if let Some(directory) = subscription_store_dir.as_ref()
-            && (!imported_subscriptions.is_empty()
-                || !saved_single_nodes.is_empty()
-                || !qx_rule_sources.is_empty()
-                || !managed_policy_groups.is_empty()
-                || routing_mode != RoutingMode::Rule)
-        {
-            status = match runtime.apply_saved_sources(directory) {
-                Ok(GeneratedProfileApply::Updated) => language
-                    .text("Saved sources are ready", "已载入保存的来源")
-                    .to_owned(),
-                Ok(GeneratedProfileApply::Restarted) => language
-                    .text(
-                        "Saved sources are ready and Mihomo was restarted",
-                        "已载入保存的来源，Mihomo 已重新启动",
-                    )
-                    .to_owned(),
-                Err(error) => format!(
-                    "{}{error}",
-                    language.text(
-                        "Saved sources were loaded, but the changes could not be applied: ",
-                        "已载入保存的来源，但更改未能生效："
-                    )
-                ),
-            };
-        }
         let mut node_workspace = NodeWorkspaceState::default();
         node_workspace.replace_collapsed_groups(collapsed_groups.iter().map(String::as_str));
         Self {
@@ -939,19 +1002,7 @@ impl ManisApp {
             catalog: None,
             runtime,
             kernel_switch_state: KernelSwitchState::Idle,
-            mihomo_core_update_state: {
-                #[cfg(test)]
-                {
-                    MihomoCoreUpdateState::Missing
-                }
-                #[cfg(not(test))]
-                {
-                    core_update::managed_core_binary_path()
-                        .map_or(MihomoCoreUpdateState::Missing, |_path| {
-                            MihomoCoreUpdateState::Ready(String::new())
-                        })
-                }
-            },
+            mihomo_core_update_state: Self::initial_mihomo_core_update_state(),
             controller: ControllerState::Disconnected,
             observed_routes: Vec::new(),
             source_providers: Vec::new(),
@@ -960,29 +1011,15 @@ impl ManisApp {
             subscription_store_dir,
             imported_subscriptions,
             saved_single_nodes,
-            qx_rule_sources,
-            routing_rule_group_order,
-            qx_rule_feedback: QxRuleImportFeedback::Idle,
-            qx_rule_target_policy: default_rule_target.clone(),
-            qx_rule_editor_source_id: None,
-            qx_rule_editor_refresh_interval: RemoteSourceRefreshInterval::Manual,
-            qx_rule_editor_popover: QxRuleEditorPopover::None,
-            qx_rule_import_generation: 0,
-            qx_rule_source_refreshes: BTreeMap::new(),
-            qx_rule_source_target_updates: BTreeMap::new(),
-            qx_rule_target_popover: None,
-            source_refresh_retry_not_before: BTreeMap::new(),
-            source_refresh_scheduler: SourceRefreshSchedulerState::Stopped,
-            managed_policy_groups,
-            node_selection_preferences,
-            managed_policy_draft: None,
-            managed_policy_editor_popover: None,
-            pending_policy_benchmark_name: None,
-            group_benchmarks: BTreeMap::new(),
-            group_benchmark_generation: 0,
-            group_benchmark_active_generation: None,
-            managed_policy_runtime_states: BTreeMap::new(),
-            managed_policy_runtime_generation: 0,
+            rule_sources: RuleSourceState::restored(
+                qx_rule_sources,
+                routing_rule_group_order,
+                default_rule_target.clone(),
+            ),
+            managed_policies: ManagedPolicyState::restored(
+                managed_policy_groups,
+                node_selection_preferences,
+            ),
             source_store_error,
             proxy_mode: ProxyMode::Off,
             proxy_mode_busy: None,
@@ -1003,19 +1040,8 @@ impl ManisApp {
             dropped_kernel_logs: 0,
             dark: false,
             status,
-            subscription_input: None,
-            subscription_name_input: None,
-            subscription_editor_source_id: None,
-            single_node_editor_source_id: None,
-            proxy_source_editor_kind: ProxySourceEditorKind::Subscription,
-            subscription_editor_refresh_interval: RemoteSourceRefreshInterval::Manual,
-            subscription_editor_interval_popover: false,
-            subscription_editor_enabled: true,
-            subscription_editor_error: None,
-            subscription_feedback: SubscriptionFeedback::Idle,
-            subscription_input_events: None,
-            qx_rule_input: None,
-            qx_rule_input_events: None,
+            proxy_source_editor: ProxySourceEditorState::default(),
+            inputs: WorkspaceInputs::default(),
             manual_rules: Vec::new(),
             manual_rule_conditions: Vec::new(),
             manual_rule_condition_count: 1,
@@ -1023,14 +1049,58 @@ impl ManisApp {
             manual_rule_editor_state: ManualRuleEditorState::Closed,
             manual_rule_popover: None,
             manual_rule_error: None,
-            policy_group_name_input: None,
-            policy_group_filter_input: None,
-            activity_search_input: None,
-            activity_search_events: None,
-            logs_search_input: None,
-            logs_search_events: None,
-            window_bounds_events: None,
-            app_lifecycle_events: None,
+            lifecycle_subscriptions: LifecycleSubscriptions::default(),
+        }
+    }
+
+    fn restored_workspace_status(
+        runtime: &KernelRuntime,
+        directory: Option<&PathBuf>,
+        workspace: &StoredWorkspace,
+        language: Language,
+    ) -> String {
+        let Some(directory) = directory else {
+            return runtime.initial_status_in(language);
+        };
+        let has_saved_configuration = !workspace.imported_subscriptions.is_empty()
+            || !workspace.saved_single_nodes.is_empty()
+            || !workspace.qx_rule_sources.is_empty()
+            || !workspace.managed_policy_groups.is_empty()
+            || workspace.routing_mode != RoutingMode::Rule;
+        if !has_saved_configuration {
+            return runtime.initial_status_in(language);
+        }
+        match runtime.apply_saved_sources(directory) {
+            Ok(GeneratedProfileApply::Updated) => language
+                .text("Saved sources are ready", "已载入保存的来源")
+                .to_owned(),
+            Ok(GeneratedProfileApply::Restarted) => language
+                .text(
+                    "Saved sources are ready and Mihomo was restarted",
+                    "已载入保存的来源，Mihomo 已重新启动",
+                )
+                .to_owned(),
+            Err(error) => format!(
+                "{}{error}",
+                language.text(
+                    "Saved sources were loaded, but the changes could not be applied: ",
+                    "已载入保存的来源，但更改未能生效："
+                )
+            ),
+        }
+    }
+
+    fn initial_mihomo_core_update_state() -> MihomoCoreUpdateState {
+        #[cfg(test)]
+        {
+            MihomoCoreUpdateState::Missing
+        }
+        #[cfg(not(test))]
+        {
+            core_update::managed_core_binary_path()
+                .map_or(MihomoCoreUpdateState::Missing, |_path| {
+                    MihomoCoreUpdateState::Ready(String::new())
+                })
         }
     }
 
@@ -1038,13 +1108,13 @@ impl ManisApp {
         self.workspace.resize(window.viewport_size().width.as_f32());
         self.sync_window_inputs(window, cx);
         self.ensure_source_refresh_scheduler(cx);
-        let _previous = self.window_bounds_events.replace(cx.observe_window_bounds(
-            window,
-            |this, window, cx| {
-                this.workspace.resize(window.viewport_size().width.as_f32());
-                cx.notify();
-            },
-        ));
+        let _previous =
+            self.lifecycle_subscriptions
+                .window_bounds
+                .replace(cx.observe_window_bounds(window, |this, window, cx| {
+                    this.workspace.resize(window.viewport_size().width.as_f32());
+                    cx.notify();
+                }));
     }
 
     fn sync_window_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1175,12 +1245,12 @@ impl ManisApp {
         cx: &mut Context<Self>,
     ) {
         let language = self.language();
-        if let Some(input) = self.subscription_input.as_ref() {
+        if let Some(input) = self.proxy_source_editor.input.as_ref() {
             input.update(cx, |input, cx| {
                 input.set_theme(theme, self.dark, cx);
                 input.set_language(language, cx);
             });
-            if let Some(name_input) = self.subscription_name_input.as_ref() {
+            if let Some(name_input) = self.proxy_source_editor.name_input.as_ref() {
                 name_input.update(cx, |input, cx| {
                     input.set_theme(theme, self.dark, cx);
                     input.set_placeholder(
@@ -1196,13 +1266,13 @@ impl ManisApp {
             SubscriptionTextInput::new_with_language(language, theme, self.dark, window, cx)
         });
         let events = cx.subscribe(&input, |this, _input, _: &SubscriptionInputChanged, cx| {
-            if this.subscription_feedback != SubscriptionFeedback::Idle {
-                this.subscription_feedback = SubscriptionFeedback::Idle;
+            if this.proxy_source_editor.feedback != SubscriptionFeedback::Idle {
+                this.proxy_source_editor.feedback = SubscriptionFeedback::Idle;
                 cx.notify();
             }
         });
-        self.subscription_input = Some(input);
-        self.subscription_name_input = Some(cx.new(|cx| {
+        self.proxy_source_editor.input = Some(input);
+        self.proxy_source_editor.name_input = Some(cx.new(|cx| {
             SubscriptionTextInput::new_field(
                 TextInputSpec::new(
                     "subscription-name-input",
@@ -1215,12 +1285,12 @@ impl ManisApp {
                 cx,
             )
         }));
-        self.subscription_input_events = Some(events);
+        self.proxy_source_editor.input_events = Some(events);
         self.restore_imported_subscriptions(cx);
     }
 
     fn ensure_qx_rule_input(&mut self, theme: Theme, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(input) = self.qx_rule_input.as_ref() {
+        if let Some(input) = self.inputs.qx_rule.as_ref() {
             input.update(cx, |input, cx| input.set_theme(theme, self.dark, cx));
             return;
         }
@@ -1238,13 +1308,13 @@ impl ManisApp {
             )
         });
         let events = cx.subscribe(&input, |this, _input, _: &SubscriptionInputChanged, cx| {
-            if this.qx_rule_feedback != QxRuleImportFeedback::Idle {
-                this.qx_rule_feedback = QxRuleImportFeedback::Idle;
+            if this.rule_sources.feedback != QxRuleImportFeedback::Idle {
+                this.rule_sources.feedback = QxRuleImportFeedback::Idle;
                 cx.notify();
             }
         });
-        self.qx_rule_input = Some(input);
-        self.qx_rule_input_events = Some(events);
+        self.inputs.qx_rule = Some(input);
+        self.inputs.qx_rule_events = Some(events);
     }
 
     fn ensure_policy_group_inputs(
@@ -1255,16 +1325,16 @@ impl ManisApp {
     ) {
         let language = self.language();
         for input in [
-            self.policy_group_name_input.as_ref(),
-            self.policy_group_filter_input.as_ref(),
+            self.inputs.policy_group_name.as_ref(),
+            self.inputs.policy_group_filter.as_ref(),
         ]
         .into_iter()
         .flatten()
         {
             input.update(cx, |input, cx| input.set_theme(theme, self.dark, cx));
         }
-        if self.policy_group_name_input.is_none() {
-            self.policy_group_name_input = Some(cx.new(|cx| {
+        if self.inputs.policy_group_name.is_none() {
+            self.inputs.policy_group_name = Some(cx.new(|cx| {
                 SubscriptionTextInput::new_field(
                     TextInputSpec::new(
                         "policy-group-name-input",
@@ -1278,8 +1348,8 @@ impl ManisApp {
                 )
             }));
         }
-        if self.policy_group_filter_input.is_none() {
-            self.policy_group_filter_input = Some(cx.new(|cx| {
+        if self.inputs.policy_group_filter.is_none() {
+            self.inputs.policy_group_filter = Some(cx.new(|cx| {
                 SubscriptionTextInput::new_field(
                     TextInputSpec::new(
                         "policy-group-filter-input",
@@ -1302,7 +1372,7 @@ impl ManisApp {
         cx: &mut Context<Self>,
     ) {
         let language = self.language();
-        if let Some(input) = self.activity_search_input.as_ref() {
+        if let Some(input) = self.inputs.activity_search.as_ref() {
             input.update(cx, |input, cx| {
                 input.set_theme(theme, self.dark, cx);
                 input.set_placeholder(
@@ -1333,11 +1403,11 @@ impl ManisApp {
             let events = cx.subscribe(&input, |_this, _input, _: &SubscriptionInputChanged, cx| {
                 cx.notify();
             });
-            self.activity_search_input = Some(input);
-            self.activity_search_events = Some(events);
+            self.inputs.activity_search = Some(input);
+            self.inputs.activity_search_events = Some(events);
         }
 
-        if let Some(input) = self.logs_search_input.as_ref() {
+        if let Some(input) = self.inputs.logs_search.as_ref() {
             input.update(cx, |input, cx| {
                 input.set_theme(theme, self.dark, cx);
                 input.set_placeholder(
@@ -1368,8 +1438,8 @@ impl ManisApp {
             let events = cx.subscribe(&input, |_this, _input, _: &SubscriptionInputChanged, cx| {
                 cx.notify();
             });
-            self.logs_search_input = Some(input);
-            self.logs_search_events = Some(events);
+            self.inputs.logs_search = Some(input);
+            self.inputs.logs_search_events = Some(events);
         }
     }
 
@@ -1388,7 +1458,7 @@ impl ManisApp {
         } = request;
         let language = self.language();
         let Some(store_dir) = self.subscription_store_dir.clone() else {
-            self.subscription_feedback =
+            self.proxy_source_editor.feedback =
                 SubscriptionFeedback::StoreFailed(SubscriptionStoreError::DataDirectoryUnavailable);
             language
                 .text(
@@ -1402,7 +1472,7 @@ impl ManisApp {
         };
         self.subscription_preview_generation = self.subscription_preview_generation.wrapping_add(1);
         let generation = self.subscription_preview_generation;
-        self.subscription_feedback = SubscriptionFeedback::Importing(kind);
+        self.proxy_source_editor.feedback = SubscriptionFeedback::Importing(kind);
         language
             .text(
                 "Validating nodes and importing subscription",
@@ -1410,10 +1480,10 @@ impl ManisApp {
             )
             .clone_into(&mut self.status);
         trace_ui(UiEvent::SourceImportStarted);
-        if let Some(input) = self.subscription_input.as_ref() {
+        if let Some(input) = self.proxy_source_editor.input.as_ref() {
             input.update(cx, |input, cx| input.set_enabled(false, cx));
         }
-        if let Some(input) = self.subscription_name_input.as_ref() {
+        if let Some(input) = self.proxy_source_editor.name_input.as_ref() {
             input.update(cx, |input, cx| input.set_enabled(false, cx));
         }
 
@@ -1462,10 +1532,10 @@ impl ManisApp {
                 if this.subscription_preview_generation != generation {
                     return;
                 }
-                if let Some(input) = this.subscription_input.as_ref() {
+                if let Some(input) = this.proxy_source_editor.input.as_ref() {
                     input.update(cx, |input, cx| input.set_enabled(true, cx));
                 }
-                if let Some(input) = this.subscription_name_input.as_ref() {
+                if let Some(input) = this.proxy_source_editor.name_input.as_ref() {
                     input.update(cx, |input, cx| input.set_enabled(true, cx));
                 }
                 this.finish_subscription_import(generation, kind, result, cx);
@@ -1491,16 +1561,16 @@ impl ManisApp {
                 let provider_count = providers.len();
                 self.merge_imported_subscription(subscription, &providers, generation, kind);
                 self.subscription_preview_providers = providers;
-                self.subscription_feedback = SubscriptionFeedback::Idle;
-                if let Some(input) = self.subscription_input.as_ref() {
+                self.proxy_source_editor.feedback = SubscriptionFeedback::Idle;
+                if let Some(input) = self.proxy_source_editor.input.as_ref() {
                     input.update(cx, SubscriptionTextInput::clear_without_event);
                 }
-                if let Some(input) = self.subscription_name_input.as_ref() {
+                if let Some(input) = self.proxy_source_editor.name_input.as_ref() {
                     input.update(cx, SubscriptionTextInput::clear_without_event);
                 }
                 self.configuration_add_section = None;
-                self.subscription_editor_source_id = None;
-                self.subscription_editor_error = None;
+                self.proxy_source_editor.subscription_source_id = None;
+                self.proxy_source_editor.error = None;
                 transaction.apply.reconcile_proxy_mode(&mut self.proxy_mode);
                 self.status = match language {
                     Language::English => format!(
@@ -1517,7 +1587,7 @@ impl ManisApp {
                 trace_ui(UiEvent::SourceImportSucceeded);
             }
             Ok((transaction, _providers)) => {
-                self.subscription_feedback =
+                self.proxy_source_editor.feedback =
                     SubscriptionFeedback::StoreFailed(SubscriptionStoreError::StoreUnavailable);
                 self.status = format!(
                     "{}{}",
@@ -1530,7 +1600,7 @@ impl ManisApp {
                 trace_ui(UiEvent::SourceImportFailed);
             }
             Err(ImportSubscriptionError::Preview(error)) => {
-                self.subscription_feedback = SubscriptionFeedback::PreviewFailed(error);
+                self.proxy_source_editor.feedback = SubscriptionFeedback::PreviewFailed(error);
                 self.status = format!(
                     "{}{error}",
                     language.text("Subscription import failed: ", "订阅导入失败：")
@@ -1538,7 +1608,7 @@ impl ManisApp {
                 trace_ui(UiEvent::SourceImportFailed);
             }
             Err(ImportSubscriptionError::Store(error)) => {
-                self.subscription_feedback = SubscriptionFeedback::StoreFailed(error);
+                self.proxy_source_editor.feedback = SubscriptionFeedback::StoreFailed(error);
                 self.status = format!(
                     "{}{error}",
                     language.text("Could not save subscription: ", "订阅保存失败：")
@@ -1703,7 +1773,8 @@ impl ManisApp {
                 subscription.refresh_interval = stored.refresh_interval;
                 subscription.last_successful_update_unix_secs =
                     stored.last_successful_update_unix_secs;
-                self.source_refresh_retry_not_before
+                self.rule_sources
+                    .refresh_retry_not_before
                     .remove(&DueRemoteSource::Subscription(id.to_owned()).scheduler_key());
                 transaction.apply.reconcile_proxy_mode(&mut self.proxy_mode);
                 self.status = if language == Language::English {
@@ -1760,12 +1831,13 @@ impl ManisApp {
                 source.state,
                 ImportedSubscriptionState::Refreshing(_) | ImportedSubscriptionState::Removing(_)
             )
-        }) || self.qx_rule_feedback == QxRuleImportFeedback::Importing
+        }) || self.rule_sources.feedback == QxRuleImportFeedback::Importing
             || self
-                .qx_rule_source_refreshes
+                .rule_sources
+                .refreshes
                 .values()
                 .any(QxRuleSourceRefreshState::is_refreshing)
-            || !self.qx_rule_source_target_updates.is_empty()
+            || !self.rule_sources.target_updates.is_empty()
     }
 
     fn refresh_next_due_source(&mut self, cx: &mut Context<Self>) {
@@ -1775,12 +1847,13 @@ impl ManisApp {
         let now = mihomo::current_unix_secs();
         let due = next_due_remote_source(
             &self.imported_subscriptions,
-            &self.qx_rule_sources,
-            &self.source_refresh_retry_not_before,
+            &self.rule_sources.sources,
+            &self.rule_sources.refresh_retry_not_before,
             now,
         );
         if let Some(source) = due.as_ref() {
-            self.source_refresh_retry_not_before
+            self.rule_sources
+                .refresh_retry_not_before
                 .insert(source.scheduler_key(), now.saturating_add(300));
         }
         match due {
@@ -1793,12 +1866,12 @@ impl ManisApp {
     }
 
     fn ensure_source_refresh_scheduler(&mut self, cx: &mut Context<Self>) {
-        if self.source_refresh_scheduler == SourceRefreshSchedulerState::Started
+        if self.rule_sources.refresh_scheduler == SourceRefreshSchedulerState::Started
             || self.subscription_store_dir.is_none()
         {
             return;
         }
-        self.source_refresh_scheduler = SourceRefreshSchedulerState::Started;
+        self.rule_sources.refresh_scheduler = SourceRefreshSchedulerState::Started;
         cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor()
@@ -1829,7 +1902,7 @@ impl ManisApp {
         self.subscription_preview_generation = self.subscription_preview_generation.wrapping_add(1);
         let generation = self.subscription_preview_generation;
         subscription.generation = generation;
-        self.subscription_feedback = SubscriptionFeedback::Idle;
+        self.proxy_source_editor.feedback = SubscriptionFeedback::Idle;
         subscription.state = ImportedSubscriptionState::Removing(kind);
         language
             .text("Removing imported subscription", "正在移除已导入订阅")
@@ -1862,7 +1935,8 @@ impl ManisApp {
                 match result {
                     Ok(transaction) if transaction.value.is_some() => {
                         this.imported_subscriptions.remove(index);
-                        this.source_refresh_retry_not_before
+                        this.rule_sources
+                            .refresh_retry_not_before
                             .remove(&DueRemoteSource::Subscription(id.clone()).scheduler_key());
                         transaction.apply.reconcile_proxy_mode(&mut this.proxy_mode);
                         this.status = format!(
@@ -1949,14 +2023,16 @@ impl ManisApp {
     }
 
     fn begin_group_benchmark(&mut self, key: String) -> Option<u64> {
-        if self.group_benchmark_active_generation.is_some() {
+        if self.managed_policies.active_benchmark_generation.is_some() {
             return None;
         }
-        self.group_benchmark_generation = self.group_benchmark_generation.wrapping_add(1);
-        let generation = self.group_benchmark_generation;
-        self.group_benchmarks
+        self.managed_policies.benchmark_generation =
+            self.managed_policies.benchmark_generation.wrapping_add(1);
+        let generation = self.managed_policies.benchmark_generation;
+        self.managed_policies
+            .benchmarks
             .insert(key, GroupBenchmarkState::running(generation));
-        self.group_benchmark_active_generation = Some(generation);
+        self.managed_policies.active_benchmark_generation = Some(generation);
         Some(generation)
     }
 
@@ -1972,7 +2048,7 @@ impl ManisApp {
             .map(|mut updates| updates.drain(..).collect::<Vec<_>>())
             .unwrap_or_default();
         let mut changed = false;
-        if let Some(state) = self.group_benchmarks.get_mut(&key) {
+        if let Some(state) = self.managed_policies.benchmarks.get_mut(&key) {
             for (name, delay) in drained {
                 changed |= state.record(generation, &name, delay);
             }
@@ -1980,7 +2056,7 @@ impl ManisApp {
         if changed {
             cx.notify();
         }
-        if self.group_benchmark_active_generation != Some(generation) {
+        if self.managed_policies.active_benchmark_generation != Some(generation) {
             return;
         }
         cx.spawn(async move |this, cx| {
@@ -2705,7 +2781,7 @@ impl ManisApp {
                         this.start_pending_policy_benchmark(cx);
                     }
                     Err(error) => {
-                        this.pending_policy_benchmark_name = None;
+                        this.managed_policies.pending_benchmark_name = None;
                         record_operation(
                             operation,
                             LogLevel::Error,
@@ -2739,7 +2815,7 @@ impl ManisApp {
     }
 
     fn start_pending_policy_benchmark(&mut self, cx: &mut Context<Self>) {
-        let Some(policy_name) = self.pending_policy_benchmark_name.take() else {
+        let Some(policy_name) = self.managed_policies.pending_benchmark_name.take() else {
             return;
         };
         let Some(policy_id) = self
@@ -2762,7 +2838,7 @@ impl ManisApp {
     fn apply_mihomo_snapshot(&mut self, endpoint: String, snapshot: LoadedSnapshot) {
         trace_ui(UiEvent::MihomoConnectSucceeded);
         let mut catalog = snapshot.catalog;
-        for (group, target) in self.node_selection_preferences.iter_policy_targets() {
+        for (group, target) in self.managed_policies.node_selections.iter_policy_targets() {
             if let Some(catalog) = catalog.as_mut() {
                 let _ = catalog.apply_selector_target(group, target);
             }
@@ -2828,14 +2904,15 @@ impl ManisApp {
             return;
         }
         let mut targets = Vec::new();
-        if let Some(global) = self.node_selection_preferences.global() {
+        if let Some(global) = self.managed_policies.node_selections.global() {
             targets.push(("GLOBAL".to_owned(), global.node_name.clone()));
         }
         targets.extend(self.policy_groups().filter_map(|group| {
             if !group.kind.allows_manual_selection() || group.name.eq_ignore_ascii_case("GLOBAL") {
                 return None;
             }
-            self.node_selection_preferences
+            self.managed_policies
+                .node_selections
                 .policy_target(&group.name)
                 .map(|target| (group.name.clone(), target.to_owned()))
         }));
@@ -2872,16 +2949,16 @@ impl ManisApp {
                                 let _ = catalog.apply_selector_target(&group, current);
                             }
                             if let Some(stored_group) = this
-                                .managed_policy_groups
+                                .managed_policies.groups
                                 .iter()
                                 .find(|candidate| candidate.name == group)
                             {
-                                this.managed_policy_runtime_generation =
-                                    this.managed_policy_runtime_generation.wrapping_add(1);
-                                this.managed_policy_runtime_states.insert(
+                                this.managed_policies.runtime_generation =
+                                    this.managed_policies.runtime_generation.wrapping_add(1);
+                                this.managed_policies.runtime_states.insert(
                                     stored_group.id.clone(),
                                     ManagedPolicyRuntimeState::Ready {
-                                        generation: this.managed_policy_runtime_generation,
+                                        generation: this.managed_policies.runtime_generation,
                                         current: snapshot.current,
                                         candidates: snapshot.candidates,
                                     },
@@ -2941,7 +3018,7 @@ impl ManisApp {
         };
         let key = Self::policy_group_benchmark_key(&group.id);
         if matches!(
-            self.group_benchmarks.get(&key),
+            self.managed_policies.benchmarks.get(&key),
             Some(GroupBenchmarkState::Running { .. })
         ) {
             return;
@@ -3037,10 +3114,10 @@ impl ManisApp {
             total,
         } = run;
         let language = self.language();
-        if self.group_benchmark_active_generation != Some(generation) {
+        if self.managed_policies.active_benchmark_generation != Some(generation) {
             return;
         }
-        self.group_benchmark_active_generation = None;
+        self.managed_policies.active_benchmark_generation = None;
         let (delays, current, failure) = match result {
             Ok(snapshot) => (Some(snapshot.delays), snapshot.current, None),
             Err(error) => (None, None, Some(error.to_string())),
@@ -3050,7 +3127,7 @@ impl ManisApp {
         {
             let _ = catalog.apply_group_benchmark(&group_id, current.as_deref(), delays);
         }
-        let Some(state) = self.group_benchmarks.get_mut(&key) else {
+        let Some(state) = self.managed_policies.benchmarks.get_mut(&key) else {
             cx.notify();
             return;
         };
@@ -3655,15 +3732,15 @@ impl ManisApp {
             );
             return;
         }
-        let previous = self.node_selection_preferences.clone();
-        self.node_selection_preferences.set_global(selected);
+        let previous = self.managed_policies.node_selections.clone();
+        self.managed_policies.node_selections.set_global(selected);
         if let Some(directory) = self.subscription_store_dir.as_deref()
             && let Err(error) = mihomo::save_node_selection_preferences_in(
                 directory,
-                &self.node_selection_preferences,
+                &self.managed_policies.node_selections,
             )
         {
-            self.node_selection_preferences = previous;
+            self.managed_policies.node_selections = previous;
             record_operation(
                 operation,
                 LogLevel::Error,
@@ -3824,7 +3901,8 @@ impl ManisApp {
         }
 
         if let Some((stored_group_id, candidates)) = self
-            .managed_policy_groups
+            .managed_policies
+            .groups
             .iter()
             .find(|group| group.name == group_name)
             .map(|group| {
@@ -3836,11 +3914,12 @@ impl ManisApp {
                 )
             })
         {
-            self.managed_policy_runtime_generation =
-                self.managed_policy_runtime_generation.wrapping_add(1);
-            let generation = self.managed_policy_runtime_generation;
+            self.managed_policies.runtime_generation =
+                self.managed_policies.runtime_generation.wrapping_add(1);
+            let generation = self.managed_policies.runtime_generation;
             let state = self
-                .managed_policy_runtime_states
+                .managed_policies
+                .runtime_states
                 .entry(stored_group_id)
                 .or_default();
             if !state.begin_selection(generation, &node_name) {
@@ -3902,7 +3981,8 @@ impl ManisApp {
             return true;
         }
         let stored_group = self
-            .managed_policy_groups
+            .managed_policies
+            .groups
             .iter()
             .find(|group| group.id == group_id.as_str() || group.name == group_name);
         if !matches!(self.controller, ControllerState::Connected { .. }) && stored_group.is_none() {
@@ -3968,9 +4048,10 @@ impl ManisApp {
         cx: &mut Context<Self>,
     ) -> Option<mihomo::NodeSelectionPreferences> {
         let language = self.language();
-        let previous = self.node_selection_preferences.clone();
+        let previous = self.managed_policies.node_selections.clone();
         if let Err(error) = self
-            .node_selection_preferences
+            .managed_policies
+            .node_selections
             .set_policy_target(group_name, node_name)
         {
             record_operation(
@@ -3991,10 +4072,10 @@ impl ManisApp {
         if let Some(directory) = self.subscription_store_dir.as_deref()
             && let Err(error) = mihomo::save_node_selection_preferences_in(
                 directory,
-                &self.node_selection_preferences,
+                &self.managed_policies.node_selections,
             )
         {
-            self.node_selection_preferences = previous;
+            self.managed_policies.node_selections = previous;
             record_operation(
                 operation,
                 LogLevel::Error,
@@ -4067,16 +4148,17 @@ impl ManisApp {
                     self.workspace.select_node(node_id);
                 }
                 if let Some(stored_group) = self
-                    .managed_policy_groups
+                    .managed_policies
+                    .groups
                     .iter()
                     .find(|group| group.name == group_name)
                 {
-                    self.managed_policy_runtime_generation =
-                        self.managed_policy_runtime_generation.wrapping_add(1);
-                    self.managed_policy_runtime_states.insert(
+                    self.managed_policies.runtime_generation =
+                        self.managed_policies.runtime_generation.wrapping_add(1);
+                    self.managed_policies.runtime_states.insert(
                         stored_group.id.clone(),
                         ManagedPolicyRuntimeState::Ready {
-                            generation: self.managed_policy_runtime_generation,
+                            generation: self.managed_policies.runtime_generation,
                             current: snapshot.current,
                             candidates: snapshot.candidates,
                         },
@@ -4118,7 +4200,7 @@ impl ManisApp {
     }
 
     fn global_target_identity(&self) -> Option<&NodeIdentity> {
-        self.node_selection_preferences.global()
+        self.managed_policies.node_selections.global()
     }
 
     fn global_target(&self) -> Option<&str> {
@@ -4573,7 +4655,7 @@ impl ManisApp {
             .flex_1()
             .overflow_y_scroll()
             .p(Space::Xl.px());
-        if self.managed_policy_groups.is_empty() {
+        if self.managed_policies.groups.is_empty() {
             body = body.child(div().max_w(px(620.0)).child(empty_state(
                 title,
                 description,
@@ -4582,16 +4664,17 @@ impl ManisApp {
             )));
         } else {
             let mut rows = div().flex().flex_col().gap(Space::Sm.px());
-            for policy in self.managed_policy_groups.clone() {
+            for policy in self.managed_policies.groups.clone() {
                 let policy_group_id = PolicyGroupId::new(policy.id.clone());
                 let expanded = self.expanded_policy_group.as_ref() == Some(&policy_group_id);
                 let candidates = self.managed_policy_candidate_names(&policy);
                 let candidate_count = candidates.len();
                 let benchmarkable = candidate_count > 0;
-                let benchmarking =
-                    self.pending_policy_benchmark_name.as_deref() == Some(policy.name.as_str());
+                let benchmarking = self.managed_policies.pending_benchmark_name.as_deref()
+                    == Some(policy.name.as_str());
                 let selected_name = self
-                    .node_selection_preferences
+                    .managed_policies
+                    .node_selections
                     .policy_target(&policy.name)
                     .map(str::to_owned);
                 let edit_id = policy.id.clone();
@@ -4643,7 +4726,8 @@ impl ManisApp {
                         cx.listener(move |this, _, _, cx| {
                             cx.stop_propagation();
                             if !benchmarking {
-                                this.pending_policy_benchmark_name = Some(benchmark_name.clone());
+                                this.managed_policies.pending_benchmark_name =
+                                    Some(benchmark_name.clone());
                                 this.connect_mihomo(cx);
                             }
                         }),
@@ -4875,7 +4959,8 @@ impl ManisApp {
             let expanded = self.expanded_policy_group.as_ref() == Some(&item.id);
             let benchmarkable = Self::policy_group_benchmarkable(&item);
             let policy_icon = self
-                .managed_policy_groups
+                .managed_policies
+                .groups
                 .iter()
                 .find(|group| group.name == item.name)
                 .map_or(ManagedPolicyIcon::None, |group| group.icon);
@@ -4889,7 +4974,8 @@ impl ManisApp {
             let benchmark_id = item.id.clone();
             let benchmark_key = Self::policy_group_benchmark_key(&item.id);
             let benchmarking = self
-                .group_benchmarks
+                .managed_policies
+                .benchmarks
                 .get(&benchmark_key)
                 .is_some_and(GroupBenchmarkState::is_running);
             let action = if expanded {
@@ -5030,8 +5116,11 @@ impl ManisApp {
                 .overflow_hidden()
                 .child(header);
             if expanded {
-                if let Some(feedback) =
-                    self.group_benchmarks.get(&benchmark_key).and_then(|state| {
+                if let Some(feedback) = self
+                    .managed_policies
+                    .benchmarks
+                    .get(&benchmark_key)
+                    .and_then(|state| {
                         Self::policy_group_benchmark_feedback(
                             language,
                             state,
@@ -5061,7 +5150,8 @@ impl ManisApp {
                     for node in item.nodes.iter().cloned() {
                         let current = node.name == item.target;
                         let benchmark_state = self
-                            .group_benchmarks
+                            .managed_policies
+                            .benchmarks
                             .get(&benchmark_key)
                             .map_or(GroupBenchmarkNodeState::Idle, |state| {
                                 state.node_state(&node.name)
@@ -5479,7 +5569,8 @@ impl ManisApp {
     }
 
     fn editable_policy_group_id(&self, policy_name: &str) -> Option<&str> {
-        self.managed_policy_groups
+        self.managed_policies
+            .groups
             .iter()
             .find(|group| group.name == policy_name)
             .map(|group| group.id.as_str())
@@ -5512,7 +5603,8 @@ impl ManisApp {
                     if tab == PolicyDetailTab::Settings {
                         if let Some(group_id) = editable_group_id.as_deref() {
                             let already_editing = this
-                                .managed_policy_draft
+                                .managed_policies
+                                .draft
                                 .as_ref()
                                 .and_then(|draft| draft.editing_id.as_deref())
                                 == Some(group_id);
@@ -5547,14 +5639,16 @@ impl ManisApp {
         let benchmarkable = Self::policy_group_benchmarkable(&selected_policy);
         let benchmark_key = Self::policy_group_benchmark_key(&selected_policy.id);
         let benchmarking = self
-            .group_benchmarks
+            .managed_policies
+            .benchmarks
             .get(&benchmark_key)
             .is_some_and(GroupBenchmarkState::is_running);
         let editable_group_id = self
             .editable_policy_group_id(&selected_policy.name)
             .map(str::to_owned);
         let display_icon = self
-            .managed_policy_groups
+            .managed_policies
+            .groups
             .iter()
             .find(|group| group.name == selected_policy.name)
             .map_or(ManagedPolicyIcon::None, |group| group.icon);
@@ -5611,14 +5705,19 @@ impl ManisApp {
                         )),
                 );
             }
-            if let Some(feedback) = self.group_benchmarks.get(&benchmark_key).and_then(|state| {
-                Self::policy_group_benchmark_feedback(
-                    language,
-                    state,
-                    selected_policy.nodes.len(),
-                    theme,
-                )
-            }) {
+            if let Some(feedback) = self
+                .managed_policies
+                .benchmarks
+                .get(&benchmark_key)
+                .and_then(|state| {
+                    Self::policy_group_benchmark_feedback(
+                        language,
+                        state,
+                        selected_policy.nodes.len(),
+                        theme,
+                    )
+                })
+            {
                 body = body.child(feedback);
             }
             body = body.child(
@@ -5644,7 +5743,8 @@ impl ManisApp {
                 let item_name = item.name.clone();
                 let source = self.policy_node_source_label(&item, language);
                 let benchmark_state = self
-                    .group_benchmarks
+                    .managed_policies
+                    .benchmarks
                     .get(&benchmark_key)
                     .map_or(GroupBenchmarkNodeState::Idle, |state| {
                         state.node_state(&item.name)
@@ -5674,7 +5774,8 @@ impl ManisApp {
         if self.policy_detail_tab == PolicyDetailTab::Settings {
             if let Some(group_id) = editable_group_id.as_deref() {
                 let active_draft = self
-                    .managed_policy_draft
+                    .managed_policies
+                    .draft
                     .as_ref()
                     .filter(|draft| draft.editing_id.as_deref() == Some(group_id));
                 if let Some(draft) = active_draft {
@@ -5704,8 +5805,8 @@ impl ManisApp {
                                 ControlSize::Compact,
                             )
                             .on_click(cx.listener(|this, _, _, cx| {
-                                this.managed_policy_draft = None;
-                                this.managed_policy_editor_popover = None;
+                                this.managed_policies.draft = None;
+                                this.managed_policies.editor_popover = None;
                                 cx.notify();
                             })),
                         )
@@ -6361,6 +6462,139 @@ fn policy_kind_label(language: Language, kind: manis_core::PolicyGroupKind) -> &
     }
 }
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum PolicyWorkspaceRender {
+    Inactive,
+    Editor,
+    Empty,
+    Catalog,
+}
+
+#[derive(Clone, Copy)]
+struct WorkspaceRenderState {
+    size_class: WindowSizeClass,
+    policy_workspace: PolicyWorkspaceRender,
+}
+
+impl WorkspaceRenderState {
+    fn from_app(app: &ManisApp, size_class: WindowSizeClass) -> Self {
+        let policies_active = app.primary_workspace == PrimaryWorkspace::Policies;
+        let editing_new_policy = app
+            .managed_policies
+            .draft
+            .as_ref()
+            .is_some_and(|draft| draft.editing_id.is_none());
+        let policy_workspace = if !policies_active {
+            PolicyWorkspaceRender::Inactive
+        } else if editing_new_policy {
+            PolicyWorkspaceRender::Editor
+        } else if app.catalog.is_some() {
+            PolicyWorkspaceRender::Catalog
+        } else {
+            PolicyWorkspaceRender::Empty
+        };
+        Self {
+            size_class,
+            policy_workspace,
+        }
+    }
+
+    fn compact(self) -> bool {
+        self.size_class == WindowSizeClass::Compact
+    }
+
+    fn shows_policy_groups(self, navigation: CompactNavigation) -> bool {
+        !self.compact() || navigation == CompactNavigation::GroupList
+    }
+
+    fn shows_policy_detail(self, navigation: CompactNavigation) -> bool {
+        !self.compact() || navigation == CompactNavigation::GroupDetail
+    }
+}
+
+impl ManisApp {
+    fn workspace_content(
+        &mut self,
+        state: WorkspaceRenderState,
+        theme: Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        div()
+            .relative()
+            .flex_1()
+            .overflow_hidden()
+            .flex()
+            .child(self.navigation(theme, state.size_class, cx))
+            .when(self.primary_workspace == PrimaryWorkspace::Nodes, |main| {
+                main.child(self.node_workspace(theme, state.size_class, cx))
+            })
+            .when(
+                self.primary_workspace == PrimaryWorkspace::RoutingRules,
+                |main| {
+                    main.child(self.routing_rules_workspace(theme, state.size_class, window, cx))
+                },
+            )
+            .when(
+                self.primary_workspace == PrimaryWorkspace::Activity,
+                |main| main.child(self.activity_workspace(theme, state.size_class, cx)),
+            )
+            .when(self.primary_workspace == PrimaryWorkspace::Logs, |main| {
+                main.child(self.logs_workspace(theme, state.size_class, cx))
+            })
+            .when(
+                self.primary_workspace == PrimaryWorkspace::Configuration,
+                |main| main.child(self.configuration_workspace(theme, state.size_class, cx)),
+            )
+            .when(
+                state.policy_workspace == PolicyWorkspaceRender::Editor,
+                |main| {
+                    let draft = self
+                        .managed_policies
+                        .draft
+                        .as_ref()
+                        .expect("policy editor state requires a draft");
+                    main.child(self.managed_policy_editor_workspace(
+                        draft,
+                        state.compact(),
+                        self.language(),
+                        theme,
+                        cx,
+                    ))
+                },
+            )
+            .when(
+                state.policy_workspace == PolicyWorkspaceRender::Empty,
+                |main| main.child(self.empty_policy_workspace(theme, cx)),
+            )
+            .when(
+                state.policy_workspace == PolicyWorkspaceRender::Catalog
+                    && state.shows_policy_groups(self.workspace.compact_navigation),
+                |main| {
+                    main.child(
+                        self.policy_list(theme, state.policy_list_width(), cx)
+                            .when(state.compact(), Styled::flex_1),
+                    )
+                },
+            )
+            .when(
+                state.policy_workspace == PolicyWorkspaceRender::Catalog
+                    && state.shows_policy_detail(self.workspace.compact_navigation),
+                |main| main.child(self.detail(theme, state.compact(), cx)),
+            )
+    }
+}
+
+impl WorkspaceRenderState {
+    fn policy_list_width(self) -> Option<f32> {
+        match self.size_class {
+            WindowSizeClass::Compact => None,
+            WindowSizeClass::Medium => Some(LayoutMetric::MediumPolicyList.px().as_f32()),
+            WindowSizeClass::Wide => Some(LayoutMetric::WidePolicyList.px().as_f32()),
+        }
+    }
+}
+
 impl Default for ManisApp {
     fn default() -> Self {
         Self::new()
@@ -6371,24 +6605,7 @@ impl Render for ManisApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let size_class = WindowSizeClass::for_width(window.viewport_size().width.as_f32());
         let theme = self.theme();
-        let compact = size_class == WindowSizeClass::Compact;
-        let show_groups =
-            !compact || self.workspace.compact_navigation == CompactNavigation::GroupList;
-        let show_detail =
-            !compact || self.workspace.compact_navigation == CompactNavigation::GroupDetail;
-        let policies_active = self.primary_workspace == PrimaryWorkspace::Policies;
-        // Creating a group has no existing detail context, so it keeps the standalone editor.
-        // Editing an existing group stays inside its Settings tab and preserves the policy header.
-        let policy_editor_active = policies_active
-            && self
-                .managed_policy_draft
-                .as_ref()
-                .is_some_and(|draft| draft.editing_id.is_none());
-        let has_policy_catalog = self.catalog.is_some();
-        let nodes_active = self.primary_workspace == PrimaryWorkspace::Nodes;
-        let routing_rules_active = self.primary_workspace == PrimaryWorkspace::RoutingRules;
-        let activity_active = self.primary_workspace == PrimaryWorkspace::Activity;
-        let logs_active = self.primary_workspace == PrimaryWorkspace::Logs;
+        let state = WorkspaceRenderState::from_app(self, size_class);
 
         div()
             .relative()
@@ -6399,76 +6616,7 @@ impl Render for ManisApp {
             .text_color(theme.text_primary)
             .text_size(px(13.0))
             .child(self.chrome(theme, size_class, cx))
-            .child(
-                div()
-                    .relative()
-                    .flex_1()
-                    .overflow_hidden()
-                    .flex()
-                    .child(self.navigation(theme, size_class, cx))
-                    .when(nodes_active, |main| {
-                        main.child(self.node_workspace(theme, size_class, cx))
-                    })
-                    .when(routing_rules_active, |main| {
-                        main.child(self.routing_rules_workspace(theme, size_class, window, cx))
-                    })
-                    .when(activity_active, |main| {
-                        main.child(self.activity_workspace(theme, size_class, cx))
-                    })
-                    .when(logs_active, |main| {
-                        main.child(self.logs_workspace(theme, size_class, cx))
-                    })
-                    .when(
-                        self.primary_workspace == PrimaryWorkspace::Configuration,
-                        |main| main.child(self.configuration_workspace(theme, size_class, cx)),
-                    )
-                    .when(policy_editor_active, |main| {
-                        let draft = self
-                            .managed_policy_draft
-                            .as_ref()
-                            .expect("policy editor state requires a draft");
-                        main.child(self.managed_policy_editor_workspace(
-                            draft,
-                            compact,
-                            self.language(),
-                            theme,
-                            cx,
-                        ))
-                    })
-                    .when(
-                        policies_active && !policy_editor_active && !has_policy_catalog,
-                        |main| main.child(self.empty_policy_workspace(theme, cx)),
-                    )
-                    .when(
-                        policies_active
-                            && !policy_editor_active
-                            && has_policy_catalog
-                            && show_groups,
-                        |main| {
-                            main.child(
-                                self.policy_list(
-                                    theme,
-                                    if compact {
-                                        None
-                                    } else if size_class == WindowSizeClass::Medium {
-                                        Some(LayoutMetric::MediumPolicyList.px().as_f32())
-                                    } else {
-                                        Some(LayoutMetric::WidePolicyList.px().as_f32())
-                                    },
-                                    cx,
-                                )
-                                .when(compact, Styled::flex_1),
-                            )
-                        },
-                    )
-                    .when(
-                        policies_active
-                            && !policy_editor_active
-                            && has_policy_catalog
-                            && show_detail,
-                        |main| main.child(self.detail(theme, compact, cx)),
-                    ),
-            )
+            .child(self.workspace_content(state, theme, window, cx))
             .children(gpui_component::Root::render_sheet_layer(window, cx))
             .child(self.status_bar(theme))
     }
@@ -6695,7 +6843,7 @@ mod tests {
     #[test]
     fn policy_settings_only_match_a_saved_manis_group_by_exact_name() {
         let mut app = ManisApp::with_fixture_controller("http://127.0.0.1:9090");
-        app.managed_policy_groups.push(
+        app.managed_policies.groups.push(
             ManagedPolicyGroup::new("group-deadbeef", "Hong Kong")
                 .expect("valid managed policy group"),
         );
@@ -6811,7 +6959,7 @@ mod tests {
         assert_eq!(app.global_target(), Some("Tokyo"));
         assert_eq!(app.runtime_global_target(), Some("Tokyo"));
 
-        app.node_selection_preferences.set_global(
+        app.managed_policies.node_selections.set_global(
             NodeIdentity::new("saved", "Singapore").expect("valid saved node identity"),
         );
         assert_eq!(app.global_target(), Some("Singapore"));
@@ -6847,7 +6995,9 @@ mod tests {
             Some(("saved", "Singapore"))
         );
         assert_eq!(
-            app.node_selection_preferences.policy_target("Manual Video"),
+            app.managed_policies
+                .node_selections
+                .policy_target("Manual Video"),
             Some("Tokyo")
         );
         fs::remove_dir_all(root).expect("remove selection fixture");
@@ -6938,10 +7088,10 @@ mod tests {
             store,
         );
 
-        assert_eq!(app.qx_rule_sources.len(), 1);
-        assert!(app.qx_rule_sources[0].enabled);
-        assert_eq!(app.qx_rule_sources[0].rule_count, 1);
-        assert_eq!(app.qx_rule_sources[0].target_policy.as_str(), "Proxy");
+        assert_eq!(app.rule_sources.sources.len(), 1);
+        assert!(app.rule_sources.sources[0].enabled);
+        assert_eq!(app.rule_sources.sources[0].rule_count, 1);
+        assert_eq!(app.rule_sources.sources[0].target_policy.as_str(), "Proxy");
         fs::remove_dir_all(root).expect("remove fixture");
     }
 
