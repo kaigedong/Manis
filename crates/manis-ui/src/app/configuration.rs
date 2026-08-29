@@ -2334,148 +2334,172 @@ impl ManisApp {
             })
     }
 
-    #[allow(clippy::too_many_lines)]
     fn saved_single_node_cards(&self, theme: Theme, cx: &mut Context<Self>) -> Div {
         let language = self.language();
-        let mut list = div();
         let controls_enabled = !matches!(
             self.subscription_feedback,
             SubscriptionFeedback::Importing(_)
         ) && !self.source_refresh_busy();
-        for saved in &self.saved_single_nodes {
-            let id = saved.id.clone();
-            let edit_id = id.clone();
-            let card_edit_id = id.clone();
-            let toggle_id = id.clone();
-            let remove_id = id.clone();
-            let node = saved.source.preview();
-            let enabled = saved.enabled;
-            let url = saved.source.expose_to(str::to_owned);
-            list = list.child(
+        div().children(self.saved_single_nodes.iter().map(|saved| {
+            Self::saved_single_node_card(saved, controls_enabled, language, theme, cx)
+        }))
+    }
+
+    fn saved_single_node_card(
+        saved: &mihomo::StoredSingleNode,
+        controls_enabled: bool,
+        language: Language,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let card_edit_id = saved.id.clone();
+        let node = saved.source.preview();
+        div()
+            .id(format!("single-node-card-{card_edit_id}"))
+            .role(Role::Button)
+            .aria_label(language.text("Edit this single-node source", "编辑这个单节点来源"))
+            .tab_stop(controls_enabled)
+            .focusable()
+            .when(controls_enabled, gpui::Styled::cursor_pointer)
+            .mt_2()
+            .px_3()
+            .py_2()
+            .rounded(Radius::Row.px())
+            .border_1()
+            .border_color(theme.outline_subtle)
+            .bg(theme.surface_low)
+            .child(Self::saved_single_node_header(
+                saved,
+                node,
+                controls_enabled,
+                theme,
+                cx,
+            ))
+            .child(
                 div()
-                    .id(format!("single-node-card-{card_edit_id}"))
-                    .role(Role::Button)
-                    .aria_label(language.text("Edit this single-node source", "编辑这个单节点来源"))
+                    .mt_1()
+                    .ml_7()
+                    .overflow_x_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .text_size(TextRole::Metadata.size())
+                    .text_color(theme.text_tertiary)
+                    .child(saved.source.expose_to(str::to_owned)),
+            )
+            .child(Self::saved_single_node_actions(
+                saved,
+                node,
+                controls_enabled,
+                language,
+                theme,
+                cx,
+            ))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                if controls_enabled {
+                    this.open_single_node_editor(card_edit_id.clone(), cx);
+                    this.open_proxy_source_dialog(window, cx);
+                }
+            }))
+    }
+
+    fn saved_single_node_header(
+        saved: &mihomo::StoredSingleNode,
+        node: &crate::subscription::SourceNodePreview,
+        controls_enabled: bool,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let toggle_id = saved.id.clone();
+        let enabled = saved.enabled;
+        div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(
+                Checkbox::new(format!("single-node-enabled-{toggle_id}"))
+                    .label("")
+                    .checked(enabled)
+                    .disabled(!controls_enabled)
                     .tab_stop(controls_enabled)
-                    .focusable()
-                    .when(controls_enabled, gpui::Styled::cursor_pointer)
-                    .mt_2()
-                    .px_3()
-                    .py_2()
-                    .rounded(Radius::Row.px())
-                    .border_1()
-                    .border_color(theme.outline_subtle)
-                    .bg(theme.surface_low)
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        if controls_enabled {
+                            this.set_single_node_enabled(toggle_id.clone(), !enabled, cx);
+                        }
+                    })),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .flex()
+                    .items_center()
+                    .gap_2()
                     .child(
                         div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(
-                                Checkbox::new(format!("single-node-enabled-{toggle_id}"))
-                                    .label("")
-                                    .checked(enabled)
-                                    .disabled(!controls_enabled)
-                                    .tab_stop(controls_enabled)
-                                    .cursor_pointer()
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        cx.stop_propagation();
-                                        if controls_enabled {
-                                            this.set_single_node_enabled(
-                                                toggle_id.clone(),
-                                                !enabled,
-                                                cx,
-                                            );
-                                        }
-                                    })),
-                            )
-                            .child(
-                                div()
-                                    .id(format!("single-node-edit-{edit_id}"))
-                                    .flex_1()
-                                    .min_w(px(0.0))
-                                    .flex()
-                                    .items_center()
-                                    .gap_2()
-                                    .child(
-                                        div()
-                                            .min_w(px(0.0))
-                                            .overflow_x_hidden()
-                                            .whitespace_nowrap()
-                                            .text_ellipsis()
-                                            .text_size(TextRole::Label.size())
-                                            .font_weight(TextRole::Label.weight())
-                                            .text_color(if enabled {
-                                                theme.text_primary
-                                            } else {
-                                                theme.text_secondary
-                                            })
-                                            .child(saved.name.clone()),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex_shrink_0()
-                                            .text_size(TextRole::Metadata.size())
-                                            .text_color(theme.text_tertiary)
-                                            .child(node.protocol),
-                                    ),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .mt_1()
-                            .ml_7()
+                            .min_w(px(0.0))
                             .overflow_x_hidden()
                             .whitespace_nowrap()
                             .text_ellipsis()
-                            .text_size(TextRole::Metadata.size())
-                            .text_color(theme.text_tertiary)
-                            .child(url),
+                            .text_size(TextRole::Label.size())
+                            .font_weight(TextRole::Label.weight())
+                            .text_color(if enabled {
+                                theme.text_primary
+                            } else {
+                                theme.text_secondary
+                            })
+                            .child(saved.name.clone()),
                     )
                     .child(
                         div()
-                            .mt_1()
-                            .ml_7()
-                            .flex()
-                            .items_center()
-                            .gap_2()
+                            .flex_shrink_0()
                             .text_size(TextRole::Metadata.size())
-                            .text_color(theme.text_secondary)
-                            .child(format!("{} · {}", node.endpoint, node.detail))
-                            .child(div().flex_1())
-                            .when(controls_enabled, |row| {
-                                row.child(
-                                    action_button(
-                                        format!("remove-single-node-{remove_id}"),
-                                        language.text("Remove", "移除"),
-                                        ActionRole::Quiet,
-                                        ControlSize::Compact,
-                                    )
-                                    .accessibility_label(
-                                        language
-                                            .text("Remove single-node source", "移除单节点来源"),
-                                    )
-                                    .cursor_pointer()
-                                    .px_3()
-                                    .text_color(theme.status_error)
-                                    .on_click(cx.listener(
-                                        move |this, _, _, cx| {
-                                            cx.stop_propagation();
-                                            this.remove_saved_single_node(remove_id.clone(), cx);
-                                        },
-                                    )),
-                                )
-                            }),
+                            .text_color(theme.text_tertiary)
+                            .child(node.protocol),
+                    ),
+            )
+    }
+
+    fn saved_single_node_actions(
+        saved: &mihomo::StoredSingleNode,
+        node: &crate::subscription::SourceNodePreview,
+        controls_enabled: bool,
+        language: Language,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let remove_id = saved.id.clone();
+        div()
+            .mt_1()
+            .ml_7()
+            .flex()
+            .items_center()
+            .gap_2()
+            .text_size(TextRole::Metadata.size())
+            .text_color(theme.text_secondary)
+            .child(format!("{} · {}", node.endpoint, node.detail))
+            .child(div().flex_1())
+            .when(controls_enabled, |row| {
+                row.child(
+                    action_button(
+                        format!("remove-single-node-{remove_id}"),
+                        language.text("Remove", "移除"),
+                        ActionRole::Quiet,
+                        ControlSize::Compact,
                     )
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        if controls_enabled {
-                            this.open_single_node_editor(card_edit_id.clone(), cx);
-                            this.open_proxy_source_dialog(window, cx);
-                        }
+                    .accessibility_label(
+                        language.text("Remove single-node source", "移除单节点来源"),
+                    )
+                    .cursor_pointer()
+                    .px_3()
+                    .text_color(theme.status_error)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.remove_saved_single_node(remove_id.clone(), cx);
                     })),
-            );
-        }
-        list
+                )
+            })
     }
 
     fn set_single_node_enabled(&mut self, id: String, enabled: bool, cx: &mut Context<Self>) {
