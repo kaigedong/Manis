@@ -41,7 +41,8 @@ case "$OS_NAME:$ARCH_NAME" in
 esac
 
 METADATA="$WORK_DIR/release.json"
-curl --fail --silent --show-error --location --retry 3 \
+curl --fail --silent --show-error --location \
+  --retry 5 --retry-all-errors --retry-delay 5 --retry-max-time 120 \
   --max-filesize 1048576 \
   -H "Accept: application/vnd.github+json" \
   -H "User-Agent: Manis-packager" \
@@ -73,7 +74,8 @@ PY
 )
 
 ARCHIVE="$WORK_DIR/$asset_name"
-curl --fail --silent --show-error --location --retry 3 \
+curl --fail --silent --show-error --location \
+  --retry 5 --retry-all-errors --retry-delay 5 --retry-max-time 120 \
   --max-filesize 67108864 \
   -H "User-Agent: Manis-packager" \
   "$download_url" > "$ARCHIVE"
