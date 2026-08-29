@@ -24,7 +24,7 @@ use crate::{
     components::{ActionRole, action_button, empty_state, section_heading},
     diagnostics::{UiEvent, trace_ui},
     localization::{CountNoun, Language, Message},
-    mihomo::{self, LoadedProvider, LoadedProviderNode, ProxyDelayTarget},
+    mihomo::{self, LoadedProvider, LoadedProviderNode, ProxyDelayTarget, SubscriptionStoreError},
     subscription::SourceNodePreview,
     theme::{ControlSize, Radius, Space, TextRole, Theme},
 };
@@ -44,6 +44,69 @@ struct NodeWorkspaceView {
     compact: bool,
     language: Language,
     theme: Theme,
+}
+
+struct WorkspaceNodeRowContext {
+    row_id: String,
+    source_id: String,
+    compact: bool,
+    language: Language,
+    theme: Theme,
+}
+
+enum ManagedPolicyDraftError {
+    InvalidName,
+    DuplicateName,
+    ReservedName,
+    InvalidInterval,
+    MissingFilter,
+    MissingExplicitMember,
+    NoCandidates,
+    InvalidReferences(String),
+}
+
+impl ManagedPolicyDraftError {
+    fn message(self, language: Language) -> String {
+        match self {
+            Self::InvalidName => language
+                .text(
+                    "Group name cannot be empty or contain newlines/control characters",
+                    "策略组名称不能为空，也不能包含换行或控制字符",
+                )
+                .to_owned(),
+            Self::DuplicateName => language
+                .text(
+                    "A policy group with this name already exists. Choose another name.",
+                    "已有同名策略组，请换一个名称",
+                )
+                .to_owned(),
+            Self::ReservedName => language
+                .text(
+                    "This name is reserved by the proxy kernel",
+                    "该名称由代理内核保留",
+                )
+                .to_owned(),
+            Self::InvalidInterval => language
+                .text("Automatic check interval is invalid", "自动检查间隔无效")
+                .to_owned(),
+            Self::MissingFilter => language
+                .text("Enter the node name to match", "请填写要匹配的节点名称")
+                .to_owned(),
+            Self::MissingExplicitMember => language
+                .text(
+                    "Select at least one node or policy group",
+                    "请至少选择一个节点或策略组",
+                )
+                .to_owned(),
+            Self::NoCandidates => language
+                .text(
+                    "The current rule does not match any imported nodes",
+                    "当前规则没有匹配到任何已导入节点",
+                )
+                .to_owned(),
+            Self::InvalidReferences(message) => message,
+        }
+    }
 }
 
 struct PolicyEditorPopup {
@@ -1354,7 +1417,6 @@ impl ManisApp {
             .collect()
     }
 
-    #[allow(clippy::too_many_lines)]
     fn start_source_group_benchmark(
         &mut self,
         id: &str,
@@ -1425,52 +1487,60 @@ impl ManisApp {
                 })
                 .await;
             this.update(cx, |this, cx| {
-                let language = this.language();
-                if this.group_benchmark_active_generation != Some(generation) {
-                    return;
-                }
-                this.group_benchmark_active_generation = None;
-                let Some(state) = this.group_benchmarks.get_mut(&key) else {
-                    cx.notify();
-                    return;
-                };
-                let failure = result.as_ref().err().map(ToString::to_string);
-                let accepted = match result {
-                    Ok(delays) => state.complete(generation, total, delays),
-                    Err(_error) => state.fail(generation),
-                };
-                if !accepted {
-                    return;
-                }
-                match state {
-                    GroupBenchmarkState::Complete { summary, .. } => {
-                        trace_ui(UiEvent::GroupBenchmarkSucceeded);
-                        this.status = format!(
-                            "{}: {}",
-                            language.text("Source test completed", "来源测速完成"),
-                            Self::success_fraction_label(
-                                summary.succeeded,
-                                summary.total,
-                                language
-                            )
-                        );
-                    }
-                    GroupBenchmarkState::Failed { .. } => {
-                        trace_ui(UiEvent::GroupBenchmarkFailed);
-                        this.status = format!(
-                            "{}：{}",
-                            language.text("Source test failed", "来源测速失败"),
-                            failure.as_deref().unwrap_or_else(|| language
-                                .text("Mihomo did not return a result", "Mihomo 未返回结果"))
-                        );
-                    }
-                    _ => return,
-                }
-                cx.notify();
+                this.finish_source_group_benchmark(&key, generation, total, result, cx);
             })
             .ok();
         })
         .detach();
+        cx.notify();
+    }
+
+    fn finish_source_group_benchmark(
+        &mut self,
+        key: &str,
+        generation: u64,
+        total: usize,
+        result: Result<BTreeMap<String, u16>, mihomo::LoadError>,
+        cx: &mut Context<Self>,
+    ) {
+        let language = self.language();
+        if self.group_benchmark_active_generation != Some(generation) {
+            return;
+        }
+        self.group_benchmark_active_generation = None;
+        let Some(state) = self.group_benchmarks.get_mut(key) else {
+            cx.notify();
+            return;
+        };
+        let failure = result.as_ref().err().map(ToString::to_string);
+        let accepted = match result {
+            Ok(delays) => state.complete(generation, total, delays),
+            Err(_error) => state.fail(generation),
+        };
+        if !accepted {
+            return;
+        }
+        match state {
+            GroupBenchmarkState::Complete { summary, .. } => {
+                trace_ui(UiEvent::GroupBenchmarkSucceeded);
+                self.status = format!(
+                    "{}: {}",
+                    language.text("Source test completed", "来源测速完成"),
+                    Self::success_fraction_label(summary.succeeded, summary.total, language)
+                );
+            }
+            GroupBenchmarkState::Failed { .. } => {
+                trace_ui(UiEvent::GroupBenchmarkFailed);
+                self.status = format!(
+                    "{}：{}",
+                    language.text("Source test failed", "来源测速失败"),
+                    failure.as_deref().unwrap_or_else(|| {
+                        language.text("Mihomo did not return a result", "Mihomo 未返回结果")
+                    })
+                );
+            }
+            _ => return,
+        }
         cx.notify();
     }
 
@@ -1550,7 +1620,67 @@ impl ManisApp {
         cx.notify();
     }
 
-    #[allow(clippy::too_many_lines)]
+    fn build_managed_policy(
+        &self,
+        draft: ManagedPolicyDraft,
+        name: &str,
+        filter: &str,
+    ) -> Result<ManagedPolicyGroup, ManagedPolicyDraftError> {
+        let id = draft
+            .editing_id
+            .clone()
+            .unwrap_or_else(mihomo::new_managed_policy_id);
+        let mut group =
+            ManagedPolicyGroup::new(&id, name).map_err(|_| ManagedPolicyDraftError::InvalidName)?;
+        if self
+            .managed_policy_groups
+            .iter()
+            .any(|existing| existing.id != id && existing.name == name)
+        {
+            return Err(ManagedPolicyDraftError::DuplicateName);
+        }
+        if matches!(
+            name,
+            manis_profile::MANIS_GLOBAL_GROUP_NAME | "GLOBAL" | "DIRECT" | "REJECT"
+        ) {
+            return Err(ManagedPolicyDraftError::ReservedName);
+        }
+        group.icon = draft.icon;
+        group.strategy = draft.strategy;
+        group
+            .set_test_interval_secs(draft.test_interval_secs)
+            .map_err(|_| ManagedPolicyDraftError::InvalidInterval)?;
+        let matcher = match draft.matcher_kind {
+            PolicyCandidateMatcherKind::All => PolicyCandidateMatcher::All,
+            PolicyCandidateMatcherKind::NameContains => {
+                PolicyCandidateMatcher::name_contains(filter)
+                    .map_err(|_| ManagedPolicyDraftError::MissingFilter)?
+            }
+            PolicyCandidateMatcherKind::Explicit if draft.explicit_members.is_empty() => {
+                return Err(ManagedPolicyDraftError::MissingExplicitMember);
+            }
+            PolicyCandidateMatcherKind::Explicit => {
+                PolicyCandidateMatcher::Explicit(draft.explicit_members)
+            }
+        };
+        let explicit = matches!(matcher, PolicyCandidateMatcher::Explicit(_));
+        group
+            .set_matcher(matcher)
+            .map_err(|_| ManagedPolicyDraftError::NoCandidates)?;
+        if !explicit && self.managed_policy_candidate_count(&group) == 0 {
+            return Err(ManagedPolicyDraftError::NoCandidates);
+        }
+        let mut proposed = self.managed_policy_groups.clone();
+        if let Some(existing) = proposed.iter_mut().find(|existing| existing.id == group.id) {
+            existing.clone_from(&group);
+        } else {
+            proposed.push(group.clone());
+        }
+        mihomo::validate_managed_policy_references(&proposed)
+            .map_err(|error| ManagedPolicyDraftError::InvalidReferences(error.to_string()))?;
+        Ok(group)
+    }
+
     pub(super) fn save_managed_policy(&mut self, cx: &mut Context<Self>) {
         let Some(draft) = self.managed_policy_draft.clone() else {
             return;
@@ -1565,113 +1695,15 @@ impl ManisApp {
             .as_ref()
             .map(|input| input.read(cx).value().trim().to_owned())
             .unwrap_or_default();
-        let id = draft
-            .editing_id
-            .clone()
-            .unwrap_or_else(mihomo::new_managed_policy_id);
         let language = self.language();
-        let Ok(mut group) = ManagedPolicyGroup::new(&id, &name) else {
-            language
-                .text(
-                    "Group name cannot be empty or contain newlines/control characters",
-                    "策略组名称不能为空，也不能包含换行或控制字符",
-                )
-                .clone_into(&mut self.status);
-            cx.notify();
-            return;
-        };
-        if self
-            .managed_policy_groups
-            .iter()
-            .any(|existing| existing.id != id && existing.name == name)
-        {
-            language
-                .text(
-                    "A policy group with this name already exists. Choose another name.",
-                    "已有同名策略组，请换一个名称",
-                )
-                .clone_into(&mut self.status);
-            cx.notify();
-            return;
-        }
-        if matches!(
-            name.as_str(),
-            manis_profile::MANIS_GLOBAL_GROUP_NAME | "GLOBAL" | "DIRECT" | "REJECT"
-        ) {
-            language
-                .text(
-                    "This name is reserved by the proxy kernel",
-                    "该名称由代理内核保留",
-                )
-                .clone_into(&mut self.status);
-            cx.notify();
-            return;
-        }
-        group.icon = draft.icon;
-        group.strategy = draft.strategy;
-        if group
-            .set_test_interval_secs(draft.test_interval_secs)
-            .is_err()
-        {
-            language
-                .text("Automatic check interval is invalid", "自动检查间隔无效")
-                .clone_into(&mut self.status);
-            cx.notify();
-            return;
-        }
-        let matcher = match draft.matcher_kind {
-            PolicyCandidateMatcherKind::All => PolicyCandidateMatcher::All,
-            PolicyCandidateMatcherKind::NameContains => {
-                let Ok(matcher) = PolicyCandidateMatcher::name_contains(&filter) else {
-                    language
-                        .text("Enter the node name to match", "请填写要匹配的节点名称")
-                        .clone_into(&mut self.status);
-                    cx.notify();
-                    return;
-                };
-                matcher
-            }
-            PolicyCandidateMatcherKind::Explicit => {
-                if draft.explicit_members.is_empty() {
-                    language
-                        .text(
-                            "Select at least one node or policy group",
-                            "请至少选择一个节点或策略组",
-                        )
-                        .clone_into(&mut self.status);
-                    cx.notify();
-                    return;
-                }
-                PolicyCandidateMatcher::Explicit(draft.explicit_members)
+        let group = match self.build_managed_policy(draft, &name, &filter) {
+            Ok(group) => group,
+            Err(error) => {
+                self.status = error.message(language);
+                cx.notify();
+                return;
             }
         };
-        let explicit = matches!(matcher, PolicyCandidateMatcher::Explicit(_));
-        if group.set_matcher(matcher).is_err()
-            || (!explicit && self.managed_policy_candidate_count(&group) == 0)
-        {
-            language
-                .text(
-                    "The current rule does not match any imported nodes",
-                    "当前规则没有匹配到任何已导入节点",
-                )
-                .clone_into(&mut self.status);
-            cx.notify();
-            return;
-        }
-        let mut proposed_groups = self.managed_policy_groups.clone();
-        if let Some(existing) = proposed_groups
-            .iter_mut()
-            .find(|existing| existing.id == group.id)
-        {
-            existing.clone_from(&group);
-        } else {
-            proposed_groups.push(group.clone());
-        }
-        if let Err(error) = mihomo::validate_managed_policy_references(&proposed_groups) {
-            self.status = error.to_string();
-            cx.notify();
-            return;
-        }
         let Some(store_dir) = self.subscription_store_dir.clone() else {
             language
                 .text(
@@ -1700,57 +1732,65 @@ impl ManisApp {
                 })
                 .await;
             this.update(cx, |this, cx| {
-                match result {
-                    Ok(transaction) => {
-                        let language = this.language();
-                        transaction.apply.reconcile_proxy_mode(&mut this.proxy_mode);
-                        if let Some(group) = transaction.value {
-                            if let Some(existing) = this
-                                .managed_policy_groups
-                                .iter_mut()
-                                .find(|existing| existing.id == group.id)
-                            {
-                                existing.clone_from(&group);
-                            } else {
-                                this.managed_policy_groups.push(group.clone());
-                                this.managed_policy_groups
-                                    .sort_by(|left, right| left.id.cmp(&right.id));
-                            }
-                            this.group_benchmarks
-                                .remove(&Self::managed_policy_benchmark_key(&group.id));
-                            this.managed_policy_runtime_states.remove(&group.id);
-                            this.managed_policy_draft = None;
-                            this.managed_policy_editor_popover = None;
-                            this.status = format!(
-                                "{} “{}”{}",
-                                language.text("Group saved", "分组已保存"),
-                                group.name,
-                                transaction.apply.status_suffix(language)
-                            );
-                        } else {
-                            this.status = format!(
-                                "{}{}",
-                                language.text("Failed to save policy group", "策略组保存失败"),
-                                transaction.apply.status_suffix_after_rollback_attempt(
-                                    language,
-                                    transaction.rollback_error.as_ref(),
-                                )
-                            );
-                        }
-                    }
-                    Err(error) => {
-                        this.status = format!(
-                            "{}: {error}",
-                            this.language()
-                                .text("Failed to save policy group", "策略组保存失败")
-                        );
-                    }
-                }
-                cx.notify();
+                this.finish_managed_policy_save(result, cx);
             })
             .ok();
         })
         .detach();
+        cx.notify();
+    }
+
+    fn finish_managed_policy_save(
+        &mut self,
+        result: Result<super::SourceMutation<ManagedPolicyGroup>, SubscriptionStoreError>,
+        cx: &mut Context<Self>,
+    ) {
+        match result {
+            Ok(transaction) => {
+                let language = self.language();
+                transaction.apply.reconcile_proxy_mode(&mut self.proxy_mode);
+                if let Some(group) = transaction.value {
+                    if let Some(existing) = self
+                        .managed_policy_groups
+                        .iter_mut()
+                        .find(|existing| existing.id == group.id)
+                    {
+                        existing.clone_from(&group);
+                    } else {
+                        self.managed_policy_groups.push(group.clone());
+                        self.managed_policy_groups
+                            .sort_by(|left, right| left.id.cmp(&right.id));
+                    }
+                    self.group_benchmarks
+                        .remove(&Self::managed_policy_benchmark_key(&group.id));
+                    self.managed_policy_runtime_states.remove(&group.id);
+                    self.managed_policy_draft = None;
+                    self.managed_policy_editor_popover = None;
+                    self.status = format!(
+                        "{} “{}”{}",
+                        language.text("Group saved", "分组已保存"),
+                        group.name,
+                        transaction.apply.status_suffix(language)
+                    );
+                } else {
+                    self.status = format!(
+                        "{}{}",
+                        language.text("Failed to save policy group", "策略组保存失败"),
+                        transaction.apply.status_suffix_after_rollback_attempt(
+                            language,
+                            transaction.rollback_error.as_ref(),
+                        )
+                    );
+                }
+            }
+            Err(error) => {
+                self.status = format!(
+                    "{}: {error}",
+                    self.language()
+                        .text("Failed to save policy group", "策略组保存失败")
+                );
+            }
+        }
         cx.notify();
     }
 
@@ -2300,13 +2340,15 @@ impl ManisApp {
                     continue;
                 }
                 table = table.child(self.workspace_node_row(
-                    format!("node-row-{}-{provider_index}-{node_index}", group.id),
                     node,
-                    &group.id,
                     benchmark,
-                    compact,
-                    language,
-                    theme,
+                    WorkspaceNodeRowContext {
+                        row_id: format!("node-row-{}-{provider_index}-{node_index}", group.id),
+                        source_id: group.id.clone(),
+                        compact,
+                        language,
+                        theme,
+                    },
                     cx,
                 ));
             }
@@ -2322,17 +2364,19 @@ impl ManisApp {
                 alive: None,
             };
             table = table.child(self.workspace_node_row(
-                format!(
-                    "node-row-{}-{}-{node_index}",
-                    group.id,
-                    group.providers.len()
-                ),
                 &loaded,
-                &group.id,
                 benchmark,
-                compact,
-                language,
-                theme,
+                WorkspaceNodeRowContext {
+                    row_id: format!(
+                        "node-row-{}-{}-{node_index}",
+                        group.id,
+                        group.providers.len()
+                    ),
+                    source_id: group.id.clone(),
+                    compact,
+                    language,
+                    theme,
+                },
                 cx,
             ));
         }
@@ -2361,22 +2405,24 @@ impl ManisApp {
             )
     }
 
-    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
     fn workspace_node_row(
         &self,
-        row_id: String,
         node: &LoadedProviderNode,
-        source_id: &str,
         benchmark: &GroupBenchmarkState,
-        compact: bool,
-        language: Language,
-        theme: Theme,
+        context: WorkspaceNodeRowContext,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
+        let WorkspaceNodeRowContext {
+            row_id,
+            source_id,
+            compact,
+            language,
+            theme,
+        } = context;
         let latency = benchmark.node_state(&node.name);
         let idle_latency = node.latency_label.clone().unwrap_or_else(|| "—".to_owned());
         let spinner_id = format!("{row_id}-latency");
-        let global_identity = NodeIdentity::new(source_id, &node.name).ok();
+        let global_identity = NodeIdentity::new(&source_id, &node.name).ok();
         let global_runtime_selected = self.runtime_global_target() == Some(node.name.as_str());
         let global_selected = global_identity.as_ref().is_some_and(|identity| {
             self.global_target_identity()
@@ -2384,7 +2430,7 @@ impl ManisApp {
         });
         let selection_locked = self.global_selection_busy.is_some();
         let selected_name = node.name.clone();
-        let content = if compact {
+        let row_body = if compact {
             Self::compact_node_row_content(
                 node,
                 latency,
@@ -2411,7 +2457,7 @@ impl ManisApp {
             } else {
                 theme.surface_high
             })
-            .child(content)
+            .child(row_body)
             .when_some(global_identity, |row, selected_identity| {
                 row.role(Role::RadioButton)
                     .aria_label(format!(
