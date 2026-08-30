@@ -1,6 +1,6 @@
 #![allow(clippy::unreadable_literal)]
 
-use gpui::{FontWeight, Pixels, Rgba, px, rgb};
+use gpui::{FontWeight, Pixels, Rgba, px, rgb, rgba};
 use gpui_component::{Theme as ComponentTheme, ThemeMode};
 
 #[derive(Clone, Copy)]
@@ -27,10 +27,12 @@ pub(crate) struct Theme {
 impl Theme {
     pub(crate) fn light() -> Self {
         Self {
-            surface_base: rgb(0xf4f7f5),
-            surface_low: rgb(0xedf2ef),
-            surface_high: rgb(0xffffff),
-            surface_chrome: rgb(0xe7eeea),
+            // The surface stack is deliberately translucent so the platform blur can show
+            // through. Higher layers are more opaque to retain hierarchy and legibility.
+            surface_base: rgba(0xf4f7f5b8),
+            surface_low: rgba(0xedf2efc7),
+            surface_high: rgba(0xffffffde),
+            surface_chrome: rgba(0xe7eeead1),
             text_primary: rgb(0x152321),
             text_secondary: rgb(0x5f6e69),
             text_tertiary: rgb(0x84918d),
@@ -49,10 +51,10 @@ impl Theme {
 
     pub(crate) fn dark() -> Self {
         Self {
-            surface_base: rgb(0x0e1715),
-            surface_low: rgb(0x111d1a),
-            surface_high: rgb(0x172521),
-            surface_chrome: rgb(0x13211e),
+            surface_base: rgba(0x0e1715c7),
+            surface_low: rgba(0x111d1ad1),
+            surface_high: rgba(0x172521e0),
+            surface_chrome: rgba(0x13211ed6),
             text_primary: rgb(0xe3eeea),
             text_secondary: rgb(0xa4b4ae),
             text_tertiary: rgb(0x7d8e88),
@@ -251,7 +253,7 @@ pub(crate) fn sync_component_theme(
 
 #[cfg(test)]
 mod tests {
-    use super::{ControlSize, LayoutMetric, Radius, Space, TextRole};
+    use super::{ControlSize, LayoutMetric, Radius, Space, TextRole, Theme};
 
     fn assert_px(value: gpui::Pixels, expected: f32) {
         assert!((value.as_f32() - expected).abs() < f32::EPSILON);
@@ -288,6 +290,18 @@ mod tests {
             ControlSize::Standard.component_size(),
             gpui_component::Size::Medium
         );
+    }
+
+    #[test]
+    fn glass_surfaces_are_translucent_and_preserve_layer_hierarchy() {
+        for theme in [Theme::light(), Theme::dark()] {
+            assert!(theme.surface_base.a < theme.surface_low.a);
+            assert!(theme.surface_low.a < theme.surface_high.a);
+            assert!(theme.surface_base.a >= 0.7);
+            assert!(theme.surface_high.a >= 0.85);
+            assert!(theme.surface_chrome.a > theme.surface_base.a);
+            assert!((theme.text_primary.a - 1.0).abs() < f32::EPSILON);
+        }
     }
 
     #[test]

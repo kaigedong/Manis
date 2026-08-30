@@ -1,7 +1,8 @@
 use std::time::Duration;
 
 use gpui::{
-    App, AppContext, Bounds, Entity, Global, QuitMode, WindowBounds, WindowOptions, px, size,
+    App, AppContext, Bounds, Entity, Global, QuitMode, TitlebarOptions, WindowBackgroundAppearance,
+    WindowBounds, WindowOptions, px, size,
 };
 use manis_core::ProxyMode;
 use tray_icon::{
@@ -89,6 +90,12 @@ pub fn open_window(cx: &mut App) -> gpui::Result<()> {
     cx.open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
+            titlebar: Some(TitlebarOptions {
+                title: Some(crate::brand::PRODUCT_NAME.into()),
+                appears_transparent: true,
+                ..Default::default()
+            }),
+            window_background: WindowBackgroundAppearance::Blurred,
             window_min_size: Some(size(
                 LayoutMetric::MinWindowWidth.px(),
                 LayoutMetric::MinWindowHeight.px(),
