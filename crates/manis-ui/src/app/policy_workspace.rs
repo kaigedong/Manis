@@ -457,7 +457,7 @@ impl ManisApp {
                     .p(Space::Lg.px())
                     .border_b_1()
                     .border_color(theme.outline_subtle)
-                    .bg(theme.surface_high)
+                    .bg(theme.surface_chrome)
                     .child(page_heading(
                         language.message(Message::PolicyGroups),
                         language.localized(
@@ -646,7 +646,6 @@ impl ManisApp {
             .rounded(Radius::Pane.px())
             .border_1()
             .border_color(theme.outline_subtle)
-            .bg(theme.surface_high)
             .overflow_hidden()
             .child(Self::offline_policy_header(&view, language, theme, cx));
         if !view.expanded {
@@ -738,7 +737,7 @@ impl ManisApp {
             .bg(if current {
                 theme.action_soft
             } else {
-                theme.surface_high
+                theme.surface_base
             })
             .child(
                 div()
@@ -858,7 +857,6 @@ impl ManisApp {
             .rounded(Radius::Pane.px())
             .border_1()
             .border_color(theme.outline_subtle)
-            .bg(theme.surface_high)
             .overflow_hidden()
             .child(Self::policy_list_header(
                 &view, compact, language, theme, cx,
@@ -950,9 +948,9 @@ impl ManisApp {
             .items_center()
             .gap(Space::Md.px())
             .bg(if view.selected || view.expanded {
-                theme.surface_high
-            } else {
                 theme.surface_low
+            } else {
+                theme.surface_base
             })
             .child(Self::policy_group_icon(
                 PolicyGroupIconView {
@@ -1105,7 +1103,7 @@ impl ManisApp {
             .bg(if current {
                 theme.action_soft
             } else {
-                theme.surface_high
+                theme.surface_base
             })
             .child(
                 div()

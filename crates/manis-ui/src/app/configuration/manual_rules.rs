@@ -1557,7 +1557,6 @@ impl ManisApp {
             .rounded(Radius::Pane.px())
             .border_1()
             .border_color(theme.outline_subtle)
-            .bg(theme.surface_high)
             .child(
                 div()
                     .flex()

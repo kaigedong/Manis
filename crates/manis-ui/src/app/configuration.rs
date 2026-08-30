@@ -297,7 +297,6 @@ fn panel_surface(id: &'static str, compact: bool, theme: Theme) -> Stateful<Div>
         .rounded(Radius::Pane.px())
         .border_1()
         .border_color(theme.outline_subtle)
-        .bg(theme.surface_high)
 }
 
 fn field_label(label: impl Into<gpui::SharedString>, theme: Theme) -> Div {

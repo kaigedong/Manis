@@ -502,7 +502,7 @@ impl ManisApp {
             .pb(Space::Lg.px())
             .border_b_1()
             .border_color(theme.outline_subtle)
-            .bg(theme.surface_high)
+            .bg(theme.surface_chrome)
             .child(crate::components::page_heading(
                 format!("{} · {}", language.message(Message::Nodes), counts.total),
                 detail,
@@ -623,7 +623,7 @@ impl ManisApp {
             .flex_shrink_0()
             .border_b_1()
             .border_color(theme.outline_subtle)
-            .bg(theme.surface_high)
+            .bg(theme.surface_chrome)
             .flex()
             .items_center()
             .child(div().w(px(112.0)).child(left))
@@ -737,7 +737,7 @@ impl ManisApp {
             .overflow_hidden()
             .border_1()
             .border_color(theme.outline_subtle)
-            .bg(theme.surface_high)
+            .bg(theme.surface_low)
             .child(Self::policy_editor_popup_row(
                 "policy-editor-type",
                 language.localized(copy::nodes::TYPE),
@@ -809,7 +809,7 @@ impl ManisApp {
             .overflow_hidden()
             .border_1()
             .border_color(theme.outline_subtle)
-            .bg(theme.surface_high)
+            .bg(theme.surface_low)
             .child(Self::policy_editor_popup_row(
                 "policy-editor-candidate-mode",
                 language.localized(copy::nodes::NODE_SCOPE),

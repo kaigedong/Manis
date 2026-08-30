@@ -831,7 +831,7 @@ impl ManisApp {
             .flex_shrink_0()
             .border_b_1()
             .border_color(theme.outline_subtle)
-            .bg(theme.surface_high)
+            .bg(theme.surface_chrome)
             .flex()
             .items_start()
             .justify_between()
