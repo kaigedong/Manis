@@ -1,0 +1,13 @@
+[package]
+name = "manis-linux-helper"
+description = "Narrow privileged Linux DNS helper for Manis TUN mode"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+publish.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true

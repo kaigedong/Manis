@@ -236,6 +236,9 @@ jobs:
           package_path="$(find dist -maxdepth 1 -type f -name 'manis-*.pkg.tar.zst' -print -quit)"
           pacman -Qip "$package_path"
           pacman -Qlp "$package_path"
+          pacman -Qlp "$package_path" | grep -Fx 'manis /usr/lib/manis/manis-linux-helper'
+          pacman -Qlp "$package_path" | grep -Fx 'manis /usr/share/polkit-1/actions/dev.manis.app.linux-helper.policy'
+          bsdtar -xOf "$package_path" .INSTALL | grep -F '/usr/bin/setcap cap_net_admin,cap_net_raw=ep /usr/lib/manis/mihomo'
       - name: Upload Arch Linux package
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

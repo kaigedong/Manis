@@ -25,3 +25,4 @@ sed \
   -e "s/@PKGVER@/$version/g" \
   -e "s/@SHA256@/$checksum/g" \
   "$script_directory/PKGBUILD.in" > "$output_directory/PKGBUILD"
+cp "$script_directory/../archlinux/manis.install" "$output_directory/manis.install"

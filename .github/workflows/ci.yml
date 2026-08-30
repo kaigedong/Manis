@@ -70,3 +70,6 @@ jobs:
       - name: Test Linux TUN DNS lifecycle
         if: runner.os == 'Linux'
         run: cargo test -p manis-ui --lib linux_tun_dns --locked --quiet
+      - name: Test Linux privileged helper boundary
+        if: runner.os == 'Linux'
+        run: cargo test -p manis-linux-helper --locked --quiet

@@ -251,10 +251,90 @@ fn restore_tun_mode(runtime: &ControllerRuntime, reason: &str) -> Result<(), Loa
         );
         return Err(LoadError::ProxyModeLost(error.to_string()));
     }
+    #[cfg(target_os = "linux")]
+    if let Err(error) = require_linux_dns_rebind(
+        reason,
+        || crate::linux_privileged::install_tun_dns().map_err(|error| error.to_string()),
+        || crate::linux_privileged::restore_tun_dns().map_err(|error| error.to_string()),
+        || {
+            runtime
+                .set_tun_enabled(false)
+                .map_err(|error| error.to_string())
+        },
+    ) {
+        record_event(
+            LogLevel::Error,
+            "controller.tun.dns.rebind_failed",
+            format!("reason={reason} error={error}"),
+        );
+        return Err(LoadError::ProxyModeLost(error));
+    }
+    #[cfg(target_os = "linux")]
+    record_event(
+        LogLevel::Info,
+        "controller.tun.dns.rebound",
+        format!("reason={reason} link=Meta resolver=198.18.0.2 domain=~."),
+    );
     record_event(
         LogLevel::Info,
         "proxy.mode.restore.succeeded",
         format!("mode=tun reason={reason}"),
     );
     Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn require_linux_dns_rebind(
+    reason: &str,
+    rebind: impl FnOnce() -> Result<(), String>,
+    restore: impl FnOnce() -> Result<(), String>,
+    disable_tun: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    let Err(error) = rebind() else {
+        return Ok(());
+    };
+    let dns_cleanup = restore().map_or_else(
+        |error| format!("failed ({error})"),
+        |()| "succeeded".to_owned(),
+    );
+    let tun_cleanup = disable_tun().map_or_else(
+        |error| format!("failed ({error})"),
+        |()| "succeeded".to_owned(),
+    );
+    Err(format!(
+        "TUN restarted after {reason}, but Linux DNS routing could not be rebound: {error}; DNS cleanup: {dns_cleanup}; TUN cleanup: {tun_cleanup}"
+    ))
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod linux_tests {
+    use std::cell::RefCell;
+
+    use super::require_linux_dns_rebind;
+
+    #[test]
+    fn linux_tun_dns_rebind_failure_restores_dns_before_disabling_tun() {
+        let calls = RefCell::new(Vec::new());
+        let result = require_linux_dns_rebind(
+            "test_restart",
+            || {
+                calls.borrow_mut().push("rebind");
+                Err("rebind failed".to_owned())
+            },
+            || {
+                calls.borrow_mut().push("restore");
+                Ok(())
+            },
+            || {
+                calls.borrow_mut().push("disable");
+                Ok(())
+            },
+        );
+
+        assert_eq!(*calls.borrow(), ["rebind", "restore", "disable"]);
+        let error = result.expect_err("a failed DNS rebind must fail the TUN restoration");
+        assert!(error.contains("rebind failed"));
+        assert!(error.contains("DNS cleanup: succeeded"));
+        assert!(error.contains("TUN cleanup: succeeded"));
+    }
 }
