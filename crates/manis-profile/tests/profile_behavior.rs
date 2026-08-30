@@ -135,9 +135,10 @@ fn qx_default_renders_ordered_minimal_mihomo_yaml() {
     assert!(yaml.contains("log-level: \"info\""));
     assert!(yaml.contains("store-selected: true"));
     assert!(yaml.contains("ipv6: false"));
-    assert!(yaml.contains(
-        "tun:\n  enable: false\n  stack: \"gvisor\"\n  auto-route: true\n  strict-route: false\n  auto-detect-interface: true\n  dns-hijack:\n    - \"any:53\"\n    - \"tcp://any:53\""
-    ));
+    let strict_route = cfg!(target_os = "linux");
+    assert!(yaml.contains(&format!(
+        "tun:\n  enable: false\n  stack: \"gvisor\"\n  auto-route: true\n  strict-route: {strict_route}\n  auto-detect-interface: true\n  dns-hijack:\n    - \"any:53\"\n    - \"tcp://any:53\""
+    )));
     assert!(yaml.contains("store-fake-ip: true"));
     assert!(yaml.contains("dns:\n  enable: true\n  ipv6: false\n  enhanced-mode: \"fake-ip\""));
     assert!(yaml.contains("fake-ip-range: \"198.18.0.1/16\""));

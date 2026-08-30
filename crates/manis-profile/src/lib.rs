@@ -1087,10 +1087,12 @@ pub fn render_mihomo_yaml_with_tun(
         .expect("String write cannot fail");
     yaml.push_str("  store-fake-ip: true\ntun:\n");
     writeln!(yaml, "  enable: {tun_enabled}").expect("String write cannot fail");
+    yaml.push_str("  stack: \"gvisor\"\n  auto-route: true\n");
+    // systemd-resolved originates DNS from its loopback stub. Mihomo's non-strict Linux route
+    // rules deliberately return port 53 to the main table, bypassing `dns-hijack` and fake-IP.
+    writeln!(yaml, "  strict-route: {}", cfg!(target_os = "linux"))
+        .expect("String write cannot fail");
     yaml.push_str(concat!(
-        "  stack: \"gvisor\"\n",
-        "  auto-route: true\n",
-        "  strict-route: false\n",
         "  auto-detect-interface: true\n",
         "  dns-hijack:\n",
         "    - \"any:53\"\n",
