@@ -1647,10 +1647,9 @@ impl ManisApp {
             .overflow_hidden()
             .border_1()
             .border_color(theme.outline_subtle)
-            .bg(theme.surface_low)
             .item(|item| {
                 item.open(open)
-                    .title_style(accordion_title_style(compact))
+                    .title_style(accordion_title_style(compact, theme))
                     .content_style(accordion_content_style())
                     .title(title)
                     .child(rules)
@@ -1715,10 +1714,9 @@ impl ManisApp {
             .overflow_hidden()
             .border_1()
             .border_color(theme.outline_subtle)
-            .bg(theme.surface_low)
             .item(|item| {
                 item.open(open)
-                    .title_style(accordion_title_style(compact))
+                    .title_style(accordion_title_style(compact, theme))
                     .content_style(accordion_content_style())
                     .title(title)
                     .child(rules)
@@ -1813,7 +1811,6 @@ impl ManisApp {
             .pb(Space::Md.px())
             .border_t_1()
             .border_color(theme.outline_subtle)
-            .bg(theme.surface_high)
     }
 
     fn sync_rule_group_open(this: &mut Self, key: &str, open: bool, cx: &mut Context<Self>) {

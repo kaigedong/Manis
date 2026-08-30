@@ -31,7 +31,7 @@ impl Theme {
             // through. Higher layers are more opaque to retain hierarchy and legibility.
             surface_base: rgba(0xf4f7f566),
             surface_low: rgba(0xedf2ef8c),
-            surface_high: rgba(0xffffffb3),
+            surface_high: rgba(0xf7faf89e),
             surface_chrome: rgba(0xe7eeea99),
             text_primary: rgb(0x152321),
             text_secondary: rgb(0x5f6e69),
@@ -248,6 +248,21 @@ pub(crate) fn sync_component_theme(
     component.secondary_foreground = theme.text_primary.into();
     component.danger = theme.status_error.into();
     component.danger_foreground = theme.action_on_primary.into();
+    // Compound components must not paint their upstream opaque card underneath Manis'
+    // rounded shells. Their titles and rows own the visible material instead.
+    component.accordion = rgba(0x00000000).into();
+    component.group_box = theme.surface_base.into();
+    component.group_box_foreground = theme.text_primary.into();
+    component.colors.list = theme.surface_base.into();
+    component.colors.list_even = theme.surface_base.into();
+    component.colors.list_head = theme.surface_low.into();
+    component.colors.list_hover = theme.action_soft.into();
+    component.colors.list_active = theme.action_soft.into();
+    component.table = theme.surface_base.into();
+    component.table_even = theme.surface_base.into();
+    component.table_head = theme.surface_low.into();
+    component.table_hover = theme.action_soft.into();
+    component.table_active = theme.action_soft.into();
     sync_component_color_tokens(component);
     ComponentTheme::sync_base(cx);
 }
@@ -308,7 +323,7 @@ mod tests {
             assert!(theme.surface_base.a < theme.surface_low.a);
             assert!(theme.surface_low.a < theme.surface_high.a);
             assert!(theme.surface_base.a >= 0.4);
-            assert!(theme.surface_high.a >= 0.7);
+            assert!(theme.surface_high.a >= 0.6);
             assert!(theme.surface_chrome.a > theme.surface_base.a);
             assert!((theme.text_primary.a - 1.0).abs() < f32::EPSILON);
         }
@@ -318,6 +333,7 @@ mod tests {
     fn component_render_tokens_follow_projected_palette() {
         let colors = gpui_component::ThemeColor {
             background: Theme::light().surface_base.into(),
+            accordion: gpui::rgba(0x00000000).into(),
             ..Default::default()
         };
         let mut component = ComponentTheme {
@@ -329,6 +345,7 @@ mod tests {
 
         assert_eq!(component.tokens.background.color, component.background);
         assert!(component.tokens.background.color.a < 1.0);
+        assert!(component.tokens.accordion.color.a.abs() < f32::EPSILON);
     }
 
     #[test]

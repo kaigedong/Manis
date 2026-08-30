@@ -320,8 +320,8 @@ fn accordion_content_style() -> StyleRefinement {
     style
 }
 
-fn accordion_title_style(compact: bool) -> StyleRefinement {
-    let mut style = StyleRefinement::default();
+fn accordion_title_style(compact: bool, theme: Theme) -> StyleRefinement {
+    let mut style = StyleRefinement::default().bg(theme.surface_low);
     if compact {
         style.padding.right = Some(px(12.0).into());
         style.padding.left = Some(px(12.0).into());

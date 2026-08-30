@@ -2153,6 +2153,7 @@ impl ManisApp {
                 .py_3()
                 .border_t_1()
                 .border_color(theme.outline_subtle)
+                .bg(theme.surface_base)
                 .text_size(TextRole::Body.size())
                 .line_height(TextRole::Body.line_height())
                 .text_color(theme.text_secondary)
@@ -2180,7 +2181,6 @@ impl ManisApp {
             .rounded(Radius::Pane.px())
             .border_1()
             .border_color(theme.outline_subtle)
-            .bg(theme.surface_high)
             .overflow_hidden()
             .child(
                 Collapsible::new()
@@ -2508,7 +2508,7 @@ impl ManisApp {
             .bg(if global_selected {
                 theme.action_soft
             } else {
-                theme.surface_high
+                theme.surface_base
             })
             .child(row_body)
             .when_some(global_identity, |row, selected_identity| {
