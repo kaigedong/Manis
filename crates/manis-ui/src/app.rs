@@ -1179,6 +1179,16 @@ impl ManisApp {
             "app.shutdown.requested",
             format!("proxy_mode={:?}", self.proxy_mode),
         );
+        if let Ok(mut dns) = self.tun_dns.lock()
+            && let Err(error) = dns.shutdown_with_language(language)
+        {
+            record_operation(
+                operation,
+                LogLevel::Error,
+                "tun_dns.shutdown.failed",
+                error.to_string(),
+            );
+        }
         if self.proxy_mode == ProxyMode::Tun {
             match self.runtime.set_tun_enabled(false) {
                 Ok(()) => record_operation(
@@ -1202,16 +1212,6 @@ impl ManisApp {
                 operation,
                 LogLevel::Error,
                 "system_proxy.shutdown.failed",
-                error.to_string(),
-            );
-        }
-        if let Ok(mut dns) = self.tun_dns.lock()
-            && let Err(error) = dns.shutdown_with_language(language)
-        {
-            record_operation(
-                operation,
-                LogLevel::Error,
-                "tun_dns.shutdown.failed",
                 error.to_string(),
             );
         }
@@ -2251,9 +2251,6 @@ fn disable_tun_with_dns(
     dns: &mut TunDnsSession,
     language: Language,
 ) -> Result<(), String> {
-    runtime
-        .set_tun_enabled(false)
-        .map_err(|error| error.to_string())?;
     record_event(
         LogLevel::Info,
         "controller.tun.dns.requested",
@@ -2281,7 +2278,22 @@ fn disable_tun_with_dns(
             );
             Ok(())
         },
-    )
+    )?;
+
+    if let Err(error) = runtime.set_tun_enabled(false) {
+        let dns_rollback = dns
+            .prepare_with_language(language)
+            .and_then(|()| dns.activate_with_language(language));
+        return Err(match dns_rollback {
+            Ok(()) => error.to_string(),
+            Err(rollback) => copy::app::dns_reactivation_failed(
+                language,
+                &error.to_string(),
+                &rollback.to_string(),
+            ),
+        });
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy)]
@@ -2309,12 +2321,12 @@ const fn tun_dns_log_details() -> TunDnsLogDetails {
 #[cfg(target_os = "linux")]
 const fn tun_dns_log_details() -> TunDnsLogDetails {
     TunDnsLogDetails {
-        prepare_requested: "action=prepare strategy=tun_hijack system_resolver=unchanged",
-        prepare_succeeded: "action=prepare strategy=tun_hijack strict_route=true",
-        install_requested: "action=install strategy=tun_hijack system_resolver=unchanged",
-        install_succeeded: "action=install strategy=tun_hijack strict_route=true",
-        restore_requested: "action=restore strategy=tun_hijack system_resolver=unchanged",
-        restore_succeeded: "action=restore strategy=tun_hijack system_resolver=unchanged",
+        prepare_requested: "action=prepare strategy=systemd_resolved recovery=pending",
+        prepare_succeeded: "action=prepare strategy=systemd_resolved recovery=saved",
+        install_requested: "action=install strategy=systemd_resolved link=Meta resolver=198.18.0.2 domain=~.",
+        install_succeeded: "action=install strategy=systemd_resolved cache=flushed",
+        restore_requested: "action=restore strategy=systemd_resolved link=Meta",
+        restore_succeeded: "action=restore strategy=systemd_resolved recovery=removed cache=flushed",
     }
 }
 
@@ -2658,14 +2670,15 @@ mod tests {
         }
         #[cfg(target_os = "linux")]
         {
-            assert!(details.install_requested.contains("strategy=tun_hijack"));
             assert!(
                 details
                     .install_requested
-                    .contains("system_resolver=unchanged")
+                    .contains("strategy=systemd_resolved")
             );
-            assert!(details.install_succeeded.contains("strict_route=true"));
-            assert!(!details.install_requested.contains("114.114.114.114"));
+            assert!(details.install_requested.contains("resolver=198.18.0.2"));
+            assert!(details.install_requested.contains("domain=~."));
+            assert!(details.install_succeeded.contains("cache=flushed"));
+            assert!(details.restore_succeeded.contains("recovery=removed"));
         }
     }
 

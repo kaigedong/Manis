@@ -86,6 +86,17 @@ pub(crate) fn dns_rollback_failed(language: Language, error: &str, rollback: &st
     }
 }
 
+pub(crate) fn dns_reactivation_failed(language: Language, error: &str, rollback: &str) -> String {
+    match language {
+        Language::English => {
+            format!("{error}; reactivating TUN DNS also failed: {rollback}")
+        }
+        Language::SimplifiedChinese => {
+            format!("{error}；重新启用 TUN DNS 也失败：{rollback}")
+        }
+    }
+}
+
 pub(crate) fn tun_shutdown_rollback_failed(
     language: Language,
     error: &str,

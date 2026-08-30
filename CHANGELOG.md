@@ -21,7 +21,8 @@ once the public API and configuration formats stabilize.
 
 ### Fixed
 
-- Route Linux DNS through Mihomo's TUN hijacker so fake-IP routing and domain-aware proxying are
-  not bypassed by `systemd-resolved`, and report the actual platform DNS strategy in diagnostics.
+- Route Linux `systemd-resolved` queries through the managed TUN interface, flush stale poisoned
+  answers, and restore the original resolver route when TUN stops so fake-IP and domain rules work
+  even when DHCP supplies a private gateway DNS server.
 
 [Unreleased]: https://github.com/kaigedong/Manis/commits/main
