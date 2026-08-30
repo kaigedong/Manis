@@ -238,8 +238,8 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  draft-release:
-    name: Update draft release
+  release:
+    name: Update release
     if: github.event_name == 'push'
     needs:
       - macos
@@ -268,7 +268,7 @@ jobs:
           [[ ${#linux_packages[@]} -eq 1 ]]
           [[ ${#checksums[@]} -eq 3 ]]
           sha256sum --check "${checksums[@]}"
-      - name: Create or update draft release
+      - name: Create or update release
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -277,10 +277,15 @@ jobs:
           trap 'rm -f "$notes_file"' EXIT
           create_target=()
           edit_target=()
+          create_state=()
+          edit_state=()
+          rolling_release=0
           if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
             release_tag="$GITHUB_REF_NAME"
             release_title="Manis $release_tag test build"
             create_target=(--verify-tag)
+            create_state=(--draft --prerelease)
+            edit_state=(--draft --prerelease)
             cat > "$notes_file" <<'EOF'
           Automated test packages for macOS and Arch Linux.
 
@@ -289,10 +294,13 @@ jobs:
           This release remains a draft until the maintainer release checklist is complete.
           EOF
           else
+            rolling_release=1
             release_tag="latest"
             release_title="Latest Manis development build (${GITHUB_SHA::7})"
             create_target=(--target "$GITHUB_SHA")
             edit_target=(--target "$GITHUB_SHA")
+            create_state=(--prerelease --latest=false)
+            edit_state=(--draft=false --prerelease=true --latest=false)
             {
               echo 'Automated test packages from the latest successful build of `main`.'
               echo
@@ -302,7 +310,7 @@ jobs:
               echo 'tested, but the production TUN helper requires a Developer ID-signed and notarized'
               echo 'application. The Arch Linux package is experimental and supports native Wayland.'
               echo
-              echo 'This rolling draft is replaced after every successful `main` build. Verify the'
+              echo 'This rolling pre-release is replaced after every successful `main` build. Verify the'
               echo 'download with its accompanying `.sha256` file before installing it.'
             } > "$notes_file"
           fi
@@ -314,26 +322,31 @@ jobs:
               --json isDraft \
               --jq .isDraft 2>/dev/null
           )"; then
-            if [[ "$is_draft" != "true" ]]; then
+            if [[ "$rolling_release" == "0" && "$is_draft" != "true" ]]; then
               echo "release $release_tag is already published; refusing to replace its assets" >&2
               exit 1
             fi
             gh release upload "$release_tag" "${release_assets[@]}" \
               --repo "$GITHUB_REPOSITORY" \
               --clobber
+            if [[ "$rolling_release" == "1" && "$is_draft" != "true" ]]; then
+              gh api --method PATCH \
+                "repos/$GITHUB_REPOSITORY/git/refs/tags/$release_tag" \
+                -f sha="$GITHUB_SHA" \
+                -F force=true \
+                >/dev/null
+            fi
             gh release edit "$release_tag" \
               --repo "$GITHUB_REPOSITORY" \
               "${edit_target[@]}" \
-              --draft \
-              --prerelease \
+              "${edit_state[@]}" \
               --title "$release_title" \
               --notes-file "$notes_file"
           else
             gh release create "$release_tag" "${release_assets[@]}" \
               --repo "$GITHUB_REPOSITORY" \
               "${create_target[@]}" \
-              --draft \
-              --prerelease \
+              "${create_state[@]}" \
               --title "$release_title" \
               --notes-file "$notes_file"
           fi
