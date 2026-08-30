@@ -320,8 +320,16 @@ fn accordion_content_style() -> StyleRefinement {
     style
 }
 
-fn accordion_title_style(compact: bool, theme: Theme) -> StyleRefinement {
-    let mut style = StyleRefinement::default().bg(theme.surface_low);
+fn accordion_title_style(compact: bool, open: bool, theme: Theme) -> StyleRefinement {
+    let mut style = StyleRefinement::default()
+        .bg(theme.surface_low)
+        .rounded_tl(Radius::Pane.px())
+        .rounded_tr(Radius::Pane.px());
+    if !open {
+        style = style
+            .rounded_bl(Radius::Pane.px())
+            .rounded_br(Radius::Pane.px());
+    }
     if compact {
         style.padding.right = Some(px(12.0).into());
         style.padding.left = Some(px(12.0).into());

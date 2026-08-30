@@ -1649,7 +1649,7 @@ impl ManisApp {
             .border_color(theme.outline_subtle)
             .item(|item| {
                 item.open(open)
-                    .title_style(accordion_title_style(compact, theme))
+                    .title_style(accordion_title_style(compact, open, theme))
                     .content_style(accordion_content_style())
                     .title(title)
                     .child(rules)
@@ -1716,7 +1716,7 @@ impl ManisApp {
             .border_color(theme.outline_subtle)
             .item(|item| {
                 item.open(open)
-                    .title_style(accordion_title_style(compact, theme))
+                    .title_style(accordion_title_style(compact, open, theme))
                     .content_style(accordion_content_style())
                     .title(title)
                     .child(rules)

@@ -2286,6 +2286,13 @@ impl ManisApp {
             .flex()
             .items_center()
             .gap_3()
+            .rounded_tl(Radius::Pane.px())
+            .rounded_tr(Radius::Pane.px())
+            .when(presentation.collapsed, |header| {
+                header
+                    .rounded_bl(Radius::Pane.px())
+                    .rounded_br(Radius::Pane.px())
+            })
             .bg(theme.surface_low)
             .child(Self::group_benchmark_icon(
                 &presentation.benchmark_key,
