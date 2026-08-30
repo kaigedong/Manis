@@ -35,7 +35,7 @@ impl Theme {
             surface_base: rgba(0xf6f8f626),
             surface_low: rgba(0xfbfcfb42),
             surface_high: rgba(0xfbfcfb72),
-            surface_overlay: rgba(0xfbfcfbe8),
+            surface_overlay: rgba(0xe4ece8f2),
             surface_chrome: rgba(0xedf3ef68),
             text_primary: rgb(0x152321),
             text_secondary: rgb(0x5f6e69),
@@ -246,11 +246,23 @@ pub(crate) fn sync_component_theme(
     component.primary = theme.action_primary.into();
     component.primary_foreground = theme.action_on_primary.into();
     component.ring = theme.action_primary.into();
-    component.button = theme.surface_low.into();
+    component.button = theme.surface_base.into();
     component.button_foreground = theme.text_primary.into();
-    component.button_hover = theme.action_soft.into();
+    component.button_hover = theme.surface_high.into();
     component.button_active = theme.action_soft.into();
-    component.secondary = theme.surface_low.into();
+    component.button_primary = theme.action_primary.into();
+    component.button_primary_hover = theme.action_primary.into();
+    component.button_primary_active = theme.action_primary.into();
+    component.button_primary_foreground = theme.action_on_primary.into();
+    component.button_secondary = theme.surface_base.into();
+    component.button_secondary_hover = theme.surface_high.into();
+    component.button_secondary_active = theme.action_soft.into();
+    component.button_secondary_foreground = theme.text_primary.into();
+    component.button_danger = theme.status_error.into();
+    component.button_danger_hover = theme.status_error.into();
+    component.button_danger_active = theme.status_error.into();
+    component.button_danger_foreground = theme.action_on_primary.into();
+    component.secondary = theme.surface_base.into();
     component.secondary_foreground = theme.text_primary.into();
     component.danger = theme.status_error.into();
     component.danger_foreground = theme.action_on_primary.into();

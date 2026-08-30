@@ -533,16 +533,32 @@ fn capture_configuration_sections(
     open_workspace(cx, window, width, SnapshotWorkspace::Configuration)?;
 
     save_screenshot(cx, window, "configuration-section-proxy-sources.png")?;
+    cx.simulate_click(window, point(px(1_330.0), px(180.0)), Modifiers::none());
+    settle_ui_animation(cx, window)?;
+    save_screenshot(cx, window, "configuration-proxy-source-modal.png")?;
+    cx.simulate_keystrokes(window, "escape");
+    settle_ui_animation(cx, window)?;
+
     for (y, file_name) in [
         (177.0, "configuration-section-general.png"),
         (235.0, "configuration-section-runtime.png"),
-        (350.0, "configuration-section-rule-sources.png"),
-        (410.0, "configuration-section-advanced.png"),
     ] {
         cx.simulate_click(window, point(px(340.0), px(y)), Modifiers::none());
         refresh(cx, window)?;
         save_screenshot(cx, window, file_name)?;
     }
+    cx.simulate_click(window, point(px(340.0), px(350.0)), Modifiers::none());
+    refresh(cx, window)?;
+    save_screenshot(cx, window, "configuration-section-rule-sources.png")?;
+    cx.simulate_click(window, point(px(1_330.0), px(180.0)), Modifiers::none());
+    settle_ui_animation(cx, window)?;
+    save_screenshot(cx, window, "configuration-rule-source-modal.png")?;
+    cx.simulate_keystrokes(window, "escape");
+    settle_ui_animation(cx, window)?;
+
+    cx.simulate_click(window, point(px(340.0), px(410.0)), Modifiers::none());
+    refresh(cx, window)?;
+    save_screenshot(cx, window, "configuration-section-advanced.png")?;
     close_window(cx, window)
 }
 

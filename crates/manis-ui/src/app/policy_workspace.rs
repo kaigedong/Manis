@@ -65,7 +65,7 @@ impl ManisApp {
         )
         .accessibility_label(label)
         .border_color(theme.outline_subtle)
-        .bg(theme.surface_high)
+        .bg(theme.surface_base)
         .on_click(cx.listener(|this, _, window, cx| {
             this.dark = !this.dark;
             crate::theme::sync_component_theme(this.theme(), this.dark, Some(window), cx);
@@ -99,7 +99,7 @@ impl ManisApp {
                 .h(ControlSize::Compact.height())
                 .px(Space::Md.px())
                 .border_color(theme.outline_subtle)
-                .bg(theme.surface_high)
+                .bg(theme.surface_base)
                 .text_color(theme.text_primary)
                 .text_size(TextRole::Label.size())
                 .when(self.proxy_mode_busy.is_none(), |button| {
@@ -143,13 +143,17 @@ impl ManisApp {
                     } else {
                         TextRole::Metadata.weight()
                     })
-                    .bg(if pending || selected {
+                    .bg(if pending {
                         theme.action_primary
+                    } else if selected {
+                        theme.action_soft
                     } else {
-                        theme.surface_base
+                        gpui::rgba(0x0000_0000)
                     })
-                    .text_color(if pending || selected {
+                    .text_color(if pending {
                         theme.action_on_primary
+                    } else if selected {
+                        theme.action_primary
                     } else {
                         theme.text_secondary
                     })
@@ -165,7 +169,7 @@ impl ManisApp {
             .rounded(Radius::Control.px())
             .border_1()
             .border_color(theme.outline_subtle)
-            .bg(theme.surface_high)
+            .bg(theme.surface_base)
             .flex()
             .items_center()
             .child(
@@ -205,7 +209,7 @@ impl ManisApp {
                 .h(ControlSize::Compact.height())
                 .px(Space::Md.px())
                 .border_color(theme.outline_subtle)
-                .bg(theme.surface_high)
+                .bg(theme.surface_base)
                 .text_color(theme.text_primary)
                 .text_size(TextRole::Label.size())
                 .when(self.routing_mode_busy.is_none(), |button| {
@@ -241,13 +245,17 @@ impl ManisApp {
                     } else {
                         TextRole::Metadata.weight()
                     })
-                    .bg(if selected {
+                    .bg(if self.routing_mode_busy == Some(mode) {
                         theme.action_primary
+                    } else if selected {
+                        theme.action_soft
                     } else {
-                        theme.surface_base
+                        gpui::rgba(0x0000_0000)
                     })
-                    .text_color(if selected {
+                    .text_color(if self.routing_mode_busy == Some(mode) {
                         theme.action_on_primary
+                    } else if selected {
+                        theme.action_primary
                     } else {
                         theme.text_secondary
                     })
@@ -263,7 +271,7 @@ impl ManisApp {
             .rounded(Radius::Control.px())
             .border_1()
             .border_color(theme.outline_subtle)
-            .bg(theme.surface_high)
+            .bg(theme.surface_base)
             .flex()
             .items_center()
             .child(
@@ -1219,7 +1227,7 @@ impl ManisApp {
             theme.action_primary
         })
         .bg(if connecting {
-            theme.surface_high
+            theme.surface_base
         } else {
             theme.action_soft
         })

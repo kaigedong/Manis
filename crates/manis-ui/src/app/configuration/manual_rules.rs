@@ -980,7 +980,7 @@ impl ManisApp {
         let margin_top = ((viewport.height.as_f32() - estimated_height) / 2.0).max(16.0);
         let app = cx.entity();
 
-        dialog
+        glass_dialog(dialog, theme)
             .width(px(dialog_width))
             .max_h(px((viewport.height.as_f32() - 32.0).max(320.0)))
             .margin_top(px(margin_top))
@@ -988,10 +988,6 @@ impl ManisApp {
             .overlay_closable(true)
             .keyboard(true)
             .close_button(false)
-            .p_0()
-            .rounded_md()
-            .bg(theme.surface_overlay)
-            .overflow_hidden()
             .title(Self::manual_rule_editor_title(
                 editing,
                 final_selected,
@@ -1092,16 +1088,7 @@ impl ManisApp {
         language: Language,
         cx: &mut Context<Self>,
     ) -> Div {
-        div()
-            .flex_shrink_0()
-            .px_5()
-            .py_3()
-            .border_t_1()
-            .border_color(theme.outline_subtle)
-            .flex()
-            .items_center()
-            .justify_end()
-            .gap_2()
+        dialog_footer_surface(theme)
             .child(
                 style_action_button(
                     Button::new("cancel-manual-rule").label(language.message(Message::Cancel)),
@@ -1145,13 +1132,8 @@ impl ManisApp {
         theme: Theme,
         language: Language,
     ) -> Stateful<Div> {
-        div()
+        dialog_header_surface(theme)
             .id("manual-rule-modal-header")
-            .flex_shrink_0()
-            .px_5()
-            .py_4()
-            .border_b_1()
-            .border_color(theme.outline_subtle)
             .child(
                 div()
                     .text_size(px(17.0))

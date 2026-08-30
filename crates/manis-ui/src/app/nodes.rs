@@ -580,7 +580,7 @@ impl ManisApp {
             .min_w(px(0.0))
             .flex()
             .flex_col()
-            .bg(theme.surface_low)
+            .bg(theme.surface_base)
             .child(Self::policy_editor_header(draft, language, theme, cx))
             .child(self.policy_editor_form(draft, compact, false, language, theme, cx))
     }

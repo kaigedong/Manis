@@ -24,8 +24,9 @@ use super::{
 use crate::{
     app_update,
     components::{
-        ActionRole, StatusTone, action_button, empty_state, page_heading, section_heading,
-        status_badge, style_action_button,
+        ActionRole, StatusTone, action_button, dialog_footer_surface, dialog_header_surface,
+        empty_state, glass_dialog, page_heading, section_heading, status_badge,
+        style_action_button,
     },
     diagnostics::{LogLevel, UiEvent, begin_operation, record_event, record_operation, trace_ui},
     localization::{

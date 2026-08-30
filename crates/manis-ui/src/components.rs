@@ -5,6 +5,7 @@ use gpui::{
 use gpui_component::{
     Sizable as _,
     button::{Button, ButtonVariant, ButtonVariants as _},
+    dialog::Dialog,
     popover::Popover,
 };
 
@@ -44,6 +45,40 @@ pub(crate) fn style_action_button(button: Button, role: ActionRole, size: Contro
         .with_size(size.component_size())
         .h(size.height())
         .rounded(Radius::Control.px())
+}
+
+pub(crate) fn glass_dialog(dialog: Dialog, theme: Theme) -> Dialog {
+    dialog
+        .p_0()
+        .rounded(Radius::Pane.px())
+        .border_1()
+        .border_color(theme.outline_strong)
+        .bg(theme.surface_overlay)
+        .overflow_hidden()
+}
+
+pub(crate) fn dialog_header_surface(theme: Theme) -> Div {
+    div()
+        .flex_shrink_0()
+        .px_5()
+        .py_4()
+        .border_b_1()
+        .border_color(theme.outline_subtle)
+        .bg(theme.surface_base)
+}
+
+pub(crate) fn dialog_footer_surface(theme: Theme) -> Div {
+    div()
+        .flex_shrink_0()
+        .px_5()
+        .py_3()
+        .border_t_1()
+        .border_color(theme.outline_subtle)
+        .bg(theme.surface_base)
+        .flex()
+        .items_center()
+        .justify_end()
+        .gap_2()
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

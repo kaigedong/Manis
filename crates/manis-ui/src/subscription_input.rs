@@ -256,7 +256,7 @@ impl gpui::Render for SubscriptionTextInput {
             } else {
                 self.theme.outline_strong
             })
-            .bg(self.theme.surface_high)
+            .bg(self.theme.surface_base)
             .text_color(self.theme.text_primary);
 
         // `Input::h` configures multiline height. Set the single-line frame
