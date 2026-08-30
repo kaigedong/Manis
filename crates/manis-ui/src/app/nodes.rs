@@ -502,7 +502,6 @@ impl ManisApp {
             .pb(Space::Lg.px())
             .border_b_1()
             .border_color(theme.outline_subtle)
-            .bg(theme.surface_high)
             .child(crate::components::page_heading(
                 format!("{} · {}", language.message(Message::Nodes), counts.total),
                 detail,
@@ -581,7 +580,7 @@ impl ManisApp {
             .min_w(px(0.0))
             .flex()
             .flex_col()
-            .bg(theme.surface_low)
+            .bg(theme.surface_base)
             .child(Self::policy_editor_header(draft, language, theme, cx))
             .child(self.policy_editor_form(draft, compact, false, language, theme, cx))
     }
@@ -623,7 +622,7 @@ impl ManisApp {
             .flex_shrink_0()
             .border_b_1()
             .border_color(theme.outline_subtle)
-            .bg(theme.surface_high)
+            .bg(theme.surface_chrome)
             .flex()
             .items_center()
             .child(div().w(px(112.0)).child(left))
@@ -737,7 +736,7 @@ impl ManisApp {
             .overflow_hidden()
             .border_1()
             .border_color(theme.outline_subtle)
-            .bg(theme.surface_high)
+            .bg(theme.surface_low)
             .child(Self::policy_editor_popup_row(
                 "policy-editor-type",
                 language.localized(copy::nodes::TYPE),
@@ -809,7 +808,7 @@ impl ManisApp {
             .overflow_hidden()
             .border_1()
             .border_color(theme.outline_subtle)
-            .bg(theme.surface_high)
+            .bg(theme.surface_low)
             .child(Self::policy_editor_popup_row(
                 "policy-editor-candidate-mode",
                 language.localized(copy::nodes::NODE_SCOPE),
@@ -2153,6 +2152,7 @@ impl ManisApp {
                 .py_3()
                 .border_t_1()
                 .border_color(theme.outline_subtle)
+                .bg(theme.surface_base)
                 .text_size(TextRole::Body.size())
                 .line_height(TextRole::Body.line_height())
                 .text_color(theme.text_secondary)
@@ -2180,7 +2180,6 @@ impl ManisApp {
             .rounded(Radius::Pane.px())
             .border_1()
             .border_color(theme.outline_subtle)
-            .bg(theme.surface_high)
             .overflow_hidden()
             .child(
                 Collapsible::new()
@@ -2286,6 +2285,13 @@ impl ManisApp {
             .flex()
             .items_center()
             .gap_3()
+            .rounded_tl(Radius::Pane.px())
+            .rounded_tr(Radius::Pane.px())
+            .when(presentation.collapsed, |header| {
+                header
+                    .rounded_bl(Radius::Pane.px())
+                    .rounded_br(Radius::Pane.px())
+            })
             .bg(theme.surface_low)
             .child(Self::group_benchmark_icon(
                 &presentation.benchmark_key,
@@ -2508,7 +2514,7 @@ impl ManisApp {
             .bg(if global_selected {
                 theme.action_soft
             } else {
-                theme.surface_high
+                theme.surface_base
             })
             .child(row_body)
             .when_some(global_identity, |row, selected_identity| {

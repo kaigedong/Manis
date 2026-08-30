@@ -57,7 +57,7 @@ impl ManisApp {
             language.localized(copy::activity::REFRESH_ACTIVITY_DATA_BY_RECONNECTING_THE_KERNEL),
         )
         .border_color(theme.outline_subtle)
-        .bg(theme.surface_high)
+        .bg(theme.surface_base)
         .text_color(theme.text_primary)
         .on_click(cx.listener(|this, _, _, cx| this.connect_mihomo(cx)))
         .into_any_element();
@@ -152,7 +152,7 @@ impl ManisApp {
                             copy::activity::REFRESH_ACTIVITY_DATA_BY_RECONNECTING_THE_KERNEL,
                         ))
                         .border_color(theme.outline_subtle)
-                        .bg(theme.surface_high)
+                        .bg(theme.surface_base)
                         .text_color(theme.text_primary)
                         .on_click(cx.listener(|this, _, _, cx| this.connect_mihomo(cx)))
                         .into_any_element(),

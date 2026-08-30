@@ -6,7 +6,8 @@ impl ManisApp {
             .flex_shrink_0()
             .flex()
             .items_center()
-            .px(Space::Lg.px())
+            .pl(platform_chrome_left_padding())
+            .pr(Space::Lg.px())
             .gap(Space::Md.px())
             .bg(theme.surface_chrome)
             .border_b_1()
@@ -64,7 +65,7 @@ impl ManisApp {
         )
         .accessibility_label(label)
         .border_color(theme.outline_subtle)
-        .bg(theme.surface_high)
+        .bg(theme.surface_base)
         .on_click(cx.listener(|this, _, window, cx| {
             this.dark = !this.dark;
             crate::theme::sync_component_theme(this.theme(), this.dark, Some(window), cx);
@@ -98,7 +99,7 @@ impl ManisApp {
                 .h(ControlSize::Compact.height())
                 .px(Space::Md.px())
                 .border_color(theme.outline_subtle)
-                .bg(theme.surface_high)
+                .bg(theme.surface_base)
                 .text_color(theme.text_primary)
                 .text_size(TextRole::Label.size())
                 .when(self.proxy_mode_busy.is_none(), |button| {
@@ -142,13 +143,17 @@ impl ManisApp {
                     } else {
                         TextRole::Metadata.weight()
                     })
-                    .bg(if pending || selected {
+                    .bg(if pending {
                         theme.action_primary
+                    } else if selected {
+                        theme.action_soft
                     } else {
-                        theme.surface_high
+                        gpui::rgba(0x0000_0000)
                     })
-                    .text_color(if pending || selected {
+                    .text_color(if pending {
                         theme.action_on_primary
+                    } else if selected {
+                        theme.action_primary
                     } else {
                         theme.text_secondary
                     })
@@ -164,7 +169,7 @@ impl ManisApp {
             .rounded(Radius::Control.px())
             .border_1()
             .border_color(theme.outline_subtle)
-            .bg(theme.surface_high)
+            .bg(theme.surface_base)
             .flex()
             .items_center()
             .child(
@@ -204,7 +209,7 @@ impl ManisApp {
                 .h(ControlSize::Compact.height())
                 .px(Space::Md.px())
                 .border_color(theme.outline_subtle)
-                .bg(theme.surface_high)
+                .bg(theme.surface_base)
                 .text_color(theme.text_primary)
                 .text_size(TextRole::Label.size())
                 .when(self.routing_mode_busy.is_none(), |button| {
@@ -240,13 +245,17 @@ impl ManisApp {
                     } else {
                         TextRole::Metadata.weight()
                     })
-                    .bg(if selected {
+                    .bg(if self.routing_mode_busy == Some(mode) {
                         theme.action_primary
+                    } else if selected {
+                        theme.action_soft
                     } else {
-                        theme.surface_high
+                        gpui::rgba(0x0000_0000)
                     })
-                    .text_color(if selected {
+                    .text_color(if self.routing_mode_busy == Some(mode) {
                         theme.action_on_primary
+                    } else if selected {
+                        theme.action_primary
                     } else {
                         theme.text_secondary
                     })
@@ -262,7 +271,7 @@ impl ManisApp {
             .rounded(Radius::Control.px())
             .border_1()
             .border_color(theme.outline_subtle)
-            .bg(theme.surface_high)
+            .bg(theme.surface_base)
             .flex()
             .items_center()
             .child(
@@ -325,7 +334,7 @@ impl ManisApp {
             .flex()
             .flex_col()
             .gap(Space::Xs.px())
-            .bg(theme.surface_low)
+            .bg(theme.surface_chrome)
             .border_r_1()
             .border_color(theme.outline_subtle)
             .children(entries.into_iter().map(|(label, short_label, workspace)| {
@@ -448,7 +457,7 @@ impl ManisApp {
             .h_full()
             .flex_1()
             .min_w(px(0.0))
-            .bg(theme.surface_low)
+            .bg(theme.surface_base)
             .flex()
             .flex_col()
             .child(
@@ -456,7 +465,6 @@ impl ManisApp {
                     .p(Space::Lg.px())
                     .border_b_1()
                     .border_color(theme.outline_subtle)
-                    .bg(theme.surface_high)
                     .child(page_heading(
                         language.message(Message::PolicyGroups),
                         language.localized(
@@ -645,7 +653,6 @@ impl ManisApp {
             .rounded(Radius::Pane.px())
             .border_1()
             .border_color(theme.outline_subtle)
-            .bg(theme.surface_high)
             .overflow_hidden()
             .child(Self::offline_policy_header(&view, language, theme, cx));
         if !view.expanded {
@@ -737,7 +744,7 @@ impl ManisApp {
             .bg(if current {
                 theme.action_soft
             } else {
-                theme.surface_high
+                theme.surface_base
             })
             .child(
                 div()
@@ -786,7 +793,7 @@ impl ManisApp {
             .h_full()
             .flex()
             .flex_col()
-            .bg(theme.surface_low)
+            .bg(theme.surface_chrome)
             .border_r_1()
             .border_color(theme.outline_subtle)
             .child(
@@ -856,8 +863,11 @@ impl ManisApp {
         let mut card = div()
             .rounded(Radius::Pane.px())
             .border_1()
-            .border_color(theme.outline_subtle)
-            .bg(theme.surface_high)
+            .border_color(if view.selected || view.expanded {
+                theme.outline_subtle
+            } else {
+                gpui::rgba(0x0000_0000)
+            })
             .overflow_hidden()
             .child(Self::policy_list_header(
                 &view, compact, language, theme, cx,
@@ -948,10 +958,12 @@ impl ManisApp {
             .flex()
             .items_center()
             .gap(Space::Md.px())
-            .bg(if view.selected || view.expanded {
-                theme.surface_high
-            } else {
+            .bg(if view.selected {
+                theme.action_soft
+            } else if view.expanded {
                 theme.surface_low
+            } else {
+                gpui::rgba(0x0000_0000)
             })
             .child(Self::policy_group_icon(
                 PolicyGroupIconView {
@@ -1104,7 +1116,7 @@ impl ManisApp {
             .bg(if current {
                 theme.action_soft
             } else {
-                theme.surface_high
+                theme.surface_base
             })
             .child(
                 div()
@@ -1215,7 +1227,7 @@ impl ManisApp {
             theme.action_primary
         })
         .bg(if connecting {
-            theme.surface_high
+            theme.surface_base
         } else {
             theme.action_soft
         })
@@ -1276,11 +1288,12 @@ impl ManisApp {
             .flex()
             .items_center()
             .gap(Space::Md.px())
-            .rounded(Radius::Row.px())
+            .border_t_1()
+            .border_color(theme.outline_subtle)
             .bg(if manually_selectable && current {
                 theme.action_soft
             } else {
-                theme.surface_low
+                theme.surface_base
             })
             .child(leading)
             .child(description)
@@ -1482,7 +1495,7 @@ impl ManisApp {
     fn detail(&self, theme: Theme, compact: bool, cx: &mut Context<Self>) -> Div {
         let language = self.language();
         let Some(view) = self.policy_detail_view() else {
-            return div().h_full().flex_1().bg(theme.surface_high);
+            return div().h_full().flex_1().bg(theme.surface_base);
         };
         let body = match self.policy_detail_tab {
             PolicyDetailTab::Nodes => self.policy_nodes_detail(&view, language, theme, cx),
@@ -1496,7 +1509,7 @@ impl ManisApp {
             .min_w(px(0.0))
             .flex()
             .flex_col()
-            .bg(theme.surface_high)
+            .bg(theme.surface_base)
             .child(self.policy_detail_header(&view, compact, language, theme, cx))
             .child(body)
     }
@@ -1569,7 +1582,12 @@ impl ManisApp {
         {
             body = body.child(feedback);
         }
-        body = body.child(Self::policy_candidate_table_header(language, theme));
+        let mut candidates = div()
+            .rounded(Radius::Pane.px())
+            .border_1()
+            .border_color(theme.outline_subtle)
+            .overflow_hidden()
+            .child(Self::policy_candidate_table_header(language, theme));
         for item in view.policy.nodes.iter().cloned() {
             let source = self.policy_node_source_label(&item, language);
             let benchmark_state = self
@@ -1586,7 +1604,7 @@ impl ManisApp {
                 node_name: item.name.clone(),
             };
             let current = selection.node_id == view.selected_node_id;
-            body = body.child(Self::node_row(
+            candidates = candidates.child(Self::node_row(
                 item,
                 PolicyNodeRowContext {
                     source,
@@ -1601,7 +1619,7 @@ impl ManisApp {
                 cx,
             ));
         }
-        body
+        body.child(candidates)
     }
 
     fn policy_kind_guidance(kind: manis_core::PolicyGroupKind, language: Language) -> &'static str {
@@ -1628,7 +1646,9 @@ impl ManisApp {
         div()
             .p(Space::Md.px())
             .rounded(Radius::Row.px())
-            .bg(theme.surface_low)
+            .border_1()
+            .border_color(theme.outline_subtle)
+            .bg(theme.surface_base)
             .text_size(TextRole::Metadata.size())
             .line_height(TextRole::Metadata.line_height())
             .text_color(theme.text_secondary)
@@ -1637,8 +1657,9 @@ impl ManisApp {
 
     fn policy_candidate_table_header(language: Language, theme: Theme) -> Div {
         div()
-            .mt(Space::Sm.px())
             .px(Space::Md.px())
+            .py(Space::Sm.px())
+            .bg(theme.surface_low)
             .flex()
             .text_size(TextRole::Metadata.size())
             .line_height(TextRole::Metadata.line_height())
@@ -2017,5 +2038,15 @@ impl ManisApp {
             .text_color(theme.text_secondary)
             .left(left)
             .right(right)
+    }
+}
+
+fn platform_chrome_left_padding() -> gpui::Pixels {
+    if cfg!(target_os = "macos") {
+        // A transparent macOS title bar extends application content underneath the traffic
+        // lights. Reserve their native control area before rendering the Manis brand.
+        px(78.0)
+    } else {
+        Space::Lg.px()
     }
 }

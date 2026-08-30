@@ -1,13 +1,15 @@
 #![allow(clippy::unreadable_literal)]
 
-use gpui::{FontWeight, Pixels, Rgba, px, rgb};
+use gpui::{FontWeight, Pixels, Rgba, px, rgb, rgba};
 use gpui_component::{Theme as ComponentTheme, ThemeMode};
 
 #[derive(Clone, Copy)]
 pub(crate) struct Theme {
+    pub window_backdrop: Rgba,
     pub surface_base: Rgba,
     pub surface_low: Rgba,
     pub surface_high: Rgba,
+    pub surface_overlay: Rgba,
     pub surface_chrome: Rgba,
     pub text_primary: Rgba,
     pub text_secondary: Rgba,
@@ -27,18 +29,22 @@ pub(crate) struct Theme {
 impl Theme {
     pub(crate) fn light() -> Self {
         Self {
-            surface_base: rgb(0xf4f7f5),
-            surface_low: rgb(0xedf2ef),
-            surface_high: rgb(0xffffff),
-            surface_chrome: rgb(0xe7eeea),
+            // Blur belongs to the window backdrop. Content surfaces only add a restrained
+            // tint so nested layouts do not compound into opaque white rectangles.
+            window_backdrop: rgba(0xf0f4f182),
+            surface_base: rgba(0xf6f8f626),
+            surface_low: rgba(0xfbfcfb42),
+            surface_high: rgba(0xfbfcfb72),
+            surface_overlay: rgba(0xe4ece8f2),
+            surface_chrome: rgba(0xedf3ef68),
             text_primary: rgb(0x152321),
             text_secondary: rgb(0x5f6e69),
             text_tertiary: rgb(0x84918d),
-            outline_subtle: rgb(0xcbd6d2),
-            outline_strong: rgb(0x9fafa9),
+            outline_subtle: rgba(0x50665f2e),
+            outline_strong: rgba(0x49615970),
             action_primary: rgb(0x176c62),
             action_on_primary: rgb(0xffffff),
-            action_soft: rgb(0xd5ebe6),
+            action_soft: rgba(0xcce9e2b8),
             route_trace: rgb(0xd46642),
             route_soft: rgb(0xf8e5dc),
             status_success: rgb(0x24795f),
@@ -49,18 +55,20 @@ impl Theme {
 
     pub(crate) fn dark() -> Self {
         Self {
-            surface_base: rgb(0x0e1715),
-            surface_low: rgb(0x111d1a),
-            surface_high: rgb(0x172521),
-            surface_chrome: rgb(0x13211e),
+            window_backdrop: rgba(0x091310d4),
+            surface_base: rgba(0x13201c30),
+            surface_low: rgba(0x20312c4d),
+            surface_high: rgba(0x20332d9c),
+            surface_overlay: rgba(0x16241fee),
+            surface_chrome: rgba(0x111f1ba8),
             text_primary: rgb(0xe3eeea),
             text_secondary: rgb(0xa4b4ae),
             text_tertiary: rgb(0x7d8e88),
-            outline_subtle: rgb(0x2b3d37),
-            outline_strong: rgb(0x435851),
+            outline_subtle: rgba(0xb5c8c12e),
+            outline_strong: rgba(0xa9beb670),
             action_primary: rgb(0x79d7c6),
             action_on_primary: rgb(0x082a24),
-            action_soft: rgb(0x1b4038),
+            action_soft: rgba(0x1d594ccf),
             route_trace: rgb(0xf39b75),
             route_soft: rgb(0x402820),
             status_success: rgb(0x79d7b0),
@@ -229,7 +237,7 @@ pub(crate) fn sync_component_theme(
     component.foreground = theme.text_primary.into();
     component.border = theme.outline_subtle.into();
     component.input = theme.outline_strong.into();
-    component.popover = theme.surface_high.into();
+    component.popover = theme.surface_overlay.into();
     component.popover_foreground = theme.text_primary.into();
     component.muted = theme.surface_low.into();
     component.muted_foreground = theme.text_secondary.into();
@@ -238,20 +246,57 @@ pub(crate) fn sync_component_theme(
     component.primary = theme.action_primary.into();
     component.primary_foreground = theme.action_on_primary.into();
     component.ring = theme.action_primary.into();
-    component.button = theme.surface_low.into();
+    component.button = theme.surface_base.into();
     component.button_foreground = theme.text_primary.into();
-    component.button_hover = theme.action_soft.into();
+    component.button_hover = theme.surface_high.into();
     component.button_active = theme.action_soft.into();
-    component.secondary = theme.surface_low.into();
+    component.button_primary = theme.action_primary.into();
+    component.button_primary_hover = theme.action_primary.into();
+    component.button_primary_active = theme.action_primary.into();
+    component.button_primary_foreground = theme.action_on_primary.into();
+    component.button_secondary = theme.surface_base.into();
+    component.button_secondary_hover = theme.surface_high.into();
+    component.button_secondary_active = theme.action_soft.into();
+    component.button_secondary_foreground = theme.text_primary.into();
+    component.button_danger = theme.status_error.into();
+    component.button_danger_hover = theme.status_error.into();
+    component.button_danger_active = theme.status_error.into();
+    component.button_danger_foreground = theme.action_on_primary.into();
+    component.secondary = theme.surface_base.into();
     component.secondary_foreground = theme.text_primary.into();
     component.danger = theme.status_error.into();
     component.danger_foreground = theme.action_on_primary.into();
+    // Compound components must not paint their upstream opaque card underneath Manis'
+    // rounded shells. Their titles and rows own the visible material instead.
+    component.accordion = rgba(0x00000000).into();
+    component.group_box = theme.surface_base.into();
+    component.group_box_foreground = theme.text_primary.into();
+    component.colors.list = theme.surface_base.into();
+    component.colors.list_even = theme.surface_base.into();
+    component.colors.list_head = theme.surface_low.into();
+    component.colors.list_hover = theme.action_soft.into();
+    component.colors.list_active = theme.action_soft.into();
+    component.table = theme.surface_base.into();
+    component.table_even = theme.surface_base.into();
+    component.table_head = theme.surface_low.into();
+    component.table_hover = theme.action_soft.into();
+    component.table_active = theme.action_soft.into();
+    sync_component_color_tokens(component);
     ComponentTheme::sync_base(cx);
+}
+
+/// gpui-component keeps legacy colors and renderable tokens separately. Root and newer
+/// components read `tokens`, so every palette projection must update both representations.
+fn sync_component_color_tokens(component: &mut ComponentTheme) {
+    component.tokens = component.colors.into();
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{ControlSize, LayoutMetric, Radius, Space, TextRole};
+    use super::{
+        ComponentTheme, ControlSize, LayoutMetric, Radius, Space, TextRole, Theme,
+        sync_component_color_tokens,
+    };
 
     fn assert_px(value: gpui::Pixels, expected: f32) {
         assert!((value.as_f32() - expected).abs() < f32::EPSILON);
@@ -288,6 +333,40 @@ mod tests {
             ControlSize::Standard.component_size(),
             gpui_component::Size::Medium
         );
+    }
+
+    #[test]
+    fn glass_surfaces_are_translucent_and_preserve_layer_hierarchy() {
+        for theme in [Theme::light(), Theme::dark()] {
+            assert!(theme.surface_base.a < theme.surface_low.a);
+            assert!(theme.surface_low.a < theme.surface_high.a);
+            assert!(theme.window_backdrop.a >= 0.5);
+            assert!(theme.surface_base.a <= 0.2);
+            assert!(theme.surface_high.a >= 0.4);
+            assert!(theme.surface_overlay.a > theme.surface_high.a);
+            assert!(theme.surface_chrome.a > theme.surface_base.a);
+            assert!(theme.outline_subtle.a < theme.outline_strong.a);
+            assert!((theme.text_primary.a - 1.0).abs() < f32::EPSILON);
+        }
+    }
+
+    #[test]
+    fn component_render_tokens_follow_projected_palette() {
+        let colors = gpui_component::ThemeColor {
+            background: Theme::light().surface_base.into(),
+            accordion: gpui::rgba(0x00000000).into(),
+            ..Default::default()
+        };
+        let mut component = ComponentTheme {
+            colors,
+            ..Default::default()
+        };
+
+        sync_component_color_tokens(&mut component);
+
+        assert_eq!(component.tokens.background.color, component.background);
+        assert!(component.tokens.background.color.a < 1.0);
+        assert!(component.tokens.accordion.color.a.abs() < f32::EPSILON);
     }
 
     #[test]

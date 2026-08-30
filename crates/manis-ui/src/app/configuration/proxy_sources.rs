@@ -225,7 +225,7 @@ impl ManisApp {
         );
         let footer = Self::proxy_source_editor_footer(input, view, language, theme, cx);
         let app = cx.entity();
-        dialog
+        glass_dialog(dialog, theme)
             .width(px(view.dialog_width))
             .max_h(px((viewport.height.as_f32() - 32.0).max(320.0)))
             .margin_top(px(((viewport.height.as_f32() - 480.0) / 2.0).max(16.0)))
@@ -233,10 +233,6 @@ impl ManisApp {
             .overlay_closable(true)
             .keyboard(true)
             .close_button(false)
-            .p_0()
-            .rounded_md()
-            .bg(theme.surface_high)
-            .overflow_hidden()
             .title(Self::proxy_source_editor_title(view, language, theme))
             .child(body)
             .footer(footer)
@@ -402,7 +398,16 @@ impl ManisApp {
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Div {
-        div().mt_1().flex().gap_2().children(
+        div()
+            .mt_1()
+            .flex()
+            .p_1()
+            .gap_1()
+            .rounded(Radius::Control.px())
+            .border_1()
+            .border_color(theme.outline_subtle)
+            .bg(theme.surface_base)
+            .children(
             [
                 (
                     ProxySourceEditorKind::Subscription,
@@ -434,12 +439,12 @@ impl ManisApp {
                 )
                 .cursor_pointer()
                 .bg(if selected {
-                    theme.action_primary
+                    theme.action_soft
                 } else {
-                    theme.surface_high
+                    gpui::rgba(0x0000_0000)
                 })
                 .text_color(if selected {
-                    theme.action_on_primary
+                    theme.action_primary
                 } else {
                     theme.text_secondary
                 })
@@ -459,16 +464,7 @@ impl ManisApp {
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Div {
-        div()
-            .flex_shrink_0()
-            .px_5()
-            .py_4()
-            .border_t_1()
-            .border_color(theme.outline_subtle)
-            .flex()
-            .items_center()
-            .justify_end()
-            .gap_2()
+        dialog_footer_surface(theme)
             .child(
                 style_action_button(
                     Button::new("cancel-proxy-source").label(language.message(Message::Cancel)),
@@ -521,11 +517,7 @@ impl ManisApp {
         language: Language,
         theme: Theme,
     ) -> Div {
-        div()
-            .px_5()
-            .py_4()
-            .border_b_1()
-            .border_color(theme.outline_subtle)
+        dialog_header_surface(theme)
             .child(
                 div()
                     .text_size(px(17.0))
@@ -1023,7 +1015,7 @@ impl ManisApp {
                 .px_3()
                 .border_1()
                 .border_color(theme.outline_subtle)
-                .bg(theme.surface_high)
+                .bg(theme.surface_base)
                 .text_color(theme.action_primary)
                 .on_click(cx.listener(move |this, _, _, cx| {
                     cx.stop_propagation();

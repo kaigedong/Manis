@@ -45,7 +45,7 @@ impl ManisApp {
         )
         .accessibility_label(language.localized(copy::logs::REFRESH_LOG_DATA))
         .border_color(theme.outline_subtle)
-        .bg(theme.surface_high)
+        .bg(theme.surface_base)
         .text_color(theme.text_primary)
         .on_click(cx.listener(|this, _, _, cx| this.connect_mihomo(cx)));
         let live_status = copy::app::live_stream_phase(language, &self.live_status.logs);

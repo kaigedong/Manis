@@ -24,8 +24,9 @@ use super::{
 use crate::{
     app_update,
     components::{
-        ActionRole, StatusTone, action_button, empty_state, page_heading, section_heading,
-        status_badge, style_action_button,
+        ActionRole, StatusTone, action_button, dialog_footer_surface, dialog_header_surface,
+        empty_state, glass_dialog, page_heading, section_heading, status_badge,
+        style_action_button,
     },
     diagnostics::{LogLevel, UiEvent, begin_operation, record_event, record_operation, trace_ui},
     localization::{
@@ -297,7 +298,6 @@ fn panel_surface(id: &'static str, compact: bool, theme: Theme) -> Stateful<Div>
         .rounded(Radius::Pane.px())
         .border_1()
         .border_color(theme.outline_subtle)
-        .bg(theme.surface_high)
 }
 
 fn field_label(label: impl Into<gpui::SharedString>, theme: Theme) -> Div {
@@ -320,8 +320,16 @@ fn accordion_content_style() -> StyleRefinement {
     style
 }
 
-fn accordion_title_style(compact: bool) -> StyleRefinement {
-    let mut style = StyleRefinement::default();
+fn accordion_title_style(compact: bool, open: bool, theme: Theme) -> StyleRefinement {
+    let mut style = StyleRefinement::default()
+        .bg(theme.surface_low)
+        .rounded_tl(Radius::Pane.px())
+        .rounded_tr(Radius::Pane.px());
+    if !open {
+        style = style
+            .rounded_bl(Radius::Pane.px())
+            .rounded_br(Radius::Pane.px());
+    }
     if compact {
         style.padding.right = Some(px(12.0).into());
         style.padding.left = Some(px(12.0).into());

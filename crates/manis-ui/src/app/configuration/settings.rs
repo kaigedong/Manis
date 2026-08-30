@@ -3,7 +3,7 @@ impl ManisApp {
         let language = self.language();
         let navigation = div()
             .flex_shrink_0()
-            .bg(theme.surface_low)
+            .bg(theme.surface_chrome)
             .when(compact, |navigation| {
                 navigation
                     .w_full()
@@ -104,12 +104,12 @@ impl ManisApp {
             .border_color(if selected {
                 theme.action_primary
             } else {
-                theme.surface_low
+                gpui::rgba(0x0000_0000)
             })
             .bg(if selected {
                 theme.action_soft
             } else {
-                theme.surface_low
+                gpui::rgba(0x0000_0000)
             })
             .child(
                 div()
@@ -831,7 +831,6 @@ impl ManisApp {
             .flex_shrink_0()
             .border_b_1()
             .border_color(theme.outline_subtle)
-            .bg(theme.surface_high)
             .flex()
             .items_start()
             .justify_between()

@@ -189,7 +189,7 @@ impl ManisApp {
             .child(self.qx_rule_interval_select(view, language, theme, cx))
             .child(self.qx_rule_import_feedback(theme, language));
         let app = cx.entity();
-        dialog
+        glass_dialog(dialog, theme)
             .width(px(view.dialog_width))
             .max_h(px((viewport.height.as_f32() - 32.0).max(320.0)))
             .margin_top(px(((viewport.height.as_f32() - 440.0) / 2.0).max(16.0)))
@@ -197,10 +197,6 @@ impl ManisApp {
             .overlay_closable(true)
             .keyboard(true)
             .close_button(false)
-            .p_0()
-            .rounded_md()
-            .bg(theme.surface_high)
-            .overflow_hidden()
             .title(Self::qx_rule_editor_title(view.editing, language, theme))
             .child(body)
             .footer(Self::qx_rule_editor_footer(
@@ -349,7 +345,7 @@ impl ManisApp {
             .bg(if selected {
                 theme.action_soft
             } else {
-                theme.surface_high
+                gpui::rgba(0x0000_0000)
             })
             .font_weight(if selected {
                 FontWeight::SEMIBOLD
@@ -372,16 +368,7 @@ impl ManisApp {
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Div {
-        div()
-            .flex_shrink_0()
-            .px_5()
-            .py_4()
-            .border_t_1()
-            .border_color(theme.outline_subtle)
-            .flex()
-            .items_center()
-            .justify_end()
-            .gap_2()
+        dialog_footer_surface(theme)
             .child(
                 style_action_button(
                     Button::new("cancel-qx-rule-source").label(language.message(Message::Cancel)),
@@ -430,11 +417,7 @@ impl ManisApp {
     }
 
     fn qx_rule_editor_title(editing: bool, language: Language, theme: Theme) -> Div {
-        div()
-            .px_5()
-            .py_4()
-            .border_b_1()
-            .border_color(theme.outline_subtle)
+        dialog_header_surface(theme)
             .child(
                 div()
                     .text_size(px(17.0))
@@ -741,7 +724,7 @@ impl ManisApp {
         .px_3()
         .border_1()
         .border_color(theme.outline_subtle)
-        .bg(theme.surface_high)
+        .bg(theme.surface_base)
         .text_color(theme.action_primary)
         .on_click(cx.listener(move |this, _, _, cx| {
             cx.stop_propagation();
