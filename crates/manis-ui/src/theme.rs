@@ -29,10 +29,10 @@ impl Theme {
         Self {
             // The surface stack is deliberately translucent so the platform blur can show
             // through. Higher layers are more opaque to retain hierarchy and legibility.
-            surface_base: rgba(0xf4f7f5b8),
-            surface_low: rgba(0xedf2efc7),
-            surface_high: rgba(0xffffffde),
-            surface_chrome: rgba(0xe7eeead1),
+            surface_base: rgba(0xf4f7f566),
+            surface_low: rgba(0xedf2ef8c),
+            surface_high: rgba(0xffffffb3),
+            surface_chrome: rgba(0xe7eeea99),
             text_primary: rgb(0x152321),
             text_secondary: rgb(0x5f6e69),
             text_tertiary: rgb(0x84918d),
@@ -51,10 +51,10 @@ impl Theme {
 
     pub(crate) fn dark() -> Self {
         Self {
-            surface_base: rgba(0x0e1715c7),
-            surface_low: rgba(0x111d1ad1),
-            surface_high: rgba(0x172521e0),
-            surface_chrome: rgba(0x13211ed6),
+            surface_base: rgba(0x0e171580),
+            surface_low: rgba(0x111d1a9e),
+            surface_high: rgba(0x172521bf),
+            surface_chrome: rgba(0x13211ead),
             text_primary: rgb(0xe3eeea),
             text_secondary: rgb(0xa4b4ae),
             text_tertiary: rgb(0x7d8e88),
@@ -248,12 +248,22 @@ pub(crate) fn sync_component_theme(
     component.secondary_foreground = theme.text_primary.into();
     component.danger = theme.status_error.into();
     component.danger_foreground = theme.action_on_primary.into();
+    sync_component_color_tokens(component);
     ComponentTheme::sync_base(cx);
+}
+
+/// gpui-component keeps legacy colors and renderable tokens separately. Root and newer
+/// components read `tokens`, so every palette projection must update both representations.
+fn sync_component_color_tokens(component: &mut ComponentTheme) {
+    component.tokens = component.colors.into();
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{ControlSize, LayoutMetric, Radius, Space, TextRole, Theme};
+    use super::{
+        ComponentTheme, ControlSize, LayoutMetric, Radius, Space, TextRole, Theme,
+        sync_component_color_tokens,
+    };
 
     fn assert_px(value: gpui::Pixels, expected: f32) {
         assert!((value.as_f32() - expected).abs() < f32::EPSILON);
@@ -297,11 +307,28 @@ mod tests {
         for theme in [Theme::light(), Theme::dark()] {
             assert!(theme.surface_base.a < theme.surface_low.a);
             assert!(theme.surface_low.a < theme.surface_high.a);
-            assert!(theme.surface_base.a >= 0.7);
-            assert!(theme.surface_high.a >= 0.85);
+            assert!(theme.surface_base.a >= 0.4);
+            assert!(theme.surface_high.a >= 0.7);
             assert!(theme.surface_chrome.a > theme.surface_base.a);
             assert!((theme.text_primary.a - 1.0).abs() < f32::EPSILON);
         }
+    }
+
+    #[test]
+    fn component_render_tokens_follow_projected_palette() {
+        let colors = gpui_component::ThemeColor {
+            background: Theme::light().surface_base.into(),
+            ..Default::default()
+        };
+        let mut component = ComponentTheme {
+            colors,
+            ..Default::default()
+        };
+
+        sync_component_color_tokens(&mut component);
+
+        assert_eq!(component.tokens.background.color, component.background);
+        assert!(component.tokens.background.color.a < 1.0);
     }
 
     #[test]

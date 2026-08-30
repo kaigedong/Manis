@@ -6,7 +6,8 @@ impl ManisApp {
             .flex_shrink_0()
             .flex()
             .items_center()
-            .px(Space::Lg.px())
+            .pl(platform_chrome_left_padding())
+            .pr(Space::Lg.px())
             .gap(Space::Md.px())
             .bg(theme.surface_chrome)
             .border_b_1()
@@ -1482,7 +1483,7 @@ impl ManisApp {
     fn detail(&self, theme: Theme, compact: bool, cx: &mut Context<Self>) -> Div {
         let language = self.language();
         let Some(view) = self.policy_detail_view() else {
-            return div().h_full().flex_1().bg(theme.surface_high);
+            return div().h_full().flex_1().bg(theme.surface_base);
         };
         let body = match self.policy_detail_tab {
             PolicyDetailTab::Nodes => self.policy_nodes_detail(&view, language, theme, cx),
@@ -1496,7 +1497,7 @@ impl ManisApp {
             .min_w(px(0.0))
             .flex()
             .flex_col()
-            .bg(theme.surface_high)
+            .bg(theme.surface_base)
             .child(self.policy_detail_header(&view, compact, language, theme, cx))
             .child(body)
     }
@@ -2017,5 +2018,15 @@ impl ManisApp {
             .text_color(theme.text_secondary)
             .left(left)
             .right(right)
+    }
+}
+
+fn platform_chrome_left_padding() -> gpui::Pixels {
+    if cfg!(target_os = "macos") {
+        // A transparent macOS title bar extends application content underneath the traffic
+        // lights. Reserve their native control area before rendering the Manis brand.
+        px(78.0)
+    } else {
+        Space::Lg.px()
     }
 }
