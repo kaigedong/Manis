@@ -384,3 +384,26 @@ jobs:
               --title "$release_title" \
               --notes-file "$notes_file"
           fi
+
+          if [[ "$rolling_release" == "1" ]]; then
+            immutable_tag="build-$MANIS_PACKAGE_VERSION"
+            if immutable_target="$(
+              gh release view "$immutable_tag" \
+                --repo "$GITHUB_REPOSITORY" \
+                --json targetCommitish \
+                --jq .targetCommitish 2>/dev/null
+            )"; then
+              if [[ "$immutable_target" != "$GITHUB_SHA" ]]; then
+                echo "release $immutable_tag already targets another commit" >&2
+                exit 1
+              fi
+            else
+              gh release create "$immutable_tag" "${release_assets[@]}" \
+                --repo "$GITHUB_REPOSITORY" \
+                --target "$GITHUB_SHA" \
+                --prerelease \
+                --latest=false \
+                --title "Manis $MANIS_PACKAGE_VERSION development build" \
+                --notes "Immutable development packages for AUR and reproducible installs. Commit: $GITHUB_SHA"
+            fi
+          fi

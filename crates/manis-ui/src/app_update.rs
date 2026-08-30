@@ -129,9 +129,28 @@ pub(crate) fn installation_supported(app_path: &Path) -> bool {
         fs::canonicalize(app_path).is_ok_and(|path| path == Path::new("/usr/bin/manis"))
             && Path::new("/usr/bin/pacman").is_file()
             && Path::new("/usr/bin/pkexec").is_file()
+            && linux_package_owner_is_upstream()
     } else {
         false
     }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_package_owner_is_upstream() -> bool {
+    std::process::Command::new("/usr/bin/pacman")
+        .args(["-Qoq", "/usr/bin/manis"])
+        .output()
+        .is_ok_and(|output| output.status.success() && package_owner_is_upstream(&output.stdout))
+}
+
+#[cfg(not(target_os = "linux"))]
+const fn linux_package_owner_is_upstream() -> bool {
+    false
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn package_owner_is_upstream(output: &[u8]) -> bool {
+    String::from_utf8_lossy(output).trim() == "manis"
 }
 
 pub(crate) fn check_for_update() -> Result<Option<AvailableUpdate>, AppUpdateError> {
@@ -496,6 +515,13 @@ mod tests {
     fn numeric_versions_do_not_compare_lexically() {
         assert!(Version::parse("0.1.101").unwrap() > Version::parse("0.1.99").unwrap());
         assert!(Version::parse("0.2.0").unwrap() > Version::parse("0.1.999").unwrap());
+    }
+
+    #[test]
+    fn only_the_upstream_arch_package_enables_self_update() {
+        assert!(package_owner_is_upstream(b"manis\n"));
+        assert!(!package_owner_is_upstream(b"manis-bin\n"));
+        assert!(!package_owner_is_upstream(b""));
     }
 
     #[test]

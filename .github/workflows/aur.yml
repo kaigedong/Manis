@@ -1,0 +1,102 @@
+name: Publish AUR
+
+on:
+  workflow_run:
+    workflows:
+      - Package
+    types:
+      - completed
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-aur
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Update manis-bin
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+      GH_TOKEN: ${{ github.token }}
+      MANIS_PACKAGE_VERSION: 0.1.${{ github.event.workflow_run.run_number }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Resolve immutable release digest
+        id: release
+        shell: bash
+        run: |
+          asset_name="manis-$MANIS_PACKAGE_VERSION-1-x86_64.pkg.tar.zst"
+          digest="$(
+            gh api \
+              "repos/$GITHUB_REPOSITORY/releases/tags/build-$MANIS_PACKAGE_VERSION" \
+              --jq ".assets[] | select(.name == \"$asset_name\") | .digest"
+          )"
+          digest="${digest#sha256:}"
+          if [[ ! "$digest" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "immutable release asset has no valid SHA-256 digest" >&2
+            exit 1
+          fi
+          echo "sha256=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AUR SSH identity
+        shell: bash
+        run: |
+          if [[ -z "$AUR_SSH_PRIVATE_KEY" ]]; then
+            echo "AUR_SSH_PRIVATE_KEY is not configured" >&2
+            exit 1
+          fi
+          install -d -m 0700 "$HOME/.ssh"
+          printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > "$HOME/.ssh/aur"
+          chmod 0600 "$HOME/.ssh/aur"
+          printf '%s\n' \
+            'aur.archlinux.org ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEuBKrPzbawxA/k2g6NcyV5jmqwJ2s+zpgZGZ7tpLIcN' \
+            > "$HOME/.ssh/known_hosts"
+          chmod 0644 "$HOME/.ssh/known_hosts"
+
+      - name: Render AUR metadata
+        env:
+          GIT_SSH_COMMAND: ssh -i ~/.ssh/aur -o IdentitiesOnly=yes
+          MANIS_PACKAGE_SHA256: ${{ steps.release.outputs.sha256 }}
+        shell: bash
+        run: |
+          git clone ssh://aur@aur.archlinux.org/manis-bin.git "$RUNNER_TEMP/manis-bin"
+          packaging/aur/render-pkgbuild.sh \
+            "$MANIS_PACKAGE_VERSION" \
+            "$MANIS_PACKAGE_SHA256" \
+            "$RUNNER_TEMP/manis-bin"
+          docker run --rm \
+            --platform linux/amd64 \
+            -v "$RUNNER_TEMP/manis-bin:/aur:ro" \
+            archlinux:base-devel@sha256:a26046b7363dad8e2614858f4313949ae9b05c9c5f31de343a54864b9e20806f \
+            bash -lc '
+              useradd --create-home builder
+              cp -a /aur /home/builder/package
+              chown -R builder:builder /home/builder/package
+              runuser -u builder -- bash -lc "cd ~/package && makepkg --printsrcinfo"
+            ' > "$RUNNER_TEMP/manis-bin/.SRCINFO"
+
+      - name: Publish AUR update
+        env:
+          GIT_SSH_COMMAND: ssh -i ~/.ssh/aur -o IdentitiesOnly=yes
+        shell: bash
+        run: |
+          cd "$RUNNER_TEMP/manis-bin"
+          git config user.name "Manis release automation"
+          git config user.email "bobosingle@users.noreply.github.com"
+          git add PKGBUILD .SRCINFO
+          if git diff --cached --quiet; then
+            echo "AUR already contains $MANIS_PACKAGE_VERSION"
+            exit 0
+          fi
+          git commit -m "Update to $MANIS_PACKAGE_VERSION"
+          git push origin HEAD:master
