@@ -2176,10 +2176,11 @@ fn enable_tun_with_dns(
     dns: &mut TunDnsSession,
     language: Language,
 ) -> Result<(), String> {
+    let log = tun_dns_log_details();
     record_event(
         LogLevel::Info,
         "controller.tun.dns.requested",
-        "action=prepare resolver=114.114.114.114",
+        log.prepare_requested,
     );
     dns.prepare_with_language(language).map_err(|error| {
         record_event(
@@ -2192,7 +2193,7 @@ fn enable_tun_with_dns(
     record_event(
         LogLevel::Info,
         "controller.tun.dns.succeeded",
-        "action=prepare recovery=saved",
+        log.prepare_succeeded,
     );
     if let Err(error) = runtime.set_tun_enabled(true) {
         let rollback = dns.disable_with_language(language);
@@ -2207,7 +2208,7 @@ fn enable_tun_with_dns(
     record_event(
         LogLevel::Info,
         "controller.tun.dns.requested",
-        "action=install resolver=114.114.114.114",
+        log.install_requested,
     );
     if let Err(error) = dns.activate_with_language(language) {
         let dns_rollback = dns.disable_with_language(language);
@@ -2240,7 +2241,7 @@ fn enable_tun_with_dns(
     record_event(
         LogLevel::Info,
         "controller.tun.dns.succeeded",
-        "action=install recovery=retained",
+        log.install_succeeded,
     );
     Ok(())
 }
@@ -2256,7 +2257,7 @@ fn disable_tun_with_dns(
     record_event(
         LogLevel::Info,
         "controller.tun.dns.requested",
-        "action=restore",
+        tun_dns_log_details().restore_requested,
     );
     dns.disable_with_language(language).map_or_else(
         |error| {
@@ -2276,11 +2277,57 @@ fn disable_tun_with_dns(
             record_event(
                 LogLevel::Info,
                 "controller.tun.dns.succeeded",
-                "action=restore recovery=removed",
+                tun_dns_log_details().restore_succeeded,
             );
             Ok(())
         },
     )
+}
+
+#[derive(Clone, Copy)]
+struct TunDnsLogDetails {
+    prepare_requested: &'static str,
+    prepare_succeeded: &'static str,
+    install_requested: &'static str,
+    install_succeeded: &'static str,
+    restore_requested: &'static str,
+    restore_succeeded: &'static str,
+}
+
+#[cfg(target_os = "macos")]
+const fn tun_dns_log_details() -> TunDnsLogDetails {
+    TunDnsLogDetails {
+        prepare_requested: "action=prepare strategy=system_resolver resolver=114.114.114.114",
+        prepare_succeeded: "action=prepare strategy=system_resolver recovery=saved",
+        install_requested: "action=install strategy=system_resolver resolver=114.114.114.114",
+        install_succeeded: "action=install strategy=system_resolver recovery=retained",
+        restore_requested: "action=restore strategy=system_resolver",
+        restore_succeeded: "action=restore strategy=system_resolver recovery=removed",
+    }
+}
+
+#[cfg(target_os = "linux")]
+const fn tun_dns_log_details() -> TunDnsLogDetails {
+    TunDnsLogDetails {
+        prepare_requested: "action=prepare strategy=tun_hijack system_resolver=unchanged",
+        prepare_succeeded: "action=prepare strategy=tun_hijack strict_route=true",
+        install_requested: "action=install strategy=tun_hijack system_resolver=unchanged",
+        install_succeeded: "action=install strategy=tun_hijack strict_route=true",
+        restore_requested: "action=restore strategy=tun_hijack system_resolver=unchanged",
+        restore_succeeded: "action=restore strategy=tun_hijack system_resolver=unchanged",
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+const fn tun_dns_log_details() -> TunDnsLogDetails {
+    TunDnsLogDetails {
+        prepare_requested: "action=prepare strategy=kernel_managed",
+        prepare_succeeded: "action=prepare strategy=kernel_managed",
+        install_requested: "action=install strategy=kernel_managed",
+        install_succeeded: "action=install strategy=kernel_managed",
+        restore_requested: "action=restore strategy=kernel_managed",
+        restore_succeeded: "action=restore strategy=kernel_managed",
+    }
 }
 
 fn proxy_mode_label(language: Language, mode: ProxyMode) -> &'static str {
@@ -2584,13 +2631,43 @@ mod tests {
     use super::{
         ControllerReadiness, DueRemoteSource, ImportedSubscription, ImportedSubscriptionState,
         ManisApp, PolicyDetailTab, ProxyModeBlock, SourceRuntimeApply, TunSupport,
-        proxy_mode_block,
+        proxy_mode_block, tun_dns_log_details,
     };
     use crate::subscription::SourceKind;
     use crate::{
         localization::Language,
         mihomo::{self, ControllerState},
     };
+
+    #[test]
+    fn tun_dns_diagnostics_describe_the_platform_strategy() {
+        let details = tun_dns_log_details();
+        #[cfg(target_os = "macos")]
+        {
+            assert!(
+                details
+                    .install_requested
+                    .contains("strategy=system_resolver")
+            );
+            assert!(
+                details
+                    .install_requested
+                    .contains("resolver=114.114.114.114")
+            );
+            assert!(details.restore_succeeded.contains("recovery=removed"));
+        }
+        #[cfg(target_os = "linux")]
+        {
+            assert!(details.install_requested.contains("strategy=tun_hijack"));
+            assert!(
+                details
+                    .install_requested
+                    .contains("system_resolver=unchanged")
+            );
+            assert!(details.install_succeeded.contains("strict_route=true"));
+            assert!(!details.install_requested.contains("114.114.114.114"));
+        }
+    }
 
     #[test]
     fn policy_detail_tabs_round_trip_through_component_indices() {

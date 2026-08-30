@@ -19,4 +19,9 @@ once the public API and configuration formats stabilize.
 - Restricted controller endpoints, private credential storage, redacted diagnostics, owned-process
   lifecycle management, and fixed-purpose macOS privileged-helper boundaries.
 
+### Fixed
+
+- Route Linux DNS through Mihomo's TUN hijacker so fake-IP routing and domain-aware proxying are
+  not bypassed by `systemd-resolved`, and report the actual platform DNS strategy in diagnostics.
+
 [Unreleased]: https://github.com/kaigedong/Manis/commits/main
