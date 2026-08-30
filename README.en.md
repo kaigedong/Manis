@@ -67,18 +67,20 @@ network integration has been validated on that operating system.
 
 The Package workflow builds unnotarized macOS bundles for Apple Silicon and Intel, plus an
 experimental Arch Linux `x86_64` package with native Wayland support, and generates checksums for
-each package. Manual workflow artifacts are retained for 14 days. Pushing any tag also places
-the same files in a draft GitHub Release until a maintainer completes the release checklist and
-decides whether to publish it. See the [macOS](packaging/macos/README.md) and
+each package. Every commit merged into `main` replaces the rolling `latest` draft release, while
+manual workflow artifacts are retained for 14 days. Pushing any version tag also creates a separate
+draft GitHub Release until a maintainer completes the release checklist and decides whether to
+publish it. See the [macOS](packaging/macos/README.md) and
 [Arch Linux](packaging/archlinux/README.md) packaging notes before installing them.
 
 ## Download a test build
 
-Repository maintainers can download artifacts from the latest successful run on the
+Repository maintainers can download the most recent successful `main` build from the
+`Latest Manis development build` draft on the [Releases page](https://github.com/kaigedong/Manis/releases),
+or download a single run from the
 [Package workflow page](https://github.com/kaigedong/Manis/actions/workflows/package.yml). Choose
-`arm64` for an Apple Silicon Mac or `x86_64` for an Intel Mac. Tagged builds also appear in the
-repository's draft releases. An empty public Releases page is expected until the repository has a
-version tag and a maintainer publishes its draft.
+`arm64` for an Apple Silicon Mac, `x86_64` for an Intel Mac, or the `.pkg.tar.zst` package for
+CachyOS and Arch Linux. Draft releases are visible only to signed-in users with repository access.
 
 The macOS archives are ad-hoc signed but do not have a Developer ID signature or Apple
 notarization, so they are test builds only. Normal system-proxy mode can be exercised; the

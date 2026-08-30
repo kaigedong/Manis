@@ -54,8 +54,16 @@ build() {
     cargo rustc -p manis-ui --bin manis-ui --release --locked -- \
       -L "native=$ring_directory" -l "static:+whole-archive=$ring_library"
 
-  MANIS_MIHOMO_OS=Linux MANIS_MIHOMO_ARCH=x86_64 \
-    "$startdir/../fetch-mihomo.sh" "$target_dir/release/mihomo"
+  if [[ -n "${MANIS_MIHOMO_BINARY:-}" ]]; then
+    if [[ ! -x "$MANIS_MIHOMO_BINARY" ]]; then
+      error "MANIS_MIHOMO_BINARY must point to an executable Mihomo binary"
+      return 1
+    fi
+    install -Dm755 "$MANIS_MIHOMO_BINARY" "$target_dir/release/mihomo"
+  else
+    MANIS_MIHOMO_OS=Linux MANIS_MIHOMO_ARCH=x86_64 \
+      "$startdir/../fetch-mihomo.sh" "$target_dir/release/mihomo"
+  fi
 }
 
 check() {
