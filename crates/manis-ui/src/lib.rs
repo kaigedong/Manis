@@ -7,6 +7,8 @@ mod core_update;
 mod diagnostics;
 mod direct_rule;
 mod kernel;
+#[cfg(target_os = "linux")]
+mod linux_privileged;
 mod localization;
 #[cfg(target_os = "macos")]
 mod macos_privileged;

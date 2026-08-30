@@ -9,7 +9,8 @@ use manis_profile::write_private_atomic;
 use super::{
     ControllerRuntime, GeneratedProfileApply, LoadError, LogLevel, ManagedGeneratedProfile,
     compile_saved_profile, fetch_runtime_config, generated_engine_manager, generated_profile_names,
-    managed_engine_config, record_event, render_generated_profile, sync_single_node_provider_files,
+    managed_engine_config, managed_engine_config_for_privilege, record_event,
+    render_generated_profile, sync_single_node_provider_files,
 };
 
 struct PreparedProfile {
@@ -102,7 +103,7 @@ fn install_profile(
     .map_err(|_error| {
         LoadError::Runtime("managed configuration could not be replaced".to_owned())
     })?;
-    let final_config = managed_engine_config(spec, final_path);
+    let final_config = managed_engine_config_for_privilege(spec, final_path, was_privileged)?;
     let mut manager = manager.lock().map_err(|_poisoned| {
         LoadError::Runtime("managed kernel state lock is poisoned".to_owned())
     })?;
@@ -200,10 +201,11 @@ fn rollback_failed_restart(
             rollback.final_name,
             &previous_config,
         );
-        let rollback_config = managed_engine_config(
+        let rollback_config = managed_engine_config_for_privilege(
             rollback.spec,
             rollback.spec.data_dir.join(rollback.final_name),
-        );
+            rollback.was_privileged,
+        )?;
         *manager = generated_engine_manager(
             rollback.spec,
             rollback_config,
