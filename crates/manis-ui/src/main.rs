@@ -3,6 +3,10 @@ use gpui_platform::application;
 use manis_ui::{Assets, init, install_tray, open_window, show_or_open_window};
 
 fn main() {
+    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("--version")) {
+        println!("Manis {}", manis_ui::version());
+        return;
+    }
     let application = application().with_assets(Assets);
     application.on_reopen(show_or_open_window);
     application.run(|cx: &mut App| {

@@ -18,6 +18,8 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  MANIS_BUILD_COMMIT: ${{ github.sha }}
+  MANIS_PACKAGE_VERSION: 0.1.${{ github.run_number }}
 
 jobs:
   mihomo-seeds:
@@ -108,6 +110,7 @@ jobs:
             cargo-package-macos-${{ matrix.architecture }}-
       - name: Build unsigned application bundle
         env:
+          MANIS_BUILD_VERSION: ${{ steps.package.outputs.version }}
           MANIS_BUNDLE_BUILD: ${{ github.run_number }}
           MANIS_BUNDLE_VERSION: ${{ steps.package.outputs.version }}
           MANIS_MIHOMO_BINARY: ${{ runner.temp }}/mihomo-seeds/mihomo-darwin-${{ matrix.architecture }}
@@ -165,7 +168,7 @@ jobs:
         run: |
           pacman -Syu --noconfirm --needed \
           alsa-lib clang cmake desktop-file-utils fontconfig git gtk3 hicolor-icon-theme \
-          libappindicator libx11 libxcb libxkbcommon libxkbcommon-x11 mesa pkgconf rustup \
+          libappindicator libx11 libxcb libxkbcommon libxkbcommon-x11 mesa pkgconf polkit rustup \
           vulkan-headers vulkan-icd-loader wayland wayland-protocols xdotool
           useradd --create-home --shell /bin/bash builder
           chown -R builder:builder "$GITHUB_WORKSPACE"
@@ -173,7 +176,9 @@ jobs:
         id: package
         shell: bash
         run: |
-          version="$(runuser -u builder -- "$GITHUB_WORKSPACE/packaging/package-version.sh")"
+          version="$(runuser -u builder -- env \
+            MANIS_PACKAGE_VERSION="$MANIS_PACKAGE_VERSION" \
+            "$GITHUB_WORKSPACE/packaging/package-version.sh")"
           echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Install pinned Rust toolchain
         shell: bash
@@ -202,7 +207,10 @@ jobs:
         run: |
           chmod 0755 "$RUNNER_TEMP/mihomo-seeds/mihomo-linux-x86_64"
           runuser -u builder -- env \
+            MANIS_BUILD_COMMIT="$MANIS_BUILD_COMMIT" \
+            MANIS_BUILD_VERSION="$MANIS_PACKAGE_VERSION" \
             MANIS_MIHOMO_BINARY="$RUNNER_TEMP/mihomo-seeds/mihomo-linux-x86_64" \
+            MANIS_PACKAGE_VERSION="$MANIS_PACKAGE_VERSION" \
             bash -c \
             'cd "$1/packaging/archlinux" && makepkg --noconfirm --cleanbuild' \
             _ "$GITHUB_WORKSPACE"
@@ -250,6 +258,7 @@ jobs:
       actions: read
       contents: write
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Download package artifacts
         uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
@@ -268,6 +277,9 @@ jobs:
           [[ ${#linux_packages[@]} -eq 1 ]]
           [[ ${#checksums[@]} -eq 3 ]]
           sha256sum --check "${checksums[@]}"
+      - name: Create signed-by-release update manifest
+        shell: bash
+        run: packaging/generate-update-manifest.sh dist/release
       - name: Create or update release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -296,13 +308,15 @@ jobs:
           else
             rolling_release=1
             release_tag="latest"
-            release_title="Latest Manis development build (${GITHUB_SHA::7})"
+            release_title="Latest Manis development build ($MANIS_PACKAGE_VERSION · ${GITHUB_SHA::7})"
             create_target=(--target "$GITHUB_SHA")
             edit_target=(--target "$GITHUB_SHA")
             create_state=(--prerelease --latest=false)
             edit_state=(--draft=false --prerelease=true --latest=false)
             {
               echo 'Automated test packages from the latest successful build of `main`.'
+              echo
+              printf 'Version: `%s`\n' "$MANIS_PACKAGE_VERSION"
               echo
               printf 'Commit: `%s`\n' "$GITHUB_SHA"
               echo
@@ -329,6 +343,26 @@ jobs:
             gh release upload "$release_tag" "${release_assets[@]}" \
               --repo "$GITHUB_REPOSITORY" \
               --clobber
+            mapfile -t published_assets < <(
+              gh release view "$release_tag" \
+                --repo "$GITHUB_REPOSITORY" \
+                --json assets \
+                --jq '.assets[].name'
+            )
+            for published_asset in "${published_assets[@]}"; do
+              keep_asset=0
+              for local_asset in "${release_assets[@]}"; do
+                if [[ "$(basename "$local_asset")" == "$published_asset" ]]; then
+                  keep_asset=1
+                  break
+                fi
+              done
+              if [[ "$keep_asset" == "0" ]]; then
+                gh release delete-asset "$release_tag" "$published_asset" \
+                  --repo "$GITHUB_REPOSITORY" \
+                  --yes
+              fi
+            done
             if [[ "$rolling_release" == "1" && "$is_draft" != "true" ]]; then
               gh api --method PATCH \
                 "repos/$GITHUB_REPOSITORY/git/refs/tags/$release_tag" \

@@ -1,4 +1,180 @@
 impl ManisApp {
+    fn start_app_update_polling(cx: &mut Context<Self>) {
+        let timer = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            loop {
+                if this
+                    .update(cx, |this, cx| this.check_for_app_update(false, cx))
+                    .is_err()
+                {
+                    break;
+                }
+                timer.timer(Duration::from_hours(1)).await;
+            }
+        })
+        .detach();
+    }
+
+    fn check_for_app_update(&mut self, manual: bool, cx: &mut Context<Self>) {
+        if self.app_update_state.is_busy()
+            || matches!(self.app_update_state, AppUpdateState::Ready(_))
+        {
+            return;
+        }
+        let Ok(app_path) = cx.app_path() else {
+            self.app_update_state = AppUpdateState::Unsupported;
+            if manual {
+                self.language()
+                    .localized(copy::app_update::UNSUPPORTED)
+                    .clone_into(&mut self.status);
+            }
+            cx.notify();
+            return;
+        };
+        if !app_update::installation_supported(&app_path) {
+            self.app_update_state = AppUpdateState::Unsupported;
+            if manual {
+                self.language()
+                    .localized(copy::app_update::UNSUPPORTED)
+                    .clone_into(&mut self.status);
+            }
+            cx.notify();
+            return;
+        }
+
+        self.app_update_state = AppUpdateState::Checking;
+        if manual {
+            self.language()
+                .localized(copy::app_update::CHECKING)
+                .clone_into(&mut self.status);
+        }
+        cx.notify();
+
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let checked = executor
+                .spawn(async { app_update::check_for_update() })
+                .await;
+            let Some(available) = (match checked {
+                Ok(available) => available,
+                Err(error) => {
+                    this.update(cx, |this, cx| {
+                        this.finish_app_update_failure(error, manual, cx);
+                    })
+                    .ok();
+                    return;
+                }
+            }) else {
+                this.update(cx, |this, cx| {
+                    this.app_update_state = AppUpdateState::Current;
+                    if manual {
+                        this.language()
+                            .localized(copy::app_update::UP_TO_DATE)
+                            .clone_into(&mut this.status);
+                    }
+                    cx.notify();
+                })
+                .ok();
+                return;
+            };
+
+            let version = available.version.clone();
+            this.update(cx, |this, cx| {
+                this.app_update_state = AppUpdateState::Downloading(version.clone());
+                if manual {
+                    this.language()
+                        .localized(copy::app_update::DOWNLOADING)
+                        .clone_into(&mut this.status);
+                }
+                cx.notify();
+            })
+            .ok();
+
+            let staged = executor
+                .spawn(async move { app_update::stage_update(&available) })
+                .await;
+            this.update(cx, |this, cx| match staged {
+                Ok(staged) => {
+                    record_event(
+                        LogLevel::Info,
+                        "app.update.ready",
+                        format!("version={}", staged.version),
+                    );
+                    this.status = copy::app_update::ready_version(
+                        this.language(),
+                        &staged.version,
+                    );
+                    this.app_update_state = AppUpdateState::Ready(staged);
+                    cx.notify();
+                }
+                Err(error) => this.finish_app_update_failure(error, manual, cx),
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn finish_app_update_failure(
+        &mut self,
+        error: AppUpdateError,
+        manual: bool,
+        cx: &mut Context<Self>,
+    ) {
+        record_event(LogLevel::Warn, "app.update.failed", error.to_string());
+        if manual {
+            self.app_update_state = AppUpdateState::Failed(error);
+            self.status = format!(
+                "{}: {}",
+                self.language().localized(copy::app_update::UPDATE_FAILED),
+                copy::app_update::error(self.language(), error)
+            );
+        } else {
+            self.app_update_state = AppUpdateState::Idle;
+        }
+        cx.notify();
+    }
+
+    fn restart_with_app_update(&mut self, cx: &mut Context<Self>) {
+        let AppUpdateState::Ready(staged) = self.app_update_state.clone() else {
+            return;
+        };
+        let Ok(app_path) = cx.app_path() else {
+            self.finish_app_update_failure(AppUpdateError::UnsupportedInstallation, true, cx);
+            return;
+        };
+        let version = staged.version.clone();
+        self.app_update_state = AppUpdateState::Installing(version.clone());
+        self.language()
+            .localized(copy::app_update::INSTALLING)
+            .clone_into(&mut self.status);
+        cx.notify();
+
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let result = executor
+                .spawn(async move {
+                    app_update::install_staged_update(&staged, &app_path)
+                })
+                .await;
+            this.update(cx, |this, cx| match result {
+                Ok(restart_path) => {
+                    record_event(
+                        LogLevel::Info,
+                        "app.update.install.succeeded",
+                        format!("version={version}"),
+                    );
+                    if let Some(path) = restart_path {
+                        cx.set_restart_path(path);
+                    }
+                    cx.restart();
+                }
+                Err(error) => this.finish_app_update_failure(error, true, cx),
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     fn switch_kernel(&mut self, requested: KernelKind, cx: &mut Context<Self>) {
         let language = self.language();
         if self.kernel_switch_state.is_busy() || self.runtime.kind() == requested {

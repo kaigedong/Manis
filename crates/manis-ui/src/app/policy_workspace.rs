@@ -1927,7 +1927,7 @@ impl ManisApp {
             )
     }
 
-    fn status_bar(&self, theme: Theme) -> StatusBar {
+    fn status_bar(&self, theme: Theme, cx: &mut Context<Self>) -> StatusBar {
         let language = self.language();
         let kernel_name = self.runtime.kind().display_name();
         let source = controller_status_label(&self.controller, kernel_name, language);
@@ -1974,6 +1974,33 @@ impl ManisApp {
             .line_height(TextRole::Data.line_height())
             .font_weight(TextRole::Data.weight())
             .text_color(theme.text_secondary)
+            .when_some(
+                match &self.app_update_state {
+                    AppUpdateState::Ready(staged) => Some(staged.version.clone()),
+                    _ => None,
+                },
+                |right, version| {
+                    right.child(
+                        style_action_button(
+                            Button::new("status-bar-restart-update")
+                                .accessibility_label(
+                                    language.localized(copy::app_update::RESTART_AND_UPDATE),
+                                )
+                                .label(format!(
+                                    "{} · {version}",
+                                    language.localized(copy::app_update::RESTART_AND_UPDATE)
+                                ))
+                                .icon(IconName::Redo2),
+                            ActionRole::Primary,
+                            ControlSize::Compact,
+                        )
+                        .cursor_pointer()
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.restart_with_app_update(cx);
+                        })),
+                    )
+                },
+            )
             .child(values.download)
             .child(values.upload);
 
