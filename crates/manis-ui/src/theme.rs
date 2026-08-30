@@ -5,9 +5,11 @@ use gpui_component::{Theme as ComponentTheme, ThemeMode};
 
 #[derive(Clone, Copy)]
 pub(crate) struct Theme {
+    pub window_backdrop: Rgba,
     pub surface_base: Rgba,
     pub surface_low: Rgba,
     pub surface_high: Rgba,
+    pub surface_overlay: Rgba,
     pub surface_chrome: Rgba,
     pub text_primary: Rgba,
     pub text_secondary: Rgba,
@@ -27,20 +29,22 @@ pub(crate) struct Theme {
 impl Theme {
     pub(crate) fn light() -> Self {
         Self {
-            // The surface stack is deliberately translucent so the platform blur can show
-            // through. Higher layers are more opaque to retain hierarchy and legibility.
-            surface_base: rgba(0xf4f7f566),
-            surface_low: rgba(0xedf2ef8c),
-            surface_high: rgba(0xf7faf89e),
-            surface_chrome: rgba(0xe7eeea99),
+            // Blur belongs to the window backdrop. Content surfaces only add a restrained
+            // tint so nested layouts do not compound into opaque white rectangles.
+            window_backdrop: rgba(0xf0f4f182),
+            surface_base: rgba(0xf6f8f626),
+            surface_low: rgba(0xfbfcfb42),
+            surface_high: rgba(0xfbfcfb72),
+            surface_overlay: rgba(0xfbfcfbe8),
+            surface_chrome: rgba(0xedf3ef68),
             text_primary: rgb(0x152321),
             text_secondary: rgb(0x5f6e69),
             text_tertiary: rgb(0x84918d),
-            outline_subtle: rgb(0xcbd6d2),
-            outline_strong: rgb(0x9fafa9),
+            outline_subtle: rgba(0x50665f2e),
+            outline_strong: rgba(0x49615970),
             action_primary: rgb(0x176c62),
             action_on_primary: rgb(0xffffff),
-            action_soft: rgb(0xd5ebe6),
+            action_soft: rgba(0xcce9e2b8),
             route_trace: rgb(0xd46642),
             route_soft: rgb(0xf8e5dc),
             status_success: rgb(0x24795f),
@@ -51,18 +55,20 @@ impl Theme {
 
     pub(crate) fn dark() -> Self {
         Self {
-            surface_base: rgba(0x0e171580),
-            surface_low: rgba(0x111d1a9e),
-            surface_high: rgba(0x172521bf),
-            surface_chrome: rgba(0x13211ead),
+            window_backdrop: rgba(0x091310d4),
+            surface_base: rgba(0x13201c30),
+            surface_low: rgba(0x20312c4d),
+            surface_high: rgba(0x20332d9c),
+            surface_overlay: rgba(0x16241fee),
+            surface_chrome: rgba(0x111f1ba8),
             text_primary: rgb(0xe3eeea),
             text_secondary: rgb(0xa4b4ae),
             text_tertiary: rgb(0x7d8e88),
-            outline_subtle: rgb(0x2b3d37),
-            outline_strong: rgb(0x435851),
+            outline_subtle: rgba(0xb5c8c12e),
+            outline_strong: rgba(0xa9beb670),
             action_primary: rgb(0x79d7c6),
             action_on_primary: rgb(0x082a24),
-            action_soft: rgb(0x1b4038),
+            action_soft: rgba(0x1d594ccf),
             route_trace: rgb(0xf39b75),
             route_soft: rgb(0x402820),
             status_success: rgb(0x79d7b0),
@@ -231,7 +237,7 @@ pub(crate) fn sync_component_theme(
     component.foreground = theme.text_primary.into();
     component.border = theme.outline_subtle.into();
     component.input = theme.outline_strong.into();
-    component.popover = theme.surface_high.into();
+    component.popover = theme.surface_overlay.into();
     component.popover_foreground = theme.text_primary.into();
     component.muted = theme.surface_low.into();
     component.muted_foreground = theme.text_secondary.into();
@@ -322,9 +328,12 @@ mod tests {
         for theme in [Theme::light(), Theme::dark()] {
             assert!(theme.surface_base.a < theme.surface_low.a);
             assert!(theme.surface_low.a < theme.surface_high.a);
-            assert!(theme.surface_base.a >= 0.4);
-            assert!(theme.surface_high.a >= 0.6);
+            assert!(theme.window_backdrop.a >= 0.5);
+            assert!(theme.surface_base.a <= 0.2);
+            assert!(theme.surface_high.a >= 0.4);
+            assert!(theme.surface_overlay.a > theme.surface_high.a);
             assert!(theme.surface_chrome.a > theme.surface_base.a);
+            assert!(theme.outline_subtle.a < theme.outline_strong.a);
             assert!((theme.text_primary.a - 1.0).abs() < f32::EPSILON);
         }
     }

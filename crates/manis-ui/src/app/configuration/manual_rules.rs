@@ -990,7 +990,7 @@ impl ManisApp {
             .close_button(false)
             .p_0()
             .rounded_md()
-            .bg(theme.surface_high)
+            .bg(theme.surface_overlay)
             .overflow_hidden()
             .title(Self::manual_rule_editor_title(
                 editing,
@@ -1190,15 +1190,15 @@ impl ManisApp {
         let edit_label = copy::configuration::manual_rule_accessibility(language, order);
         let row = div()
             .id(format!("manual-routing-rule-{index}"))
-            .mt_1()
             .min_h(px(44.0))
             .px(Space::Md.px())
             .py(Space::Sm.px())
-            .rounded(Radius::Row.px())
+            .border_b_1()
+            .border_color(theme.outline_subtle)
             .bg(if enabled {
-                theme.surface_low
-            } else {
                 theme.surface_base
+            } else {
+                gpui::rgba(0x0000_0000)
             })
             .flex()
             .items_center()
@@ -1837,12 +1837,12 @@ impl ManisApp {
         theme: Theme,
     ) -> Div {
         div()
-            .mt_1()
             .min_h(px(44.0))
             .px(Space::Md.px())
             .py(Space::Sm.px())
-            .rounded(Radius::Row.px())
-            .bg(theme.surface_low)
+            .border_b_1()
+            .border_color(theme.outline_subtle)
+            .bg(theme.surface_base)
             .flex()
             .items_center()
             .gap(Space::Md.px())

@@ -168,8 +168,6 @@ pub(crate) fn empty_state(
     div()
         .w_full()
         .p(Space::Xl.px())
-        .rounded(Radius::Pane.px())
-        .bg(theme.surface_low)
         .child(
             div()
                 .text_color(theme.text_primary)

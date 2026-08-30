@@ -235,7 +235,7 @@ impl ManisApp {
             .close_button(false)
             .p_0()
             .rounded_md()
-            .bg(theme.surface_high)
+            .bg(theme.surface_overlay)
             .overflow_hidden()
             .title(Self::proxy_source_editor_title(view, language, theme))
             .child(body)

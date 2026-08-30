@@ -199,7 +199,7 @@ impl ManisApp {
             .close_button(false)
             .p_0()
             .rounded_md()
-            .bg(theme.surface_high)
+            .bg(theme.surface_overlay)
             .overflow_hidden()
             .title(Self::qx_rule_editor_title(view.editing, language, theme))
             .child(body)

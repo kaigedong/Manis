@@ -2559,7 +2559,7 @@ impl Render for ManisApp {
             .size_full()
             .flex()
             .flex_col()
-            .bg(theme.surface_base)
+            .bg(theme.window_backdrop)
             .text_color(theme.text_primary)
             .text_size(px(13.0))
             .child(self.chrome(theme, size_class, cx))

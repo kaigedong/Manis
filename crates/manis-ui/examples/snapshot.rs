@@ -26,6 +26,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         capture_data_page_coverage(&mut cx)?;
         return Ok(());
     }
+    if std::env::args().any(|argument| argument == "--connected") {
+        capture_connected(&mut cx)?;
+        return Ok(());
+    }
+    if std::env::args().any(|argument| argument == "--configuration-sections") {
+        capture_configuration_sections(&mut cx)?;
+        return Ok(());
+    }
+    if std::env::args().any(|argument| argument == "--compact-flow") {
+        capture_compact_flow(&mut cx)?;
+        return Ok(());
+    }
     capture(&mut cx, 1420.0, 900.0, "native-wide.png")?;
     capture_automatic_policy(&mut cx)?;
     capture_managed_policy_settings(&mut cx)?;
@@ -499,6 +511,37 @@ fn capture_configuration(
         cx.simulate_click(window, point(px(500.0), px(485.0)), Modifiers::none());
         refresh(cx, window)?;
         save_screenshot(cx, window, "configuration-compact-subscription-preview.png")?;
+    }
+    close_window(cx, window)
+}
+
+#[cfg(target_os = "macos")]
+fn capture_configuration_sections(
+    cx: &mut gpui::VisualTestAppContext,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use gpui::{AnyWindowHandle, Modifiers, point, px, size};
+    use manis_ui::ManisApp;
+
+    let width = 1_420.0;
+    let window = cx.open_offscreen_window(size(px(width), px(900.0)), |window, cx| {
+        manis_root(window, cx, |_| {
+            ManisApp::with_fixture_controller("http://127.0.0.1:9090")
+        })
+    })?;
+    let window: AnyWindowHandle = window.into();
+    refresh(cx, window)?;
+    open_workspace(cx, window, width, SnapshotWorkspace::Configuration)?;
+
+    save_screenshot(cx, window, "configuration-section-proxy-sources.png")?;
+    for (y, file_name) in [
+        (177.0, "configuration-section-general.png"),
+        (235.0, "configuration-section-runtime.png"),
+        (350.0, "configuration-section-rule-sources.png"),
+        (410.0, "configuration-section-advanced.png"),
+    ] {
+        cx.simulate_click(window, point(px(340.0), px(y)), Modifiers::none());
+        refresh(cx, window)?;
+        save_screenshot(cx, window, file_name)?;
     }
     close_window(cx, window)
 }

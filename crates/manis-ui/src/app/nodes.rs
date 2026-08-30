@@ -502,7 +502,6 @@ impl ManisApp {
             .pb(Space::Lg.px())
             .border_b_1()
             .border_color(theme.outline_subtle)
-            .bg(theme.surface_chrome)
             .child(crate::components::page_heading(
                 format!("{} · {}", language.message(Message::Nodes), counts.total),
                 detail,
