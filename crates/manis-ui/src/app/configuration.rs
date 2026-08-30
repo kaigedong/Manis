@@ -16,12 +16,13 @@ use manis_core::{KernelKind, ProxyMode, WindowSizeClass};
 use manis_profile::{QxRuleKind, SecretUrl};
 
 use super::{
-    ConfigurationSection, ImportQxRuleError, ImportQxRuleSuccess, ImportedSubscriptionState,
-    ManisApp, ManualRulePopover, MihomoCoreUpdateState, ProxySourceEditorKind,
-    QxRuleImportFeedback, QxRuleList, QxRuleSourceRefreshState, SourceRuntimeApply,
-    SubscriptionFeedback, proxy_mode_label, routing_mode_label,
+    AppUpdateState, ConfigurationSection, ImportQxRuleError, ImportQxRuleSuccess,
+    ImportedSubscriptionState, ManisApp, ManualRulePopover, MihomoCoreUpdateState,
+    ProxySourceEditorKind, QxRuleImportFeedback, QxRuleList, QxRuleSourceRefreshState,
+    SourceRuntimeApply, SubscriptionFeedback, proxy_mode_label, routing_mode_label,
 };
 use crate::{
+    app_update,
     components::{
         ActionRole, StatusTone, action_button, empty_state, page_heading, section_heading,
         status_badge, style_action_button,
@@ -546,9 +547,13 @@ impl ManisApp {
             || self.source_refresh_busy();
         let selected_section = self.configuration_section;
         let detail: AnyElement = match selected_section {
-            ConfigurationSection::General => {
-                self.language_panel(theme, compact, cx).into_any_element()
-            }
+            ConfigurationSection::General => div()
+                .flex()
+                .flex_col()
+                .gap(Space::Lg.px())
+                .child(self.language_panel(theme, compact, cx))
+                .child(self.app_update_panel(theme, compact, cx))
+                .into_any_element(),
             ConfigurationSection::Runtime => {
                 self.kernel_panel(theme, compact, cx).into_any_element()
             }

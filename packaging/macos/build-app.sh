@@ -28,6 +28,7 @@ PARENT_REQUIREMENT="${MANIS_PARENT_REQUIREMENT:-identifier \"dev.manis.app\"}"
 MIHOMO_SOURCE="${MANIS_MIHOMO_BINARY:-}"
 BUNDLE_VERSION="${MANIS_BUNDLE_VERSION:-0.1.0}"
 BUNDLE_BUILD="${MANIS_BUNDLE_BUILD:-1}"
+CARGO_BUILD_DIR="${CARGO_TARGET_DIR:-$ROOT_DIR/target}"
 
 if [[ ! "$BUNDLE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   echo "MANIS_BUNDLE_VERSION must contain exactly three numeric components" >&2
@@ -57,7 +58,7 @@ if [[ -n "${MANIS_CODESIGN_IDENTITY:-}" ]]; then
   esac
 fi
 
-cargo build -p manis-ui --release --locked
+CARGO_TARGET_DIR="$CARGO_BUILD_DIR" cargo build -p manis-ui --release --locked
 
 mkdir -p "$MACOS_DIR" "$LAUNCH_DAEMONS_DIR" "$HELPER_TOOLS_DIR" "$MIHOMO_RESOURCES_DIR"
 
@@ -68,7 +69,7 @@ plutil -insert ManisParentCodeSigningRequirement -string "$PARENT_REQUIREMENT" "
 if [[ "${MANIS_ALLOW_INSECURE_LOCAL_HELPER:-0}" == "1" ]]; then
   plutil -insert ManisAllowInsecureLocalHelper -bool YES "$CONTENTS_DIR/Info.plist"
 fi
-cp "$ROOT_DIR/target/release/manis-ui" "$MACOS_DIR/Manis"
+cp "$CARGO_BUILD_DIR/release/manis-ui" "$MACOS_DIR/Manis"
 
 ICONSET_DIR="$BUILD_ROOT/Manis.iconset"
 mkdir -p "$ICONSET_DIR"

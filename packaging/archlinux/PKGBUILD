@@ -17,6 +17,7 @@ depends=(
   'libxcb'
   'libxkbcommon'
   'libxkbcommon-x11'
+  'polkit'
   'vulkan-icd-loader'
   'wayland'
   'xdotool'

@@ -288,6 +288,131 @@ impl ManisApp {
             )
     }
 
+    fn app_update_panel(
+        &self,
+        theme: Theme,
+        compact: bool,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let language = self.language();
+        let (status, tone) = self.app_update_status(language);
+        let (button_label, ready, busy, supported) = self.app_update_action(language);
+
+        panel_surface("configuration-app-update", compact, theme)
+            .child(section_heading(
+                language.localized(copy::app_update::AUTOMATIC_UPDATES),
+                language.localized(copy::app_update::AUTOMATIC_UPDATES_DETAIL),
+                Some(status_badge(status, tone, theme).into_any_element()),
+                theme,
+            ))
+            .child(
+                div()
+                    .mt(Space::Md.px())
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap(Space::Md.px())
+                    .child(
+                        div()
+                            .text_size(TextRole::Metadata.size())
+                            .line_height(TextRole::Metadata.line_height())
+                            .text_color(theme.text_secondary)
+                            .child(copy::app_update::current_version(
+                                language,
+                                app_update::current_version(),
+                            )),
+                    )
+                    .child(
+                        style_action_button(
+                            Button::new("app-update-action")
+                                .accessibility_label(button_label)
+                                .label(button_label)
+                                .icon(IconName::Redo2)
+                                .loading(busy)
+                                .disabled(!supported || busy)
+                                .tab_stop(supported && !busy),
+                            if ready {
+                                ActionRole::Primary
+                            } else {
+                                ActionRole::Quiet
+                            },
+                            ControlSize::Compact,
+                        )
+                        .when(supported && !busy, gpui::Styled::cursor_pointer)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            if matches!(this.app_update_state, AppUpdateState::Ready(_)) {
+                                this.restart_with_app_update(cx);
+                            } else {
+                                this.check_for_app_update(true, cx);
+                            }
+                        })),
+                    ),
+            )
+    }
+
+    fn app_update_status(&self, language: Language) -> (String, StatusTone) {
+        match &self.app_update_state {
+            AppUpdateState::Idle => (
+                copy::app_update::current_version(language, app_update::current_version()),
+                StatusTone::Neutral,
+            ),
+            AppUpdateState::Checking => (
+                language.localized(copy::app_update::CHECKING).to_owned(),
+                StatusTone::Neutral,
+            ),
+            AppUpdateState::Downloading(version) => (
+                format!(
+                    "{} · {version}",
+                    language.localized(copy::app_update::DOWNLOADING)
+                ),
+                StatusTone::Neutral,
+            ),
+            AppUpdateState::Ready(staged) => (
+                copy::app_update::ready_version(language, &staged.version),
+                StatusTone::Success,
+            ),
+            AppUpdateState::Installing(version) => (
+                format!(
+                    "{} · {version}",
+                    language.localized(copy::app_update::INSTALLING)
+                ),
+                StatusTone::Warning,
+            ),
+            AppUpdateState::Current => (
+                language.localized(copy::app_update::UP_TO_DATE).to_owned(),
+                StatusTone::Success,
+            ),
+            AppUpdateState::Failed(error) => (
+                copy::app_update::error(language, *error).to_owned(),
+                StatusTone::Error,
+            ),
+            AppUpdateState::Unsupported => (
+                language.localized(copy::app_update::UNSUPPORTED).to_owned(),
+                StatusTone::Neutral,
+            ),
+        }
+    }
+
+    fn app_update_action(&self, language: Language) -> (&'static str, bool, bool, bool) {
+        let ready = matches!(self.app_update_state, AppUpdateState::Ready(_));
+        let busy = self.app_update_state.is_busy();
+        let supported = !matches!(self.app_update_state, AppUpdateState::Unsupported);
+        let button_label = if ready {
+            language.localized(copy::app_update::RESTART_AND_UPDATE)
+        } else if matches!(self.app_update_state, AppUpdateState::Failed(_)) {
+            language.localized(copy::app_update::TRY_AGAIN)
+        } else if matches!(self.app_update_state, AppUpdateState::Checking) {
+            language.localized(copy::app_update::CHECKING)
+        } else if matches!(self.app_update_state, AppUpdateState::Downloading(_)) {
+            language.localized(copy::app_update::DOWNLOADING)
+        } else if matches!(self.app_update_state, AppUpdateState::Installing(_)) {
+            language.localized(copy::app_update::INSTALLING)
+        } else {
+            language.localized(copy::app_update::CHECK_FOR_UPDATES)
+        };
+        (button_label, ready, busy, supported)
+    }
+
     fn language_option(
         preference: LanguagePreference,
         selected: bool,

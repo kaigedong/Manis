@@ -1,4 +1,5 @@
 mod app;
+mod app_update;
 mod assets;
 mod brand;
 mod components;
@@ -21,6 +22,12 @@ mod tray;
 pub use app::ManisApp;
 pub use assets::Assets;
 pub use tray::{install as install_tray, open_window, show_or_open_window};
+
+/// Returns the version embedded by the packaging workflow.
+#[must_use]
+pub fn version() -> &'static str {
+    app_update::current_version()
+}
 
 struct ManisRootView {
     app: gpui::Entity<ManisApp>,

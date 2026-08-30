@@ -63,6 +63,10 @@ CI 会检查三个平台，但“能够编译”不代表该平台上的所有�
 Package workflow 会分别构建 Apple Silicon、Intel 的未公证 macOS 应用包，以及支持原生
 Wayland 的实验性 Arch Linux `x86_64` 软件包，并附带校验文件。每次提交合并到 `main` 后，
 工作流会覆盖更新名为 `latest` 的公开滚动 Pre-release；手动运行的 Actions 产物保留 14 天。
+滚动构建使用 `0.1.<Package 运行编号>` 作为单调递增版本，并发布由 GitHub Release 摘要
+保护的更新清单。通过这些测试包装入的 Manis 会每小时在后台检查和校验更新；下载完成后，
+可在“设置 → 通用”或底部状态栏点击“重启并更新”。Arch/CachyOS 安装时会通过 polkit 请求
+一次管理员授权，以便继续由 pacman 管理软件包。
 推送任意版本标签时，工作流还会创建独立的 Draft Release，待维护者完成发布清单后再决定
 是否公开。安装前请阅读
 [macOS](packaging/macos/README.md) 与 [Arch Linux](packaging/archlinux/README.md) 打包说明。

@@ -23,10 +23,11 @@ use manis_mihomo::{Connection, ObservedRouteEvidence, RuntimeConfig};
 use manis_profile::{QxRuleList, SecretUrl};
 
 use crate::{
+    app_update::{self, AppUpdateError, StagedUpdate},
     assets, brand,
     components::{
         ActionRole, StatusTone, action_button, empty_state, page_heading, section_heading,
-        status_badge,
+        status_badge, style_action_button,
     },
     core_update,
     diagnostics::{
@@ -118,6 +119,27 @@ enum MihomoCoreUpdateOutcome {
         message: String,
         recovered: Option<mihomo::RuntimeSnapshot>,
     },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum AppUpdateState {
+    Idle,
+    Checking,
+    Downloading(String),
+    Ready(StagedUpdate),
+    Installing(String),
+    Current,
+    Failed(AppUpdateError),
+    Unsupported,
+}
+
+impl AppUpdateState {
+    const fn is_busy(&self) -> bool {
+        matches!(
+            self,
+            Self::Checking | Self::Downloading(_) | Self::Installing(_)
+        )
+    }
 }
 
 fn perform_mihomo_core_update(
@@ -861,6 +883,7 @@ pub struct ManisApp {
     runtime: KernelRuntime,
     kernel_switch_state: KernelSwitchState,
     mihomo_core_update_state: MihomoCoreUpdateState,
+    app_update_state: AppUpdateState,
     controller: ControllerState,
     observed_routes: Vec<ObservedRouteEvidence>,
     source_providers: Vec<LoadedProvider>,
@@ -955,6 +978,7 @@ impl ManisApp {
         let mut app = Self::new();
         app.lifecycle_subscriptions.app_lifecycle = Some(cx.on_app_quit(Self::shutdown_for_quit));
         app.restore_imported_subscriptions(cx);
+        Self::start_app_update_polling(cx);
         if matches!(app.mihomo_core_update_state, MihomoCoreUpdateState::Missing) {
             app.update_mihomo_core(cx);
         }
@@ -1031,6 +1055,7 @@ impl ManisApp {
             runtime,
             kernel_switch_state: KernelSwitchState::Idle,
             mihomo_core_update_state: Self::initial_mihomo_core_update_state(),
+            app_update_state: AppUpdateState::Idle,
             controller: ControllerState::Disconnected,
             observed_routes: Vec::new(),
             source_providers: Vec::new(),
@@ -2540,7 +2565,7 @@ impl Render for ManisApp {
             .child(self.chrome(theme, size_class, cx))
             .child(self.workspace_content(state, theme, window, cx))
             .children(gpui_component::Root::render_sheet_layer(window, cx))
-            .child(self.status_bar(theme))
+            .child(self.status_bar(theme, cx))
     }
 }
 
