@@ -166,6 +166,8 @@ impl SystemProxySession {
 pub(crate) struct TunDnsSession {
     #[cfg(target_os = "macos")]
     previous: Option<macos::DnsSnapshot>,
+    #[cfg(target_os = "linux")]
+    previous: Option<linux::DnsSnapshot>,
     prepared: bool,
     applied: bool,
 }
@@ -178,6 +180,8 @@ impl TunDnsSession {
     ) -> Result<(), SystemProxyError> {
         #[cfg(target_os = "macos")]
         macos::recover_stale_tun_dns(language)?;
+        #[cfg(target_os = "linux")]
+        linux::recover_stale_tun_dns(language)?;
 
         self.prepared = false;
         self.applied = false;
@@ -195,6 +199,10 @@ impl TunDnsSession {
         #[cfg(target_os = "macos")]
         {
             self.previous = Some(macos::prepare_tun_dns(language)?);
+        }
+        #[cfg(target_os = "linux")]
+        {
+            self.previous = Some(linux::prepare_tun_dns(language)?);
         }
         self.prepared = true;
         Ok(())
@@ -217,6 +225,10 @@ impl TunDnsSession {
         if let Some(previous) = self.previous.as_ref() {
             macos::apply_tun_dns(previous, language)?;
         }
+        #[cfg(target_os = "linux")]
+        if let Some(previous) = self.previous.as_ref() {
+            linux::apply_tun_dns(previous, language)?;
+        }
         Ok(())
     }
 
@@ -232,6 +244,14 @@ impl TunDnsSession {
         if let Some(previous) = self.previous.as_ref() {
             if self.applied {
                 macos::restore_tun_dns(previous, language)?;
+            }
+            delete_tun_dns_recovery_snapshot(language)?;
+            self.previous = None;
+        }
+        #[cfg(target_os = "linux")]
+        if let Some(previous) = self.previous.as_ref() {
+            if self.applied {
+                linux::restore_tun_dns(previous, language)?;
             }
             delete_tun_dns_recovery_snapshot(language)?;
             self.previous = None;
@@ -274,7 +294,7 @@ fn tun_dns_recovery_snapshot_path(language: Language) -> Result<PathBuf, SystemP
         })
 }
 
-#[cfg(all(target_os = "macos", not(test)))]
+#[cfg(all(any(target_os = "macos", target_os = "linux"), not(test)))]
 fn read_tun_dns_recovery_snapshot(language: Language) -> Result<Option<String>, SystemProxyError> {
     let path = tun_dns_recovery_snapshot_path(language)?;
     read_recovery_snapshot_at(&path, language)
@@ -1542,9 +1562,17 @@ mod linux {
     use crate::localization::{Language, copy};
 
     use super::{
-        ProxyPorts, RECOVERY_VERSION, SystemProxyError, decode_string, delete_recovery_snapshot,
-        encode_string, read_recovery_snapshot, write_recovery_snapshot,
+        ProxyPorts, RECOVERY_VERSION, SystemProxyError, TUN_DNS_RECOVERY_VERSION, decode_string,
+        delete_recovery_snapshot, encode_string, read_recovery_snapshot, write_recovery_snapshot,
+        write_tun_dns_recovery_snapshot,
     };
+    #[cfg(not(test))]
+    use super::{delete_tun_dns_recovery_snapshot, read_tun_dns_recovery_snapshot};
+
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    pub(super) struct DnsSnapshot {
+        device: String,
+    }
 
     #[derive(Clone, Debug, Eq, PartialEq)]
     pub(super) struct GnomeSnapshot {
@@ -1555,6 +1583,74 @@ mod linux {
         https_port: String,
         socks_host: String,
         socks_port: String,
+    }
+
+    pub(super) fn prepare_tun_dns(language: Language) -> Result<DnsSnapshot, SystemProxyError> {
+        let snapshot = DnsSnapshot {
+            device: manis_profile::LINUX_TUN_DEVICE.to_owned(),
+        };
+        write_tun_dns_recovery_snapshot(&encode_dns_snapshot(&snapshot), language)?;
+        Ok(snapshot)
+    }
+
+    pub(super) fn apply_tun_dns(
+        snapshot: &DnsSnapshot,
+        _language: Language,
+    ) -> Result<(), SystemProxyError> {
+        if snapshot.device != manis_profile::LINUX_TUN_DEVICE {
+            return Err(SystemProxyError::CommandFailed(
+                "Linux TUN DNS recovery snapshot names an unexpected interface".to_owned(),
+            ));
+        }
+        crate::linux_privileged::install_tun_dns()
+            .map_err(|error| SystemProxyError::CommandFailed(error.to_string()))
+    }
+
+    pub(super) fn restore_tun_dns(
+        snapshot: &DnsSnapshot,
+        _language: Language,
+    ) -> Result<(), SystemProxyError> {
+        if snapshot.device != manis_profile::LINUX_TUN_DEVICE {
+            return Err(SystemProxyError::CommandFailed(
+                "Linux TUN DNS recovery snapshot names an unexpected interface".to_owned(),
+            ));
+        }
+        crate::linux_privileged::restore_tun_dns()
+            .map_err(|error| SystemProxyError::CommandFailed(error.to_string()))
+    }
+
+    #[cfg(not(test))]
+    pub(super) fn recover_stale_tun_dns(language: Language) -> Result<(), SystemProxyError> {
+        let Some(contents) = read_tun_dns_recovery_snapshot(language)? else {
+            return Ok(());
+        };
+        let snapshot = decode_dns_snapshot(&contents).ok_or_else(|| {
+            SystemProxyError::CommandFailed(
+                language
+                    .localized(copy::system_proxy::MANIS_TUN_DNS_RECOVERY_SNAPSHOT_IS_INVALID)
+                    .to_owned(),
+            )
+        })?;
+        restore_tun_dns(&snapshot, language)?;
+        delete_tun_dns_recovery_snapshot(language)
+    }
+
+    fn encode_dns_snapshot(snapshot: &DnsSnapshot) -> String {
+        format!(
+            "{TUN_DNS_RECOVERY_VERSION}\nplatform=linux-resolved\ndevice\t{}\n",
+            encode_string(&snapshot.device)
+        )
+    }
+
+    fn decode_dns_snapshot(contents: &str) -> Option<DnsSnapshot> {
+        let mut lines = contents.lines();
+        (lines.next()? == TUN_DNS_RECOVERY_VERSION).then_some(())?;
+        (lines.next()? == "platform=linux-resolved").then_some(())?;
+        let fields: Vec<_> = lines.next()?.split('\t').collect();
+        (fields.len() == 2 && fields[0] == "device").then_some(())?;
+        lines.all(|line| line.trim().is_empty()).then_some(())?;
+        let device = decode_string(fields[1])?;
+        (device == manis_profile::LINUX_TUN_DEVICE).then_some(DnsSnapshot { device })
     }
 
     pub(super) fn enable(
@@ -1759,6 +1855,26 @@ mod linux {
                     .to_owned(),
             )
         })
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::{DnsSnapshot, decode_dns_snapshot, encode_dns_snapshot};
+
+        #[test]
+        fn linux_tun_dns_snapshot_is_bound_to_the_managed_interface() {
+            let snapshot = DnsSnapshot {
+                device: manis_profile::LINUX_TUN_DEVICE.to_owned(),
+            };
+            let encoded = encode_dns_snapshot(&snapshot);
+            assert_eq!(decode_dns_snapshot(&encoded), Some(snapshot));
+            assert!(
+                decode_dns_snapshot(
+                    "manis-tun-dns-v1\nplatform=linux-resolved\ndevice\t65746830\n"
+                )
+                .is_none()
+            );
+        }
     }
 }
 

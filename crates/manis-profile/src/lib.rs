@@ -12,6 +12,12 @@ const MAX_VLESS_FIELD_BYTES: usize = 1024;
 const MAX_PROXY_DNS_SERVERS: usize = 8;
 const MAX_PROXY_DNS_SERVER_BYTES: usize = 1024;
 const GROUP_TEST_URL: &str = "https://www.gstatic.com/generate_204";
+/// Stable Linux TUN interface name used by Mihomo and systemd-resolved integration.
+#[cfg(target_os = "linux")]
+pub const LINUX_TUN_DEVICE: &str = "Meta";
+/// Synthetic TUN peer used as the systemd-resolved DNS endpoint on Linux.
+#[cfg(target_os = "linux")]
+pub const LINUX_TUN_DNS_SERVER: &str = "198.18.0.2";
 /// Internal selector that keeps the node-page global exit independent from rule policy groups.
 pub const MANIS_GLOBAL_GROUP_NAME: &str = "__MANIS_GLOBAL__";
 const SUBSCRIPTION_METADATA_EXCLUDE_FILTER: &str =
@@ -1088,6 +1094,8 @@ pub fn render_mihomo_yaml_with_tun(
     yaml.push_str("  store-fake-ip: true\ntun:\n");
     writeln!(yaml, "  enable: {tun_enabled}").expect("String write cannot fail");
     yaml.push_str("  stack: \"gvisor\"\n  auto-route: true\n");
+    #[cfg(target_os = "linux")]
+    writeln!(yaml, "  device: {}", quoted(LINUX_TUN_DEVICE)).expect("String write cannot fail");
     // systemd-resolved originates DNS from its loopback stub. Mihomo's non-strict Linux route
     // rules deliberately return port 53 to the main table, bypassing `dns-hijack` and fake-IP.
     writeln!(yaml, "  strict-route: {}", cfg!(target_os = "linux"))
