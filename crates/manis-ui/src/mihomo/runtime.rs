@@ -233,31 +233,8 @@ impl ControllerRuntime {
         let (manager, spec) = self.managed_mihomo_tun_parts()?;
         let profile = compile_managed_generated_profile(spec)?;
         let payload = render_generated_profile_with_tun(spec, &profile, enabled)?;
-        #[cfg(target_os = "macos")]
         if enabled {
-            if let Some(conflict) =
-                crate::macos_privileged::existing_tun_route().map_err(|error| {
-                    LoadError::Runtime(format!("macOS TUN routes could not be inspected: {error}"))
-                })?
-            {
-                record_event(LogLevel::Error, "controller.tun.conflict", conflict.clone());
-                return Err(LoadError::Runtime(format!(
-                    "another TUN is using the system proxy route ({conflict}); turn off TUN mode in other proxy applications first"
-                )));
-            }
-            if let Err(error) = self.ensure_privileged_mihomo() {
-                record_event(
-                    LogLevel::Error,
-                    "controller.tun.failed",
-                    format!("enabled=true phase=privilege_promotion error={error}"),
-                );
-                return Err(error);
-            }
-            record_event(
-                LogLevel::Info,
-                "controller.tun.interface_selection",
-                "strategy=auto-detect-interface",
-            );
+            self.prepare_tun_activation()?;
         }
         let controller_secret = self.controller_secret();
         let endpoint = running_managed_endpoint(manager)?;
@@ -315,6 +292,45 @@ impl ControllerRuntime {
             ),
         }
         result
+    }
+
+    fn prepare_tun_activation(&self) -> Result<(), LoadError> {
+        #[cfg(target_os = "macos")]
+        {
+            if let Some(conflict) =
+                crate::macos_privileged::existing_tun_route().map_err(|error| {
+                    LoadError::Runtime(format!("macOS TUN routes could not be inspected: {error}"))
+                })?
+            {
+                record_event(LogLevel::Error, "controller.tun.conflict", conflict.clone());
+                return Err(LoadError::Runtime(format!(
+                    "another TUN is using the system proxy route ({conflict}); turn off TUN mode in other proxy applications first"
+                )));
+            }
+            if let Err(error) = self.ensure_privileged_mihomo() {
+                record_event(
+                    LogLevel::Error,
+                    "controller.tun.failed",
+                    format!("enabled=true phase=privilege_promotion error={error}"),
+                );
+                return Err(error);
+            }
+            record_event(
+                LogLevel::Info,
+                "controller.tun.interface_selection",
+                "strategy=auto-detect-interface",
+            );
+        }
+        #[cfg(target_os = "linux")]
+        if let Err(error) = self.ensure_linux_tun_capabilities() {
+            record_event(
+                LogLevel::Error,
+                "controller.tun.failed",
+                format!("enabled=true phase=capability_promotion error={error}"),
+            );
+            return Err(error);
+        }
+        Ok(())
     }
 
     fn managed_mihomo_tun_parts(
@@ -461,6 +477,94 @@ impl ControllerRuntime {
             readiness_probe(spec),
         );
         start_promoted_mihomo(&mut manager, spec, final_path, was_running, privileged)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn ensure_linux_tun_capabilities(&self) -> Result<(), LoadError> {
+        let Self::Managed {
+            manager,
+            generated_profile: Some(spec),
+            privileged,
+            ..
+        } = self
+        else {
+            return Err(LoadError::Runtime(
+                "Linux TUN requires a Mihomo configuration generated from saved Manis sources"
+                    .to_owned(),
+            ));
+        };
+        if spec.kernel != KernelKind::Mihomo {
+            return Err(LoadError::Runtime(
+                "Linux TUN capability authorization supports only Mihomo".to_owned(),
+            ));
+        }
+        if privileged.load(Ordering::Acquire) {
+            record_event(
+                LogLevel::Debug,
+                "helper.promotion.skipped",
+                "platform=linux reason=already_capable",
+            );
+            return Ok(());
+        }
+
+        record_event(
+            LogLevel::Info,
+            "helper.promotion.requested",
+            "platform=linux kernel=mihomo capabilities=cap_net_admin,cap_net_raw",
+        );
+        let (state, privileged_binary) = crate::linux_privileged::ensure_tun_capabilities()
+            .map_err(|error| LoadError::Runtime(error.to_string()))?;
+
+        let final_path = spec.data_dir.join(GENERATED_PROFILE_FILE);
+        let mut privileged_spec = spec.clone();
+        privileged_spec.binary = privileged_binary;
+        let config = managed_engine_config(&privileged_spec, final_path.clone());
+        validate_managed_config(&config)?;
+
+        let mut manager = manager
+            .lock()
+            .map_err(|_poisoned| LoadError::Runtime(MANAGED_KERNEL_LOCK_POISONED.to_owned()))?;
+        let was_running = manager.running_endpoint()?.is_some();
+        if was_running {
+            manager.stop()?;
+        }
+        *manager = EngineManager::new(config, ReadinessPolicy::default(), readiness_probe(spec));
+        match manager.start() {
+            Ok(_endpoint) => {
+                privileged.store(true, Ordering::Release);
+                record_event(
+                    LogLevel::Info,
+                    "helper.promotion.succeeded",
+                    format!(
+                        "platform=linux capability_state={state:?} ordinary_core_restarted={was_running}"
+                    ),
+                );
+                Ok(())
+            }
+            Err(error) => {
+                record_event(
+                    LogLevel::Error,
+                    "helper.promotion.failed",
+                    format!("platform=linux error={error}"),
+                );
+                let fallback_config = managed_engine_config(spec, final_path);
+                *manager = EngineManager::new(
+                    fallback_config,
+                    ReadinessPolicy::default(),
+                    readiness_probe(spec),
+                );
+                let fallback = was_running.then(|| manager.start().err()).flatten();
+                let message = fallback.map_or_else(
+                    || format!("Mihomo could not start after Linux TUN authorization: {error}"),
+                    |fallback| {
+                        format!(
+                            "Mihomo could not start after Linux TUN authorization: {error}; restoring ordinary Mihomo also failed: {fallback}"
+                        )
+                    },
+                );
+                Err(LoadError::Runtime(message))
+            }
+        }
     }
 
     pub(crate) fn set_routing_mode(&self, mode: RoutingMode) -> Result<(), LoadError> {

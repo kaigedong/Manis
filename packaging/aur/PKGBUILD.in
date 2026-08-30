@@ -19,6 +19,7 @@ depends=(
   'gtk3'
   'hicolor-icon-theme'
   'libappindicator'
+  'libcap'
   'libx11'
   'libxcb'
   'libxkbcommon'

@@ -578,7 +578,7 @@ fn core_binary_name() -> &'static str {
 }
 
 #[cfg_attr(test, allow(dead_code))]
-fn bundled_seed_path() -> Option<PathBuf> {
+pub(crate) fn bundled_seed_path() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let exe_dir = exe.parent()?;
     if cfg!(target_os = "macos") {

@@ -385,6 +385,28 @@ fn managed_engine_config(
     }
 }
 
+fn managed_engine_config_for_privilege(
+    spec: &ManagedGeneratedProfile,
+    config_file: PathBuf,
+    privileged: bool,
+) -> Result<ManagedEngineConfig, LoadError> {
+    if privileged && spec.kernel != KernelKind::Mihomo {
+        return Err(LoadError::Runtime(
+            "privileged managed runtime supports only Mihomo".to_owned(),
+        ));
+    }
+    #[cfg(target_os = "linux")]
+    if privileged {
+        let mut privileged_spec = spec.clone();
+        privileged_spec.binary = crate::linux_privileged::packaged_tun_core()
+            .map_err(|error| LoadError::Runtime(error.to_string()))?;
+        return Ok(managed_engine_config(&privileged_spec, config_file));
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = privileged;
+    Ok(managed_engine_config(spec, config_file))
+}
+
 fn readiness_probe(spec: &ManagedGeneratedProfile) -> Box<dyn ReadinessProbe> {
     match spec.kernel {
         KernelKind::Mihomo => Box::new(MihomoReadinessProbe),
