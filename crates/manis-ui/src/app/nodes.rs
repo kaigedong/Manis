@@ -1906,10 +1906,13 @@ impl ManisApp {
             cx.notify();
             return;
         };
-        let failure = result.as_ref().err().map(ToString::to_string);
+        let failure = result
+            .as_ref()
+            .err()
+            .map(|error| Self::benchmark_failure_description(language, error));
         let accepted = match result {
             Ok(delays) => state.complete(generation, total, delays),
-            Err(_error) => state.fail(generation),
+            Err(_error) => state.fail(generation, failure.clone()),
         };
         if !accepted {
             return;
@@ -3464,7 +3467,13 @@ mod tests {
     fn benchmark_state_reports_running_only_for_active_variant() {
         assert!(GroupBenchmarkState::running(1).is_running());
         assert!(!GroupBenchmarkState::Idle.is_running());
-        assert!(!GroupBenchmarkState::Failed { generation: 1 }.is_running());
+        assert!(
+            !GroupBenchmarkState::Failed {
+                generation: 1,
+                message: None
+            }
+            .is_running()
+        );
     }
 
     #[test]

@@ -642,12 +642,12 @@ impl ManisApp {
         ) {
             return;
         }
-        let candidate_names = group
+        let targets = group
             .nodes
             .iter()
-            .map(|node| node.name.clone())
+            .map(mihomo::ProxyDelayTarget::from_policy_node)
             .collect::<Vec<_>>();
-        if candidate_names.is_empty() {
+        if targets.is_empty() {
             language
                 .localized(copy::app::THIS_POLICY_GROUP_HAS_NO_TESTABLE_CANDIDATES)
                 .clone_into(&mut self.status);
@@ -662,14 +662,14 @@ impl ManisApp {
             return;
         };
         self.status =
-            copy::app::testing_policy_candidates(language, &group.name, candidate_names.len());
+            copy::app::testing_policy_candidates(language, &group.name, targets.len());
         trace_ui(UiEvent::GroupBenchmarkStarted);
 
         let runtime = self.runtime.clone();
         let group_id = group.id.clone();
         let group_name = group.name.clone();
         let group_kind = group.kind;
-        let total = candidate_names.len();
+        let total = targets.len();
         let run = PolicyBenchmarkRun {
             key,
             generation,
@@ -683,13 +683,13 @@ impl ManisApp {
                 .spawn(async move {
                     if group_kind == manis_core::PolicyGroupKind::Direct {
                         runtime
-                            .test_proxy_candidates_delay(&group_name, &candidate_names)
+                            .test_proxy_delay_targets_with_progress(&targets, |_name, _delay| {})
                             .map(|delays| mihomo::PolicyGroupBenchmarkSnapshot {
                                 delays,
                                 current: None,
                             })
                     } else {
-                        runtime.test_policy_group_delay(&group_name, &candidate_names)
+                        runtime.test_policy_group_delay(&group_name, &targets)
                     }
                 })
                 .await;
@@ -722,7 +722,18 @@ impl ManisApp {
         self.managed_policies.active_benchmark_generation = None;
         let (delays, current, failure) = match result {
             Ok(snapshot) => (Some(snapshot.delays), snapshot.current, None),
-            Err(error) => (None, None, Some(error.to_string())),
+            Err(error) => {
+                record_event(
+                    LogLevel::Warn,
+                    "group.delay.failed",
+                    format!("group={} error={error}", group_id.as_str()),
+                );
+                (
+                    None,
+                    None,
+                    Some(Self::benchmark_failure_description(language, &error)),
+                )
+            }
         };
         if let Some(delays) = delays.as_ref()
             && let Some(catalog) = self.catalog.as_mut()
@@ -735,7 +746,7 @@ impl ManisApp {
         };
         let accepted = match delays {
             Some(delays) => state.complete(generation, total, delays),
-            None => state.fail(generation),
+            None => state.fail(generation, failure.clone()),
         };
         if !accepted {
             return;

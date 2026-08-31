@@ -419,6 +419,41 @@ impl ManisApp {
         )
     }
 
+    fn benchmark_failure_description(language: Language, error: &mihomo::LoadError) -> String {
+        use manis_mihomo::MihomoError;
+        use std::io::ErrorKind;
+        let message = match error {
+            mihomo::LoadError::NoLatencyResults => copy::app::BENCHMARK_NO_RESULTS,
+            mihomo::LoadError::Mihomo(MihomoError::HttpStatus {
+                status_code: 401 | 403,
+                ..
+            }) => copy::app::BENCHMARK_ACCESS_DENIED,
+            mihomo::LoadError::Mihomo(MihomoError::HttpStatus {
+                status_code: 404, ..
+            }) => copy::app::BENCHMARK_TARGET_MISSING,
+            mihomo::LoadError::Mihomo(MihomoError::HttpStatus {
+                status_code: 408 | 504,
+                ..
+            }) => copy::app::BENCHMARK_PROBE_TIMEOUT,
+            mihomo::LoadError::Mihomo(MihomoError::HttpStatus {
+                status_code: 503, ..
+            }) => copy::app::BENCHMARK_PROBE_FAILED,
+            mihomo::LoadError::Mihomo(MihomoError::Io(source))
+                if matches!(source.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock) =>
+            {
+                copy::app::BENCHMARK_RESPONSE_TIMEOUT
+            }
+            mihomo::LoadError::Mihomo(MihomoError::Io(_)) => {
+                copy::app::BENCHMARK_CONTROLLER_UNREACHABLE
+            }
+            mihomo::LoadError::Mihomo(
+                MihomoError::Json { .. } | MihomoError::InvalidResponse(_),
+            ) => copy::app::BENCHMARK_INVALID_RESPONSE,
+            _ => return error.to_string(),
+        };
+        language.localized(message).to_owned()
+    }
+
     fn policy_group_benchmark_feedback(
         language: Language,
         state: &GroupBenchmarkState,
@@ -441,12 +476,14 @@ impl ManisApp {
                 ),
                 theme.status_success,
             ),
-            GroupBenchmarkState::Failed { .. } => (
-                language
-                    .localized(
-                        copy::app::LATENCY_TEST_FAILED_THIS_POLICY_GROUP_RETURNED_NO_DELAY_DATA,
-                    )
-                    .to_owned(),
+            GroupBenchmarkState::Failed { message, .. } => (
+                format!(
+                    "{}：{}",
+                    language.localized(copy::app::POLICY_GROUP_BENCHMARK_FAILED),
+                    message.as_deref().unwrap_or_else(|| {
+                        language.localized(copy::common::MIHOMO_DID_NOT_RETURN_A_RESULT)
+                    }),
+                ),
                 theme.route_trace,
             ),
         };
