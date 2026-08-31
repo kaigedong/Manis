@@ -36,8 +36,20 @@ pub(crate) fn action_button(
     style_action_button(Button::new(id).label(label), role, size)
 }
 
+/// A row action owns its mouse target without blocking scrolling of the list.
+/// Keep ordinary buttons transparent to parent popover triggers.
+pub(crate) fn row_action_button(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    role: ActionRole,
+    size: ControlSize,
+) -> Button {
+    action_button(id, label, role, size).block_mouse_except_scroll()
+}
+
 pub(crate) fn style_action_button(button: Button, role: ActionRole, size: ControlSize) -> Button {
     primary_button_interaction(button)
+        .cursor_pointer()
         .with_variant(role.variant())
         .with_size(gpui_component::Size::Small)
         .h(size.height())
@@ -373,6 +385,7 @@ fn render_button_gallery(dark: bool) -> Div {
                         ControlSize::Compact,
                     )
                     .disabled(true)
+                    .cursor_default()
                     .w(px(150.0)),
                 )
                 .child(
@@ -384,6 +397,7 @@ fn render_button_gallery(dark: bool) -> Div {
                     )
                     .icon(IconName::Redo2)
                     .loading(true)
+                    .cursor_default()
                     .w(px(164.0)),
                 ),
         )
@@ -418,7 +432,7 @@ mod tests {
 
     use gpui::{
         Context, InteractiveElement as _, IntoElement as _, Modifiers, ParentElement as _, Render,
-        Styled as _, Window, div, px,
+        Styled as _, Window, div, prelude::FluentBuilder as _, px,
     };
     use gpui_component::button::{Button, ButtonVariant};
 
@@ -435,17 +449,36 @@ mod tests {
         assert_eq!(ActionRole::Danger.variant(), ButtonVariant::Danger);
     }
 
+    #[test]
+    fn actionable_button_roles_use_the_pointing_hand_cursor() {
+        for role in [
+            ActionRole::Primary,
+            ActionRole::Secondary,
+            ActionRole::Danger,
+        ] {
+            let mut button = action_button("cursor", "Action", role, ControlSize::Standard);
+            assert_eq!(
+                button.style().mouse_cursor,
+                Some(gpui::CursorStyle::PointingHand)
+            );
+        }
+    }
+
     struct PopoverHarness;
 
     impl Render for PopoverHarness {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl gpui::IntoElement {
             div().size_full().p(px(80.)).child(anchored_popover(
                 "positioned-popover",
-                Button::new("positioned-trigger")
-                    .debug_selector(|| "positioned-trigger".into())
-                    .label("Open")
-                    .w(px(180.))
-                    .h(px(38.)),
+                action_button(
+                    "positioned-trigger",
+                    "Open",
+                    ActionRole::Secondary,
+                    ControlSize::Standard,
+                )
+                .debug_selector(|| "positioned-trigger".into())
+                .w(px(180.))
+                .h(px(38.)),
                 div()
                     .debug_selector(|| "positioned-content".into())
                     .h(px(80.)),
@@ -520,6 +553,7 @@ mod tests {
                         .w(px(160.0))
                         .disabled(disabled)
                         .loading(loading)
+                        .when(disabled || loading, gpui::Styled::cursor_default)
                         .on_click(move |_, _, _| clicks.set(clicks.get() + 1))
                     }),
                 )
@@ -608,6 +642,111 @@ mod tests {
     }
 
     struct FoundationHarness;
+
+    struct NestedButtonHarness {
+        hovered: std::rc::Rc<std::cell::Cell<bool>>,
+        edits: std::rc::Rc<std::cell::Cell<usize>>,
+        actions: std::rc::Rc<std::cell::Cell<usize>>,
+        scroll: gpui::ScrollHandle,
+    }
+
+    impl Render for NestedButtonHarness {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl gpui::IntoElement {
+            use gpui::StatefulInteractiveElement as _;
+            use gpui_component::Disableable as _;
+            let hovered = self.hovered.clone();
+            let edits = self.edits.clone();
+            div()
+                .id("scroll-area")
+                .h(px(240.0))
+                .overflow_y_scroll()
+                .track_scroll(&self.scroll)
+                .p(px(20.0))
+                .child(
+                    div()
+                        .id("editable-row")
+                        .debug_selector(|| "editable-row".into())
+                        .w(px(400.0))
+                        .p(px(16.0))
+                        .pb(px(300.0))
+                        .cursor_pointer()
+                        .hover(|style| style.bg(Theme::light().action_soft))
+                        .on_hover(move |value, _, _| hovered.set(*value))
+                        .on_click(move |_, _, _| edits.set(edits.get() + 1))
+                        .child(div().h(px(40.0)).child("Edit source"))
+                        .children(
+                            [
+                                ("nested-enabled", false, false),
+                                ("nested-disabled", true, false),
+                                ("nested-loading", false, true),
+                            ]
+                            .map(|(id, disabled, loading)| {
+                                let actions = self.actions.clone();
+                                super::row_action_button(
+                                    id,
+                                    "Update",
+                                    ActionRole::Secondary,
+                                    ControlSize::Compact,
+                                )
+                                .debug_selector(move || id.into())
+                                .disabled(disabled)
+                                .loading(loading)
+                                .when(disabled || loading, gpui::Styled::cursor_default)
+                                .on_click(move |_, _, cx| {
+                                    cx.stop_propagation();
+                                    actions.set(actions.get() + 1);
+                                })
+                            }),
+                        ),
+                )
+        }
+    }
+
+    #[gpui::test]
+    fn nested_buttons_own_hover_and_do_not_fall_through_to_row_edit(cx: &mut gpui::TestAppContext) {
+        cx.update(crate::init);
+        let hovered = std::rc::Rc::new(std::cell::Cell::new(false));
+        let edits = std::rc::Rc::new(std::cell::Cell::new(0));
+        let actions = std::rc::Rc::new(std::cell::Cell::new(0));
+        let scroll = gpui::ScrollHandle::new();
+        let (_, cx) = cx.add_window_view(|_, _| NestedButtonHarness {
+            hovered: hovered.clone(),
+            edits: edits.clone(),
+            actions: actions.clone(),
+            scroll: scroll.clone(),
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let row = cx.debug_bounds("editable-row").unwrap();
+        let body = row.origin + gpui::point(px(24.0), px(24.0));
+        cx.simulate_mouse_move(body, None, Modifiers::none());
+        assert!(hovered.get(), "row body must retain its edit hover");
+        for id in ["nested-enabled", "nested-disabled", "nested-loading"] {
+            let button = cx.debug_bounds(id).unwrap();
+            cx.simulate_mouse_move(button.center(), None, Modifiers::none());
+            assert!(!hovered.get(), "{id} must not highlight its parent row");
+            cx.simulate_click(button.center(), Modifiers::none());
+            assert_eq!(edits.get(), 0, "{id} must not trigger row editing");
+        }
+        assert_eq!(actions.get(), 1);
+        cx.simulate_mouse_move(body, None, Modifiers::none());
+        assert!(
+            hovered.get(),
+            "row hover must return after leaving controls"
+        );
+        cx.simulate_click(body, Modifiers::none());
+        assert_eq!(edits.get(), 1);
+        let button = cx.debug_bounds("nested-enabled").unwrap();
+        cx.simulate_mouse_move(button.center(), None, Modifiers::none());
+        cx.simulate_event(gpui::ScrollWheelEvent {
+            position: button.center(),
+            delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.0), px(-60.0))),
+            ..Default::default()
+        });
+        assert!(
+            scroll.offset().y < px(0.0),
+            "scrolling over controls must still move the page"
+        );
+    }
 
     struct ContextMenuHarness(std::rc::Rc<std::cell::Cell<usize>>);
 

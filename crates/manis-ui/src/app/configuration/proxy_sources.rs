@@ -313,7 +313,8 @@ impl ManisApp {
                 language,
             ))
             .disabled(view.busy());
-        let trigger = style_action_button(trigger, ActionRole::Secondary, ControlSize::Standard);
+        let trigger = style_action_button(trigger, ActionRole::Secondary, ControlSize::Standard)
+            .when(view.busy(), gpui::Styled::cursor_default);
         let app = cx.entity();
         crate::components::anchored_popover(
             "subscription-editor-refresh-popover",
@@ -490,6 +491,7 @@ impl ManisApp {
                     ActionRole::Primary,
                     ControlSize::Standard,
                 )
+                .when(view.busy(), gpui::Styled::cursor_default)
                 .on_click(cx.listener(move |this, _, window, cx| {
                     if !view.busy() && this.submit_source_import(&input, cx) {
                         window.close_dialog(cx);
@@ -870,6 +872,7 @@ impl ManisApp {
             })
             .child(
                 Checkbox::new(format!("subscription-enabled-{toggle_id}"))
+                    .block_mouse_except_scroll()
                     .aria_label(subscription.name.clone())
                     .flex_shrink_0()
                     .map(crate::components::primary_button_interaction)
@@ -996,7 +999,7 @@ impl ManisApp {
             .child(presentation.updated.clone())
             .child(div().flex_1())
             .child(
-                action_button(
+                row_action_button(
                     format!("subscription-refresh-{refresh_id}"),
                     if busy {
                         language.localized(copy::configuration::UPDATING)
@@ -1011,6 +1014,7 @@ impl ManisApp {
                 )
                 .disabled(!refresh_enabled)
                 .loading(busy)
+                .when(!refresh_enabled || busy, gpui::Styled::cursor_default)
                 .on_click(cx.listener(move |this, _, _, cx| {
                     cx.stop_propagation();
                     if refresh_enabled {
@@ -1020,7 +1024,7 @@ impl ManisApp {
             )
             .when(controls_enabled, |row| {
                 row.child(
-                    action_button(
+                    row_action_button(
                         format!("remove-{remove_id}"),
                         language.localized(copy::configuration::REMOVE),
                         ActionRole::Danger,
@@ -1082,6 +1086,7 @@ impl ManisApp {
             })
             .child(
                 Checkbox::new(format!("single-node-enabled-{toggle_id}"))
+                    .block_mouse_except_scroll()
                     .aria_label(saved.name.clone())
                     .flex_shrink_0()
                     .map(crate::components::primary_button_interaction)
@@ -1190,7 +1195,7 @@ impl ManisApp {
             .child(div().flex_1())
             .when(controls_enabled, |row| {
                 row.child(
-                    action_button(
+                    row_action_button(
                         format!("remove-single-node-{remove_id}"),
                         language.localized(copy::configuration::REMOVE),
                         ActionRole::Danger,

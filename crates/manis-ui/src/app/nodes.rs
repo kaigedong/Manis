@@ -701,6 +701,7 @@ impl ManisApp {
                                 ActionRole::Danger,
                                 ControlSize::Standard,
                             )
+                            .when(busy, gpui::Styled::cursor_default)
                             .on_click(cx.listener(
                                 move |this, _, window, cx| {
                                     if !busy {
@@ -720,6 +721,7 @@ impl ManisApp {
                             ActionRole::Secondary,
                             ControlSize::Standard,
                         )
+                        .when(busy, gpui::Styled::cursor_default)
                         .on_click(cx.listener(|this, _, window, cx| {
                             if !this.managed_policies.mutation_state.is_busy() {
                                 this.close_managed_policy_editor(cx);
@@ -742,6 +744,7 @@ impl ManisApp {
                             ActionRole::Primary,
                             ControlSize::Standard,
                         )
+                        .when(busy, gpui::Styled::cursor_default)
                         .on_click(cx.listener(|this, _, window, cx| {
                             if !this.managed_policies.mutation_state.is_busy() {
                                 this.save_managed_policy_from_dialog(window, cx);
@@ -1110,6 +1113,7 @@ impl ManisApp {
             ActionRole::Secondary,
             ControlSize::Standard,
         )
+        .when(disabled, gpui::Styled::cursor_default)
         .w_full()
         .child(
             div()

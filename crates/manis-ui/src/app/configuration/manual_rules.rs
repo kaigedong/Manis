@@ -1135,6 +1135,7 @@ impl ManisApp {
                     ActionRole::Primary,
                     ControlSize::Standard,
                 )
+                .when(self.routing_apply_state.is_busy(), gpui::Styled::cursor_default)
                 .on_click(cx.listener(|this, _, window, cx| {
                     if this.submit_manual_rule(cx) {
                         window.close_dialog(cx);
@@ -1422,6 +1423,7 @@ impl ManisApp {
                     ActionRole::Secondary,
                     ControlSize::Icon,
                 )
+                .when(position == 0 || self.routing_apply_state.is_busy(), gpui::Styled::cursor_default)
                 .on_click(cx.listener(move |this, _, _, cx| {
                     cx.stop_propagation();
                     this.move_routing_rule_group(&up_id, -1, cx);
@@ -1440,6 +1442,7 @@ impl ManisApp {
                     ActionRole::Secondary,
                     ControlSize::Icon,
                 )
+                .when(position + 1 >= group_count || self.routing_apply_state.is_busy(), gpui::Styled::cursor_default)
                 .on_click(cx.listener(move |this, _, _, cx| {
                     cx.stop_propagation();
                     this.move_routing_rule_group(&down_id, 1, cx);
