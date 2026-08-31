@@ -870,9 +870,6 @@ impl ManisApp {
                         style_action_button(
                             Button::new("configuration-export")
                                 .label(language.localized(copy::backup::EXPORT))
-                                .border_1()
-                                .border_color(theme.outline_subtle)
-                                .bg(theme.surface_low)
                                 .disabled(disabled),
                             ActionRole::Secondary,
                             ControlSize::Standard,
@@ -885,9 +882,6 @@ impl ManisApp {
                         style_action_button(
                             Button::new("configuration-import")
                                 .label(language.localized(copy::backup::IMPORT))
-                                .border_1()
-                                .border_color(theme.outline_subtle)
-                                .bg(theme.surface_low)
                                 .disabled(disabled),
                             ActionRole::Secondary,
                             ControlSize::Standard,
@@ -900,9 +894,6 @@ impl ManisApp {
                         style_action_button(
                             Button::new("configuration-edit")
                                 .label(language.localized(copy::backup::EDIT))
-                                .border_1()
-                                .border_color(theme.outline_subtle)
-                                .bg(theme.surface_low)
                                 .disabled(disabled),
                             ActionRole::Secondary,
                             ControlSize::Standard,
@@ -938,7 +929,7 @@ impl ManisApp {
                         style_action_button(
                             Button::new("configuration-backups")
                                 .label(language.localized(copy::backup::SHOW_BACKUPS)),
-                            ActionRole::Quiet,
+                            ActionRole::Secondary,
                             ControlSize::Compact,
                         )
                         .mt(Space::Sm.px())

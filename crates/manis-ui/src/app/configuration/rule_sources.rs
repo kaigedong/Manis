@@ -14,8 +14,6 @@ impl ManisApp {
             ActionRole::Primary,
             ControlSize::Compact,
         )
-        .bg(theme.action_primary)
-        .text_color(theme.action_on_primary)
         .on_click(cx.listener(move |this, _, window, cx| {
             this.open_new_qx_rule_editor(cx);
             this.open_qx_rule_source_dialog(window, cx);
@@ -57,8 +55,6 @@ impl ManisApp {
                             ActionRole::Primary,
                             ControlSize::Compact,
                         )
-                        .bg(theme.action_primary)
-                        .text_color(theme.action_on_primary)
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.open_new_qx_rule_editor(cx);
                             this.open_qx_rule_source_dialog(window, cx);
@@ -252,12 +248,10 @@ impl ManisApp {
         let trigger = Button::new("qx-rule-editor-target")
             .accessibility_label(language.localized(copy::configuration::CHOOSE_TARGET_POLICY))
             .dropdown_caret(true)
-            .with_variant(ButtonVariant::Default)
-            .with_size(ControlSize::Standard.component_size())
-            .h(ControlSize::Standard.height())
             .w_full()
             .child(self.rule_sources.target_policy.clone())
             .disabled(view.busy);
+        let trigger = style_action_button(trigger, ActionRole::Secondary, ControlSize::Standard);
         let app = cx.entity();
         crate::components::anchored_popover(
             "qx-rule-editor-target-popover",
@@ -313,15 +307,13 @@ impl ManisApp {
                 language.localized(copy::configuration::CHOOSE_RULE_UPDATE_INTERVAL),
             )
             .dropdown_caret(true)
-            .with_variant(ButtonVariant::Default)
-            .with_size(ControlSize::Standard.component_size())
-            .h(ControlSize::Standard.height())
             .w_full()
             .child(refresh_interval_label(
                 self.rule_sources.editor_refresh_interval,
                 language,
             ))
             .disabled(view.busy);
+        let trigger = style_action_button(trigger, ActionRole::Secondary, ControlSize::Standard);
         let app = cx.entity();
         crate::components::anchored_popover(
             "qx-rule-editor-refresh-popover",
@@ -366,6 +358,20 @@ impl ManisApp {
             } else {
                 gpui::rgba(0x0000_0000)
             })
+            .hover(move |style| {
+                if selected {
+                    style.bg(theme.action_soft)
+                } else {
+                    style.bg(theme.button_hover)
+                }
+            })
+            .active(move |style| {
+                if selected {
+                    style.bg(theme.action_soft)
+                } else {
+                    style.bg(theme.button_active)
+                }
+            })
             .font_weight(if selected {
                 FontWeight::SEMIBOLD
             } else {
@@ -394,8 +400,6 @@ impl ManisApp {
                     ActionRole::Secondary,
                     ControlSize::Standard,
                 )
-                .px(Space::Lg.px())
-                .cursor_pointer()
                 .on_click(cx.listener(|this, _, window, cx| {
                     this.close_qx_rule_editor(cx);
                     window.close_dialog(cx);
@@ -415,18 +419,6 @@ impl ManisApp {
                     ActionRole::Primary,
                     ControlSize::Standard,
                 )
-                .px(Space::Lg.px())
-                .when(!view.busy, gpui::Styled::cursor_pointer)
-                .bg(if view.busy {
-                    theme.action_soft
-                } else {
-                    theme.action_primary
-                })
-                .text_color(if view.busy {
-                    theme.action_primary
-                } else {
-                    theme.action_on_primary
-                })
                 .on_click(cx.listener(move |this, _, window, cx| {
                     if !view.busy && this.submit_qx_rule_import(&input, cx) {
                         window.close_dialog(cx);
@@ -719,13 +711,10 @@ impl ManisApp {
                 action_button(
                     format!("qx-rule-remove-{index}"),
                     language.localized(copy::configuration::REMOVE),
-                    ActionRole::Quiet,
+                    ActionRole::Danger,
                     ControlSize::Compact,
                 )
                 .disabled(!controls_enabled)
-                .when(controls_enabled, gpui::Styled::cursor_pointer)
-                .px_3()
-                .text_color(theme.status_error)
                 .on_click(cx.listener(move |this, _, _, cx| {
                     cx.stop_propagation();
                     if controls_enabled {
@@ -740,7 +729,7 @@ impl ManisApp {
         refreshing: bool,
         enabled: bool,
         language: Language,
-        theme: Theme,
+        _theme: Theme,
         cx: &mut Context<Self>,
     ) -> Button {
         action_button(
@@ -750,17 +739,11 @@ impl ManisApp {
             } else {
                 language.localized(copy::configuration::UPDATE_NOW)
             },
-            ActionRole::Quiet,
+            ActionRole::Secondary,
             ControlSize::Compact,
         )
         .disabled(!enabled)
         .loading(refreshing)
-        .when(enabled, gpui::Styled::cursor_pointer)
-        .px_3()
-        .border_1()
-        .border_color(theme.outline_subtle)
-        .bg(theme.surface_base)
-        .text_color(theme.action_primary)
         .on_click(cx.listener(move |this, _, _, cx| {
             cx.stop_propagation();
             if enabled {
@@ -786,7 +769,7 @@ impl ManisApp {
                     .accessibility_label(format!("Target {target}"))
                     .selected(selected)
                     .with_variant(ButtonVariant::Text)
-                    .with_size(ControlSize::Compact.component_size())
+                    .with_size(gpui_component::Size::Small)
                     .w_full()
                     .min_h(ControlSize::Standard.min_pointer_target())
                     .px(Space::Md.px())
@@ -841,26 +824,29 @@ impl ManisApp {
                 language.message(Message::PolicyGroup)
             )
         };
-        let trigger = Button::new(format!("qx-rule-target-select-{}", source.id))
-            .accessibility_label(
-                language.localized(copy::configuration::CHANGE_TARGET_POLICY_FOR_THIS_RULE_SOURCE),
-            )
-            .dropdown_caret(true)
-            .with_variant(ButtonVariant::Default)
-            .with_size(ControlSize::Compact.component_size())
-            .h(ControlSize::Compact.height())
-            .child(
-                div()
-                    .min_w(px(0.0))
-                    .overflow_x_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .text_size(TextRole::Label.size())
-                    .line_height(TextRole::Label.line_height())
-                    .font_weight(TextRole::Label.weight())
-                    .child(display_value),
-            )
-            .disabled(!enabled);
+        let trigger = style_action_button(
+            Button::new(format!("qx-rule-target-select-{}", source.id))
+                .accessibility_label(
+                    language
+                        .localized(copy::configuration::CHANGE_TARGET_POLICY_FOR_THIS_RULE_SOURCE),
+                )
+                .dropdown_caret(true)
+                .w_full()
+                .disabled(!enabled)
+                .child(
+                    div()
+                        .min_w(px(0.0))
+                        .overflow_x_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .text_size(TextRole::Label.size())
+                        .line_height(TextRole::Label.line_height())
+                        .font_weight(TextRole::Label.weight())
+                        .child(display_value),
+                ),
+            ActionRole::Secondary,
+            ControlSize::Compact,
+        );
         let app = cx.entity();
         crate::components::anchored_popover(
             format!("qx-rule-target-popover-{}", source.id),

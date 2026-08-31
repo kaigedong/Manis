@@ -50,7 +50,7 @@ impl ManisApp {
             })
     }
 
-    fn theme_toggle(&self, theme: Theme, cx: &mut Context<Self>) -> Button {
+    fn theme_toggle(&self, _theme: Theme, cx: &mut Context<Self>) -> Button {
         let language = self.language();
         let label = if self.dark {
             language.localized(copy::app::LIGHT)
@@ -64,8 +64,6 @@ impl ManisApp {
             ControlSize::Compact,
         )
         .accessibility_label(label)
-        .border_color(theme.outline_subtle)
-        .bg(theme.surface_base)
         .on_click(cx.listener(|this, _, window, cx| {
             this.dark = !this.dark;
             crate::theme::sync_component_theme(this.theme(), this.dark, Some(window), cx);
@@ -87,34 +85,27 @@ impl ManisApp {
         let language = self.language();
         if compact {
             let next = self.proxy_mode.next();
-            return Button::new("proxy-mode-cycle")
-                .accessibility_label(language.localized(copy::app::CHANGE_PROXY_MODE))
-                .label(compact_proxy_mode_label(
-                    language,
-                    self.proxy_mode,
-                    self.proxy_mode_busy,
-                ))
-                .with_variant(ButtonVariant::Default)
-                .with_size(ControlSize::Compact.component_size())
-                .h(ControlSize::Compact.height())
-                .px(Space::Md.px())
-                .border_color(theme.outline_subtle)
-                .bg(theme.surface_base)
-                .text_color(theme.text_primary)
-                .text_size(TextRole::Label.size())
-                .when(self.proxy_mode_busy.is_none(), |button| {
-                    button.icon(IconName::Redo2)
-                })
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.apply_proxy_mode(next, cx);
-                }))
-                .into_any_element();
+            return action_button(
+                "proxy-mode-cycle",
+                compact_proxy_mode_label(language, self.proxy_mode, self.proxy_mode_busy),
+                ActionRole::Secondary,
+                ControlSize::Compact,
+            )
+            .accessibility_label(language.localized(copy::app::CHANGE_PROXY_MODE))
+            .loading(self.proxy_mode_busy.is_some())
+            .when(self.proxy_mode_busy.is_none(), |button| {
+                button.icon(IconName::Redo2)
+            })
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.apply_proxy_mode(next, cx);
+            }))
+            .into_any_element();
         }
 
         let interactive = self.proxy_mode_busy.is_none();
         let mut modes = ButtonGroup::new("proxy-mode-options")
-            .with_variant(ButtonVariant::Ghost)
-            .with_size(ControlSize::Icon.component_size())
+            .with_variant(ButtonVariant::Secondary)
+            .with_size(gpui_component::Size::Small)
             .h_full();
         for mode in [ProxyMode::Off, ProxyMode::System, ProxyMode::Tun] {
             let selected = mode == self.proxy_mode;
@@ -143,20 +134,7 @@ impl ManisApp {
                     } else {
                         TextRole::Metadata.weight()
                     })
-                    .bg(if pending {
-                        theme.action_primary
-                    } else if selected {
-                        theme.action_soft
-                    } else {
-                        gpui::rgba(0x0000_0000)
-                    })
-                    .text_color(if pending {
-                        theme.action_on_primary
-                    } else if selected {
-                        theme.action_primary
-                    } else {
-                        theme.text_secondary
-                    })
+                    .loading(pending)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.apply_proxy_mode(mode, cx);
                     })),
@@ -201,29 +179,26 @@ impl ManisApp {
                     RoutingMode::Rule => routing_mode_label(language, RoutingMode::Rule),
                 }
             };
-            return Button::new("routing-mode-cycle")
-                .accessibility_label(language.localized(copy::app::CHANGE_ROUTING_MODE))
-                .label(label)
-                .with_variant(ButtonVariant::Default)
-                .with_size(ControlSize::Compact.component_size())
-                .h(ControlSize::Compact.height())
-                .px(Space::Md.px())
-                .border_color(theme.outline_subtle)
-                .bg(theme.surface_base)
-                .text_color(theme.text_primary)
-                .text_size(TextRole::Label.size())
-                .when(self.routing_mode_busy.is_none(), |button| {
-                    button.icon(IconName::Redo2)
-                })
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.apply_routing_mode(next, cx);
-                }))
-                .into_any_element();
+            return action_button(
+                "routing-mode-cycle",
+                label,
+                ActionRole::Secondary,
+                ControlSize::Compact,
+            )
+            .accessibility_label(language.localized(copy::app::CHANGE_ROUTING_MODE))
+            .loading(self.routing_mode_busy.is_some())
+            .when(self.routing_mode_busy.is_none(), |button| {
+                button.icon(IconName::Redo2)
+            })
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.apply_routing_mode(next, cx);
+            }))
+            .into_any_element();
         }
 
         let mut modes = ButtonGroup::new("routing-mode-options")
-            .with_variant(ButtonVariant::Ghost)
-            .with_size(ControlSize::Icon.component_size())
+            .with_variant(ButtonVariant::Secondary)
+            .with_size(gpui_component::Size::Small)
             .h_full();
         for mode in [RoutingMode::Direct, RoutingMode::Global, RoutingMode::Rule] {
             let selected = mode == self.routing_mode;
@@ -245,20 +220,7 @@ impl ManisApp {
                     } else {
                         TextRole::Metadata.weight()
                     })
-                    .bg(if self.routing_mode_busy == Some(mode) {
-                        theme.action_primary
-                    } else if selected {
-                        theme.action_soft
-                    } else {
-                        gpui::rgba(0x0000_0000)
-                    })
-                    .text_color(if self.routing_mode_busy == Some(mode) {
-                        theme.action_on_primary
-                    } else if selected {
-                        theme.action_primary
-                    } else {
-                        theme.text_secondary
-                    })
+                    .disabled(self.routing_mode_busy.is_some())
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.apply_routing_mode(mode, cx);
                     })),
@@ -684,8 +646,12 @@ impl ManisApp {
         } else {
             card = card.child(Self::policy_candidate_table_header(language, theme));
             let benchmark_key = Self::managed_policy_benchmark_key(&view.policy.id);
-            let runtime_key = Self::policy_group_benchmark_key(&PolicyGroupId::new(view.policy.name.clone()));
-            let benchmark = self.managed_policies.benchmarks.get(&benchmark_key)
+            let runtime_key =
+                Self::policy_group_benchmark_key(&PolicyGroupId::new(view.policy.name.clone()));
+            let benchmark = self
+                .managed_policies
+                .benchmarks
+                .get(&benchmark_key)
                 .or_else(|| self.managed_policies.benchmarks.get(&runtime_key));
             for candidate in &view.candidates {
                 let current = view.selected_name.as_deref() == Some(candidate.name.as_str());
@@ -702,7 +668,9 @@ impl ManisApp {
                         current,
                         manually_selectable: view.policy.strategy == ManagedPolicyStrategy::Manual,
                         selection_busy: self.policy_selection_busy.is_some(),
-                        benchmark_state: benchmark.map_or(GroupBenchmarkNodeState::Idle, |state| state.node_state(&candidate.name)),
+                        benchmark_state: benchmark.map_or(GroupBenchmarkNodeState::Idle, |state| {
+                            state.node_state(&candidate.name)
+                        }),
                         language,
                         theme,
                     },
@@ -717,21 +685,26 @@ impl ManisApp {
         row_id: &str,
         group_id: Option<String>,
         language: Language,
-        theme: Theme,
+        _theme: Theme,
         cx: &mut Context<Self>,
     ) -> Button {
         let editable = group_id.is_some();
         action_button(
             format!("policy-settings-{row_id}"),
-            if editable { language.message(Message::Settings) } else { language.localized(copy::app::READ_ONLY) },
+            if editable {
+                language.message(Message::Settings)
+            } else {
+                language.localized(copy::app::READ_ONLY)
+            },
             ActionRole::Secondary,
             ControlSize::Compact,
         )
-        .with_variant(ButtonVariant::Default)
-        .border_color(theme.outline_strong)
-        .bg(theme.surface_base)
         .disabled(!editable)
-        .accessibility_label(language.localized(if editable { copy::common::EDIT_POLICY_GROUP } else { copy::app::THIS_RUNTIME_POLICY_IS_READ_ONLY_IN_MANIS }))
+        .accessibility_label(language.localized(if editable {
+            copy::common::EDIT_POLICY_GROUP
+        } else {
+            copy::app::THIS_RUNTIME_POLICY_IS_READ_ONLY_IN_MANIS
+        }))
         .on_click(cx.listener(move |this, _, window, cx| {
             cx.stop_propagation();
             if let Some(id) = group_id.as_deref() {
@@ -836,9 +809,7 @@ impl ManisApp {
             .border_1()
             .border_color(theme.outline_subtle)
             .overflow_hidden()
-            .child(Self::policy_list_header(
-                &view, language, theme, cx,
-            ));
+            .child(Self::policy_list_header(&view, language, theme, cx));
         if !view.expanded {
             return card;
         }
@@ -858,8 +829,13 @@ impl ManisApp {
         card = card.child(Self::policy_candidate_table_header(language, theme));
         let selected_node = self.node_for_policy(&view.item);
         for node in &view.item.nodes {
-            let benchmark_state = self.managed_policies.benchmarks.get(&view.benchmark_key)
-                .map_or(GroupBenchmarkNodeState::Idle, |state| state.node_state(&node.name));
+            let benchmark_state = self
+                .managed_policies
+                .benchmarks
+                .get(&view.benchmark_key)
+                .map_or(GroupBenchmarkNodeState::Idle, |state| {
+                    state.node_state(&node.name)
+                });
             let context = PolicyNodeRowContext {
                 source: self.policy_node_source_label(node, language),
                 current: node.id == selected_node.id,
@@ -1037,7 +1013,7 @@ impl ManisApp {
     fn managed_policy_add_button(
         id: &'static str,
         language: Language,
-        theme: Theme,
+        _theme: Theme,
         cx: &mut Context<Self>,
     ) -> Button {
         action_button(
@@ -1047,16 +1023,12 @@ impl ManisApp {
             ControlSize::Compact,
         )
         .accessibility_label(language.message(Message::AddPolicyGroup))
-        .cursor_pointer()
-        .bg(theme.action_primary)
-        .text_color(theme.action_on_primary)
-        .font_weight(FontWeight::SEMIBOLD)
         .on_click(cx.listener(|this, _, window, cx| {
             this.open_managed_policy_create(window, cx);
         }))
     }
 
-    fn connection_button(&self, theme: Theme, cx: &mut Context<Self>) -> Button {
+    fn connection_button(&self, _theme: Theme, cx: &mut Context<Self>) -> Button {
         let connecting = matches!(self.controller, ControllerState::Connecting { .. });
         let language = self.language();
         action_button(
@@ -1074,23 +1046,7 @@ impl ManisApp {
             },
         )
         .tab_stop(!connecting)
-        .px_3()
-        .cursor_pointer()
-        .border_color(if connecting {
-            theme.outline_subtle
-        } else {
-            theme.action_primary
-        })
-        .bg(if connecting {
-            theme.surface_base
-        } else {
-            theme.action_soft
-        })
-        .text_color(if connecting {
-            theme.text_tertiary
-        } else {
-            theme.action_primary
-        })
+        .loading(connecting)
         .on_click(cx.listener(|this, _, _, cx| this.connect_mihomo(cx)))
     }
 
@@ -1309,11 +1265,19 @@ impl ManisApp {
             return None;
         }
         let language = self.language();
-        let is_issue = |phase: &LiveStreamPhase| !matches!(phase,
-            LiveStreamPhase::Waiting | LiveStreamPhase::Connecting | LiveStreamPhase::Live
-        );
-        if self.live_status.activity == self.live_status.logs && is_issue(&self.live_status.activity) {
-            return Some(copy::app::live_stream_phase(language, &self.live_status.activity));
+        let is_issue = |phase: &LiveStreamPhase| {
+            !matches!(
+                phase,
+                LiveStreamPhase::Waiting | LiveStreamPhase::Connecting | LiveStreamPhase::Live
+            )
+        };
+        if self.live_status.activity == self.live_status.logs
+            && is_issue(&self.live_status.activity)
+        {
+            return Some(copy::app::live_stream_phase(
+                language,
+                &self.live_status.activity,
+            ));
         }
         let issues = [
             (Message::NetworkActivity, &self.live_status.activity),
@@ -1321,9 +1285,13 @@ impl ManisApp {
         ]
         .into_iter()
         .filter(|(_, phase)| is_issue(phase))
-        .map(|(source, phase)| format!("{}：{}",
-            language.message(source), copy::app::live_stream_phase(language, phase)
-        ))
+        .map(|(source, phase)| {
+            format!(
+                "{}：{}",
+                language.message(source),
+                copy::app::live_stream_phase(language, phase)
+            )
+        })
         .collect::<Vec<_>>();
         (!issues.is_empty()).then(|| issues.join(" · "))
     }
@@ -1407,7 +1375,6 @@ impl ManisApp {
                             ActionRole::Primary,
                             ControlSize::Compact,
                         )
-                        .cursor_pointer()
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.restart_with_app_update(cx);
                         })),
@@ -1417,7 +1384,7 @@ impl ManisApp {
             .when(!compact || issue.is_none(), |right| right.child(values.download).child(values.upload));
 
         StatusBar::new()
-            .h(ControlSize::Icon.min_pointer_target())
+            .h(ControlSize::Standard.height())
             .flex_shrink_0()
             .py_0()
             .px(Space::Md.px())

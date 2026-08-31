@@ -26,9 +26,12 @@ rendering; gpui-component still owns buttons, inputs, dialogs, popovers, focus, 
   inherit an opaque parent; modal scrims and shadows may blend over the application.
 - Main content is white in light mode and `#212121` in dark mode. Chrome is `#f9f9f9` / `#181818`;
   elevated content is white / `#303030`. Popups must conceal the text beneath them.
-- Primary actions are charcoal / near-white with inverse labels. Hover and pressed fills differ.
-  Navigation and selected rows use neutral gray, not a brand-colored wash. Green, amber, red, and
-  warm route accents communicate status, not general decoration.
+- Ordinary actions share a neutral gray fill and a 1 px border. Primary actions use semibold text,
+  not an inverted black/white fill; secondary actions use medium text. All action buttons come from
+  `action_button` / `style_action_button`, without per-page background, border or text-color overrides.
+  Hover and pressed fills differ in both themes; disabled and loading controls do not respond to clicks.
+  Navigation, segmented choices and expandable rows remain separate controls with neutral selection.
+  Green, amber, red, and warm route accents communicate status, not general decoration.
 - Log level badges use blue for INFO, purple for DEBUG, cyan for TRACE, amber for WARN, and red
   for ERROR/FATAL/PANIC, with a subtle matching fill. Keep log messages neutral for readability;
   level labels remain visible so severity never depends on color alone.
@@ -36,7 +39,9 @@ rendering; gpui-component still owns buttons, inputs, dialogs, popovers, focus, 
   labels from the dark-mode primary button. Input caret, selection, tabs, scrollbars, and chrome are
   projected into the same component theme. Synchronize both legacy colors and render tokens.
 - Page/section headings use semibold, labels/data medium, and supporting text normal weight.
-  Preserve the 4/8/12/16/24 px spacing scale, 8/12 px corner radii, and existing pointer target sizes.
+  Preserve the 4/8/12/16/24 px spacing scale and 8/12 px corner radii. Text buttons share 14 px labels,
+  centered in 34 px compact or 38 px standard controls. Icon-only buttons use a 32 px square target.
+  Ordinary buttons use the native arrow cursor; clickable rows and navigation retain a pointer.
   In narrow split panes, actions wrap before descriptions become cramped columns.
 - Decorative separators are subtle. Interactive input borders and keyboard focus indicators meet
   3:1 against their intended surfaces. Navigation hover, selected, and keyboard-focus states differ.
@@ -55,6 +60,7 @@ On macOS, capture the synthetic appearance matrix:
 
 ```bash
 cargo run -p manis-ui --example snapshot --features snapshot-fixtures --locked -- --appearance
+cargo run -p manis-ui --example snapshot --features snapshot-fixtures --locked -- --buttons
 ```
 
 This covers all six workspaces at 1420×900, 1060×800, 720×720, and the minimum 640×560 size in light

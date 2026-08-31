@@ -24,6 +24,8 @@ mod tray;
 
 pub use app::ManisApp;
 pub use assets::Assets;
+#[cfg(feature = "snapshot-fixtures")]
+pub use components::button_gallery_fixture;
 pub use tray::{install as install_tray, open_window, show_or_open_window};
 
 /// Returns the version embedded by the packaging workflow.

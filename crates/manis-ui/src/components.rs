@@ -15,16 +15,13 @@ use crate::theme::{ControlSize, Radius, Space, TextRole, Theme};
 pub(crate) enum ActionRole {
     Primary,
     Secondary,
-    Quiet,
     Danger,
 }
 
 impl ActionRole {
     pub(crate) fn variant(self) -> ButtonVariant {
         match self {
-            Self::Primary => ButtonVariant::Primary,
-            Self::Secondary => ButtonVariant::Secondary,
-            Self::Quiet => ButtonVariant::Ghost,
+            Self::Primary | Self::Secondary => ButtonVariant::Secondary,
             Self::Danger => ButtonVariant::Danger,
         }
     }
@@ -42,9 +39,22 @@ pub(crate) fn action_button(
 pub(crate) fn style_action_button(button: Button, role: ActionRole, size: ControlSize) -> Button {
     button
         .with_variant(role.variant())
-        .with_size(size.component_size())
+        .with_size(gpui_component::Size::Small)
         .h(size.height())
+        .min_w(size.min_pointer_target())
+        .px(Space::Md.px())
+        .py_0()
+        .border_1()
         .rounded(Radius::Control.px())
+        .line_height(gpui::relative(1.0))
+        .font_weight(if role == ActionRole::Primary {
+            gpui::FontWeight::SEMIBOLD
+        } else {
+            TextRole::Label.weight()
+        })
+        .when(size == ControlSize::Icon, |button| {
+            button.px_0().w(size.height())
+        })
 }
 
 pub(crate) fn disclosure_icon(expanded: bool, theme: Theme) -> Icon {
@@ -261,6 +271,137 @@ pub(crate) fn anchored_popover(
     )
 }
 
+/// Synthetic controls for native state screenshots; never reads application data.
+#[cfg(feature = "snapshot-fixtures")]
+#[doc(hidden)]
+pub fn button_gallery_fixture(dark: bool, cx: &mut gpui::App) -> impl gpui::Render + use<> {
+    struct Gallery(bool);
+    impl gpui::Render for Gallery {
+        fn render(
+            &mut self,
+            _: &mut gpui::Window,
+            _: &mut gpui::Context<Self>,
+        ) -> impl IntoElement {
+            render_button_gallery(self.0)
+        }
+    }
+    crate::theme::sync_component_theme(
+        if dark { Theme::dark() } else { Theme::light() },
+        dark,
+        None,
+        cx,
+    );
+    Gallery(dark)
+}
+
+#[cfg(feature = "snapshot-fixtures")]
+#[allow(clippy::too_many_lines)] // Keep the native button-state fixture in one view.
+fn render_button_gallery(dark: bool) -> Div {
+    use gpui_component::{Disableable as _, Selectable as _};
+    let theme = if dark { Theme::dark() } else { Theme::light() };
+    let mut gallery = div()
+        .size_full()
+        .p(px(24.0))
+        .bg(theme.surface_base)
+        .text_color(theme.text_primary)
+        .flex()
+        .flex_col()
+        .gap(px(20.0));
+    for (index, (size, label)) in [
+        (ControlSize::Standard, "Standard · 标准"),
+        (ControlSize::Compact, "Compact · 紧凑"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        gallery = gallery.child(
+            div()
+                .h(px(80.0))
+                .flex()
+                .flex_col()
+                .gap(px(10.0))
+                .child(div().h(px(18.0)).text_size(px(12.0)).child(label))
+                .child(
+                    div().flex().items_center().gap(px(12.0)).children(
+                        [
+                            ("primary", "保存 Save", ActionRole::Primary),
+                            ("secondary", "刷新 Refresh", ActionRole::Secondary),
+                            ("danger", "删除 Delete", ActionRole::Danger),
+                        ]
+                        .map(|(id, label, role)| {
+                            action_button(format!("gallery-{id}-{index}"), label, role, size)
+                                .w(px(112.0))
+                                .when(role == ActionRole::Secondary, |button| {
+                                    button.icon(IconName::Redo2).w(px(136.0))
+                                })
+                        }),
+                    ),
+                ),
+        );
+    }
+    gallery
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(12.0))
+                .child(
+                    action_button(
+                        "gallery-selected",
+                        "已选择 Selected",
+                        ActionRole::Secondary,
+                        ControlSize::Compact,
+                    )
+                    .selected(true)
+                    .w(px(150.0)),
+                )
+                .child(
+                    action_button(
+                        "gallery-disabled",
+                        "不可用 Disabled",
+                        ActionRole::Secondary,
+                        ControlSize::Compact,
+                    )
+                    .disabled(true)
+                    .w(px(150.0)),
+                )
+                .child(
+                    action_button(
+                        "gallery-loading",
+                        "加载中 Loading",
+                        ActionRole::Secondary,
+                        ControlSize::Compact,
+                    )
+                    .icon(IconName::Redo2)
+                    .loading(true)
+                    .w(px(164.0)),
+                ),
+        )
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(12.0))
+                .child(style_action_button(
+                    Button::new("gallery-icon")
+                        .icon(IconName::Plus)
+                        .accessibility_label("Add"),
+                    ActionRole::Secondary,
+                    ControlSize::Icon,
+                ))
+                .child(
+                    action_button(
+                        "gallery-menu",
+                        "自动选择 Automatic",
+                        ActionRole::Secondary,
+                        ControlSize::Standard,
+                    )
+                    .dropdown_caret(true)
+                    .w(px(220.0)),
+                ),
+        )
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
@@ -279,9 +420,8 @@ mod tests {
 
     #[test]
     fn action_roles_map_to_component_button_variants() {
-        assert_eq!(ActionRole::Primary.variant(), ButtonVariant::Primary);
+        assert_eq!(ActionRole::Primary.variant(), ButtonVariant::Secondary);
         assert_eq!(ActionRole::Secondary.variant(), ButtonVariant::Secondary);
-        assert_eq!(ActionRole::Quiet.variant(), ButtonVariant::Ghost);
         assert_eq!(ActionRole::Danger.variant(), ButtonVariant::Danger);
     }
 
@@ -332,6 +472,78 @@ mod tests {
         assert!(
             horizontal_drift.abs() <= px(1.),
             "popover should align with its trigger, drifted by {horizontal_drift:?}",
+        );
+    }
+
+    struct ButtonHarness {
+        clicks: std::rc::Rc<std::cell::Cell<usize>>,
+    }
+
+    impl Render for ButtonHarness {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl gpui::IntoElement {
+            use gpui_component::Disableable as _;
+            div()
+                .p(px(20.0))
+                .flex()
+                .flex_col()
+                .gap(px(12.0))
+                .line_height(px(60.0))
+                .children(
+                    [
+                        ("enabled", false, false),
+                        ("disabled", true, false),
+                        ("loading", false, true),
+                    ]
+                    .into_iter()
+                    .map(|(id, disabled, loading)| {
+                        let clicks = self.clicks.clone();
+                        super::style_action_button(
+                            Button::new(id).child(
+                                div()
+                                    .debug_selector(move || format!("{id}-text"))
+                                    .child("保存 Save"),
+                            ),
+                            ActionRole::Secondary,
+                            ControlSize::Standard,
+                        )
+                        .debug_selector(move || id.into())
+                        .w(px(160.0))
+                        .disabled(disabled)
+                        .loading(loading)
+                        .on_click(move |_, _, _| clicks.set(clicks.get() + 1))
+                    }),
+                )
+        }
+    }
+
+    #[gpui::test]
+    fn buttons_center_content_and_keep_disabled_and_loading_actions_inert(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(crate::init);
+        let clicks = std::rc::Rc::new(std::cell::Cell::new(0));
+        let (_, cx) = cx.add_window_view(|_, _| ButtonHarness {
+            clicks: clicks.clone(),
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        for (id, label_id) in [
+            ("enabled", "enabled-text"),
+            ("disabled", "disabled-text"),
+            ("loading", "loading-text"),
+        ] {
+            let button = cx.debug_bounds(id).expect("button renders");
+            let label = cx.debug_bounds(label_id).expect("label renders");
+            assert_eq!(button.size.height, ControlSize::Standard.height());
+            assert!(
+                (button.center().y - label.center().y).abs() <= px(1.0),
+                "{id}: inherited line height must not misalign the label"
+            );
+            cx.simulate_click(button.center(), Modifiers::none());
+        }
+        assert_eq!(
+            clicks.get(),
+            1,
+            "disabled and loading buttons must not activate"
         );
     }
 

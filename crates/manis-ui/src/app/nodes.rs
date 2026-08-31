@@ -5,7 +5,7 @@ use gpui::{
     Stateful, Styled, Toggled, Window, div, prelude::*, px,
 };
 use gpui_component::{
-    Disableable, IconName, Sizable, WindowExt,
+    Disableable, IconName, Selectable as _, WindowExt,
     button::{Button, ButtonVariant, ButtonVariants},
     checkbox::Checkbox,
     collapsible::Collapsible,
@@ -781,8 +781,6 @@ impl ManisApp {
                                 ActionRole::Danger,
                                 ControlSize::Standard,
                             )
-                            .px(Space::Lg.px())
-                            .when(!busy, gpui::Styled::cursor_pointer)
                             .on_click(cx.listener(
                                 move |this, _, window, cx| {
                                     if !busy {
@@ -802,8 +800,6 @@ impl ManisApp {
                             ActionRole::Secondary,
                             ControlSize::Standard,
                         )
-                        .px(Space::Lg.px())
-                        .when(!busy, gpui::Styled::cursor_pointer)
                         .on_click(cx.listener(|this, _, window, cx| {
                             if !this.managed_policies.mutation_state.is_busy() {
                                 this.close_managed_policy_editor(cx);
@@ -826,18 +822,6 @@ impl ManisApp {
                             ActionRole::Primary,
                             ControlSize::Standard,
                         )
-                        .px(Space::Lg.px())
-                        .when(!busy, gpui::Styled::cursor_pointer)
-                        .bg(if busy {
-                            theme.action_soft
-                        } else {
-                            theme.action_primary
-                        })
-                        .text_color(if busy {
-                            theme.action_primary
-                        } else {
-                            theme.action_on_primary
-                        })
                         .on_click(cx.listener(|this, _, window, cx| {
                             if !this.managed_policies.mutation_state.is_busy() {
                                 this.save_managed_policy_from_dialog(window, cx);
@@ -859,10 +843,6 @@ impl ManisApp {
                 ActionRole::Primary,
                 ControlSize::Standard,
             )
-            .px(Space::Lg.px())
-            .cursor_pointer()
-            .bg(theme.action_primary)
-            .text_color(theme.action_on_primary)
             .on_click(cx.listener(|_, _, window, cx| {
                 window.close_dialog(cx);
             })),
@@ -1202,37 +1182,36 @@ impl ManisApp {
             disabled,
         } = popup;
         let app = cx.entity();
-        let trigger = Button::new(id)
-            .accessibility_label(format!("{label}: {value}"))
-            .disabled(disabled)
-            .dropdown_caret(true)
-            .with_variant(ButtonVariant::Default)
-            .with_size(ControlSize::Standard.component_size())
-            .h(ControlSize::Standard.height())
-            .w_full()
-            .border_color(theme.outline_subtle)
-            .bg(theme.surface_low)
-            .child(
-                div()
-                    .w_full()
-                    .min_w(px(0.0))
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .when_some(value_icon, ParentElement::child)
-                    .child(
-                        div()
-                            .flex_1()
-                            .overflow_x_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
-                            .text_size(TextRole::Label.size())
-                            .line_height(TextRole::Label.line_height())
-                            .font_weight(TextRole::Label.weight())
-                            .text_color(theme.text_secondary)
-                            .child(value),
-                    ),
-            );
+        let trigger = style_action_button(
+            Button::new(id)
+                .accessibility_label(format!("{label}: {value}"))
+                .disabled(disabled)
+                .dropdown_caret(true),
+            ActionRole::Secondary,
+            ControlSize::Standard,
+        )
+        .w_full()
+        .child(
+            div()
+                .w_full()
+                .min_w(px(0.0))
+                .flex()
+                .items_center()
+                .gap_2()
+                .when_some(value_icon, ParentElement::child)
+                .child(
+                    div()
+                        .flex_1()
+                        .overflow_x_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .text_size(TextRole::Label.size())
+                        .line_height(TextRole::Label.line_height())
+                        .font_weight(TextRole::Label.weight())
+                        .text_color(theme.text_secondary)
+                        .child(value),
+                ),
+        );
         let popover = crate::components::anchored_popover(
             format!("{id}-popover"),
             trigger,
@@ -1317,6 +1296,8 @@ impl ManisApp {
             .items_center()
             .border_b_1()
             .border_color(theme.outline_subtle)
+            .hover(|style| style.bg(theme.button_hover))
+            .active(|style| style.bg(theme.button_active))
             .on_click(listener)
     }
 
@@ -1344,6 +1325,8 @@ impl ManisApp {
             .px_3()
             .border_b_1()
             .border_color(theme.outline_subtle)
+            .hover(|style| style.bg(theme.button_hover))
+            .active(|style| style.bg(theme.button_active))
             .flex()
             .items_center()
             .gap_3()
@@ -1525,6 +1508,8 @@ impl ManisApp {
                 .items_center()
                 .border_b_1()
                 .border_color(theme.outline_subtle)
+                .hover(|style| style.bg(theme.button_hover))
+                .active(|style| style.bg(theme.button_active))
                 .child(
                     div().flex().items_center().gap_3().child(
                         div()
@@ -1581,12 +1566,9 @@ impl ManisApp {
                     "policy-editor-node-menu-done",
                     language.localized(copy::nodes::DONE),
                     ActionRole::Primary,
-                    ControlSize::Icon,
+                    ControlSize::Compact,
                 )
                 .accessibility_label(language.localized(copy::nodes::FINISH_SELECTING_CANDIDATES))
-                .px_3()
-                .cursor_pointer()
-                .font_weight(FontWeight::SEMIBOLD)
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.managed_policies.editor_popover = None;
                     cx.notify();
@@ -2414,18 +2396,18 @@ impl ManisApp {
         );
     }
 
-    fn node_configuration_link(language: Language, theme: Theme, cx: &mut Context<Self>) -> Button {
+    fn node_configuration_link(
+        language: Language,
+        _theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Button {
         action_button(
             "nodes-open-configuration",
             language.message(Message::ManageSources),
             ActionRole::Secondary,
             ControlSize::Compact,
         )
-        .with_variant(ButtonVariant::Default)
-        .border_color(theme.outline_strong)
         .accessibility_label(language.localized(copy::nodes::MANAGE_SUBSCRIPTION_SOURCES))
-        .px_3()
-        .cursor_pointer()
         .on_click(cx.listener(|this, _, _, cx| {
             this.primary_workspace = PrimaryWorkspace::Configuration;
             this.language()
@@ -2438,7 +2420,7 @@ impl ManisApp {
     fn node_refresh_button(
         refreshing: bool,
         language: Language,
-        theme: Theme,
+        _theme: Theme,
         cx: &mut Context<Self>,
     ) -> Button {
         action_button(
@@ -2451,14 +2433,10 @@ impl ManisApp {
             ActionRole::Secondary,
             ControlSize::Compact,
         )
-        .with_variant(ButtonVariant::Default)
-        .border_color(theme.outline_strong)
         .icon(IconName::Redo2)
         .loading(refreshing)
         .accessibility_label(language.localized(copy::nodes::REFRESH_NODE_HEALTH))
         .tab_stop(!refreshing)
-        .px_3()
-        .cursor_pointer()
         .on_click(cx.listener(move |this, _, _, cx| {
             if refreshing {
                 return;
@@ -2514,19 +2492,15 @@ impl ManisApp {
                     } else {
                         ActionRole::Secondary
                     },
-                    ControlSize::Icon,
+                    ControlSize::Compact,
                 )
-                .when(!active, |button| {
-                    button.with_variant(ButtonVariant::Default)
-                })
+                .selected(active)
                 .toggled(active)
                 .accessibility_label(format!(
                     "{} {label}",
                     language.localized(copy::nodes::FILTER_NODES_BY)
                 ))
                 .flex_shrink_0()
-                .cursor_pointer()
-                .px_3()
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.node_workspace.select_filter(filter);
                     let language = this.language();
@@ -3075,12 +3049,7 @@ impl ManisApp {
         .accessibility_label(
             language.localized(copy::nodes::GO_TO_CONFIGURATION_TO_IMPORT_A_SUBSCRIPTION),
         )
-        .cursor_pointer()
         .w(px(180.0))
-        .px_4()
-        .bg(theme.action_primary)
-        .text_color(theme.action_on_primary)
-        .border_color(theme.action_primary)
         .on_click(cx.listener(|this, _, _, cx| {
             this.primary_workspace = PrimaryWorkspace::Configuration;
             this.language()
