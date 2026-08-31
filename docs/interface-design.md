@@ -19,6 +19,9 @@ rendering; gpui-component still owns buttons, inputs, dialogs, popovers, focus, 
 
 ## Rules
 
+- The Nodes page contains source/node lists followed by policy groups, separated by a subtle rule.
+  Use one page scroll container; expanded groups retain their natural height and push later items
+  down. Do not restore a separate policy workspace or availability counters/filter controls.
 - Native windows use `WindowBackgroundAppearance::Opaque`. The integrated macOS title bar remains
   transparent *to the application's opaque chrome*, not to the desktop. Do not restore backdrop blur.
 - Window, page, navigation, card, input, table, dialog, and popup surfaces are fully opaque in both
@@ -63,7 +66,7 @@ cargo run -p manis-ui --example snapshot --features snapshot-fixtures --locked -
 cargo run -p manis-ui --example snapshot --features snapshot-fixtures --locked -- --buttons
 ```
 
-This covers all six workspaces at 1420×900, 1060×800, 720×720, and the minimum 640×560 size in light
+This covers all five workspaces at 1420×900, 1060×800, 720×720, and the minimum 640×560 size in light
 and dark modes, plus source dialogs and nested popovers. It asserts screenshot alpha and samples
 an unobstructed chrome pixel to confirm the actual theme rather than trusting coordinate clicks.
 All outputs go to the ignored `target/manis-snapshots/` directory. Review text wrapping, clipping,

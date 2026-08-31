@@ -516,6 +516,7 @@ fn configuration_section_label(section: ConfigurationSection, language: Language
         }
         ConfigurationSection::RuleSources => language.localized(copy::configuration::RULE_SOURCES),
         ConfigurationSection::Advanced => language.localized(copy::configuration::ADVANCED),
+        ConfigurationSection::Updates => language.localized(copy::app_update::APP_UPDATES),
     }
 }
 
@@ -532,6 +533,7 @@ fn configuration_section_detail(section: ConfigurationSection, language: Languag
             language.localized(copy::configuration::REMOTE_RULE_SETS)
         }
         ConfigurationSection::Advanced => language.localized(copy::configuration::NETWORK_BEHAVIOR),
+        ConfigurationSection::Updates => language.localized(copy::app_update::CHECK_AUTOMATICALLY),
     }
 }
 
@@ -560,7 +562,6 @@ impl ManisApp {
                 .gap(Space::Lg.px())
                 .child(self.language_panel(theme, compact, cx))
                 .child(self.configuration_transfer_panel(theme, compact, cx))
-                .child(self.app_update_panel(theme, compact, cx))
                 .into_any_element(),
             self.kernel_panel(theme, compact, cx).into_any_element(),
             self.source_panel(theme, compact, cx).into_any_element(),
@@ -568,6 +569,7 @@ impl ManisApp {
                 .into_any_element(),
             self.advanced_configuration_panel(theme, compact)
                 .into_any_element(),
+            self.app_update_panel(theme, compact).into_any_element(),
         ];
         let navigation = self.configuration_navigation(theme, compact, cx);
         let content = div()
@@ -650,6 +652,21 @@ impl ManisApp {
     }
 
     #[doc(hidden)]
+    pub fn show_app_update_fixture(&mut self, failed: bool, cx: &mut Context<Self>) {
+        if self.runtime.is_fixture() {
+            self.primary_workspace = manis_core::PrimaryWorkspace::Configuration;
+            self.app_update_state = if failed {
+                AppUpdateState::Failed(crate::app_update::AppUpdateError::NetworkUnavailable)
+            } else {
+                AppUpdateState::Available(crate::app_update::AvailableUpdate {
+                    version: "0.2.0".to_owned(),
+                })
+            };
+            self.scroll_to_configuration_section(ConfigurationSection::Updates, cx);
+        }
+    }
+
+    #[doc(hidden)]
     pub fn show_configuration_sources_fixture(&mut self, rules: bool, cx: &mut Context<Self>) {
         if self.runtime.is_fixture() {
             self.scroll_to_configuration_section(
@@ -673,6 +690,58 @@ mod tests {
         manual_rule_keyboard_action_for, rule_group_is_open, rule_source_expansion_key,
         source_update_label,
     };
+
+    #[gpui::test]
+    fn rule_group_secondary_click_does_not_focus_expand_or_edit(cx: &mut gpui::TestAppContext) {
+        use crate::manual_rule::{ManualRule, ManualRuleKind};
+        use gpui::{AppContext as _, MouseButton, MouseDownEvent, MouseUpEvent};
+        cx.update(crate::init);
+        let mut app = None;
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            let entity = cx.new(|_| {
+                let mut app = super::ManisApp::with_fixture_controller("http://127.0.0.1:1");
+                app.primary_workspace = manis_core::PrimaryWorkspace::RoutingRules;
+                app.manual_rules =
+                    vec![ManualRule::parse(ManualRuleKind::Host, "example.com", "DIRECT").unwrap()];
+                app.node_workspace.toggle_group(MANUAL_RULES_EXPANSION_KEY);
+                app
+            });
+            app = Some(entity.clone());
+            crate::root(entity, window, cx)
+        });
+        let app = app.unwrap();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let bounds = cx
+            .debug_bounds("rule-group-toggle-routing-manual-rules")
+            .unwrap();
+        for button in [MouseButton::Right, MouseButton::Middle] {
+            cx.simulate_event(MouseDownEvent {
+                button,
+                position: bounds.center(),
+                ..Default::default()
+            });
+            cx.simulate_event(MouseUpEvent {
+                button,
+                position: bounds.center(),
+                ..Default::default()
+            });
+        }
+        cx.update(|window, cx| assert!(window.focused(cx).is_none()));
+        app.read_with(cx, |app, _| {
+            assert!(
+                app.node_workspace
+                    .is_group_collapsed(MANUAL_RULES_EXPANSION_KEY)
+            );
+            assert!(!app.manual_rule_editor_state.is_open());
+        });
+        cx.simulate_click(bounds.center(), gpui::Modifiers::none());
+        app.read_with(cx, |app, _| {
+            assert!(
+                !app.node_workspace
+                    .is_group_collapsed(MANUAL_RULES_EXPANSION_KEY)
+            );
+        });
+    }
 
     #[test]
     fn configuration_starts_at_the_first_directory_section() {
@@ -793,7 +862,7 @@ mod tests {
         use super::configuration_section_at_scroll;
         use gpui::px;
 
-        let tops = [120.0, 480.0, 790.0, 1_450.0, 1_900.0].map(px);
+        let tops = [120.0, 480.0, 790.0, 1_450.0, 1_900.0, 2_300.0].map(px);
         for (offset, expected) in [
             (120.0, ConfigurationSection::General),
             (478.0, ConfigurationSection::General),
@@ -801,6 +870,7 @@ mod tests {
             (1_200.0, ConfigurationSection::ProxySources),
             (1_500.0, ConfigurationSection::RuleSources),
             (1_900.0, ConfigurationSection::Advanced),
+            (2_300.0, ConfigurationSection::Updates),
             (500.0, ConfigurationSection::Runtime),
             (120.0, ConfigurationSection::General),
         ] {
@@ -810,8 +880,8 @@ mod tests {
             );
         }
         assert_eq!(
-            configuration_section_at_scroll(&tops, px(1_600.0), true),
-            ConfigurationSection::Advanced,
+            configuration_section_at_scroll(&tops, px(2_000.0), true),
+            ConfigurationSection::Updates,
             "the last short section is active when the viewport reaches the bottom",
         );
     }
@@ -841,7 +911,7 @@ mod tests {
             window.draw(cx).clear(cx);
             app.read_with(cx, |app, _| {
                 assert_eq!(app.configuration_section, ConfigurationSection::General);
-                assert_eq!(app.configuration_scroll.children_count(), 5);
+                assert_eq!(app.configuration_scroll.children_count(), 6);
                 assert_eq!(app.configuration_scroll.offset().y, px(0.0));
             });
 
@@ -861,20 +931,20 @@ mod tests {
                 app.configuration_scroll
                     .set_offset(point(px(0.0), -app.configuration_scroll.max_offset().y));
                 app.sync_configuration_directory(cx);
-                assert_eq!(app.configuration_section, ConfigurationSection::Advanced);
+                assert_eq!(app.configuration_section, ConfigurationSection::Updates);
                 app.scroll_to_configuration_section(ConfigurationSection::General, cx);
             });
             window.draw(cx).clear(cx);
             app.read_with(cx, |app, _| {
                 assert_eq!(app.configuration_scroll.offset().y, px(0.0));
-                assert_eq!(app.configuration_scroll.children_count(), 5);
+                assert_eq!(app.configuration_scroll.children_count(), 6);
             });
         });
 
         let position = window_cx
             .update(|_, cx| app.read_with(cx, |app, _| app.configuration_scroll.bounds().center()));
         for (delta, expected) in [
-            (-10_000.0, ConfigurationSection::Advanced),
+            (-10_000.0, ConfigurationSection::Updates),
             (10_000.0, ConfigurationSection::General),
         ] {
             window_cx.simulate_event(ScrollWheelEvent {
@@ -885,6 +955,91 @@ mod tests {
             window_cx.update(|window, cx| {
                 window.draw(cx).clear(cx);
                 app.read_with(cx, |app, _| assert_eq!(app.configuration_section, expected));
+            });
+        }
+    }
+
+    #[test]
+    fn app_update_checks_only_announce_new_versions_and_keep_known_releases() {
+        use super::{AppUpdateState, ManisApp};
+        use crate::app_update::{AppUpdateError, AvailableUpdate};
+        let mut app = ManisApp::with_fixture_controller("http://127.0.0.1:9090");
+        let available = AvailableUpdate {
+            version: "0.2.0".to_owned(),
+        };
+        app.finish_app_update_check(Ok(Some(available.clone())), AppUpdateState::Idle);
+        assert_eq!(
+            app.app_update_state,
+            AppUpdateState::Available(available.clone())
+        );
+        assert!(app.status.contains("0.2.0"));
+        app.status = "unrelated status".to_owned();
+        app.finish_app_update_check(Ok(Some(available.clone())), app.app_update_state.clone());
+        assert_eq!(app.status, "unrelated status");
+        app.finish_app_update_check(
+            Err(AppUpdateError::NetworkUnavailable),
+            app.app_update_state.clone(),
+        );
+        assert_eq!(app.app_update_state, AppUpdateState::Available(available));
+        app.app_update_state = AppUpdateState::Checking;
+        assert!(
+            !app.configuration_mutation_busy(),
+            "read-only checks must not block configuration editing"
+        );
+        app.finish_app_update_check(Ok(None), AppUpdateState::Checking);
+        assert_eq!(app.app_update_state, AppUpdateState::Current);
+    }
+
+    #[gpui::test]
+    fn app_update_link_stays_available_without_shifting_the_panel(cx: &mut gpui::TestAppContext) {
+        use super::{AppUpdateState, ManisApp};
+        use crate::app_update::{self, AppUpdateError, AvailableUpdate};
+        use gpui::{AppContext as _, Modifiers};
+        use manis_core::PrimaryWorkspace;
+        cx.update(crate::init);
+        let mut app = None;
+        let (_, window_cx) = cx.add_window_view(|window, cx| {
+            let entity = cx.new(|_| ManisApp::with_fixture_controller("http://127.0.0.1:9090"));
+            app = Some(entity.clone());
+            crate::root(entity, window, cx)
+        });
+        let app = app.expect("fixture app");
+        let mut expected_height = None;
+        for state in [
+            AppUpdateState::Idle,
+            AppUpdateState::Checking,
+            AppUpdateState::Current,
+            AppUpdateState::Available(AvailableUpdate {
+                version: "0.2.0".to_owned(),
+            }),
+            AppUpdateState::Failed(AppUpdateError::NetworkUnavailable),
+        ] {
+            window_cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    app.primary_workspace = PrimaryWorkspace::Configuration;
+                    app.app_update_state = state.clone();
+                    app.scroll_to_configuration_section(ConfigurationSection::Updates, cx);
+                });
+                window.draw(cx).clear(cx);
+            });
+            let panel = window_cx
+                .debug_bounds("app-update-panel")
+                .expect("update panel renders");
+            assert_eq!(
+                *expected_height.get_or_insert(panel.size.height),
+                panel.size.height
+            );
+            let button = window_cx
+                .debug_bounds("app-update-github")
+                .expect("GitHub action renders");
+            window_cx.update(|_, cx| cx.open_url("https://example.invalid/reset"));
+            window_cx.simulate_click(button.center(), Modifiers::none());
+            assert_eq!(
+                window_cx.opened_url().as_deref(),
+                Some(app_update::RELEASES_URL)
+            );
+            window_cx.update(|_, cx| {
+                app.read_with(cx, |app, _| assert_eq!(app.app_update_state, state));
             });
         }
     }

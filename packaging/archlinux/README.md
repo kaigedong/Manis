@@ -14,10 +14,9 @@ The package depends on polkit for its narrow privileged integration. Package ins
 only `CAP_NET_ADMIN` and `CAP_NET_RAW` to the root-owned packaged core. The fixed-purpose helper may
 only install or restore DNS routing for the managed `Meta` interface, and PolicyKit permits that
 helper for the active local session without another password prompt. Ordinary proxy mode and the
-GUI remain unprivileged. Manis downloads and verifies application updates in the background;
-**Restart and update** runs `pacman -U` through `pkexec`, so the package upgrade itself remains the
-single administrative authorization point. Source builds and binaries outside `/usr/bin/manis` do
-not self-update.
+GUI remain unprivileged. Manis only checks application version metadata in the background; it
+never downloads packages or invokes `pacman` for an upgrade. Configuration → App updates links to
+GitHub, where users can download the package and install it through their package manager.
 
 The Linux GPUI backend is compiled with Wayland and X11 support. A native Wayland session is the
 primary target; X11 remains available as a compatibility fallback. The build fetches the official

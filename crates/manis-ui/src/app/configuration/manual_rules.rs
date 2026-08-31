@@ -715,6 +715,7 @@ impl ManisApp {
                     .aria_label(kind.display_label())
                     .tab_stop(supported)
                     .focusable()
+                    .map(crate::components::primary_button_interaction)
                     .when(supported, gpui::Styled::cursor_pointer)
                     .min_h(px(36.0))
                     .px(Space::Md.px())
@@ -775,6 +776,7 @@ impl ManisApp {
                     .aria_label(format!("Target {target}"))
                     .tab_stop(true)
                     .focusable()
+                    .map(crate::components::primary_button_interaction)
                     .cursor_pointer()
                     .min_h(ControlSize::Standard.min_pointer_target())
                     .px(Space::Md.px())
@@ -1206,6 +1208,7 @@ impl ManisApp {
             .role(Role::Button)
             .tab_stop(true)
             .focusable()
+            .map(crate::components::primary_button_interaction)
             .aria_label(edit_label)
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.open_manual_rule_editor_for_edit(index, window, cx);
@@ -1655,12 +1658,22 @@ impl ManisApp {
         });
         let toggle_key = key.to_owned();
         let header = Button::new(format!("rule-group-toggle-{key}"))
+            .map(crate::components::primary_button_interaction)
+            .debug_selector({
+                let key = key.to_owned();
+                move || format!("rule-group-toggle-{key}")
+            })
             .with_variant(ButtonVariant::Ghost)
             .accessibility_label(format!("{action} {name}"))
             .cursor_pointer()
             .toggled(open)
             .w_full()
             .h_auto()
+            .rounded_tl(Radius::Pane.px())
+            .rounded_tr(Radius::Pane.px())
+            .when(!open, |header| {
+                header.rounded_bl(Radius::Pane.px()).rounded_br(Radius::Pane.px())
+            })
             .px(if compact { px(12.0) } else { px(16.0) })
             .py_3()
             .bg(theme.surface_low)

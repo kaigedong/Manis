@@ -8,7 +8,6 @@ pub(crate) const INTERVAL_5_MINUTES: LocalizedText = LocalizedText::new("5 min",
 pub(crate) const INTERVAL_10_MINUTES: LocalizedText = LocalizedText::new("10 min", "10 分钟");
 pub(crate) const INTERVAL_30_MINUTES: LocalizedText = LocalizedText::new("30 min", "30 分钟");
 
-pub(crate) const ALL: LocalizedText = LocalizedText::new("All", "全部");
 pub(crate) const ALL_NODES: LocalizedText = LocalizedText::new("All nodes", "全部节点");
 pub(crate) const APPLYING_CHANGES: LocalizedText =
     LocalizedText::new("applying changes", "正在应用更改");
@@ -16,7 +15,6 @@ pub(crate) const AS_GLOBAL_EXIT: LocalizedText =
     LocalizedText::new("as global exit", "作为全局出口");
 pub(crate) const AUTOMATIC_CHECK_INTERVAL_IS_INVALID: LocalizedText =
     LocalizedText::new("Automatic check interval is invalid", "自动检查间隔无效");
-pub(crate) const AVAILABLE: LocalizedText = LocalizedText::new("Available", "可用");
 pub(crate) const A_GROUP_TEST_IS_ALREADY_RUNNING_WAIT_FOR_IT_TO: LocalizedText = LocalizedText::new(
     "A group test is already running. Wait for it to finish.",
     "已有分组正在测速，请等待完成后再试",
@@ -51,7 +49,6 @@ pub(crate) const FAILED_TO_DELETE_POLICY_GROUP: LocalizedText =
     LocalizedText::new("Failed to delete policy group", "策略组删除失败");
 pub(crate) const FAILED_TO_SAVE_POLICY_GROUP: LocalizedText =
     LocalizedText::new("Failed to save policy group", "策略组保存失败");
-pub(crate) const FILTER_NODES_BY: LocalizedText = LocalizedText::new("Filter nodes by", "筛选节点");
 pub(crate) const FINISH_SELECTING_CANDIDATES: LocalizedText =
     LocalizedText::new("Finish selecting candidates", "完成选择候选项");
 pub(crate) const FIRST_LETTER: LocalizedText = LocalizedText::new("First letter", "首字圆标");
@@ -83,9 +80,6 @@ pub(crate) const INDIVIDUALLY_ADDED_VLESS_NODES_PRIVATE_LOCAL_STORAGE: Localized
         "Individually added VLESS nodes · private local storage",
         "单独添加的 VLESS 节点 · 私有本机存储",
     );
-pub(crate) const LOADING: LocalizedText = LocalizedText::new("Loading…", "读取中…");
-pub(crate) const MANAGE_SUBSCRIPTION_SOURCES: LocalizedText =
-    LocalizedText::new("Manage subscription sources", "管理订阅来源");
 pub(crate) const MANIS_IS_LOADING_NODES_FROM_YOUR_SAVED_SUBSCRIPTIONS: LocalizedText =
     LocalizedText::new(
         "Manis is loading nodes from your saved subscriptions.",
@@ -98,7 +92,6 @@ pub(crate) const NEW_POLICY_GROUP: LocalizedText =
 pub(crate) const NODE: LocalizedText = LocalizedText::new("Node", "节点");
 pub(crate) const NODES_ARE_TEMPORARILY_UNAVAILABLE: LocalizedText =
     LocalizedText::new("Nodes are temporarily unavailable", "暂时无法读取节点");
-pub(crate) const NODE_FILTER: LocalizedText = LocalizedText::new("Node filter", "节点筛选");
 pub(crate) const NODE_NAME_CONTAINS: LocalizedText =
     LocalizedText::new("Node name contains", "节点名称包含");
 pub(crate) const NODE_SCOPE: LocalizedText = LocalizedText::new("Node scope", "节点范围");
@@ -108,18 +101,13 @@ pub(crate) const NODE_SOURCE_EXPANDED_STATE_UPDATED: LocalizedText = LocalizedTe
     "已更新节点来源展开状态",
 );
 pub(crate) const NOT_LOADED: LocalizedText = LocalizedText::new("Not loaded", "尚未读取");
-pub(crate) const NO_NODES_FROM_THIS_SOURCE_MATCH_THE_CURRENT_FILTER: LocalizedText =
-    LocalizedText::new(
-        "No nodes from this source match the current filter.",
-        "这个来源中没有符合当前筛选的节点。",
-    );
+pub(crate) const NO_NODES_IN_THIS_SOURCE: LocalizedText =
+    LocalizedText::new("No nodes in this source", "此来源暂无节点");
 pub(crate) const POLICY_EDITING_CANCELLED: LocalizedText =
     LocalizedText::new("Policy editing cancelled", "已取消编辑策略");
 pub(crate) const POLICY_GROUP_NAME: LocalizedText =
     LocalizedText::new("Policy group name", "策略组名称");
 pub(crate) const PROTOCOL: LocalizedText = LocalizedText::new("Protocol", "协议");
-pub(crate) const REFRESH_NODE_HEALTH: LocalizedText =
-    LocalizedText::new("Refresh node health", "刷新节点健康状态");
 pub(crate) const REMOVING: LocalizedText = LocalizedText::new("Removing", "正在移除");
 pub(crate) const RESTORES_AFTER_RESTART: LocalizedText =
     LocalizedText::new("Restores after restart", "重启后自动恢复");
@@ -132,10 +120,6 @@ pub(crate) const ROUTING_RULES_POINT_TO_THIS_POLICY_THE_POLICY_CHOOSES_ONE: Loca
         "Routing rules point to this policy; the policy chooses one exit from this node scope.",
         "分流规则会指向这个策略组；策略组再从这里配置的节点范围中选择出口。",
     );
-pub(crate) const SAVED_NODES_DO_NOT_NEED_TO_BE_DOWNLOADED_AGAIN: LocalizedText = LocalizedText::new(
-    "Saved nodes do not need to be downloaded again",
-    "已保存节点不需要重新下载",
-);
 pub(crate) const SELECT: LocalizedText = LocalizedText::new("Select", "选择");
 pub(crate) const SELECTED_CANDIDATES: LocalizedText =
     LocalizedText::new("Selected candidates", "已选候选项");
@@ -190,9 +174,7 @@ pub(crate) const THIS_POLICY_GROUP_IS_USED_BY_ANOTHER_POLICY_GROUP_AND: Localize
 pub(crate) const THIS_SOURCE_HAS_NO_NODES_TO_TEST: LocalizedText =
     LocalizedText::new("This source has no nodes to test", "当前来源没有可测速节点");
 pub(crate) const TYPE: LocalizedText = LocalizedText::new("Type", "类型");
-pub(crate) const UNAVAILABLE: LocalizedText = LocalizedText::new("Unavailable", "不可用");
 pub(crate) const UNAVAILABLE_2: LocalizedText = LocalizedText::new("Unavailable", "当前不可用");
-pub(crate) const UNTESTED: LocalizedText = LocalizedText::new("Untested", "未测速");
 pub(crate) const USING_MIHOMO_CACHE: LocalizedText =
     LocalizedText::new("Using Mihomo cache", "使用 Mihomo 缓存");
 

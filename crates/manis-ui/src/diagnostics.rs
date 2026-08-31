@@ -49,7 +49,6 @@ struct Diagnostics {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum UiEvent {
-    WorkspacePoliciesOpened,
     WorkspaceNodesOpened,
     WorkspaceRoutingRulesOpened,
     WorkspaceActivityOpened,
@@ -88,7 +87,6 @@ pub(crate) enum UiEvent {
 impl UiEvent {
     fn as_str(self) -> &'static str {
         match self {
-            Self::WorkspacePoliciesOpened => "workspace.policies.opened",
             Self::WorkspaceNodesOpened => "workspace.nodes.opened",
             Self::WorkspaceRoutingRulesOpened => "workspace.routing_rules.opened",
             Self::WorkspaceActivityOpened => "workspace.activity.opened",

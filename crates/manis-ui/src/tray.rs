@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use gpui::{
-    App, AppContext, Bounds, Entity, Global, QuitMode, TitlebarOptions, WindowBackgroundAppearance,
-    WindowBounds, WindowOptions, px, size,
+    AnyWindowHandle, App, AppContext, Bounds, Entity, Global, QuitMode, TitlebarOptions,
+    WindowBackgroundAppearance, WindowBounds, WindowOptions, px, size,
 };
 use manis_core::ProxyMode;
 #[cfg(not(target_os = "linux"))]
@@ -27,6 +27,8 @@ use linux::ManisTray;
 #[cfg(not(target_os = "linux"))]
 const SHOW_MENU_ID: &str = "manis.tray.show";
 #[cfg(not(target_os = "linux"))]
+const ABOUT_MENU_ID: &str = "manis.tray.about";
+#[cfg(not(target_os = "linux"))]
 const QUIT_MENU_ID: &str = "manis.tray.quit";
 #[cfg(not(target_os = "linux"))]
 const SYSTEM_PROXY_MENU_ID: &str = "manis.tray.proxy.system";
@@ -38,6 +40,7 @@ const TRAY_EVENT_INTERVAL: Duration = Duration::from_millis(100);
 struct ManisTray {
     _icon: TrayIcon,
     show_id: MenuId,
+    about: MenuItem,
     quit_id: MenuId,
     system_proxy: CheckMenuItem,
     tun_proxy: CheckMenuItem,
@@ -197,6 +200,12 @@ fn create_native_tray(language: Language) -> Result<ManisTray, &'static str> {
     );
     let separator = PredefinedMenuItem::separator();
     let proxy_separator = PredefinedMenuItem::separator();
+    let about = MenuItem::with_id(
+        ABOUT_MENU_ID,
+        language.localized(copy::tray::ABOUT_MANIS),
+        true,
+        None,
+    );
     let quit = MenuItem::with_id(
         QUIT_MENU_ID,
         language.localized(copy::tray::QUIT_MANIS),
@@ -210,6 +219,7 @@ fn create_native_tray(language: Language) -> Result<ManisTray, &'static str> {
         &system_proxy,
         &tun_proxy,
         &separator,
+        &about,
         &quit,
     ])
     .map_err(|_error| language.localized(copy::tray::COULD_NOT_CREATE_THE_SYSTEM_TRAY_MENU))?;
@@ -227,6 +237,7 @@ fn create_native_tray(language: Language) -> Result<ManisTray, &'static str> {
     Ok(ManisTray {
         _icon: tray,
         show_id: show.id().clone(),
+        about,
         quit_id: quit.id().clone(),
         system_proxy,
         tun_proxy,
@@ -236,10 +247,11 @@ fn create_native_tray(language: Language) -> Result<ManisTray, &'static str> {
 
 #[cfg(not(target_os = "linux"))]
 fn drain_menu_events(cx: &mut App) -> bool {
-    let (show_id, quit_id, system_id, tun_id) = {
+    let (show_id, about_id, quit_id, system_id, tun_id) = {
         let tray = cx.global::<ManisTray>();
         (
             tray.show_id.clone(),
+            tray.about.id().clone(),
             tray.quit_id.clone(),
             tray.system_proxy.id().clone(),
             tray.tun_proxy.id().clone(),
@@ -249,6 +261,8 @@ fn drain_menu_events(cx: &mut App) -> bool {
     while let Ok(event) = MenuEvent::receiver().try_recv() {
         if event.id == show_id {
             show_or_open_window(cx);
+        } else if event.id == about_id {
+            open_about_dialog(cx);
         } else if event.id == quit_id {
             should_quit = true;
         } else if event.id == system_id {
@@ -271,6 +285,7 @@ fn drain_menu_events(cx: &mut App) -> bool {
     for event in events {
         match event {
             linux::TrayAction::Show => show_or_open_window(cx),
+            linux::TrayAction::About => open_about_dialog(cx),
             linux::TrayAction::Quit => {
                 cx.quit();
                 return true;
@@ -290,6 +305,40 @@ fn drain_menu_events(cx: &mut App) -> bool {
 fn request_proxy_mode(cx: &mut App, selected: ProxyMode) {
     let app = manis_app(cx);
     app.update(cx, |app, cx| app.toggle_proxy_mode(selected, cx));
+}
+
+fn open_about_dialog(cx: &mut App) {
+    let app = manis_app(cx);
+    if let Some(window) = activate_main_window(cx) {
+        let _ = window.update(cx, |_, window, cx| {
+            app.update(cx, |app, cx| app.open_about_dialog(window, cx));
+        });
+        cx.activate(true);
+        return;
+    }
+
+    let window_size = size(px(1420.0), px(900.0));
+    let bounds = Bounds::centered(None, window_size, cx);
+    let root_app = app.clone();
+    let Ok(window) = cx.open_window(main_window_options(bounds), move |window, cx| {
+        cx.new(|cx| crate::root(root_app, window, cx))
+    }) else {
+        return;
+    };
+    let window: AnyWindowHandle = window.into();
+    let _ = window.update(cx, |_, window, cx| {
+        app.update(cx, |app, cx| app.open_about_dialog(window, cx));
+    });
+    cx.activate(true);
+}
+
+fn activate_main_window(cx: &mut App) -> Option<AnyWindowHandle> {
+    let window = cx
+        .windows()
+        .into_iter()
+        .find(|window| window.downcast::<gpui_component::Root>().is_some())?;
+    let _ = window.update(cx, |_, window, _| window.activate_window());
+    Some(window)
 }
 
 /// Mirrors the live proxy mode onto the tray check items.
@@ -318,13 +367,17 @@ fn sync_proxy_menu(cx: &mut App) {
     #[cfg(target_os = "linux")]
     tray.sync(snapshot);
     #[cfg(not(target_os = "linux"))]
-    for (item, mode, block) in [
-        (&tray.system_proxy, ProxyMode::System, snapshot.system_block),
-        (&tray.tun_proxy, ProxyMode::Tun, snapshot.tun_block),
-    ] {
-        item.set_checked(snapshot.active == mode);
-        item.set_enabled(block.is_none());
-        item.set_text(tray_menu_label(snapshot.language, mode, block));
+    {
+        tray.about
+            .set_text(snapshot.language.localized(copy::tray::ABOUT_MANIS));
+        for (item, mode, block) in [
+            (&tray.system_proxy, ProxyMode::System, snapshot.system_block),
+            (&tray.tun_proxy, ProxyMode::Tun, snapshot.tun_block),
+        ] {
+            item.set_checked(snapshot.active == mode);
+            item.set_enabled(block.is_none());
+            item.set_text(tray_menu_label(snapshot.language, mode, block));
+        }
     }
 }
 
@@ -369,7 +422,78 @@ fn manis_icon_rgba() -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{main_window_options, manis_icon_rgba};
+    use gpui::{AnyWindowHandle, AppContext as _, WindowHandle};
+    use gpui_component::WindowExt as _;
+
+    use super::{GlobalManisApp, main_window_options, manis_icon_rgba, open_about_dialog};
+    use crate::ManisApp;
+
+    fn fixture_window(cx: &mut gpui::TestAppContext) -> (gpui::Entity<ManisApp>, AnyWindowHandle) {
+        cx.update(crate::init);
+        let mut app = None;
+        let window: WindowHandle<gpui_component::Root> = cx.add_window(|window, cx| {
+            let entity = cx.new(|_| ManisApp::with_fixture_controller("http://127.0.0.1:9090"));
+            app = Some(entity.clone());
+            crate::root(entity, window, cx)
+        });
+        let app = app.expect("fixture app");
+        cx.set_global(GlobalManisApp(app.clone()));
+        (app, window.into())
+    }
+
+    fn fixture_app(cx: &mut gpui::TestAppContext) -> gpui::Entity<ManisApp> {
+        cx.update(crate::init);
+        let app =
+            cx.update(|cx| cx.new(|_| ManisApp::with_fixture_controller("http://127.0.0.1:9090")));
+        cx.set_global(GlobalManisApp(app.clone()));
+        app
+    }
+
+    fn assert_global_app(cx: &gpui::TestAppContext, expected: &gpui::Entity<ManisApp>) {
+        cx.read_global::<GlobalManisApp, _>(|global, _| {
+            assert_eq!(&global.0, expected);
+        });
+    }
+
+    fn assert_single_about_dialog(window: AnyWindowHandle, cx: &mut gpui::TestAppContext) {
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(300));
+        let mut window_cx = gpui::VisualTestContext::from_window(window, cx);
+        window_cx.run_until_parked();
+        window_cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert!(window_cx.debug_bounds("manis-about-content").is_some());
+
+        window_cx.simulate_keystrokes("escape");
+        window_cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            assert!(!window.has_active_dialog(cx), "one Escape closes About");
+        });
+    }
+
+    #[gpui::test]
+    fn tray_about_reuses_global_app_with_existing_window(cx: &mut gpui::TestAppContext) {
+        let (app, window) = fixture_window(cx);
+        cx.update(open_about_dialog);
+        cx.update(open_about_dialog);
+
+        assert_eq!(cx.windows(), vec![window]);
+        assert_global_app(cx, &app);
+        assert_single_about_dialog(window, cx);
+    }
+
+    #[gpui::test]
+    fn tray_about_reuses_global_app_after_main_window_closed(cx: &mut gpui::TestAppContext) {
+        let app = fixture_app(cx);
+        assert!(cx.windows().is_empty());
+
+        cx.update(open_about_dialog);
+        cx.update(open_about_dialog);
+
+        let windows = cx.windows();
+        assert_eq!(windows.len(), 1);
+        assert_global_app(cx, &app);
+        assert_single_about_dialog(windows[0], cx);
+    }
 
     #[test]
     fn main_window_uses_an_opaque_native_backdrop() {

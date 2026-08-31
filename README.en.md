@@ -45,6 +45,7 @@ format.
 - Manual, latency-based, fallback, and load-balancing policy group models, gated by core capability.
 - Ordered routing rules, QX rule-list import, compound domain/port matching, and explicit fallback.
 - Per-source and per-policy latency tests with incremental results.
+- Nodes and policy groups share the Nodes page in one scrolling document; sources are managed in Configuration.
 - Direct, global, and rule routing modes.
 - System HTTP/SOCKS proxy control and macOS TUN integration.
 - Live connections, route evidence, core logs, and redacted application diagnostics.
@@ -90,6 +91,13 @@ pins the approved app, `manis-helperctl`, privileged-helper fingerprints, and th
 and does not require a paid Apple Developer Program account. The Developer ID/SMAppService signed
 path remains available as an optional maintainer release route.
 
+Manis checks for a new version at startup and every hour. It only reads version metadata and never
+downloads or installs application updates. View the result under Configuration → App updates at the
+bottom of the settings page, then use “View on GitHub” to download and install a release yourself.
+The link remains available if the check fails. The section also shows the current version and project
+address. Choose “About Manis” from the tray menu to view the same information in a dialog. Manual
+Mihomo core updates are unchanged.
+
 ## Build from source
 
 The repository pins its Rust toolchain in `rust-toolchain.toml` and its GPUI revision in
@@ -109,7 +117,7 @@ Manis only starts Mihomo processes it owns and only runs configuration generated
 through the application. It does not attach to another application's controller or run a supplied
 Mihomo YAML file. Release packages include a SHA-256-verified stable upstream seed. On first launch
 it is installed into Manis's private data directory; subsequent downloads, version validation,
-atomic replacement, and rollback are handled by the in-app updater.
+atomic replacement, and rollback are handled by the in-app core updater.
 
 Before the first node is added, Manis prepares a direct-only bootstrap configuration. After a
 subscription or individual node is added, Manis validates and writes the generated configuration to

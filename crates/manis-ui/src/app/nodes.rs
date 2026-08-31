@@ -5,7 +5,7 @@ use gpui::{
     Stateful, Styled, Toggled, Window, div, prelude::*, px,
 };
 use gpui_component::{
-    Disableable, IconName, Selectable as _, WindowExt,
+    Disableable, WindowExt,
     button::{Button, ButtonVariant, ButtonVariants},
     checkbox::Checkbox,
     collapsible::Collapsible,
@@ -13,9 +13,9 @@ use gpui_component::{
     radio::Radio,
 };
 use manis_core::{
-    ManagedPolicyGroup, ManagedPolicyIcon, ManagedPolicyStrategy, NodeAvailabilityFilter,
-    NodeIdentity, PolicyCandidateKind, PolicyCandidateMatcher, PolicyNode, PrimaryWorkspace,
-    ProxyId, WindowSizeClass,
+    ManagedPolicyGroup, ManagedPolicyIcon, ManagedPolicyStrategy, NodeIdentity,
+    PolicyCandidateKind, PolicyCandidateMatcher, PolicyNode, PrimaryWorkspace, ProxyId,
+    WindowSizeClass,
 };
 
 use super::{
@@ -45,7 +45,6 @@ struct NodeSourceGroup<'a> {
 
 #[derive(Clone, Copy)]
 struct NodeWorkspaceView {
-    filter: NodeAvailabilityFilter,
     compact: bool,
     language: Language,
     theme: Theme,
@@ -60,7 +59,6 @@ struct WorkspaceNodeRowContext {
 }
 
 struct SourceGroupPresentation {
-    visible_count: usize,
     collapsed: bool,
     benchmark_key: String,
     benchmark: GroupBenchmarkState,
@@ -192,66 +190,47 @@ impl NodeSourceGroup<'_> {
 
 const MAX_GROUP_BENCHMARK_NODES: usize = 512;
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-struct NodeCounts {
-    total: usize,
-    available: usize,
-    unavailable: usize,
-    untested: usize,
-}
-
-impl NodeCounts {
-    #[cfg(test)]
-    fn from_providers(providers: &[LoadedProvider]) -> Self {
-        let mut counts = Self::default();
-        for provider in providers {
-            counts.add_provider(provider);
-        }
-        counts
-    }
-
-    fn from_provider_refs(providers: &[&LoadedProvider]) -> Self {
-        let mut counts = Self::default();
-        for provider in providers {
-            counts.add_provider(provider);
-        }
-        counts
-    }
-
-    fn from_groups(groups: &[NodeSourceGroup<'_>]) -> Self {
-        let mut counts = Self::default();
-        for group in groups {
-            for provider in &group.providers {
-                counts.add_provider(provider);
-            }
-            counts.total += group.saved_nodes.len();
-            counts.untested += group.saved_nodes.len();
-        }
-        counts
-    }
-
-    fn add_provider(&mut self, provider: &LoadedProvider) {
-        for node in &provider.nodes {
-            self.total += 1;
-            match node.alive {
-                Some(true) => self.available += 1,
-                Some(false) => self.unavailable += 1,
-                None => self.untested += 1,
-            }
-        }
-    }
-
-    fn count_for(self, filter: NodeAvailabilityFilter) -> usize {
-        match filter {
-            NodeAvailabilityFilter::All => self.total,
-            NodeAvailabilityFilter::Available => self.available,
-            NodeAvailabilityFilter::Unavailable => self.unavailable,
-            NodeAvailabilityFilter::Untested => self.untested,
-        }
-    }
-}
-
 impl ManisApp {
+    #[cfg(feature = "snapshot-fixtures")]
+    #[doc(hidden)]
+    pub fn show_merged_nodes_fixture(&mut self, expanded: bool, cx: &mut Context<Self>) {
+        if !self.runtime.is_fixture() {
+            return;
+        }
+        self.primary_workspace = PrimaryWorkspace::Nodes;
+        self.source_providers = vec![LoadedProvider {
+            name: "测试订阅".to_owned(),
+            vehicle_type: Some("HTTP".to_owned()),
+            nodes: (1..=50)
+                .map(|index| LoadedProviderNode {
+                    name: format!("测试节点 {index:02}"),
+                    protocol: "Trojan".to_owned(),
+                    latency_label: Some(format!("{} ms", 40 + index)),
+                    alive: Some(true),
+                })
+                .collect(),
+        }];
+        self.node_workspace.replace_collapsed_groups(["mihomo:0"]);
+        self.managed_policies.groups = ["手动选择", "自动选择", "备用策略"]
+            .into_iter()
+            .enumerate()
+            .map(|(index, name)| {
+                let mut group = ManagedPolicyGroup::new(&format!("policy-{}", index + 1), name)
+                    .expect("valid fixture policy");
+                if index == 1 {
+                    group.strategy = ManagedPolicyStrategy::LowestLatency;
+                }
+                group
+            })
+            .collect();
+        self.managed_policies
+            .node_selections
+            .set_policy_target("自动选择", "测试节点 02")
+            .expect("valid fixture selection");
+        self.expanded_policy_group = expanded.then(|| manis_core::PolicyGroupId::new("policy-2"));
+        cx.notify();
+    }
+
     fn managed_policy_icon_label(icon: ManagedPolicyIcon, language: Language) -> &'static str {
         match icon {
             ManagedPolicyIcon::None => language.localized(copy::nodes::FIRST_LETTER),
@@ -260,22 +239,6 @@ impl ManisApp {
             ManagedPolicyIcon::Shield => language.localized(copy::nodes::SHIELD),
             ManagedPolicyIcon::Compass => language.localized(copy::nodes::COMPASS),
         }
-    }
-
-    fn availability_filter_label(
-        filter: NodeAvailabilityFilter,
-        language: Language,
-    ) -> &'static str {
-        match filter {
-            NodeAvailabilityFilter::All => language.localized(copy::nodes::ALL),
-            NodeAvailabilityFilter::Available => language.localized(copy::nodes::AVAILABLE),
-            NodeAvailabilityFilter::Unavailable => language.localized(copy::nodes::UNAVAILABLE),
-            NodeAvailabilityFilter::Untested => language.localized(copy::nodes::UNTESTED),
-        }
-    }
-
-    fn source_count_label(count: usize, language: Language) -> String {
-        language.count(CountNoun::Source, count)
     }
 
     fn node_count_label(count: usize, language: Language) -> String {
@@ -308,8 +271,6 @@ impl ManisApp {
             || !self.saved_single_nodes.is_empty();
         let language = self.language();
         let groups = self.node_source_groups(has_local_sources, language);
-        let counts = NodeCounts::from_groups(&groups);
-        let filter = self.node_workspace.filter;
         let loading = self.imported_subscriptions.iter().any(|subscription| {
             subscription.enabled
                 && matches!(
@@ -318,12 +279,6 @@ impl ManisApp {
                         | ImportedSubscriptionState::Refreshing(_)
                 )
         });
-        let refreshing = loading
-            || (!has_local_sources
-                && matches!(
-                    self.controller,
-                    crate::mihomo::ControllerState::Connecting { .. }
-                ));
         let enabled_subscriptions = self
             .imported_subscriptions
             .iter()
@@ -338,7 +293,6 @@ impl ManisApp {
                 )
             });
         let view = NodeWorkspaceView {
-            filter,
             compact,
             language,
             theme,
@@ -350,15 +304,19 @@ impl ManisApp {
             .flex()
             .flex_col()
             .bg(theme.surface_base)
-            .child(self.node_workspace_header(
-                groups.len(),
-                counts,
-                refreshing,
-                !matches!(self.controller, super::ControllerState::Connected { .. }),
-                view,
-                cx,
-            ))
-            .child(self.node_workspace_body(&groups, loading, unavailable, view, cx))
+            .child(self.node_workspace_header(view, cx))
+            .child(
+                div()
+                    .id("nodes-scroll")
+                    .debug_selector(|| "nodes-scroll".to_owned())
+                    .flex_1()
+                    .min_h(px(0.0))
+                    .overflow_y_scroll()
+                    .flex()
+                    .flex_col()
+                    .child(self.node_workspace_body(&groups, loading, unavailable, view, cx))
+                    .child(self.policy_section(theme, compact, cx)),
+            )
     }
 
     fn node_source_groups(
@@ -465,71 +423,35 @@ impl ManisApp {
             .collect()
     }
 
-    fn node_workspace_header(
-        &self,
-        source_count: usize,
-        counts: NodeCounts,
-        refreshing: bool,
-        show_connection: bool,
-        view: NodeWorkspaceView,
-        cx: &mut Context<Self>,
-    ) -> Div {
+    fn node_workspace_header(&self, view: NodeWorkspaceView, cx: &mut Context<Self>) -> Div {
         let NodeWorkspaceView {
-            filter,
             compact,
             language,
             theme,
         } = view;
-        let actions = div()
-            .flex()
-            .flex_shrink_0()
-            .items_center()
-            .gap(Space::Sm.px())
-            .when(show_connection, |actions| {
-                actions.child(self.connection_button(theme, cx))
-            })
-            .child(Self::node_refresh_button(refreshing, language, theme, cx))
-            .child(Self::node_configuration_link(language, theme, cx));
-
         div()
-            .flex()
-            .flex_col()
             .flex_shrink_0()
-            .gap(Space::Md.px())
             .px(if compact { px(12.0) } else { px(24.0) })
             .py(Space::Lg.px())
             .border_b_1()
             .border_color(theme.outline_subtle)
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .justify_between()
+            .gap(Space::Md.px())
             .child(
                 div()
-                    .flex()
-                    .flex_wrap()
-                    .items_center()
-                    .justify_between()
-                    .gap(Space::Md.px())
-                    .child(
-                        div()
-                            .flex()
-                            .items_baseline()
-                            .gap(Space::Md.px())
-                            .child(
-                                div()
-                                    .text_size(TextRole::PageTitle.size())
-                                    .line_height(TextRole::PageTitle.line_height())
-                                    .font_weight(TextRole::PageTitle.weight())
-                                    .text_color(theme.text_primary)
-                                    .child(language.message(Message::Nodes)),
-                            )
-                            .child(
-                                div()
-                                    .text_size(TextRole::Metadata.size())
-                                    .text_color(theme.text_secondary)
-                                    .child(Self::source_count_label(source_count, language)),
-                            ),
-                    )
-                    .child(actions),
+                    .text_size(TextRole::PageTitle.size())
+                    .line_height(TextRole::PageTitle.line_height())
+                    .font_weight(TextRole::PageTitle.weight())
+                    .text_color(theme.text_primary)
+                    .child(language.message(Message::Nodes)),
             )
-            .child(Self::node_filter_bar(counts, filter, compact, language, cx))
+            .when(
+                !matches!(self.controller, super::ControllerState::Connected { .. }),
+                |header| header.child(self.connection_button(theme, cx)),
+            )
     }
 
     fn node_workspace_body(
@@ -541,16 +463,14 @@ impl ManisApp {
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let NodeWorkspaceView {
-            filter,
             compact,
             language,
             theme,
         } = view;
         div()
-            .id("nodes-scroll")
-            .flex_1()
-            .min_h(px(0.0))
-            .overflow_y_scroll()
+            .id("node-sources-section")
+            .debug_selector(|| "node-sources-section".to_owned())
+            .flex_shrink_0()
             .px(if compact { px(12.0) } else { px(24.0) })
             .py_4()
             .when(loading && groups.is_empty(), |body| {
@@ -571,7 +491,7 @@ impl ManisApp {
                 body.child(Self::node_empty_state(compact, language, theme, cx))
             })
             .when(!groups.is_empty(), |body| {
-                body.child(self.source_group_list(groups, filter, compact, language, theme, cx))
+                body.child(self.source_group_list(groups, compact, language, theme, cx))
             })
     }
 
@@ -1287,6 +1207,7 @@ impl ManisApp {
         let title = title.into();
         Radio::new(id)
             .label(title)
+            .map(crate::components::primary_button_interaction)
             .checked(selected)
             .tab_stop(true)
             .cursor_pointer()
@@ -1320,6 +1241,7 @@ impl ManisApp {
             })
             .tab_stop(true)
             .focusable()
+            .map(crate::components::primary_button_interaction)
             .cursor_pointer()
             .min_h(px(50.0))
             .px_3()
@@ -1499,6 +1421,7 @@ impl ManisApp {
                 } else {
                     member.node_name.clone()
                 })
+                .map(crate::components::primary_button_interaction)
                 .checked(selected)
                 .tab_stop(true)
                 .cursor_pointer()
@@ -2399,136 +2322,17 @@ impl ManisApp {
         );
     }
 
-    fn node_configuration_link(
-        language: Language,
-        _theme: Theme,
-        cx: &mut Context<Self>,
-    ) -> Button {
-        action_button(
-            "nodes-open-configuration",
-            language.message(Message::ManageSources),
-            ActionRole::Secondary,
-            ControlSize::Compact,
-        )
-        .accessibility_label(language.localized(copy::nodes::MANAGE_SUBSCRIPTION_SOURCES))
-        .on_click(cx.listener(|this, _, _, cx| {
-            this.primary_workspace = PrimaryWorkspace::Configuration;
-            this.language()
-                .localized(copy::nodes::SUBSCRIPTION_SOURCE_CONFIGURATION_OPENED)
-                .clone_into(&mut this.status);
-            this.scroll_to_configuration_section(super::ConfigurationSection::ProxySources, cx);
-        }))
-    }
-
-    fn node_refresh_button(
-        refreshing: bool,
-        language: Language,
-        _theme: Theme,
-        cx: &mut Context<Self>,
-    ) -> Button {
-        action_button(
-            "nodes-refresh",
-            if refreshing {
-                language.localized(copy::nodes::LOADING)
-            } else {
-                language.message(Message::RefreshNodes)
-            },
-            ActionRole::Secondary,
-            ControlSize::Compact,
-        )
-        .icon(IconName::Redo2)
-        .loading(refreshing)
-        .accessibility_label(language.localized(copy::nodes::REFRESH_NODE_HEALTH))
-        .tab_stop(!refreshing)
-        .on_click(cx.listener(move |this, _, _, cx| {
-            if refreshing {
-                return;
-            }
-            if !this.imported_subscriptions.is_empty() {
-                for subscription in this
-                    .imported_subscriptions
-                    .iter_mut()
-                    .filter(|subscription| subscription.enabled)
-                {
-                    let kind = super::source_kind(&subscription.source);
-                    subscription.state = ImportedSubscriptionState::Pending(kind);
-                }
-                this.restore_imported_subscriptions(cx);
-            } else if !this.saved_single_nodes.is_empty() {
-                this.language()
-                    .localized(copy::nodes::SAVED_NODES_DO_NOT_NEED_TO_BE_DOWNLOADED_AGAIN)
-                    .clone_into(&mut this.status);
-                cx.notify();
-            } else {
-                this.connect_mihomo(cx);
-            }
-        }))
-    }
-
-    fn node_filter_bar(
-        counts: NodeCounts,
-        selected: NodeAvailabilityFilter,
-        compact: bool,
-        language: Language,
-        cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
-        let filters = [
-            NodeAvailabilityFilter::All,
-            NodeAvailabilityFilter::Available,
-            NodeAvailabilityFilter::Unavailable,
-            NodeAvailabilityFilter::Untested,
-        ];
-        div()
-            .id("node-filter-bar")
-            .flex()
-            .items_center()
-            .gap_2()
-            .when(compact, gpui::StatefulInteractiveElement::overflow_x_scroll)
-            .children(filters.into_iter().map(|filter| {
-                let label = Self::availability_filter_label(filter, language);
-                let active = selected == filter;
-                action_button(
-                    format!("node-filter-{label}"),
-                    format!("{label} {}", counts.count_for(filter)),
-                    if active {
-                        ActionRole::Primary
-                    } else {
-                        ActionRole::Secondary
-                    },
-                    ControlSize::Compact,
-                )
-                .selected(active)
-                .toggled(active)
-                .accessibility_label(format!(
-                    "{} {label}",
-                    language.localized(copy::nodes::FILTER_NODES_BY)
-                ))
-                .flex_shrink_0()
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.node_workspace.select_filter(filter);
-                    let language = this.language();
-                    this.status = format!(
-                        "{}: {}",
-                        language.localized(copy::nodes::NODE_FILTER),
-                        Self::availability_filter_label(filter, language)
-                    );
-                    cx.notify();
-                }))
-            }))
-    }
-
     fn source_group_list(
         &self,
         groups: &[NodeSourceGroup<'_>],
-        filter: NodeAvailabilityFilter,
         compact: bool,
         language: Language,
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Div {
-        let mut list = div().flex().flex_col().gap_3();
+        let mut list = div().flex_shrink_0().flex().flex_col().gap_3();
         for group in groups {
-            list = list.child(self.source_group(group, filter, compact, language, theme, cx));
+            list = list.child(self.source_group(group, compact, language, theme, cx));
         }
         list
     }
@@ -2536,16 +2340,15 @@ impl ManisApp {
     fn source_group(
         &self,
         group: &NodeSourceGroup<'_>,
-        filter: NodeAvailabilityFilter,
         compact: bool,
         language: Language,
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Div {
-        let presentation = self.source_group_presentation(group, filter, language);
+        let presentation = self.source_group_presentation(group, language);
         let header = Self::source_group_header(group, &presentation, compact, language, theme, cx);
 
-        let content = if presentation.visible_count == 0 {
+        let content = if presentation.total_nodes == 0 {
             div()
                 .px_4()
                 .py_3()
@@ -2555,17 +2358,13 @@ impl ManisApp {
                 .text_size(TextRole::Body.size())
                 .line_height(TextRole::Body.line_height())
                 .text_color(theme.text_secondary)
-                .child(
-                    language
-                        .localized(copy::nodes::NO_NODES_FROM_THIS_SOURCE_MATCH_THE_CURRENT_FILTER),
-                )
+                .child(language.localized(copy::nodes::NO_NODES_IN_THIS_SOURCE))
                 .into_any_element()
         } else {
             self.source_group_table(
                 group,
                 &presentation.benchmark,
                 NodeWorkspaceView {
-                    filter,
                     compact,
                     language,
                     theme,
@@ -2576,6 +2375,7 @@ impl ManisApp {
         };
 
         div()
+            .flex_shrink_0()
             .rounded(Radius::Pane.px())
             .border_1()
             .border_color(theme.outline_subtle)
@@ -2591,12 +2391,14 @@ impl ManisApp {
     fn source_group_presentation(
         &self,
         group: &NodeSourceGroup<'_>,
-        filter: NodeAvailabilityFilter,
         language: Language,
     ) -> SourceGroupPresentation {
-        let mut counts = NodeCounts::from_provider_refs(&group.providers);
-        counts.total += group.saved_nodes.len();
-        counts.untested += group.saved_nodes.len();
+        let total_nodes = group
+            .providers
+            .iter()
+            .map(|provider| provider.nodes.len())
+            .sum::<usize>()
+            + group.saved_nodes.len();
         let benchmark_key = Self::source_group_benchmark_key(&group.id);
         let benchmark = self
             .managed_policies
@@ -2624,12 +2426,11 @@ impl ManisApp {
             ),
         };
         SourceGroupPresentation {
-            visible_count: counts.count_for(filter),
             collapsed: self.node_workspace.is_group_collapsed(&group.id),
             benchmark_key,
             benchmark,
             detail,
-            total_nodes: counts.total,
+            total_nodes,
         }
     }
 
@@ -2648,6 +2449,11 @@ impl ManisApp {
         };
         let trigger_group_id = group.id.clone();
         let trigger = Button::new(format!("source-group-header-{}", group.id))
+            .map(crate::components::primary_button_interaction)
+            .debug_selector({
+                let id = group.id.clone();
+                move || format!("source-group-header-{id}")
+            })
             .accessibility_label(format!(
                 "{} {} {}",
                 action,
@@ -2775,7 +2581,6 @@ impl ManisApp {
         cx: &mut Context<Self>,
     ) -> Div {
         let NodeWorkspaceView {
-            filter,
             compact,
             language,
             theme,
@@ -2787,9 +2592,6 @@ impl ManisApp {
 
         for (provider_index, provider) in group.providers.iter().enumerate() {
             for (node_index, node) in provider.nodes.iter().enumerate() {
-                if !filter.includes(node.alive) {
-                    continue;
-                }
                 table = table.child(self.workspace_node_row(
                     node,
                     benchmark,
@@ -2805,9 +2607,6 @@ impl ManisApp {
             }
         }
         for (node_index, node) in group.saved_nodes.iter().enumerate() {
-            if !filter.includes(None) {
-                continue;
-            }
             let loaded = LoadedProviderNode {
                 name: node.name.clone(),
                 protocol: node.protocol.to_owned(),
@@ -2897,8 +2696,10 @@ impl ManisApp {
         } else {
             Self::wide_node_row_content(node, latency, idle_latency, &spinner_id, language, theme)
         };
+        let selector = row_id.clone();
         div()
             .id(row_id)
+            .debug_selector(move || selector.clone())
             .min_h(if compact { px(64.0) } else { px(52.0) })
             .px(if compact { px(12.0) } else { px(16.0) })
             .py_2()
@@ -2927,6 +2728,7 @@ impl ManisApp {
                     })
                     .tab_stop(!selection_locked)
                     .focusable()
+                    .map(crate::components::primary_button_interaction)
                     .cursor_pointer()
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if !selection_locked {
@@ -3063,7 +2865,11 @@ impl ManisApp {
         .into_any_element();
 
         div()
-            .min_h(px(if compact { 260.0 } else { 320.0 }))
+            .py(if compact {
+                Space::Md.px()
+            } else {
+                Space::Lg.px()
+            })
             .flex()
             .items_center()
             .child(empty_state(
@@ -3084,12 +2890,238 @@ impl ManisApp {
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
-    use super::{NodeCounts, NodeSourceGroup, subscription_provider_refs};
+    use super::{NodeSourceGroup, subscription_provider_refs};
     use crate::app::{
         GroupBenchmarkNodeState, GroupBenchmarkState, GroupBenchmarkSummary,
         ManagedPolicyRuntimeState,
     };
     use crate::mihomo::{LoadedProvider, LoadedProviderNode, ProxyDelayTarget};
+
+    fn merged_nodes_fixture() -> crate::app::ManisApp {
+        use crate::app::ManisApp;
+        use manis_core::ManagedPolicyGroup;
+        let mut app = ManisApp::with_fixture_controller("http://127.0.0.1:1");
+        app.source_providers = vec![LoadedProvider {
+            name: "Fixture source".to_owned(),
+            vehicle_type: None,
+            nodes: (0..50)
+                .map(|index| LoadedProviderNode {
+                    name: format!("Node {index}"),
+                    protocol: "Trojan".to_owned(),
+                    latency_label: None,
+                    alive: [Some(true), Some(false), None][index % 3],
+                })
+                .collect(),
+        }];
+        app.node_workspace.toggle_group("mihomo:0");
+        app.managed_policies.groups = (1..=3)
+            .map(|index| {
+                ManagedPolicyGroup::new(&format!("policy-{index}"), &format!("Group {index}"))
+                    .unwrap()
+            })
+            .collect();
+        app
+    }
+
+    #[gpui::test]
+    fn secondary_clicks_leave_homepage_controls_unchanged(cx: &mut gpui::TestAppContext) {
+        use gpui::{AppContext as _, MouseButton, MouseDownEvent, MouseUpEvent};
+        cx.update(crate::init);
+        let mut app = None;
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            let entity = cx.new(|_| merged_nodes_fixture());
+            app = Some(entity.clone());
+            crate::root(entity, window, cx)
+        });
+        let app = app.unwrap();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let before = app.read_with(cx, |app, _| {
+            (
+                app.status.clone(),
+                app.proxy_mode,
+                app.routing_mode,
+                app.node_workspace.clone(),
+            )
+        });
+        for selector in [
+            "source-group-header-mihomo:0",
+            "saved-policy-header-policy-1",
+            "proxy-mode-System",
+            "routing-mode-Global",
+        ] {
+            let bounds = cx.debug_bounds(selector).expect(selector);
+            for button in [MouseButton::Right, MouseButton::Middle] {
+                cx.simulate_event(MouseDownEvent {
+                    button,
+                    position: bounds.center(),
+                    ..Default::default()
+                });
+                cx.simulate_event(MouseUpEvent {
+                    button,
+                    position: bounds.center(),
+                    ..Default::default()
+                });
+                cx.update(|window, cx| {
+                    assert!(
+                        window.focused(cx).is_none(),
+                        "{selector} must not take focus"
+                    );
+                    window.draw(cx).clear(cx);
+                });
+            }
+        }
+        app.read_with(cx, |app, _| {
+            assert_eq!(
+                before,
+                (
+                    app.status.clone(),
+                    app.proxy_mode,
+                    app.routing_mode,
+                    app.node_workspace.clone()
+                )
+            );
+            assert!(app.expanded_policy_group.is_none());
+            assert!(app.proxy_mode_busy.is_none());
+            assert!(app.routing_mode_busy.is_none());
+        });
+    }
+
+    #[gpui::test]
+    fn nodes_page_keeps_sources_and_expanding_policies_in_one_document(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use gpui::{AppContext as _, ScrollDelta, ScrollWheelEvent, point, px};
+        use manis_core::PolicyGroupId;
+
+        cx.update(crate::init);
+        let mut app = None;
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            let entity = cx.new(|_| merged_nodes_fixture());
+            app = Some(entity.clone());
+            crate::root(entity, window, cx)
+        });
+        let app = app.unwrap();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let sources = cx
+            .debug_bounds("node-sources-section")
+            .expect("sources on homepage");
+        let policies = cx
+            .debug_bounds("node-policies-section")
+            .expect("policies on homepage");
+        assert!(policies.origin.y >= sources.bottom());
+        let first = cx.debug_bounds("saved-policy-card-policy-1").unwrap();
+        let third = cx.debug_bounds("saved-policy-card-policy-3").unwrap();
+        cx.update(|window, cx| {
+            app.update(cx, |app, cx| {
+                app.expanded_policy_group = Some(PolicyGroupId::new("policy-2"));
+                cx.notify();
+            });
+            window.draw(cx).clear(cx);
+        });
+        assert_eq!(
+            cx.debug_bounds("saved-policy-card-policy-1").unwrap(),
+            first
+        );
+        let expanded = cx.debug_bounds("saved-policy-card-policy-2").unwrap();
+        let after = cx.debug_bounds("saved-policy-card-policy-3").unwrap();
+        assert!(
+            expanded.size.height > px(2500.0),
+            "all 50 candidates retain row height"
+        );
+        assert!(
+            after.origin.y >= expanded.bottom(),
+            "following card must move down"
+        );
+        assert_eq!(
+            after.size.height, third.size.height,
+            "following card must not shrink"
+        );
+        let viewport = cx.debug_bounds("nodes-scroll").unwrap();
+        cx.simulate_event(ScrollWheelEvent {
+            position: viewport.center(),
+            delta: ScrollDelta::Pixels(point(px(0.0), px(-10_000.0))),
+            ..Default::default()
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let last = cx.debug_bounds("saved-policy-card-policy-3").unwrap();
+        assert!(
+            last.bottom() <= viewport.bottom(),
+            "last group is reachable by scrolling"
+        );
+        assert!(last.origin.y >= viewport.origin.y);
+        cx.simulate_event(ScrollWheelEvent {
+            position: viewport.center(),
+            delta: ScrollDelta::Pixels(point(px(0.0), px(10_000.0))),
+            ..Default::default()
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert!(cx.debug_bounds("navigation-Nodes").is_some());
+        assert!(cx.debug_bounds("navigation-Policies").is_none());
+        cx.update(|window, cx| {
+            app.update(cx, |app, cx| {
+                app.node_workspace.toggle_group("mihomo:0");
+                cx.notify();
+            });
+            window.draw(cx).clear(cx);
+        });
+        for row in [
+            "node-row-mihomo:0-0-0",
+            "node-row-mihomo:0-0-1",
+            "node-row-mihomo:0-0-2",
+        ] {
+            assert!(
+                cx.debug_bounds(row).is_some(),
+                "alive/failed/unknown nodes must all stay visible"
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn nodes_page_opens_policy_creation_and_settings_without_leaving_home(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use crate::app::ManisApp;
+        use gpui::{AppContext as _, Modifiers};
+        use gpui_component::WindowExt as _;
+        use manis_core::{ManagedPolicyGroup, PrimaryWorkspace};
+
+        cx.update(crate::init);
+        let mut app = None;
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            let entity = cx.new(|_| {
+                let mut app = ManisApp::with_fixture_controller("http://127.0.0.1:1");
+                app.managed_policies.groups =
+                    vec![ManagedPolicyGroup::new("policy-1", "Saved group").unwrap()];
+                app
+            });
+            app = Some(entity.clone());
+            crate::root(entity, window, cx)
+        });
+        let app = app.unwrap();
+        for (selector, editing_id) in [
+            ("policy-settings-policy-1", Some("policy-1")),
+            ("add-policy-group-header", None),
+        ] {
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            let button = cx
+                .debug_bounds(selector)
+                .expect("policy action on homepage");
+            cx.simulate_click(button.center(), Modifiers::none());
+            cx.update(|window, cx| {
+                assert!(window.has_active_dialog(cx));
+                app.read_with(cx, |app, _| {
+                    assert_eq!(app.primary_workspace, PrimaryWorkspace::Nodes);
+                    let draft = app
+                        .managed_policies
+                        .draft
+                        .as_ref()
+                        .expect("policy editor draft");
+                    assert_eq!(draft.editing_id.as_deref(), editing_id);
+                });
+                window.close_dialog(cx);
+            });
+        }
+    }
 
     #[test]
     fn proxy_candidate_keeps_its_identity_when_the_homepage_exit_changes()
@@ -3299,30 +3331,6 @@ mod tests {
             assert!(app.managed_policies.groups.is_empty());
             assert!(matches!(app.controller, ControllerState::Disconnected));
         });
-    }
-
-    #[test]
-    fn counts_node_availability_across_providers() {
-        let providers = vec![LoadedProvider {
-            name: "fixture".to_owned(),
-            vehicle_type: None,
-            nodes: vec![
-                node(Some(true)),
-                node(Some(true)),
-                node(Some(false)),
-                node(None),
-            ],
-        }];
-
-        assert_eq!(
-            NodeCounts::from_providers(&providers),
-            NodeCounts {
-                total: 4,
-                available: 2,
-                unavailable: 1,
-                untested: 1,
-            }
-        );
     }
 
     #[test]

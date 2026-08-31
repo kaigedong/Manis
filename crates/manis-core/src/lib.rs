@@ -407,7 +407,6 @@ pub enum CompactNavigation {
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum PrimaryWorkspace {
-    Policies,
     #[default]
     Nodes,
     RoutingRules,
@@ -418,10 +417,9 @@ pub enum PrimaryWorkspace {
 
 impl PrimaryWorkspace {
     #[must_use]
-    pub const fn navigation_order() -> &'static [Self; 6] {
+    pub const fn navigation_order() -> &'static [Self; 5] {
         &[
             Self::Nodes,
-            Self::Policies,
             Self::RoutingRules,
             Self::Activity,
             Self::Logs,
@@ -512,43 +510,12 @@ impl RoutingMode {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum NodeAvailabilityFilter {
-    #[default]
-    All,
-    Available,
-    Unavailable,
-    Untested,
-}
-
-impl NodeAvailabilityFilter {
-    #[must_use]
-    pub fn includes(self, alive: Option<bool>) -> bool {
-        match self {
-            Self::All => true,
-            Self::Available => alive == Some(true),
-            Self::Unavailable => alive == Some(false),
-            Self::Untested => alive.is_none(),
-        }
-    }
-}
-
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct NodeWorkspaceState {
-    pub filter: NodeAvailabilityFilter,
     collapsed_groups: BTreeSet<String>,
 }
 
 impl NodeWorkspaceState {
-    pub fn select_filter(&mut self, filter: NodeAvailabilityFilter) {
-        self.filter = filter;
-    }
-
-    #[must_use]
-    pub fn includes(&self, alive: Option<bool>) -> bool {
-        self.filter.includes(alive)
-    }
-
     pub fn toggle_group(&mut self, group_id: &str) {
         if group_id.is_empty() {
             return;

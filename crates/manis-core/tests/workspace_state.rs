@@ -2,10 +2,10 @@ use std::collections::BTreeMap;
 
 use manis_core::{
     CompactNavigation, EmptyPolicyCatalog, ManagedPolicyGroup, ManagedPolicyIcon,
-    ManagedPolicyStrategy, NodeAvailabilityFilter, NodeIdentity, NodeWorkspaceState,
-    PolicyCandidateKind, PolicyCandidateMatcher, PolicyCatalog, PolicyGroup, PolicyGroupId,
-    PolicyGroupKind, PolicyNode, PolicyRule, PolicyWorkspaceState, PrimaryWorkspace, ProxyId,
-    ProxyMode, RoutingMode, WindowSizeClass,
+    ManagedPolicyStrategy, NodeIdentity, NodeWorkspaceState, PolicyCandidateKind,
+    PolicyCandidateMatcher, PolicyCatalog, PolicyGroup, PolicyGroupId, PolicyGroupKind, PolicyNode,
+    PolicyRule, PolicyWorkspaceState, PrimaryWorkspace, ProxyId, ProxyMode, RoutingMode,
+    WindowSizeClass,
 };
 
 fn streaming() -> PolicyGroupId {
@@ -271,12 +271,10 @@ fn replacing_a_data_source_keeps_size_but_resets_navigation_and_selection() {
 }
 
 #[test]
-fn primary_workspace_switches_between_policy_operation_and_configuration() {
+fn primary_workspace_switches_between_nodes_and_configuration() {
     let mut active = PrimaryWorkspace::default();
 
     assert_eq!(active, PrimaryWorkspace::navigation_order()[0]);
-    active = PrimaryWorkspace::Policies;
-    assert_eq!(active, PrimaryWorkspace::Policies);
     active = PrimaryWorkspace::RoutingRules;
     assert_eq!(active, PrimaryWorkspace::RoutingRules);
     active = PrimaryWorkspace::Configuration;
@@ -284,12 +282,11 @@ fn primary_workspace_switches_between_policy_operation_and_configuration() {
 }
 
 #[test]
-fn primary_navigation_places_routing_rules_between_policies_and_runtime_diagnostics() {
+fn primary_navigation_places_routing_rules_after_nodes() {
     assert_eq!(
         PrimaryWorkspace::navigation_order(),
         &[
             PrimaryWorkspace::Nodes,
-            PrimaryWorkspace::Policies,
             PrimaryWorkspace::RoutingRules,
             PrimaryWorkspace::Activity,
             PrimaryWorkspace::Logs,
@@ -348,30 +345,6 @@ fn routing_mode_has_stable_labels_and_wire_values() {
     );
     assert_eq!(RoutingMode::parse_wire_value("script"), None);
     assert_eq!(RoutingMode::default(), RoutingMode::Rule);
-}
-
-#[test]
-fn node_workspace_filters_known_and_untested_availability() {
-    let mut state = NodeWorkspaceState::default();
-
-    assert!(state.includes(Some(true)));
-    assert!(state.includes(Some(false)));
-    assert!(state.includes(None));
-
-    state.select_filter(NodeAvailabilityFilter::Available);
-    assert!(state.includes(Some(true)));
-    assert!(!state.includes(Some(false)));
-    assert!(!state.includes(None));
-
-    state.select_filter(NodeAvailabilityFilter::Unavailable);
-    assert!(!state.includes(Some(true)));
-    assert!(state.includes(Some(false)));
-    assert!(!state.includes(None));
-
-    state.select_filter(NodeAvailabilityFilter::Untested);
-    assert!(!state.includes(Some(true)));
-    assert!(!state.includes(Some(false)));
-    assert!(state.includes(None));
 }
 
 #[test]
