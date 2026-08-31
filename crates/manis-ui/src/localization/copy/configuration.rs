@@ -125,7 +125,7 @@ pub(crate) const COULD_NOT_UPDATE_SOURCE: LocalizedText =
 pub(crate) const COUNTRY_OR_REGION: LocalizedText =
     LocalizedText::new("Country or region", "国家或地区");
 pub(crate) const CURRENT: LocalizedText = LocalizedText::new("Current", "当前");
-pub(crate) const CURRENT_2: LocalizedText = LocalizedText::new("Current", "当前使用");
+pub(crate) const CURRENT_KERNEL: LocalizedText = LocalizedText::new("Current", "当前使用");
 pub(crate) const CURRENT_MANAGED_NETWORK_BEHAVIOR: LocalizedText =
     LocalizedText::new("Current managed network behavior", "当前托管网络行为");
 pub(crate) const DAILY: LocalizedText = LocalizedText::new("Daily", "每天");
@@ -134,7 +134,7 @@ pub(crate) const DESTINATION_PORT: LocalizedText =
 pub(crate) const DIRECT_GLOBAL_OR_ORDERED_RULES: LocalizedText =
     LocalizedText::new("Direct, global, or ordered rules", "直连、全局或有序规则");
 pub(crate) const DISABLED: LocalizedText = LocalizedText::new("Disabled", "已禁用");
-pub(crate) const DISABLED_2: LocalizedText = LocalizedText::new("Disabled", "未启用");
+pub(crate) const SOURCE_DISABLED_LABEL: LocalizedText = LocalizedText::new("Disabled", "未启用");
 pub(crate) const DNS_AND_TUN: LocalizedText = LocalizedText::new("DNS and TUN", "DNS 与 TUN");
 pub(crate) const DOMAIN_CONTAINS_KEYWORD: LocalizedText =
     LocalizedText::new("Domain contains keyword", "域名中包含关键词");
@@ -267,7 +267,7 @@ pub(crate) const LANGUAGE_SAVED: LocalizedText =
 pub(crate) const LAST_UPDATE_FAILED: LocalizedText =
     LocalizedText::new("Last update failed", "上次更新失败");
 pub(crate) const MANAGED: LocalizedText = LocalizedText::new("Managed", "Manis 托管");
-pub(crate) const MANAGED_2: LocalizedText = LocalizedText::new("Managed", "托管");
+pub(crate) const MANAGED_SECTION_SUMMARY: LocalizedText = LocalizedText::new("Managed", "托管");
 pub(crate) const MANAGE_MANIS_PREFERENCES_AND_DATA_SOURCES: LocalizedText = LocalizedText::new(
     "Manage Manis preferences and data sources",
     "管理 Manis 偏好与数据来源",
@@ -374,7 +374,8 @@ pub(crate) const SELECT_LANGUAGE: LocalizedText =
     LocalizedText::new("Select language", "选择界面语言");
 pub(crate) const SETTINGS: LocalizedText = LocalizedText::new("SETTINGS", "设置");
 pub(crate) const SINGLE_NODE: LocalizedText = LocalizedText::new("Single node", "单节点");
-pub(crate) const SINGLE_NODE_2: LocalizedText = LocalizedText::new("Single node", "单节点来源");
+pub(crate) const SINGLE_NODE_SOURCE: LocalizedText =
+    LocalizedText::new("Single node", "单节点来源");
 pub(crate) const SINGLE_NODE_SOURCE_REMOVED: LocalizedText =
     LocalizedText::new("Single-node source removed", "单节点来源已移除");
 pub(crate) const SINGLE_NODE_SOURCE_SAVE_FAILED: LocalizedText =
@@ -451,7 +452,7 @@ pub(crate) const UPDATE_NOW: LocalizedText = LocalizedText::new("Update now", "�
 pub(crate) const UPDATE_THIS_SUBSCRIPTION_NOW: LocalizedText =
     LocalizedText::new("Update this subscription now", "立即更新这个订阅");
 pub(crate) const UPDATING: LocalizedText = LocalizedText::new("Updating…", "更新中…");
-pub(crate) const UPDATING_2: LocalizedText = LocalizedText::new("Updating…", "正在更新…");
+pub(crate) const UPDATE_STATUS: LocalizedText = LocalizedText::new("Updating…", "正在更新…");
 pub(crate) const UPDATING_REMOTE_QX_RULES: LocalizedText =
     LocalizedText::new("Updating remote QX rules", "正在更新远程 QX 规则");
 pub(crate) const US: LocalizedText = LocalizedText::new("US", "US（国家代码）");

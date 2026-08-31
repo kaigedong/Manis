@@ -1,5 +1,22 @@
+use gpui::{Context, Entity};
+use manis_profile::SecretUrl;
+
+use crate::app::{
+    ImportQxRuleError, ImportQxRuleSuccess, ImportedSubscriptionState, ManisApp,
+    QxRuleImportFeedback, QxRuleList, QxRuleSourceRefreshState, SourceRuntimeApply,
+};
+use crate::{
+    diagnostics::{LogLevel, begin_operation, record_event, record_operation},
+    localization::copy,
+    mihomo::{self, SubscriptionStoreError},
+    rule_source::download_qx_rule_document_secret,
+    subscription_input::SubscriptionTextInput,
+};
+
+use super::{QxRuleSaveRequest, SubscriptionToggleCompletion, save_qx_rule_source};
+
 impl ManisApp {
-    fn submit_qx_rule_import(
+    pub(super) fn submit_qx_rule_import(
         &mut self,
         input: &Entity<SubscriptionTextInput>,
         cx: &mut Context<Self>,
@@ -142,7 +159,7 @@ impl ManisApp {
         &mut self,
         generation: u64,
         operation_id: u64,
-        result: super::QxRuleImportResult,
+        result: crate::app::QxRuleImportResult,
         cx: &mut Context<Self>,
     ) {
         if self.rule_sources.import_generation != generation {
@@ -315,7 +332,7 @@ impl ManisApp {
         }
     }
 
-    fn remove_qx_rule_source(&mut self, id: String, cx: &mut Context<Self>) {
+    pub(super) fn remove_qx_rule_source(&mut self, id: String, cx: &mut Context<Self>) {
         if self.configuration_transfer.active {
             return;
         }
@@ -333,7 +350,7 @@ impl ManisApp {
         cx.spawn(async move |this, cx| {
             let result = executor
                 .spawn(async move {
-                    super::mutate_saved_sources(&runtime, &store_dir, |store_dir| {
+                    crate::app::mutate_saved_sources(&runtime, &store_dir, |store_dir| {
                         mihomo::remove_qx_rule_source_in(store_dir, &id).map(|()| id.clone())
                     })
                 })
@@ -354,9 +371,9 @@ impl ManisApp {
                             );
                         }
                         this.rule_sources.refreshes.remove(&id);
-                        this.rule_sources
-                            .refresh_retry_not_before
-                            .remove(&super::DueRemoteSource::QxRule(id.clone()).scheduler_key());
+                        this.rule_sources.refresh_retry_not_before.remove(
+                            &crate::app::DueRemoteSource::QxRule(id.clone()).scheduler_key(),
+                        );
                         this.rule_sources.feedback = QxRuleImportFeedback::Idle;
                         let language = this.language();
                         transaction.apply.reconcile_proxy_mode(&mut this.proxy_mode);
@@ -373,9 +390,10 @@ impl ManisApp {
                             "{}{}",
                             this.language()
                                 .localized(copy::configuration::REMOTE_QX_RULE_REMOVAL_FAILED),
-                            transaction
-                                .apply
-                                .status_suffix_after_rollback_attempt(this.language(), transaction.rollback_error.as_ref())
+                            transaction.apply.status_suffix_after_rollback_attempt(
+                                this.language(),
+                                transaction.rollback_error.as_ref()
+                            )
                         );
                     }
                     Err(error) => {
@@ -396,7 +414,12 @@ impl ManisApp {
         cx.notify();
     }
 
-    fn set_subscription_enabled(&mut self, id: &str, enabled: bool, cx: &mut Context<Self>) {
+    pub(super) fn set_subscription_enabled(
+        &mut self,
+        id: &str,
+        enabled: bool,
+        cx: &mut Context<Self>,
+    ) {
         if self.configuration_transfer.active {
             return;
         }
@@ -415,7 +438,7 @@ impl ManisApp {
         };
         let previous_state = source.state;
         let previous_enabled = source.enabled;
-        let kind = super::source_kind(&source.source);
+        let kind = crate::app::source_kind(&source.source);
         self.subscription_action_generation = self.subscription_action_generation.wrapping_add(1);
         let generation = self.subscription_action_generation;
         source.generation = generation;
@@ -436,7 +459,7 @@ impl ManisApp {
         cx.spawn(async move |this, cx| {
             let result = executor
                 .spawn(async move {
-                    super::mutate_saved_sources(&runtime, &store_dir, |store_dir| {
+                    crate::app::mutate_saved_sources(&runtime, &store_dir, |store_dir| {
                         mihomo::update_subscription_source_enabled_in(store_dir, &task_id, enabled)
                     })
                 })
@@ -453,7 +476,10 @@ impl ManisApp {
     fn finish_subscription_toggle(
         &mut self,
         completion: SubscriptionToggleCompletion,
-        result: Result<super::SourceMutation<mihomo::StoredSubscription>, SubscriptionStoreError>,
+        result: Result<
+            crate::app::SourceMutation<mihomo::StoredSubscription>,
+            SubscriptionStoreError,
+        >,
         cx: &mut Context<Self>,
     ) {
         let language = self.language();
@@ -494,9 +520,10 @@ impl ManisApp {
                 self.status = format!(
                     "{}{}",
                     language.localized(copy::configuration::FAILED_TO_CHANGE_SUBSCRIPTION_STATE),
-                    transaction
-                        .apply
-                        .status_suffix_after_rollback_attempt(language, transaction.rollback_error.as_ref())
+                    transaction.apply.status_suffix_after_rollback_attempt(
+                        language,
+                        transaction.rollback_error.as_ref()
+                    )
                 );
                 false
             }
@@ -517,7 +544,12 @@ impl ManisApp {
         cx.notify();
     }
 
-    fn set_qx_rule_source_enabled(&mut self, id: String, enabled: bool, cx: &mut Context<Self>) {
+    pub(super) fn set_qx_rule_source_enabled(
+        &mut self,
+        id: String,
+        enabled: bool,
+        cx: &mut Context<Self>,
+    ) {
         if self.configuration_transfer.active {
             return;
         }
@@ -541,7 +573,7 @@ impl ManisApp {
         cx.spawn(async move |this, cx| {
             let result = executor
                 .spawn(async move {
-                    super::mutate_saved_sources(&runtime, &store_dir, |store_dir| {
+                    crate::app::mutate_saved_sources(&runtime, &store_dir, |store_dir| {
                         mihomo::update_qx_rule_source_enabled_in(store_dir, &task_id, enabled)
                     })
                 })
@@ -580,9 +612,10 @@ impl ManisApp {
                             "{}{}",
                             this.language()
                                 .localized(copy::configuration::FAILED_TO_CHANGE_RULE_SOURCE_STATE),
-                            transaction
-                                .apply
-                                .status_suffix_after_rollback_attempt(this.language(), transaction.rollback_error.as_ref())
+                            transaction.apply.status_suffix_after_rollback_attempt(
+                                this.language(),
+                                transaction.rollback_error.as_ref()
+                            )
                         );
                     }
                     Err(error) => {
@@ -602,7 +635,12 @@ impl ManisApp {
         cx.notify();
     }
 
-    fn update_qx_rule_source_target(&mut self, id: String, target: String, cx: &mut Context<Self>) {
+    pub(super) fn update_qx_rule_source_target(
+        &mut self,
+        id: String,
+        target: String,
+        cx: &mut Context<Self>,
+    ) {
         if self.configuration_transfer.active {
             return;
         }
@@ -647,7 +685,7 @@ impl ManisApp {
         cx.spawn(async move |this, cx| {
             let result = executor
                 .spawn(async move {
-                    super::mutate_saved_sources(&runtime, &store_dir, |store_dir| {
+                    crate::app::mutate_saved_sources(&runtime, &store_dir, |store_dir| {
                         mihomo::update_qx_rule_source_target_in(store_dir, &task_id, &target)
                     })
                 })
@@ -665,7 +703,10 @@ impl ManisApp {
         &mut self,
         id: &str,
         generation: u64,
-        result: Result<super::SourceMutation<mihomo::StoredQxRuleSource>, SubscriptionStoreError>,
+        result: Result<
+            crate::app::SourceMutation<mihomo::StoredQxRuleSource>,
+            SubscriptionStoreError,
+        >,
         cx: &mut Context<Self>,
     ) {
         if self.rule_sources.target_updates.get(id) != Some(&generation) {
@@ -681,9 +722,10 @@ impl ManisApp {
                     "{}{}",
                     self.language()
                         .localized(copy::configuration::FAILED_TO_SAVE_RULE_SOURCE_POLICY),
-                    transaction
-                        .apply
-                        .status_suffix_after_rollback_attempt(self.language(), transaction.rollback_error.as_ref())
+                    transaction.apply.status_suffix_after_rollback_attempt(
+                        self.language(),
+                        transaction.rollback_error.as_ref()
+                    )
                 );
             }
             Err(error) => {
@@ -701,7 +743,7 @@ impl ManisApp {
     fn finish_successful_qx_rule_target_update(
         &mut self,
         id: &str,
-        mut transaction: super::SourceMutation<mihomo::StoredQxRuleSource>,
+        mut transaction: crate::app::SourceMutation<mihomo::StoredQxRuleSource>,
     ) {
         let stored = transaction
             .value
@@ -730,7 +772,7 @@ impl ManisApp {
         );
     }
 
-    pub(super) fn refresh_qx_rule_source(&mut self, id: String, cx: &mut Context<Self>) {
+    pub(in crate::app) fn refresh_qx_rule_source(&mut self, id: String, cx: &mut Context<Self>) {
         if self.configuration_transfer.active {
             return;
         }
@@ -770,15 +812,16 @@ impl ManisApp {
                     if parsed.rules.is_empty() {
                         return Err(ImportQxRuleError::InvalidDocument);
                     }
-                    let transaction = super::mutate_saved_sources(&runtime, &store_dir, |store_dir| {
-                        mihomo::replace_qx_rule_source_content_in(
-                            store_dir,
-                            &task_id,
-                            &content,
-                            mihomo::current_unix_secs(),
-                        )
-                    })
-                    .map_err(ImportQxRuleError::Store)?;
+                    let transaction =
+                        crate::app::mutate_saved_sources(&runtime, &store_dir, |store_dir| {
+                            mihomo::replace_qx_rule_source_content_in(
+                                store_dir,
+                                &task_id,
+                                &content,
+                                mihomo::current_unix_secs(),
+                            )
+                        })
+                        .map_err(ImportQxRuleError::Store)?;
                     Ok::<_, ImportQxRuleError>(transaction)
                 })
                 .await;
@@ -795,7 +838,7 @@ impl ManisApp {
         &mut self,
         id: &str,
         generation: u64,
-        result: super::QxRuleRefreshResult,
+        result: crate::app::QxRuleRefreshResult,
         cx: &mut Context<Self>,
     ) {
         if !matches!(
@@ -823,9 +866,10 @@ impl ManisApp {
                     "{}{}",
                     self.language()
                         .localized(copy::configuration::REMOTE_QX_RULE_UPDATE_FAILED),
-                    transaction
-                        .apply
-                        .status_suffix_after_rollback_attempt(self.language(), transaction.rollback_error.as_ref())
+                    transaction.apply.status_suffix_after_rollback_attempt(
+                        self.language(),
+                        transaction.rollback_error.as_ref()
+                    )
                 );
             }
         }
@@ -835,7 +879,7 @@ impl ManisApp {
     fn finish_successful_qx_rule_refresh(
         &mut self,
         id: &str,
-        mut transaction: super::SourceMutation<mihomo::StoredQxRuleSource>,
+        mut transaction: crate::app::SourceMutation<mihomo::StoredQxRuleSource>,
     ) {
         let stored = transaction
             .value
@@ -854,7 +898,7 @@ impl ManisApp {
         self.rule_sources.refreshes.remove(id);
         self.rule_sources
             .refresh_retry_not_before
-            .remove(&super::DueRemoteSource::QxRule(id.to_owned()).scheduler_key());
+            .remove(&crate::app::DueRemoteSource::QxRule(id.to_owned()).scheduler_key());
         transaction.apply.reconcile_proxy_mode(&mut self.proxy_mode);
         self.status = copy::configuration::qx_rules_applied(
             language,

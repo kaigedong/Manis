@@ -1,12 +1,29 @@
+use super::{
+    AppUpdateState, GroupBenchmarkState, KernelSwitchState, ManagedPolicyRuntimeState, ManisApp,
+    MihomoCoreUpdateOutcome, MihomoCoreUpdateState, PolicyBenchmarkRun, ProxyPorts,
+    apply_proxy_mode_transition, perform_mihomo_core_update,
+};
+use crate::{
+    app_update::{self, AppUpdateError, AvailableUpdate},
+    core_update,
+    diagnostics::{LogLevel, UiEvent, begin_operation, record_event, record_operation, trace_ui},
+    kernel::{self, KernelRuntime},
+    localization::copy,
+    mihomo::{
+        self, ControllerRuntime, ControllerState, LiveRuntimeSession, LiveStreamPhase,
+        LiveStreamStatus, LoadedSnapshot, ManagedRuntimeHealth,
+    },
+};
+use gpui::Context;
+use manis_core::{KernelKind, ProxyMode};
+use std::time::Duration;
+
 impl ManisApp {
-    fn start_app_update_polling(cx: &mut Context<Self>) {
+    pub(super) fn start_app_update_polling(cx: &mut Context<Self>) {
         let timer = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
             loop {
-                if this
-                    .update(cx, Self::check_for_app_update)
-                    .is_err()
-                {
+                if this.update(cx, Self::check_for_app_update).is_err() {
                     break;
                 }
                 timer.timer(Duration::from_hours(1)).await;
@@ -35,7 +52,7 @@ impl ManisApp {
         .detach();
     }
 
-    fn finish_app_update_check(
+    pub(super) fn finish_app_update_check(
         &mut self,
         result: Result<Option<AvailableUpdate>, AppUpdateError>,
         previous: AppUpdateState,
@@ -65,7 +82,7 @@ impl ManisApp {
         };
     }
 
-    fn switch_kernel(&mut self, requested: KernelKind, cx: &mut Context<Self>) {
+    pub(super) fn switch_kernel(&mut self, requested: KernelKind, cx: &mut Context<Self>) {
         if self.configuration_transfer.active {
             return;
         }
@@ -75,7 +92,9 @@ impl ManisApp {
         }
         if self.proxy_mode_busy.is_some() {
             language
-                .localized(copy::app::WAIT_FOR_THE_PROXY_MODE_CHANGE_TO_FINISH_BEFORE_CHANGING_KERNELS)
+                .localized(
+                    copy::app::WAIT_FOR_THE_PROXY_MODE_CHANGE_TO_FINISH_BEFORE_CHANGING_KERNELS,
+                )
                 .clone_into(&mut self.status);
             cx.notify();
             return;
@@ -117,9 +136,11 @@ impl ManisApp {
                                 language,
                             )
                         },
-                        |kind| kernel::save_kernel_kind_in(&store_dir, kind)
-                            .map(|_path| ())
-                            .map_err(|error| error.to_string()),
+                        |kind| {
+                            kernel::save_kernel_kind_in(&store_dir, kind)
+                                .map(|_path| ())
+                                .map_err(|error| error.to_string())
+                        },
                         |active| {
                             apply_proxy_mode_transition(
                                 &previous_for_restore,
@@ -181,7 +202,7 @@ impl ManisApp {
         cx.notify();
     }
 
-    fn update_mihomo_core(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn update_mihomo_core(&mut self, cx: &mut Context<Self>) {
         if self.configuration_transfer.active {
             return;
         }
@@ -279,9 +300,10 @@ impl ManisApp {
         self.start_live_runtime(&controller_endpoint, controller_secret.as_deref(), cx);
     }
 
-    fn connect_mihomo(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn connect_mihomo(&mut self, cx: &mut Context<Self>) {
         if self.configuration_transfer.active
-            || matches!(self.controller, ControllerState::Connecting { .. }) {
+            || matches!(self.controller, ControllerState::Connecting { .. })
+        {
             return;
         }
 
@@ -383,7 +405,7 @@ impl ManisApp {
         self.start_policy_group_benchmark(&policy_id, cx);
     }
 
-    fn apply_mihomo_snapshot(&mut self, endpoint: String, snapshot: LoadedSnapshot) {
+    pub(super) fn apply_mihomo_snapshot(&mut self, endpoint: String, snapshot: LoadedSnapshot) {
         trace_ui(UiEvent::MihomoConnectSucceeded);
         let mut catalog = snapshot.catalog;
         for (group, target) in self.managed_policies.node_selections.iter_policy_targets() {
@@ -540,7 +562,7 @@ impl ManisApp {
         .detach();
     }
 
-    fn start_policy_group_benchmark(
+    pub(super) fn start_policy_group_benchmark(
         &mut self,
         id: &manis_core::PolicyGroupId,
         cx: &mut Context<Self>,
@@ -582,8 +604,7 @@ impl ManisApp {
             cx.notify();
             return;
         };
-        self.status =
-            copy::app::testing_policy_candidates(language, &group.name, targets.len());
+        self.status = copy::app::testing_policy_candidates(language, &group.name, targets.len());
         trace_ui(UiEvent::GroupBenchmarkStarted);
 
         let runtime = self.runtime.clone();
@@ -879,8 +900,7 @@ fn perform_kernel_switch(
     let mut proxy_mode_restored = false;
     if previous_mode != ProxyMode::Off {
         if let Err(message) = restore_proxy_mode(previous_mode) {
-            let message =
-                message_with_selection_rollback(message, save_kernel_kind(previous_kind));
+            let message = message_with_selection_rollback(message, save_kernel_kind(previous_kind));
             return Err(KernelSwitchFailure {
                 message,
                 proxy_mode_restored: false,
@@ -898,10 +918,7 @@ fn perform_kernel_switch(
     Ok(prepared)
 }
 
-fn message_with_selection_rollback(
-    message: String,
-    rollback: Result<(), String>,
-) -> String {
+fn message_with_selection_rollback(message: String, rollback: Result<(), String>) -> String {
     match rollback {
         Ok(()) => message,
         Err(rollback) => {
@@ -919,9 +936,7 @@ mod runtime_lifecycle_tests {
 
     use gpui::AppContext as _;
 
-    use super::{
-        ControllerRuntime, KernelRuntime, ManisApp, perform_kernel_switch,
-    };
+    use super::{ControllerRuntime, KernelRuntime, ManisApp, perform_kernel_switch};
 
     fn fixture_runtime() -> KernelRuntime {
         KernelRuntime::mihomo(ControllerRuntime::Fixture {
@@ -958,9 +973,7 @@ mod runtime_lifecycle_tests {
             {
                 let calls = calls.clone();
                 move |mode| {
-                    calls
-                        .borrow_mut()
-                        .push(format!("restore:{mode:?}->Off"));
+                    calls.borrow_mut().push(format!("restore:{mode:?}->Off"));
                     Ok(())
                 }
             },
@@ -976,19 +989,12 @@ mod runtime_lifecycle_tests {
         assert!(result.is_ok());
         assert_eq!(
             calls.borrow().as_slice(),
-            [
-                "prepare",
-                "save:sing-box",
-                "restore:System->Off",
-                "stop"
-            ]
+            ["prepare", "save:sing-box", "restore:System->Off", "stop"]
         );
     }
 
     #[gpui::test]
-    fn switching_kernel_reserves_proxy_mode_even_when_proxy_is_off(
-        cx: &mut gpui::TestAppContext,
-    ) {
+    fn switching_kernel_reserves_proxy_mode_even_when_proxy_is_off(cx: &mut gpui::TestAppContext) {
         let store = std::env::temp_dir().join(format!(
             "manis-kernel-switch-{}-{}",
             std::process::id(),
@@ -1047,9 +1053,7 @@ mod runtime_lifecycle_tests {
             {
                 let calls = calls.clone();
                 move |mode| {
-                    calls
-                        .borrow_mut()
-                        .push(format!("restore:{mode:?}->Off"));
+                    calls.borrow_mut().push(format!("restore:{mode:?}->Off"));
                     Err("restore failed".to_owned())
                 }
             },
@@ -1107,9 +1111,7 @@ mod runtime_lifecycle_tests {
             {
                 let calls = calls.clone();
                 move |mode| {
-                    calls
-                        .borrow_mut()
-                        .push(format!("restore:{mode:?}->Off"));
+                    calls.borrow_mut().push(format!("restore:{mode:?}->Off"));
                     Ok(())
                 }
             },

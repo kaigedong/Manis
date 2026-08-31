@@ -1,43 +1,41 @@
 use std::path::Path;
 
+#[cfg(feature = "snapshot-fixtures")]
+use super::AppUpdateState;
+#[cfg(feature = "snapshot-fixtures")]
+use gpui::Window;
+#[cfg(feature = "snapshot-fixtures")]
+use gpui_component::WindowExt as _;
+
 use gpui::{
-    AnyElement, Context, Div, Entity, Focusable, FontWeight, KeyDownEvent, ParentElement, Role,
-    Stateful, Styled, Window, div, prelude::*, px,
+    AnyElement, Context, Div, Entity, KeyDownEvent, ParentElement, Stateful, Styled, div,
+    prelude::*, px,
 };
-use gpui_component::{
-    Disableable, IconName, Selectable, Sizable, WindowExt as _,
-    button::{Button, ButtonVariant, ButtonVariants},
-    checkbox::Checkbox,
-    collapsible::Collapsible,
-    dialog::Dialog,
-    menu::{ContextMenuExt, PopupMenuItem},
-};
-use manis_core::{KernelKind, ProxyMode, WindowSizeClass};
-use manis_profile::{QxRuleKind, SecretUrl};
+use manis_core::WindowSizeClass;
 
 use super::{
-    AppUpdateState, ConfigurationSection, ImportQxRuleError, ImportQxRuleSuccess,
-    ImportedSubscriptionState, ManisApp, ManualRulePopover, MihomoCoreUpdateState,
-    ProxySourceEditorKind, QxRuleImportFeedback, QxRuleList, QxRuleSourceRefreshState,
-    SourceRuntimeApply, SubscriptionFeedback, proxy_mode_label, routing_mode_label,
+    ConfigurationSection, ImportQxRuleError, ImportQxRuleSuccess, ImportedSubscriptionState,
+    ManisApp, QxRuleImportFeedback, QxRuleList, SourceRuntimeApply,
 };
 use crate::{
-    app_update,
-    components::{
-        ActionRole, StatusTone, action_button, dialog_footer_surface, dialog_header_surface,
-        empty_state, page_heading, row_action_button, section_heading, status_badge,
-        style_action_button, surface_dialog,
-    },
-    diagnostics::{LogLevel, UiEvent, begin_operation, record_event, record_operation, trace_ui},
-    localization::{
-        CountNoun, Language, LanguagePreference, Message, copy, save_language_preference_in,
-    },
-    mihomo::{self, RemoteSourceRefreshInterval, SubscriptionStoreError},
-    rule_source::{download_qx_rule_document, download_qx_rule_document_secret},
-    subscription::{SourceKind, validate_single_node_preview, validate_subscription_preview},
-    subscription_input::{SubscriptionTextInput, TextInputSpec},
-    theme::{ControlSize, Radius, Space, TextRole, Theme},
+    components::StatusTone,
+    localization::{Language, LanguagePreference, Message, copy},
+    mihomo::{self, RemoteSourceRefreshInterval},
+    rule_source::download_qx_rule_document,
+    subscription::SourceKind,
+    subscription_input::SubscriptionTextInput,
+    theme::{Radius, Space, TextRole, Theme},
 };
+
+mod editor;
+mod manual_rules;
+mod proxy_sources;
+mod rule_sources;
+mod settings;
+mod source_mutations;
+mod transfer;
+
+pub(super) use transfer::ConfigurationTransfer;
 
 const MAX_MANUAL_RULE_INPUT_BYTES: usize = 1_024;
 const MANUAL_RULES_EXPANSION_KEY: &str = "routing-manual-rules";
@@ -624,13 +622,6 @@ impl ManisApp {
             )
     }
 }
-include!("configuration/settings.rs");
-include!("configuration/transfer.rs");
-include!("configuration/editor.rs");
-include!("configuration/proxy_sources.rs");
-include!("configuration/rule_sources.rs");
-include!("configuration/manual_rules.rs");
-include!("configuration/source_mutations.rs");
 
 #[cfg(feature = "snapshot-fixtures")]
 impl ManisApp {
@@ -859,7 +850,7 @@ mod tests {
 
     #[test]
     fn configuration_directory_follows_variable_height_sections_in_both_directions() {
-        use super::configuration_section_at_scroll;
+        use super::settings::configuration_section_at_scroll;
         use gpui::px;
 
         let tops = [120.0, 480.0, 790.0, 1_450.0, 1_900.0, 2_300.0].map(px);
@@ -961,7 +952,7 @@ mod tests {
 
     #[test]
     fn app_update_checks_only_announce_new_versions_and_keep_known_releases() {
-        use super::{AppUpdateState, ManisApp};
+        use crate::app::{AppUpdateState, ManisApp};
         use crate::app_update::{AppUpdateError, AvailableUpdate};
         let mut app = ManisApp::with_fixture_controller("http://127.0.0.1:9090");
         let available = AvailableUpdate {
@@ -992,7 +983,7 @@ mod tests {
 
     #[gpui::test]
     fn app_update_link_stays_available_without_shifting_the_panel(cx: &mut gpui::TestAppContext) {
-        use super::{AppUpdateState, ManisApp};
+        use crate::app::{AppUpdateState, ManisApp};
         use crate::app_update::{self, AppUpdateError, AvailableUpdate};
         use gpui::{AppContext as _, Modifiers};
         use manis_core::PrimaryWorkspace;

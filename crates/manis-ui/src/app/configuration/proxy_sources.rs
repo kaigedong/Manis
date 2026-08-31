@@ -1,5 +1,35 @@
+use gpui::{
+    AnyElement, Context, Div, Entity, Focusable, FontWeight, ParentElement, Role, Stateful, Styled,
+    Window, div, prelude::*, px,
+};
+use gpui_component::{
+    Disableable, Selectable, WindowExt as _, button::Button, checkbox::Checkbox, dialog::Dialog,
+};
+
+use crate::app::{
+    ImportedSubscriptionState, ManisApp, ProxySourceEditorKind, SubscriptionFeedback,
+};
+use crate::{
+    components::{
+        ActionRole, action_button, dialog_footer_surface, dialog_header_surface, empty_state,
+        row_action_button, section_heading, style_action_button, surface_dialog,
+    },
+    diagnostics::{UiEvent, trace_ui},
+    localization::{CountNoun, Language, Message, copy},
+    mihomo::{self, RemoteSourceRefreshInterval, SubscriptionStoreError},
+    subscription::{SourceKind, validate_single_node_preview, validate_subscription_preview},
+    subscription_input::SubscriptionTextInput,
+    theme::{ControlSize, Radius, Space, TextRole, Theme},
+};
+
+use super::{
+    ProxySourceEditorActivity, ProxySourceEditorInputs, ProxySourceEditorView,
+    SubscriptionCardActivity, SubscriptionCardPresentation, field_label, panel_surface,
+    refresh_interval_label, source_kind_label, source_update_label,
+};
+
 impl ManisApp {
-    fn source_panel(&self, theme: Theme, compact: bool, cx: &mut Context<Self>) -> Div {
+    pub(super) fn source_panel(&self, theme: Theme, compact: bool, cx: &mut Context<Self>) -> Div {
         let language = self.language();
         let saved_source_count = self.imported_subscriptions.len() + self.saved_single_nodes.len();
         let add_action = action_button(
@@ -9,7 +39,10 @@ impl ManisApp {
             ControlSize::Compact,
         )
         .disabled(self.proxy_source_editor.is_importing())
-        .when(self.proxy_source_editor.is_importing(), gpui::Styled::cursor_default)
+        .when(
+            self.proxy_source_editor.is_importing(),
+            gpui::Styled::cursor_default,
+        )
         .on_click(cx.listener(|this, _, window, cx| {
             this.open_new_subscription_editor(cx);
             this.open_proxy_source_dialog(window, cx);
@@ -77,7 +110,7 @@ impl ManisApp {
         div().w_full().child(panel)
     }
 
-    fn open_new_subscription_editor(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn open_new_subscription_editor(&mut self, cx: &mut Context<Self>) {
         if self.proxy_source_editor.is_importing() {
             return;
         }
@@ -154,7 +187,7 @@ impl ManisApp {
         cx.notify();
     }
 
-    fn open_proxy_source_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn open_proxy_source_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.proxy_source_editor.is_importing() {
             return;
         }
@@ -458,7 +491,7 @@ impl ManisApp {
                                 language.localized(copy::configuration::SUBSCRIPTION)
                             }
                             ProxySourceEditorKind::SingleNode => {
-                                language.localized(copy::configuration::SINGLE_NODE_2)
+                                language.localized(copy::configuration::SINGLE_NODE_SOURCE)
                             }
                         },
                         if selected {
@@ -615,7 +648,7 @@ impl ManisApp {
                 }
                 trace_ui(UiEvent::SourceRecognitionSucceeded);
                 self.import_remote_subscription(
-                    super::SubscriptionImportRequest {
+                    crate::app::SubscriptionImportRequest {
                         input: input_value,
                         name,
                         refresh_interval: self.proxy_source_editor.refresh_interval,
@@ -683,25 +716,29 @@ impl ManisApp {
             let result = executor
                 .spawn(async move {
                     let providers = mihomo::preview_single_node(&input_value)?;
-                    let transaction = super::mutate_saved_sources(&runtime, &store_dir, |store_dir| {
-                        if let Some(id) = editing_id {
-                            mihomo::update_single_node_source_in(
-                                store_dir,
-                                &id,
-                                &input_value,
-                                &name,
-                                enabled,
-                            )
-                        } else {
-                            mihomo::save_single_node_source_with_options_in(
-                                store_dir,
-                                &input_value,
-                                &name,
-                                enabled,
-                            )
-                        }
-                    })?;
-                    Ok::<_, SubscriptionStoreError>((transaction, providers))
+                    let transaction =
+                        crate::app::mutate_saved_sources(&runtime, &store_dir, |store_dir| {
+                            if let Some(id) = editing_id {
+                                mihomo::update_single_node_source_in(
+                                    store_dir,
+                                    &id,
+                                    &input_value,
+                                    &name,
+                                    enabled,
+                                )
+                            } else {
+                                mihomo::save_single_node_source_with_options_in(
+                                    store_dir,
+                                    &input_value,
+                                    &name,
+                                    enabled,
+                                )
+                            }
+                        })?;
+                    Ok::<_, SubscriptionStoreError>(crate::app::SourceLoadOutcome {
+                        providers,
+                        mutation: transaction,
+                    })
                 })
                 .await;
             this.update(cx, |this, cx| {
@@ -718,7 +755,7 @@ impl ManisApp {
         &mut self,
         generation: u64,
         preview: crate::subscription::SubscriptionPreview,
-        result: super::SingleNodeImportResult,
+        result: crate::app::SingleNodeImportResult,
         cx: &mut Context<Self>,
     ) {
         if self.proxy_source_editor.import_generation != generation {
@@ -728,7 +765,10 @@ impl ManisApp {
             input.update(cx, |input, cx| input.set_enabled(true, cx));
         }
         match result {
-            Ok((transaction, providers)) => {
+            Ok(crate::app::SourceLoadOutcome {
+                providers,
+                mutation: transaction,
+            }) => {
                 self.finish_saved_single_node(transaction, providers, preview, cx);
             }
             Err(error) => {
@@ -747,7 +787,7 @@ impl ManisApp {
 
     fn finish_saved_single_node(
         &mut self,
-        mut transaction: super::SourceMutation<mihomo::StoredSingleNode>,
+        mut transaction: crate::app::SourceMutation<mihomo::StoredSingleNode>,
         providers: Vec<mihomo::LoadedProvider>,
         preview: crate::subscription::SubscriptionPreview,
         cx: &mut Context<Self>,
@@ -760,9 +800,10 @@ impl ManisApp {
             self.status = format!(
                 "{}{}",
                 language.localized(copy::configuration::SINGLE_NODE_SOURCE_SAVE_FAILED),
-                transaction
-                    .apply
-                    .status_suffix_after_rollback_attempt(language, transaction.rollback_error.as_ref())
+                transaction.apply.status_suffix_after_rollback_attempt(
+                    language,
+                    transaction.rollback_error.as_ref()
+                )
             );
             trace_ui(UiEvent::SourceImportFailed);
             cx.notify();
@@ -808,7 +849,7 @@ impl ManisApp {
 
     fn subscription_card_presentation(
         &self,
-        subscription: &super::ImportedSubscription,
+        subscription: &crate::app::ImportedSubscription,
         now: u64,
         language: Language,
     ) -> SubscriptionCardPresentation {
@@ -820,13 +861,13 @@ impl ManisApp {
         let (state, activity) = match &subscription.state {
             ImportedSubscriptionState::None => (
                 language
-                    .localized(copy::configuration::DISABLED_2)
+                    .localized(copy::configuration::SOURCE_DISABLED_LABEL)
                     .to_owned(),
                 SubscriptionCardActivity::Idle { healthy: true },
             ),
             ImportedSubscriptionState::Pending(_) | ImportedSubscriptionState::Refreshing(_) => (
                 language
-                    .localized(copy::configuration::UPDATING_2)
+                    .localized(copy::configuration::UPDATE_STATUS)
                     .to_owned(),
                 SubscriptionCardActivity::Busy,
             ),
@@ -869,7 +910,7 @@ impl ManisApp {
     }
 
     fn imported_subscription_card(
-        subscription: &super::ImportedSubscription,
+        subscription: &crate::app::ImportedSubscription,
         presentation: &SubscriptionCardPresentation,
         language: Language,
         theme: Theme,
@@ -953,7 +994,7 @@ impl ManisApp {
     }
 
     fn subscription_card_header(
-        subscription: &super::ImportedSubscription,
+        subscription: &crate::app::ImportedSubscription,
         presentation: &SubscriptionCardPresentation,
         theme: Theme,
     ) -> Div {
@@ -1003,7 +1044,7 @@ impl ManisApp {
     }
 
     fn subscription_card_actions(
-        subscription: &super::ImportedSubscription,
+        subscription: &crate::app::ImportedSubscription,
         presentation: &SubscriptionCardPresentation,
         language: Language,
         theme: Theme,
@@ -1242,7 +1283,12 @@ impl ManisApp {
             })
     }
 
-    fn set_single_node_enabled(&mut self, id: String, enabled: bool, cx: &mut Context<Self>) {
+    pub(super) fn set_single_node_enabled(
+        &mut self,
+        id: String,
+        enabled: bool,
+        cx: &mut Context<Self>,
+    ) {
         if self.configuration_transfer.active
             || self.source_refresh_busy()
             || self.routing_apply_state.is_busy()
@@ -1260,7 +1306,7 @@ impl ManisApp {
         cx.spawn(async move |this, cx| {
             let result = executor
                 .spawn(async move {
-                    super::mutate_saved_sources(&runtime, &store_dir, |store_dir| {
+                    crate::app::mutate_saved_sources(&runtime, &store_dir, |store_dir| {
                         mihomo::update_single_node_source_enabled_in(store_dir, &id, enabled)
                     })
                 })
@@ -1311,7 +1357,7 @@ impl ManisApp {
         .detach();
     }
 
-    fn remove_saved_single_node(&mut self, id: String, cx: &mut Context<Self>) {
+    pub(super) fn remove_saved_single_node(&mut self, id: String, cx: &mut Context<Self>) {
         if self.configuration_transfer.active
             || self.source_refresh_busy()
             || self.routing_apply_state.is_busy()
@@ -1329,7 +1375,7 @@ impl ManisApp {
         cx.spawn(async move |this, cx| {
             let result = executor
                 .spawn(async move {
-                    super::mutate_saved_sources(&runtime, &store_dir, |store_dir| {
+                    crate::app::mutate_saved_sources(&runtime, &store_dir, |store_dir| {
                         mihomo::remove_single_node_source_in(store_dir, &id).map(|()| id.clone())
                     })
                 })
@@ -1417,7 +1463,16 @@ impl ManisApp {
 
 #[cfg(test)]
 mod subscription_import_concurrency_tests {
-    use crate::app::*;
+    use gpui::AppContext as _;
+
+    use crate::{
+        app::{
+            ImportSubscriptionError, ImportedSubscription, ImportedSubscriptionState, ManisApp,
+            SubscriptionFeedback,
+        },
+        mihomo::{RemoteSourceRefreshInterval, StoredSubscription, SubscriptionStoreError},
+        subscription::SourceKind,
+    };
 
     fn source_fixture() -> ImportedSubscription {
         ImportedSubscription {

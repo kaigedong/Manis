@@ -1,16 +1,35 @@
+use super::{
+    GroupBenchmarkNodeState, GroupBenchmarkProgressQueue, GroupBenchmarkState,
+    GroupBenchmarkSummary, ManisApp, managed_subscription_provider_index, stored_workspace,
+};
+use crate::{
+    components::{ActionRole, style_action_button},
+    diagnostics::{LogLevel, record_event},
+    localization::{Language, Message, copy},
+    mihomo,
+    theme::{ControlSize, Space, TextRole, Theme},
+};
+use gpui::{
+    AnyElement, Context, Div, FontWeight, IntoElement, ParentElement, Styled, Window, div,
+    prelude::*, px,
+};
+use gpui_component::{Sizable, button::Button, spinner::Spinner};
+use manis_core::{ManagedPolicyIcon, PolicyCatalog, PolicyGroup, PolicyNode, ProxyId};
+use std::time::Duration;
+
 #[derive(Clone, Copy)]
-struct PolicyGroupIconView<'a> {
-    id: &'a str,
-    icon: ManagedPolicyIcon,
-    policy_name: &'a str,
-    benchmarkable: bool,
-    running: bool,
-    language: Language,
-    theme: Theme,
+pub(super) struct PolicyGroupIconView<'a> {
+    pub(super) id: &'a str,
+    pub(super) icon: ManagedPolicyIcon,
+    pub(super) policy_name: &'a str,
+    pub(super) benchmarkable: bool,
+    pub(super) running: bool,
+    pub(super) language: Language,
+    pub(super) theme: Theme,
 }
 
 impl ManisApp {
-    fn persist_node_workspace(&mut self) {
+    pub(super) fn persist_node_workspace(&mut self) {
         if self.configuration_transfer.active {
             return;
         }
@@ -27,7 +46,7 @@ impl ManisApp {
         }
     }
 
-    fn theme(&self) -> Theme {
+    pub(super) fn theme(&self) -> Theme {
         if self.dark {
             Theme::dark()
         } else {
@@ -35,27 +54,27 @@ impl ManisApp {
         }
     }
 
-    fn policy_groups(&self) -> impl Iterator<Item = &PolicyGroup> {
+    pub(super) fn policy_groups(&self) -> impl Iterator<Item = &PolicyGroup> {
         self.catalog.iter().flat_map(PolicyCatalog::iter)
     }
 
-    fn policy_group_benchmarkable(group: &PolicyGroup) -> bool {
+    pub(super) fn policy_group_benchmarkable(group: &PolicyGroup) -> bool {
         !group.nodes.is_empty()
     }
 
-    fn source_group_benchmark_key(id: &str) -> String {
+    pub(super) fn source_group_benchmark_key(id: &str) -> String {
         format!("source:{id}")
     }
 
-    fn managed_policy_benchmark_key(id: &str) -> String {
+    pub(super) fn managed_policy_benchmark_key(id: &str) -> String {
         format!("user:{id}")
     }
 
-    fn policy_group_benchmark_key(id: &manis_core::PolicyGroupId) -> String {
+    pub(super) fn policy_group_benchmark_key(id: &manis_core::PolicyGroupId) -> String {
         format!("policy:{}", id.as_str())
     }
 
-    fn persist_group_benchmarks(&self) {
+    pub(super) fn persist_group_benchmarks(&self) {
         if self.configuration_transfer.active {
             return;
         }
@@ -73,7 +92,7 @@ impl ManisApp {
         }
     }
 
-    fn apply_completed_policy_benchmarks(&self, catalog: &mut PolicyCatalog) {
+    pub(super) fn apply_completed_policy_benchmarks(&self, catalog: &mut PolicyCatalog) {
         for (key, state) in &self.managed_policies.benchmarks {
             let Some(group_id) = key.strip_prefix("policy:") else {
                 continue;
@@ -81,11 +100,15 @@ impl ManisApp {
             let Some(delays) = state.complete_delays() else {
                 continue;
             };
-            let _ = catalog.apply_group_benchmark(&manis_core::PolicyGroupId::new(group_id), None, delays);
+            let _ = catalog.apply_group_benchmark(
+                &manis_core::PolicyGroupId::new(group_id),
+                None,
+                delays,
+            );
         }
     }
 
-    fn begin_group_benchmark(&mut self, key: String) -> Option<u64> {
+    pub(super) fn begin_group_benchmark(&mut self, key: String) -> Option<u64> {
         if self.configuration_transfer.active {
             return None;
         }
@@ -103,7 +126,7 @@ impl ManisApp {
         Some(generation)
     }
 
-    fn poll_group_benchmark_progress(
+    pub(super) fn poll_group_benchmark_progress(
         &mut self,
         generation: u64,
         key: String,
@@ -139,7 +162,7 @@ impl ManisApp {
         .detach();
     }
 
-    fn policy_icon_visual(
+    pub(super) fn policy_icon_visual(
         icon: ManagedPolicyIcon,
         policy_name: &str,
         size: f32,
@@ -286,7 +309,7 @@ impl ManisApp {
             )
     }
 
-    fn policy_group_icon(
+    pub(super) fn policy_group_icon(
         view: PolicyGroupIconView<'_>,
         listener: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
     ) -> AnyElement {
@@ -330,7 +353,7 @@ impl ManisApp {
         .into_any_element()
     }
 
-    fn group_benchmark_icon(
+    pub(super) fn group_benchmark_icon(
         id: &str,
         running: bool,
         language: Language,
@@ -368,7 +391,7 @@ impl ManisApp {
         .on_click(listener)
     }
 
-    fn benchmark_latency_content(
+    pub(super) fn benchmark_latency_content(
         state: GroupBenchmarkNodeState,
         idle_label: String,
         spinner_id: &str,
@@ -398,7 +421,7 @@ impl ManisApp {
         }
     }
 
-    fn benchmark_latency_spinner(id: String, theme: Theme) -> impl IntoElement {
+    pub(super) fn benchmark_latency_spinner(id: String, theme: Theme) -> impl IntoElement {
         div().id(id).size(px(14.0)).child(
             Spinner::new()
                 .with_size(px(14.0))
@@ -406,7 +429,7 @@ impl ManisApp {
         )
     }
 
-    fn policy_benchmark_status(
+    pub(super) fn policy_benchmark_status(
         language: Language,
         kind: manis_core::PolicyGroupKind,
         current: Option<&str>,
@@ -421,7 +444,10 @@ impl ManisApp {
         )
     }
 
-    fn benchmark_failure_description(language: Language, error: &mihomo::LoadError) -> String {
+    pub(super) fn benchmark_failure_description(
+        language: Language,
+        error: &mihomo::LoadError,
+    ) -> String {
         use manis_mihomo::MihomoError;
         use std::io::ErrorKind;
         let message = match error {
@@ -456,7 +482,7 @@ impl ManisApp {
         language.localized(message).to_owned()
     }
 
-    fn policy_group_benchmark_feedback(
+    pub(super) fn policy_group_benchmark_feedback(
         language: Language,
         state: &GroupBenchmarkState,
         total: usize,
@@ -500,7 +526,7 @@ impl ManisApp {
         )
     }
 
-    fn node_for_policy(&self, policy: &PolicyGroup) -> PolicyNode {
+    pub(super) fn node_for_policy(&self, policy: &PolicyGroup) -> PolicyNode {
         let selected = if policy.kind.allows_manual_selection() {
             self.workspace
                 .selection_for(&policy.id)
@@ -529,11 +555,15 @@ impl ManisApp {
             })
     }
 
-    fn policy_candidate_display_name(name: &str) -> &str {
-        if name == manis_profile::MANIS_GLOBAL_GROUP_NAME { "Proxy" } else { name }
+    pub(super) fn policy_candidate_display_name(name: &str) -> &str {
+        if name == manis_profile::MANIS_GLOBAL_GROUP_NAME {
+            "Proxy"
+        } else {
+            name
+        }
     }
 
-    fn policy_node_source_label(&self, node: &PolicyNode, language: Language) -> String {
+    pub(super) fn policy_node_source_label(&self, node: &PolicyNode, language: Language) -> String {
         if node.name == manis_profile::MANIS_GLOBAL_GROUP_NAME {
             return language.localized(copy::nodes::BUILT_IN).to_owned();
         }

@@ -609,7 +609,7 @@ impl VlessProxy {
         }
         let (server, port) = parse_vless_server(server_port)?;
         let fields = parse_vless_query(query)?;
-        require_vless_encryption(fields.get("encryption"))?;
+        require_vless_encryption(fields.get("encryption").map(String::as_str))?;
 
         let name = match fragment {
             Some(value) => decode_query_value(value)
@@ -1397,7 +1397,7 @@ fn validate_groups(
                 if proxies.is_empty() && use_providers.is_empty() {
                     return Err(ProfileError::InvalidValue("select group"));
                 }
-                validate_group_filter(filter.as_ref())?;
+                validate_group_filter(filter.as_deref())?;
                 validate_policy_refs(proxies, group_names, proxy_names)?;
                 validate_provider_refs(use_providers, provider_names)?;
             }
@@ -1415,7 +1415,7 @@ fn validate_groups(
                 {
                     return Err(ProfileError::InvalidValue("url-test group"));
                 }
-                validate_group_filter(filter.as_ref())?;
+                validate_group_filter(filter.as_deref())?;
                 validate_policy_refs(proxies, group_names, proxy_names)?;
                 validate_provider_refs(use_providers, provider_names)?;
             }
@@ -1424,11 +1424,8 @@ fn validate_groups(
     Ok(())
 }
 
-fn validate_group_filter(filter: Option<&String>) -> Result<(), ProfileError> {
-    if filter
-        .map(String::as_str)
-        .is_some_and(|value| !is_group_metadata(value))
-    {
+fn validate_group_filter(filter: Option<&str>) -> Result<(), ProfileError> {
+    if filter.is_some_and(|value| !is_group_metadata(value)) {
         Err(ProfileError::InvalidValue("proxy group filter"))
     } else {
         Ok(())
@@ -1598,7 +1595,7 @@ fn parse_vless_security(
         return Err(ProfileError::InvalidVless);
     }
     let client_fingerprint = optional_vless_value(fields, "fp")?;
-    let skip_cert_verify = parse_vless_bool(fields.get("allowinsecure"))?;
+    let skip_cert_verify = parse_vless_bool(fields.get("allowinsecure").map(String::as_str))?;
     let reality_public_key = optional_vless_value(fields, "pbk")?;
     let reality_short_id = optional_vless_value(fields, "sid")?;
     if security == VlessSecurity::None
@@ -1654,15 +1651,15 @@ fn parse_vless_transport(fields: &HashMap<String, String>) -> Result<VlessTransp
     }
 }
 
-fn require_vless_encryption(value: Option<&String>) -> Result<(), ProfileError> {
-    match value.map_or("none", String::as_str) {
+fn require_vless_encryption(value: Option<&str>) -> Result<(), ProfileError> {
+    match value.unwrap_or("none") {
         "none" => Ok(()),
         _ => Err(ProfileError::UnsupportedVless),
     }
 }
 
-fn parse_vless_bool(value: Option<&String>) -> Result<bool, ProfileError> {
-    match value.map_or("false", String::as_str) {
+fn parse_vless_bool(value: Option<&str>) -> Result<bool, ProfileError> {
+    match value.unwrap_or("false") {
         "false" | "0" => Ok(false),
         "true" | "1" => Ok(true),
         _ => Err(ProfileError::InvalidVless),

@@ -512,7 +512,10 @@ where
         return Ok(vec![
             items
                 .into_iter()
-                .filter_map(|item| item.as_str().map(ToOwned::to_owned))
+                .filter_map(|item| match item {
+                    Value::String(value) => Some(value),
+                    _ => None,
+                })
                 .collect(),
         ]);
     }
@@ -526,7 +529,10 @@ where
             Some(
                 chain
                     .into_iter()
-                    .filter_map(|entry| entry.as_str().map(ToOwned::to_owned))
+                    .filter_map(|entry| match entry {
+                        Value::String(value) => Some(value),
+                        _ => None,
+                    })
                     .collect(),
             )
         })

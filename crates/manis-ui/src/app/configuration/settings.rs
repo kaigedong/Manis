@@ -1,4 +1,33 @@
-fn configuration_section_at_scroll(
+use gpui::{
+    Context, Div, FontWeight, KeyDownEvent, ParentElement, Role, Stateful, Styled, Window, div,
+    prelude::*, px,
+};
+use gpui_component::{Disableable, IconName, Selectable, button::Button};
+use manis_core::{KernelKind, ProxyMode, WindowSizeClass};
+
+use crate::app::{
+    AppUpdateState, ConfigurationSection, ManisApp, MihomoCoreUpdateState, proxy_mode_label,
+    routing_mode_label,
+};
+use crate::{
+    app_update,
+    components::{
+        ActionRole, StatusTone, action_button, page_heading, section_heading, status_badge,
+        style_action_button,
+    },
+    localization::{
+        CountNoun, Language, LanguagePreference, Message, copy, save_language_preference_in,
+    },
+    mihomo::{self},
+    theme::{ControlSize, Radius, Space, TextRole, Theme},
+};
+
+use super::{
+    configuration_section_detail, configuration_section_label, language_preference_label,
+    panel_surface,
+};
+
+pub(super) fn configuration_section_at_scroll(
     section_tops: &[gpui::Pixels],
     scroll_top: gpui::Pixels,
     at_bottom: bool,
@@ -19,7 +48,7 @@ fn configuration_section_at_scroll(
 }
 
 impl ManisApp {
-    pub(super) fn scroll_to_configuration_section(
+    pub(in crate::app) fn scroll_to_configuration_section(
         &mut self,
         section: ConfigurationSection,
         cx: &mut Context<Self>,
@@ -34,7 +63,7 @@ impl ManisApp {
         cx.notify();
     }
 
-    fn sync_configuration_directory(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn sync_configuration_directory(&mut self, cx: &mut Context<Self>) {
         let scroll = &self.configuration_scroll;
         let section_tops: Vec<_> = (0..ConfigurationSection::ALL.len())
             .filter_map(|index| scroll.bounds_for_item(index).map(|bounds| bounds.top()))
@@ -61,7 +90,12 @@ impl ManisApp {
         }
     }
 
-    fn configuration_navigation(&self, theme: Theme, compact: bool, cx: &mut Context<Self>) -> Div {
+    pub(super) fn configuration_navigation(
+        &self,
+        theme: Theme,
+        compact: bool,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let language = self.language();
         let navigation = div()
             .flex_shrink_0()
@@ -147,7 +181,7 @@ impl ManisApp {
                 language.count(CountNoun::Source, self.rule_sources.sources.len())
             }
             ConfigurationSection::Advanced => language
-                .localized(copy::configuration::MANAGED_2)
+                .localized(copy::configuration::MANAGED_SECTION_SUMMARY)
                 .to_owned(),
             ConfigurationSection::Updates => String::new(),
         };
@@ -236,7 +270,11 @@ impl ManisApp {
             }))
     }
 
-    fn advanced_configuration_panel(&self, theme: Theme, compact: bool) -> Stateful<Div> {
+    pub(super) fn advanced_configuration_panel(
+        &self,
+        theme: Theme,
+        compact: bool,
+    ) -> Stateful<Div> {
         let language = self.language();
         let profile_source = self.runtime.profile_source();
         let profile_detail = copy::configuration::profile_source_detail(language, profile_source);
@@ -318,7 +356,12 @@ impl ManisApp {
             .child(status_badge(value, StatusTone::Neutral, theme))
     }
 
-    fn language_panel(&self, theme: Theme, compact: bool, cx: &mut Context<Self>) -> Stateful<Div> {
+    pub(super) fn language_panel(
+        &self,
+        theme: Theme,
+        compact: bool,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
         let language = self.language();
         let current_preference = self.language_preference();
         let current_language = language.display_name();
@@ -365,7 +408,7 @@ impl ManisApp {
             )
     }
 
-    fn app_update_panel(&self, theme: Theme, compact: bool) -> Stateful<Div> {
+    pub(super) fn app_update_panel(&self, theme: Theme, compact: bool) -> Stateful<Div> {
         let language = self.language();
         let label = language.localized(copy::app_update::OPEN_GITHUB);
         panel_surface("configuration-app-update", compact, theme)
@@ -411,7 +454,9 @@ impl ManisApp {
 
     fn app_update_status(&self, language: Language) -> String {
         match &self.app_update_state {
-            AppUpdateState::Idle => language.localized(copy::app_update::CHECK_PENDING).to_owned(),
+            AppUpdateState::Idle => language
+                .localized(copy::app_update::CHECK_PENDING)
+                .to_owned(),
             AppUpdateState::Checking => language.localized(copy::app_update::CHECKING).to_owned(),
             AppUpdateState::Available(update) => {
                 copy::app_update::available_version(language, &update.version)
@@ -511,7 +556,11 @@ impl ManisApp {
             }))
     }
 
-    fn set_language_preference(&mut self, preference: LanguagePreference, cx: &mut Context<Self>) {
+    pub(super) fn set_language_preference(
+        &mut self,
+        preference: LanguagePreference,
+        cx: &mut Context<Self>,
+    ) {
         if self.configuration_transfer.active {
             return;
         }
@@ -569,7 +618,12 @@ impl ManisApp {
         cx.notify();
     }
 
-    fn kernel_panel(&self, theme: Theme, compact: bool, cx: &mut Context<Self>) -> Stateful<Div> {
+    pub(super) fn kernel_panel(
+        &self,
+        theme: Theme,
+        compact: bool,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
         let language = self.language();
         let active = self.runtime.kind();
         let (sing_box_reason, sing_box_supported) = self.sing_box_support(language);
@@ -672,7 +726,9 @@ impl ManisApp {
             MihomoCoreUpdateState::Missing => {
                 language.localized(copy::configuration::NOT_INSTALLED)
             }
-            MihomoCoreUpdateState::Updating => language.localized(copy::configuration::UPDATING_2),
+            MihomoCoreUpdateState::Updating => {
+                language.localized(copy::configuration::UPDATE_STATUS)
+            }
         };
         div()
             .mt(Space::Sm.px())
@@ -754,7 +810,7 @@ impl ManisApp {
                 action_button(
                     format!("kernel-select-{}", kind.persistence_key()),
                     if selected {
-                        language.localized(copy::configuration::CURRENT_2)
+                        language.localized(copy::configuration::CURRENT_KERNEL)
                     } else {
                         language.localized(copy::configuration::SWITCH_AND_VALIDATE)
                     },
@@ -777,7 +833,7 @@ impl ManisApp {
             )
     }
 
-    pub(super) fn routing_rules_workspace(
+    pub(in crate::app) fn routing_rules_workspace(
         &mut self,
         theme: Theme,
         size_class: WindowSizeClass,
@@ -833,7 +889,7 @@ impl ManisApp {
             )
     }
 
-    fn workspace_header(
+    pub(super) fn workspace_header(
         title: &'static str,
         detail: &'static str,
         badge: &'static str,

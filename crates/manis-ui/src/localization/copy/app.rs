@@ -44,9 +44,9 @@ pub(crate) const CONNECT_TO_THE_KERNEL_BEFORE_CHANGING_ROUTING_MODE: LocalizedTe
     );
 pub(crate) const COULD_NOT_REMOVE_SUBSCRIPTION: LocalizedText =
     LocalizedText::new("Could not remove subscription: ", "移除订阅失败：");
-pub(crate) const COULD_NOT_SAVE_SUBSCRIPTION: LocalizedText =
+pub(crate) const SUBSCRIPTION_SAVE_FAILED_TITLE: LocalizedText =
     LocalizedText::new("Could not save subscription", "订阅保存失败");
-pub(crate) const COULD_NOT_SAVE_SUBSCRIPTION_2: LocalizedText =
+pub(crate) const SUBSCRIPTION_SAVE_FAILED_PREFIX: LocalizedText =
     LocalizedText::new("Could not save subscription: ", "订阅保存失败：");
 pub(crate) const COULD_NOT_SAVE_THE_GLOBAL_NODE: LocalizedText =
     LocalizedText::new("Could not save the global node: ", "无法保存全局节点：");
@@ -243,12 +243,12 @@ pub(crate) const SUBSCRIPTION_LOADED_BUT_ITS_UPDATE_TIME_COULD_NOT_BE_SAVED: Loc
         "Subscription loaded, but its update time could not be saved: ",
         "订阅已读取，但更新时间保存失败：",
     );
-pub(crate) const SUBSCRIPTION_UPDATE_FAILED: LocalizedText =
+pub(crate) const SUBSCRIPTION_UPDATE_FAILED_TITLE: LocalizedText =
     LocalizedText::new("Subscription update failed", "订阅更新失败");
-pub(crate) const SUBSCRIPTION_UPDATE_FAILED_2: LocalizedText =
+pub(crate) const SUBSCRIPTION_UPDATE_FAILED_PREFIX: LocalizedText =
     LocalizedText::new("Subscription update failed: ", "订阅更新失败：");
 pub(crate) const SWITCHING: LocalizedText = LocalizedText::new("Switching…", "切换中…");
-pub(crate) const SWITCHING_2: LocalizedText = LocalizedText::new("switching", "切换中");
+pub(crate) const SWITCHING_STATUS: LocalizedText = LocalizedText::new("switching", "切换中");
 pub(crate) const SWITCHING_TO: LocalizedText = LocalizedText::new("Switching to ", "正在切换到");
 pub(crate) const SYSTEM: LocalizedText = LocalizedText::new("System", "系统代理");
 #[cfg(not(test))]
