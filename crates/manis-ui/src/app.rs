@@ -12,11 +12,10 @@ use gpui_component::{
     button::{Button, ButtonGroup, ButtonVariant, ButtonVariants},
     spinner::Spinner,
     status_bar::StatusBar,
-    tab::{Tab, TabBar},
 };
 use manis_core::{
-    CompactNavigation, KernelKind, ManagedPolicyGroup, ManagedPolicyIcon, ManagedPolicyStrategy,
-    NodeIdentity, NodeWorkspaceState, PolicyCatalog, PolicyGroup, PolicyGroupId, PolicyNode,
+    KernelKind, ManagedPolicyGroup, ManagedPolicyIcon, ManagedPolicyStrategy, NodeIdentity,
+    NodeWorkspaceState, PolicyCatalog, PolicyGroup, PolicyGroupId, PolicyNode,
     PolicyWorkspaceState, PrimaryWorkspace, ProxyId, ProxyMode, RoutingMode, WindowSizeClass,
 };
 use manis_mihomo::{Connection, ObservedRouteEvidence, RuntimeConfig};
@@ -26,8 +25,8 @@ use crate::{
     app_update::{self, AppUpdateError, StagedUpdate},
     assets, brand,
     components::{
-        ActionRole, StatusTone, action_button, empty_state, page_heading, section_heading,
-        status_badge, style_action_button,
+        ActionRole, StatusTone, action_button, empty_state, page_heading, status_badge,
+        style_action_button,
     },
     core_update,
     diagnostics::{
@@ -316,17 +315,6 @@ enum ImportQxRuleSuccess {
 
 type QxRuleImportResult = Result<ImportQxRuleSuccess, ImportQxRuleError>;
 
-struct PolicyCandidateRowContext {
-    policy_id: PolicyGroupId,
-    policy_name: String,
-    current: bool,
-    manually_selectable: bool,
-    selection_busy: bool,
-    benchmark_state: GroupBenchmarkNodeState,
-    language: Language,
-    theme: Theme,
-}
-
 #[derive(Clone)]
 struct PolicySelectionRequest {
     group_id: PolicyGroupId,
@@ -348,7 +336,7 @@ struct PolicyNodeRowContext {
 
 struct OfflinePolicyCardView {
     policy: ManagedPolicyGroup,
-    candidates: Vec<String>,
+    candidates: Vec<PolicyNode>,
     selected_name: Option<String>,
     expanded: bool,
     benchmarking: bool,
@@ -356,21 +344,11 @@ struct OfflinePolicyCardView {
 
 struct PolicyListCardView {
     item: PolicyGroup,
-    selected: bool,
     expanded: bool,
+    editable_group_id: Option<String>,
     icon: ManagedPolicyIcon,
     benchmark_key: String,
     benchmarking: bool,
-}
-
-struct PolicyDetailView {
-    policy: PolicyGroup,
-    selected_node_id: ProxyId,
-    benchmark_key: String,
-    benchmarkable: bool,
-    benchmarking: bool,
-    editable_group_id: Option<String>,
-    display_icon: ManagedPolicyIcon,
 }
 
 struct PolicyBenchmarkRun {
@@ -439,6 +417,20 @@ impl MihomoCoreUpdateState {
 impl KernelSwitchState {
     const fn is_busy(self) -> bool {
         matches!(self, Self::Preparing)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum ManagedPolicyMutationState {
+    #[default]
+    Idle,
+    Saving,
+    Removing,
+}
+
+impl ManagedPolicyMutationState {
+    const fn is_busy(self) -> bool {
+        !matches!(self, Self::Idle)
     }
 }
 
@@ -552,29 +544,6 @@ impl ManualRuleEditorState {
         match self {
             Self::Editing(index) => Some(index),
             Self::Closed | Self::Creating => None,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-enum PolicyDetailTab {
-    #[default]
-    Nodes,
-    Settings,
-}
-
-impl PolicyDetailTab {
-    const fn index(self) -> usize {
-        match self {
-            Self::Nodes => 0,
-            Self::Settings => 1,
-        }
-    }
-
-    const fn from_index(index: usize) -> Self {
-        match index {
-            1 => Self::Settings,
-            _ => Self::Nodes,
         }
     }
 }
@@ -857,6 +826,7 @@ struct ManagedPolicyState {
     active_benchmark_generation: Option<u64>,
     runtime_states: BTreeMap<String, ManagedPolicyRuntimeState>,
     runtime_generation: u64,
+    mutation_state: ManagedPolicyMutationState,
 }
 
 impl ManagedPolicyState {
@@ -876,6 +846,7 @@ impl ManagedPolicyState {
             active_benchmark_generation: None,
             runtime_states: BTreeMap::new(),
             runtime_generation: 0,
+            mutation_state: ManagedPolicyMutationState::Idle,
         }
     }
 }
@@ -889,7 +860,6 @@ pub struct ManisApp {
     node_workspace: NodeWorkspaceState,
     workspace: PolicyWorkspaceState,
     expanded_policy_group: Option<PolicyGroupId>,
-    policy_detail_tab: PolicyDetailTab,
     catalog: Option<PolicyCatalog>,
     runtime: KernelRuntime,
     kernel_switch_state: KernelSwitchState,
@@ -1063,7 +1033,6 @@ impl ManisApp {
             node_workspace,
             workspace: PolicyWorkspaceState::default(),
             expanded_policy_group: None,
-            policy_detail_tab: PolicyDetailTab::default(),
             catalog: None,
             runtime,
             kernel_switch_state: KernelSwitchState::Idle,
@@ -2516,60 +2485,10 @@ fn policy_kind_label(language: Language, kind: manis_core::PolicyGroupKind) -> &
     }
 }
 
-#[derive(Clone, Copy, Eq, PartialEq)]
-enum PolicyWorkspaceRender {
-    Inactive,
-    Editor,
-    Empty,
-    Catalog,
-}
-
-#[derive(Clone, Copy)]
-struct WorkspaceRenderState {
-    size_class: WindowSizeClass,
-    policy_workspace: PolicyWorkspaceRender,
-}
-
-impl WorkspaceRenderState {
-    fn from_app(app: &ManisApp, size_class: WindowSizeClass) -> Self {
-        let policies_active = app.primary_workspace == PrimaryWorkspace::Policies;
-        let editing_new_policy = app
-            .managed_policies
-            .draft
-            .as_ref()
-            .is_some_and(|draft| draft.editing_id.is_none());
-        let policy_workspace = if !policies_active {
-            PolicyWorkspaceRender::Inactive
-        } else if editing_new_policy {
-            PolicyWorkspaceRender::Editor
-        } else if app.catalog.is_some() {
-            PolicyWorkspaceRender::Catalog
-        } else {
-            PolicyWorkspaceRender::Empty
-        };
-        Self {
-            size_class,
-            policy_workspace,
-        }
-    }
-
-    fn compact(self) -> bool {
-        self.size_class == WindowSizeClass::Compact
-    }
-
-    fn shows_policy_groups(self, navigation: CompactNavigation) -> bool {
-        !self.compact() || navigation == CompactNavigation::GroupList
-    }
-
-    fn shows_policy_detail(self, navigation: CompactNavigation) -> bool {
-        !self.compact() || navigation == CompactNavigation::GroupDetail
-    }
-}
-
 impl ManisApp {
     fn workspace_content(
         &mut self,
-        state: WorkspaceRenderState,
+        size_class: WindowSizeClass,
         theme: Theme,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -2579,73 +2498,36 @@ impl ManisApp {
             .flex_1()
             .overflow_hidden()
             .flex()
-            .child(self.navigation(theme, state.size_class, cx))
+            .child(self.navigation(theme, size_class, cx))
             .when(self.primary_workspace == PrimaryWorkspace::Nodes, |main| {
-                main.child(self.node_workspace(theme, state.size_class, cx))
+                main.child(self.node_workspace(theme, size_class, cx))
             })
             .when(
                 self.primary_workspace == PrimaryWorkspace::RoutingRules,
-                |main| {
-                    main.child(self.routing_rules_workspace(theme, state.size_class, window, cx))
-                },
+                |main| main.child(self.routing_rules_workspace(theme, size_class, window, cx)),
             )
             .when(
                 self.primary_workspace == PrimaryWorkspace::Activity,
-                |main| main.child(self.activity_workspace(theme, state.size_class, cx)),
+                |main| main.child(self.activity_workspace(theme, size_class, cx)),
             )
             .when(self.primary_workspace == PrimaryWorkspace::Logs, |main| {
-                main.child(self.logs_workspace(theme, state.size_class, cx))
+                main.child(self.logs_workspace(theme, size_class, cx))
             })
             .when(
                 self.primary_workspace == PrimaryWorkspace::Configuration,
-                |main| main.child(self.configuration_workspace(theme, state.size_class, cx)),
+                |main| main.child(self.configuration_workspace(theme, size_class, cx)),
             )
             .when(
-                state.policy_workspace == PolicyWorkspaceRender::Editor,
+                self.primary_workspace == PrimaryWorkspace::Policies,
                 |main| {
-                    let draft = self
-                        .managed_policies
-                        .draft
-                        .as_ref()
-                        .expect("policy editor state requires a draft");
-                    main.child(self.managed_policy_editor_workspace(
-                        draft,
-                        state.compact(),
-                        self.language(),
-                        theme,
-                        cx,
-                    ))
+                    let compact = size_class == WindowSizeClass::Compact;
+                    if self.catalog.is_some() {
+                        main.child(self.policy_list(theme, compact, cx))
+                    } else {
+                        main.child(self.empty_policy_workspace(theme, compact, cx))
+                    }
                 },
             )
-            .when(
-                state.policy_workspace == PolicyWorkspaceRender::Empty,
-                |main| main.child(self.empty_policy_workspace(theme, cx)),
-            )
-            .when(
-                state.policy_workspace == PolicyWorkspaceRender::Catalog
-                    && state.shows_policy_groups(self.workspace.compact_navigation),
-                |main| {
-                    main.child(
-                        self.policy_list(theme, state.policy_list_width(), cx)
-                            .when(state.compact(), Styled::flex_1),
-                    )
-                },
-            )
-            .when(
-                state.policy_workspace == PolicyWorkspaceRender::Catalog
-                    && state.shows_policy_detail(self.workspace.compact_navigation),
-                |main| main.child(self.detail(theme, state.compact(), cx)),
-            )
-    }
-}
-
-impl WorkspaceRenderState {
-    fn policy_list_width(self) -> Option<f32> {
-        match self.size_class {
-            WindowSizeClass::Compact => None,
-            WindowSizeClass::Medium => Some(LayoutMetric::MediumPolicyList.px().as_f32()),
-            WindowSizeClass::Wide => Some(LayoutMetric::WidePolicyList.px().as_f32()),
-        }
     }
 }
 
@@ -2659,7 +2541,6 @@ impl Render for ManisApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let size_class = WindowSizeClass::for_width(window.viewport_size().width.as_f32());
         let theme = self.theme();
-        let state = WorkspaceRenderState::from_app(self, size_class);
 
         div()
             .relative()
@@ -2670,7 +2551,7 @@ impl Render for ManisApp {
             .text_color(theme.text_primary)
             .text_size(px(13.0))
             .child(self.chrome(theme, size_class, cx))
-            .child(self.workspace_content(state, theme, window, cx))
+            .child(self.workspace_content(size_class, theme, window, cx))
             .children(gpui_component::Root::render_sheet_layer(window, cx))
             .child(self.status_bar(theme, cx))
     }
@@ -2690,7 +2571,7 @@ mod tests {
 
     use super::{
         ControllerReadiness, DueRemoteSource, GroupBenchmarkState, GroupBenchmarkSummary,
-        ImportedSubscription, ImportedSubscriptionState, ManisApp, PolicyDetailTab, ProxyModeBlock,
+        ImportedSubscription, ImportedSubscriptionState, ManisApp, ProxyModeBlock,
         SourceRuntimeApply, TunSupport, proxy_mode_block, stored_workspace, tun_dns_log_details,
     };
     use crate::subscription::SourceKind;
@@ -2743,16 +2624,6 @@ mod tests {
             assert!(details.install_succeeded.contains("cache=flushed"));
             assert!(details.restore_succeeded.contains("recovery=removed"));
         }
-    }
-
-    #[test]
-    fn policy_detail_tabs_round_trip_through_component_indices() {
-        assert_eq!(PolicyDetailTab::Nodes.index(), 0);
-        assert_eq!(PolicyDetailTab::Settings.index(), 1);
-        assert_eq!(PolicyDetailTab::from_index(0), PolicyDetailTab::Nodes);
-        assert_eq!(PolicyDetailTab::from_index(1), PolicyDetailTab::Settings);
-        assert_eq!(PolicyDetailTab::from_index(2), PolicyDetailTab::Nodes);
-        assert_eq!(PolicyDetailTab::from_index(99), PolicyDetailTab::Nodes);
     }
 
     #[test]
@@ -3213,7 +3084,7 @@ mod tests {
     }
 
     #[test]
-    fn manual_policy_detail_falls_back_to_the_catalog_target() {
+    fn manual_policy_table_falls_back_to_the_catalog_target() {
         let mut app = ManisApp::with_fixture_controller("http://127.0.0.1:9090");
         let policy_id = PolicyGroupId::new("manual-video");
         app.catalog = Some(
@@ -3239,12 +3110,122 @@ mod tests {
             }])
             .expect("manual policy catalog"),
         );
-        app.workspace.select_group(policy_id);
+        app.workspace.select_group(policy_id.clone());
 
         assert_eq!(
-            app.selected_node().map(|node| node.name),
+            app.catalog
+                .as_ref()
+                .map(|catalog| app.node_for_policy(catalog.select(Some(&policy_id))).name),
             Some("Singapore".to_owned())
         );
+    }
+
+    #[test]
+    fn policy_expansion_survives_switching_between_saved_and_runtime_groups() {
+        let mut app = ManisApp::with_fixture_controller("http://127.0.0.1:9090");
+        let saved =
+            ManagedPolicyGroup::new("group-deadbeef", "Hong Kong").expect("valid saved policy");
+        let runtime = PolicyGroup {
+            id: PolicyGroupId::new("Hong Kong"),
+            name: "Hong Kong".to_owned(),
+            kind: PolicyGroupKind::Selector,
+            target: String::new(),
+            nodes: Vec::new(),
+            rules_total: 0,
+            rules: Vec::new(),
+        };
+        app.managed_policies.groups.push(saved.clone());
+        app.expanded_policy_group = Some(PolicyGroupId::new(saved.id.clone()));
+        assert!(app.policy_list_card_view(runtime.clone()).expanded);
+
+        app.expanded_policy_group = Some(runtime.id.clone());
+        assert!(app.offline_policy_card_view(saved.clone()).expanded);
+
+        app.expanded_policy_group = None;
+        assert!(!app.policy_list_card_view(runtime).expanded);
+        assert!(!app.offline_policy_card_view(saved).expanded);
+    }
+
+    #[test]
+    fn offline_policy_table_keeps_candidate_metadata_and_source_filtering() {
+        let mut app = ManisApp::with_fixture_controller("http://127.0.0.1:9090");
+        let node = mihomo::LoadedProviderNode {
+            name: "Hong Kong".to_owned(),
+            protocol: "Trojan".to_owned(),
+            latency_label: Some("42 ms".to_owned()),
+            alive: Some(true),
+        };
+        app.source_providers = vec![
+            mihomo::LoadedProvider {
+                name: "First".to_owned(),
+                vehicle_type: None,
+                nodes: vec![node.clone()],
+            },
+            mihomo::LoadedProvider {
+                name: "Second".to_owned(),
+                vehicle_type: None,
+                nodes: vec![node],
+            },
+        ];
+        let mut policy = ManagedPolicyGroup::new("policy-test", "Manual").expect("policy");
+        policy
+            .set_matcher(manis_core::PolicyCandidateMatcher::Explicit(
+                [NodeIdentity::new("mihomo:1", "Hong Kong").expect("identity")].into(),
+            ))
+            .expect("matcher");
+        let candidates = app.managed_policy_candidate_nodes(&policy);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].provider.as_deref(), Some("Second"));
+        assert_eq!(candidates[0].detail, "Trojan");
+        assert_eq!(candidates[0].latency_ms, Some(42));
+        assert_eq!(candidates[0].alive, Some(true));
+    }
+
+    #[test]
+    fn offline_policy_table_includes_explicit_builtins_and_nested_groups() {
+        let mut app = ManisApp::with_fixture_controller("http://127.0.0.1:9090");
+        let nested = ManagedPolicyGroup::new("policy-nested", "Nested").expect("nested policy");
+        app.managed_policies.groups.push(nested);
+        let mut policy = ManagedPolicyGroup::new("policy-parent", "Parent").expect("parent policy");
+        assert!(app.managed_policy_candidate_nodes(&policy).is_empty());
+        policy
+            .set_matcher(manis_core::PolicyCandidateMatcher::Explicit(
+                [
+                    NodeIdentity::new("builtin", "DIRECT").expect("builtin"),
+                    NodeIdentity::new("policy:policy-nested", "Nested").expect("nested"),
+                ]
+                .into(),
+            ))
+            .expect("matcher");
+        let candidates = app.managed_policy_candidate_nodes(&policy);
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(candidates[0].name, "DIRECT");
+        assert_eq!(candidates[1].kind, PolicyCandidateKind::PolicyGroup);
+        assert_eq!(
+            app.managed_policy_candidate_names(&policy),
+            vec!["DIRECT", "Nested"]
+        );
+    }
+
+    #[test]
+    fn offline_saved_node_keeps_protocol_without_fabricated_latency() {
+        let mut app = ManisApp::with_fixture_controller("http://127.0.0.1:9090");
+        app.saved_single_nodes.push(mihomo::StoredSingleNode {
+            id: "single-test".to_owned(),
+            name: "Saved".to_owned(),
+            source: crate::subscription::SingleNodeSource::parse(
+                "vless://11111111-1111-1111-1111-111111111111@example.com:443#Saved",
+            )
+            .expect("saved node"),
+            enabled: true,
+        });
+        let policy = ManagedPolicyGroup::new("policy-test", "Manual").expect("policy");
+        let candidates = app.managed_policy_candidate_nodes(&policy);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].name, "Saved");
+        assert_eq!(candidates[0].detail, "VLESS");
+        assert_eq!(candidates[0].latency_ms, None);
+        assert_eq!(candidates[0].alive, None);
     }
 
     #[test]

@@ -215,8 +215,6 @@ pub(crate) enum LayoutMetric {
     WideNavigation,
     MediumNavigation,
     CompactNavigation,
-    WidePolicyList,
-    MediumPolicyList,
 }
 
 impl LayoutMetric {
@@ -227,8 +225,6 @@ impl LayoutMetric {
             Self::WideNavigation => px(220.0),
             Self::MediumNavigation => px(66.0),
             Self::CompactNavigation => px(56.0),
-            Self::WidePolicyList => px(326.0),
-            Self::MediumPolicyList => px(292.0),
         }
     }
 }
@@ -565,7 +561,5 @@ mod tests {
         assert_px(LayoutMetric::WideNavigation.px(), 220.0);
         assert_px(LayoutMetric::MediumNavigation.px(), 66.0);
         assert_px(LayoutMetric::CompactNavigation.px(), 56.0);
-        assert_px(LayoutMetric::WidePolicyList.px(), 326.0);
-        assert_px(LayoutMetric::MediumPolicyList.px(), 292.0);
     }
 }

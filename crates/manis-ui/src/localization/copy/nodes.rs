@@ -39,8 +39,6 @@ pub(crate) const COULD_NOT_DETERMINE_WHERE_TO_SAVE_POLICY_GROUPS: LocalizedText 
     );
 pub(crate) const CREATING_POLICY_GROUP: LocalizedText =
     LocalizedText::new("Creating policy group", "正在创建策略组");
-pub(crate) const CURRENT_MIHOMO: LocalizedText =
-    LocalizedText::new("Current Mihomo", "当前 Mihomo");
 pub(crate) const DONE: LocalizedText = LocalizedText::new("Done", "完成");
 pub(crate) const EDITING_GROUP: LocalizedText = LocalizedText::new("Editing group", "正在编辑分组");
 pub(crate) const ENTER_THE_NODE_NAME_TO_MATCH: LocalizedText =
@@ -66,7 +64,6 @@ pub(crate) const GROUP_NAME_CANNOT_BE_EMPTY_OR_CONTAIN_NEWLINES_CONTROL_CHARACTE
     );
 pub(crate) const GROUP_SAVED: LocalizedText = LocalizedText::new("Group saved", "分组已保存");
 pub(crate) const ICON: LocalizedText = LocalizedText::new("Icon", "图标");
-pub(crate) const IMPORTED_NODES: LocalizedText = LocalizedText::new("Imported Nodes", "导入的节点");
 pub(crate) const IMPORT_A_SUBSCRIPTION_OR_ADD_A_VLESS_NODE_NODES_WILL: LocalizedText =
     LocalizedText::new(
         "Import a subscription or add a VLESS node; nodes will then appear here automatically.",
@@ -83,7 +80,6 @@ pub(crate) const INDIVIDUALLY_ADDED_VLESS_NODES_PRIVATE_LOCAL_STORAGE: Localized
         "单独添加的 VLESS 节点 · 私有本机存储",
     );
 pub(crate) const LOADING: LocalizedText = LocalizedText::new("Loading…", "读取中…");
-pub(crate) const LOCAL_SOURCES: LocalizedText = LocalizedText::new("Local sources", "本机来源");
 pub(crate) const MANAGE_SUBSCRIPTION_SOURCES: LocalizedText =
     LocalizedText::new("Manage subscription sources", "管理订阅来源");
 pub(crate) const MANIS_IS_LOADING_NODES_FROM_YOUR_SAVED_SUBSCRIPTIONS: LocalizedText =
@@ -113,8 +109,6 @@ pub(crate) const NO_NODES_FROM_THIS_SOURCE_MATCH_THE_CURRENT_FILTER: LocalizedTe
         "No nodes from this source match the current filter.",
         "这个来源中没有符合当前筛选的节点。",
     );
-pub(crate) const NO_NODE_SOURCES: LocalizedText =
-    LocalizedText::new("No node sources", "尚无节点来源");
 pub(crate) const POLICY_EDITING_CANCELLED: LocalizedText =
     LocalizedText::new("Policy editing cancelled", "已取消编辑策略");
 pub(crate) const POLICY_GROUP_NAME: LocalizedText =
@@ -129,15 +123,6 @@ pub(crate) const RESTORING: LocalizedText = LocalizedText::new("Restoring", "正
 pub(crate) const RESTORING_NODES: LocalizedText =
     LocalizedText::new("Restoring nodes", "正在恢复节点");
 pub(crate) const RETEST_INTERVAL: LocalizedText = LocalizedText::new("Retest interval", "重测间隔");
-pub(crate) const REVIEW_EXIT_HEALTH_AND_GLOBAL_SELECTIONS_HERE: LocalizedText = LocalizedText::new(
-    "Review exit health and global selections here",
-    "在这里查看出口健康状态",
-);
-pub(crate) const REVIEW_IMPORTED_NODES_BY_SOURCE_CHOOSE_ONE_EXIT_FOR_GLOBAL: LocalizedText =
-    LocalizedText::new(
-        "Review imported nodes by source; choose one exit for global mode.",
-        "按来源查看已经导入的节点；可为全局模式指定一个出口。",
-    );
 pub(crate) const ROUTING_RULES_POINT_TO_THIS_POLICY_THE_POLICY_CHOOSES_ONE: LocalizedText =
     LocalizedText::new(
         "Routing rules point to this policy; the policy chooses one exit from this node scope.",

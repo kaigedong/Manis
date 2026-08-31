@@ -36,12 +36,6 @@ impl ManisApp {
         self.catalog.iter().flat_map(PolicyCatalog::iter)
     }
 
-    fn selected_policy(&self) -> Option<&PolicyGroup> {
-        self.catalog
-            .as_ref()
-            .map(|catalog| catalog.select(self.workspace.selected_group.as_ref()))
-    }
-
     fn policy_group_benchmarkable(group: &PolicyGroup) -> bool {
         !group.nodes.is_empty()
     }
@@ -472,11 +466,6 @@ impl ManisApp {
                 .text_color(color)
                 .child(label),
         )
-    }
-
-    fn selected_node(&self) -> Option<PolicyNode> {
-        let policy = self.selected_policy()?;
-        Some(self.node_for_policy(policy))
     }
 
     fn node_for_policy(&self, policy: &PolicyGroup) -> PolicyNode {

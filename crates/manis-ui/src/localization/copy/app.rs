@@ -14,11 +14,6 @@ pub(crate) const ANOTHER_GROUP_IS_BEING_TESTED_WAIT_FOR_IT_TO_FINISH: LocalizedT
         "Another group is being tested; wait for it to finish",
         "已有分组正在测速，请等待完成后再试",
     );
-pub(crate) const AUTOMATIC_POLICY_MANIS_SHOWS_CANDIDATES_FOR_INSPECTION_MIHOMO_SELECTS_THE:
-    LocalizedText = LocalizedText::new(
-    "Automatic policy. Manis shows candidates for inspection; Mihomo selects the active exit from the policy settings.",
-    "自动策略。Manis 展示候选项供检查；实际出口由 Mihomo 按策略设置自动选择。",
-);
 pub(crate) const AUTOMATIC_SELECTION: LocalizedText =
     LocalizedText::new("Automatic selection", "自动选择");
 pub(crate) const AUTOMATIC_SYSTEM_PROXY_RECOVERY_FAILED: LocalizedText = LocalizedText::new(
@@ -26,21 +21,12 @@ pub(crate) const AUTOMATIC_SYSTEM_PROXY_RECOVERY_FAILED: LocalizedText = Localiz
     " · 系统代理自动恢复失败：",
 );
 pub(crate) const AUTO_SELECT: LocalizedText = LocalizedText::new("Auto select", "自动选择");
-pub(crate) const BACK: LocalizedText = LocalizedText::new("Back", "返回");
-pub(crate) const BACK_TO_POLICY_GROUPS: LocalizedText =
-    LocalizedText::new("Back to policy groups", "返回策略组");
 pub(crate) const CANDIDATE_GROUP: LocalizedText =
     LocalizedText::new("Candidate / group", "候选节点 / 分组");
-pub(crate) const CANDIDATE_NODES: LocalizedText = LocalizedText::new("Candidate nodes", "候选节点");
 pub(crate) const CHANGE_PROXY_MODE: LocalizedText =
     LocalizedText::new("Change proxy mode", "切换代理模式");
 pub(crate) const CHANGE_ROUTING_MODE: LocalizedText =
     LocalizedText::new("Change routing mode", "切换路由模式");
-pub(crate) const CHOOSE_THE_EXIT_USED_WHEN_A_ROUTING_RULE_TARGETS_THIS: LocalizedText =
-    LocalizedText::new(
-        "Choose the exit used when a routing rule targets this policy",
-        "分流规则命中此策略组时，使用下方所选出口",
-    );
 pub(crate) const CONFIGURATION: LocalizedText = LocalizedText::new("configuration", "配置");
 pub(crate) const CONFIGURATION_OPENED: LocalizedText =
     LocalizedText::new("Configuration opened", "已打开配置");
@@ -79,17 +65,12 @@ pub(crate) const DARK_THEME_ENABLED: LocalizedText =
     LocalizedText::new("Dark theme enabled", "已切换到深色主题");
 pub(crate) const DELETE_POLICY_GROUP: LocalizedText =
     LocalizedText::new("Delete policy group", "删除策略组");
-pub(crate) const DIRECT_POLICIES_HAVE_NO_SELECTABLE_EXIT: LocalizedText = LocalizedText::new(
-    "Direct policies have no selectable exit",
-    "直连策略没有可切换的出口",
-);
 pub(crate) const DISCONNECTED: LocalizedText = LocalizedText::new("disconnected", "未连接");
 pub(crate) const DOWNLOADING_AND_VERIFYING_THE_STABLE_MIHOMO_RELEASE: LocalizedText =
     LocalizedText::new(
         "Downloading and verifying the stable Mihomo release…",
         "正在下载并校验 Mihomo 稳定版…",
     );
-pub(crate) const EDIT: LocalizedText = LocalizedText::new("Edit", "编辑");
 pub(crate) const ENABLED: LocalizedText = LocalizedText::new(" enabled", "已生效");
 pub(crate) const ENABLING: LocalizedText = LocalizedText::new("Enabling…", "启用中…");
 pub(crate) const FAILED_TO_CHANGE_PROXY_MODE: LocalizedText =
@@ -131,8 +112,6 @@ pub(crate) const LOCAL_CONFIGURATION: LocalizedText =
 pub(crate) const LOCAL_CONTROLLER: LocalizedText =
     LocalizedText::new("Local controller", "本地控制器");
 pub(crate) const LOGS_OPENED: LocalizedText = LocalizedText::new("Logs opened", "已打开日志");
-pub(crate) const MANAGED_POLICY_SETTINGS: LocalizedText =
-    LocalizedText::new("Managed policy settings", "托管策略组设置");
 pub(crate) const MANIS_IS_LOADING_YOUR_CURRENT_GROUPS_AND_SELECTED_NODES: LocalizedText =
     LocalizedText::new(
         "Manis is loading your current groups and selected nodes.",
@@ -141,26 +120,11 @@ pub(crate) const MANIS_IS_LOADING_YOUR_CURRENT_GROUPS_AND_SELECTED_NODES: Locali
 pub(crate) const MANUAL: LocalizedText = LocalizedText::new("Manual", "手动选择");
 pub(crate) const MANUAL_SELECTION: LocalizedText =
     LocalizedText::new("Manual selection", "手动选择");
-pub(crate) const MIHOMO_CHECKS_CANDIDATES_ON_SCHEDULE_AND_FAILS_OVER_AUTOMATICALLY: LocalizedText =
-    LocalizedText::new(
-        "Mihomo checks candidates on schedule and fails over automatically",
-        "Mihomo 按策略配置的间隔自动检查并故障转移，候选项不可手动切换",
-    );
 pub(crate) const MIHOMO_COULD_NOT_BE_STARTED_CHECK_LOGS_FOR_DETAILS_THEN: LocalizedText =
     LocalizedText::new(
         "Mihomo could not be started. Check Logs for details, then try again.",
         "Mihomo 启动失败。请在“日志”中查看原因，然后重试。",
     );
-pub(crate) const MIHOMO_DISTRIBUTES_CONNECTIONS_ACROSS_CANDIDATES_AUTOMATICALLY: LocalizedText =
-    LocalizedText::new(
-        "Mihomo distributes connections across candidates automatically",
-        "Mihomo 自动在候选分组之间分配连接，候选项不可手动切换",
-    );
-pub(crate) const MIHOMO_MEASURES_THE_CONFIGURED_URL_ON_SCHEDULE_CANDIDATES_ARE_AUTOMATIC:
-    LocalizedText = LocalizedText::new(
-    "Mihomo measures the configured URL on schedule; candidates are automatic",
-    "Mihomo 按策略配置的 URL 和间隔自动测量，候选项不可手动切换",
-);
 pub(crate) const MIHOMO_UPDATE_FAILED_THE_PREVIOUS_CORE_WAS_RESTORED: LocalizedText =
     LocalizedText::new(
         "Mihomo update failed; the previous core was restored: ",
@@ -220,18 +184,6 @@ pub(crate) const ROUTING_RULES_CHOOSE_POLICY_GROUPS_POLICIES_CHOOSE_EXITS: Local
 pub(crate) const ROUTING_RULES_OPENED: LocalizedText =
     LocalizedText::new("Routing rules opened", "已打开分流规则");
 pub(crate) const RULES: LocalizedText = LocalizedText::new("Rules", "规则");
-pub(crate) const RULES_TARGET_A_POLICY_OPEN_ONE_TO_CONFIGURE_ITS_EXIT: LocalizedText =
-    LocalizedText::new(
-        "rules target a policy; open one to configure its exit",
-        "分流规则指定策略组；打开后配置它的出口",
-    );
-pub(crate) const RUNTIME_POLICY: LocalizedText =
-    LocalizedText::new("Runtime policy", "运行时策略组");
-pub(crate) const SAVED_IN_MANIS_AND_APPLIED_TO_THE_MANAGED_MIHOMO_CONFIGURATION: LocalizedText =
-    LocalizedText::new(
-        "Saved in Manis and applied to the managed Mihomo configuration.",
-        "保存在 Manis 中，并会应用到 Manis 托管的 Mihomo 配置。",
-    );
 pub(crate) const SAVED_SOURCES_ARE_READY: LocalizedText =
     LocalizedText::new("Saved sources are ready", "已载入保存的来源");
 pub(crate) const SAVED_SOURCES_ARE_READY_AND_MIHOMO_WAS_RESTARTED: LocalizedText =
@@ -327,11 +279,6 @@ pub(crate) const THE_SUBSCRIPTION_STORAGE_LOCATION_IS_UNAVAILABLE: LocalizedText
     LocalizedText::new(
         "The subscription storage location is unavailable",
         "无法确定订阅保存位置",
-    );
-pub(crate) const THIS_POLICY_COMES_FROM_THE_ACTIVE_KERNEL_CONFIGURATION_AND_IS: LocalizedText =
-    LocalizedText::new(
-        "This policy comes from the active kernel configuration and is read-only.",
-        "这个策略组来自当前内核配置，因此为只读。",
     );
 pub(crate) const THIS_POLICY_GROUP_HAS_NO_TESTABLE_CANDIDATES: LocalizedText = LocalizedText::new(
     "This policy group has no testable candidates",

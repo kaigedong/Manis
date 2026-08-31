@@ -1619,31 +1619,7 @@ impl ManisApp {
             ));
             *rule_order += 1;
         }
-        let open = rule_group_is_open(&self.node_workspace, MANUAL_RULES_EXPANSION_KEY);
-        Accordion::new("routing-manual-rules")
-            .bordered(false)
-            .with_size(Size::Large)
-            .mt(Space::Lg.px())
-            .rounded(Radius::Pane.px())
-            .overflow_hidden()
-            .border_1()
-            .border_color(theme.outline_subtle)
-            .item(|item| {
-                item.open(open)
-                    .title_style(accordion_title_style(compact, open, theme))
-                    .content_style(accordion_content_style())
-                    .title(title)
-                    .child(rules)
-            })
-            .on_toggle_click(cx.listener(|this, open_indices: &[usize], _, cx| {
-                Self::sync_rule_group_open(
-                    this,
-                    MANUAL_RULES_EXPANSION_KEY,
-                    open_indices.contains(&0),
-                    cx,
-                );
-            }))
-            .into_any_element()
+        self.rule_group_card((MANUAL_RULES_EXPANSION_KEY, group_name), title, rules, view, cx)
     }
 
     fn remote_rule_group(
@@ -1683,26 +1659,51 @@ impl ManisApp {
             *rule_order += 1;
         }
         let expansion_key = rule_source_expansion_key(&source.id);
-        let toggle_key = expansion_key.clone();
-        let open = rule_group_is_open(&self.node_workspace, &expansion_key);
-        Accordion::new(format!("routing-rule-source-{}", source.id))
-            .bordered(false)
-            .with_size(Size::Large)
+        self.rule_group_card((&expansion_key, &name), title, rules, view, cx)
+    }
+
+    fn rule_group_card(
+        &self,
+        (key, name): (&str, &str),
+        title: Div,
+        rules: Div,
+        view: RuleGroupRenderContext,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let RuleGroupRenderContext { compact, language, theme, .. } = view;
+        let open = rule_group_is_open(&self.node_workspace, key);
+        let action = language.localized(if open { copy::common::COLLAPSE } else { copy::common::EXPAND });
+        let toggle_key = key.to_owned();
+        let header = Button::new(format!("rule-group-toggle-{key}"))
+            .with_variant(ButtonVariant::Ghost)
+            .accessibility_label(format!("{action} {name}"))
+            .toggled(open)
+            .w_full()
+            .h_auto()
+            .px(if compact { px(12.0) } else { px(16.0) })
+            .py_3()
+            .bg(theme.surface_low)
+            .child(
+                div()
+                    .w_full()
+                    .min_w(px(0.0))
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .child(div().flex_1().min_w(px(0.0)).child(title))
+                    .child(crate::components::disclosure_icon(open, theme)),
+            )
+            .on_click(cx.listener(move |this, _, _, cx| {
+                Self::sync_rule_group_open(this, &toggle_key, !open, cx);
+            }));
+        div()
+            .id(format!("routing-rule-group-{key}"))
             .mt(Space::Lg.px())
             .rounded(Radius::Pane.px())
             .overflow_hidden()
             .border_1()
             .border_color(theme.outline_subtle)
-            .item(|item| {
-                item.open(open)
-                    .title_style(accordion_title_style(compact, open, theme))
-                    .content_style(accordion_content_style())
-                    .title(title)
-                    .child(rules)
-            })
-            .on_toggle_click(cx.listener(move |this, open_indices: &[usize], _, cx| {
-                Self::sync_rule_group_open(this, &toggle_key, open_indices.contains(&0), cx);
-            }))
+            .child(Collapsible::new().open(open).child(header).content(rules))
             .into_any_element()
     }
 
