@@ -59,20 +59,20 @@ fn load_subscription_inputs(
     }
     let mut indexes = HashMap::new();
     let mut nameservers = Vec::new();
-    for source in &stored {
+    for source in stored {
         let index = subscriptions
             .iter()
             .position(|candidate| candidate == &source.source)
             .unwrap_or_else(|| {
-                subscriptions.push(source.source.clone());
+                subscriptions.push(source.source);
                 subscriptions.len() - 1
             });
-        indexes.insert(source.id.clone(), index);
-        for nameserver in &source.proxy_server_nameservers {
-            if !nameservers.contains(nameserver)
+        indexes.insert(source.id, index);
+        for nameserver in source.proxy_server_nameservers {
+            if !nameservers.contains(&nameserver)
                 && nameservers.len() < MAX_SUBSCRIPTION_PROXY_DNS_SERVERS
             {
-                nameservers.push(nameserver.clone());
+                nameservers.push(nameserver);
             }
         }
     }

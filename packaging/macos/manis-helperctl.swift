@@ -12,23 +12,6 @@ private let installedMihomo = URL(
     fileURLWithPath: "/Library/Application Support/Manis/bin/mihomo"
 )
 
-@objc(ManisPrivilegedHelperProtocol)
-protocol ManisPrivilegedHelperProtocol {
-    func status(withReply reply: @escaping (String, Int32) -> Void)
-    func start(
-        dataDir: String,
-        config: String,
-        controller: String,
-        withReply reply: @escaping (String, Int32) -> Void
-    )
-    func stop(expectedPid: pid_t, withReply reply: @escaping (String, Int32) -> Void)
-    func stageCore(
-        contents: Data,
-        sha256: String,
-        withReply reply: @escaping (String, Int32) -> Void
-    )
-}
-
 private enum CliError: Error, CustomStringConvertible {
     case usage
     case timeout

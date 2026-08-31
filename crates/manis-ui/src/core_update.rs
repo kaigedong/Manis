@@ -221,7 +221,7 @@ pub(crate) fn select_release_asset(
 
     let selected = release
         .assets
-        .iter()
+        .into_iter()
         .filter_map(|asset| asset_priority(&asset.name, platform).map(|priority| (priority, asset)))
         .min_by_key(|(priority, _asset)| *priority)
         .map(|(_priority, asset)| asset)
@@ -237,8 +237,8 @@ pub(crate) fn select_release_asset(
 
     Ok(ReleaseAsset {
         version: release.tag_name,
-        name: selected.name.clone(),
-        download_url: selected.browser_download_url.clone(),
+        name: selected.name,
+        download_url: selected.browser_download_url,
         archive,
         sha256: digest,
     })
@@ -488,13 +488,15 @@ fn download_bytes(url: &str, max_bytes: u64) -> Result<Vec<u8>, CoreUpdateError>
         .limit(max_bytes + 1)
         .read_to_vec()
         .map_err(|error| map_body_error(&error))
-        .and_then(|bytes| {
-            if bytes.len() as u64 > max_bytes {
-                Err(CoreUpdateError::PackageTooLarge)
-            } else {
-                Ok(bytes)
-            }
-        })
+        .and_then(|bytes| enforce_body_limit(bytes, max_bytes))
+}
+
+fn enforce_body_limit(bytes: Vec<u8>, max_bytes: u64) -> Result<Vec<u8>, CoreUpdateError> {
+    if bytes.len() as u64 > max_bytes {
+        Err(CoreUpdateError::PackageTooLarge)
+    } else {
+        Ok(bytes)
+    }
 }
 
 fn map_request_error(error: &ureq::Error) -> CoreUpdateError {
@@ -508,20 +510,6 @@ fn map_body_error(error: &ureq::Error) -> CoreUpdateError {
     match error {
         ureq::Error::BodyExceedsLimit(_) => CoreUpdateError::PackageTooLarge,
         _ => CoreUpdateError::NetworkUnavailable,
-    }
-}
-
-#[cfg(test)]
-fn read_limited_body(reader: &mut impl Read, max_bytes: u64) -> Result<Vec<u8>, CoreUpdateError> {
-    let mut limited = reader.take(max_bytes + 1);
-    let mut body = Vec::new();
-    limited
-        .read_to_end(&mut body)
-        .map_err(|_error| CoreUpdateError::NetworkUnavailable)?;
-    if body.len() as u64 > max_bytes {
-        Err(CoreUpdateError::PackageTooLarge)
-    } else {
-        Ok(body)
     }
 }
 
@@ -847,12 +835,14 @@ mod tests {
     }
 
     #[test]
-    fn reads_download_bodies_with_a_hard_limit() {
-        let mut body = Cursor::new(vec![7_u8; 5]);
-
+    fn downloaded_bodies_are_bounded() {
         assert_eq!(
-            super::read_limited_body(&mut body, 4),
+            super::enforce_body_limit(vec![7_u8; 5], 4),
             Err(CoreUpdateError::PackageTooLarge)
+        );
+        assert_eq!(
+            super::enforce_body_limit(vec![7_u8; 4], 4),
+            Ok(vec![7_u8; 4])
         );
     }
 

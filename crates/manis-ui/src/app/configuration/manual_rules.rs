@@ -566,24 +566,24 @@ impl ManisApp {
                 .await;
             this.update(cx, |this, cx| {
                 this.routing_apply_state.finish();
-                if !result
-                    .as_ref()
-                    .is_ok_and(|transaction| transaction.value.is_some())
-                {
+                if !matches!(&result, Ok(crate::app::SourceMutation::Committed { .. })) {
                     this.manual_rules = rollback.manual_rules;
                     this.rule_sources.group_order = rollback.group_order;
                 }
                 this.status = match result {
-                    Ok(transaction) => {
-                        transaction.apply.reconcile_proxy_mode(&mut this.proxy_mode);
-                        let suffix = if transaction.value.is_none() {
-                            transaction.apply.status_suffix_after_rollback_attempt(
-                                this.language(),
-                                transaction.rollback_error.as_ref(),
-                            )
-                        } else {
-                            transaction.apply.status_suffix(this.language())
-                        };
+                    Ok(crate::app::SourceMutation::Committed { apply, .. }) => {
+                        apply.reconcile_proxy_mode(&mut this.proxy_mode);
+                        format!("{completion}{}", apply.status_suffix(this.language()))
+                    }
+                    Ok(crate::app::SourceMutation::RollbackAttempted {
+                        apply,
+                        rollback_error,
+                    }) => {
+                        apply.reconcile_proxy_mode(&mut this.proxy_mode);
+                        let suffix = apply.status_suffix_after_rollback_attempt(
+                            this.language(),
+                            rollback_error.as_ref(),
+                        );
                         format!("{completion}{suffix}")
                     }
                     Err(error) => format!(

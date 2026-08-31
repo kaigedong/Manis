@@ -223,14 +223,17 @@ fn replace_qx_rule_source(
         )
     })
     .map_err(ImportQxRuleError::Store)?;
-    Ok(match transaction.value {
-        Some(stored) => ImportQxRuleSuccess::Imported {
-            stored,
-            apply: transaction.apply,
-        },
-        None => ImportQxRuleSuccess::RolledBack {
-            apply: transaction.apply,
-            rollback_error: transaction.rollback_error,
+    Ok(match transaction {
+        super::SourceMutation::Committed {
+            value: stored,
+            apply,
+        } => ImportQxRuleSuccess::Imported { stored, apply },
+        super::SourceMutation::RollbackAttempted {
+            apply,
+            rollback_error,
+        } => ImportQxRuleSuccess::RolledBack {
+            apply,
+            rollback_error,
         },
     })
 }
@@ -259,17 +262,21 @@ fn create_qx_rule_source(
         Ok(mihomo::SaveQxRuleSourceOutcome::Created(stored))
     })
     .map_err(ImportQxRuleError::Store)?;
-    Ok(match transaction.value {
-        Some(mihomo::SaveQxRuleSourceOutcome::Created(stored)) => ImportQxRuleSuccess::Imported {
-            stored,
-            apply: transaction.apply,
-        },
-        Some(mihomo::SaveQxRuleSourceOutcome::Existing(stored)) => {
-            ImportQxRuleSuccess::AlreadyExists { stored }
-        }
-        None => ImportQxRuleSuccess::RolledBack {
-            apply: transaction.apply,
-            rollback_error: transaction.rollback_error,
+    Ok(match transaction {
+        super::SourceMutation::Committed {
+            value: mihomo::SaveQxRuleSourceOutcome::Created(stored),
+            apply,
+        } => ImportQxRuleSuccess::Imported { stored, apply },
+        super::SourceMutation::Committed {
+            value: mihomo::SaveQxRuleSourceOutcome::Existing(stored),
+            ..
+        } => ImportQxRuleSuccess::AlreadyExists { stored },
+        super::SourceMutation::RollbackAttempted {
+            apply,
+            rollback_error,
+        } => ImportQxRuleSuccess::RolledBack {
+            apply,
+            rollback_error,
         },
     })
 }
@@ -544,12 +551,6 @@ impl ManisApp {
     ) -> Div {
         let compact = size_class == WindowSizeClass::Compact;
         let language = self.language();
-        let rule_input = self
-            .inputs
-            .qx_rule
-            .as_ref()
-            .expect("QX rule input is initialized before rendering")
-            .clone();
         let rule_busy = self.rule_sources.feedback == QxRuleImportFeedback::Importing
             || self.source_refresh_busy();
         let selected_section = self.configuration_section;
@@ -563,7 +564,7 @@ impl ManisApp {
                 .into_any_element(),
             self.kernel_panel(theme, compact, cx).into_any_element(),
             self.source_panel(theme, compact, cx).into_any_element(),
-            self.rule_source_manager(rule_input, rule_busy, theme, compact, cx)
+            self.rule_source_manager(rule_busy, theme, compact, cx)
                 .into_any_element(),
             self.advanced_configuration_panel(theme, compact)
                 .into_any_element(),

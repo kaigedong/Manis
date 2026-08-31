@@ -15,6 +15,7 @@ use serde_json::Value;
 #[derive(Default)]
 struct FakeTransport {
     requests: RefCell<Vec<RecordedRequest>>,
+    initial_config: RefCell<Option<&'static str>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -80,7 +81,11 @@ impl ControllerTransport for FakeTransport {
             ),
             "/rules" => Ok(rule_fixture()),
             "/connections" => Ok(connection_fixture()),
-            "/configs" => Ok(config_fixture()),
+            "/configs" => Ok(self
+                .initial_config
+                .borrow_mut()
+                .take()
+                .map_or_else(config_fixture, str::to_owned)),
             _ => Err(MihomoError::InvalidResponse(format!(
                 "unexpected path {path}"
             ))),
@@ -652,6 +657,59 @@ fn enabling_tun_preserves_mihomo_interface_auto_detection() -> Result<(), Box<dy
         ]
     );
     Ok(())
+}
+
+#[test]
+fn enabling_tun_defaults_missing_or_null_configuration() -> Result<(), Box<dyn std::error::Error>> {
+    for config in ["{}", r#"{"tun":null}"#, "[]"] {
+        let transport = FakeTransport {
+            initial_config: RefCell::new(Some(config)),
+            ..FakeTransport::default()
+        };
+        let client = MihomoClient::new(ControllerConfig::default(), &transport);
+
+        client.set_tun_enabled(true)?;
+
+        assert_eq!(
+            transport.requests.borrow()[1],
+            RecordedRequest::patch(
+                "/configs",
+                serde_json::json!({"tun": {
+                    "enable": true,
+                    "dns-hijack": ["any:53", "tcp://any:53"]
+                }})
+            ),
+            "configuration: {config}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn enabling_tun_rejects_non_object_fields_before_patching() {
+    for config in [
+        r#"{"tun":false}"#,
+        r#"{"tun":1}"#,
+        r#"{"tun":"invalid"}"#,
+        r#"{"tun":[]}"#,
+    ] {
+        let transport = FakeTransport {
+            initial_config: RefCell::new(Some(config)),
+            ..FakeTransport::default()
+        };
+        let client = MihomoClient::new(ControllerConfig::default(), &transport);
+
+        assert!(matches!(
+            client.set_tun_enabled(true),
+            Err(MihomoError::InvalidResponse(message))
+                if message == "/configs tun field was not an object"
+        ));
+        assert_eq!(
+            transport.requests.borrow().as_slice(),
+            [RecordedRequest::get("/configs")],
+            "configuration: {config}"
+        );
+    }
 }
 
 #[test]

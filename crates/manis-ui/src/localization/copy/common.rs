@@ -1,4 +1,4 @@
-use crate::localization::LocalizedText;
+use crate::localization::{Language, LocalizedText};
 
 pub(crate) const COLLAPSE: LocalizedText = LocalizedText::new("Collapse", "收起");
 pub(crate) const DIRECT: LocalizedText = LocalizedText::new("Direct", "直连");
@@ -23,3 +23,10 @@ pub(crate) const OFF: LocalizedText = LocalizedText::new("Off", "关闭代理");
 pub(crate) const SAVED: LocalizedText = LocalizedText::new("Saved", "已保存");
 pub(crate) const SYSTEM_PROXY: LocalizedText = LocalizedText::new("System proxy", "系统代理");
 pub(crate) const TUN_PROXY: LocalizedText = LocalizedText::new("TUN proxy", "TUN 代理");
+
+pub(crate) fn numbered_rule_source(language: Language, index: usize) -> String {
+    match language {
+        Language::English => format!("Rule source {index}"),
+        Language::SimplifiedChinese => format!("规则源 {index}"),
+    }
+}

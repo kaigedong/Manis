@@ -331,16 +331,16 @@ struct PolicyNodeRowContext {
     theme: Theme,
 }
 
-struct OfflinePolicyCardView {
-    policy: ManagedPolicyGroup,
+struct OfflinePolicyCardView<'a> {
+    policy: &'a ManagedPolicyGroup,
     candidates: Vec<PolicyNode>,
     selected_name: Option<String>,
     expanded: bool,
     benchmarking: bool,
 }
 
-struct PolicyListCardView {
-    item: PolicyGroup,
+struct PolicyListCardView<'a> {
+    item: &'a PolicyGroup,
     expanded: bool,
     editable_group_id: Option<String>,
     icon: ManagedPolicyIcon,
@@ -719,11 +719,38 @@ impl ManagedPolicyRuntimeState {
         }
         *self = Self::Selecting {
             generation,
-            current: current.clone(),
-            candidates: candidates.clone(),
+            current: current.take(),
+            candidates: std::mem::take(candidates),
             pending: selected.to_owned(),
         };
         true
+    }
+}
+
+enum ProxySourceEditorTarget {
+    New { kind: ProxySourceEditorKind },
+    Subscription { id: String },
+    SingleNode { id: String },
+}
+
+impl ProxySourceEditorTarget {
+    const fn kind(&self) -> ProxySourceEditorKind {
+        match self {
+            Self::New { kind } => *kind,
+            Self::Subscription { .. } => ProxySourceEditorKind::Subscription,
+            Self::SingleNode { .. } => ProxySourceEditorKind::SingleNode,
+        }
+    }
+
+    fn editing_id(&self) -> Option<&str> {
+        match self {
+            Self::New { .. } => None,
+            Self::Subscription { id } | Self::SingleNode { id } => Some(id),
+        }
+    }
+
+    fn reset(&mut self) {
+        *self = Self::New { kind: self.kind() };
     }
 }
 
@@ -731,9 +758,7 @@ struct ProxySourceEditorState {
     import_generation: u64,
     input: Option<Entity<SubscriptionTextInput>>,
     name_input: Option<Entity<SubscriptionTextInput>>,
-    subscription_source_id: Option<String>,
-    single_node_source_id: Option<String>,
-    kind: ProxySourceEditorKind,
+    target: ProxySourceEditorTarget,
     refresh_interval: RemoteSourceRefreshInterval,
     interval_popover: bool,
     enabled: bool,
@@ -754,9 +779,9 @@ impl Default for ProxySourceEditorState {
             import_generation: 0,
             input: None,
             name_input: None,
-            subscription_source_id: None,
-            single_node_source_id: None,
-            kind: ProxySourceEditorKind::default(),
+            target: ProxySourceEditorTarget::New {
+                kind: ProxySourceEditorKind::default(),
+            },
             refresh_interval: RemoteSourceRefreshInterval::Manual,
             interval_popover: false,
             enabled: true,
@@ -1618,9 +1643,12 @@ impl ManisApp {
         match result {
             Ok(SourceLoadOutcome {
                 providers,
-                mutation,
-            }) if mutation.value.is_some() => {
-                let subscription = mutation.value.expect("checked committed mutation");
+                mutation:
+                    SourceMutation::Committed {
+                        value: subscription,
+                        apply,
+                    },
+            }) => {
                 let node_count: usize = providers.iter().map(|provider| provider.nodes.len()).sum();
                 let provider_count = providers.len();
                 self.subscription_action_generation =
@@ -1640,28 +1668,32 @@ impl ManisApp {
                     input.update(cx, SubscriptionTextInput::clear_without_event);
                 }
                 self.configuration_add_section = None;
-                self.proxy_source_editor.subscription_source_id = None;
+                self.proxy_source_editor.target.reset();
                 self.proxy_source_editor.error = None;
-                mutation.apply.reconcile_proxy_mode(&mut self.proxy_mode);
+                apply.reconcile_proxy_mode(&mut self.proxy_mode);
                 self.status = copy::app::subscription_imported(
                     language,
                     self.imported_subscriptions.len(),
                     provider_count,
                     node_count,
-                    &mutation.apply.status_suffix(language),
+                    &apply.status_suffix(language),
                 );
                 trace_ui(UiEvent::SourceImportSucceeded);
             }
-            Ok(SourceLoadOutcome { mutation, .. }) => {
+            Ok(SourceLoadOutcome {
+                mutation:
+                    SourceMutation::RollbackAttempted {
+                        apply,
+                        rollback_error,
+                    },
+                ..
+            }) => {
                 self.proxy_source_editor.feedback =
                     SubscriptionFeedback::StoreFailed(SubscriptionStoreError::StoreUnavailable);
                 self.status = format!(
                     "{}{}",
                     language.localized(copy::app::SUBSCRIPTION_SAVE_FAILED_TITLE),
-                    mutation.apply.status_suffix_after_rollback_attempt(
-                        language,
-                        mutation.rollback_error.as_ref(),
-                    )
+                    apply.status_suffix_after_rollback_attempt(language, rollback_error.as_ref())
                 );
                 trace_ui(UiEvent::SourceImportFailed);
             }
@@ -1842,9 +1874,12 @@ impl ManisApp {
         match result {
             Ok(SourceLoadOutcome {
                 providers,
-                mutation,
-            }) if mutation.value.is_some() => {
-                let stored = mutation.value.expect("checked committed mutation");
+                mutation:
+                    SourceMutation::Committed {
+                        value: stored,
+                        apply,
+                    },
+            }) => {
                 let node_count: usize = providers.iter().map(|provider| provider.nodes.len()).sum();
                 subscription.providers = providers;
                 subscription.state = ImportedSubscriptionState::Ready(kind);
@@ -1854,23 +1889,27 @@ impl ManisApp {
                 self.rule_sources
                     .refresh_retry_not_before
                     .remove(&DueRemoteSource::Subscription(id.to_owned()).scheduler_key());
-                mutation.apply.reconcile_proxy_mode(&mut self.proxy_mode);
+                apply.reconcile_proxy_mode(&mut self.proxy_mode);
                 self.status = copy::app::subscription_updated(
                     language,
                     node_count,
-                    &mutation.apply.status_suffix(language),
+                    &apply.status_suffix(language),
                 );
                 trace_ui(UiEvent::SourceRestoreSucceeded);
             }
-            Ok(SourceLoadOutcome { mutation, .. }) => {
+            Ok(SourceLoadOutcome {
+                mutation:
+                    SourceMutation::RollbackAttempted {
+                        apply,
+                        rollback_error,
+                    },
+                ..
+            }) => {
                 subscription.state = ImportedSubscriptionState::Pending(kind);
                 self.status = format!(
                     "{}{}",
                     language.localized(copy::app::SUBSCRIPTION_UPDATE_FAILED_TITLE),
-                    mutation.apply.status_suffix_after_rollback_attempt(
-                        language,
-                        mutation.rollback_error.as_ref(),
-                    )
+                    apply.status_suffix_after_rollback_attempt(language, rollback_error.as_ref())
                 );
                 trace_ui(UiEvent::SourceRestoreFailed);
             }
@@ -2012,28 +2051,31 @@ impl ManisApp {
                     return;
                 }
                 match result {
-                    Ok(transaction) if transaction.value.is_some() => {
+                    Ok(SourceMutation::Committed { apply, .. }) => {
                         this.imported_subscriptions.remove(index);
                         this.rule_sources
                             .refresh_retry_not_before
                             .remove(&DueRemoteSource::Subscription(id.clone()).scheduler_key());
-                        transaction.apply.reconcile_proxy_mode(&mut this.proxy_mode);
+                        apply.reconcile_proxy_mode(&mut this.proxy_mode);
                         this.status = format!(
                             "{}{}",
                             language.localized(copy::app::IMPORTED_SUBSCRIPTION_REMOVED),
-                            transaction.apply.status_suffix(language)
+                            apply.status_suffix(language)
                         );
                         trace_ui(UiEvent::SourceRemoveSucceeded);
                     }
-                    Ok(transaction) => {
+                    Ok(SourceMutation::RollbackAttempted {
+                        apply,
+                        rollback_error,
+                    }) => {
                         this.imported_subscriptions[index].state =
                             ImportedSubscriptionState::Ready(kind);
                         this.status = format!(
                             "{}{}",
                             language.localized(copy::app::IMPORTED_SUBSCRIPTION_REMOVAL_FAILED),
-                            transaction.apply.status_suffix_after_rollback_attempt(
+                            apply.status_suffix_after_rollback_attempt(
                                 language,
-                                transaction.rollback_error.as_ref()
+                                rollback_error.as_ref()
                             )
                         );
                         trace_ui(UiEvent::SourceRemoveFailed);
@@ -3319,14 +3361,14 @@ mod tests {
         };
         app.managed_policies.groups.push(saved.clone());
         app.expanded_policy_group = Some(PolicyGroupId::new(saved.id.clone()));
-        assert!(app.policy_list_card_view(runtime.clone()).expanded);
+        assert!(app.policy_list_card_view(&runtime).expanded);
 
         app.expanded_policy_group = Some(runtime.id.clone());
-        assert!(app.offline_policy_card_view(saved.clone()).expanded);
+        assert!(app.offline_policy_card_view(&saved).expanded);
 
         app.expanded_policy_group = None;
-        assert!(!app.policy_list_card_view(runtime).expanded);
-        assert!(!app.offline_policy_card_view(saved).expanded);
+        assert!(!app.policy_list_card_view(&runtime).expanded);
+        assert!(!app.offline_policy_card_view(&saved).expanded);
     }
 
     #[test]

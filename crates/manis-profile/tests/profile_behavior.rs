@@ -1063,6 +1063,38 @@ fn renderer_escapes_double_quoted_yaml_scalars() {
 }
 
 #[test]
+fn validation_checks_each_policy_reference_kind() {
+    let saved = VlessProxy::parse_share_link(
+        "vless://00000000-0000-4000-8000-000000000000@edge.example.invalid:443?security=tls#Saved",
+    )
+    .expect("valid saved proxy");
+    let mut profile =
+        Profile::qx_sources_with_groups(vec![fixture_secret()], vec![saved], Vec::new(), 17_890)
+            .expect("valid profile");
+    let group = profile.groups[0].name.clone();
+    let proxy = Name::parse("Saved").expect("valid proxy name");
+    let missing = Name::parse("Missing").expect("valid missing name");
+
+    for (policy, expected) in [
+        (PolicyRef::Direct, Ok(())),
+        (PolicyRef::Reject, Ok(())),
+        (PolicyRef::Group(group), Ok(())),
+        (PolicyRef::Proxy(proxy), Ok(())),
+        (
+            PolicyRef::Group(missing.clone()),
+            Err(ProfileError::DanglingReference),
+        ),
+        (
+            PolicyRef::Proxy(missing),
+            Err(ProfileError::DanglingReference),
+        ),
+    ] {
+        profile.rules = vec![Rule::Match { policy }];
+        assert_eq!(profile.validate(), expected);
+    }
+}
+
+#[test]
 fn validation_rejects_invalid_names_duplicates_dangling_refs_and_misplaced_match() {
     assert!(Name::parse("bad,name").is_err());
     assert!(Name::parse("bad\u{7f}name").is_err());

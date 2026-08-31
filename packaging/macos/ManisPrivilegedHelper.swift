@@ -19,23 +19,6 @@ private let maximumCoreBytes = 128 * 1024 * 1024
 private let coreLogName = "manis-privileged-core.log"
 private let optionalGeodataNames = ["geoip.metadb", "geoip.dat", "geosite.dat", "GeoLite2-ASN.mmdb"]
 
-@objc(ManisPrivilegedHelperProtocol)
-protocol ManisPrivilegedHelperProtocol {
-    func status(withReply reply: @escaping (String, Int32) -> Void)
-    func start(
-        dataDir: String,
-        config: String,
-        controller: String,
-        withReply reply: @escaping (String, Int32) -> Void
-    )
-    func stop(expectedPid: pid_t, withReply reply: @escaping (String, Int32) -> Void)
-    func stageCore(
-        contents: Data,
-        sha256: String,
-        withReply reply: @escaping (String, Int32) -> Void
-    )
-}
-
 final class HelperDelegate: NSObject, NSXPCListenerDelegate {
     private let core = HelperCore()
 

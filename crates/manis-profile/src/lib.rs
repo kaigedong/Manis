@@ -395,8 +395,8 @@ impl Profile {
         for proxy in &self.proxies {
             let name = proxy.name();
             if matches!(name.as_str(), "DIRECT" | "REJECT")
-                || !all_names.insert(name.clone())
-                || !proxy_names.insert(name.clone())
+                || !all_names.insert(name)
+                || !proxy_names.insert(name)
             {
                 return Err(ProfileError::DuplicateName);
             }
@@ -405,9 +405,7 @@ impl Profile {
 
         let mut provider_names = HashSet::new();
         for provider in &self.providers {
-            if !all_names.insert(provider.name.clone())
-                || !provider_names.insert(provider.name.clone())
-            {
+            if !all_names.insert(&provider.name) || !provider_names.insert(&provider.name) {
                 return Err(ProfileError::DuplicateName);
             }
             if provider.interval_secs == 0
@@ -422,8 +420,8 @@ impl Profile {
         let mut group_names = HashSet::new();
         for group in &self.groups {
             if matches!(group.name.as_str(), "DIRECT" | "REJECT")
-                || !all_names.insert(group.name.clone())
-                || !group_names.insert(group.name.clone())
+                || !all_names.insert(&group.name)
+                || !group_names.insert(&group.name)
             {
                 return Err(ProfileError::DuplicateName);
             }
@@ -1365,8 +1363,8 @@ fn compile_user_groups(
 
 fn validate_policy_refs(
     policies: &[PolicyRef],
-    groups: &HashSet<Name>,
-    proxies: &HashSet<Name>,
+    groups: &HashSet<&Name>,
+    proxies: &HashSet<&Name>,
 ) -> Result<(), ProfileError> {
     for policy in policies {
         validate_policy_ref(policy, groups, proxies)?;
@@ -1376,9 +1374,9 @@ fn validate_policy_refs(
 
 fn validate_groups(
     groups: &[PolicyGroup],
-    group_names: &HashSet<Name>,
-    proxy_names: &HashSet<Name>,
-    provider_names: &HashSet<Name>,
+    group_names: &HashSet<&Name>,
+    proxy_names: &HashSet<&Name>,
+    provider_names: &HashSet<&Name>,
 ) -> Result<(), ProfileError> {
     for group in groups {
         if group
@@ -1434,20 +1432,21 @@ fn validate_group_filter(filter: Option<&str>) -> Result<(), ProfileError> {
 
 fn validate_policy_ref(
     policy: &PolicyRef,
-    groups: &HashSet<Name>,
-    proxies: &HashSet<Name>,
+    groups: &HashSet<&Name>,
+    proxies: &HashSet<&Name>,
 ) -> Result<(), ProfileError> {
-    match policy {
-        PolicyRef::Group(name) if !groups.contains(name) => Err(ProfileError::DanglingReference),
-        PolicyRef::Proxy(name) if !proxies.contains(name) => Err(ProfileError::DanglingReference),
-        _ => Ok(()),
-    }
+    let known = match policy {
+        PolicyRef::Direct | PolicyRef::Reject => true,
+        PolicyRef::Group(name) => groups.contains(name),
+        PolicyRef::Proxy(name) => proxies.contains(name),
+    };
+    known.then_some(()).ok_or(ProfileError::DanglingReference)
 }
 
 fn validate_rule(
     rule: &Rule,
-    groups: &HashSet<Name>,
-    proxies: &HashSet<Name>,
+    groups: &HashSet<&Name>,
+    proxies: &HashSet<&Name>,
 ) -> Result<(), ProfileError> {
     let policy = match rule {
         Rule::Domain { value, policy }
@@ -1499,7 +1498,7 @@ fn validate_rule(
     validate_policy_ref(policy, groups, proxies)
 }
 
-fn validate_provider_refs(providers: &[Name], known: &HashSet<Name>) -> Result<(), ProfileError> {
+fn validate_provider_refs(providers: &[Name], known: &HashSet<&Name>) -> Result<(), ProfileError> {
     if providers.iter().all(|name| known.contains(name)) {
         Ok(())
     } else {

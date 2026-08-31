@@ -58,10 +58,10 @@ struct WorkspaceNodeRowContext {
     theme: Theme,
 }
 
-struct SourceGroupPresentation {
+struct SourceGroupPresentation<'a> {
     collapsed: bool,
     benchmark_key: String,
-    benchmark: GroupBenchmarkState,
+    benchmark: &'a GroupBenchmarkState,
     detail: String,
     total_nodes: usize,
 }
@@ -2096,55 +2096,59 @@ impl ManisApp {
         self.managed_policies.mutation_state = ManagedPolicyMutationState::Idle;
         let mut saved = false;
         match result {
-            Ok(transaction) => {
+            Ok(super::SourceMutation::Committed {
+                value: group,
+                apply,
+            }) => {
                 let language = self.language();
-                transaction.apply.reconcile_proxy_mode(&mut self.proxy_mode);
-                if let Some(group) = transaction.value {
-                    let previous_name = self
-                        .managed_policies
-                        .groups
-                        .iter()
-                        .find(|existing| existing.id == group.id)
-                        .map(|existing| existing.name.clone());
-                    self.clear_managed_policy_benchmarks(
-                        &group.id,
-                        previous_name.as_deref(),
-                        Some(&group.name),
-                    );
-                    if let Some(existing) = self
-                        .managed_policies
-                        .groups
-                        .iter_mut()
-                        .find(|existing| existing.id == group.id)
-                    {
-                        existing.clone_from(&group);
-                    } else {
-                        self.managed_policies.groups.push(group.clone());
-                        self.managed_policies
-                            .groups
-                            .sort_by(|left, right| left.id.cmp(&right.id));
-                    }
-                    self.persist_group_benchmarks();
-                    self.managed_policies.runtime_states.remove(&group.id);
-                    self.managed_policies.draft = None;
-                    self.managed_policies.editor_popover = None;
-                    saved = true;
-                    self.status = format!(
-                        "{} “{}”{}",
-                        language.localized(copy::nodes::GROUP_SAVED),
-                        group.name,
-                        transaction.apply.status_suffix(language)
-                    );
+                apply.reconcile_proxy_mode(&mut self.proxy_mode);
+                let previous_name = self
+                    .managed_policies
+                    .groups
+                    .iter()
+                    .find(|existing| existing.id == group.id)
+                    .map(|existing| existing.name.clone());
+                self.clear_managed_policy_benchmarks(
+                    &group.id,
+                    previous_name.as_deref(),
+                    Some(&group.name),
+                );
+                if let Some(existing) = self
+                    .managed_policies
+                    .groups
+                    .iter_mut()
+                    .find(|existing| existing.id == group.id)
+                {
+                    existing.clone_from(&group);
                 } else {
-                    self.status = format!(
-                        "{}{}",
-                        language.localized(copy::nodes::FAILED_TO_SAVE_POLICY_GROUP),
-                        transaction.apply.status_suffix_after_rollback_attempt(
-                            language,
-                            transaction.rollback_error.as_ref(),
-                        )
-                    );
+                    self.managed_policies.groups.push(group.clone());
+                    self.managed_policies
+                        .groups
+                        .sort_by(|left, right| left.id.cmp(&right.id));
                 }
+                self.persist_group_benchmarks();
+                self.managed_policies.runtime_states.remove(&group.id);
+                self.managed_policies.draft = None;
+                self.managed_policies.editor_popover = None;
+                saved = true;
+                self.status = format!(
+                    "{} “{}”{}",
+                    language.localized(copy::nodes::GROUP_SAVED),
+                    group.name,
+                    apply.status_suffix(language)
+                );
+            }
+            Ok(super::SourceMutation::RollbackAttempted {
+                apply,
+                rollback_error,
+            }) => {
+                let language = self.language();
+                apply.reconcile_proxy_mode(&mut self.proxy_mode);
+                self.status = format!(
+                    "{}{}",
+                    language.localized(copy::nodes::FAILED_TO_SAVE_POLICY_GROUP),
+                    apply.status_suffix_after_rollback_attempt(language, rollback_error.as_ref())
+                );
             }
             Err(error) => {
                 self.status = format!(
@@ -2261,19 +2265,22 @@ impl ManisApp {
         self.managed_policies.mutation_state = ManagedPolicyMutationState::Idle;
         let mut removed = false;
         match result {
-            Ok(transaction) if transaction.value.is_some() => {
-                self.finish_successful_managed_policy_removal(transaction);
+            Ok(super::SourceMutation::Committed {
+                value: (deleted_id, group),
+                apply,
+            }) => {
+                self.finish_successful_managed_policy_removal(&deleted_id, &group, &apply);
                 removed = true;
             }
-            Ok(transaction) => {
+            Ok(super::SourceMutation::RollbackAttempted {
+                apply,
+                rollback_error,
+            }) => {
                 let language = self.language();
                 self.status = format!(
                     "{}{}",
                     language.localized(copy::nodes::FAILED_TO_DELETE_POLICY_GROUP),
-                    transaction.apply.status_suffix_after_rollback_attempt(
-                        language,
-                        transaction.rollback_error.as_ref(),
-                    )
+                    apply.status_suffix_after_rollback_attempt(language, rollback_error.as_ref())
                 );
             }
             Err(error) => {
@@ -2294,26 +2301,24 @@ impl ManisApp {
 
     fn finish_successful_managed_policy_removal(
         &mut self,
-        mut transaction: super::SourceMutation<(String, ManagedPolicyGroup)>,
+        deleted_id: &str,
+        group: &ManagedPolicyGroup,
+        apply: &super::SourceRuntimeApply,
     ) {
-        let (deleted_id, group) = transaction
-            .value
-            .take()
-            .expect("checked committed mutation");
         let language = self.language();
-        transaction.apply.reconcile_proxy_mode(&mut self.proxy_mode);
+        apply.reconcile_proxy_mode(&mut self.proxy_mode);
         self.managed_policies
             .groups
             .retain(|candidate| candidate.id != deleted_id);
-        self.clear_managed_policy_benchmarks(&deleted_id, Some(&group.name), None);
+        self.clear_managed_policy_benchmarks(deleted_id, Some(&group.name), None);
         self.persist_group_benchmarks();
-        self.managed_policies.runtime_states.remove(&deleted_id);
+        self.managed_policies.runtime_states.remove(deleted_id);
         if self
             .managed_policies
             .draft
             .as_ref()
             .and_then(|draft| draft.editing_id.as_deref())
-            == Some(deleted_id.as_str())
+            == Some(deleted_id)
         {
             self.managed_policies.draft = None;
             self.managed_policies.editor_popover = None;
@@ -2322,7 +2327,7 @@ impl ManisApp {
             "{} “{}”{}",
             language.localized(copy::nodes::GROUP_DELETED),
             group.name,
-            transaction.apply.status_suffix(language)
+            apply.status_suffix(language)
         );
     }
 
@@ -2367,7 +2372,7 @@ impl ManisApp {
         } else {
             self.source_group_table(
                 group,
-                &presentation.benchmark,
+                presentation.benchmark,
                 NodeWorkspaceView {
                     compact,
                     language,
@@ -2396,7 +2401,7 @@ impl ManisApp {
         &self,
         group: &NodeSourceGroup<'_>,
         language: Language,
-    ) -> SourceGroupPresentation {
+    ) -> SourceGroupPresentation<'_> {
         let total_nodes = group
             .providers
             .iter()
@@ -2408,9 +2413,8 @@ impl ManisApp {
             .managed_policies
             .benchmarks
             .get(&benchmark_key)
-            .cloned()
-            .unwrap_or_default();
-        let detail = match &benchmark {
+            .unwrap_or(&GroupBenchmarkState::Idle);
+        let detail = match benchmark {
             GroupBenchmarkState::Idle => group.detail.clone(),
             GroupBenchmarkState::Running { .. } => format!(
                 "{} · {}",
@@ -2440,7 +2444,7 @@ impl ManisApp {
 
     fn source_group_header(
         group: &NodeSourceGroup<'_>,
-        presentation: &SourceGroupPresentation,
+        presentation: &SourceGroupPresentation<'_>,
         compact: bool,
         language: Language,
         theme: Theme,
@@ -2525,7 +2529,7 @@ impl ManisApp {
 
     fn source_group_header_content(
         group: &NodeSourceGroup<'_>,
-        presentation: &SourceGroupPresentation,
+        presentation: &SourceGroupPresentation<'_>,
         language: Language,
         theme: Theme,
     ) -> Div {
@@ -3232,10 +3236,9 @@ mod tests {
             };
             let group = ManagedPolicyGroup::new("group-new", "New").expect("group");
             assert!(app.finish_managed_policy_save(
-                Ok(SourceMutation {
-                    value: Some(group.clone()),
+                Ok(SourceMutation::Committed {
+                    value: group.clone(),
                     apply: SourceRuntimeApply::MetadataOnly,
-                    rollback_error: None,
                 }),
                 cx
             ));
@@ -3270,8 +3273,7 @@ mod tests {
             ));
             app.start_managed_policy_create(cx);
             assert!(!app.finish_managed_policy_save(
-                Ok(SourceMutation {
-                    value: None,
+                Ok(SourceMutation::RollbackAttempted {
                     apply: SourceRuntimeApply::Failed("fixture validation failure".to_owned()),
                     rollback_error: None,
                 }),
@@ -3298,10 +3300,9 @@ mod tests {
             app.managed_policies.groups.push(group.clone());
             group.name = "Renamed".to_owned();
             assert!(app.finish_managed_policy_save(
-                Ok(SourceMutation {
-                    value: Some(group.clone()),
+                Ok(SourceMutation::Committed {
+                    value: group.clone(),
                     apply: SourceRuntimeApply::MetadataOnly,
-                    rollback_error: None,
                 }),
                 cx
             ));
@@ -3321,10 +3322,9 @@ mod tests {
                 Vec::new(),
             ));
             assert!(app.finish_managed_policy_removal(
-                Ok(SourceMutation {
-                    value: Some((group.id.clone(), group)),
+                Ok(SourceMutation::Committed {
+                    value: (group.id.clone(), group),
                     apply: SourceRuntimeApply::MetadataOnly,
-                    rollback_error: None,
                 }),
                 cx
             ));
@@ -3495,8 +3495,19 @@ mod tests {
             current: Some("Tokyo".to_owned()),
             candidates: BTreeSet::from(["Tokyo".to_owned(), "Singapore".to_owned()]),
         };
+        let ready = state.clone();
         assert!(!state.begin_selection(5, "Unknown"));
+        assert_eq!(state, ready);
         assert!(state.begin_selection(5, "Singapore"));
+        assert_eq!(
+            state,
+            ManagedPolicyRuntimeState::Selecting {
+                generation: 5,
+                current: Some("Tokyo".to_owned()),
+                candidates: BTreeSet::from(["Tokyo".to_owned(), "Singapore".to_owned()]),
+                pending: "Singapore".to_owned(),
+            }
+        );
         assert!(matches!(
             state,
             ManagedPolicyRuntimeState::Selecting {

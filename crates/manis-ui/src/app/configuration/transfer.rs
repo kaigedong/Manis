@@ -26,6 +26,12 @@ pub(super) enum TransferProgress {
     Replacing,
 }
 
+enum ConfigurationReplacementOutcome {
+    ProxyStopFailed,
+    KernelStopFailed,
+    RestoreFinished(Result<crate::config_backup::ImportResult, crate::config_backup::ImportError>),
+}
+
 #[derive(Default, PartialEq, Eq)]
 pub(super) enum TransferPresentation {
     #[default]
@@ -227,7 +233,7 @@ impl ManisApp {
         }
     }
 
-    fn replace_configuration(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+    fn replace_configuration(&mut self, cx: &mut Context<Self>) {
         if self.configuration_transfer.is_busy() || self.configuration_transfer.preview.is_none() {
             return;
         }
@@ -258,7 +264,7 @@ impl ManisApp {
         let previous = self.proxy_mode;
         let executor = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
-            let (proxy_off, result) = executor
+            let result = executor
                 .spawn(async move {
                     if crate::app::apply_proxy_mode_transition(
                         &runtime,
@@ -274,52 +280,72 @@ impl ManisApp {
                     )
                     .is_err()
                     {
-                        return (false, Err(copy::backup::STOP_FAILED));
+                        return ConfigurationReplacementOutcome::ProxyStopFailed;
                     }
                     if runtime.stop_managed().is_err() {
-                        return (true, Err(copy::backup::STOP_FAILED));
+                        return ConfigurationReplacementOutcome::KernelStopFailed;
                     }
-                    (true, Ok(crate::config_backup::restore(&store, &preview)))
+                    ConfigurationReplacementOutcome::RestoreFinished(crate::config_backup::restore(
+                        &store, &preview,
+                    ))
                 })
                 .await;
             this.update(cx, |this, cx| {
-                if proxy_off {
-                    this.proxy_mode = ProxyMode::Off;
-                    this.live_generation = this.live_generation.wrapping_add(1);
-                    this.live_runtime = None;
-                    this.controller = mihomo::ControllerState::Disconnected;
-                    this.live_status = mihomo::LiveStreamStatus::default();
-                    this.active_connections.clear();
-                }
-                match result {
-                    Ok(Ok(imported)) => {
-                        this.configuration_transfer.output_path = Some(imported.backup_dir);
-                        language
-                            .localized(copy::backup::IMPORTED)
-                            .clone_into(&mut this.status);
-                        cx.restart();
-                    }
-                    Ok(Err(error)) => {
-                        this.configuration_transfer.output_path = error.backup_dir;
-                        this.finish_configuration_transfer(
-                            language.localized(if error.rollback_failed {
-                                copy::backup::ROLLBACK_FAILED
-                            } else {
-                                copy::backup::RESTORE_FAILED
-                            }),
-                            true,
-                            cx,
-                        );
-                    }
-                    Err(message) => {
-                        this.finish_configuration_transfer(language.localized(message), true, cx);
-                    }
-                }
+                this.finish_configuration_replacement(result, language, cx);
             })
             .ok();
         })
         .detach();
         cx.notify();
+    }
+
+    fn finish_configuration_replacement(
+        &mut self,
+        result: ConfigurationReplacementOutcome,
+        language: Language,
+        cx: &mut Context<Self>,
+    ) {
+        if matches!(
+            &result,
+            ConfigurationReplacementOutcome::KernelStopFailed
+                | ConfigurationReplacementOutcome::RestoreFinished(_)
+        ) {
+            self.proxy_mode = ProxyMode::Off;
+            self.live_generation = self.live_generation.wrapping_add(1);
+            self.live_runtime = None;
+            self.controller = mihomo::ControllerState::Disconnected;
+            self.live_status = mihomo::LiveStreamStatus::default();
+            self.active_connections.clear();
+        }
+        match result {
+            ConfigurationReplacementOutcome::RestoreFinished(Ok(imported)) => {
+                self.configuration_transfer.output_path = Some(imported.backup_dir);
+                language
+                    .localized(copy::backup::IMPORTED)
+                    .clone_into(&mut self.status);
+                cx.restart();
+            }
+            ConfigurationReplacementOutcome::RestoreFinished(Err(error)) => {
+                self.configuration_transfer.output_path = error.backup_dir;
+                self.finish_configuration_transfer(
+                    language.localized(if error.rollback_failed {
+                        copy::backup::ROLLBACK_FAILED
+                    } else {
+                        copy::backup::RESTORE_FAILED
+                    }),
+                    true,
+                    cx,
+                );
+            }
+            ConfigurationReplacementOutcome::ProxyStopFailed
+            | ConfigurationReplacementOutcome::KernelStopFailed => {
+                self.finish_configuration_transfer(
+                    language.localized(copy::backup::STOP_FAILED),
+                    true,
+                    cx,
+                );
+            }
+        }
     }
 
     pub(super) fn configuration_transfer_panel(
@@ -646,9 +672,7 @@ impl ManisApp {
                         ControlSize::Standard,
                     )
                     .when(busy, gpui::Styled::cursor_default)
-                    .on_click(
-                        cx.listener(|this, _, window, cx| this.replace_configuration(window, cx)),
-                    ),
+                    .on_click(cx.listener(|this, _, _, cx| this.replace_configuration(cx))),
                 )
             })
     }

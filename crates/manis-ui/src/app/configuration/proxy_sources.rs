@@ -7,7 +7,8 @@ use gpui_component::{
 };
 
 use crate::app::{
-    ImportedSubscriptionState, ManisApp, ProxySourceEditorKind, SubscriptionFeedback,
+    ImportedSubscriptionState, ManisApp, ProxySourceEditorKind, ProxySourceEditorTarget,
+    SourceMutation, SourceRuntimeApply, SubscriptionFeedback,
 };
 use crate::{
     components::{
@@ -114,9 +115,9 @@ impl ManisApp {
         if self.proxy_source_editor.is_importing() {
             return;
         }
-        self.proxy_source_editor.subscription_source_id = None;
-        self.proxy_source_editor.single_node_source_id = None;
-        self.proxy_source_editor.kind = ProxySourceEditorKind::Subscription;
+        self.proxy_source_editor.target = ProxySourceEditorTarget::New {
+            kind: ProxySourceEditorKind::Subscription,
+        };
         self.proxy_source_editor.refresh_interval = RemoteSourceRefreshInterval::Manual;
         self.proxy_source_editor.interval_popover = false;
         self.proxy_source_editor.enabled = true;
@@ -144,9 +145,7 @@ impl ManisApp {
         };
         let name = subscription.name.clone();
         let url = subscription.source.expose_to(str::to_owned);
-        self.proxy_source_editor.subscription_source_id = Some(id);
-        self.proxy_source_editor.single_node_source_id = None;
-        self.proxy_source_editor.kind = ProxySourceEditorKind::Subscription;
+        self.proxy_source_editor.target = ProxySourceEditorTarget::Subscription { id };
         self.proxy_source_editor.refresh_interval = subscription.refresh_interval;
         self.proxy_source_editor.interval_popover = false;
         self.proxy_source_editor.enabled = subscription.enabled;
@@ -170,9 +169,7 @@ impl ManisApp {
         };
         let name = saved.name.clone();
         let url = saved.source.expose_to(str::to_owned);
-        self.proxy_source_editor.subscription_source_id = None;
-        self.proxy_source_editor.single_node_source_id = Some(id);
-        self.proxy_source_editor.kind = ProxySourceEditorKind::SingleNode;
+        self.proxy_source_editor.target = ProxySourceEditorTarget::SingleNode { id };
         self.proxy_source_editor.refresh_interval = RemoteSourceRefreshInterval::Manual;
         self.proxy_source_editor.interval_popover = false;
         self.proxy_source_editor.enabled = saved.enabled;
@@ -210,8 +207,7 @@ impl ManisApp {
             return;
         }
         self.configuration_add_section = None;
-        self.proxy_source_editor.subscription_source_id = None;
-        self.proxy_source_editor.single_node_source_id = None;
+        self.proxy_source_editor.target.reset();
         self.proxy_source_editor.interval_popover = false;
         self.proxy_source_editor.error = None;
         self.proxy_source_editor.feedback = SubscriptionFeedback::Idle;
@@ -246,9 +242,9 @@ impl ManisApp {
             .clone();
         let viewport = window.viewport_size();
         let view = ProxySourceEditorView {
-            direct_input: self.proxy_source_editor.kind == ProxySourceEditorKind::SingleNode,
-            editing: self.proxy_source_editor.subscription_source_id.is_some()
-                || self.proxy_source_editor.single_node_source_id.is_some(),
+            direct_input: self.proxy_source_editor.target.kind()
+                == ProxySourceEditorKind::SingleNode,
+            editing: self.proxy_source_editor.target.editing_id().is_some(),
             activity: if matches!(
                 self.proxy_source_editor.feedback,
                 SubscriptionFeedback::Importing(_)
@@ -503,7 +499,7 @@ impl ManisApp {
                     )
                     .selected(selected)
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        this.proxy_source_editor.kind = kind;
+                        this.proxy_source_editor.target = ProxySourceEditorTarget::New { kind };
                         this.proxy_source_editor.error = None;
                         cx.notify();
                     }))
@@ -613,7 +609,7 @@ impl ManisApp {
             let input = input.read(cx);
             (
                 input.value().to_owned(),
-                match self.proxy_source_editor.kind {
+                match self.proxy_source_editor.target.kind() {
                     ProxySourceEditorKind::Subscription => {
                         validate_subscription_preview(input.value())
                     }
@@ -625,7 +621,10 @@ impl ManisApp {
         };
         match result {
             Ok(preview) if preview.kind == SourceKind::SingleNode => {
-                if self.proxy_source_editor.subscription_source_id.is_some() {
+                if matches!(
+                    self.proxy_source_editor.target,
+                    ProxySourceEditorTarget::Subscription { .. }
+                ) {
                     self.proxy_source_editor.error = Some(
                         self.language()
                             .localized(copy::configuration::AN_EXISTING_SUBSCRIPTION_MUST_KEEP_AN_HTTP_HTTPS_URL)
@@ -637,7 +636,10 @@ impl ManisApp {
                 self.import_single_node(input_value, name, preview, cx)
             }
             Ok(preview) => {
-                if self.proxy_source_editor.single_node_source_id.is_some() {
+                if matches!(
+                    self.proxy_source_editor.target,
+                    ProxySourceEditorTarget::SingleNode { .. }
+                ) {
                     self.proxy_source_editor.error = Some(
                         self.language()
                             .localized(copy::configuration::THIS_SOURCE_MUST_REMAIN_A_SINGLE_NODE_SHARE_LINK)
@@ -653,7 +655,11 @@ impl ManisApp {
                         name,
                         refresh_interval: self.proxy_source_editor.refresh_interval,
                         enabled: self.proxy_source_editor.enabled,
-                        editing_id: self.proxy_source_editor.subscription_source_id.clone(),
+                        editing_id: self
+                            .proxy_source_editor
+                            .target
+                            .editing_id()
+                            .map(str::to_owned),
                         kind: preview.kind,
                     },
                     cx,
@@ -709,7 +715,11 @@ impl ManisApp {
             input.update(cx, |input, cx| input.set_enabled(false, cx));
         }
         let runtime = self.runtime.clone();
-        let editing_id = self.proxy_source_editor.single_node_source_id.clone();
+        let editing_id = self
+            .proxy_source_editor
+            .target
+            .editing_id()
+            .map(str::to_owned);
         let enabled = self.proxy_source_editor.enabled;
         let executor = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
@@ -767,9 +777,33 @@ impl ManisApp {
         match result {
             Ok(crate::app::SourceLoadOutcome {
                 providers,
-                mutation: transaction,
+                mutation:
+                    SourceMutation::Committed {
+                        value: stored,
+                        apply,
+                    },
             }) => {
-                self.finish_saved_single_node(transaction, providers, preview, cx);
+                self.finish_saved_single_node(stored, &apply, providers, preview, cx);
+            }
+            Ok(crate::app::SourceLoadOutcome {
+                mutation:
+                    SourceMutation::RollbackAttempted {
+                        apply,
+                        rollback_error,
+                    },
+                ..
+            }) => {
+                let language = self.language();
+                apply.reconcile_proxy_mode(&mut self.proxy_mode);
+                self.proxy_source_editor.feedback =
+                    SubscriptionFeedback::StoreFailed(SubscriptionStoreError::StoreUnavailable);
+                self.status = format!(
+                    "{}{}",
+                    language.localized(copy::configuration::SINGLE_NODE_SOURCE_SAVE_FAILED),
+                    apply.status_suffix_after_rollback_attempt(language, rollback_error.as_ref())
+                );
+                trace_ui(UiEvent::SourceImportFailed);
+                cx.notify();
             }
             Err(error) => {
                 self.proxy_source_editor.feedback = SubscriptionFeedback::StoreFailed(error);
@@ -787,28 +821,14 @@ impl ManisApp {
 
     fn finish_saved_single_node(
         &mut self,
-        mut transaction: crate::app::SourceMutation<mihomo::StoredSingleNode>,
+        stored: mihomo::StoredSingleNode,
+        apply: &SourceRuntimeApply,
         providers: Vec<mihomo::LoadedProvider>,
         preview: crate::subscription::SubscriptionPreview,
         cx: &mut Context<Self>,
     ) {
         let language = self.language();
-        transaction.apply.reconcile_proxy_mode(&mut self.proxy_mode);
-        let Some(stored) = transaction.value.take() else {
-            self.proxy_source_editor.feedback =
-                SubscriptionFeedback::StoreFailed(SubscriptionStoreError::StoreUnavailable);
-            self.status = format!(
-                "{}{}",
-                language.localized(copy::configuration::SINGLE_NODE_SOURCE_SAVE_FAILED),
-                transaction.apply.status_suffix_after_rollback_attempt(
-                    language,
-                    transaction.rollback_error.as_ref()
-                )
-            );
-            trace_ui(UiEvent::SourceImportFailed);
-            cx.notify();
-            return;
-        };
+        apply.reconcile_proxy_mode(&mut self.proxy_mode);
         if let Some(existing) = self
             .saved_single_nodes
             .iter_mut()
@@ -827,13 +847,10 @@ impl ManisApp {
             input.update(cx, SubscriptionTextInput::clear_without_event);
         }
         self.configuration_add_section = None;
-        self.proxy_source_editor.subscription_source_id = None;
-        self.proxy_source_editor.single_node_source_id = None;
+        self.proxy_source_editor.target.reset();
         self.proxy_source_editor.error = None;
-        self.status = copy::configuration::single_node_saved(
-            language,
-            &transaction.apply.status_suffix(language),
-        );
+        self.status =
+            copy::configuration::single_node_saved(language, &apply.status_suffix(language));
         trace_ui(UiEvent::SourceImportSucceeded);
         cx.notify();
     }
@@ -1314,32 +1331,39 @@ impl ManisApp {
             this.update(cx, |this, cx| {
                 this.routing_apply_state.finish();
                 match result {
-                    Ok(transaction) => {
+                    Ok(SourceMutation::Committed {
+                        value: stored,
+                        apply,
+                    }) => {
                         let language = this.language();
-                        transaction.apply.reconcile_proxy_mode(&mut this.proxy_mode);
-                        if let Some(stored) = transaction.value {
-                            if let Some(existing) = this
-                                .saved_single_nodes
-                                .iter_mut()
-                                .find(|existing| existing.id == stored.id)
-                            {
-                                *existing = stored;
-                            }
-                            this.status = format!(
-                                "{}{}",
-                                language.localized(copy::configuration::SINGLE_NODE_SOURCE_UPDATED),
-                                transaction.apply.status_suffix(language)
-                            );
-                        } else {
-                            this.status = format!(
-                                "{}{}",
-                                language.localized(copy::configuration::COULD_NOT_UPDATE_SOURCE),
-                                transaction.apply.status_suffix_after_rollback_attempt(
-                                    language,
-                                    transaction.rollback_error.as_ref(),
-                                )
-                            );
+                        apply.reconcile_proxy_mode(&mut this.proxy_mode);
+                        if let Some(existing) = this
+                            .saved_single_nodes
+                            .iter_mut()
+                            .find(|existing| existing.id == stored.id)
+                        {
+                            *existing = stored;
                         }
+                        this.status = format!(
+                            "{}{}",
+                            language.localized(copy::configuration::SINGLE_NODE_SOURCE_UPDATED),
+                            apply.status_suffix(language)
+                        );
+                    }
+                    Ok(SourceMutation::RollbackAttempted {
+                        apply,
+                        rollback_error,
+                    }) => {
+                        let language = this.language();
+                        apply.reconcile_proxy_mode(&mut this.proxy_mode);
+                        this.status = format!(
+                            "{}{}",
+                            language.localized(copy::configuration::COULD_NOT_UPDATE_SOURCE),
+                            apply.status_suffix_after_rollback_attempt(
+                                language,
+                                rollback_error.as_ref(),
+                            )
+                        );
                     }
                     Err(error) => {
                         this.status = format!(
@@ -1383,26 +1407,33 @@ impl ManisApp {
             this.update(cx, |this, cx| {
                 this.routing_apply_state.finish();
                 match result {
-                    Ok(transaction) => {
+                    Ok(SourceMutation::Committed {
+                        value: deleted_id,
+                        apply,
+                    }) => {
                         let language = this.language();
-                        transaction.apply.reconcile_proxy_mode(&mut this.proxy_mode);
-                        if let Some(deleted_id) = transaction.value {
-                            this.saved_single_nodes.retain(|node| node.id != deleted_id);
-                            this.status = format!(
-                                "{}{}",
-                                language.localized(copy::configuration::SINGLE_NODE_SOURCE_REMOVED),
-                                transaction.apply.status_suffix(language)
-                            );
-                        } else {
-                            this.status = format!(
-                                "{}{}",
-                                language.localized(copy::configuration::FAILED_TO_REMOVE_SOURCE),
-                                transaction.apply.status_suffix_after_rollback_attempt(
-                                    language,
-                                    transaction.rollback_error.as_ref(),
-                                )
-                            );
-                        }
+                        apply.reconcile_proxy_mode(&mut this.proxy_mode);
+                        this.saved_single_nodes.retain(|node| node.id != deleted_id);
+                        this.status = format!(
+                            "{}{}",
+                            language.localized(copy::configuration::SINGLE_NODE_SOURCE_REMOVED),
+                            apply.status_suffix(language)
+                        );
+                    }
+                    Ok(SourceMutation::RollbackAttempted {
+                        apply,
+                        rollback_error,
+                    }) => {
+                        let language = this.language();
+                        apply.reconcile_proxy_mode(&mut this.proxy_mode);
+                        this.status = format!(
+                            "{}{}",
+                            language.localized(copy::configuration::FAILED_TO_REMOVE_SOURCE),
+                            apply.status_suffix_after_rollback_attempt(
+                                language,
+                                rollback_error.as_ref(),
+                            )
+                        );
                     }
                     Err(error) => {
                         this.status = format!(
@@ -1468,7 +1499,7 @@ mod subscription_import_concurrency_tests {
     use crate::{
         app::{
             ImportSubscriptionError, ImportedSubscription, ImportedSubscriptionState, ManisApp,
-            SubscriptionFeedback,
+            ProxySourceEditorKind, ProxySourceEditorTarget, SubscriptionFeedback,
         },
         mihomo::{RemoteSourceRefreshInterval, StoredSubscription, SubscriptionStoreError},
         subscription::SourceKind,
@@ -1587,7 +1618,9 @@ mod subscription_import_concurrency_tests {
         app.update(cx, |app, cx| {
             app.proxy_source_editor.feedback =
                 SubscriptionFeedback::Importing(SourceKind::HttpsSubscription);
-            app.proxy_source_editor.subscription_source_id = Some("being-edited".to_owned());
+            app.proxy_source_editor.target = ProxySourceEditorTarget::Subscription {
+                id: "being-edited".to_owned(),
+            };
 
             app.close_subscription_editor(cx);
             app.open_new_subscription_editor(cx);
@@ -1597,9 +1630,31 @@ mod subscription_import_concurrency_tests {
                 SubscriptionFeedback::Importing(SourceKind::HttpsSubscription)
             ));
             assert_eq!(
-                app.proxy_source_editor.subscription_source_id.as_deref(),
+                app.proxy_source_editor.target.editing_id(),
                 Some("being-edited")
             );
+        });
+    }
+
+    #[gpui::test]
+    fn closing_editor_preserves_kind_and_generation_for_the_next_draft(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let app = cx.new(|_| app_fixture());
+        app.update(cx, |app, cx| {
+            app.proxy_source_editor.target = ProxySourceEditorTarget::SingleNode {
+                id: "saved-node".to_owned(),
+            };
+            app.proxy_source_editor.import_generation = 41;
+
+            app.close_subscription_editor(cx);
+
+            assert_eq!(
+                app.proxy_source_editor.target.kind(),
+                ProxySourceEditorKind::SingleNode
+            );
+            assert!(app.proxy_source_editor.target.editing_id().is_none());
+            assert_eq!(app.proxy_source_editor.import_generation, 41);
         });
     }
 
