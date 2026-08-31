@@ -289,7 +289,7 @@ impl ManisApp {
     fn policy_group_icon(
         view: PolicyGroupIconView<'_>,
         listener: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
-    ) -> Stateful<Div> {
+    ) -> AnyElement {
         let PolicyGroupIconView {
             id,
             icon,
@@ -299,38 +299,34 @@ impl ManisApp {
             language,
             theme,
         } = view;
-        div()
-            .id(format!("policy-icon-{id}"))
-            .size(px(38.0))
-            .flex_shrink_0()
-            .rounded_full()
-            .when(benchmarkable, |avatar| {
-                avatar
-                    .role(Role::Button)
-                    .aria_label(language.localized(if running {
-                        copy::nodes::POLICY_BENCHMARK_IN_PROGRESS
-                    } else {
-                        copy::nodes::TEST_POLICY_CANDIDATE_LATENCY
-                    }))
-                    .tab_stop(!running)
-                    .focusable()
-                    .on_click(listener)
-            })
-            .when(benchmarkable && !running, gpui::Styled::cursor_pointer)
-            .when(running, |avatar| {
-                avatar
-                    .bg(theme.action_soft)
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(Self::benchmark_latency_spinner(
-                        format!("{id}-policy-icon-spinner"),
-                        theme,
-                    ))
-            })
-            .when(!running, |avatar| {
-                avatar.child(Self::policy_icon_visual(icon, policy_name, 38.0, theme))
-            })
+        if !benchmarkable {
+            return Self::policy_icon_visual(icon, policy_name, 38.0, theme)
+                .flex_shrink_0()
+                .into_any_element();
+        }
+        style_action_button(
+            Button::new(format!("policy-icon-{id}"))
+                .accessibility_label(language.localized(if running {
+                    copy::nodes::POLICY_BENCHMARK_IN_PROGRESS
+                } else {
+                    copy::nodes::TEST_POLICY_CANDIDATE_LATENCY
+                }))
+                .loading(running),
+            ActionRole::Secondary,
+            ControlSize::Standard,
+        )
+        .w(ControlSize::Standard.height())
+        .px_0()
+        .rounded_full()
+        .flex_shrink_0()
+        .when(!running, |button| {
+            button.child(
+                Self::policy_icon_visual(icon, policy_name, 32.0, theme)
+                    .bg(gpui::rgba(0x0000_0000)),
+            )
+        })
+        .on_click(listener)
+        .into_any_element()
     }
 
     fn group_benchmark_icon(
@@ -339,47 +335,35 @@ impl ManisApp {
         language: Language,
         theme: Theme,
         listener: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
-    ) -> Stateful<Div> {
-        let bar_color = if running {
-            theme.action_primary
-        } else {
-            theme.text_secondary
-        };
-        div()
-            .id(format!("group-benchmark-{id}"))
-            .role(Role::Button)
-            .aria_label(language.localized(if running {
-                copy::nodes::GROUP_BENCHMARK_IN_PROGRESS
-            } else {
-                copy::nodes::TEST_GROUP_LATENCY
-            }))
-            .tab_stop(!running)
-            .focusable()
-            .size(px(30.0))
-            .flex_shrink_0()
-            .rounded_md()
-            .border_1()
-            .border_color(theme.outline_subtle)
-            .bg(theme.surface_high)
-            .flex()
-            .justify_center()
-            .when(running, |button| {
-                button.items_center().child(Self::benchmark_latency_spinner(
-                    format!("{id}-button-spinner"),
-                    theme,
-                ))
-            })
-            .when(!running, |button| {
-                button
+    ) -> Button {
+        style_action_button(
+            Button::new(format!("group-benchmark-{id}"))
+                .accessibility_label(language.localized(if running {
+                    copy::nodes::GROUP_BENCHMARK_IN_PROGRESS
+                } else {
+                    copy::nodes::TEST_GROUP_LATENCY
+                }))
+                .loading(running),
+            ActionRole::Secondary,
+            ControlSize::Icon,
+        )
+        .flex_shrink_0()
+        .when(!running, |button| {
+            button.child(
+                div()
+                    .flex()
                     .items_end()
                     .gap(px(2.0))
-                    .pb(px(7.0))
-                    .child(div().w(px(2.0)).h(px(5.0)).rounded_full().bg(bar_color))
-                    .child(div().w(px(2.0)).h(px(9.0)).rounded_full().bg(bar_color))
-                    .child(div().w(px(2.0)).h(px(13.0)).rounded_full().bg(bar_color))
-            })
-            .when(!running, gpui::Styled::cursor_pointer)
-            .on_click(listener)
+                    .children([5.0, 9.0, 13.0].map(|height| {
+                        div()
+                            .w(px(2.0))
+                            .h(px(height))
+                            .rounded_full()
+                            .bg(theme.text_secondary)
+                    })),
+            )
+        })
+        .on_click(listener)
     }
 
     fn benchmark_latency_content(

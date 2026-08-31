@@ -633,6 +633,23 @@ include!("configuration/source_mutations.rs");
 #[cfg(feature = "snapshot-fixtures")]
 impl ManisApp {
     #[doc(hidden)]
+    pub fn show_proxy_source_dialog_fixture(
+        &mut self,
+        interval_open: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.runtime.is_fixture() {
+            if !window.has_active_dialog(cx) {
+                self.open_new_subscription_editor(cx);
+                self.open_proxy_source_dialog(window, cx);
+            }
+            self.proxy_source_editor.interval_popover = interval_open;
+            cx.notify();
+        }
+    }
+
+    #[doc(hidden)]
     pub fn show_configuration_sources_fixture(&mut self, rules: bool, cx: &mut Context<Self>) {
         if self.runtime.is_fixture() {
             self.scroll_to_configuration_section(

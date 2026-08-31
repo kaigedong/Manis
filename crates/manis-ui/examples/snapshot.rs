@@ -6,6 +6,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::sync::Arc::new(manis_ui::Assets),
     );
     cx.update(manis_ui::init);
+    if std::env::args().any(|argument| argument == "--buttons") {
+        return capture_buttons(&mut cx);
+    }
     if std::env::args().any(|argument| argument == "--source-cards") {
         return capture_source_cards(&mut cx);
     }
@@ -22,16 +25,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return capture_configuration_transfer(&mut cx);
     }
     if std::env::args().any(|argument| argument == "--stream-status") {
-        capture_stream_status(&mut cx)?;
-        return Ok(());
+        return capture_stream_status(&mut cx);
     }
     if std::env::args().any(|argument| argument == "--nodes-toolbar") {
-        capture_nodes_toolbar(&mut cx)?;
-        return Ok(());
+        return capture_nodes_toolbar(&mut cx);
     }
     if std::env::args().any(|argument| argument == "--log-colors") {
-        capture_log_colors(&mut cx)?;
-        return Ok(());
+        return capture_log_colors(&mut cx);
     }
     if std::env::args().any(|argument| argument == "--appearance") {
         capture_appearance(&mut cx)?;
@@ -99,6 +99,57 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     capture_connected(&mut cx)?;
     capture_data_page_coverage(&mut cx)?;
     capture_live_when_configured(&mut cx)?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn capture_buttons(cx: &mut gpui::VisualTestAppContext) -> Result<(), Box<dyn std::error::Error>> {
+    use gpui::{AppContext as _, Modifiers, MouseButton, point, px, size};
+    for (dark, mode) in [(false, "light"), (true, "dark")] {
+        let window = cx
+            .open_offscreen_window(size(px(640.0), px(400.0)), |window, cx| {
+                let view = cx.new(|cx| manis_ui::button_gallery_fixture(dark, cx));
+                cx.new(|cx| gpui_component::Root::new(view, window, cx))
+            })?
+            .into();
+        refresh(cx, window)?;
+        save_screenshot(cx, window, &format!("buttons-{mode}-normal.png"))?;
+        let normal = cx.capture_screenshot(window)?;
+        let scale = normal.width() / 640;
+        let position = point(px(60.0), px(70.0));
+        cx.simulate_mouse_move(window, position, None, Modifiers::none());
+        refresh(cx, window)?;
+        let hover = cx.capture_screenshot(window)?;
+        assert_ne!(
+            normal.get_pixel(30 * scale, 70 * scale),
+            hover.get_pixel(30 * scale, 70 * scale),
+            "{mode}: hover must change the button fill"
+        );
+        save_screenshot(cx, window, &format!("buttons-{mode}-hover.png"))?;
+        cx.simulate_mouse_down(window, position, MouseButton::Left, Modifiers::none());
+        refresh(cx, window)?;
+        let pressed = cx.capture_screenshot(window)?;
+        assert_ne!(
+            hover.get_pixel(30 * scale, 70 * scale),
+            pressed.get_pixel(30 * scale, 70 * scale),
+            "{mode}: pressed must differ from hover"
+        );
+        save_screenshot(cx, window, &format!("buttons-{mode}-pressed.png"))?;
+        cx.simulate_mouse_up(window, position, MouseButton::Left, Modifiers::none());
+        cx.simulate_mouse_move(window, point(px(200.0), px(240.0)), None, Modifiers::none());
+        refresh(cx, window)?;
+        let disabled = cx.capture_screenshot(window)?;
+        assert_eq!(
+            normal.get_pixel(192 * scale, 240 * scale),
+            disabled.get_pixel(192 * scale, 240 * scale),
+            "{mode}: disabled buttons must not react to hover"
+        );
+        cx.simulate_mouse_move(window, point(px(600.0), px(380.0)), None, Modifiers::none());
+        cx.simulate_keystrokes(window, "tab");
+        refresh(cx, window)?;
+        save_screenshot(cx, window, &format!("buttons-{mode}-focus.png"))?;
+        close_window(cx, window)?;
+    }
     Ok(())
 }
 
@@ -736,15 +787,17 @@ fn capture_appearance_at_size(
     height: f32,
     label: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use gpui::{AnyWindowHandle, Modifiers, point, px, size};
+    use gpui::{AnyWindowHandle, AppContext as _, Modifiers, point, px, size};
     use gpui_component::WindowExt as _;
 
     let (endpoint, server) = spawn_mihomo_fixture()?;
+    let mut app = None;
     let window = cx.open_offscreen_window(size(px(width), px(height)), |window, cx| {
-        manis_root(window, cx, |_| {
-            manis_ui::ManisApp::with_fixture_controller(endpoint)
-        })
+        let entity = cx.new(|_| manis_ui::ManisApp::with_fixture_controller(endpoint));
+        app = Some(entity.clone());
+        cx.new(|cx| manis_ui::root(entity, window, cx))
     })?;
+    let app = app.ok_or("missing appearance app")?;
     let window: AnyWindowHandle = window.into();
     refresh(cx, window)?;
     cx.simulate_click(
@@ -772,14 +825,11 @@ fn capture_appearance_at_size(
             save_screenshot(cx, window, &format!("appearance-{label}-{mode}-{name}.png"))?;
         }
         if width >= 1280.0 || width <= 720.0 {
-            cx.simulate_click(
-                window,
-                point(
-                    px(width - 60.0),
-                    px(if width >= 1280.0 { 184.0 } else { 194.0 }),
-                ),
-                Modifiers::none(),
-            );
+            cx.update_window(window, |_, window, cx| {
+                app.update(cx, |app, cx| {
+                    app.show_proxy_source_dialog_fixture(false, window, cx);
+                });
+            })?;
             settle_ui_animation(cx, window)?;
             if !cx.update_window(window, |_, window, cx| window.has_active_dialog(cx))? {
                 return Err("appearance fixture did not open the source dialog".into());
@@ -787,14 +837,18 @@ fn capture_appearance_at_size(
             save_screenshot(cx, window, &format!("appearance-{label}-{mode}-dialog.png"))?;
             if width >= 1280.0 {
                 // Open the interval menu inside the modal to verify nested popup materials.
-                cx.simulate_click(window, point(px(width / 2.0), px(530.0)), Modifiers::none());
+                cx.update_window(window, |_, window, cx| {
+                    app.update(cx, |app, cx| {
+                        app.show_proxy_source_dialog_fixture(true, window, cx);
+                    });
+                })?;
                 settle_ui_animation(cx, window)?;
                 save_screenshot(
                     cx,
                     window,
                     &format!("appearance-{label}-{mode}-popover.png"),
                 )?;
-                cx.simulate_click(window, point(px(width / 2.0), px(530.0)), Modifiers::none());
+                cx.simulate_keystrokes(window, "escape");
                 refresh(cx, window)?;
             }
             cx.update_window(window, |_, window, cx| window.close_dialog(cx))?;

@@ -8,8 +8,6 @@ impl ManisApp {
             ActionRole::Primary,
             ControlSize::Compact,
         )
-        .bg(theme.action_primary)
-        .text_color(theme.action_on_primary)
         .on_click(cx.listener(|this, _, window, cx| {
             this.open_new_subscription_editor(cx);
             this.open_proxy_source_dialog(window, cx);
@@ -53,18 +51,16 @@ impl ManisApp {
                         language.localized(copy::configuration::NO_PROXY_SOURCES),
                         language.localized(copy::configuration::ADD_A_SUBSCRIPTION_OR_A_SINGLE_NODE_SOURCE),
                         Some(
-                            action_button(
-                                "configuration-empty-add-proxy-source",
-                                language.localized(copy::configuration::ADD_SOURCE),
-                                ActionRole::Primary,
-                                ControlSize::Compact,
-                            )
-                            .bg(theme.action_primary)
-                            .text_color(theme.action_on_primary)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.open_new_subscription_editor(cx);
-                                this.open_proxy_source_dialog(window, cx);
-                            }))
+                        action_button(
+                            "configuration-empty-add-proxy-source",
+                            language.localized(copy::configuration::ADD_SOURCE),
+                            ActionRole::Primary,
+                            ControlSize::Compact,
+                        )
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.open_new_subscription_editor(cx);
+                            this.open_proxy_source_dialog(window, cx);
+                        }))
                             .into_any_element(),
                         ),
                         theme,
@@ -273,6 +269,20 @@ impl ManisApp {
                     } else {
                         theme.surface_high
                     })
+                    .hover(move |style| {
+                        if selected {
+                            style.bg(theme.action_soft)
+                        } else {
+                            style.bg(theme.button_hover)
+                        }
+                    })
+                    .active(move |style| {
+                        if selected {
+                            style.bg(theme.action_soft)
+                        } else {
+                            style.bg(theme.button_active)
+                        }
+                    })
                     .font_weight(if selected {
                         FontWeight::SEMIBOLD
                     } else {
@@ -296,15 +306,13 @@ impl ManisApp {
                 language.localized(copy::configuration::CHOOSE_SUBSCRIPTION_UPDATE_INTERVAL),
             )
             .dropdown_caret(true)
-            .with_variant(ButtonVariant::Default)
-            .with_size(ControlSize::Standard.component_size())
-            .h(ControlSize::Standard.height())
             .w_full()
             .child(refresh_interval_label(
                 self.proxy_source_editor.refresh_interval,
                 language,
             ))
             .disabled(view.busy());
+        let trigger = style_action_button(trigger, ActionRole::Secondary, ControlSize::Standard);
         let app = cx.entity();
         crate::components::anchored_popover(
             "subscription-editor-refresh-popover",
@@ -408,53 +416,43 @@ impl ManisApp {
             .border_color(theme.outline_subtle)
             .bg(theme.surface_base)
             .children(
-            [
-                (
-                    ProxySourceEditorKind::Subscription,
-                    "proxy-source-kind-subscription",
-                ),
-                (
-                    ProxySourceEditorKind::SingleNode,
-                    "proxy-source-kind-single-node",
-                ),
-            ]
-            .map(|(kind, id)| {
-                let selected = (kind == ProxySourceEditorKind::SingleNode) == view.direct_input;
-                action_button(
-                    id,
-                    match kind {
-                        ProxySourceEditorKind::Subscription => {
-                            language.localized(copy::configuration::SUBSCRIPTION)
-                        }
-                        ProxySourceEditorKind::SingleNode => {
-                            language.localized(copy::configuration::SINGLE_NODE_2)
-                        }
-                    },
-                    if selected {
-                        ActionRole::Primary
-                    } else {
-                        ActionRole::Secondary
-                    },
-                    ControlSize::Compact,
-                )
-                .cursor_pointer()
-                .bg(if selected {
-                    theme.action_soft
-                } else {
-                    gpui::rgba(0x0000_0000)
-                })
-                .text_color(if selected {
-                    theme.action_primary
-                } else {
-                    theme.text_secondary
-                })
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.proxy_source_editor.kind = kind;
-                    this.proxy_source_editor.error = None;
-                    cx.notify();
-                }))
-            }),
-        )
+                [
+                    (
+                        ProxySourceEditorKind::Subscription,
+                        "proxy-source-kind-subscription",
+                    ),
+                    (
+                        ProxySourceEditorKind::SingleNode,
+                        "proxy-source-kind-single-node",
+                    ),
+                ]
+                .map(|(kind, id)| {
+                    let selected = (kind == ProxySourceEditorKind::SingleNode) == view.direct_input;
+                    action_button(
+                        id,
+                        match kind {
+                            ProxySourceEditorKind::Subscription => {
+                                language.localized(copy::configuration::SUBSCRIPTION)
+                            }
+                            ProxySourceEditorKind::SingleNode => {
+                                language.localized(copy::configuration::SINGLE_NODE_2)
+                            }
+                        },
+                        if selected {
+                            ActionRole::Primary
+                        } else {
+                            ActionRole::Secondary
+                        },
+                        ControlSize::Compact,
+                    )
+                    .selected(selected)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.proxy_source_editor.kind = kind;
+                        this.proxy_source_editor.error = None;
+                        cx.notify();
+                    }))
+                }),
+            )
     }
 
     fn proxy_source_editor_footer(
@@ -471,8 +469,6 @@ impl ManisApp {
                     ActionRole::Secondary,
                     ControlSize::Standard,
                 )
-                .px(Space::Lg.px())
-                .cursor_pointer()
                 .on_click(cx.listener(|this, _, window, cx| {
                     this.close_subscription_editor(cx);
                     window.close_dialog(cx);
@@ -492,18 +488,6 @@ impl ManisApp {
                     ActionRole::Primary,
                     ControlSize::Standard,
                 )
-                .px(Space::Lg.px())
-                .when(!view.busy(), gpui::Styled::cursor_pointer)
-                .bg(if view.busy() {
-                    theme.action_soft
-                } else {
-                    theme.action_primary
-                })
-                .text_color(if view.busy() {
-                    theme.action_primary
-                } else {
-                    theme.action_on_primary
-                })
                 .on_click(cx.listener(move |this, _, window, cx| {
                     if !view.busy() && this.submit_source_import(&input, cx) {
                         window.close_dialog(cx);
@@ -1015,7 +999,7 @@ impl ManisApp {
                     } else {
                         language.localized(copy::configuration::UPDATE_NOW)
                     },
-                    ActionRole::Quiet,
+                    ActionRole::Secondary,
                     ControlSize::Compact,
                 )
                 .accessibility_label(
@@ -1023,12 +1007,6 @@ impl ManisApp {
                 )
                 .disabled(!refresh_enabled)
                 .loading(busy)
-                .when(refresh_enabled, gpui::Styled::cursor_pointer)
-                .px_3()
-                .border_1()
-                .border_color(theme.outline_subtle)
-                .bg(theme.surface_base)
-                .text_color(theme.action_primary)
                 .on_click(cx.listener(move |this, _, _, cx| {
                     cx.stop_propagation();
                     if refresh_enabled {
@@ -1041,15 +1019,12 @@ impl ManisApp {
                     action_button(
                         format!("remove-{remove_id}"),
                         language.localized(copy::configuration::REMOVE),
-                        ActionRole::Quiet,
+                        ActionRole::Danger,
                         ControlSize::Compact,
                     )
                     .accessibility_label(
                         language.localized(copy::configuration::REMOVE_THIS_SUBSCRIPTION),
                     )
-                    .cursor_pointer()
-                    .px_3()
-                    .text_color(theme.status_error)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         cx.stop_propagation();
                         this.remove_imported_subscription(remove_id.clone(), cx);
@@ -1212,15 +1187,12 @@ impl ManisApp {
                     action_button(
                         format!("remove-single-node-{remove_id}"),
                         language.localized(copy::configuration::REMOVE),
-                        ActionRole::Quiet,
+                        ActionRole::Danger,
                         ControlSize::Compact,
                     )
                     .accessibility_label(
                         language.localized(copy::configuration::REMOVE_SINGLE_NODE_SOURCE),
                     )
-                    .cursor_pointer()
-                    .px_3()
-                    .text_color(theme.status_error)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         cx.stop_propagation();
                         this.remove_saved_single_node(remove_id.clone(), cx);

@@ -12,7 +12,10 @@ fn configuration_section_at_scroll(
             .rposition(|top| *top <= scroll_top + px(1.0))
             .unwrap_or(0)
     };
-    ConfigurationSection::ALL.get(index).copied().unwrap_or_default()
+    ConfigurationSection::ALL
+        .get(index)
+        .copied()
+        .unwrap_or_default()
 }
 
 impl ManisApp {
@@ -159,7 +162,13 @@ impl ManisApp {
             } else {
                 gpui::rgba(0x0000_0000)
             })
-            .hover(move |row| row.bg(if selected { theme.action_soft } else { theme.surface_high }))
+            .hover(move |row| {
+                row.bg(if selected {
+                    theme.action_soft
+                } else {
+                    theme.surface_high
+                })
+            })
             .focus_visible(move |row| row.border_color(theme.focus_ring))
             .child(
                 div()
@@ -389,11 +398,10 @@ impl ManisApp {
                             if ready {
                                 ActionRole::Primary
                             } else {
-                                ActionRole::Quiet
+                                ActionRole::Secondary
                             },
                             ControlSize::Compact,
                         )
-                        .when(supported && !busy, gpui::Styled::cursor_pointer)
                         .on_click(cx.listener(|this, _, _, cx| {
                             if matches!(this.app_update_state, AppUpdateState::Ready(_)) {
                                 this.restart_with_app_update(cx);
@@ -538,6 +546,20 @@ impl ManisApp {
                         )
                     }),
             )
+            .hover(move |style| {
+                style.bg(if selected {
+                    theme.action_soft
+                } else {
+                    theme.button_hover
+                })
+            })
+            .active(move |style| {
+                style.bg(if selected {
+                    theme.action_soft
+                } else {
+                    theme.button_active
+                })
+            })
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.set_language_preference(preference, cx);
             }))
@@ -737,10 +759,9 @@ impl ManisApp {
                         .loading(updating)
                         .disabled(!enabled)
                         .tab_stop(enabled),
-                    ActionRole::Quiet,
+                    ActionRole::Secondary,
                     ControlSize::Compact,
                 )
-                .when(enabled, gpui::Styled::cursor_pointer)
                 .on_click(cx.listener(|this, _, _, cx| this.update_mihomo_core(cx))),
             )
     }
@@ -783,49 +804,28 @@ impl ManisApp {
                     ),
             )
             .child(
-                div()
-                    .id(format!("kernel-select-{}", kind.persistence_key()))
-                    .role(Role::Button)
-                    .aria_label(format!(
-                        "{} {}",
-                        language.localized(copy::configuration::SWITCH_TO),
-                        kind.display_name()
-                    ))
-                    .tab_stop(enabled)
-                    .focusable()
-                    .when(enabled, gpui::Styled::cursor_pointer)
-                    .h(ControlSize::Compact.height())
-                    .px(Space::Md.px())
-                    .rounded(Radius::Control.px())
-                    .border_1()
-                    .border_color(if selected {
-                        theme.action_primary
-                    } else {
-                        theme.outline_subtle
-                    })
-                    .bg(if selected {
-                        theme.action_soft
-                    } else {
-                        theme.surface_high
-                    })
-                    .text_size(TextRole::Label.size())
-                    .line_height(TextRole::Label.line_height())
-                    .font_weight(TextRole::Label.weight())
-                    .text_color(if selected || enabled {
-                        theme.action_primary
-                    } else {
-                        theme.text_tertiary
-                    })
-                    .child(if selected {
+                action_button(
+                    format!("kernel-select-{}", kind.persistence_key()),
+                    if selected {
                         language.localized(copy::configuration::CURRENT_2)
                     } else {
                         language.localized(copy::configuration::SWITCH_AND_VALIDATE)
-                    })
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if enabled {
-                            this.switch_kernel(kind, cx);
-                        }
-                    })),
+                    },
+                    ActionRole::Secondary,
+                    ControlSize::Compact,
+                )
+                .accessibility_label(format!(
+                    "{} {}",
+                    language.localized(copy::configuration::SWITCH_TO),
+                    kind.display_name()
+                ))
+                .selected(selected)
+                .disabled(!enabled)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if enabled {
+                        this.switch_kernel(kind, cx);
+                    }
+                })),
             )
     }
 
@@ -914,5 +914,4 @@ impl ManisApp {
                 theme,
             ))
     }
-
 }

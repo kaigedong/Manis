@@ -749,6 +749,10 @@ impl ManisApp {
                             .text_color(theme.text_tertiary)
                             .child(detail),
                     )
+                    .when(supported && !selected, |row| {
+                        row.hover(move |style| style.bg(theme.button_hover))
+                            .active(move |style| style.bg(theme.button_active))
+                    })
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if supported {
                             this.set_manual_rule_kind(condition_index, kind, cx);
@@ -790,6 +794,10 @@ impl ManisApp {
                     } else {
                         theme.text_primary
                     })
+                    .when(!selected, |row| {
+                        row.hover(move |style| style.bg(theme.button_hover))
+                            .active(move |style| style.bg(theme.button_active))
+                    })
                     .child(target)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.manual_rule_target.clone_from(&row_target);
@@ -814,9 +822,6 @@ impl ManisApp {
         let trigger = Button::new(id.to_owned())
             .accessibility_label(label)
             .dropdown_caret(true)
-            .with_variant(ButtonVariant::Default)
-            .with_size(ControlSize::Standard.component_size())
-            .h(ControlSize::Standard.height())
             .w_full()
             .child(
                 div()
@@ -831,10 +836,16 @@ impl ManisApp {
                     .child(value),
             );
 
-        crate::components::anchored_popover(format!("{id}-popover"), trigger, menu, width, 360.0)
-            .open(open)
-            .on_open_change(on_open_change)
-            .into_any_element()
+        crate::components::anchored_popover(
+            format!("{id}-popover"),
+            style_action_button(trigger, ActionRole::Secondary, ControlSize::Standard),
+            menu,
+            width,
+            360.0,
+        )
+        .open(open)
+        .on_open_change(on_open_change)
+        .into_any_element()
     }
 
     fn manual_rule_condition_editor(
@@ -921,21 +932,19 @@ impl ManisApp {
             );
         if condition_index > 0 {
             row = row.child(
-                Button::new(format!("remove-manual-rule-condition-{condition_index}"))
-                    .accessibility_label(
-                        language.localized(copy::configuration::REMOVE_THIS_CONDITION),
-                    )
-                    .label(language.localized(copy::configuration::REMOVE_CONDITION))
-                    .text()
-                    .with_size(ControlSize::Compact.component_size())
-                    .h(ControlSize::Compact.height())
-                    .mt(Space::Sm.px())
-                    .cursor_pointer()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(theme.status_error)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.remove_manual_rule_condition(condition_index, cx);
-                    })),
+                style_action_button(
+                    Button::new(format!("remove-manual-rule-condition-{condition_index}"))
+                        .accessibility_label(
+                            language.localized(copy::configuration::REMOVE_THIS_CONDITION),
+                        )
+                        .label(language.localized(copy::configuration::REMOVE_CONDITION))
+                        .mt(Space::Sm.px()),
+                    ActionRole::Danger,
+                    ControlSize::Compact,
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.remove_manual_rule_condition(condition_index, cx);
+                })),
             );
         }
         row
@@ -1040,20 +1049,17 @@ impl ManisApp {
             return conditions;
         }
         conditions.child(
-            Button::new("add-manual-rule-condition")
-                .accessibility_label(language.localized(copy::configuration::ADD_AN_AND_CONDITION))
-                .label(language.localized(copy::configuration::ADD_AND_CONDITION))
-                .with_variant(ButtonVariant::Default)
-                .with_size(ControlSize::Standard.component_size())
-                .h(ControlSize::Standard.height())
-                .mt(Space::Md.px())
-                .px(Space::Md.px())
-                .py(Space::Sm.px())
-                .cursor_pointer()
-                .border_color(theme.outline_strong)
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(theme.action_primary)
-                .on_click(cx.listener(|this, _, _, cx| this.add_manual_rule_condition(cx))),
+            style_action_button(
+                Button::new("add-manual-rule-condition")
+                    .accessibility_label(
+                        language.localized(copy::configuration::ADD_AN_AND_CONDITION),
+                    )
+                    .label(language.localized(copy::configuration::ADD_AND_CONDITION))
+                    .mt(Space::Md.px()),
+                ActionRole::Primary,
+                ControlSize::Standard,
+            )
+            .on_click(cx.listener(|this, _, _, cx| this.add_manual_rule_condition(cx))),
         )
     }
 
@@ -1110,8 +1116,6 @@ impl ManisApp {
                     ActionRole::Secondary,
                     ControlSize::Standard,
                 )
-                .px(Space::Lg.px())
-                .cursor_pointer()
                 .on_click(cx.listener(|this, _, window, cx| {
                     this.close_manual_rule_editor(cx);
                     window.close_dialog(cx);
@@ -1129,10 +1133,6 @@ impl ManisApp {
                     ActionRole::Primary,
                     ControlSize::Standard,
                 )
-                .px(Space::Lg.px())
-                .cursor_pointer()
-                .bg(theme.action_primary)
-                .text_color(theme.action_on_primary)
                 .on_click(cx.listener(|this, _, window, cx| {
                     if this.submit_manual_rule(cx) {
                         window.close_dialog(cx);
@@ -1200,6 +1200,8 @@ impl ManisApp {
             .flex()
             .items_center()
             .gap(Space::Md.px())
+            .hover(move |style| style.bg(theme.surface_low))
+            .active(move |style| style.bg(theme.action_soft))
             .cursor_pointer()
             .role(Role::Button)
             .tab_stop(true)
@@ -1394,7 +1396,7 @@ impl ManisApp {
         group_id: &str,
         group_name: &str,
         position: (usize, usize),
-        theme: Theme,
+        _theme: Theme,
         language: Language,
         cx: &mut Context<Self>,
     ) -> Div {
@@ -1407,34 +1409,38 @@ impl ManisApp {
             .items_center()
             .gap(Space::Xs.px())
             .child(
-                Button::new(format!("move-rule-group-up-{group_id}"))
-                    .accessibility_label(copy::configuration::move_rule_group(
-                        language, group_name, true,
-                    ))
-                    .icon(IconName::ArrowUp)
-                    .text()
-                    .with_size(ControlSize::Icon.component_size())
-                    .text_color(theme.text_secondary)
-                    .disabled(position == 0 || self.routing_apply_state.is_busy())
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        cx.stop_propagation();
-                        this.move_routing_rule_group(&up_id, -1, cx);
-                    })),
+                style_action_button(
+                    Button::new(format!("move-rule-group-up-{group_id}"))
+                        .accessibility_label(copy::configuration::move_rule_group(
+                            language, group_name, true,
+                        ))
+                        .icon(IconName::ArrowUp)
+                        .disabled(position == 0 || self.routing_apply_state.is_busy()),
+                    ActionRole::Secondary,
+                    ControlSize::Icon,
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.move_routing_rule_group(&up_id, -1, cx);
+                })),
             )
             .child(
-                Button::new(format!("move-rule-group-down-{group_id}"))
-                    .accessibility_label(copy::configuration::move_rule_group(
-                        language, group_name, false,
-                    ))
-                    .icon(IconName::ArrowDown)
-                    .text()
-                    .with_size(ControlSize::Icon.component_size())
-                    .text_color(theme.text_secondary)
-                    .disabled(position + 1 >= group_count || self.routing_apply_state.is_busy())
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        cx.stop_propagation();
-                        this.move_routing_rule_group(&down_id, 1, cx);
-                    })),
+                style_action_button(
+                    Button::new(format!("move-rule-group-down-{group_id}"))
+                        .accessibility_label(copy::configuration::move_rule_group(
+                            language, group_name, false,
+                        ))
+                        .icon(IconName::ArrowDown)
+                        .disabled(
+                            position + 1 >= group_count || self.routing_apply_state.is_busy(),
+                        ),
+                    ActionRole::Secondary,
+                    ControlSize::Icon,
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.move_routing_rule_group(&down_id, 1, cx);
+                })),
             )
     }
 
@@ -1578,7 +1584,13 @@ impl ManisApp {
             ));
             *rule_order += 1;
         }
-        self.rule_group_card((MANUAL_RULES_EXPANSION_KEY, group_name), title, rules, view, cx)
+        self.rule_group_card(
+            (MANUAL_RULES_EXPANSION_KEY, group_name),
+            title,
+            rules,
+            view,
+            cx,
+        )
     }
 
     fn remote_rule_group(
@@ -1629,9 +1641,18 @@ impl ManisApp {
         view: RuleGroupRenderContext,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let RuleGroupRenderContext { compact, language, theme, .. } = view;
+        let RuleGroupRenderContext {
+            compact,
+            language,
+            theme,
+            ..
+        } = view;
         let open = rule_group_is_open(&self.node_workspace, key);
-        let action = language.localized(if open { copy::common::COLLAPSE } else { copy::common::EXPAND });
+        let action = language.localized(if open {
+            copy::common::COLLAPSE
+        } else {
+            copy::common::EXPAND
+        });
         let toggle_key = key.to_owned();
         let header = Button::new(format!("rule-group-toggle-{key}"))
             .with_variant(ButtonVariant::Ghost)

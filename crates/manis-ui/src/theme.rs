@@ -21,6 +21,9 @@ pub(crate) struct Theme {
     pub action_primary_active: Rgba,
     pub action_on_primary: Rgba,
     pub action_soft: Rgba,
+    pub button_bg: Rgba,
+    pub button_hover: Rgba,
+    pub button_active: Rgba,
     pub focus_ring: Rgba,
     pub modal_scrim: Rgba,
     pub route_trace: Rgba,
@@ -54,6 +57,9 @@ impl Theme {
             action_primary_active: rgb(0x414141),
             action_on_primary: rgb(0xffffff),
             action_soft: rgb(0xededed),
+            button_bg: rgb(0xf3f3f3),
+            button_hover: rgb(0xe8e8e8),
+            button_active: rgb(0xdcdcdc),
             focus_ring: rgb(0x2563eb),
             modal_scrim: rgba(0x00000040),
             route_trace: rgb(0x923b0f),
@@ -85,6 +91,9 @@ impl Theme {
             action_primary_active: rgb(0xdcdcdc),
             action_on_primary: rgb(0x0d0d0d),
             action_soft: rgb(0x393939),
+            button_bg: rgb(0x303030),
+            button_hover: rgb(0x3c3c3c),
+            button_active: rgb(0x484848),
             focus_ring: rgb(0x8cb4ff),
             modal_scrim: rgba(0x00000066),
             route_trace: rgb(0xffb790),
@@ -184,13 +193,6 @@ pub(crate) enum ControlSize {
 }
 
 impl ControlSize {
-    pub(crate) const fn component_size(self) -> gpui_component::Size {
-        match self {
-            Self::Compact | Self::Icon => gpui_component::Size::Small,
-            Self::Standard => gpui_component::Size::Medium,
-        }
-    }
-
     pub(crate) fn height(self) -> Pixels {
         match self {
             Self::Compact => px(34.0),
@@ -272,17 +274,17 @@ fn project_component_palette(component: &mut ComponentTheme, theme: Theme) {
     component.caret = theme.text_primary.into();
     component.selection = theme.action_soft.into();
     component.overlay = theme.modal_scrim.into();
-    component.button = theme.surface_base.into();
+    component.button = theme.button_bg.into();
     component.button_foreground = theme.text_primary.into();
-    component.button_hover = theme.surface_high.into();
-    component.button_active = theme.action_soft.into();
-    component.button_primary = theme.action_primary.into();
-    component.button_primary_hover = theme.action_primary_hover.into();
-    component.button_primary_active = theme.action_primary_active.into();
-    component.button_primary_foreground = theme.action_on_primary.into();
-    component.button_secondary = theme.surface_base.into();
-    component.button_secondary_hover = theme.surface_high.into();
-    component.button_secondary_active = theme.action_soft.into();
+    component.button_hover = theme.button_hover.into();
+    component.button_active = theme.button_active.into();
+    component.button_primary = theme.button_bg.into();
+    component.button_primary_hover = theme.button_hover.into();
+    component.button_primary_active = theme.button_active.into();
+    component.button_primary_foreground = theme.text_primary.into();
+    component.button_secondary = theme.button_bg.into();
+    component.button_secondary_hover = theme.button_hover.into();
+    component.button_secondary_active = theme.button_active.into();
     component.button_secondary_foreground = theme.text_primary.into();
     // Destructive fills have their own contrast pair; status text and an inverted
     // dark-mode primary button must never determine a destructive button's label.
@@ -395,14 +397,6 @@ mod tests {
         assert_px(ControlSize::Compact.height(), 34.0);
         assert_px(ControlSize::Standard.height(), 38.0);
         assert_px(ControlSize::Icon.min_pointer_target(), 32.0);
-        assert_eq!(
-            ControlSize::Compact.component_size(),
-            gpui_component::Size::Small
-        );
-        assert_eq!(
-            ControlSize::Standard.component_size(),
-            gpui_component::Size::Medium
-        );
     }
 
     fn surfaces(theme: Theme) -> [gpui::Rgba; 7] {
@@ -515,6 +509,27 @@ mod tests {
             }
             assert_ne!(theme.action_primary, theme.action_primary_hover);
             assert_ne!(theme.action_primary_hover, theme.action_primary_active);
+        }
+    }
+
+    #[test]
+    fn button_states_are_neutral_distinct_and_readable() {
+        for theme in [Theme::light(), Theme::dark()] {
+            let fills = [theme.button_bg, theme.button_hover, theme.button_active];
+            for fill in fills {
+                assert_opaque(fill);
+                assert!((fill.r - fill.g).abs() < f32::EPSILON);
+                assert!((fill.g - fill.b).abs() < f32::EPSILON);
+                assert_contrast(theme.text_primary, fill, 4.5);
+            }
+            assert_ne!(fills[0], fills[1]);
+            assert_ne!(fills[1], fills[2]);
+            let mut component = ComponentTheme::default();
+            project_component_palette(&mut component, theme);
+            assert_eq!(component.button, component.button_secondary);
+            assert_eq!(component.button_primary, component.button_secondary);
+            assert_eq!(component.button_hover, component.button_secondary_hover);
+            assert_eq!(component.button_active, component.button_secondary_active);
         }
     }
 
