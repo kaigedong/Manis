@@ -57,9 +57,9 @@ jobs:
         if: runner.os == 'Linux'
         run: >-
           sudo apt-get update && sudo apt-get install --yes
-          libasound2-dev libfontconfig1-dev libgtk-3-dev libwayland-dev
+          dbus libasound2-dev libfontconfig1-dev libwayland-dev
           libx11-xcb-dev libxcb-render0-dev libxcb-shape0-dev
-          libxcb-xfixes0-dev libxdo-dev libxkbcommon-dev
+          libxcb-xfixes0-dev libxkbcommon-dev
       - name: Install Rust toolchain
         run: rustup show active-toolchain
       - name: Check workspace
@@ -70,6 +70,12 @@ jobs:
       - name: Test Linux TUN DNS lifecycle
         if: runner.os == 'Linux'
         run: cargo test -p manis-ui --lib linux_tun_dns --locked --quiet
+      - name: Test GTK-free Linux tray
+        if: runner.os == 'Linux'
+        run: cargo test -p manis-ui --lib linux_tray --locked --quiet
+      - name: Test Linux tray on an isolated D-Bus session
+        if: runner.os == 'Linux'
+        run: dbus-run-session -- cargo test -p manis-ui --lib linux_tray_dbus --locked --quiet -- --ignored
       - name: Test Linux privileged helper boundary
         if: runner.os == 'Linux'
         run: cargo test -p manis-linux-helper --locked --quiet

@@ -10,9 +10,7 @@ license=('Apache-2.0' 'GPL-3.0-only')
 depends=(
   'alsa-lib'
   'fontconfig'
-  'gtk3'
   'hicolor-icon-theme'
-  'libappindicator'
   'libcap'
   'libx11'
   'libxcb'
@@ -21,7 +19,6 @@ depends=(
   'polkit'
   'vulkan-icd-loader'
   'wayland'
-  'xdotool'
 )
 makedepends=('cargo' 'clang' 'cmake' 'desktop-file-utils' 'git' 'pkgconf' 'rust')
 options=('!debug')
