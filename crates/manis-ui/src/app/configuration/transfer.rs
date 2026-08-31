@@ -6,11 +6,20 @@ enum TransferProgress {
     Replacing,
 }
 
+#[derive(Default, PartialEq, Eq)]
+enum TransferPresentation {
+    #[default]
+    Dialog,
+    Inline,
+}
+
 #[derive(Default)]
 pub(super) struct ConfigurationTransfer {
     pub(super) active: bool,
     progress: TransferProgress,
+    presentation: TransferPresentation,
     preview: Option<crate::config_backup::PreparedBackup>,
+    editor: Option<Entity<gpui_component::input::EditorState>>,
     message: String,
     failed: bool,
     output_path: Option<std::path::PathBuf>,
@@ -30,6 +39,7 @@ impl ConfigurationTransfer {
 mod transfer_tests {
     use super::ManisApp;
     use gpui::{AppContext as _, ClipboardItem};
+    use gpui_component::WindowExt as _;
 
     #[gpui::test]
     fn file_export_produces_an_importable_backup_without_changing_sources(
@@ -48,7 +58,7 @@ mod transfer_tests {
             .expect("fixture routing");
         let output = root.join("export.manis.json");
         let mut app = None;
-        let (_, window_cx) = cx.add_window_view(|window, cx| {
+        let (_, cx) = cx.add_window_view(|window, cx| {
             let entity = cx.new(|_| {
                 ManisApp::with_fixture_controller_and_subscription_store(
                     "http://127.0.0.1:1",
@@ -59,8 +69,12 @@ mod transfer_tests {
             crate::root(entity, window, cx)
         });
         let app = app.expect("fixture app");
-        window_cx.update(|window, cx| {
+        cx.update(|window, cx| {
             app.update(cx, |app, cx| app.choose_configuration_export(window, cx));
+            assert!(
+                !window.has_active_dialog(cx),
+                "export must only show the system save dialog"
+            );
         });
         assert!(cx.did_prompt_for_new_path());
         cx.simulate_new_path_selection(|_| Some(output.clone()));
@@ -72,6 +86,7 @@ mod transfer_tests {
             manis_core::RoutingMode::Direct
         );
         app.read_with(cx, |app, _| {
+            assert!(!app.configuration_transfer.active);
             assert!(!app.configuration_transfer.failed);
             assert!(!app.configuration_transfer.is_busy());
             assert_eq!(
@@ -79,7 +94,94 @@ mod transfer_tests {
                 Some(&output)
             );
         });
+        cx.update(|window, cx| assert!(!window.has_active_dialog(cx)));
         std::fs::remove_dir_all(root).expect("remove fixture");
+    }
+
+    #[gpui::test]
+    fn cancelling_export_does_not_open_a_dialog_or_write_configuration(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(crate::init);
+        let store = unique_temp_store("manis-export-cancel");
+        let mut app = None;
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            let entity = cx.new(|_| {
+                ManisApp::with_fixture_controller_and_subscription_store(
+                    "http://127.0.0.1:1",
+                    store.clone(),
+                )
+            });
+            app = Some(entity.clone());
+            crate::root(entity, window, cx)
+        });
+        let app = app.expect("fixture app");
+        cx.update(|window, cx| {
+            app.update(cx, |app, cx| app.choose_configuration_export(window, cx));
+            assert!(!window.has_active_dialog(cx));
+        });
+        assert!(cx.did_prompt_for_new_path());
+        cx.simulate_new_path_selection(|_| None);
+        cx.run_until_parked();
+        app.read_with(cx, |app, _| {
+            assert!(!app.configuration_transfer.active);
+            assert!(!app.configuration_transfer.is_busy());
+            assert!(app.configuration_transfer.output_path.is_none());
+        });
+        cx.update(|window, cx| assert!(!window.has_active_dialog(cx)));
+        assert!(
+            !store.exists(),
+            "cancelling export must not write configuration"
+        );
+    }
+
+    #[gpui::test]
+    fn failed_export_unlocks_configuration_and_reports_the_error_without_a_dialog(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(crate::init);
+        let store = unique_temp_store("manis-export-failure");
+        crate::mihomo::save_routing_mode_in(&store, manis_core::RoutingMode::Direct)
+            .expect("fixture routing");
+        let output = store
+            .parent()
+            .expect("fixture root")
+            .join("directory.manis.json");
+        std::fs::create_dir(&output).expect("directory cannot be overwritten by export");
+        let original = std::fs::read(store.join("routing.mode")).expect("fixture routing");
+        let mut app = None;
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            let entity = cx.new(|_| {
+                ManisApp::with_fixture_controller_and_subscription_store(
+                    "http://127.0.0.1:1",
+                    store.clone(),
+                )
+            });
+            app = Some(entity.clone());
+            crate::root(entity, window, cx)
+        });
+        let app = app.expect("fixture app");
+        cx.update(|window, cx| {
+            app.update(cx, |app, cx| app.choose_configuration_export(window, cx));
+        });
+        cx.simulate_new_path_selection(|_| Some(output));
+        cx.run_until_parked();
+        app.read_with(cx, |app, _| {
+            assert!(!app.configuration_transfer.active);
+            assert!(!app.configuration_transfer.is_busy());
+            assert!(app.configuration_transfer.failed);
+            assert!(app.configuration_transfer.output_path.is_none());
+            assert_eq!(
+                app.status,
+                app.language().localized(super::copy::backup::EXPORT_FAILED)
+            );
+        });
+        cx.update(|window, cx| assert!(!window.has_active_dialog(cx)));
+        assert_eq!(
+            std::fs::read(store.join("routing.mode")).expect("routing unchanged"),
+            original
+        );
+        std::fs::remove_dir_all(store.parent().expect("fixture root")).expect("remove fixture");
     }
 
     #[gpui::test]
@@ -140,7 +242,7 @@ mod transfer_tests {
         cx.update(crate::init);
         let store = unique_temp_store("manis-transfer-cancel");
         let mut app = None;
-        let (_, window_cx) = cx.add_window_view(|window, cx| {
+        let (_, cx) = cx.add_window_view(|window, cx| {
             let entity = cx.new(|_| {
                 ManisApp::with_fixture_controller_and_subscription_store(
                     "http://127.0.0.1:1",
@@ -151,8 +253,12 @@ mod transfer_tests {
             crate::root(entity, window, cx)
         });
         let app = app.expect("fixture app");
-        window_cx.update(|window, cx| {
+        cx.update(|window, cx| {
             app.update(cx, |app, cx| app.choose_configuration_import(window, cx));
+            assert!(
+                !window.has_active_dialog(cx),
+                "only the native picker should open"
+            );
         });
         assert!(cx.did_prompt_for_paths());
         cx.simulate_path_prompt_response(|options| {
@@ -161,24 +267,23 @@ mod transfer_tests {
         });
         cx.run_until_parked();
         app.read_with(cx, |app, _| assert!(!app.configuration_transfer.active));
-        assert!(
-            !store.exists(),
-            "cancelling must not create or modify configuration"
-        );
+        cx.update(|window, cx| assert!(!window.has_active_dialog(cx)));
+        assert!(!store.exists(), "cancelling must not create configuration");
     }
 
     #[gpui::test]
-    fn invalid_clipboard_import_never_changes_configuration(cx: &mut gpui::TestAppContext) {
+    fn file_import_only_opens_preview_after_selection_and_validation(
+        cx: &mut gpui::TestAppContext,
+    ) {
         cx.update(crate::init);
-        let store = unique_temp_store("manis-transfer-invalid");
+        let store = unique_temp_store("manis-import-preview");
         crate::mihomo::save_routing_mode_in(&store, manis_core::RoutingMode::Direct)
-            .expect("fixture routing");
-        let original = std::fs::read(store.join("routing.mode")).expect("read fixture");
-        cx.write_to_clipboard(ClipboardItem::new_string(
-            "not a Manis configuration".to_owned(),
-        ));
+            .expect("fixture mode");
+        let original = std::fs::read(store.join("routing.mode")).expect("fixture contents");
+        let input = store.parent().unwrap().join("input.manis.json");
+        std::fs::write(&input, "not a backup").expect("invalid fixture");
         let mut app = None;
-        let (_, window_cx) = cx.add_window_view(|window, cx| {
+        let (_, cx) = cx.add_window_view(|window, cx| {
             let entity = cx.new(|_| {
                 ManisApp::with_fixture_controller_and_subscription_store(
                     "http://127.0.0.1:1",
@@ -188,22 +293,142 @@ mod transfer_tests {
             app = Some(entity.clone());
             crate::root(entity, window, cx)
         });
-        let app = app.expect("fixture app");
-        window_cx.update(|window, cx| {
-            app.update(cx, |app, cx| app.paste_configuration_import(window, cx));
+        let app = app.unwrap();
+        cx.update(|window, cx| {
+            app.update(cx, |app, cx| app.choose_configuration_import(window, cx));
+            assert!(!window.has_active_dialog(cx));
+        });
+        cx.simulate_path_prompt_response(|_| Some(vec![input.clone()]));
+        cx.run_until_parked();
+        cx.update(|window, cx| assert!(!window.has_active_dialog(cx)));
+        app.read_with(cx, |app, _| {
+            assert!(app.configuration_transfer.failed);
+            assert!(!app.configuration_transfer.active);
+        });
+        crate::config_backup::export_to_file(&store, &input).expect("valid fixture");
+        cx.update(|window, cx| {
+            app.update(cx, |app, cx| app.choose_configuration_import(window, cx));
+            assert!(!window.has_active_dialog(cx));
+        });
+        cx.simulate_path_prompt_response(|_| Some(vec![input.clone()]));
+        cx.run_until_parked();
+        cx.update(|window, cx| assert!(window.has_active_dialog(cx)));
+        app.read_with(cx, |app, _| {
+            assert!(
+                app.configuration_transfer.active,
+                "preview must keep the mutation lock"
+            );
+            assert!(!app.configuration_transfer.failed);
+            assert!(!app.configuration_transfer.is_busy());
+            assert!(app.configuration_transfer.preview.is_some());
+        });
+        assert_eq!(std::fs::read(store.join("routing.mode")).unwrap(), original);
+        std::fs::remove_dir_all(store.parent().unwrap()).unwrap();
+    }
+
+    #[gpui::test]
+    fn editor_prefills_current_configuration_and_preserves_invalid_edits(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(crate::init);
+        let store = unique_temp_store("manis-config-editor");
+        crate::mihomo::save_routing_mode_in(&store, manis_core::RoutingMode::Direct)
+            .expect("fixture routing");
+        let original = std::fs::read(store.join("routing.mode")).unwrap();
+        cx.write_to_clipboard(ClipboardItem::new_string(
+            "not the current configuration".to_owned(),
+        ));
+        let mut app = None;
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            let entity = cx.new(|_| {
+                ManisApp::with_fixture_controller_and_subscription_store(
+                    "http://127.0.0.1:1",
+                    store.clone(),
+                )
+            });
+            app = Some(entity.clone());
+            crate::root(entity, window, cx)
+        });
+        let app = app.unwrap();
+        cx.update(|window, cx| app.update(cx, |app, cx| app.edit_configuration(window, cx)));
+        cx.run_until_parked();
+        let editor = app.read_with(cx, |app, _| {
+            assert!(app.configuration_transfer.active);
+            assert!(app.configuration_transfer.preview.is_none());
+            app.configuration_transfer
+                .editor
+                .clone()
+                .expect("prefilled editor")
+        });
+        let current = editor.read_with(cx, |editor, _| editor.value());
+        let document: serde_json::Value = serde_json::from_str(&current).unwrap();
+        assert!(
+            document["files"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|file| file["name"] == "routing.mode"
+                    && file["contents"] == String::from_utf8(original.clone()).unwrap())
+        );
+        cx.update(|window, cx| {
+            assert!(window.has_active_dialog(cx));
+            editor.update(cx, |editor, cx| {
+                editor.set_value("invalid edits", window, cx);
+            });
+            app.update(cx, ManisApp::preview_configuration_edits);
         });
         cx.run_until_parked();
         app.read_with(cx, |app, _| {
             assert!(app.configuration_transfer.failed);
             assert!(!app.configuration_transfer.is_busy());
             assert!(app.configuration_transfer.preview.is_none());
-            assert_eq!(app.routing_mode, manis_core::RoutingMode::Direct);
+            assert!(app.configuration_transfer.active);
         });
         assert_eq!(
-            std::fs::read(store.join("routing.mode")).expect("fixture remains"),
-            original
+            editor.read_with(cx, |editor, _| editor.value()),
+            "invalid edits"
         );
-        std::fs::remove_dir_all(store.parent().expect("fixture root")).expect("remove fixture");
+        let mut replacement = document;
+        for file in replacement["files"].as_array_mut().unwrap() {
+            if file["name"] == "routing.mode" {
+                file["contents"] = "global".into();
+            }
+        }
+        let replacement = serde_json::to_string_pretty(&replacement).unwrap();
+        cx.update(|window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.set_value(replacement.clone(), window, cx);
+            });
+            app.update(cx, ManisApp::preview_configuration_edits);
+        });
+        cx.run_until_parked();
+        app.read_with(cx, |app, _| {
+            assert!(
+                app.configuration_transfer.preview.is_some(),
+                "corrected input should reach confirmation"
+            );
+            assert!(!app.configuration_transfer.failed);
+        });
+        cx.update(|window, cx| {
+            app.update(cx, |app, cx| app.resume_configuration_editing(window, cx));
+        });
+        assert_eq!(
+            editor.read_with(cx, |editor, _| editor.value()),
+            replacement
+        );
+        app.read_with(cx, |app, _| {
+            assert!(app.configuration_transfer.preview.is_none());
+        });
+        cx.update(|window, cx| {
+            app.update(cx, |app, cx| app.cancel_configuration_transfer(window, cx));
+        });
+        cx.run_until_parked();
+        app.read_with(cx, |app, _| {
+            assert!(!app.configuration_transfer.active);
+            assert!(app.configuration_transfer.editor.is_none());
+        });
+        assert_eq!(std::fs::read(store.join("routing.mode")).unwrap(), original);
+        std::fs::remove_dir_all(store.parent().unwrap()).unwrap();
     }
 }
 
@@ -220,6 +445,7 @@ impl ManisApp {
         if self.runtime.is_fixture()
             && self.begin_configuration_transfer(
                 self.language().localized(copy::backup::READING),
+                TransferPresentation::Dialog,
                 window,
                 cx,
             )
@@ -232,6 +458,7 @@ impl ManisApp {
         let language = self.language();
         if !self.begin_configuration_transfer(
             language.localized(copy::backup::EXPORTING),
+            TransferPresentation::Inline,
             window,
             cx,
         ) {
@@ -249,9 +476,12 @@ impl ManisApp {
             let path = match prompt.await {
                 Ok(Ok(Some(path))) => path,
                 Ok(Ok(None)) => {
-                    this.update_in(cx, |this, window, cx| {
+                    this.update(cx, |this, cx| {
                         this.configuration_transfer = ConfigurationTransfer::default();
-                        window.close_dialog(cx);
+                        language
+                            .localized(copy::backup::EXPORT_CANCELLED)
+                            .clone_into(&mut this.status);
+                        cx.notify();
                     })
                     .ok();
                     return;
@@ -293,8 +523,12 @@ impl ManisApp {
 
     fn choose_configuration_import(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let language = self.language();
-        if !self.begin_configuration_transfer(language.localized(copy::backup::READING), window, cx)
-        {
+        if !self.begin_configuration_transfer(
+            language.localized(copy::backup::READING),
+            TransferPresentation::Inline,
+            window,
+            cx,
+        ) {
             return;
         }
         let prompt = cx.prompt_for_paths(gpui::PathPromptOptions {
@@ -310,9 +544,12 @@ impl ManisApp {
                     paths.into_iter().next().expect("one path")
                 }
                 Ok(Ok(None)) => {
-                    this.update_in(cx, |this, window, cx| {
+                    this.update(cx, |this, cx| {
                         this.configuration_transfer = ConfigurationTransfer::default();
-                        window.close_dialog(cx);
+                        language
+                            .localized(copy::backup::IMPORT_CANCELLED)
+                            .clone_into(&mut this.status);
+                        cx.notify();
                     })
                     .ok();
                     return;
@@ -332,33 +569,13 @@ impl ManisApp {
             let result = executor
                 .spawn(async move { crate::config_backup::read_backup(&path) })
                 .await;
-            this.update(cx, |this, cx| this.finish_configuration_preview(result, cx))
-                .ok();
-        })
-        .detach();
-    }
-
-    fn paste_configuration_import(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let language = self.language();
-        if !self.begin_configuration_transfer(language.localized(copy::backup::READING), window, cx)
-        {
-            return;
-        }
-        let Some(text) = cx
-            .read_from_clipboard()
-            .and_then(|item| item.text())
-            .filter(|text| !text.trim().is_empty())
-        else {
-            self.finish_configuration_transfer(language.localized(copy::backup::NO_TEXT), true, cx);
-            return;
-        };
-        let executor = cx.background_executor().clone();
-        cx.spawn(async move |this, cx| {
-            let result = executor
-                .spawn(async move { crate::config_backup::prepare_import(&text) })
-                .await;
-            this.update(cx, |this, cx| this.finish_configuration_preview(result, cx))
-                .ok();
+            this.update_in(cx, |this, window, cx| {
+                this.finish_configuration_preview(result, cx);
+                if this.configuration_transfer.preview.is_some() {
+                    this.open_configuration_transfer_dialog(window, cx);
+                }
+            })
+            .ok();
         })
         .detach();
     }
@@ -373,6 +590,10 @@ impl ManisApp {
                 self.configuration_transfer.preview = Some(preview);
                 self.configuration_transfer.progress = TransferProgress::Idle;
                 self.configuration_transfer.message.clear();
+                self.configuration_transfer.failed = false;
+                self.language()
+                    .localized(copy::backup::PREVIEW)
+                    .clone_into(&mut self.status);
                 cx.notify();
             }
             Err(_) => self.finish_configuration_transfer(
@@ -402,6 +623,7 @@ impl ManisApp {
             return;
         };
         let language = self.language();
+        self.configuration_transfer.editor = None;
         self.configuration_transfer.progress = TransferProgress::Replacing;
         self.configuration_transfer.failed = false;
         language
@@ -530,8 +752,8 @@ impl ManisApp {
                     )
                     .child(
                         style_action_button(
-                            Button::new("configuration-paste")
-                                .label(language.localized(copy::backup::PASTE))
+                            Button::new("configuration-edit")
+                                .label(language.localized(copy::backup::EDIT))
                                 .border_1()
                                 .border_color(theme.outline_subtle)
                                 .bg(theme.surface_low)
@@ -540,7 +762,7 @@ impl ManisApp {
                             ControlSize::Standard,
                         )
                         .on_click(cx.listener(|this, _, window, cx| {
-                            this.paste_configuration_import(window, cx);
+                            this.edit_configuration(window, cx);
                         })),
                     ),
             )
@@ -560,6 +782,11 @@ impl ManisApp {
                     .text_color(theme.text_secondary)
                     .child(language.localized(copy::backup::EXCLUDED)),
             )
+            .when(
+                self.configuration_transfer.presentation == TransferPresentation::Inline
+                    && !self.configuration_transfer.message.is_empty(),
+                |panel| panel.child(self.configuration_transfer_feedback(theme, language)),
+            )
             .when_some(
                 self.subscription_store_dir
                     .as_deref()
@@ -574,12 +801,44 @@ impl ManisApp {
                             ControlSize::Compact,
                         )
                         .mt(Space::Sm.px())
-                        .on_click(move |_, _, cx| {
-                            cx.reveal_path(&store);
-                        }),
+                        .on_click(move |_, _, cx| cx.reveal_path(&store)),
                     )
                 },
             )
+    }
+
+    fn configuration_transfer_feedback(&self, theme: Theme, language: Language) -> Div {
+        let state = &self.configuration_transfer;
+        div()
+            .mt(Space::Md.px())
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap(Space::Sm.px())
+            .child(
+                div()
+                    .id("configuration-transfer-status")
+                    .role(Role::Status)
+                    .text_size(TextRole::Metadata.size())
+                    .line_height(TextRole::Metadata.line_height())
+                    .text_color(if state.failed {
+                        theme.status_error
+                    } else {
+                        theme.text_secondary
+                    })
+                    .child(state.message.clone()),
+            )
+            .when_some(state.output_path.clone(), |row, path| {
+                row.child(
+                    action_button(
+                        "configuration-export-show",
+                        language.localized(copy::backup::SHOW_FILE),
+                        ActionRole::Secondary,
+                        ControlSize::Compact,
+                    )
+                    .on_click(move |_, _, cx| cx.reveal_path(&path)),
+                )
+            })
     }
 
     fn configuration_mutation_busy(&self) -> bool {
@@ -604,6 +863,7 @@ impl ManisApp {
     fn begin_configuration_transfer(
         &mut self,
         message: &'static str,
+        presentation: TransferPresentation,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
@@ -618,7 +878,8 @@ impl ManisApp {
             None
         };
         self.configuration_transfer = ConfigurationTransfer {
-            active: true,
+            active: error.is_none() || presentation == TransferPresentation::Dialog,
+            presentation,
             progress: if error.is_none() {
                 TransferProgress::Preparing
             } else {
@@ -630,14 +891,25 @@ impl ManisApp {
                 .to_owned(),
             ..ConfigurationTransfer::default()
         };
+        if self.configuration_transfer.presentation == TransferPresentation::Dialog {
+            self.open_configuration_transfer_dialog(window, cx);
+        } else {
+            self.configuration_transfer
+                .message
+                .clone_into(&mut self.status);
+        }
+        cx.notify();
+        error.is_none()
+    }
+
+    fn open_configuration_transfer_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.configuration_transfer.presentation = TransferPresentation::Dialog;
         let app = cx.entity();
         window.open_dialog(cx, move |dialog, window, cx| {
             app.update(cx, |this, cx| {
                 this.configuration_transfer_dialog(dialog, window, cx)
             })
         });
-        cx.notify();
-        error.is_none()
     }
 
     fn finish_configuration_transfer(
@@ -647,13 +919,21 @@ impl ManisApp {
         cx: &mut Context<Self>,
     ) {
         self.configuration_transfer.progress = TransferProgress::Idle;
+        if self.configuration_transfer.presentation == TransferPresentation::Inline {
+            self.configuration_transfer.active = false;
+        }
         self.configuration_transfer.failed = failed;
         message.clone_into(&mut self.configuration_transfer.message);
         message.clone_into(&mut self.status);
         cx.notify();
     }
 
-    fn configuration_transfer_body(&self, theme: Theme, language: Language) -> Stateful<Div> {
+    fn configuration_transfer_body(
+        &self,
+        theme: Theme,
+        language: Language,
+        window: &Window,
+    ) -> Stateful<Div> {
         let state = &self.configuration_transfer;
         let mut body = div()
             .id("configuration-transfer-body")
@@ -664,6 +944,9 @@ impl ManisApp {
             .flex()
             .flex_col()
             .gap(Space::Md.px());
+        if state.preview.is_none() && state.editor.is_some() {
+            body = body.child(self.configuration_editor_body(theme, language, window));
+        }
         if let Some(preview) = &state.preview {
             let summary = preview.summary();
             body = body
@@ -732,18 +1015,15 @@ impl ManisApp {
         body
     }
 
-    fn configuration_transfer_dialog(
+    fn configuration_transfer_footer(
         &self,
-        dialog: Dialog,
-        window: &mut Window,
+        theme: Theme,
+        language: Language,
         cx: &mut Context<Self>,
-    ) -> Dialog {
-        let theme = self.theme();
-        let language = self.language();
+    ) -> Div {
         let state = &self.configuration_transfer;
         let busy = state.is_busy();
-        let body = self.configuration_transfer_body(theme, language);
-        let footer = dialog_footer_surface(theme)
+        dialog_footer_surface(theme)
             .flex_wrap()
             .when_some(state.output_path.clone(), |footer, path| {
                 footer.child(
@@ -759,7 +1039,7 @@ impl ManisApp {
             .child(
                 style_action_button(
                     Button::new("configuration-transfer-close")
-                        .label(if state.preview.is_some() {
+                        .label(if state.preview.is_some() || state.editor.is_some() {
                             language.message(Message::Cancel)
                         } else {
                             language.localized(copy::backup::DONE)
@@ -769,13 +1049,10 @@ impl ManisApp {
                     ControlSize::Standard,
                 )
                 .on_click(cx.listener(|this, _, window, cx| {
-                    if !this.configuration_transfer.is_busy() {
-                        this.configuration_transfer = ConfigurationTransfer::default();
-                        window.close_dialog(cx);
-                        cx.notify();
-                    }
+                    this.cancel_configuration_transfer(window, cx);
                 })),
             )
+            .children(self.configuration_editor_actions(language, cx))
             .when(state.preview.is_some(), |footer| {
                 footer.child(
                     style_action_button(
@@ -790,18 +1067,45 @@ impl ManisApp {
                         cx.listener(|this, _, window, cx| this.replace_configuration(window, cx)),
                     ),
                 )
-            });
+            })
+    }
+
+    fn cancel_configuration_transfer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.configuration_transfer.is_busy() {
+            self.configuration_transfer = ConfigurationTransfer::default();
+            self.language()
+                .localized(copy::backup::IMPORT_CANCELLED)
+                .clone_into(&mut self.status);
+            window.close_dialog(cx);
+            cx.notify();
+        }
+    }
+
+    fn configuration_transfer_dialog(
+        &self,
+        dialog: Dialog,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Dialog {
+        let theme = self.theme();
+        let language = self.language();
+        let state = &self.configuration_transfer;
+        let busy = state.is_busy();
+        let body = self.configuration_transfer_body(theme, language, window);
+        let editing = state.editor.is_some();
+        let footer = self.configuration_transfer_footer(theme, language, cx);
         let app = cx.entity();
         surface_dialog(dialog, theme)
-            .width(px(
-                (window.viewport_size().width.as_f32() - 32.0).clamp(300.0, 560.0)
-            ))
+            .width(px((window.viewport_size().width.as_f32() - 32.0)
+                .clamp(300.0, if editing { 920.0 } else { 560.0 })))
             .max_h(px(
                 (window.viewport_size().height.as_f32() - 32.0).max(280.0)
             ))
-            .margin_top(px(
+            .margin_top(px(if editing {
+                16.0
+            } else {
                 ((window.viewport_size().height.as_f32() - 440.0) / 2.0).max(16.0)
-            ))
+            }))
             .overlay(true)
             .overlay_closable(!busy)
             .keyboard(!busy)
@@ -810,7 +1114,11 @@ impl ManisApp {
                 dialog_header_surface(theme)
                     .text_size(TextRole::SectionTitle.size())
                     .font_weight(FontWeight::SEMIBOLD)
-                    .child(language.localized(copy::backup::TITLE)),
+                    .child(language.localized(if editing {
+                        copy::backup::EDIT
+                    } else {
+                        copy::backup::TITLE
+                    })),
             )
             .child(body)
             .footer(footer)

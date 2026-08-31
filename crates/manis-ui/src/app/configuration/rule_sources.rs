@@ -470,6 +470,8 @@ impl ManisApp {
         let presentation = self.rule_source_card_presentation(index, source, busy, language);
         let edit_id = source.id.clone();
         let controls_enabled = presentation.controls_enabled;
+        let toggle_id = source.id.clone();
+        let enabled = source.enabled;
         div()
             .id(format!("qx-rule-source-card-{}", source.id))
             .role(Role::Button)
@@ -487,36 +489,60 @@ impl ManisApp {
                 theme.outline_subtle
             })
             .bg(theme.surface_low)
-            .child(Self::rule_source_card_header(
-                source,
-                &presentation,
-                language,
-                theme,
-                cx,
-            ))
+            .flex()
+            .items_center()
+            .gap_2()
+            .when(controls_enabled, |card| {
+                card.hover(move |card| card.bg(theme.action_soft))
+            })
+            .child(
+                Checkbox::new(format!("qx-rule-enabled-{toggle_id}"))
+                    .aria_label(presentation.name.clone())
+                    .flex_shrink_0()
+                    .checked(enabled)
+                    .disabled(!controls_enabled)
+                    .tab_stop(controls_enabled)
+                    .when(controls_enabled, gpui::Styled::cursor_pointer)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        if controls_enabled {
+                            this.set_qx_rule_source_enabled(toggle_id.clone(), !enabled, cx);
+                        }
+                    })),
+            )
             .child(
                 div()
-                    .mt_1()
-                    .ml_7()
-                    .overflow_x_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .text_size(TextRole::Metadata.size())
-                    .text_color(theme.text_tertiary)
-                    .child(source.source.expose_to(str::to_owned)),
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .child(Self::rule_source_card_header(
+                        source,
+                        &presentation,
+                        language,
+                        theme,
+                    ))
+                    .child(
+                        div()
+                            .mt_1()
+                            .overflow_x_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .text_size(TextRole::Metadata.size())
+                            .text_color(theme.text_tertiary)
+                            .child(source.source.expose_to(str::to_owned)),
+                    )
+                    .when_some(
+                        Self::rule_source_refresh_error(&presentation),
+                        |card, error| card.child(Self::rule_source_error(error, language, theme)),
+                    )
+                    .child(Self::rule_source_card_actions(
+                        index,
+                        source,
+                        &presentation,
+                        language,
+                        theme,
+                        cx,
+                    )),
             )
-            .when_some(
-                Self::rule_source_refresh_error(&presentation),
-                |card, error| card.child(Self::rule_source_error(error, language, theme)),
-            )
-            .child(Self::rule_source_card_actions(
-                index,
-                source,
-                &presentation,
-                language,
-                theme,
-                cx,
-            ))
             .on_click(cx.listener(move |this, _, window, cx| {
                 if controls_enabled {
                     this.open_qx_rule_editor(edit_id.clone(), cx);
@@ -575,29 +601,12 @@ impl ManisApp {
         presentation: &RuleSourceCardPresentation,
         language: Language,
         theme: Theme,
-        cx: &mut Context<Self>,
     ) -> Div {
-        let toggle_id = source.id.clone();
         let enabled = source.enabled;
-        let controls_enabled = presentation.controls_enabled;
         div()
             .flex()
             .items_center()
             .gap_2()
-            .child(
-                Checkbox::new(format!("qx-rule-enabled-{toggle_id}"))
-                    .label("")
-                    .checked(enabled)
-                    .disabled(!controls_enabled)
-                    .tab_stop(controls_enabled)
-                    .cursor_pointer()
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        cx.stop_propagation();
-                        if controls_enabled {
-                            this.set_qx_rule_source_enabled(toggle_id.clone(), !enabled, cx);
-                        }
-                    })),
-            )
             .child(
                 div()
                     .flex_1()
@@ -653,7 +662,6 @@ impl ManisApp {
     fn rule_source_error(error: &str, language: Language, theme: Theme) -> Div {
         div()
             .mt_1()
-            .ml_7()
             .text_size(TextRole::Metadata.size())
             .line_height(TextRole::Metadata.line_height())
             .text_color(theme.route_trace)
@@ -678,7 +686,6 @@ impl ManisApp {
         let controls_enabled = presentation.controls_enabled;
         div()
             .mt_1()
-            .ml_7()
             .flex()
             .items_center()
             .gap_2()
