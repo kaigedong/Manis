@@ -81,7 +81,6 @@ pub(crate) const FILTER_BY_TARGET_PROCESS_RULE_OR_ROUTE: LocalizedText = Localiz
     "Filter by target, process, rule, or route",
     "筛选目标、进程、规则或路径",
 );
-pub(crate) const G: LocalizedText = LocalizedText::new("G", "组");
 pub(crate) const GLOBAL: LocalizedText = LocalizedText::new("Global", "全局");
 pub(crate) const GLOBAL_MODE_ENABLED_CHOOSE_THE_GLOBAL_EXIT_ON_THE_NODES: LocalizedText =
     LocalizedText::new(
@@ -128,7 +127,6 @@ pub(crate) const MIHOMO_UPDATE_FAILED_THE_PREVIOUS_CORE_WAS_RESTORED: LocalizedT
         "Mihomo update failed; the previous core was restored: ",
         "Mihomo 更新失败，已恢复原内核：",
     );
-pub(crate) const N: LocalizedText = LocalizedText::new("N", "点");
 pub(crate) const NETWORK_ACTIVITY_OPENED: LocalizedText =
     LocalizedText::new("Network activity opened", "已打开网络活动");
 pub(crate) const NODES_OPENED: LocalizedText =

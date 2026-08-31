@@ -139,6 +139,14 @@ struct BackupFile {
 }
 
 pub(crate) fn export_backup(directory: &Path) -> Result<String, BackupError> {
+    let text = read_configuration_for_editing(directory)?;
+    prepare_import(&text)?;
+    Ok(text)
+}
+
+// Reading a draft must not require valid configuration: the editor is also used to
+// repair stale references. Keep path, permission and size checks here; validate on apply.
+pub(crate) fn read_configuration_for_editing(directory: &Path) -> Result<String, BackupError> {
     let mut files = Vec::new();
     let mut total = 0_u64;
     for path in portable_store_paths(directory)? {
@@ -168,7 +176,6 @@ pub(crate) fn export_backup(directory: &Path) -> Result<String, BackupError> {
     if text.len() as u64 > MAX_BACKUP_TEXT_BYTES {
         return Err(BackupError::Oversized);
     }
-    prepare_import(&text)?;
     Ok(text)
 }
 

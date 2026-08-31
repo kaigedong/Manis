@@ -15,8 +15,8 @@ pub(crate) const EDIT_DETAIL: LocalizedText = LocalizedText::new(
 pub(crate) const LOADING_CURRENT: LocalizedText =
     LocalizedText::new("Loading current configuration…", "正在读取当前配置…");
 pub(crate) const EDIT_FAILED: LocalizedText = LocalizedText::new(
-    "Could not read the current configuration. Check its contents and directory permissions.",
-    "无法读取当前配置，请检查配置内容及目录权限。",
+    "Could not read the current configuration. Check file access permissions and size limits.",
+    "无法读取当前配置，请检查文件访问权限及大小限制。",
 );
 pub(crate) const VALIDATE: LocalizedText = LocalizedText::new("Validate and preview", "校验并预览");
 pub(crate) const BACK_TO_EDIT: LocalizedText = LocalizedText::new("Back to editing", "返回修改");
