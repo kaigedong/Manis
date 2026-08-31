@@ -25,16 +25,6 @@ pub use app::ManisApp;
 pub use assets::Assets;
 pub use tray::{install as install_tray, open_window, show_or_open_window};
 
-/// Runs the narrowly scoped privileged DNS helper when the current invocation requests it.
-///
-/// Normal desktop invocations return `None`. The Linux entry point uses this before initializing
-/// GPUI so PolicyKit can execute the installed binary as a one-shot helper.
-#[cfg(target_os = "linux")]
-pub fn run_linux_tun_dns_helper_from_args() -> Option<Result<(), String>> {
-    linux_privileged::run_tun_dns_helper_from_args(std::env::args_os().skip(1))
-        .map(|result| result.map_err(|error| error.to_string()))
-}
-
 /// Returns the version embedded by the packaging workflow.
 #[must_use]
 pub fn version() -> &'static str {

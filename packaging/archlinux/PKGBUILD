@@ -25,6 +25,7 @@ depends=(
 )
 makedepends=('cargo' 'clang' 'cmake' 'desktop-file-utils' 'git' 'pkgconf' 'rust')
 options=('!debug')
+install=manis.install
 source=()
 sha256sums=()
 
@@ -36,6 +37,10 @@ build() {
   RUSTFLAGS="$rust_flags" \
     CARGO_TARGET_DIR="$target_dir" \
     cargo build -p manis-ui --lib --release --locked
+
+  RUSTFLAGS="$rust_flags" \
+    CARGO_TARGET_DIR="$target_dir" \
+    cargo build -p manis-linux-helper --release --locked
 
   local ring_archive
   ring_archive="$(find "$target_dir/release/build" \
@@ -77,6 +82,10 @@ package() {
     "$pkgdir/usr/bin/manis"
   install -Dm755 "$startdir/../../target/archlinux/release/mihomo" \
     "$pkgdir/usr/lib/manis/mihomo"
+  install -Dm755 "$startdir/../../target/archlinux/release/manis-linux-helper" \
+    "$pkgdir/usr/lib/manis/manis-linux-helper"
+  install -Dm644 "$startdir/dev.manis.app.linux-helper.policy" \
+    "$pkgdir/usr/share/polkit-1/actions/dev.manis.app.linux-helper.policy"
   install -Dm644 "$startdir/dev.manis.app.desktop" \
     "$pkgdir/usr/share/applications/dev.manis.app.desktop"
   install -Dm644 "$startdir/../../assets/brand/manis-mark.svg" \

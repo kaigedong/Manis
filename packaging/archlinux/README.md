@@ -4,18 +4,20 @@ The Arch package builds Manis from the current checkout and installs:
 
 - `/usr/bin/manis`
 - `/usr/lib/manis/mihomo`, the SHA-256-verified stable first-launch seed
+- `/usr/lib/manis/manis-linux-helper`, a fixed-purpose TUN DNS helper
+- a PolicyKit policy restricted to that helper
 - a freedesktop desktop entry
 - a scalable application icon
 - the project license and third-party notices
 
-The package depends on polkit for graphical administrator authorization. Manis downloads and
-verifies application updates in the background; **Restart and update** then runs `pacman -U`
-through `pkexec` and restarts `/usr/bin/manis` only after pacman succeeds. On the first Linux TUN
-activation after install or upgrade, Manis asks Polkit to grant only `CAP_NET_ADMIN` and
-`CAP_NET_RAW` to the root-owned packaged core, verifies its ownership and capabilities, switches
-the managed runtime to that core, and continues the original TUN request. Ordinary proxy mode and
-the GUI remain unprivileged, and no terminal setup is required. Source builds and binaries outside
-`/usr/bin/manis` do not self-update.
+The package depends on polkit for its narrow privileged integration. Package installation assigns
+only `CAP_NET_ADMIN` and `CAP_NET_RAW` to the root-owned packaged core. The fixed-purpose helper may
+only install or restore DNS routing for the managed `Meta` interface, and PolicyKit permits that
+helper for the active local session without another password prompt. Ordinary proxy mode and the
+GUI remain unprivileged. Manis downloads and verifies application updates in the background;
+**Restart and update** runs `pacman -U` through `pkexec`, so the package upgrade itself remains the
+single administrative authorization point. Source builds and binaries outside `/usr/bin/manis` do
+not self-update.
 
 The Linux GPUI backend is compiled with Wayland and X11 support. A native Wayland session is the
 primary target; X11 remains available as a compatibility fallback. The build fetches the official

@@ -495,7 +495,7 @@ impl ControllerRuntime {
         };
         if spec.kernel != KernelKind::Mihomo {
             return Err(LoadError::Runtime(
-                "Linux TUN capability authorization supports only Mihomo".to_owned(),
+                "Linux packaged TUN capabilities support only Mihomo".to_owned(),
             ));
         }
         if privileged.load(Ordering::Acquire) {
@@ -512,7 +512,7 @@ impl ControllerRuntime {
             "helper.promotion.requested",
             "platform=linux kernel=mihomo capabilities=cap_net_admin,cap_net_raw",
         );
-        let (state, privileged_binary) = crate::linux_privileged::ensure_tun_capabilities()
+        let privileged_binary = crate::linux_privileged::ensure_tun_capabilities()
             .map_err(|error| LoadError::Runtime(error.to_string()))?;
 
         let final_path = spec.data_dir.join(GENERATED_PROFILE_FILE);
@@ -536,7 +536,7 @@ impl ControllerRuntime {
                     LogLevel::Info,
                     "helper.promotion.succeeded",
                     format!(
-                        "platform=linux capability_state={state:?} ordinary_core_restarted={was_running}"
+                        "platform=linux capability_state=packaged ordinary_core_restarted={was_running}"
                     ),
                 );
                 Ok(())
@@ -555,10 +555,10 @@ impl ControllerRuntime {
                 );
                 let fallback = was_running.then(|| manager.start().err()).flatten();
                 let message = fallback.map_or_else(
-                    || format!("Mihomo could not start after Linux TUN authorization: {error}"),
+                    || format!("Mihomo could not start with Linux TUN capabilities: {error}"),
                     |fallback| {
                         format!(
-                            "Mihomo could not start after Linux TUN authorization: {error}; restoring ordinary Mihomo also failed: {fallback}"
+                            "Mihomo could not start with Linux TUN capabilities: {error}; restoring ordinary Mihomo also failed: {fallback}"
                         )
                     },
                 );

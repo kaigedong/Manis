@@ -33,6 +33,7 @@ depends=(
 provides=("manis=${pkgver}")
 conflicts=('manis')
 options=('!debug' '!strip')
+install=manis.install
 _upstream_pkgrel=1
 source_x86_64=(
   "manis-${pkgver}-${_upstream_pkgrel}-${CARCH}.pkg.tar.zst::https://github.com/kaigedong/Manis/releases/download/build-${pkgver}/manis-${pkgver}-${_upstream_pkgrel}-${CARCH}.pkg.tar.zst"

@@ -14,6 +14,9 @@ Render a release into an AUR checkout:
 packaging/aur/render-pkgbuild.sh VERSION SHA256 /path/to/manis-bin
 ```
 
+The renderer writes both `PKGBUILD` and `manis.install`; commit both files with the generated
+`.SRCINFO` so package installs and upgrades restore Mihomo's narrow TUN capabilities.
+
 Generate `.SRCINFO` on Arch Linux:
 
 ```bash

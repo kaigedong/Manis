@@ -2,6 +2,7 @@
 members = [
     "crates/manis-core",
     "crates/manis-engine",
+    "crates/manis-linux-helper",
     "crates/manis-mihomo",
     "crates/manis-profile",
     "crates/manis-ui",

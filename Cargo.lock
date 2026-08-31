@@ -4058,6 +4058,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "manis-linux-helper"
+version = "0.1.0"
+
+[[package]]
 name = "manis-mihomo"
 version = "0.1.0"
 dependencies = [
