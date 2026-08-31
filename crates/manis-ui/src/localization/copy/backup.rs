@@ -7,7 +7,19 @@ pub(crate) const DETAIL: LocalizedText = LocalizedText::new(
 );
 pub(crate) const EXPORT: LocalizedText = LocalizedText::new("Export configuration", "导出完整配置");
 pub(crate) const IMPORT: LocalizedText = LocalizedText::new("Import file", "从文件导入");
-pub(crate) const PASTE: LocalizedText = LocalizedText::new("Paste configuration", "粘贴配置导入");
+pub(crate) const EDIT: LocalizedText = LocalizedText::new("Edit configuration", "修改配置");
+pub(crate) const EDIT_DETAIL: LocalizedText = LocalizedText::new(
+    "Edit the current complete Manis configuration, or paste an exported .manis.json file to replace it. Validate and preview before applying.",
+    "下方是当前完整的 Manis 配置，可直接修改，也可粘贴 .manis.json 文件的完整内容替换。应用前需校验并预览。",
+);
+pub(crate) const LOADING_CURRENT: LocalizedText =
+    LocalizedText::new("Loading current configuration…", "正在读取当前配置…");
+pub(crate) const EDIT_FAILED: LocalizedText = LocalizedText::new(
+    "Could not read the current configuration. Check its contents and directory permissions.",
+    "无法读取当前配置，请检查配置内容及目录权限。",
+);
+pub(crate) const VALIDATE: LocalizedText = LocalizedText::new("Validate and preview", "校验并预览");
+pub(crate) const BACK_TO_EDIT: LocalizedText = LocalizedText::new("Back to editing", "返回修改");
 pub(crate) const SENSITIVE: LocalizedText = LocalizedText::new(
     "Includes subscription URLs and node passwords in plain text. Keep the file private and only import configurations you trust.",
     "配置包含明文订阅链接和节点密码。请妥善保管，不要公开分享；仅导入可信的配置。",
@@ -29,6 +41,10 @@ pub(crate) const RULE_SOURCES: LocalizedText = LocalizedText::new("Rule sources"
 pub(crate) const MANUAL_RULES: LocalizedText = LocalizedText::new("Manual rules", "手动规则");
 pub(crate) const EXPORTING: LocalizedText =
     LocalizedText::new("Exporting configuration…", "正在导出配置…");
+pub(crate) const EXPORT_CANCELLED: LocalizedText =
+    LocalizedText::new("Configuration export cancelled.", "已取消导出配置。");
+pub(crate) const IMPORT_CANCELLED: LocalizedText =
+    LocalizedText::new("Configuration import cancelled.", "已取消导入配置。");
 pub(crate) const READING: LocalizedText =
     LocalizedText::new("Validating configuration…", "正在校验配置…");
 pub(crate) const IMPORTING: LocalizedText = LocalizedText::new(
@@ -54,10 +70,6 @@ pub(crate) const BUSY: LocalizedText = LocalizedText::new(
 pub(crate) const NO_STORE: LocalizedText = LocalizedText::new(
     "The local configuration directory is unavailable.",
     "本地配置目录不可用。",
-);
-pub(crate) const NO_TEXT: LocalizedText = LocalizedText::new(
-    "The clipboard has no text. Copy the entire exported .manis.json file first.",
-    "剪贴板中没有文本。请先复制导出的 .manis.json 文件的完整内容。",
 );
 pub(crate) const FILE_ERROR: LocalizedText = LocalizedText::new(
     "Could not open the file dialog or access the selected file.",

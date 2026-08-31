@@ -1149,7 +1149,7 @@ impl ManisApp {
             .border_t_1()
             .border_color(theme.outline_subtle)
             .bg(if current {
-                theme.selection_surface
+                theme.action_soft
             } else {
                 theme.surface_base
             })
@@ -1173,7 +1173,7 @@ impl ManisApp {
                     )),
             )
             .when(manually_selectable, |row| {
-                row.hover(move |row| row.bg(if current { theme.selection_surface } else { theme.surface_low }))
+                row.hover(move |row| row.bg(if current { theme.action_soft } else { theme.surface_low }))
                     .focus_visible(move |row| row.border_1().border_color(theme.focus_ring))
                     .role(Role::RadioButton)
                     .aria_toggled(if current {
@@ -1239,9 +1239,7 @@ impl ManisApp {
                     .text_size(TextRole::Body.size())
                     .line_height(TextRole::Body.line_height())
                     .font_weight(TextRole::Label.weight())
-                    .text_color(if current {
-                        theme.selection_accent
-                    } else if manually_selectable {
+                    .text_color(if current || manually_selectable {
                         theme.text_primary
                     } else {
                         theme.text_secondary
@@ -1252,7 +1250,7 @@ impl ManisApp {
                             language.localized(copy::app::CURRENT),
                             StatusTone::Neutral,
                             theme,
-                        ).bg(theme.selection_surface).text_color(theme.selection_accent)))
+                        )))
                     }),
             )
             .child(
@@ -1278,15 +1276,15 @@ impl ManisApp {
                 .rounded_full()
                 .border_2()
                 .border_color(if current {
-                    theme.selection_accent
+                    theme.action_primary
                 } else {
                     theme.outline_strong
                 })
-                .when(current, |dot| dot.bg(theme.selection_accent));
+                .when(current, |dot| dot.bg(theme.action_primary));
         }
         if current {
             return div().size(px(22.0)).flex().items_center().justify_center()
-                .text_color(theme.selection_accent)
+                .text_color(theme.text_primary)
                 .child(gpui_component::Icon::new(IconName::Check).small());
         }
         div()
