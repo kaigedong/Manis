@@ -24,6 +24,8 @@ struct RecordedRequest {
     body: Option<Value>,
 }
 
+type TcpResponseServer = (String, std::thread::JoinHandle<std::io::Result<String>>);
+
 #[cfg(unix)]
 type UnixResponseServer = (
     std::path::PathBuf,
@@ -915,10 +917,12 @@ fn std_http_transport_accepts_fragmented_response_headers_within_read_timeout()
 -> Result<(), Box<dyn std::error::Error>> {
     let (address, handle) = spawn_fragmented_response_header_server()?;
     let config = ControllerConfig::new(format!("http://{address}"))?
-        .with_timeouts(Duration::from_millis(40), Duration::from_millis(800));
+        .with_timeouts(Duration::from_millis(40), Duration::from_secs(2));
 
-    let body = StdHttpTransport::default().get(&config, "/version")?;
-    let request = handle.join().map_err(|_| "server thread panicked")?;
+    let response = StdHttpTransport::default().get(&config, "/version");
+    let served = handle.join().map_err(|_| "server thread panicked")?;
+    let body = response?;
+    let request = served?;
 
     assert_eq!(body, r#"{"meta":true}"#);
     assert!(request.starts_with("GET /version HTTP/1.1\r\n"));
@@ -1422,23 +1426,29 @@ fn spawn_trickling_incomplete_header_server()
     Ok((address, handle))
 }
 
-fn spawn_fragmented_response_header_server()
--> Result<(String, std::thread::JoinHandle<String>), Box<dyn std::error::Error>> {
+fn spawn_fragmented_response_header_server() -> Result<TcpResponseServer, Box<dyn std::error::Error>>
+{
     let listener = TcpListener::bind("127.0.0.1:0")?;
     let address = listener.local_addr()?.to_string();
-    let handle = std::thread::spawn(move || {
-        let Ok((mut stream, _peer)) = listener.accept() else {
-            return String::new();
-        };
-        stream
-            .set_read_timeout(Some(Duration::from_secs(2)))
-            .unwrap();
-        let request = read_request(&mut stream).unwrap();
-        for byte in b"HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\n{\"meta\":true}" {
-            let _ = stream.write_all(&[*byte]);
-            std::thread::sleep(Duration::from_millis(5));
+    let handle = std::thread::spawn(move || -> std::io::Result<String> {
+        let (mut stream, _peer) = listener.accept()?;
+        stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+        stream.set_write_timeout(Some(Duration::from_secs(2)))?;
+        stream.set_nodelay(true)?;
+        let request = read_request(&mut stream)?;
+        // A few deliberate fragments avoid accumulating a scheduler delay for
+        // every byte. Each gap still exceeds the 40 ms send-phase timeout, and
+        // both a header name and the terminating CRLF are split across reads.
+        stream.write_all(b"HTTP/1.1 200 OK\r\nCont")?;
+        for fragment in [
+            &b"ent-Length: 13\r"[..],
+            &b"\n\r"[..],
+            &b"\n{\"meta\":true}"[..],
+        ] {
+            std::thread::sleep(Duration::from_millis(100));
+            stream.write_all(fragment)?;
         }
-        request
+        Ok(request)
     });
 
     Ok((address, handle))
