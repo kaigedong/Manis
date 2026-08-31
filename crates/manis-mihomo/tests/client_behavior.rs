@@ -742,8 +742,11 @@ fn std_http_transport_sends_bearer_auth_and_accepts_chunked()
     let request = handle.join().map_err(|_| "server thread panicked")?;
 
     assert!(request.starts_with("GET /version HTTP/1.1\r\n"));
-    assert!(request.contains("Host: "));
-    assert!(request.contains("Authorization: Bearer controller-token\r\n"));
+    assert!(header_value(&request, "Host").is_some());
+    assert_eq!(
+        header_value(&request, "Authorization"),
+        Some("Bearer controller-token")
+    );
     assert_eq!(body, r#"{"ok":true}"#);
 
     Ok(())
@@ -763,9 +766,15 @@ fn std_http_transport_sends_json_patch_with_bearer_auth() -> Result<(), Box<dyn 
     let request = handle.join().map_err(|_| "server thread panicked")?;
 
     assert!(request.starts_with("PATCH /configs HTTP/1.1\r\n"));
-    assert!(request.contains("Authorization: Bearer controller-token\r\n"));
-    assert!(request.contains("Content-Type: application/json\r\n"));
-    assert!(request.contains("Content-Length: 23\r\n"));
+    assert_eq!(
+        header_value(&request, "Authorization"),
+        Some("Bearer controller-token")
+    );
+    assert_eq!(
+        header_value(&request, "Content-Type"),
+        Some("application/json")
+    );
+    assert_eq!(header_value(&request, "Content-Length"), Some("23"));
     assert!(request.ends_with(r#"{"tun":{"enable":true}}"#));
     assert_eq!(response, "");
 
@@ -784,8 +793,14 @@ fn std_http_client_sends_routing_mode_patch() -> Result<(), Box<dyn std::error::
     let request = handle.join().map_err(|_| "server thread panicked")?;
 
     assert!(request.starts_with("PATCH /configs HTTP/1.1\r\n"));
-    assert!(request.contains("Authorization: Bearer controller-token\r\n"));
-    assert!(request.contains("Content-Type: application/json\r\n"));
+    assert_eq!(
+        header_value(&request, "Authorization"),
+        Some("Bearer controller-token")
+    );
+    assert_eq!(
+        header_value(&request, "Content-Type"),
+        Some("application/json")
+    );
     assert!(request.ends_with(r#"{"mode":"direct"}"#));
 
     Ok(())
@@ -804,9 +819,15 @@ fn std_http_transport_sends_json_put_with_bearer_auth() -> Result<(), Box<dyn st
     let request = handle.join().map_err(|_| "server thread panicked")?;
 
     assert!(request.starts_with("PUT /proxies/Proxy HTTP/1.1\r\n"));
-    assert!(request.contains("Authorization: Bearer controller-token\r\n"));
-    assert!(request.contains("Content-Type: application/json\r\n"));
-    assert!(request.contains("Content-Length: 16\r\n"));
+    assert_eq!(
+        header_value(&request, "Authorization"),
+        Some("Bearer controller-token")
+    );
+    assert_eq!(
+        header_value(&request, "Content-Type"),
+        Some("application/json")
+    );
+    assert_eq!(header_value(&request, "Content-Length"), Some("16"));
     assert!(request.ends_with(r#"{"name":"US 01"}"#));
     assert_eq!(response, "");
 
@@ -875,10 +896,9 @@ fn unix_socket_transport_sends_json_patch_without_auth() -> Result<(), Box<dyn s
     let listener = UnixListener::bind(&socket_path)?;
     let server = std::thread::spawn(move || -> std::io::Result<String> {
         let (mut stream, _) = listener.accept()?;
-        let mut request = [0_u8; 2048];
-        let read = stream.read(&mut request)?;
+        let request = read_request(&mut stream)?;
         stream.write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")?;
-        Ok(String::from_utf8_lossy(&request[..read]).into_owned())
+        Ok(request)
     });
 
     let config = ControllerConfig::default().with_secret("uds-token");
@@ -891,8 +911,11 @@ fn unix_socket_transport_sends_json_patch_without_auth() -> Result<(), Box<dyn s
     std::fs::remove_file(&socket_path)?;
 
     assert!(request.starts_with("PATCH /configs HTTP/1.1\r\n"));
-    assert!(request.contains("Content-Type: application/json\r\n"));
-    assert!(!request.contains("Authorization:"));
+    assert_eq!(
+        header_value(&request, "Content-Type"),
+        Some("application/json")
+    );
+    assert!(header_value(&request, "Authorization").is_none());
     assert!(request.ends_with(r#"{"tun":{"enable":false}}"#));
     Ok(())
 }
@@ -911,10 +934,9 @@ fn unix_socket_client_sends_routing_mode_patch() -> Result<(), Box<dyn std::erro
     let listener = UnixListener::bind(&socket_path)?;
     let server = std::thread::spawn(move || -> std::io::Result<String> {
         let (mut stream, _) = listener.accept()?;
-        let mut request = [0_u8; 2048];
-        let read = stream.read(&mut request)?;
+        let request = read_request(&mut stream)?;
         stream.write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")?;
-        Ok(String::from_utf8_lossy(&request[..read]).into_owned())
+        Ok(request)
     });
 
     let config = ControllerConfig::default().with_secret("uds-token");
@@ -924,8 +946,11 @@ fn unix_socket_client_sends_routing_mode_patch() -> Result<(), Box<dyn std::erro
     std::fs::remove_file(&socket_path)?;
 
     assert!(request.starts_with("PATCH /configs HTTP/1.1\r\n"));
-    assert!(request.contains("Content-Type: application/json\r\n"));
-    assert!(!request.contains("Authorization:"));
+    assert_eq!(
+        header_value(&request, "Content-Type"),
+        Some("application/json")
+    );
+    assert!(header_value(&request, "Authorization").is_none());
     assert!(request.ends_with(r#"{"mode":"rule"}"#));
     Ok(())
 }
@@ -944,10 +969,9 @@ fn unix_socket_transport_sends_json_put_without_auth() -> Result<(), Box<dyn std
     let listener = UnixListener::bind(&socket_path)?;
     let server = std::thread::spawn(move || -> std::io::Result<String> {
         let (mut stream, _) = listener.accept()?;
-        let mut request = [0_u8; 2048];
-        let read = stream.read(&mut request)?;
+        let request = read_request(&mut stream)?;
         stream.write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")?;
-        Ok(String::from_utf8_lossy(&request[..read]).into_owned())
+        Ok(request)
     });
 
     let config = ControllerConfig::default().with_secret("uds-token");
@@ -960,8 +984,11 @@ fn unix_socket_transport_sends_json_put_without_auth() -> Result<(), Box<dyn std
     std::fs::remove_file(&socket_path)?;
 
     assert!(request.starts_with("PUT /proxies/Proxy HTTP/1.1\r\n"));
-    assert!(request.contains("Content-Type: application/json\r\n"));
-    assert!(!request.contains("Authorization:"));
+    assert_eq!(
+        header_value(&request, "Content-Type"),
+        Some("application/json")
+    );
+    assert!(header_value(&request, "Authorization").is_none());
     assert!(request.ends_with(r#"{"name":"US 01"}"#));
     Ok(())
 }
@@ -995,10 +1022,9 @@ fn unix_socket_transport_sends_readonly_http_request() -> Result<(), Box<dyn std
     let listener = UnixListener::bind(&socket_path)?;
     let server = std::thread::spawn(move || -> std::io::Result<String> {
         let (mut stream, _) = listener.accept()?;
-        let mut request = [0_u8; 2048];
-        let read = stream.read(&mut request)?;
+        let request = read_request(&mut stream)?;
         stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\n{\"meta\":true}")?;
-        Ok(String::from_utf8_lossy(&request[..read]).into_owned())
+        Ok(request)
     });
 
     let config = ControllerConfig::default().with_secret("uds-token");
@@ -1008,7 +1034,7 @@ fn unix_socket_transport_sends_readonly_http_request() -> Result<(), Box<dyn std
 
     assert_eq!(body, r#"{"meta":true}"#);
     assert!(request.starts_with("GET /version HTTP/1.1\r\n"));
-    assert!(!request.contains("Authorization:"));
+    assert!(header_value(&request, "Authorization").is_none());
     Ok(())
 }
 
@@ -1205,20 +1231,143 @@ fn spawn_one_response_server(
         let Ok((mut stream, _peer)) = listener.accept() else {
             return String::new();
         };
-        let mut request = Vec::new();
-        let mut buffer = [0_u8; 1024];
-        while let Ok(read) = stream.read(&mut buffer) {
-            if read == 0 {
-                break;
-            }
-            request.extend_from_slice(&buffer[..read]);
-            if request.windows(4).any(|window| window == b"\r\n\r\n") {
-                break;
-            }
-        }
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let request = read_request(&mut stream).unwrap();
         let _ = stream.write_all(response.as_bytes());
-        String::from_utf8_lossy(&request).into_owned()
+        request
     });
 
     Ok((address, handle))
+}
+
+fn header_value<'a>(request: &'a str, name: &str) -> Option<&'a str> {
+    request
+        .split("\r\n\r\n")
+        .next()?
+        .lines()
+        .skip(1)
+        .find_map(|line| {
+            let (key, value) = line.split_once(':')?;
+            key.eq_ignore_ascii_case(name).then(|| value.trim())
+        })
+}
+
+fn read_request(stream: &mut impl Read) -> std::io::Result<String> {
+    let mut request = Vec::new();
+    let mut byte = [0_u8; 1];
+    while !request.ends_with(b"\r\n\r\n") {
+        stream.read_exact(&mut byte)?;
+        request.push(byte[0]);
+        assert!(
+            request.len() <= 64 * 1024,
+            "fixture request headers too large"
+        );
+    }
+    let headers = String::from_utf8(request.clone()).unwrap();
+    let length = header_value(&headers, "content-length")
+        .unwrap_or("0")
+        .parse::<usize>()
+        .unwrap();
+    assert!(length <= 1024 * 1024);
+    let start = request.len();
+    request.resize(start + length, 0);
+    stream.read_exact(&mut request[start..])?;
+    Ok(String::from_utf8(request).unwrap())
+}
+
+#[test]
+fn http_decoder_accepts_close_delimited_body() -> Result<(), Box<dyn std::error::Error>> {
+    let (address, server) = spawn_one_response_server("HTTP/1.1 200 OK\r\n\r\n{\"ok\":true}")?;
+    let config = ControllerConfig::new(format!("http://{address}"))?;
+    assert_eq!(
+        StdHttpTransport::default().get(&config, "/version")?,
+        r#"{"ok":true}"#
+    );
+    server.join().unwrap();
+    Ok(())
+}
+
+#[test]
+fn http_decoder_accepts_headers_within_the_configured_limit()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (address, server) = spawn_one_response_server(&format!(
+        "HTTP/1.1 200 OK\r\nX-Large: {}\r\nContent-Length: 2\r\n\r\n{{}}",
+        "x".repeat(32 * 1024)
+    ))?;
+    let config = ControllerConfig::new(format!("http://{address}"))?;
+    assert_eq!(StdHttpTransport::default().get(&config, "/version")?, "{}");
+    server.join().unwrap();
+    Ok(())
+}
+
+#[test]
+fn chunk_trailers_are_discarded_with_the_closed_connection()
+-> Result<(), Box<dyn std::error::Error>> {
+    // ureq ends the body at the zero chunk; Manis neither retains trailers nor reuses this socket.
+    let (address, server) = spawn_one_response_server(&format!(
+        "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\n{{}}\r\n0\r\nX-Trailer: {}\r\n\r\n",
+        "x".repeat(64 * 1024 + 1)
+    ))?;
+    let config = ControllerConfig::new(format!("http://{address}"))?;
+    assert_eq!(
+        StdHttpTransport::with_body_limit(2).get(&config, "/version")?,
+        "{}"
+    );
+    server.join().unwrap();
+    Ok(())
+}
+
+#[test]
+fn http_decoder_rejects_malformed_and_oversized_metadata() -> Result<(), Box<dyn std::error::Error>>
+{
+    let oversized = "x".repeat(64 * 1024 + 1);
+    for (index, response) in [
+        format!("HTTP/1.1 200 {oversized}\r\n\r\n"),
+        format!("HTTP/1.1 200 OK\r\nX-Header: {oversized}\r\n\r\n"),
+        format!("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n{oversized}\r\n"),
+        "HTTP/1.1 200 OK\r\nContent-Length: 50\r\n\r\ntruncated".to_owned(),
+        "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n1\r\nxINVALID\r\n0\r\n\r\n"
+            .to_owned(),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let (address, server) = spawn_one_response_server(&response)?;
+        let config = ControllerConfig::new(format!("http://{address}"))?;
+        assert!(
+            StdHttpTransport::with_body_limit(1024)
+                .get(&config, "/version")
+                .is_err(),
+            "case {index}"
+        );
+        server.join().unwrap();
+    }
+    Ok(())
+}
+
+#[test]
+fn redirect_does_not_follow_or_expose_secrets() -> Result<(), Box<dyn std::error::Error>> {
+    let destination = TcpListener::bind("127.0.0.1:0")?;
+    destination.set_nonblocking(true)?;
+    let (address, server) = spawn_one_response_server(&format!(
+        "HTTP/1.1 302 secret-token\r\nLocation: http://{}/stolen\r\nContent-Length: 12\r\n\r\nsecret-token",
+        destination.local_addr()?
+    ))?;
+    let config = ControllerConfig::new(format!("http://{address}"))?.with_secret("secret-token");
+    let error = StdHttpTransport::default()
+        .get(&config, "/version")
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        MihomoError::HttpStatus {
+            status_code: 302,
+            ..
+        }
+    ));
+    assert!(!format!("{error:?} {error}").contains("secret-token"));
+    assert!(matches!(destination.accept(), Err(e) if e.kind() == std::io::ErrorKind::WouldBlock));
+    server.join().unwrap();
+    Ok(())
 }

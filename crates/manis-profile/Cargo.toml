@@ -10,5 +10,10 @@ readme.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[dependencies]
+serde = "1.0.229"
+serde_json = { version = "1.0.151", features = ["preserve_order"] }
+serde-saphyr = "0.0.29"
+
 [lints]
 workspace = true

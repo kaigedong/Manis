@@ -79,6 +79,11 @@ MANIS_UI_TRACE=debug cargo run -p manis-ui
 Manis diagnostics contain fixed event names and redacted metadata. Raw core logs can still contain
 data produced by the core; inspect them before sharing.
 
+Application lifecycle records in `logs/manis-events.log` use JSON Lines. Existing tab-separated
+history is still readable. Both the UI and file retain operation IDs for correlating mode changes,
+source imports, and other operations. See [runtime foundations](architecture/runtime-foundations.md)
+for the HTTP, configuration, and diagnostics implementation choices and upgrade constraints.
+
 ## Tests
 
 The default verification path is offline and deterministic:

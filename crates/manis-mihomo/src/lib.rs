@@ -5,6 +5,7 @@ mod client;
 mod config;
 mod error;
 mod http;
+mod http_socket;
 mod live;
 mod models;
 
