@@ -693,11 +693,9 @@ impl ManisApp {
         };
         let update = session.drain();
         self.live_status = update.status;
-        self.dropped_kernel_logs = self.dropped_kernel_logs.saturating_add(update.dropped_logs);
         for entry in update.logs {
             if self.kernel_logs.len() == 500 {
                 self.kernel_logs.pop_front();
-                self.dropped_kernel_logs = self.dropped_kernel_logs.saturating_add(1);
             }
             self.kernel_logs.push_back(entry);
         }

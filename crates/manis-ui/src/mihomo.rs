@@ -465,14 +465,12 @@ impl Default for LiveStreamStatus {
 struct LiveMailbox {
     latest_connections: Option<ConnectionsState>,
     logs: VecDeque<KernelLogEntry>,
-    dropped_logs: u64,
     status: LiveStreamStatus,
 }
 
 pub(crate) struct LiveRuntimeUpdate {
     pub connections: Option<ConnectionsState>,
     pub logs: Vec<KernelLogEntry>,
-    pub dropped_logs: u64,
     pub status: LiveStreamStatus,
 }
 
@@ -499,7 +497,6 @@ impl LiveRuntimeSession {
             return LiveRuntimeUpdate {
                 connections: None,
                 logs: Vec::new(),
-                dropped_logs: 0,
                 status: LiveStreamStatus {
                     activity: LiveStreamPhase::Unavailable,
                     logs: LiveStreamPhase::Unavailable,
@@ -509,7 +506,6 @@ impl LiveRuntimeSession {
         LiveRuntimeUpdate {
             connections: mailbox.latest_connections.take(),
             logs: mailbox.logs.drain(..).collect(),
-            dropped_logs: std::mem::take(&mut mailbox.dropped_logs),
             status: mailbox.status.clone(),
         }
     }
@@ -1140,7 +1136,6 @@ fn push_kernel_log(mailbox: &Mutex<LiveMailbox>, sequence: u64, entry: &MihomoLo
     };
     if mailbox.logs.len() == LIVE_LOG_MAILBOX_CAPACITY {
         mailbox.logs.pop_front();
-        mailbox.dropped_logs = mailbox.dropped_logs.saturating_add(1);
     }
     mailbox.logs.push_back(KernelLogEntry {
         sequence,

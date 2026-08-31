@@ -47,7 +47,7 @@ impl ManisApp {
         .on_click(cx.listener(|this, _, _, cx| this.connect_mihomo(cx)));
         let heading = page_heading(
             language.message(Message::Logs),
-            logs_summary(language, count, self.dropped_kernel_logs),
+            logs_summary(language, count),
             None,
             theme,
         );
@@ -279,8 +279,8 @@ fn kernel_log_matches_query(entry: &KernelLogEntry, query: &str) -> bool {
         || format!("k#{:04}", entry.sequence).contains(&query)
 }
 
-fn logs_summary(language: Language, count: usize, dropped: u64) -> String {
-    copy::logs::summary(language, count, dropped)
+fn logs_summary(language: Language, count: usize) -> String {
+    copy::logs::summary(language, count)
 }
 
 fn format_log_time(timestamp_ms: u128) -> String {
@@ -399,12 +399,12 @@ mod tests {
     #[test]
     fn log_summary_uses_selected_language() {
         assert_eq!(
-            super::logs_summary(crate::localization::Language::English, 2, 1),
-            "2 logs · 1 log dropped under load · sensitive data hidden"
+            super::logs_summary(crate::localization::Language::English, 2),
+            "2 logs · sensitive data hidden"
         );
         assert_eq!(
-            super::logs_summary(crate::localization::Language::SimplifiedChinese, 2, 1),
-            "2 条日志 · 高负载时丢弃 1 条日志 · 敏感信息已隐藏"
+            super::logs_summary(crate::localization::Language::SimplifiedChinese, 2),
+            "2 条日志 · 敏感信息已隐藏"
         );
     }
 
