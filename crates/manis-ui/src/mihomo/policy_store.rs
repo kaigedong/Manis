@@ -4,7 +4,7 @@ use super::{
     BTreeMap, BTreeSet, HashMap, LEGACY_MANAGED_POLICY_PREFIX, LEGACY_MANAGED_POLICY_SUFFIX,
     LEGACY_MANIS_MANAGED_POLICY_VERSION, LEGACY_RELAY_MANAGED_POLICY_VERSION,
     LEGACY_RELAY_NODE_SELECTION_PREFERENCES_VERSION, LoadError, MANAGED_POLICY_PREFIX,
-    MANAGED_POLICY_SUFFIX, MANAGED_POLICY_VERSION, MAX_MANAGED_POLICIES,
+    MANAGED_POLICY_SUFFIX, MANAGED_POLICY_VERSION, MANIS_GLOBAL_GROUP_NAME, MAX_MANAGED_POLICIES,
     MAX_NODE_SELECTION_FILE_BYTES, MAX_NODE_SELECTION_POLICY_TARGETS, MAX_SUBSCRIPTION_FILE_BYTES,
     NODE_SELECTION_PREFERENCES_FILE, NODE_SELECTION_PREFERENCES_VERSION, Name, NodeIdentity, Path,
     PolicyCandidateMatcher, PolicyRef, StoredSingleNode, SubscriptionStoreError, UserPolicyGroup,
@@ -31,6 +31,10 @@ fn direct_policy_for_member(
         return Ok(match member.node_name.as_str() {
             "DIRECT" => Some(PolicyRef::Direct),
             "REJECT" => Some(PolicyRef::Reject),
+            "PROXY" => Some(PolicyRef::Group(
+                Name::parse(MANIS_GLOBAL_GROUP_NAME)
+                    .map_err(|error| LoadError::Runtime(error.to_string()))?,
+            )),
             _ => None,
         });
     }
@@ -95,7 +99,7 @@ fn compile_managed_policy_group(
     let kind = match group.strategy {
         ManagedPolicyStrategy::Manual => UserPolicyGroupKind::Select,
         ManagedPolicyStrategy::LowestLatency => UserPolicyGroupKind::UrlTest {
-            tolerance: 50,
+            tolerance: group.switch_tolerance_ms,
             interval_secs: group.test_interval_secs,
         },
     };
@@ -388,6 +392,7 @@ fn encode_managed_policy(group: &ManagedPolicyGroup) -> Result<String, Subscript
         format!("icon\t{}", group.icon.key()),
         format!("strategy\t{}", group.strategy.key()),
         format!("interval\t{}", group.test_interval_secs),
+        format!("tolerance-ms\t{}", group.switch_tolerance_ms),
         format!("matcher\t{matcher_key}"),
         format!("filter\t{}", encode_hex(filter)),
     ];
@@ -425,6 +430,7 @@ fn decode_managed_policy(
     let mut icon = None;
     let mut strategy = None;
     let mut interval = None;
+    let mut tolerance = None;
     let mut matcher = None;
     let mut filter = None;
     let mut members = BTreeSet::new();
@@ -452,6 +458,13 @@ fn decode_managed_policy(
                         .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?,
                 );
             }
+            ["tolerance-ms", value] if tolerance.is_none() => {
+                tolerance = Some(
+                    value
+                        .parse::<u16>()
+                        .map_err(|_| SubscriptionStoreError::StoredSourceUnavailable)?,
+                );
+            }
             ["matcher", value] if matcher.is_none() => matcher = Some((*value).to_owned()),
             ["filter", value] if filter.is_none() => filter = Some(decode_hex(value)?),
             ["member", source, node] => {
@@ -474,6 +487,7 @@ fn decode_managed_policy(
     .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
     group.icon = icon.ok_or(SubscriptionStoreError::StoredSourceUnavailable)?;
     group.strategy = strategy.ok_or(SubscriptionStoreError::StoredSourceUnavailable)?;
+    group.switch_tolerance_ms = tolerance.unwrap_or(group.switch_tolerance_ms);
     group
         .set_test_interval_secs(interval.unwrap_or(600))
         .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
@@ -687,4 +701,43 @@ pub(crate) fn load_node_selection_preferences_in(
     _directory: &Path,
 ) -> Result<NodeSelectionPreferences, SubscriptionStoreError> {
     Ok(NodeSelectionPreferences::default())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn old_policy_files_gain_tolerance_and_custom_values_round_trip() {
+        let mut group = ManagedPolicyGroup::new("policy-tolerance", "Auto").unwrap();
+        group.strategy = ManagedPolicyStrategy::LowestLatency;
+        let legacy = encode_managed_policy(&group)
+            .unwrap()
+            .lines()
+            .filter(|line| !line.starts_with("tolerance-ms\t"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let decoded = decode_managed_policy(&legacy, &group.id).unwrap();
+        assert_eq!(decoded.switch_tolerance_ms, 150);
+        for tolerance in [0, 50, 150, 275, 500] {
+            group.switch_tolerance_ms = tolerance;
+            assert_eq!(
+                decode_managed_policy(&encode_managed_policy(&group).unwrap(), &group.id).unwrap(),
+                group
+            );
+        }
+        for invalid in ["-1", "65536", "20%", "nope"] {
+            assert!(
+                decode_managed_policy(&format!("{legacy}\ntolerance-ms\t{invalid}"), &group.id)
+                    .is_err()
+            );
+        }
+        assert!(
+            decode_managed_policy(
+                &format!("{legacy}\ntolerance-ms\t100\ntolerance-ms\t200"),
+                &group.id
+            )
+            .is_err()
+        );
+    }
 }

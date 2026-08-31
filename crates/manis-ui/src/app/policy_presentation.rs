@@ -11,6 +11,9 @@ struct PolicyGroupIconView<'a> {
 
 impl ManisApp {
     fn persist_node_workspace(&mut self) {
+        if self.configuration_transfer.active {
+            return;
+        }
         let Some(store_dir) = self.subscription_store_dir.as_ref() else {
             return;
         };
@@ -53,6 +56,9 @@ impl ManisApp {
     }
 
     fn persist_group_benchmarks(&self) {
+        if self.configuration_transfer.active {
+            return;
+        }
         let Some(store_dir) = self.subscription_store_dir.as_ref() else {
             return;
         };
@@ -80,6 +86,9 @@ impl ManisApp {
     }
 
     fn begin_group_benchmark(&mut self, key: String) -> Option<u64> {
+        if self.configuration_transfer.active {
+            return None;
+        }
         if self.managed_policies.active_benchmark_generation.is_some() {
             return None;
         }
@@ -497,7 +506,14 @@ impl ManisApp {
             })
     }
 
+    fn policy_candidate_display_name(name: &str) -> &str {
+        if name == manis_profile::MANIS_GLOBAL_GROUP_NAME { "Proxy" } else { name }
+    }
+
     fn policy_node_source_label(&self, node: &PolicyNode, language: Language) -> String {
+        if node.name == manis_profile::MANIS_GLOBAL_GROUP_NAME {
+            return language.localized(copy::nodes::BUILT_IN).to_owned();
+        }
         if node.kind == manis_core::PolicyCandidateKind::PolicyGroup {
             return language.message(Message::PolicyGroup).to_owned();
         }

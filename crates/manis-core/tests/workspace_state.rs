@@ -400,6 +400,7 @@ fn managed_policy_validates_identity_and_name_matching() {
     let mut group = ManagedPolicyGroup::new("group-1", "香港自动").expect("valid group");
     assert_eq!(group.strategy, ManagedPolicyStrategy::Manual);
     assert_eq!(group.test_interval_secs, 600);
+    assert_eq!(group.switch_tolerance_ms, 150);
     assert_eq!(group.icon, ManagedPolicyIcon::None);
     assert!(group.matches("subscription:one", "Hong Kong 01"));
 

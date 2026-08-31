@@ -2,8 +2,9 @@ use std::fs;
 use std::process::Command;
 
 use manis_profile::{
-    Name, PolicyRef, Profile, SecretUrl, UserPolicyGroup, UserPolicyGroupKind, VlessProxy,
-    render_mihomo_yaml, render_mihomo_yaml_with_tun, write_private_atomic,
+    MANIS_GLOBAL_GROUP_NAME, Name, PolicyRef, Profile, SecretUrl, UserPolicyGroup,
+    UserPolicyGroupKind, VlessProxy, render_mihomo_yaml, render_mihomo_yaml_with_tun,
+    write_private_atomic,
 };
 
 #[test]
@@ -88,6 +89,7 @@ fn generated_user_policy_groups_pass_mihomo_validation() -> Result<(), Box<dyn s
     }
     let subscription =
         SecretUrl::parse_https("https://subscription.example.invalid/client?token=fixture-secret")?;
+    let global_exit = PolicyRef::Group(Name::parse(MANIS_GLOBAL_GROUP_NAME)?);
     let group = UserPolicyGroup {
         name: Name::parse("HK Auto")?,
         icon: None,
@@ -97,11 +99,24 @@ fn generated_user_policy_groups_pass_mihomo_validation() -> Result<(), Box<dyn s
         },
         provider_indexes: vec![0],
         direct_proxies: Vec::new(),
-        direct_policies: vec![PolicyRef::Direct, PolicyRef::Reject],
+        direct_policies: vec![global_exit.clone(), PolicyRef::Direct, PolicyRef::Reject],
         filter: Some("(?i)Hong Kong".to_owned()),
     };
-    let profile =
-        Profile::qx_sources_with_groups(vec![subscription], Vec::new(), vec![group], 17_890)?;
+    let manual = UserPolicyGroup {
+        name: Name::parse("Manual Proxy")?,
+        icon: None,
+        kind: UserPolicyGroupKind::Select,
+        provider_indexes: Vec::new(),
+        direct_proxies: Vec::new(),
+        direct_policies: vec![global_exit],
+        filter: None,
+    };
+    let profile = Profile::qx_sources_with_groups(
+        vec![subscription],
+        Vec::new(),
+        vec![group, manual],
+        17_890,
+    )?;
     let yaml = render_mihomo_yaml(&profile)?;
     let config = write_private_atomic(&root, "manis-generated.yaml", yaml.as_bytes())?;
 

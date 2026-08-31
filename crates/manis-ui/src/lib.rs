@@ -3,6 +3,7 @@ mod app_update;
 mod assets;
 mod brand;
 mod components;
+mod config_backup;
 mod core_update;
 mod diagnostics;
 mod direct_rule;

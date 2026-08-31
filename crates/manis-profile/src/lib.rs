@@ -1256,10 +1256,12 @@ fn compile_user_groups(
                 }
                 proxies.push(PolicyRef::Proxy(name));
             }
+            let global_exit_name = Name::parse(MANIS_GLOBAL_GROUP_NAME)?;
             let mut seen_policies = HashSet::new();
             for policy in group.direct_policies {
                 if let PolicyRef::Group(name) = &policy
-                    && (name == &group.name || !group_names.contains(name))
+                    && (name == &group.name
+                        || (!group_names.contains(name) && name != &global_exit_name))
                 {
                     return Err(ProfileError::DanglingReference);
                 }

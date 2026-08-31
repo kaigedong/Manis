@@ -30,6 +30,10 @@ pub(crate) const BASIC_INFORMATION: LocalizedText =
     LocalizedText::new("Basic information", "基本信息");
 pub(crate) const BOLT: LocalizedText = LocalizedText::new("Bolt", "闪电");
 pub(crate) const BUILT_IN: LocalizedText = LocalizedText::new("Built-in", "内置");
+pub(crate) const FOLLOW_HOME_SELECTION: LocalizedText = LocalizedText::new(
+    "Follows the manual selection on Nodes",
+    "跟随节点页面的手动选择",
+);
 pub(crate) const CANDIDATES: LocalizedText = LocalizedText::new("Candidates", "候选节点");
 pub(crate) const COMPASS: LocalizedText = LocalizedText::new("Compass", "罗盘");
 pub(crate) const COULD_NOT_DETERMINE_WHERE_TO_SAVE_POLICY_GROUPS: LocalizedText =
@@ -191,3 +195,10 @@ pub(crate) const UNAVAILABLE_2: LocalizedText = LocalizedText::new("Unavailable"
 pub(crate) const UNTESTED: LocalizedText = LocalizedText::new("Untested", "未测速");
 pub(crate) const USING_MIHOMO_CACHE: LocalizedText =
     LocalizedText::new("Using Mihomo cache", "使用 Mihomo 缓存");
+
+pub(crate) const SWITCH_TOLERANCE: LocalizedText =
+    LocalizedText::new("Switching tolerance", "切换余量");
+pub(crate) const SWITCH_TOLERANCE_HELP: LocalizedText = LocalizedText::new(
+    "Keep the current exit unless another is faster by more than this margin. An unavailable exit can switch immediately.",
+    "其他节点快出的时间超过此余量才切换；当前出口不可用时立即切换。",
+);

@@ -756,10 +756,14 @@ pub struct ManagedPolicyGroup {
     pub icon: ManagedPolicyIcon,
     pub strategy: ManagedPolicyStrategy,
     pub test_interval_secs: u32,
+    /// Required latency improvement before switching a healthy automatic exit.
+    pub switch_tolerance_ms: u16,
     pub matcher: PolicyCandidateMatcher,
 }
 
 impl ManagedPolicyGroup {
+    pub const DEFAULT_SWITCH_TOLERANCE_MS: u16 = 150;
+
     /// Creates a policy group with manual selection and an all-node matcher.
     ///
     /// # Errors
@@ -777,6 +781,7 @@ impl ManagedPolicyGroup {
             icon: ManagedPolicyIcon::default(),
             strategy: ManagedPolicyStrategy::default(),
             test_interval_secs: 600,
+            switch_tolerance_ms: Self::DEFAULT_SWITCH_TOLERANCE_MS,
             matcher: PolicyCandidateMatcher::default(),
         })
     }

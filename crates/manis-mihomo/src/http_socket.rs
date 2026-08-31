@@ -34,6 +34,32 @@ impl Socket {
         }
     }
 
+    fn read_with_timeout(
+        &mut self,
+        bytes: &mut [u8],
+        timeout: Option<Duration>,
+    ) -> io::Result<usize> {
+        let result = self.read_timeout(timeout);
+        #[cfg(target_os = "macos")]
+        if let (Self::Unix(stream), Err(error)) = (&mut *self, &result)
+            && error.kind() == io::ErrorKind::InvalidInput
+            && !timeout.is_some_and(|value| value.is_zero())
+        {
+            // Darwin rejects SO_RCVTIMEO once a Unix peer has closed, even if
+            // response bytes remain buffered. Drain them without risking a
+            // blocking read; an empty open socket must still report the error.
+            stream.set_nonblocking(true)?;
+            let read = stream.read(bytes);
+            stream.set_nonblocking(false)?;
+            return match read {
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => Err(result.unwrap_err()),
+                read => read,
+            };
+        }
+        result?;
+        self.read(bytes)
+    }
+
     fn write_timeout(&self, timeout: Option<Duration>) -> io::Result<()> {
         match self {
             Self::Tcp(stream) => stream.set_write_timeout(timeout),
@@ -112,6 +138,7 @@ struct SocketTransport {
     socket: Socket,
     buffers: LazyBuffers,
     cancelled: Option<Arc<AtomicBool>>,
+    response_timeout: Option<Duration>,
 }
 
 impl std::fmt::Debug for SocketTransport {
@@ -138,7 +165,18 @@ impl Transport for SocketTransport {
 
     fn await_input(&mut self, timeout: NextTimeout) -> Result<bool, ureq::Error> {
         let started = Instant::now();
-        let budget = timeout.not_zero().map(|t| *t);
+        // ureq carries the preceding send-phase deadline into response reads. The
+        // request has already been sent; that deadline must not cut off an idle
+        // live stream. Write deadlines still apply in transmit_output above.
+        let budget = if self.cancelled.is_some()
+            && matches!(
+                timeout.reason,
+                ureq::Timeout::SendRequest | ureq::Timeout::SendBody
+            ) {
+            self.response_timeout
+        } else {
+            timeout.not_zero().map(|t| *t)
+        };
         loop {
             if self
                 .cancelled
@@ -162,8 +200,10 @@ impl Transport for SocketTransport {
             } else {
                 remaining
             };
-            self.socket.read_timeout(poll)?;
-            match self.socket.read(self.buffers.input_append_buf()) {
+            match self
+                .socket
+                .read_with_timeout(self.buffers.input_append_buf(), poll)
+            {
                 Ok(amount) => {
                     self.buffers.input_appended(amount);
                     return Ok(amount > 0);
@@ -199,10 +239,63 @@ pub(crate) fn agent(
         socket,
         buffers: LazyBuffers::new(config.input_buffer_size(), config.output_buffer_size()),
         cancelled,
+        response_timeout: config.timeouts().recv_response,
     };
     ureq::Agent::with_parts(
         config,
         ConnectedSocket(Mutex::new(Some(transport))),
         ConnectedResolver,
     )
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unix_response_remains_readable_after_peer_closes() {
+        let (client, mut server) = UnixStream::pair().unwrap();
+        server
+            .set_write_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        let body = vec![b'x'; 4 * 1024];
+        server.write_all(&body).unwrap();
+        drop(server);
+        let mut socket = Socket::Unix(client);
+        let mut received = Vec::new();
+        let mut buffer = [0; 1024];
+        loop {
+            let amount = socket
+                .read_with_timeout(&mut buffer, Some(CANCEL_POLL))
+                .expect("peer EOF must not discard buffered response bytes");
+            if amount == 0 {
+                break;
+            }
+            received.extend_from_slice(&buffer[..amount]);
+        }
+        assert_eq!(received, body);
+    }
+
+    #[test]
+    fn open_unix_socket_still_enforces_read_timeout() {
+        let (client, _server) = UnixStream::pair().unwrap();
+        let mut socket = Socket::Unix(client);
+        let mut buffer = [0; 1];
+        let started = Instant::now();
+        let error = socket
+            .read_with_timeout(&mut buffer, Some(Duration::from_millis(20)))
+            .unwrap_err();
+        assert!(matches!(
+            error.kind(),
+            io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+        ));
+        assert!(started.elapsed() < Duration::from_secs(1));
+        assert_eq!(
+            socket
+                .read_with_timeout(&mut buffer, Some(Duration::ZERO))
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidInput
+        );
+    }
 }

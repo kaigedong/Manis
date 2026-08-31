@@ -142,9 +142,12 @@ fn response_header_deadline_does_not_wait_for_idle_server_to_close() {
         let _ = release_rx.recv_timeout(Duration::from_secs(4));
     });
     let started = Instant::now();
+    let LiveController::LoopbackHttp(config) = controller else {
+        unreachable!()
+    };
     assert!(
-        controller
-            .stream_logs("info", &Arc::new(AtomicBool::new(false)), |_| {})
+        manis_mihomo::MihomoClient::new(config, manis_mihomo::StdHttpTransport::default())
+            .fetch_version()
             .is_err()
     );
     assert!(
@@ -153,6 +156,33 @@ fn response_header_deadline_does_not_wait_for_idle_server_to_close() {
     );
     release_tx.send(()).unwrap();
     handle.join().unwrap();
+}
+
+#[test]
+fn quiet_log_stream_survives_request_and_response_deadlines() {
+    let (controller, handle) = server(|mut stream| {
+        // Mihomo does not flush the HTTP headers until its first log entry.
+        std::thread::sleep(Duration::from_millis(2200));
+        stream
+            .write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n")
+            .unwrap();
+        let body = "{\"type\":\"info\",\"payload\":\"after idle\"}\n";
+        for _ in 0..2 {
+            std::thread::sleep(Duration::from_millis(2200));
+            write!(stream, "{:X}\r\n{body}\r\n", body.len()).unwrap();
+        }
+        stream.write_all(b"0\r\n\r\n").unwrap();
+    });
+    let mut messages = Vec::new();
+    let result = controller.stream_logs("info", &Arc::new(AtomicBool::new(false)), |entry| {
+        messages.push(entry.payload);
+    });
+    assert!(
+        result.is_ok(),
+        "a quiet healthy stream must not time out: {result:?}"
+    );
+    handle.join().unwrap();
+    assert_eq!(messages, ["after idle", "after idle"]);
 }
 
 #[test]

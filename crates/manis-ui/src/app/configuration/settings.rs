@@ -544,6 +544,9 @@ impl ManisApp {
     }
 
     fn set_language_preference(&mut self, preference: LanguagePreference, cx: &mut Context<Self>) {
+        if self.configuration_transfer.active {
+            return;
+        }
         self.localizer.set_preference(preference);
         let language = self.language();
         match self.subscription_store_dir.as_ref() {

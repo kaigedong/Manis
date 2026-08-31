@@ -1015,8 +1015,14 @@ fn spawn_connection_stream(
     mailbox: Arc<Mutex<LiveMailbox>>,
 ) {
     thread::spawn(move || {
-        reconnect_live_stream(&cancelled, |attempt| {
-            set_live_status(&mailbox, true, stream_phase(attempt));
+        let mut first_request = true;
+        // Without a WebSocket upgrade Mihomo returns one HTTP snapshot. Poll at
+        // the requested interval and keep a healthy snapshot live between polls.
+        reconnect_live_stream(&cancelled, LIVE_CONNECTION_INTERVAL, |attempt| {
+            if first_request || attempt > 0 {
+                set_live_status(&mailbox, true, stream_phase(attempt));
+            }
+            first_request = false;
             let result = controller.stream_connections(
                 LIVE_CONNECTION_INTERVAL,
                 &cancelled,
@@ -1042,7 +1048,7 @@ fn spawn_log_stream(
 ) {
     thread::spawn(move || {
         let mut sequence = 0_u64;
-        reconnect_live_stream(&cancelled, |attempt| {
+        reconnect_live_stream(&cancelled, Duration::from_millis(250), |attempt| {
             set_live_status(&mailbox, false, stream_phase(attempt));
             let result = controller.stream_logs("info", &cancelled, |entry| {
                 sequence = sequence.wrapping_add(1);
@@ -1058,6 +1064,7 @@ fn spawn_log_stream(
 
 fn reconnect_live_stream(
     cancelled: &AtomicBool,
+    success_delay: Duration,
     mut connect: impl FnMut(usize) -> Result<(), MihomoError>,
 ) {
     let mut attempt = 0_usize;
@@ -1072,8 +1079,11 @@ fn reconnect_live_stream(
             attempt = attempt.saturating_add(1);
         }
         let shift = u32::try_from(attempt.min(5)).unwrap_or(5);
-        let delay =
-            Duration::from_millis(250_u64.saturating_mul(1_u64 << shift)).min(LIVE_RETRY_MAX);
+        let delay = if result.is_ok() {
+            success_delay
+        } else {
+            Duration::from_millis(250_u64.saturating_mul(1_u64 << shift)).min(LIVE_RETRY_MAX)
+        };
         let started = std::time::Instant::now();
         while started.elapsed() < delay && !cancelled.load(Ordering::Relaxed) {
             thread::sleep(Duration::from_millis(50));
@@ -3089,6 +3099,7 @@ IP-CIDR,192.0.2.0/24,DIRECT
         group.icon = ManagedPolicyIcon::Globe;
         group.strategy = ManagedPolicyStrategy::LowestLatency;
         group.set_test_interval_secs(1_800)?;
+        group.switch_tolerance_ms = 150;
         group.set_matcher(PolicyCandidateMatcher::name_contains("Hong Kong")?)?;
         super::save_managed_policy_in(&store, &group)?;
 
@@ -3097,6 +3108,7 @@ IP-CIDR,192.0.2.0/24,DIRECT
         explicit.set_matcher(PolicyCandidateMatcher::Explicit(BTreeSet::default()))?;
         explicit.toggle_member(NodeIdentity::new("subscription:source-1", "Tokyo Edge")?);
         explicit.toggle_member(NodeIdentity::new("saved", "Private Edge")?);
+        explicit.toggle_member(NodeIdentity::new("builtin", "PROXY")?);
         super::save_managed_policy_in(&store, &explicit)?;
 
         let groups = super::load_managed_policy_groups_in(&store)?;
@@ -3171,6 +3183,7 @@ IP-CIDR,192.0.2.0/24,DIRECT
         let mut latency = ManagedPolicyGroup::new("group-a-1", "香港优选")?;
         latency.strategy = ManagedPolicyStrategy::LowestLatency;
         latency.set_test_interval_secs(300)?;
+        latency.switch_tolerance_ms = 200;
         latency.set_matcher(PolicyCandidateMatcher::name_contains("Hong Kong")?)?;
 
         let mut explicit = ManagedPolicyGroup::new("group-b-2", "手动出口")?;
@@ -3180,6 +3193,7 @@ IP-CIDR,192.0.2.0/24,DIRECT
         explicit.toggle_member(NodeIdentity::new("policy:group-a-1", "香港优选")?);
         explicit.toggle_member(NodeIdentity::new("builtin", "DIRECT")?);
         explicit.toggle_member(NodeIdentity::new("builtin", "REJECT")?);
+        explicit.toggle_member(NodeIdentity::new("builtin", "PROXY")?);
 
         let compiled =
             super::compile_managed_policy_groups(&[latency, explicit], &indexes, &[], &[saved], 2)?;
@@ -3187,7 +3201,7 @@ IP-CIDR,192.0.2.0/24,DIRECT
         assert_eq!(
             compiled[0].kind,
             UserPolicyGroupKind::UrlTest {
-                tolerance: 50,
+                tolerance: 200,
                 interval_secs: 300,
             }
         );
@@ -3205,6 +3219,13 @@ IP-CIDR,192.0.2.0/24,DIRECT
             compiled[1]
                 .direct_policies
                 .contains(&PolicyRef::Group(Name::parse("香港优选")?))
+        );
+        assert!(
+            compiled[1]
+                .direct_policies
+                .contains(&PolicyRef::Group(Name::parse(
+                    super::MANIS_GLOBAL_GROUP_NAME
+                )?))
         );
         Ok(())
     }
@@ -3470,6 +3491,59 @@ IP-CIDR,192.0.2.0/24,DIRECT
     fn rejects_relative_unix_controller_endpoint() {
         assert!(super::unix_socket_path("unix://relative.sock").is_err());
         assert!(super::unix_socket_path("unix://").is_err());
+    }
+
+    #[test]
+    fn successful_activity_snapshots_use_the_poll_interval_without_reconnecting() {
+        use std::sync::{Mutex, mpsc};
+        use std::time::Instant;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let config =
+            super::ControllerConfig::new(format!("http://{}", listener.local_addr().unwrap()))
+                .unwrap();
+        let (times_tx, times_rx) = mpsc::channel();
+        let server = std::thread::spawn(move || {
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(3)))
+                    .unwrap();
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                loop {
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).unwrap() == 0 || line == "\r\n" {
+                        break;
+                    }
+                }
+                let body = r#"{"downloadTotal":0,"uploadTotal":0,"connections":[]}"#;
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .unwrap();
+                times_tx.send(Instant::now()).unwrap();
+            }
+        });
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let mailbox = Arc::new(Mutex::new(super::LiveMailbox::default()));
+        super::spawn_connection_stream(
+            super::LiveController::loopback(config),
+            cancelled.clone(),
+            mailbox.clone(),
+        );
+        let first = times_rx.recv_timeout(Duration::from_secs(3));
+        std::thread::sleep(Duration::from_millis(500));
+        let phase = mailbox.lock().unwrap().status.activity.clone();
+        let second = times_rx.recv_timeout(Duration::from_secs(3));
+        cancelled.store(true, Ordering::Relaxed);
+        server.join().unwrap();
+        assert_eq!(phase, super::LiveStreamPhase::Live);
+        assert!(
+            second.unwrap().duration_since(first.unwrap()) >= super::LIVE_CONNECTION_INTERVAL,
+            "successful finite snapshots must not trigger the fast reconnect loop"
+        );
     }
 
     #[test]

@@ -546,6 +546,9 @@ impl ManisApp {
         input: &Entity<SubscriptionTextInput>,
         cx: &mut Context<Self>,
     ) -> bool {
+        if self.configuration_transfer.active {
+            return false;
+        }
         let name = self
             .proxy_source_editor
             .name_input
@@ -635,6 +638,9 @@ impl ManisApp {
         preview: crate::subscription::SubscriptionPreview,
         cx: &mut Context<Self>,
     ) -> bool {
+        if self.configuration_transfer.active {
+            return false;
+        }
         let Some(store_dir) = self.subscription_store_dir.clone() else {
             self.proxy_source_editor.feedback =
                 SubscriptionFeedback::StoreFailed(SubscriptionStoreError::DataDirectoryUnavailable);
@@ -1219,9 +1225,15 @@ impl ManisApp {
     }
 
     fn set_single_node_enabled(&mut self, id: String, enabled: bool, cx: &mut Context<Self>) {
+        if self.configuration_transfer.active {
+            return;
+        }
         let Some(store_dir) = self.subscription_store_dir.clone() else {
             return;
         };
+        if !self.routing_apply_state.begin() {
+            return;
+        }
         let runtime = self.runtime.clone();
         let executor = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
@@ -1233,6 +1245,7 @@ impl ManisApp {
                 })
                 .await;
             this.update(cx, |this, cx| {
+                this.routing_apply_state.finish();
                 match result {
                     Ok(transaction) => {
                         let language = this.language();
@@ -1278,9 +1291,15 @@ impl ManisApp {
     }
 
     fn remove_saved_single_node(&mut self, id: String, cx: &mut Context<Self>) {
+        if self.configuration_transfer.active {
+            return;
+        }
         let Some(store_dir) = self.subscription_store_dir.clone() else {
             return;
         };
+        if !self.routing_apply_state.begin() {
+            return;
+        }
         let runtime = self.runtime.clone();
         let executor = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
@@ -1292,6 +1311,7 @@ impl ManisApp {
                 })
                 .await;
             this.update(cx, |this, cx| {
+                this.routing_apply_state.finish();
                 match result {
                     Ok(transaction) => {
                         let language = this.language();

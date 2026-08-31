@@ -3,7 +3,6 @@ use crate::localization::LocalizedText;
 mod format;
 pub(crate) use format::*;
 
-pub(crate) const ACTIVITY: LocalizedText = LocalizedText::new("Activity", "活动");
 pub(crate) const ADD_A_SOURCE_OR_CREATE_A_POLICY_GROUP_TO_CHOOSE: LocalizedText =
     LocalizedText::new(
         "Add a source or create a policy group to choose how traffic should be routed.",
@@ -89,7 +88,6 @@ pub(crate) const GLOBAL_MODE_ENABLED_CHOOSE_THE_GLOBAL_EXIT_ON_THE_NODES: Locali
         "Global mode enabled; choose the global exit on the Nodes page",
         "全局模式已生效；请在节点页选择全局出口",
     );
-pub(crate) const GROUPS: LocalizedText = LocalizedText::new("Groups", "组");
 pub(crate) const IMPORTED_SUBSCRIPTION_REMOVAL_FAILED: LocalizedText =
     LocalizedText::new("Imported subscription removal failed", "导入订阅移除失败");
 pub(crate) const IMPORTED_SUBSCRIPTION_REMOVED: LocalizedText =

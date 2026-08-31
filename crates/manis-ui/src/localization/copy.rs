@@ -6,6 +6,7 @@
 pub(crate) mod activity;
 pub(crate) mod app;
 pub(crate) mod app_update;
+pub(crate) mod backup;
 pub(crate) mod common;
 pub(crate) mod configuration;
 pub(crate) mod core_update;

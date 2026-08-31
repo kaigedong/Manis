@@ -1,6 +1,6 @@
 use crate::localization::{CountNoun, Language};
 
-pub(crate) fn summary(language: Language, count: usize, live_status: &str, dropped: u64) -> String {
+pub(crate) fn summary(language: Language, count: usize, dropped: u64) -> String {
     let count = language.count(CountNoun::Log, count);
     match language {
         Language::English => {
@@ -9,12 +9,10 @@ pub(crate) fn summary(language: Language, count: usize, live_status: &str, dropp
             } else {
                 format!("{dropped} logs")
             };
-            format!(
-                "{count} · Mihomo {live_status} · {dropped} dropped under load · sensitive data hidden"
-            )
+            format!("{count} · {dropped} dropped under load · sensitive data hidden")
         }
-        Language::SimplifiedChinese => format!(
-            "{count} · Mihomo {live_status} · 高负载时丢弃 {dropped} 条日志 · 敏感信息已隐藏"
-        ),
+        Language::SimplifiedChinese => {
+            format!("{count} · 高负载时丢弃 {dropped} 条日志 · 敏感信息已隐藏")
+        }
     }
 }
