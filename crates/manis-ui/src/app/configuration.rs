@@ -624,10 +624,28 @@ impl ManisApp {
 }
 include!("configuration/settings.rs");
 include!("configuration/transfer.rs");
+include!("configuration/editor.rs");
 include!("configuration/proxy_sources.rs");
 include!("configuration/rule_sources.rs");
 include!("configuration/manual_rules.rs");
 include!("configuration/source_mutations.rs");
+
+#[cfg(feature = "snapshot-fixtures")]
+impl ManisApp {
+    #[doc(hidden)]
+    pub fn show_configuration_sources_fixture(&mut self, rules: bool, cx: &mut Context<Self>) {
+        if self.runtime.is_fixture() {
+            self.scroll_to_configuration_section(
+                if rules {
+                    ConfigurationSection::RuleSources
+                } else {
+                    ConfigurationSection::ProxySources
+                },
+                cx,
+            );
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

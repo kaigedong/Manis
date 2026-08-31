@@ -161,10 +161,12 @@ For the light/dark appearance matrix, including minimum-size windows and overlay
 cargo run -p manis-ui --example snapshot --features snapshot-fixtures --locked -- --appearance
 ```
 
-Focused synthetic captures for configuration migration, sidebar icons, and the Proxy picker:
+Focused synthetic captures for configuration migration (including the prefilled editor in wide and
+compact windows, light and dark), sidebar icons, and the Proxy picker:
 
 ```bash
 cargo run -p manis-ui --example snapshot --features snapshot-fixtures --locked -- --configuration-transfer
+cargo run -p manis-ui --example snapshot --features snapshot-fixtures --locked -- --source-cards
 cargo run -p manis-ui --example snapshot --features snapshot-fixtures --locked -- --navigation-icons
 cargo run -p manis-ui --example snapshot --features snapshot-fixtures --locked -- --proxy-candidate
 ```

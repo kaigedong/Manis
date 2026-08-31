@@ -6,20 +6,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::sync::Arc::new(manis_ui::Assets),
     );
     cx.update(manis_ui::init);
+    if std::env::args().any(|argument| argument == "--source-cards") {
+        return capture_source_cards(&mut cx);
+    }
     if std::env::args().any(|argument| argument == "--policy-scrolling") {
         return capture_policy_scrolling(&mut cx);
     }
     if std::env::args().any(|argument| argument == "--proxy-candidate") {
-        capture_proxy_candidate(&mut cx)?;
-        return Ok(());
+        return capture_proxy_candidate(&mut cx);
     }
     if std::env::args().any(|argument| argument == "--navigation-icons") {
-        capture_navigation_icons(&mut cx)?;
-        return Ok(());
+        return capture_navigation_icons(&mut cx);
     }
     if std::env::args().any(|argument| argument == "--configuration-transfer") {
-        capture_configuration_transfer(&mut cx)?;
-        return Ok(());
+        return capture_configuration_transfer(&mut cx);
     }
     if std::env::args().any(|argument| argument == "--stream-status") {
         capture_stream_status(&mut cx)?;
@@ -99,6 +99,133 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     capture_connected(&mut cx)?;
     capture_data_page_coverage(&mut cx)?;
     capture_live_when_configured(&mut cx)?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn capture_source_cards(
+    cx: &mut gpui::VisualTestAppContext,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use gpui::{AnyWindowHandle, AppContext as _, Modifiers, point, px, size};
+    let store = std::env::temp_dir().join(format!("manis-source-cards-{}", std::process::id()));
+    write_source_cards_fixture(&store)?;
+    for (width, height, label) in [(1420.0, 900.0, "wide"), (640.0, 560.0, "compact")] {
+        cx.update(manis_ui::init);
+        let mut app = None;
+        let window_store = store.clone();
+        let window = cx.open_offscreen_window(size(px(width), px(height)), |window, cx| {
+            let entity = cx.new(|_| {
+                manis_ui::ManisApp::with_fixture_controller_and_subscription_store(
+                    "http://127.0.0.1:1",
+                    window_store,
+                )
+            });
+            app = Some(entity.clone());
+            cx.new(|cx| manis_ui::root(entity, window, cx))
+        })?;
+        let app = app.ok_or("missing fixture app")?;
+        let window: AnyWindowHandle = window.into();
+        refresh(cx, window)?;
+        open_workspace(cx, window, width, SnapshotWorkspace::Configuration)?;
+        for (dark, mode) in [(false, "light"), (true, "dark")] {
+            if dark {
+                let toggle_x = width - if width >= 1280.0 { 550.0 } else { 205.0 };
+                cx.simulate_click(window, point(px(toggle_x), px(24.0)), Modifiers::none());
+                refresh(cx, window)?;
+            }
+            for (rules, section) in [(false, "proxy"), (true, "rules")] {
+                cx.update_window(window, |_, _, cx| {
+                    app.update(cx, |app, cx| {
+                        app.show_configuration_sources_fixture(rules, cx);
+                    });
+                })?;
+                cx.simulate_mouse_move(window, point(px(20.0), px(20.0)), None, Modifiers::none());
+                refresh(cx, window)?;
+                save_screenshot(
+                    cx,
+                    window,
+                    &format!("source-cards-{label}-{mode}-{section}.png"),
+                )?;
+                let hover_y = match (rules, label) {
+                    (true, "wide") => 400.0,
+                    (false, "wide") => 295.0,
+                    (true, _) => 325.0,
+                    (false, _) => 330.0,
+                };
+                let before_hover = cx.capture_screenshot(window)?;
+                cx.simulate_mouse_move(
+                    window,
+                    point(px(width - 180.0), px(hover_y)),
+                    None,
+                    Modifiers::none(),
+                );
+                refresh(cx, window)?;
+                save_screenshot(
+                    cx,
+                    window,
+                    &format!("source-cards-{label}-{mode}-{section}-hover.png"),
+                )?;
+                let after_hover = cx.capture_screenshot(window)?;
+                let changed = before_hover
+                    .pixels()
+                    .zip(after_hover.pixels())
+                    .filter(|(a, b)| a != b)
+                    .count();
+                assert!(
+                    changed > 20_000,
+                    "{label}/{mode}/{section}: hover must highlight the entire card"
+                );
+            }
+        }
+        close_window(cx, window)?;
+    }
+    std::fs::remove_dir_all(store)?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn write_source_cards_fixture(store: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    use manis_profile::write_private_atomic;
+    write_private_atomic(store, "language.preference", b"zh-CN")?;
+    let subscription = [
+        "manis-subscription-source-v3".to_owned(),
+        "id\tsource-deadbeef".to_owned(),
+        format!("name\t{}", snapshot_hex("示例订阅")),
+        format!(
+            "url\t{}",
+            snapshot_hex("https://subscriptions.example.invalid/nodes")
+        ),
+        "enabled\tfalse".to_owned(),
+    ]
+    .join("\n");
+    write_private_atomic(store, "source-deadbeef.url", subscription.as_bytes())?;
+    let node = [
+        "manis-single-node-source-v1".to_owned(),
+        "id\tsaved-deadbeef".to_owned(),
+        format!("name\t{}", snapshot_hex("家庭节点")),
+        format!(
+            "url\t{}",
+            snapshot_hex("trojan://fixture-password@example.invalid:443?security=tls#Home")
+        ),
+        "enabled\ttrue".to_owned(),
+    ]
+    .join("\n");
+    write_private_atomic(store, "saved-deadbeef.vless", node.as_bytes())?;
+    let rules = [
+        "manis-qx-rule-source-v1".to_owned(),
+        "id\tqx-rule-deadbeef".to_owned(),
+        format!(
+            "url\t{}",
+            snapshot_hex("https://rules.example.invalid/media.list")
+        ),
+        format!("target\t{}", snapshot_hex("Proxy")),
+        format!(
+            "content\t{}",
+            snapshot_hex("DOMAIN-SUFFIX,example.com,PROXY\n")
+        ),
+    ]
+    .join("\n");
+    write_private_atomic(store, "qx-rule-deadbeef.qxrules", rules.as_bytes())?;
     Ok(())
 }
 
@@ -421,9 +548,50 @@ fn capture_configuration_transfer(
             window,
             &format!("configuration-transfer-{label}-preview-dark.png"),
         )?;
+        capture_configuration_editor(cx, window, &app, label)?;
         close_window(cx, window)?;
     }
     std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn capture_configuration_editor(
+    cx: &mut gpui::VisualTestAppContext,
+    window: gpui::AnyWindowHandle,
+    app: &gpui::Entity<manis_ui::ManisApp>,
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    cx.simulate_keystrokes(window, "escape");
+    settle_ui_animation(cx, window)?;
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.show_configuration_editor_fixture(window, cx);
+        });
+    })?;
+    settle_ui_animation(cx, window)?;
+    save_screenshot(
+        cx,
+        window,
+        &format!("configuration-editor-{label}-dark.png"),
+    )?;
+    cx.simulate_keystrokes(window, "escape");
+    settle_ui_animation(cx, window)?;
+    let width = if label == "wide" { 1420.0 } else { 640.0 };
+    let toggle_x = width - if width >= 1280.0 { 550.0 } else { 205.0 };
+    cx.simulate_click(
+        window,
+        gpui::point(gpui::px(toggle_x), gpui::px(24.0)),
+        gpui::Modifiers::none(),
+    );
+    refresh(cx, window)?;
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.show_configuration_editor_fixture(window, cx);
+        });
+    })?;
+    settle_ui_animation(cx, window)?;
+    save_screenshot(cx, window, &format!("configuration-editor-{label}.png"))?;
     Ok(())
 }
 
