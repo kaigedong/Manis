@@ -2,13 +2,13 @@ use std::path::Path;
 
 use gpui::{
     AnyElement, Context, Div, Entity, Focusable, FontWeight, KeyDownEvent, ParentElement, Role,
-    Stateful, StyleRefinement, Styled, Window, div, prelude::*, px,
+    Stateful, Styled, Window, div, prelude::*, px,
 };
 use gpui_component::{
-    Disableable, IconName, Selectable, Sizable, Size, WindowExt as _,
-    accordion::Accordion,
+    Disableable, IconName, Selectable, Sizable, WindowExt as _,
     button::{Button, ButtonVariant, ButtonVariants},
     checkbox::Checkbox,
+    collapsible::Collapsible,
     dialog::Dialog,
     menu::{ContextMenuExt, PopupMenuItem},
 };
@@ -334,32 +334,6 @@ fn field_label(label: impl Into<gpui::SharedString>, theme: Theme) -> Div {
         .font_weight(TextRole::Label.weight())
         .text_color(theme.text_secondary)
         .child(label)
-}
-
-fn accordion_content_style() -> StyleRefinement {
-    let mut style = StyleRefinement::default();
-    style.padding.top = Some(px(0.0).into());
-    style.padding.right = Some(px(0.0).into());
-    style.padding.bottom = Some(px(0.0).into());
-    style.padding.left = Some(px(0.0).into());
-    style
-}
-
-fn accordion_title_style(compact: bool, open: bool, theme: Theme) -> StyleRefinement {
-    let mut style = StyleRefinement::default()
-        .bg(theme.surface_low)
-        .rounded_tl(Radius::Pane.px())
-        .rounded_tr(Radius::Pane.px());
-    if !open {
-        style = style
-            .rounded_bl(Radius::Pane.px())
-            .rounded_br(Radius::Pane.px());
-    }
-    if compact {
-        style.padding.right = Some(px(12.0).into());
-        style.padding.left = Some(px(12.0).into());
-    }
-    style
 }
 
 fn manual_rule_placeholder(

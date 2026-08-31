@@ -6,6 +6,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::sync::Arc::new(manis_ui::Assets),
     );
     cx.update(manis_ui::init);
+    if std::env::args().any(|argument| argument == "--nodes-toolbar") {
+        capture_nodes_toolbar(&mut cx)?;
+        return Ok(());
+    }
     if std::env::args().any(|argument| argument == "--log-colors") {
         capture_log_colors(&mut cx)?;
         return Ok(());
@@ -76,6 +80,50 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     capture_connected(&mut cx)?;
     capture_data_page_coverage(&mut cx)?;
     capture_live_when_configured(&mut cx)?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn capture_nodes_toolbar(
+    cx: &mut gpui::VisualTestAppContext,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use gpui::{AnyWindowHandle, Modifiers, point, px, size};
+
+    for (width, height, label) in [
+        (1420.0, 900.0, "wide"),
+        (1060.0, 800.0, "medium"),
+        (640.0, 560.0, "minimum"),
+    ] {
+        cx.update(manis_ui::init);
+        let (endpoint, server) = spawn_mihomo_fixture()?;
+        let window = cx.open_offscreen_window(size(px(width), px(height)), |window, cx| {
+            manis_root(window, cx, |_| {
+                manis_ui::ManisApp::with_fixture_controller(endpoint)
+            })
+        })?;
+        let window: AnyWindowHandle = window.into();
+        refresh(cx, window)?;
+        if label == "minimum" {
+            save_screenshot(cx, window, "nodes-toolbar-minimum-empty.png")?;
+        }
+        cx.simulate_click(
+            window,
+            point(px(width - 200.0), px(76.0)),
+            Modifiers::none(),
+        );
+        settle_ui_for(cx, window, std::time::Duration::from_millis(600))?;
+        for (dark, mode) in [(false, "light"), (true, "dark")] {
+            if dark {
+                let toggle_x = width - if width >= 1280.0 { 550.0 } else { 205.0 };
+                cx.simulate_click(window, point(px(toggle_x), px(24.0)), Modifiers::none());
+                refresh(cx, window)?;
+            }
+            assert_appearance_mode(cx, window, dark)?;
+            save_screenshot(cx, window, &format!("nodes-toolbar-{label}-{mode}.png"))?;
+        }
+        close_window(cx, window)?;
+        server.stop()?;
+    }
     Ok(())
 }
 
@@ -152,7 +200,11 @@ fn capture_appearance_at_size(
     })?;
     let window: AnyWindowHandle = window.into();
     refresh(cx, window)?;
-    cx.simulate_click(window, point(px(width - 80.0), px(76.0)), Modifiers::none());
+    cx.simulate_click(
+        window,
+        point(px(width - 200.0), px(76.0)),
+        Modifiers::none(),
+    );
     settle_ui_for(cx, window, std::time::Duration::from_millis(600))?;
     let toggle_x = width - if width >= 1280.0 { 550.0 } else { 205.0 };
     for (dark, mode) in [(false, "light"), (true, "dark")] {
@@ -264,68 +316,47 @@ fn capture_managed_policy_settings(
     std::fs::set_permissions(&group_path, std::fs::Permissions::from_mode(0o600))?;
 
     let (endpoint, server) = spawn_mihomo_fixture()?;
-    let window_store = store.clone();
-    let wide_endpoint = endpoint.clone();
-    let window = cx.open_offscreen_window(size(px(1420.0), px(900.0)), |window, cx| {
-        manis_root(window, cx, |_| {
-            ManisApp::with_fixture_controller_and_subscription_store(wide_endpoint, window_store)
-        })
-    })?;
-    let window: AnyWindowHandle = window.into();
-
-    refresh(cx, window)?;
-    cx.simulate_click(window, point(px(1_340.0), px(76.0)), Modifiers::none());
-    settle_ui_for(cx, window, std::time::Duration::from_millis(600))?;
-    save_screenshot(cx, window, "native-wide-saved-policy-collapsed.png")?;
-    cx.simulate_click(window, point(px(700.0), px(172.0)), Modifiers::none());
-    refresh(cx, window)?;
-    save_screenshot(cx, window, "native-wide-saved-policy-expanded.png")?;
-    cx.simulate_click(window, point(px(1_290.0), px(280.0)), Modifiers::none());
-    refresh(cx, window)?;
-    save_screenshot(cx, window, "native-wide-policy-settings.png")?;
-    cx.simulate_click(window, point(px(1_040.0), px(190.0)), Modifiers::none());
-    refresh(cx, window)?;
-    save_screenshot(cx, window, "native-wide-policy-type-menu.png")?;
-    cx.simulate_click(window, point(px(1_040.0), px(190.0)), Modifiers::none());
-    refresh(cx, window)?;
-    cx.simulate_click(window, point(px(1_040.0), px(350.0)), Modifiers::none());
-    refresh(cx, window)?;
-    save_screenshot(cx, window, "native-wide-policy-icon-menu.png")?;
-    cx.simulate_click(window, point(px(390.0), px(740.0)), Modifiers::none());
-    refresh(cx, window)?;
-    cx.simulate_click(window, point(px(820.0), px(450.0)), Modifiers::none());
-    refresh(cx, window)?;
-    save_screenshot(cx, window, "native-wide-policy-node-scope-menu.png")?;
-    cx.simulate_click(window, point(px(820.0), px(700.0)), Modifiers::none());
-    refresh(cx, window)?;
-    save_screenshot(cx, window, "native-wide-policy-node-menu.png")?;
-
-    close_window(cx, window)?;
-
-    let compact_store = store.clone();
-    let compact_window = cx.open_offscreen_window(size(px(720.0), px(720.0)), |window, cx| {
-        manis_root(window, cx, |_| {
-            ManisApp::with_fixture_controller_and_subscription_store(endpoint, compact_store)
-        })
-    })?;
-    let compact_window: AnyWindowHandle = compact_window.into();
-    refresh(cx, compact_window)?;
-    settle_ui_for(cx, compact_window, std::time::Duration::from_millis(600))?;
-    cx.simulate_click(
-        compact_window,
-        point(px(590.0), px(88.0)),
-        Modifiers::none(),
-    );
-    refresh(cx, compact_window)?;
-    save_screenshot(cx, compact_window, "native-compact-policy-editor.png")?;
-    cx.simulate_click(
-        compact_window,
-        point(px(400.0), px(190.0)),
-        Modifiers::none(),
-    );
-    refresh(cx, compact_window)?;
-    save_screenshot(cx, compact_window, "native-compact-policy-type-menu.png")?;
-    close_window(cx, compact_window)?;
+    for (width, height, label) in [(1420.0, 900.0, "wide"), (640.0, 560.0, "compact")] {
+        cx.update(manis_ui::init);
+        let window_store = store.clone();
+        let fixture_endpoint = endpoint.clone();
+        let window = cx.open_offscreen_window(size(px(width), px(height)), |window, cx| {
+            manis_root(window, cx, |_| {
+                ManisApp::with_fixture_controller_and_subscription_store(
+                    fixture_endpoint,
+                    window_store,
+                )
+            })
+        })?;
+        let window: AnyWindowHandle = window.into();
+        refresh(cx, window)?;
+        save_screenshot(cx, window, &format!("policy-home-{label}.png"))?;
+        cx.simulate_click(
+            window,
+            point(px(width - 200.0), px(76.0)),
+            Modifiers::none(),
+        );
+        settle_ui_for(cx, window, std::time::Duration::from_millis(600))?;
+        open_workspace(cx, window, width, SnapshotWorkspace::PolicyGroups)?;
+        save_screenshot(cx, window, &format!("policy-flat-{label}-collapsed.png"))?;
+        cx.simulate_click(window, point(px(320.0), px(172.0)), Modifiers::none());
+        refresh(cx, window)?;
+        save_screenshot(cx, window, &format!("policy-flat-{label}-expanded.png"))?;
+        cx.simulate_click(
+            window,
+            point(px(width - 132.0), px(172.0)),
+            Modifiers::none(),
+        );
+        refresh(cx, window)?;
+        save_screenshot(cx, window, &format!("policy-settings-{label}-dialog.png"))?;
+        cx.simulate_keystrokes(window, "escape");
+        refresh(cx, window)?;
+        let toggle_x = width - if width >= 1280.0 { 550.0 } else { 205.0 };
+        cx.simulate_click(window, point(px(toggle_x), px(24.0)), Modifiers::none());
+        refresh(cx, window)?;
+        save_screenshot(cx, window, &format!("policy-flat-{label}-dark.png"))?;
+        close_window(cx, window)?;
+    }
 
     server.stop()?;
     std::fs::remove_dir_all(root)?;
@@ -346,13 +377,14 @@ fn capture_automatic_policy(
     let window: AnyWindowHandle = window.into();
 
     refresh(cx, window)?;
-    cx.simulate_click(window, point(px(1_350.0), px(82.0)), Modifiers::none());
+    cx.simulate_click(window, point(px(1_220.0), px(76.0)), Modifiers::none());
     settle_ui_for(cx, window, std::time::Duration::from_millis(600))?;
+    open_workspace(cx, window, 1_420.0, SnapshotWorkspace::PolicyGroups)?;
     save_screenshot(cx, window, "native-wide-policy-groups-collapsed.png")?;
-    cx.simulate_click(window, point(px(380.0), px(190.0)), Modifiers::none());
+    cx.simulate_click(window, point(px(380.0), px(172.0)), Modifiers::none());
     refresh(cx, window)?;
     save_screenshot(cx, window, "native-wide-policy-groups-expanded.png")?;
-    cx.simulate_click(window, point(px(268.0), px(190.0)), Modifiers::none());
+    cx.simulate_click(window, point(px(268.0), px(172.0)), Modifiers::none());
     settle_ui_for(cx, window, std::time::Duration::from_millis(600))?;
     save_screenshot(cx, window, "native-wide-policy-groups-tested.png")?;
     close_window(cx, window)?;
@@ -1050,7 +1082,7 @@ fn capture_connected(
     let window: AnyWindowHandle = window.into();
 
     refresh(cx, window)?;
-    cx.simulate_click(window, point(px(1_340.0), px(76.0)), Modifiers::none());
+    cx.simulate_click(window, point(px(1_220.0), px(76.0)), Modifiers::none());
     settle_ui_for(cx, window, std::time::Duration::from_millis(600))?;
     refresh(cx, window)?;
     save_screenshot(cx, window, "native-wide-connected.png")?;
@@ -1107,7 +1139,7 @@ fn capture_activity_wide_dark_connected(
     let window: AnyWindowHandle = window.into();
 
     refresh(cx, window)?;
-    cx.simulate_click(window, point(px(1_340.0), px(76.0)), Modifiers::none());
+    cx.simulate_click(window, point(px(1_220.0), px(76.0)), Modifiers::none());
     settle_ui_animation(cx, window)?;
     cx.simulate_click(window, point(px(850.0), px(24.0)), Modifiers::none());
     settle_ui_animation(cx, window)?;
@@ -1133,7 +1165,7 @@ fn capture_activity_compact_connected(
     let window: AnyWindowHandle = window.into();
 
     refresh(cx, window)?;
-    cx.simulate_click(window, point(px(640.0), px(76.0)), Modifiers::none());
+    cx.simulate_click(window, point(px(520.0), px(76.0)), Modifiers::none());
     settle_ui_animation(cx, window)?;
     open_workspace(cx, window, 720.0, SnapshotWorkspace::Activity)?;
     settle_ui_animation(cx, window)?;
@@ -1157,7 +1189,7 @@ fn capture_activity_compact_empty(
     let window: AnyWindowHandle = window.into();
 
     refresh(cx, window)?;
-    cx.simulate_click(window, point(px(640.0), px(76.0)), Modifiers::none());
+    cx.simulate_click(window, point(px(520.0), px(76.0)), Modifiers::none());
     settle_ui_animation(cx, window)?;
     open_workspace(cx, window, 720.0, SnapshotWorkspace::Activity)?;
     settle_ui_animation(cx, window)?;
@@ -1181,7 +1213,7 @@ fn capture_logs_compact_connected_and_filtered(
     let window: AnyWindowHandle = window.into();
 
     refresh(cx, window)?;
-    cx.simulate_click(window, point(px(640.0), px(76.0)), Modifiers::none());
+    cx.simulate_click(window, point(px(520.0), px(76.0)), Modifiers::none());
     settle_ui_animation(cx, window)?;
     open_workspace(cx, window, 720.0, SnapshotWorkspace::Logs)?;
     settle_ui_animation(cx, window)?;

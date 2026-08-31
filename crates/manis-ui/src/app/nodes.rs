@@ -1,27 +1,32 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use gpui::{
-    AnyElement, Context, Div, FontWeight, ParentElement, Role, Stateful, Styled, Toggled, div,
-    prelude::*, px,
+    AnyElement, AnyWindowHandle, Context, Div, Focusable, FontWeight, ParentElement, Role,
+    Stateful, Styled, Toggled, Window, div, prelude::*, px,
 };
 use gpui_component::{
-    Icon, IconName, Sizable,
+    Disableable, IconName, Sizable, WindowExt,
     button::{Button, ButtonVariant, ButtonVariants},
     checkbox::Checkbox,
     collapsible::Collapsible,
+    dialog::Dialog,
     radio::Radio,
 };
 use manis_core::{
     ManagedPolicyGroup, ManagedPolicyIcon, ManagedPolicyStrategy, NodeAvailabilityFilter,
-    NodeIdentity, PolicyCandidateMatcher, PrimaryWorkspace, WindowSizeClass,
+    NodeIdentity, PolicyCandidateKind, PolicyCandidateMatcher, PolicyNode, PrimaryWorkspace,
+    ProxyId, WindowSizeClass,
 };
 
 use super::{
     GroupBenchmarkNodeState, GroupBenchmarkState, ImportedSubscriptionState, ManagedPolicyDraft,
-    ManisApp, PolicyCandidateMatcherKind, PolicyEditorPopover,
+    ManagedPolicyMutationState, ManisApp, PolicyCandidateMatcherKind, PolicyEditorPopover,
 };
 use crate::{
-    components::{ActionRole, action_button, empty_state, section_heading},
+    components::{
+        ActionRole, action_button, dialog_footer_surface, dialog_header_surface, empty_state,
+        status_badge, style_action_button, surface_dialog,
+    },
     diagnostics::{UiEvent, trace_ui},
     localization::{CountNoun, Language, Message, copy},
     mihomo::{self, LoadedProvider, LoadedProviderNode, ProxyDelayTarget, SubscriptionStoreError},
@@ -112,6 +117,7 @@ struct PolicyEditorPopup {
     width: f32,
     max_height: f32,
     show_divider: bool,
+    disabled: bool,
 }
 
 impl PolicyEditorPopup {
@@ -129,11 +135,17 @@ impl PolicyEditorPopup {
             width,
             max_height,
             show_divider: true,
+            disabled: false,
         }
     }
 
     fn with_divider(mut self, show_divider: bool) -> Self {
         self.show_divider = show_divider;
+        self
+    }
+
+    fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
         self
     }
 }
@@ -325,14 +337,6 @@ impl ManisApp {
                         | ImportedSubscriptionState::StoreError(_)
                 )
             });
-        let origin = if has_local_sources {
-            language.localized(copy::nodes::LOCAL_SOURCES)
-        } else if self.source_providers.is_empty() {
-            language.localized(copy::nodes::NO_NODE_SOURCES)
-        } else {
-            language.localized(copy::nodes::CURRENT_MIHOMO)
-        };
-
         let view = NodeWorkspaceView {
             filter,
             compact,
@@ -346,11 +350,11 @@ impl ManisApp {
             .flex()
             .flex_col()
             .bg(theme.surface_base)
-            .child(Self::node_workspace_header(
+            .child(self.node_workspace_header(
                 groups.len(),
                 counts,
-                origin,
                 refreshing,
+                !matches!(self.controller, super::ControllerState::Connected { .. }),
                 view,
                 cx,
             ))
@@ -462,10 +466,11 @@ impl ManisApp {
     }
 
     fn node_workspace_header(
+        &self,
         source_count: usize,
         counts: NodeCounts,
-        origin: &'static str,
         refreshing: bool,
+        show_connection: bool,
         view: NodeWorkspaceView,
         cx: &mut Context<Self>,
     ) -> Div {
@@ -477,41 +482,54 @@ impl ManisApp {
         } = view;
         let actions = div()
             .flex()
+            .flex_shrink_0()
             .items_center()
             .gap(Space::Sm.px())
+            .when(show_connection, |actions| {
+                actions.child(self.connection_button(theme, cx))
+            })
             .child(Self::node_refresh_button(refreshing, language, theme, cx))
-            .child(Self::node_configuration_link(language, cx))
-            .into_any_element();
-        let detail = format!(
-            "{origin} · {} · {}",
-            Self::source_count_label(source_count, language),
-            language.localized(copy::nodes::REVIEW_EXIT_HEALTH_AND_GLOBAL_SELECTIONS_HERE)
-        );
+            .child(Self::node_configuration_link(language, theme, cx));
 
         div()
-            .px(if compact {
-                Space::Lg.px()
-            } else {
-                Space::Xl.px()
-            })
-            .pt(if compact {
-                Space::Lg.px()
-            } else {
-                Space::Xl.px()
-            })
-            .pb(Space::Lg.px())
+            .flex()
+            .flex_col()
+            .flex_shrink_0()
+            .gap(Space::Md.px())
+            .px(if compact { px(12.0) } else { px(24.0) })
+            .py(Space::Lg.px())
             .border_b_1()
             .border_color(theme.outline_subtle)
-            .child(crate::components::page_heading(
-                format!("{} · {}", language.message(Message::Nodes), counts.total),
-                detail,
-                Some(actions),
-                theme,
-            ))
-            .child(Self::node_health_summary(counts, compact, language, theme))
-            .child(Self::node_filter_bar(
-                counts, filter, compact, language, theme, cx,
-            ))
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .justify_between()
+                    .gap(Space::Md.px())
+                    .child(
+                        div()
+                            .flex()
+                            .items_baseline()
+                            .gap(Space::Md.px())
+                            .child(
+                                div()
+                                    .text_size(TextRole::PageTitle.size())
+                                    .line_height(TextRole::PageTitle.line_height())
+                                    .font_weight(TextRole::PageTitle.weight())
+                                    .text_color(theme.text_primary)
+                                    .child(language.message(Message::Nodes)),
+                            )
+                            .child(
+                                div()
+                                    .text_size(TextRole::Metadata.size())
+                                    .text_color(theme.text_secondary)
+                                    .child(Self::source_count_label(source_count, language)),
+                            ),
+                    )
+                    .child(actions),
+            )
+            .child(Self::node_filter_bar(counts, filter, compact, language, cx))
     }
 
     fn node_workspace_body(
@@ -535,11 +553,6 @@ impl ManisApp {
             .overflow_y_scroll()
             .px(if compact { px(12.0) } else { px(24.0) })
             .py_4()
-            .child(Self::node_section_heading(
-                language.localized(copy::nodes::IMPORTED_NODES),
-                language.localized(copy::nodes::REVIEW_IMPORTED_NODES_BY_SOURCE_CHOOSE_ONE_EXIT_FOR_GLOBAL),
-                theme,
-            ))
             .when(loading && groups.is_empty(), |body| {
                 body.child(Self::node_message_panel(
                     language.localized(copy::nodes::RESTORING_NODES),
@@ -562,102 +575,298 @@ impl ManisApp {
             })
     }
 
-    fn node_section_heading(title: &'static str, detail: &'static str, theme: Theme) -> Div {
-        section_heading(title, detail, None, theme).mb(Space::Md.px())
+    pub(super) fn open_managed_policy_create(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.start_managed_policy_create(cx);
+        Self::open_managed_policy_dialog(window, cx);
+        if let Some(input) = self.inputs.policy_group_name.as_ref() {
+            input.focus_handle(cx).focus(window, cx);
+        }
     }
 
-    pub(super) fn managed_policy_editor_workspace(
+    pub(super) fn open_managed_policy_settings(
+        &mut self,
+        id: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.start_managed_policy_edit(id, cx);
+        if self.managed_policies.draft.is_none() {
+            return;
+        }
+        Self::open_managed_policy_dialog(window, cx);
+        if let Some(input) = self.inputs.policy_group_name.as_ref() {
+            input.focus_handle(cx).focus(window, cx);
+        }
+    }
+
+    fn open_managed_policy_dialog(window: &mut Window, cx: &mut Context<Self>) {
+        let app = cx.entity();
+        window.open_dialog(cx, move |dialog, window, cx| {
+            app.update(cx, |this, cx| {
+                let theme = this.theme();
+                this.ensure_policy_group_inputs(theme, window, cx);
+                this.set_policy_group_editor_enabled(
+                    !this.managed_policies.mutation_state.is_busy(),
+                    cx,
+                );
+                let compact = WindowSizeClass::for_width(window.viewport_size().width.as_f32())
+                    == WindowSizeClass::Compact;
+                this.managed_policy_editor_modal(
+                    dialog,
+                    compact,
+                    this.language(),
+                    theme,
+                    window,
+                    cx,
+                )
+            })
+        });
+        cx.notify();
+    }
+
+    fn set_policy_group_editor_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        for input in [
+            self.inputs.policy_group_name.as_ref(),
+            self.inputs.policy_group_filter.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            input.update(cx, |input, cx| input.set_enabled(enabled, cx));
+        }
+    }
+
+    fn close_managed_policy_editor(&mut self, cx: &mut Context<Self>) {
+        self.managed_policies.draft = None;
+        self.managed_policies.editor_popover = None;
+        self.language()
+            .localized(copy::nodes::POLICY_EDITING_CANCELLED)
+            .clone_into(&mut self.status);
+        cx.notify();
+    }
+
+    fn managed_policy_editor_modal(
         &self,
-        draft: &ManagedPolicyDraft,
+        dialog: Dialog,
         compact: bool,
         language: Language,
         theme: Theme,
+        window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Div {
-        div()
-            .h_full()
-            .flex_1()
-            .min_w(px(0.0))
-            .flex()
-            .flex_col()
-            .bg(theme.surface_base)
-            .child(Self::policy_editor_header(draft, language, theme, cx))
-            .child(self.policy_editor_form(draft, compact, false, language, theme, cx))
+    ) -> Dialog {
+        let viewport = window.viewport_size();
+        let width = (viewport.width.as_f32() - 32.0).clamp(320.0, 780.0);
+        let max_height = (viewport.height.as_f32() - 32.0).max(360.0);
+        let margin_top = ((viewport.height.as_f32() - 640.0) / 2.0).max(16.0);
+        let app = cx.entity();
+        let busy = self.managed_policies.mutation_state.is_busy();
+        let (title, body, footer) = if let Some(draft) = self.managed_policies.draft.as_ref() {
+            (
+                Self::managed_policy_editor_title(draft, language, theme),
+                self.policy_editor_form(draft, compact, false, language, theme, cx)
+                    .into_any_element(),
+                self.managed_policy_editor_footer(draft, language, theme, cx),
+            )
+        } else {
+            (
+                Self::managed_policy_editor_completed_title(language, theme),
+                div()
+                    .p_5()
+                    .text_size(TextRole::Body.size())
+                    .line_height(TextRole::Body.line_height())
+                    .text_color(theme.text_secondary)
+                    .child(self.status.clone())
+                    .into_any_element(),
+                Self::managed_policy_editor_completed_footer(language, theme, cx),
+            )
+        };
+
+        surface_dialog(dialog, theme)
+            .width(px(width))
+            .max_h(px(max_height))
+            .margin_top(px(margin_top))
+            .overlay(true)
+            .overlay_closable(!busy)
+            .keyboard(!busy)
+            .close_button(false)
+            .title(title)
+            .child(body)
+            .footer(footer)
+            .on_close(move |_, _, cx| {
+                app.update(cx, |this, cx| {
+                    if !this.managed_policies.mutation_state.is_busy() {
+                        this.managed_policies.draft = None;
+                        this.managed_policies.editor_popover = None;
+                        cx.notify();
+                    }
+                });
+            })
     }
 
-    fn policy_editor_header(
+    fn managed_policy_editor_title(
         draft: &ManagedPolicyDraft,
         language: Language,
         theme: Theme,
-        cx: &mut Context<Self>,
     ) -> Div {
         let title = if draft.editing_id.is_some() {
             language.localized(copy::common::EDIT_POLICY_GROUP)
         } else {
             language.localized(copy::nodes::NEW_POLICY_GROUP)
         };
-        let left = Self::policy_editor_header_button(
-            "policy-editor-back",
-            language.message(Message::Cancel),
-            false,
-            cx.listener(|this, _, _, cx| {
-                this.managed_policies.draft = None;
-                this.managed_policies.editor_popover = None;
-                this.language()
-                    .localized(copy::nodes::POLICY_EDITING_CANCELLED)
-                    .clone_into(&mut this.status);
-                cx.notify();
-            }),
-        );
-        let right = Self::policy_editor_header_button(
-            "policy-group-save",
-            language.message(Message::SaveChanges),
-            true,
-            cx.listener(|this, _, _, cx| this.save_managed_policy(cx)),
-        );
-
-        div()
-            .h(px(64.0))
-            .px_4()
-            .flex_shrink_0()
-            .border_b_1()
-            .border_color(theme.outline_subtle)
-            .bg(theme.surface_chrome)
-            .flex()
-            .items_center()
-            .child(div().w(px(112.0)).child(left))
-            .child(
-                div()
-                    .flex_1()
-                    .text_size(px(16.0))
-                    .font_weight(FontWeight::BOLD)
-                    .text_center()
-                    .child(title),
-            )
-            .child(div().w(px(112.0)).flex().justify_end().child(right))
+        dialog_header_surface(theme).child(
+            div()
+                .text_size(TextRole::SectionTitle.size())
+                .line_height(TextRole::SectionTitle.line_height())
+                .font_weight(TextRole::SectionTitle.weight())
+                .text_color(theme.text_primary)
+                .child(title),
+        )
     }
 
-    fn policy_editor_header_button(
-        id: &'static str,
-        label: &'static str,
-        primary: bool,
-        listener: impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
-    ) -> Button {
-        action_button(
-            id,
-            label,
-            if primary {
-                ActionRole::Primary
-            } else {
-                ActionRole::Quiet
-            },
-            ControlSize::Compact,
+    fn managed_policy_editor_completed_title(language: Language, theme: Theme) -> Div {
+        dialog_header_surface(theme)
+            .flex()
+            .items_center()
+            .justify_between()
+            .child(
+                div()
+                    .text_size(TextRole::SectionTitle.size())
+                    .line_height(TextRole::SectionTitle.line_height())
+                    .font_weight(TextRole::SectionTitle.weight())
+                    .child(language.localized(copy::nodes::GROUP_SAVED)),
+            )
+            .child(status_badge(
+                language.localized(copy::nodes::DONE),
+                crate::components::StatusTone::Success,
+                theme,
+            ))
+    }
+
+    fn managed_policy_editor_footer(
+        &self,
+        draft: &ManagedPolicyDraft,
+        language: Language,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let editing_id = draft.editing_id.clone();
+        let busy = self.managed_policies.mutation_state.is_busy();
+        dialog_footer_surface(theme)
+            .flex_col()
+            .items_stretch()
+            .gap_3()
+            .child(
+                div()
+                    .text_size(TextRole::Metadata.size())
+                    .line_height(TextRole::Metadata.line_height())
+                    .text_color(theme.text_secondary)
+                    .child(self.status.clone()),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_end()
+                    .gap_2()
+                    .when_some(editing_id.clone(), |actions, remove_id| {
+                        actions.child(
+                            style_action_button(
+                                Button::new("remove-managed-policy-dialog")
+                                    .label(language.localized(copy::app::DELETE_POLICY_GROUP))
+                                    .disabled(busy),
+                                ActionRole::Danger,
+                                ControlSize::Standard,
+                            )
+                            .px(Space::Lg.px())
+                            .when(!busy, gpui::Styled::cursor_pointer)
+                            .on_click(cx.listener(
+                                move |this, _, window, cx| {
+                                    if !busy {
+                                        this.remove_managed_policy_from_dialog(
+                                            &remove_id, window, cx,
+                                        );
+                                    }
+                                },
+                            )),
+                        )
+                    })
+                    .child(
+                        style_action_button(
+                            Button::new("cancel-managed-policy-dialog")
+                                .label(language.message(Message::Cancel))
+                                .disabled(busy),
+                            ActionRole::Secondary,
+                            ControlSize::Standard,
+                        )
+                        .px(Space::Lg.px())
+                        .when(!busy, gpui::Styled::cursor_pointer)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            if !this.managed_policies.mutation_state.is_busy() {
+                                this.close_managed_policy_editor(cx);
+                                window.close_dialog(cx);
+                            }
+                        })),
+                    )
+                    .child(
+                        style_action_button(
+                            Button::new("save-managed-policy-dialog")
+                                .label(if busy {
+                                    language.localized(copy::nodes::APPLYING_CHANGES)
+                                } else if editing_id.is_some() {
+                                    language.message(Message::SaveChanges)
+                                } else {
+                                    language.message(Message::AddPolicyGroup)
+                                })
+                                .loading(busy)
+                                .disabled(busy),
+                            ActionRole::Primary,
+                            ControlSize::Standard,
+                        )
+                        .px(Space::Lg.px())
+                        .when(!busy, gpui::Styled::cursor_pointer)
+                        .bg(if busy {
+                            theme.action_soft
+                        } else {
+                            theme.action_primary
+                        })
+                        .text_color(if busy {
+                            theme.action_primary
+                        } else {
+                            theme.action_on_primary
+                        })
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            if !this.managed_policies.mutation_state.is_busy() {
+                                this.save_managed_policy_from_dialog(window, cx);
+                            }
+                        })),
+                    ),
+            )
+    }
+
+    fn managed_policy_editor_completed_footer(
+        language: Language,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        dialog_footer_surface(theme).child(
+            style_action_button(
+                Button::new("close-managed-policy-dialog")
+                    .label(language.localized(copy::nodes::DONE)),
+                ActionRole::Primary,
+                ControlSize::Standard,
+            )
+            .px(Space::Lg.px())
+            .cursor_pointer()
+            .bg(theme.action_primary)
+            .text_color(theme.action_on_primary)
+            .on_click(cx.listener(|_, _, window, cx| {
+                window.close_dialog(cx);
+            })),
         )
-        .accessibility_label(label)
-        .px_3()
-        .cursor_pointer()
-        .font_weight(FontWeight::SEMIBOLD)
-        .on_click(listener)
     }
 
     pub(super) fn policy_editor_form(
@@ -726,6 +935,7 @@ impl ManisApp {
             ManagedPolicyStrategy::Manual => "static".to_owned(),
             ManagedPolicyStrategy::LowestLatency => "url-latency-benchmark".to_owned(),
         };
+        let busy = self.managed_policies.mutation_state.is_busy();
         let policy_name = self
             .inputs
             .policy_group_name
@@ -749,7 +959,8 @@ impl ManisApp {
                     Self::policy_strategy_menu(draft, language, theme, cx),
                     popover_width,
                     220.0,
-                ),
+                )
+                .disabled(busy),
                 cx,
             ))
             .child(Self::policy_editor_input_row(
@@ -777,7 +988,8 @@ impl ManisApp {
                     popover_width,
                     320.0,
                 )
-                .with_divider(false),
+                .with_divider(false)
+                .disabled(busy),
                 cx,
             ))
     }
@@ -803,6 +1015,7 @@ impl ManisApp {
         };
         let has_details = draft.matcher_kind != PolicyCandidateMatcherKind::All
             || draft.strategy == ManagedPolicyStrategy::LowestLatency;
+        let busy = self.managed_policies.mutation_state.is_busy();
         let mut nodes = div()
             .rounded(Radius::Pane.px())
             .overflow_hidden()
@@ -823,7 +1036,8 @@ impl ManisApp {
                     popover_width,
                     280.0,
                 )
-                .with_divider(has_details),
+                .with_divider(has_details)
+                .disabled(busy),
                 cx,
             ));
         if draft.matcher_kind == PolicyCandidateMatcherKind::NameContains {
@@ -878,7 +1092,8 @@ impl ManisApp {
                 popover_width.max(480.0),
                 420.0,
             )
-            .with_divider(draft.strategy == ManagedPolicyStrategy::LowestLatency),
+            .with_divider(draft.strategy == ManagedPolicyStrategy::LowestLatency)
+            .disabled(self.managed_policies.mutation_state.is_busy()),
             cx,
         )
     }
@@ -905,7 +1120,8 @@ impl ManisApp {
                 popover_width,
                 320.0,
             )
-            .with_divider(false),
+            .with_divider(false)
+            .disabled(self.managed_policies.mutation_state.is_busy()),
             cx,
         )
     }
@@ -937,10 +1153,12 @@ impl ManisApp {
             width,
             max_height,
             show_divider,
+            disabled,
         } = popup;
         let app = cx.entity();
         let trigger = Button::new(id)
             .accessibility_label(format!("{label}: {value}"))
+            .disabled(disabled)
             .dropdown_caret(true)
             .with_variant(ButtonVariant::Default)
             .with_size(ControlSize::Standard.component_size())
@@ -979,6 +1197,11 @@ impl ManisApp {
         .open(open)
         .on_open_change(move |open, _, cx| {
             app.update(cx, |this, cx| {
+                if this.managed_policies.mutation_state.is_busy() {
+                    this.managed_policies.editor_popover = None;
+                    cx.notify();
+                    return;
+                }
                 this.managed_policies.editor_popover = open.then_some(kind);
                 cx.notify();
             });
@@ -1403,13 +1626,111 @@ impl ManisApp {
     }
 
     pub(super) fn managed_policy_candidate_names(&self, group: &ManagedPolicyGroup) -> Vec<String> {
-        let mut seen = BTreeSet::new();
-        self.node_inventory()
+        self.managed_policy_candidate_nodes(group)
             .into_iter()
-            .filter(|node| group.matches(&node.source_id, &node.node_name))
-            .map(|node| node.node_name)
-            .filter(|name| seen.insert(name.clone()))
+            .map(|node| node.name)
             .collect()
+    }
+
+    pub(super) fn managed_policy_candidate_nodes(
+        &self,
+        group: &ManagedPolicyGroup,
+    ) -> Vec<PolicyNode> {
+        let language = self.language();
+        let has_local_sources =
+            !self.imported_subscriptions.is_empty() || !self.saved_single_nodes.is_empty();
+        let mut candidates = Vec::new();
+        let mut seen = BTreeSet::new();
+        for source in self.node_source_groups(has_local_sources, language) {
+            for provider in source.providers {
+                for node in &provider.nodes {
+                    if group.matches(&source.id, &node.name) && seen.insert(node.name.clone()) {
+                        candidates.push(PolicyNode {
+                            id: ProxyId::new(format!("{}:{}", source.id, node.name)),
+                            name: node.name.clone(),
+                            kind: PolicyCandidateKind::Node,
+                            provider: Some(source.name.clone()),
+                            detail: node.protocol.clone(),
+                            latency_ms: node
+                                .latency_label
+                                .as_deref()
+                                .and_then(|label| label.strip_suffix(" ms"))
+                                .and_then(|delay| delay.parse().ok()),
+                            alive: node.alive,
+                        });
+                    }
+                }
+            }
+            for node in source.saved_nodes {
+                if group.matches(&source.id, &node.name) && seen.insert(node.name.clone()) {
+                    candidates.push(PolicyNode {
+                        id: ProxyId::new(format!("{}:{}", source.id, node.name)),
+                        name: node.name.clone(),
+                        kind: PolicyCandidateKind::Node,
+                        provider: Some(source.name.clone()),
+                        detail: node.protocol.to_owned(),
+                        latency_ms: None,
+                        alive: None,
+                    });
+                }
+            }
+        }
+        if matches!(group.matcher, PolicyCandidateMatcher::Explicit(_)) {
+            for name in ["DIRECT", "REJECT"] {
+                if group.matches("builtin", name) && seen.insert(name.to_owned()) {
+                    candidates.push(PolicyNode {
+                        id: ProxyId::new(format!("builtin:{name}")),
+                        name: name.to_owned(),
+                        kind: PolicyCandidateKind::Node,
+                        provider: Some(language.localized(copy::nodes::BUILT_IN).to_owned()),
+                        detail: name.to_owned(),
+                        latency_ms: None,
+                        alive: None,
+                    });
+                }
+            }
+            for policy in &self.managed_policies.groups {
+                let source_id = format!("policy:{}", policy.id);
+                if policy.id != group.id
+                    && group.matches(&source_id, &policy.name)
+                    && seen.insert(policy.name.clone())
+                {
+                    candidates.push(PolicyNode {
+                        id: ProxyId::new(source_id),
+                        name: policy.name.clone(),
+                        kind: PolicyCandidateKind::PolicyGroup,
+                        provider: None,
+                        detail: language
+                            .localized(match policy.strategy {
+                                ManagedPolicyStrategy::Manual => copy::app::MANUAL_SELECTION,
+                                ManagedPolicyStrategy::LowestLatency => {
+                                    copy::app::AUTOMATIC_SELECTION
+                                }
+                            })
+                            .to_owned(),
+                        latency_ms: None,
+                        alive: None,
+                    });
+                }
+            }
+        }
+        candidates
+    }
+
+    fn clear_managed_policy_benchmarks(
+        &mut self,
+        id: &str,
+        previous_name: Option<&str>,
+        next_name: Option<&str>,
+    ) {
+        self.managed_policies
+            .benchmarks
+            .remove(&Self::managed_policy_benchmark_key(id));
+        for name in previous_name.into_iter().chain(next_name) {
+            self.managed_policies
+                .benchmarks
+                .remove(&format!("policy:{name}"));
+        }
     }
 
     fn start_source_group_benchmark(
@@ -1676,7 +1997,18 @@ impl ManisApp {
         Ok(group)
     }
 
-    pub(super) fn save_managed_policy(&mut self, cx: &mut Context<Self>) {
+    fn save_managed_policy_from_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.save_managed_policy_with_dialog(Some(window.window_handle()), cx);
+    }
+
+    fn save_managed_policy_with_dialog(
+        &mut self,
+        dialog_window: Option<AnyWindowHandle>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.managed_policies.mutation_state.is_busy() {
+            return;
+        }
         let Some(draft) = self.managed_policies.draft.clone() else {
             return;
         };
@@ -1715,6 +2047,7 @@ impl ManisApp {
             group_name,
             language.localized(copy::nodes::APPLYING_CHANGES)
         );
+        self.managed_policies.mutation_state = ManagedPolicyMutationState::Saving;
         let runtime = self.runtime.clone();
         let executor = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
@@ -1725,10 +2058,14 @@ impl ManisApp {
                     })
                 })
                 .await;
-            this.update(cx, |this, cx| {
-                this.finish_managed_policy_save(result, cx);
-            })
-            .ok();
+            let close = this
+                .update(cx, |this, cx| this.finish_managed_policy_save(result, cx))
+                .unwrap_or(false);
+            if close && let Some(dialog_window) = dialog_window {
+                let _ = cx.update_window(dialog_window, |_, window, cx| {
+                    window.close_dialog(cx);
+                });
+            }
         })
         .detach();
         cx.notify();
@@ -1738,12 +2075,25 @@ impl ManisApp {
         &mut self,
         result: Result<super::SourceMutation<ManagedPolicyGroup>, SubscriptionStoreError>,
         cx: &mut Context<Self>,
-    ) {
+    ) -> bool {
+        self.managed_policies.mutation_state = ManagedPolicyMutationState::Idle;
+        let mut saved = false;
         match result {
             Ok(transaction) => {
                 let language = self.language();
                 transaction.apply.reconcile_proxy_mode(&mut self.proxy_mode);
                 if let Some(group) = transaction.value {
+                    let previous_name = self
+                        .managed_policies
+                        .groups
+                        .iter()
+                        .find(|existing| existing.id == group.id)
+                        .map(|existing| existing.name.clone());
+                    self.clear_managed_policy_benchmarks(
+                        &group.id,
+                        previous_name.as_deref(),
+                        Some(&group.name),
+                    );
                     if let Some(existing) = self
                         .managed_policies
                         .groups
@@ -1757,13 +2107,11 @@ impl ManisApp {
                             .groups
                             .sort_by(|left, right| left.id.cmp(&right.id));
                     }
-                    self.managed_policies
-                        .benchmarks
-                        .remove(&Self::managed_policy_benchmark_key(&group.id));
                     self.persist_group_benchmarks();
                     self.managed_policies.runtime_states.remove(&group.id);
                     self.managed_policies.draft = None;
                     self.managed_policies.editor_popover = None;
+                    saved = true;
                     self.status = format!(
                         "{} “{}”{}",
                         language.localized(copy::nodes::GROUP_SAVED),
@@ -1791,9 +2139,27 @@ impl ManisApp {
             }
         }
         cx.notify();
+        saved
     }
 
-    pub(super) fn remove_managed_policy(&mut self, id: &str, cx: &mut Context<Self>) {
+    fn remove_managed_policy_from_dialog(
+        &mut self,
+        id: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.remove_managed_policy_with_dialog(id, Some(window.window_handle()), cx);
+    }
+
+    fn remove_managed_policy_with_dialog(
+        &mut self,
+        id: &str,
+        dialog_window: Option<AnyWindowHandle>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.managed_policies.mutation_state.is_busy() {
+            return;
+        }
         let reference = format!("policy:{id}");
         if self.managed_policies.groups.iter().any(|group| {
             matches!(
@@ -1828,6 +2194,7 @@ impl ManisApp {
             group.name,
             language.localized(copy::nodes::APPLYING_CHANGES)
         );
+        self.managed_policies.mutation_state = ManagedPolicyMutationState::Removing;
         let runtime = self.runtime.clone();
         let executor = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
@@ -1839,10 +2206,16 @@ impl ManisApp {
                     })
                 })
                 .await;
-            this.update(cx, |this, cx| {
-                this.finish_managed_policy_removal(result, cx);
-            })
-            .ok();
+            let close = this
+                .update(cx, |this, cx| {
+                    this.finish_managed_policy_removal(result, cx)
+                })
+                .unwrap_or(false);
+            if close && let Some(dialog_window) = dialog_window {
+                let _ = cx.update_window(dialog_window, |_, window, cx| {
+                    window.close_dialog(cx);
+                });
+            }
         })
         .detach();
         cx.notify();
@@ -1852,10 +2225,13 @@ impl ManisApp {
         &mut self,
         result: Result<super::SourceMutation<(String, ManagedPolicyGroup)>, SubscriptionStoreError>,
         cx: &mut Context<Self>,
-    ) {
+    ) -> bool {
+        self.managed_policies.mutation_state = ManagedPolicyMutationState::Idle;
+        let mut removed = false;
         match result {
             Ok(transaction) if transaction.value.is_some() => {
                 self.finish_successful_managed_policy_removal(transaction);
+                removed = true;
             }
             Ok(transaction) => {
                 let language = self.language();
@@ -1878,6 +2254,7 @@ impl ManisApp {
             }
         }
         cx.notify();
+        removed
     }
 
     fn finish_successful_managed_policy_removal(
@@ -1893,9 +2270,7 @@ impl ManisApp {
         self.managed_policies
             .groups
             .retain(|candidate| candidate.id != deleted_id);
-        self.managed_policies
-            .benchmarks
-            .remove(&Self::managed_policy_benchmark_key(&deleted_id));
+        self.clear_managed_policy_benchmarks(&deleted_id, Some(&group.name), None);
         self.persist_group_benchmarks();
         self.managed_policies.runtime_states.remove(&deleted_id);
         if self
@@ -1916,13 +2291,15 @@ impl ManisApp {
         );
     }
 
-    fn node_configuration_link(language: Language, cx: &mut Context<Self>) -> Button {
+    fn node_configuration_link(language: Language, theme: Theme, cx: &mut Context<Self>) -> Button {
         action_button(
             "nodes-open-configuration",
             language.message(Message::ManageSources),
-            ActionRole::Quiet,
+            ActionRole::Secondary,
             ControlSize::Compact,
         )
+        .with_variant(ButtonVariant::Default)
+        .border_color(theme.outline_strong)
         .accessibility_label(language.localized(copy::nodes::MANAGE_SUBSCRIPTION_SOURCES))
         .px_3()
         .cursor_pointer()
@@ -1951,15 +2328,14 @@ impl ManisApp {
             ActionRole::Secondary,
             ControlSize::Compact,
         )
+        .with_variant(ButtonVariant::Default)
+        .border_color(theme.outline_strong)
+        .icon(IconName::Redo2)
+        .loading(refreshing)
         .accessibility_label(language.localized(copy::nodes::REFRESH_NODE_HEALTH))
         .tab_stop(!refreshing)
         .px_3()
         .cursor_pointer()
-        .text_color(if refreshing {
-            theme.text_tertiary
-        } else {
-            theme.action_primary
-        })
         .on_click(cx.listener(move |this, _, _, cx| {
             if refreshing {
                 return;
@@ -1985,74 +2361,11 @@ impl ManisApp {
         }))
     }
 
-    fn node_health_summary(
-        counts: NodeCounts,
-        compact: bool,
-        language: Language,
-        theme: Theme,
-    ) -> Div {
-        div()
-            .mt(Space::Lg.px())
-            .flex()
-            .items_center()
-            .gap(if compact {
-                Space::Md.px()
-            } else {
-                Space::Xl.px()
-            })
-            .child(Self::node_health_value(
-                language.localized(copy::nodes::AVAILABLE),
-                counts.available,
-                theme.status_success,
-                theme,
-            ))
-            .child(Self::node_health_value(
-                language.localized(copy::nodes::UNAVAILABLE),
-                counts.unavailable,
-                theme.text_secondary,
-                theme,
-            ))
-            .child(Self::node_health_value(
-                language.localized(copy::nodes::UNTESTED),
-                counts.untested,
-                theme.text_tertiary,
-                theme,
-            ))
-    }
-
-    fn node_health_value(
-        label: &'static str,
-        count: usize,
-        color: gpui::Rgba,
-        theme: Theme,
-    ) -> Div {
-        div()
-            .flex()
-            .items_baseline()
-            .gap_1()
-            .child(
-                div()
-                    .text_size(TextRole::SectionTitle.size())
-                    .line_height(TextRole::SectionTitle.line_height())
-                    .font_weight(TextRole::SectionTitle.weight())
-                    .text_color(color)
-                    .child(count.to_string()),
-            )
-            .child(
-                div()
-                    .text_size(TextRole::Metadata.size())
-                    .line_height(TextRole::Metadata.line_height())
-                    .text_color(theme.text_secondary)
-                    .child(label),
-            )
-    }
-
     fn node_filter_bar(
         counts: NodeCounts,
         selected: NodeAvailabilityFilter,
         compact: bool,
         language: Language,
-        theme: Theme,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let filters = [
@@ -2063,7 +2376,6 @@ impl ManisApp {
         ];
         div()
             .id("node-filter-bar")
-            .mt_3()
             .flex()
             .items_center()
             .gap_2()
@@ -2071,53 +2383,37 @@ impl ManisApp {
             .children(filters.into_iter().map(|filter| {
                 let label = Self::availability_filter_label(filter, language);
                 let active = selected == filter;
-                div()
-                    .id(format!("node-filter-{label}"))
-                    .role(Role::Button)
-                    .aria_label(format!(
-                        "{} {label}",
-                        language.localized(copy::nodes::FILTER_NODES_BY)
-                    ))
-                    .tab_stop(true)
-                    .focusable()
-                    .cursor_pointer()
-                    .h(ControlSize::Icon.min_pointer_target())
-                    .px_3()
-                    .rounded(Radius::Control.px())
-                    .border_1()
-                    .border_color(if active {
-                        theme.action_primary
+                action_button(
+                    format!("node-filter-{label}"),
+                    format!("{label} {}", counts.count_for(filter)),
+                    if active {
+                        ActionRole::Primary
                     } else {
-                        theme.outline_subtle
-                    })
-                    .bg(if active {
-                        theme.action_soft
-                    } else {
-                        theme.surface_high
-                    })
-                    .text_color(if active {
-                        theme.action_primary
-                    } else {
-                        theme.text_secondary
-                    })
-                    .font_weight(if active {
-                        FontWeight::SEMIBOLD
-                    } else {
-                        FontWeight::NORMAL
-                    })
-                    .flex()
-                    .items_center()
-                    .child(format!("{label} {}", counts.count_for(filter)))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.node_workspace.select_filter(filter);
-                        let language = this.language();
-                        this.status = format!(
-                            "{}: {}",
-                            language.localized(copy::nodes::NODE_FILTER),
-                            Self::availability_filter_label(filter, language)
-                        );
-                        cx.notify();
-                    }))
+                        ActionRole::Secondary
+                    },
+                    ControlSize::Icon,
+                )
+                .when(!active, |button| {
+                    button.with_variant(ButtonVariant::Default)
+                })
+                .toggled(active)
+                .accessibility_label(format!(
+                    "{} {label}",
+                    language.localized(copy::nodes::FILTER_NODES_BY)
+                ))
+                .flex_shrink_0()
+                .cursor_pointer()
+                .px_3()
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.node_workspace.select_filter(filter);
+                    let language = this.language();
+                    this.status = format!(
+                        "{}: {}",
+                        language.localized(copy::nodes::NODE_FILTER),
+                        Self::availability_filter_label(filter, language)
+                    );
+                    cx.notify();
+                }))
             }))
     }
 
@@ -2364,15 +2660,10 @@ impl ManisApp {
                             .text_color(theme.text_secondary)
                             .child(Self::node_count_label(presentation.total_nodes, language)),
                     )
-                    .child(
-                        Icon::new(if presentation.collapsed {
-                            IconName::ChevronRight
-                        } else {
-                            IconName::ChevronDown
-                        })
-                        .xsmall()
-                        .text_color(theme.action_primary),
-                    ),
+                    .child(crate::components::disclosure_icon(
+                        !presentation.collapsed,
+                        theme,
+                    )),
             )
     }
 

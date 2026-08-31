@@ -3,7 +3,7 @@ use gpui::{
     px,
 };
 use gpui_component::{
-    Sizable as _,
+    Icon, IconName, Sizable as _,
     button::{Button, ButtonVariant, ButtonVariants as _},
     dialog::Dialog,
     popover::Popover,
@@ -45,6 +45,17 @@ pub(crate) fn style_action_button(button: Button, role: ActionRole, size: Contro
         .with_size(size.component_size())
         .h(size.height())
         .rounded(Radius::Control.px())
+}
+
+pub(crate) fn disclosure_icon(expanded: bool, theme: Theme) -> Icon {
+    Icon::new(if expanded {
+        IconName::ChevronDown
+    } else {
+        IconName::ChevronRight
+    })
+    .xsmall()
+    .flex_shrink_0()
+    .text_color(theme.action_primary)
 }
 
 pub(crate) fn surface_dialog(dialog: Dialog, theme: Theme) -> Dialog {

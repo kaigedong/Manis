@@ -334,9 +334,7 @@ impl ManisApp {
             .flex()
             .flex_col()
             .gap(Space::Xs.px())
-            .bg(theme.surface_chrome)
-            .border_r_1()
-            .border_color(theme.outline_subtle)
+            .bg(theme.surface_base)
             .children(entries.into_iter().map(|(label, short_label, workspace)| {
                 let selected = workspace == self.primary_workspace;
                 div()
@@ -416,7 +414,7 @@ impl ManisApp {
         cx.notify();
     }
 
-    fn empty_policy_workspace(&self, theme: Theme, cx: &mut Context<Self>) -> Div {
+    fn empty_policy_workspace(&self, theme: Theme, compact: bool, cx: &mut Context<Self>) -> Div {
         let language = self.language();
         let (title, description) = match &self.controller {
             ControllerState::Disconnected => (
@@ -445,7 +443,7 @@ impl ManisApp {
             .id("offline-policy-scroll")
             .flex_1()
             .overflow_y_scroll()
-            .p(Space::Xl.px());
+            .p(if compact { Space::Md.px() } else { Space::Lg.px() });
         let body = if self.managed_policies.groups.is_empty() {
             body.child(
                 div()
@@ -488,7 +486,6 @@ impl ManisApp {
                                     theme,
                                     cx,
                                 ))
-                                .child(self.connection_button(theme, cx))
                                 .into_any_element(),
                         ),
                         theme,
@@ -500,13 +497,15 @@ impl ManisApp {
     fn offline_policy_card_view(&self, policy: ManagedPolicyGroup) -> OfflinePolicyCardView {
         let policy_group_id = PolicyGroupId::new(policy.id.clone());
         OfflinePolicyCardView {
-            candidates: self.managed_policy_candidate_names(&policy),
+            candidates: self.managed_policy_candidate_nodes(&policy),
             selected_name: self
                 .managed_policies
                 .node_selections
                 .policy_target(&policy.name)
                 .map(str::to_owned),
-            expanded: self.expanded_policy_group.as_ref() == Some(&policy_group_id),
+            expanded: self.expanded_policy_group.as_ref().is_some_and(|expanded| {
+                expanded == &policy_group_id || expanded.as_str() == policy.name
+            }),
             benchmarking: self.managed_policies.pending_benchmark_name.as_deref()
                 == Some(policy.name.as_str()),
             policy,
@@ -524,6 +523,7 @@ impl ManisApp {
         let benchmarking = view.benchmarking;
         let benchmark_name = view.policy.name.clone();
         let toggle_id = PolicyGroupId::new(view.policy.id.clone());
+        let expanded = view.expanded;
         let action = if view.expanded {
             language.localized(copy::common::COLLAPSE)
         } else {
@@ -569,14 +569,17 @@ impl ManisApp {
                 }),
             ))
             .child(Self::offline_policy_identity(view, language, theme))
+            .child(Self::policy_settings_button(
+                &view.policy.id, Some(view.policy.id.clone()), language, theme, cx,
+            ))
             .child(Self::offline_policy_summary(
                 candidate_count,
-                action,
+                view.expanded,
                 language,
                 theme,
             ))
             .on_click(cx.listener(move |this, _, _, cx| {
-                if this.expanded_policy_group.as_ref() == Some(&toggle_id) {
+                if expanded {
                     this.expanded_policy_group = None;
                 } else {
                     this.expanded_policy_group = Some(toggle_id.clone());
@@ -621,7 +624,7 @@ impl ManisApp {
 
     fn offline_policy_summary(
         candidate_count: usize,
-        action: &'static str,
+        expanded: bool,
         language: Language,
         theme: Theme,
     ) -> Div {
@@ -637,15 +640,7 @@ impl ManisApp {
                     .text_color(theme.text_secondary)
                     .child(language.count(CountNoun::Node, candidate_count)),
             )
-            .child(
-                div()
-                    .min_w(px(36.0))
-                    .text_size(TextRole::Label.size())
-                    .line_height(TextRole::Label.line_height())
-                    .font_weight(TextRole::Label.weight())
-                    .text_color(theme.action_primary)
-                    .child(action),
-            )
+            .child(crate::components::disclosure_icon(expanded, theme))
     }
 
     fn offline_policy_card(
@@ -681,128 +676,86 @@ impl ManisApp {
                     ),
             );
         } else {
+            card = card.child(Self::policy_candidate_table_header(language, theme));
+            let benchmark_key = Self::managed_policy_benchmark_key(&view.policy.id);
+            let runtime_key = Self::policy_group_benchmark_key(&PolicyGroupId::new(view.policy.name.clone()));
+            let benchmark = self.managed_policies.benchmarks.get(&benchmark_key)
+                .or_else(|| self.managed_policies.benchmarks.get(&runtime_key));
             for candidate in &view.candidates {
-                card = card.child(Self::saved_policy_candidate_row(
+                let current = view.selected_name.as_deref() == Some(candidate.name.as_str());
+                card = card.child(Self::node_row(
                     candidate.clone(),
-                    view.selected_name.as_deref() == Some(candidate.as_str()),
-                    theme,
+                    PolicyNodeRowContext {
+                        source: self.policy_node_source_label(candidate, language),
+                        selection: PolicySelectionRequest {
+                            group_id: PolicyGroupId::new(view.policy.id.clone()),
+                            group_name: view.policy.name.clone(),
+                            node_id: candidate.id.clone(),
+                            node_name: candidate.name.clone(),
+                        },
+                        current,
+                        manually_selectable: view.policy.strategy == ManagedPolicyStrategy::Manual,
+                        selection_busy: self.policy_selection_busy.is_some(),
+                        benchmark_state: benchmark.map_or(GroupBenchmarkNodeState::Idle, |state| state.node_state(&candidate.name)),
+                        language,
+                        theme,
+                    },
+                    cx,
                 ));
             }
         }
-        card.child(Self::offline_policy_actions(
-            &view.policy,
-            language,
-            theme,
-            cx,
-        ))
+        card
     }
 
-    fn offline_policy_actions(
-        policy: &ManagedPolicyGroup,
+    fn policy_settings_button(
+        row_id: &str,
+        group_id: Option<String>,
         language: Language,
         theme: Theme,
         cx: &mut Context<Self>,
-    ) -> Div {
-        let edit_id = policy.id.clone();
-        let remove_id = policy.id.clone();
-        div()
-            .px_4()
-            .py(Space::Md.px())
-            .border_t_1()
-            .border_color(theme.outline_subtle)
-            .flex()
-            .justify_end()
-            .gap(Space::Sm.px())
-            .child(
-                action_button(
-                    format!("edit-offline-policy-{}", policy.id),
-                    language.localized(copy::app::EDIT),
-                    ActionRole::Secondary,
-                    ControlSize::Compact,
-                )
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    cx.stop_propagation();
-                    this.start_managed_policy_edit(&edit_id, cx);
-                })),
-            )
-            .child(
-                action_button(
-                    format!("remove-offline-policy-{}", policy.id),
-                    language.message(Message::Delete),
-                    ActionRole::Danger,
-                    ControlSize::Compact,
-                )
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    cx.stop_propagation();
-                    this.remove_managed_policy(&remove_id, cx);
-                })),
-            )
+    ) -> Button {
+        let editable = group_id.is_some();
+        action_button(
+            format!("policy-settings-{row_id}"),
+            if editable { language.message(Message::Settings) } else { language.localized(copy::app::READ_ONLY) },
+            ActionRole::Secondary,
+            ControlSize::Compact,
+        )
+        .with_variant(ButtonVariant::Default)
+        .border_color(theme.outline_strong)
+        .bg(theme.surface_base)
+        .disabled(!editable)
+        .accessibility_label(language.localized(if editable { copy::common::EDIT_POLICY_GROUP } else { copy::app::THIS_RUNTIME_POLICY_IS_READ_ONLY_IN_MANIS }))
+        .on_click(cx.listener(move |this, _, window, cx| {
+            cx.stop_propagation();
+            if let Some(id) = group_id.as_deref() {
+                this.open_managed_policy_settings(id, window, cx);
+            }
+        }))
     }
 
-    fn saved_policy_candidate_row(name: String, current: bool, theme: Theme) -> Div {
-        div()
-            .min_h(px(48.0))
-            .px(Space::Lg.px())
-            .border_t_1()
-            .border_color(theme.outline_subtle)
-            .flex()
-            .items_center()
-            .gap(Space::Md.px())
-            .bg(if current {
-                theme.action_soft
-            } else {
-                theme.surface_base
-            })
-            .child(
-                div()
-                    .size(px(10.0))
-                    .rounded_full()
-                    .border_1()
-                    .border_color(if current {
-                        theme.action_primary
-                    } else {
-                        theme.outline_strong
-                    })
-                    .when(current, |dot| dot.bg(theme.action_primary)),
-            )
-            .child(
-                div()
-                    .min_w(px(0.0))
-                    .flex_1()
-                    .overflow_x_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .text_size(TextRole::Body.size())
-                    .line_height(TextRole::Body.line_height())
-                    .text_color(theme.text_primary)
-                    .child(name),
-            )
-    }
-
-    fn policy_list(&self, theme: Theme, width: Option<f32>, cx: &mut Context<Self>) -> Div {
+    fn policy_list(&self, theme: Theme, compact: bool, cx: &mut Context<Self>) -> Div {
         let language = self.language();
-        let compact = width.is_none();
         let policy_count = self.policy_groups().count();
         let rows = self.policy_groups().cloned().fold(
             div()
                 .id("policy-scroll")
                 .flex_1()
                 .overflow_y_scroll()
-                .p(Space::Md.px())
+                .p(if compact { Space::Md.px() } else { Space::Lg.px() })
                 .flex()
                 .flex_col()
                 .gap(Space::Sm.px()),
-            |rows, item| rows.child(self.policy_list_card(item, compact, language, theme, cx)),
+            |rows, item| rows.child(self.policy_list_card(item, language, theme, cx)),
         );
 
         div()
-            .when_some(width, |list, width| list.w(px(width)).flex_shrink_0())
+            .flex_1()
+            .min_w(px(0.0))
             .h_full()
             .flex()
             .flex_col()
-            .bg(theme.surface_chrome)
-            .border_r_1()
-            .border_color(theme.outline_subtle)
+            .bg(theme.surface_base)
             .child(
                 div()
                     .p(Space::Lg.px())
@@ -814,7 +767,7 @@ impl ManisApp {
                             "{} · {}",
                             language.count(CountNoun::PolicyGroup, policy_count),
                             language.localized(
-                                copy::app::RULES_TARGET_A_POLICY_OPEN_ONE_TO_CONFIGURE_ITS_EXIT
+                                copy::app::ROUTING_RULES_CHOOSE_POLICY_GROUPS_POLICIES_CHOOSE_EXITS
                             )
                         ),
                         Some(
@@ -828,7 +781,6 @@ impl ManisApp {
                                     theme,
                                     cx,
                                 ))
-                                .child(self.connection_button(theme, cx))
                                 .into_any_element(),
                         ),
                         theme,
@@ -839,9 +791,13 @@ impl ManisApp {
 
     fn policy_list_card_view(&self, item: PolicyGroup) -> PolicyListCardView {
         let benchmark_key = Self::policy_group_benchmark_key(&item.id);
+        let editable_group_id = self.editable_policy_group_id(&item.name).map(str::to_owned);
+        let expanded = self.expanded_policy_group.as_ref().is_some_and(|expanded| {
+            expanded == &item.id || editable_group_id.as_deref() == Some(expanded.as_str())
+        });
         PolicyListCardView {
-            selected: self.workspace.selected_group.as_ref() == Some(&item.id),
-            expanded: self.expanded_policy_group.as_ref() == Some(&item.id),
+            editable_group_id,
+            expanded,
             icon: self
                 .managed_policies
                 .groups
@@ -861,7 +817,6 @@ impl ManisApp {
     fn policy_list_card(
         &self,
         item: PolicyGroup,
-        compact: bool,
         language: Language,
         theme: Theme,
         cx: &mut Context<Self>,
@@ -870,14 +825,10 @@ impl ManisApp {
         let mut card = div()
             .rounded(Radius::Pane.px())
             .border_1()
-            .border_color(if view.selected || view.expanded {
-                theme.outline_subtle
-            } else {
-                gpui::rgba(0x0000_0000)
-            })
+            .border_color(theme.outline_subtle)
             .overflow_hidden()
             .child(Self::policy_list_header(
-                &view, compact, language, theme, cx,
+                &view, language, theme, cx,
             ));
         if !view.expanded {
             return card;
@@ -895,36 +846,33 @@ impl ManisApp {
         if view.item.nodes.is_empty() {
             return card.child(Self::empty_policy_candidates(language, theme));
         }
+        card = card.child(Self::policy_candidate_table_header(language, theme));
+        let selected_node = self.node_for_policy(&view.item);
         for node in view.item.nodes.iter().cloned() {
-            let benchmark_state = self
-                .managed_policies
-                .benchmarks
-                .get(&view.benchmark_key)
-                .map_or(GroupBenchmarkNodeState::Idle, |state| {
-                    state.node_state(&node.name)
-                });
-            let current = node.name == view.item.target;
-            card = card.child(Self::policy_list_candidate_row(
-                node,
-                PolicyCandidateRowContext {
-                    policy_id: view.item.id.clone(),
-                    policy_name: view.item.name.clone(),
-                    current,
-                    manually_selectable: view.item.kind.allows_manual_selection(),
-                    selection_busy: self.policy_selection_busy.is_some(),
-                    benchmark_state,
-                    language,
-                    theme,
+            let benchmark_state = self.managed_policies.benchmarks.get(&view.benchmark_key)
+                .map_or(GroupBenchmarkNodeState::Idle, |state| state.node_state(&node.name));
+            let context = PolicyNodeRowContext {
+                source: self.policy_node_source_label(&node, language),
+                current: node.id == selected_node.id,
+                selection: PolicySelectionRequest {
+                    group_id: view.item.id.clone(),
+                    group_name: view.item.name.clone(),
+                    node_id: node.id.clone(),
+                    node_name: node.name.clone(),
                 },
-                cx,
-            ));
+                manually_selectable: view.item.kind.allows_manual_selection(),
+                selection_busy: self.policy_selection_busy.is_some(),
+                benchmark_state,
+                language,
+                theme,
+            };
+            card = card.child(Self::node_row(node, context, cx));
         }
         card
     }
 
     fn policy_list_header(
         view: &PolicyListCardView,
-        compact: bool,
         language: Language,
         theme: Theme,
         cx: &mut Context<Self>,
@@ -934,6 +882,7 @@ impl ManisApp {
         let benchmark_id = view.item.id.clone();
         let item_id = view.item.id.clone();
         let item_name = view.item.name.clone();
+        let expanded = view.expanded;
         let item_target_node = view
             .item
             .nodes
@@ -965,13 +914,8 @@ impl ManisApp {
             .flex()
             .items_center()
             .gap(Space::Md.px())
-            .bg(if view.selected {
-                theme.action_soft
-            } else if view.expanded {
-                theme.surface_low
-            } else {
-                gpui::rgba(0x0000_0000)
-            })
+            .bg(theme.surface_low)
+            .hover(|header| header.bg(theme.action_soft))
             .child(Self::policy_group_icon(
                 PolicyGroupIconView {
                     id: &view.benchmark_key,
@@ -990,23 +934,22 @@ impl ManisApp {
                 }),
             ))
             .child(Self::policy_list_identity(&view.item, language, theme))
+            .child(Self::policy_settings_button(
+                view.item.id.as_str(), view.editable_group_id.clone(), language, theme, cx,
+            ))
             .child(Self::policy_list_summary(
                 view.item.nodes.len(),
-                action,
+                view.expanded,
                 language,
                 theme,
             ))
             .on_click(cx.listener(move |this, _, _, cx| {
-                if this.expanded_policy_group.as_ref() == Some(&item_id) {
+                if expanded {
                     this.expanded_policy_group = None;
                 } else {
                     this.expanded_policy_group = Some(item_id.clone());
                 }
-                this.policy_detail_tab = PolicyDetailTab::Nodes;
                 this.workspace.select_group(item_id.clone());
-                if compact {
-                    this.workspace.navigate_back();
-                }
                 if let Some(target) = item_target_node.clone() {
                     this.workspace.select_node(target);
                 }
@@ -1051,7 +994,7 @@ impl ManisApp {
 
     fn policy_list_summary(
         node_count: usize,
-        action: &'static str,
+        expanded: bool,
         language: Language,
         theme: Theme,
     ) -> Div {
@@ -1067,15 +1010,7 @@ impl ManisApp {
                     .text_color(theme.text_secondary)
                     .child(language.count(CountNoun::Node, node_count)),
             )
-            .child(
-                div()
-                    .min_w(px(36.0))
-                    .text_size(TextRole::Label.size())
-                    .line_height(TextRole::Label.line_height())
-                    .font_weight(TextRole::Label.weight())
-                    .text_color(theme.action_primary)
-                    .child(action),
-            )
+            .child(crate::components::disclosure_icon(expanded, theme))
     }
 
     fn empty_policy_candidates(language: Language, theme: Theme) -> Div {
@@ -1088,101 +1023,6 @@ impl ManisApp {
             .line_height(TextRole::Body.line_height())
             .text_color(theme.text_secondary)
             .child(language.localized(copy::app::THIS_POLICY_HAS_NO_CANDIDATE_NODES))
-    }
-
-    fn policy_list_candidate_row(
-        node: PolicyNode,
-        row_context: PolicyCandidateRowContext,
-        cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
-        let PolicyCandidateRowContext {
-            policy_id,
-            policy_name,
-            current,
-            manually_selectable,
-            selection_busy,
-            benchmark_state,
-            language,
-            theme,
-        } = row_context;
-        let node_id = node.id.clone();
-        let node_name = node.name.clone();
-        let idle_latency = node
-            .latency_ms
-            .map_or_else(|| "—".to_owned(), |latency| format!("{latency} ms"));
-        div()
-            .id(format!("policy-list-node-{}", node.id.as_str()))
-            .tab_stop(manually_selectable && !selection_busy)
-            .min_h(px(48.0))
-            .px(Space::Lg.px())
-            .border_t_1()
-            .border_color(theme.outline_subtle)
-            .flex()
-            .items_center()
-            .gap(Space::Md.px())
-            .bg(if current {
-                theme.action_soft
-            } else {
-                theme.surface_base
-            })
-            .child(
-                div()
-                    .size(px(10.0))
-                    .rounded_full()
-                    .border_1()
-                    .border_color(if current {
-                        theme.action_primary
-                    } else {
-                        theme.outline_strong
-                    })
-                    .when(current, |dot| dot.bg(theme.action_primary)),
-            )
-            .child(
-                div()
-                    .min_w(px(0.0))
-                    .flex_1()
-                    .overflow_x_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .text_size(TextRole::Body.size())
-                    .line_height(TextRole::Body.line_height())
-                    .text_color(if manually_selectable {
-                        theme.text_primary
-                    } else {
-                        theme.text_secondary
-                    })
-                    .child(node.name),
-            )
-            .child(Self::benchmark_latency_content(
-                benchmark_state,
-                idle_latency,
-                &format!("policy-list-node-{}-spinner", node.id.as_str()),
-                language,
-                theme,
-            ))
-            .when(manually_selectable, |row| {
-                row.role(Role::RadioButton)
-                    .aria_toggled(if current {
-                        Toggled::True
-                    } else {
-                        Toggled::False
-                    })
-                    .focusable()
-                    .when(!selection_busy, gpui::Styled::cursor_pointer)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if !selection_busy {
-                            this.select_policy_node(
-                                PolicySelectionRequest {
-                                    group_id: policy_id.clone(),
-                                    group_name: policy_name.clone(),
-                                    node_id: node_id.clone(),
-                                    node_name: node_name.clone(),
-                                },
-                                cx,
-                            );
-                        }
-                    }))
-            })
     }
 
     fn managed_policy_add_button(
@@ -1202,9 +1042,8 @@ impl ManisApp {
         .bg(theme.action_primary)
         .text_color(theme.action_on_primary)
         .font_weight(FontWeight::SEMIBOLD)
-        .on_click(cx.listener(|this, _, _, cx| {
-            this.workspace.compact_navigation = CompactNavigation::GroupDetail;
-            this.start_managed_policy_create(cx);
+        .on_click(cx.listener(|this, _, window, cx| {
+            this.open_managed_policy_create(window, cx);
         }))
     }
 
@@ -1275,7 +1114,7 @@ impl ManisApp {
         let idle_latency = item
             .latency_ms
             .map_or_else(|| "—".to_owned(), |latency| format!("{latency} ms"));
-        let spinner_id = format!("policy-node-{}-latency", item.id.as_str());
+        let spinner_id = format!("policy-node-{}-{}-latency", policy_id.as_str(), item.id.as_str());
         let leading =
             Self::policy_node_leading(item.kind, manually_selectable, current, language, theme);
         let description = Self::policy_node_description(
@@ -1288,10 +1127,11 @@ impl ManisApp {
         );
         let source = Self::policy_node_source(source, manually_selectable, theme);
         div()
-            .id(format!("node-{}", item.id.as_str()))
+            .id(format!("policy-node-{}-{}", policy_id.as_str(), item.id.as_str()))
             .tab_stop(manually_selectable && !selection_busy)
             .min_h(px(64.0))
             .px(Space::Md.px())
+            .py(Space::Sm.px())
             .flex()
             .items_center()
             .gap(Space::Md.px())
@@ -1308,6 +1148,7 @@ impl ManisApp {
             .child(
                 div()
                     .w(px(64.0))
+                    .flex_shrink_0()
                     .min_h(px(18.0))
                     .flex()
                     .items_center()
@@ -1348,6 +1189,7 @@ impl ManisApp {
     fn policy_node_source(source: String, manually_selectable: bool, theme: Theme) -> Div {
         div()
             .w(px(100.0))
+            .flex_shrink_0()
             .overflow_x_hidden()
             .whitespace_nowrap()
             .text_ellipsis()
@@ -1371,6 +1213,7 @@ impl ManisApp {
     ) -> Div {
         div()
             .flex_1()
+            .min_w(px(0.0))
             .child(
                 div()
                     .flex()
@@ -1388,9 +1231,9 @@ impl ManisApp {
                     } else {
                         theme.text_secondary
                     })
-                    .child(name)
-                    .when(current && !manually_selectable, |name| {
-                        name.child(div().child(status_badge(
+                    .child(div().min_w(px(0.0)).overflow_x_hidden().whitespace_nowrap().text_ellipsis().child(name))
+                    .when(current, |name| {
+                        name.child(div().flex_shrink_0().child(status_badge(
                             language.localized(copy::app::CURRENT),
                             StatusTone::Neutral,
                             theme,
@@ -1452,222 +1295,13 @@ impl ManisApp {
             .map(|group| group.id.as_str())
     }
 
-    fn policy_detail_tabs(
-        &self,
-        editable_group_id: Option<String>,
-        language: Language,
-        cx: &mut Context<Self>,
-    ) -> TabBar {
-        let app = cx.entity();
-        TabBar::new("policy-detail-tabs")
-            .underline()
-            .selected_index(self.policy_detail_tab.index())
-            .child(
-                Tab::new()
-                    .label(language.message(Message::Nodes))
-                    .aria_label(language.message(Message::Nodes)),
-            )
-            .child(
-                Tab::new()
-                    .label(language.message(Message::Settings))
-                    .aria_label(language.message(Message::Settings)),
-            )
-            .on_click(move |index, _, cx| {
-                let tab = PolicyDetailTab::from_index(*index);
-                app.update(cx, |this, cx| {
-                    this.policy_detail_tab = tab;
-                    if tab == PolicyDetailTab::Settings {
-                        if let Some(group_id) = editable_group_id.as_deref() {
-                            let already_editing = this
-                                .managed_policies
-                                .draft
-                                .as_ref()
-                                .and_then(|draft| draft.editing_id.as_deref())
-                                == Some(group_id);
-                            if !already_editing {
-                                this.start_managed_policy_edit(group_id, cx);
-                                return;
-                            }
-                        } else {
-                            this.language()
-                                .localized(copy::app::THIS_RUNTIME_POLICY_IS_READ_ONLY_IN_MANIS)
-                                .clone_into(&mut this.status);
-                        }
-                    }
-                    cx.notify();
-                });
-            })
-    }
-
-    fn detail(&self, theme: Theme, compact: bool, cx: &mut Context<Self>) -> Div {
-        let language = self.language();
-        let Some(view) = self.policy_detail_view() else {
-            return div().h_full().flex_1().bg(theme.surface_base);
-        };
-        let body = match self.policy_detail_tab {
-            PolicyDetailTab::Nodes => self.policy_nodes_detail(&view, language, theme, cx),
-            PolicyDetailTab::Settings => {
-                self.policy_settings_detail(&view, compact, language, theme, cx)
-            }
-        };
-        div()
-            .h_full()
-            .flex_1()
-            .min_w(px(0.0))
-            .flex()
-            .flex_col()
-            .bg(theme.surface_base)
-            .child(self.policy_detail_header(&view, compact, language, theme, cx))
-            .child(body)
-    }
-
-    fn policy_detail_view(&self) -> Option<PolicyDetailView> {
-        let policy = self.selected_policy()?.clone();
-        let selected_node_id = self.selected_node()?.id.clone();
-        let benchmark_key = Self::policy_group_benchmark_key(&policy.id);
-        Some(PolicyDetailView {
-            benchmarkable: Self::policy_group_benchmarkable(&policy),
-            benchmarking: self
-                .managed_policies
-                .benchmarks
-                .get(&benchmark_key)
-                .is_some_and(GroupBenchmarkState::is_running),
-            editable_group_id: self
-                .editable_policy_group_id(&policy.name)
-                .map(str::to_owned),
-            display_icon: self
-                .managed_policies
-                .groups
-                .iter()
-                .find(|group| group.name == policy.name)
-                .map_or(ManagedPolicyIcon::None, |group| group.icon),
-            policy,
-            selected_node_id,
-            benchmark_key,
-        })
-    }
-
-    fn policy_detail_body() -> Stateful<Div> {
-        div()
-            .id("detail-scroll")
-            .flex_1()
-            .overflow_y_scroll()
-            .p(Space::Lg.px())
-            .flex()
-            .flex_col()
-            .gap(Space::Md.px())
-    }
-
-    fn policy_nodes_detail(
-        &self,
-        view: &PolicyDetailView,
-        language: Language,
-        theme: Theme,
-        cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
-        let mut body = Self::policy_detail_body().child(section_heading(
-            language.localized(copy::app::CANDIDATE_NODES),
-            Self::policy_kind_guidance(view.policy.kind, language),
-            None,
-            theme,
-        ));
-        if view.policy.kind.is_automatic() {
-            body = body.child(Self::automatic_policy_notice(language, theme));
-        }
-        if let Some(feedback) = self
-            .managed_policies
-            .benchmarks
-            .get(&view.benchmark_key)
-            .and_then(|state| {
-                Self::policy_group_benchmark_feedback(
-                    language,
-                    state,
-                    view.policy.nodes.len(),
-                    theme,
-                )
-            })
-        {
-            body = body.child(feedback);
-        }
-        let mut candidates = div()
-            .rounded(Radius::Pane.px())
-            .border_1()
-            .border_color(theme.outline_subtle)
-            .overflow_hidden()
-            .child(Self::policy_candidate_table_header(language, theme));
-        for item in view.policy.nodes.iter().cloned() {
-            let source = self.policy_node_source_label(&item, language);
-            let benchmark_state = self
-                .managed_policies
-                .benchmarks
-                .get(&view.benchmark_key)
-                .map_or(GroupBenchmarkNodeState::Idle, |state| {
-                    state.node_state(&item.name)
-                });
-            let selection = PolicySelectionRequest {
-                group_id: view.policy.id.clone(),
-                group_name: view.policy.name.clone(),
-                node_id: item.id.clone(),
-                node_name: item.name.clone(),
-            };
-            let current = selection.node_id == view.selected_node_id;
-            candidates = candidates.child(Self::node_row(
-                item,
-                PolicyNodeRowContext {
-                    source,
-                    selection,
-                    current,
-                    manually_selectable: view.policy.kind.allows_manual_selection(),
-                    selection_busy: self.policy_selection_busy.is_some(),
-                    benchmark_state,
-                    language,
-                    theme,
-                },
-                cx,
-            ));
-        }
-        body.child(candidates)
-    }
-
-    fn policy_kind_guidance(kind: manis_core::PolicyGroupKind, language: Language) -> &'static str {
-        match kind {
-            manis_core::PolicyGroupKind::Selector => {
-                language.localized(copy::app::CHOOSE_THE_EXIT_USED_WHEN_A_ROUTING_RULE_TARGETS_THIS)
-            }
-            manis_core::PolicyGroupKind::UrlTest => language.localized(
-                copy::app::MIHOMO_MEASURES_THE_CONFIGURED_URL_ON_SCHEDULE_CANDIDATES_ARE_AUTOMATIC,
-            ),
-            manis_core::PolicyGroupKind::Fallback => language.localized(
-                copy::app::MIHOMO_CHECKS_CANDIDATES_ON_SCHEDULE_AND_FAILS_OVER_AUTOMATICALLY,
-            ),
-            manis_core::PolicyGroupKind::LoadBalance => language.localized(
-                copy::app::MIHOMO_DISTRIBUTES_CONNECTIONS_ACROSS_CANDIDATES_AUTOMATICALLY,
-            ),
-            manis_core::PolicyGroupKind::Direct => {
-                language.localized(copy::app::DIRECT_POLICIES_HAVE_NO_SELECTABLE_EXIT)
-            }
-        }
-    }
-
-    fn automatic_policy_notice(language: Language, theme: Theme) -> Div {
-        div()
-            .p(Space::Md.px())
-            .rounded(Radius::Row.px())
-            .border_1()
-            .border_color(theme.outline_subtle)
-            .bg(theme.surface_base)
-            .text_size(TextRole::Metadata.size())
-            .line_height(TextRole::Metadata.line_height())
-            .text_color(theme.text_secondary)
-            .child(language.localized(copy::app::AUTOMATIC_POLICY_MANIS_SHOWS_CANDIDATES_FOR_INSPECTION_MIHOMO_SELECTS_THE))
-    }
-
     fn policy_candidate_table_header(language: Language, theme: Theme) -> Div {
         div()
             .px(Space::Md.px())
             .py(Space::Sm.px())
             .bg(theme.surface_low)
             .flex()
+            .gap(Space::Md.px())
             .text_size(TextRole::Metadata.size())
             .line_height(TextRole::Metadata.line_height())
             .font_weight(TextRole::Label.weight())
@@ -1680,278 +1314,15 @@ impl ManisApp {
             .child(
                 div()
                     .w(px(100.0))
+                    .flex_shrink_0()
                     .child(language.localized(copy::app::SOURCE)),
             )
             .child(
                 div()
                     .w(px(64.0))
+                    .flex_shrink_0()
+                    .text_right()
                     .child(language.localized(copy::common::LATENCY)),
-            )
-    }
-
-    fn policy_settings_detail(
-        &self,
-        view: &PolicyDetailView,
-        compact: bool,
-        language: Language,
-        theme: Theme,
-        cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
-        let body = Self::policy_detail_body();
-        let Some(group_id) = view.editable_group_id.as_deref() else {
-            return body
-                .child(section_heading(
-                    language.localized(copy::app::RUNTIME_POLICY),
-                    language.localized(
-                        copy::app::THIS_POLICY_COMES_FROM_THE_ACTIVE_KERNEL_CONFIGURATION_AND_IS,
-                    ),
-                    Some(
-                        status_badge(
-                            language.localized(copy::app::READ_ONLY),
-                            StatusTone::Neutral,
-                            theme,
-                        )
-                        .into_any_element(),
-                    ),
-                    theme,
-                ))
-                .child(
-                    Self::managed_policy_add_button(
-                        "add-policy-group-readonly",
-                        language,
-                        theme,
-                        cx,
-                    )
-                    .mt(Space::Sm.px()),
-                );
-        };
-        let active_draft = self
-            .managed_policies
-            .draft
-            .as_ref()
-            .filter(|draft| draft.editing_id.as_deref() == Some(group_id));
-        if let Some(draft) = active_draft {
-            self.editing_policy_settings(body, draft, compact, language, theme, cx)
-        } else {
-            Self::saved_policy_settings(body, group_id, language, theme, cx)
-        }
-    }
-
-    fn editing_policy_settings(
-        &self,
-        body: Stateful<Div>,
-        draft: &ManagedPolicyDraft,
-        compact: bool,
-        language: Language,
-        theme: Theme,
-        cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
-        let remove_id = draft
-            .editing_id
-            .clone()
-            .expect("editing policy settings require a managed policy id");
-        let actions = div()
-            .flex()
-            .items_center()
-            .gap(Space::Sm.px())
-            .child(
-                action_button(
-                    "remove-managed-policy-editing",
-                    language.localized(copy::app::DELETE_POLICY_GROUP),
-                    ActionRole::Danger,
-                    ControlSize::Compact,
-                )
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.remove_managed_policy(&remove_id, cx);
-                })),
-            )
-            .child(
-                action_button(
-                    "cancel-managed-policy-edit",
-                    language.message(Message::Cancel),
-                    ActionRole::Quiet,
-                    ControlSize::Compact,
-                )
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.managed_policies.draft = None;
-                    this.managed_policies.editor_popover = None;
-                    cx.notify();
-                })),
-            )
-            .child(
-                action_button(
-                    "save-managed-policy-edit",
-                    language.message(Message::SaveChanges),
-                    ActionRole::Primary,
-                    ControlSize::Compact,
-                )
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.save_managed_policy(cx);
-                })),
-            )
-            .into_any_element();
-        body.child(Self::managed_policy_settings_heading(
-            language,
-            Some(actions),
-            theme,
-        ))
-        .child(self.policy_editor_form(draft, compact, true, language, theme, cx))
-    }
-
-    fn saved_policy_settings(
-        body: Stateful<Div>,
-        group_id: &str,
-        language: Language,
-        theme: Theme,
-        cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
-        let edit_id = group_id.to_owned();
-        let remove_id = group_id.to_owned();
-        body.child(Self::managed_policy_settings_heading(language, None, theme))
-            .child(
-                div()
-                    .mt(Space::Sm.px())
-                    .flex()
-                    .gap(Space::Sm.px())
-                    .child(
-                        action_button(
-                            "edit-managed-policy",
-                            language.localized(copy::common::EDIT_POLICY_GROUP),
-                            ActionRole::Secondary,
-                            ControlSize::Compact,
-                        )
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.start_managed_policy_edit(&edit_id, cx);
-                        })),
-                    )
-                    .child(
-                        action_button(
-                            "remove-managed-policy",
-                            language.localized(copy::app::DELETE_POLICY_GROUP),
-                            ActionRole::Danger,
-                            ControlSize::Compact,
-                        )
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.remove_managed_policy(&remove_id, cx);
-                        })),
-                    ),
-            )
-    }
-
-    fn managed_policy_settings_heading(
-        language: Language,
-        actions: Option<AnyElement>,
-        theme: Theme,
-    ) -> Div {
-        section_heading(
-            language.localized(copy::app::MANAGED_POLICY_SETTINGS),
-            language.localized(
-                copy::app::SAVED_IN_MANIS_AND_APPLIED_TO_THE_MANAGED_MIHOMO_CONFIGURATION,
-            ),
-            actions,
-            theme,
-        )
-    }
-
-    fn policy_detail_header(
-        &self,
-        view: &PolicyDetailView,
-        compact: bool,
-        language: Language,
-        theme: Theme,
-        cx: &mut Context<Self>,
-    ) -> Div {
-        div()
-            .p(Space::Lg.px())
-            .border_b_1()
-            .border_color(theme.outline_subtle)
-            .child(Self::policy_detail_title(
-                view, compact, language, theme, cx,
-            ))
-            .child(
-                div()
-                    .mt(Space::Lg.px())
-                    .font_weight(TextRole::Label.weight())
-                    .child(self.policy_detail_tabs(view.editable_group_id.clone(), language, cx)),
-            )
-    }
-
-    fn policy_detail_title(
-        view: &PolicyDetailView,
-        compact: bool,
-        language: Language,
-        theme: Theme,
-        cx: &mut Context<Self>,
-    ) -> Div {
-        let benchmark_id = view.policy.id.clone();
-        let benchmarkable = view.benchmarkable;
-        let benchmarking = view.benchmarking;
-        div()
-            .flex()
-            .items_center()
-            .gap(Space::Md.px())
-            .when(compact, |header| {
-                header.child(
-                    Button::new("compact-back")
-                        .accessibility_label(language.localized(copy::app::BACK_TO_POLICY_GROUPS))
-                        .label(language.localized(copy::app::BACK))
-                        .icon(IconName::ArrowLeft)
-                        .with_size(ControlSize::Compact.component_size())
-                        .h(ControlSize::Compact.height())
-                        .with_variant(ButtonVariant::Text)
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.workspace.navigate_back();
-                            cx.notify();
-                        })),
-                )
-            })
-            .child(Self::policy_group_icon(
-                PolicyGroupIconView {
-                    id: &view.benchmark_key,
-                    icon: view.display_icon,
-                    policy_name: &view.policy.name,
-                    benchmarkable,
-                    running: benchmarking,
-                    language,
-                    theme,
-                },
-                cx.listener(move |this, _, _, cx| {
-                    if benchmarkable && !benchmarking {
-                        this.start_policy_group_benchmark(&benchmark_id, cx);
-                    }
-                }),
-            ))
-            .child(Self::policy_detail_identity(&view.policy, language, theme))
-    }
-
-    fn policy_detail_identity(policy: &PolicyGroup, language: Language, theme: Theme) -> Div {
-        div()
-            .min_w(px(0.0))
-            .flex_1()
-            .child(
-                div()
-                    .overflow_x_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .text_size(TextRole::PageTitle.size())
-                    .line_height(TextRole::PageTitle.line_height())
-                    .font_weight(TextRole::PageTitle.weight())
-                    .child(policy.name.clone()),
-            )
-            .child(
-                div()
-                    .mt(Space::Xs.px())
-                    .overflow_x_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .text_size(TextRole::Metadata.size())
-                    .line_height(TextRole::Metadata.line_height())
-                    .text_color(theme.text_secondary)
-                    .child(format!(
-                        "{} · {}",
-                        policy_kind_label(language, policy.kind),
-                        language.count(CountNoun::Node, policy.nodes.len())
-                    )),
             )
     }
 
