@@ -559,6 +559,7 @@ impl ManisApp {
                 .flex_col()
                 .gap(Space::Lg.px())
                 .child(self.language_panel(theme, compact, cx))
+                .child(self.configuration_transfer_panel(theme, compact, cx))
                 .child(self.app_update_panel(theme, compact, cx))
                 .into_any_element(),
             self.kernel_panel(theme, compact, cx).into_any_element(),
@@ -622,6 +623,7 @@ impl ManisApp {
     }
 }
 include!("configuration/settings.rs");
+include!("configuration/transfer.rs");
 include!("configuration/proxy_sources.rs");
 include!("configuration/rule_sources.rs");
 include!("configuration/manual_rules.rs");

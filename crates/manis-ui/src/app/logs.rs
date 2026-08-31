@@ -48,10 +48,9 @@ impl ManisApp {
         .bg(theme.surface_base)
         .text_color(theme.text_primary)
         .on_click(cx.listener(|this, _, _, cx| this.connect_mihomo(cx)));
-        let live_status = copy::app::live_stream_phase(language, &self.live_status.logs);
         let heading = page_heading(
             language.message(Message::Logs),
-            logs_summary(language, count, &live_status, self.dropped_kernel_logs),
+            logs_summary(language, count, self.dropped_kernel_logs),
             None,
             theme,
         );
@@ -281,8 +280,8 @@ fn kernel_log_matches_query(entry: &KernelLogEntry, query: &str) -> bool {
         || format!("k#{:04}", entry.sequence).contains(&query)
 }
 
-fn logs_summary(language: Language, count: usize, live_status: &str, dropped: u64) -> String {
-    copy::logs::summary(language, count, live_status, dropped)
+fn logs_summary(language: Language, count: usize, dropped: u64) -> String {
+    copy::logs::summary(language, count, dropped)
 }
 
 fn format_log_time(timestamp_ms: u128) -> String {
@@ -401,17 +400,12 @@ mod tests {
     #[test]
     fn log_summary_uses_selected_language() {
         assert_eq!(
-            super::logs_summary(crate::localization::Language::English, 2, "connected", 1),
-            "2 logs · Mihomo connected · 1 log dropped under load · sensitive data hidden"
+            super::logs_summary(crate::localization::Language::English, 2, 1),
+            "2 logs · 1 log dropped under load · sensitive data hidden"
         );
         assert_eq!(
-            super::logs_summary(
-                crate::localization::Language::SimplifiedChinese,
-                2,
-                "已连接",
-                1
-            ),
-            "2 条日志 · Mihomo 已连接 · 高负载时丢弃 1 条日志 · 敏感信息已隐藏"
+            super::logs_summary(crate::localization::Language::SimplifiedChinese, 2, 1),
+            "2 条日志 · 高负载时丢弃 1 条日志 · 敏感信息已隐藏"
         );
     }
 

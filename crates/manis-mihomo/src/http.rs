@@ -236,8 +236,13 @@ impl Target<'_> {
             .max_response_header_size(HEADER_LIMIT_BYTES)
             .timeout_send_request(Some(config.connect_timeout()))
             .timeout_send_body(Some(config.connect_timeout()))
-            .timeout_recv_response(Some(config.read_timeout()))
-            // Live streams may be idle indefinitely, but both headers and cancellation are bounded.
+            // Mihomo flushes log headers only when the first entry arrives. A quiet
+            // controller must remain cancellable without being treated as unreachable.
+            .timeout_recv_response(if cancelled.is_some() && path.starts_with("/logs?level=") {
+                None
+            } else {
+                Some(config.read_timeout())
+            })
             .timeout_recv_body(if cancelled.is_some() {
                 None
             } else {

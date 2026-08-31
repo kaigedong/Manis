@@ -619,6 +619,99 @@ fn qx_sources_with_groups_only_compiles_user_groups_and_the_hidden_global_exit()
 }
 
 #[test]
+fn user_policy_groups_can_target_the_node_page_proxy_exit() {
+    let subscription = fixture_secret();
+    let saved = VlessProxy::parse_share_link(
+        "vless://00000000-0000-4000-8000-000000000000@edge.example.invalid:443?encryption=none&security=tls&type=ws&path=%2Fmanis#Saved",
+    )
+    .expect("fixture VLESS should parse");
+    let select = UserPolicyGroup {
+        name: Name::parse("Proxy Select").expect("valid user group"),
+        icon: None,
+        kind: UserPolicyGroupKind::Select,
+        provider_indexes: Vec::new(),
+        direct_proxies: Vec::new(),
+        direct_policies: vec![global_exit_policy()],
+        filter: None,
+    };
+    let auto = UserPolicyGroup {
+        name: Name::parse("Proxy Auto").expect("valid user group"),
+        icon: None,
+        kind: UserPolicyGroupKind::UrlTest {
+            tolerance: 120,
+            interval_secs: 600,
+        },
+        provider_indexes: Vec::new(),
+        direct_proxies: Vec::new(),
+        direct_policies: vec![global_exit_policy()],
+        filter: None,
+    };
+
+    let profile = Profile::qx_sources_with_groups(
+        vec![subscription],
+        vec![saved],
+        vec![select, auto],
+        17_890,
+    )
+    .expect("global exit should be accepted as a generated group reference");
+    let yaml = render_mihomo_yaml(&profile).expect("profile should render");
+    let hidden_global = yaml
+        .split("name: \"__MANIS_GLOBAL__\"")
+        .nth(1)
+        .expect("hidden global selector should render")
+        .split("\nrules:")
+        .next()
+        .expect("proxy groups should appear before rules");
+
+    assert!(yaml.contains("name: \"Proxy Select\""));
+    assert!(yaml.contains("type: \"select\""));
+    assert!(yaml.contains("- \"__MANIS_GLOBAL__\""));
+    assert!(yaml.contains("name: \"Proxy Auto\""));
+    assert!(yaml.contains("type: \"url-test\""));
+    assert!(yaml.contains("tolerance: 120"));
+    assert!(hidden_global.contains("- \"Saved\""));
+    assert!(hidden_global.contains("- \"Subscription 1\""));
+    assert!(!hidden_global.contains("Proxy Select"));
+    assert!(!hidden_global.contains("Proxy Auto"));
+}
+
+#[test]
+fn allowing_the_proxy_exit_does_not_allow_invalid_group_references() {
+    for (direct_policies, expected) in [
+        (
+            vec![PolicyRef::Group(Name::parse("Missing").unwrap())],
+            ProfileError::DanglingReference,
+        ),
+        (
+            vec![PolicyRef::Group(Name::parse("Follow").unwrap())],
+            ProfileError::DanglingReference,
+        ),
+        (
+            vec![global_exit_policy(), global_exit_policy()],
+            ProfileError::DuplicateName,
+        ),
+    ] {
+        let group = UserPolicyGroup {
+            name: Name::parse("Follow").unwrap(),
+            icon: None,
+            kind: UserPolicyGroupKind::Select,
+            provider_indexes: Vec::new(),
+            direct_proxies: Vec::new(),
+            direct_policies,
+            filter: None,
+        };
+        let error = Profile::qx_sources_with_groups(
+            vec![fixture_secret()],
+            Vec::new(),
+            vec![group],
+            17_890,
+        )
+        .expect_err("invalid reference must be rejected");
+        assert_eq!(error, expected);
+    }
+}
+
+#[test]
 fn qx_sources_with_groups_rejects_bad_user_group_references_and_names() {
     let subscription = fixture_secret();
     let saved = VlessProxy::parse_share_link(
@@ -666,6 +759,19 @@ fn qx_sources_with_groups_rejects_bad_user_group_references_and_names() {
             vec![subscription.clone()],
             vec![saved.clone()],
             vec![reserved],
+            17_890,
+        )
+        .is_err()
+    );
+
+    let mut reserved_internal = valid.clone();
+    reserved_internal.name =
+        Name::parse(MANIS_GLOBAL_GROUP_NAME).expect("valid internal reserved name");
+    assert!(
+        Profile::qx_sources_with_groups(
+            vec![subscription.clone()],
+            vec![saved.clone()],
+            vec![reserved_internal],
             17_890,
         )
         .is_err()

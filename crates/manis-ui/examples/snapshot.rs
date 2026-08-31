@@ -6,6 +6,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::sync::Arc::new(manis_ui::Assets),
     );
     cx.update(manis_ui::init);
+    if std::env::args().any(|argument| argument == "--proxy-candidate") {
+        capture_proxy_candidate(&mut cx)?;
+        return Ok(());
+    }
+    if std::env::args().any(|argument| argument == "--navigation-icons") {
+        capture_navigation_icons(&mut cx)?;
+        return Ok(());
+    }
+    if std::env::args().any(|argument| argument == "--configuration-transfer") {
+        capture_configuration_transfer(&mut cx)?;
+        return Ok(());
+    }
+    if std::env::args().any(|argument| argument == "--stream-status") {
+        capture_stream_status(&mut cx)?;
+        return Ok(());
+    }
     if std::env::args().any(|argument| argument == "--nodes-toolbar") {
         capture_nodes_toolbar(&mut cx)?;
         return Ok(());
@@ -80,6 +96,234 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     capture_connected(&mut cx)?;
     capture_data_page_coverage(&mut cx)?;
     capture_live_when_configured(&mut cx)?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn capture_proxy_candidate(
+    cx: &mut gpui::VisualTestAppContext,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use gpui::{AnyWindowHandle, Modifiers, point, px, size};
+    let store = std::env::temp_dir().join(format!("manis-proxy-snapshot-{}", std::process::id()));
+    manis_profile::write_private_atomic(&store, "language.preference", b"zh-CN")?;
+    let policy = format!(
+        "manis-policy-group-v1\nid\tpolicy-deadbeef\nname\t{}\nicon\tnone\nstrategy\tmanual\ninterval\t600\nmatcher\texplicit\nfilter\t\nmember\t{}\t{}",
+        snapshot_hex("跟随首页"),
+        snapshot_hex("builtin"),
+        snapshot_hex("PROXY"),
+    );
+    manis_profile::write_private_atomic(&store, "policy-deadbeef.policy", policy.as_bytes())?;
+    for (width, height, label) in [(1420.0, 900.0, "wide"), (640.0, 560.0, "compact")] {
+        cx.update(manis_ui::init);
+        let window_store = store.clone();
+        let window = cx.open_offscreen_window(size(px(width), px(height)), |window, cx| {
+            manis_root(window, cx, |_| {
+                manis_ui::ManisApp::with_fixture_controller_and_subscription_store(
+                    "http://127.0.0.1:1",
+                    window_store,
+                )
+            })
+        })?;
+        let window: AnyWindowHandle = window.into();
+        refresh(cx, window)?;
+        open_workspace(cx, window, width, SnapshotWorkspace::PolicyGroups)?;
+        cx.simulate_click(window, point(px(320.0), px(172.0)), Modifiers::none());
+        refresh(cx, window)?;
+        save_screenshot(cx, window, &format!("proxy-candidate-{label}-row.png"))?;
+        for (dark, mode) in [(false, "light"), (true, "dark")] {
+            if dark {
+                let toggle_x = width - if width >= 1280.0 { 550.0 } else { 205.0 };
+                cx.simulate_click(window, point(px(toggle_x), px(24.0)), Modifiers::none());
+                refresh(cx, window)?;
+            }
+            cx.simulate_click(
+                window,
+                point(px(width - 132.0), px(172.0)),
+                Modifiers::none(),
+            );
+            refresh(cx, window)?;
+            if label == "compact" {
+                scroll_window(cx, window, width - 90.0, height - 180.0, -420.0)?;
+            }
+            save_screenshot(
+                cx,
+                window,
+                &format!("proxy-candidate-{label}-{mode}-editor.png"),
+            )?;
+            cx.simulate_click(
+                window,
+                point(
+                    px(width / 2.0 + 100.0),
+                    px(if label == "wide" { 507.0 } else { 355.0 }),
+                ),
+                Modifiers::none(),
+            );
+            refresh(cx, window)?;
+            save_screenshot(
+                cx,
+                window,
+                &format!("proxy-candidate-{label}-{mode}-picker.png"),
+            )?;
+            cx.simulate_keystrokes(window, "escape");
+            refresh(cx, window)?;
+            cx.simulate_keystrokes(window, "escape");
+            refresh(cx, window)?;
+        }
+        close_window(cx, window)?;
+    }
+    std::fs::remove_dir_all(store)?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn capture_navigation_icons(
+    cx: &mut gpui::VisualTestAppContext,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use gpui::{AnyWindowHandle, Modifiers, point, px, size};
+
+    let store =
+        std::env::temp_dir().join(format!("manis-navigation-snapshot-{}", std::process::id()));
+    manis_profile::write_private_atomic(&store, "language.preference", b"zh-CN")?;
+    for (width, height, label) in [
+        (1420.0, 900.0, "wide"),
+        (1060.0, 800.0, "medium"),
+        (640.0, 560.0, "compact"),
+    ] {
+        cx.update(manis_ui::init);
+        let window_store = store.clone();
+        let window = cx.open_offscreen_window(size(px(width), px(height)), |window, cx| {
+            manis_root(window, cx, |_| {
+                manis_ui::ManisApp::with_fixture_controller_and_subscription_store(
+                    "http://127.0.0.1:1",
+                    window_store,
+                )
+            })
+        })?;
+        let window: AnyWindowHandle = window.into();
+        refresh(cx, window)?;
+        assert_appearance_mode(cx, window, false)?;
+        save_screenshot(cx, window, &format!("navigation-{label}-light.png"))?;
+        // Exercise every destination using the unchanged row hit targets.
+        for workspace in [
+            SnapshotWorkspace::RoutingRules,
+            SnapshotWorkspace::Activity,
+            SnapshotWorkspace::Logs,
+            SnapshotWorkspace::Configuration,
+            SnapshotWorkspace::PolicyGroups,
+        ] {
+            open_workspace(cx, window, width, workspace)?;
+        }
+        let toggle_x = width - if width >= 1280.0 { 550.0 } else { 205.0 };
+        cx.simulate_click(window, point(px(toggle_x), px(24.0)), Modifiers::none());
+        refresh(cx, window)?;
+        assert_appearance_mode(cx, window, true)?;
+        save_screenshot(cx, window, &format!("navigation-{label}-dark.png"))?;
+        close_window(cx, window)?;
+    }
+    std::fs::remove_dir_all(store)?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn capture_configuration_transfer(
+    cx: &mut gpui::VisualTestAppContext,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use gpui::{AnyWindowHandle, AppContext as _, Modifiers, point, px, size};
+    let root = std::env::temp_dir().join(format!("manis-transfer-snapshot-{}", std::process::id()));
+    let store = root.join("subscriptions");
+    write_managed_policy_fixture(&store)?;
+    manis_profile::write_private_atomic(&store, "language.preference", b"zh-CN")?;
+    let backup = serde_json::json!({
+        "schema": "manis.configuration-backup", "version": 1, "created_unix_secs": 0,
+        "files": [{"name": "policy-deadbeef.policy", "contents": std::fs::read_to_string(store.join("policy-deadbeef.policy"))?}]
+    }).to_string();
+    for (width, height, label) in [(1420.0, 900.0, "wide"), (640.0, 560.0, "compact")] {
+        cx.update(manis_ui::init);
+        let mut app = None;
+        let window_store = store.clone();
+        let window = cx.open_offscreen_window(size(px(width), px(height)), |window, cx| {
+            let entity = cx.new(|_| {
+                manis_ui::ManisApp::with_fixture_controller_and_subscription_store(
+                    "http://127.0.0.1:1",
+                    window_store,
+                )
+            });
+            app = Some(entity.clone());
+            cx.new(|cx| manis_ui::root(entity, window, cx))
+        })?;
+        let app = app.ok_or("missing fixture app")?;
+        let window: AnyWindowHandle = window.into();
+        refresh(cx, window)?;
+        open_workspace(cx, window, width, SnapshotWorkspace::Configuration)?;
+        if label == "compact" {
+            scroll_window(cx, window, width - 60.0, height - 100.0, -210.0)?;
+        }
+        save_screenshot(cx, window, &format!("configuration-transfer-{label}.png"))?;
+        cx.update_window(window, |_, window, cx| {
+            app.update(cx, |app, cx| {
+                app.show_configuration_backup_fixture(&backup, window, cx);
+            });
+        })?;
+        settle_ui_animation(cx, window)?;
+        save_screenshot(
+            cx,
+            window,
+            &format!("configuration-transfer-{label}-preview.png"),
+        )?;
+        cx.simulate_keystrokes(window, "escape");
+        settle_ui_animation(cx, window)?;
+        let toggle_x = width - if width >= 1280.0 { 550.0 } else { 205.0 };
+        cx.simulate_click(window, point(px(toggle_x), px(24.0)), Modifiers::none());
+        refresh(cx, window)?;
+        cx.update_window(window, |_, window, cx| {
+            app.update(cx, |app, cx| {
+                app.show_configuration_backup_fixture(&backup, window, cx);
+            });
+        })?;
+        settle_ui_animation(cx, window)?;
+        save_screenshot(
+            cx,
+            window,
+            &format!("configuration-transfer-{label}-preview-dark.png"),
+        )?;
+        close_window(cx, window)?;
+    }
+    std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn capture_stream_status(
+    cx: &mut gpui::VisualTestAppContext,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use gpui::{AnyWindowHandle, Modifiers, point, px, size};
+    for (width, height, label) in [(1420.0, 900.0, "wide"), (640.0, 560.0, "compact")] {
+        cx.update(manis_ui::init);
+        let (endpoint, server) = spawn_mihomo_fixture_with_stream_failure(true)?;
+        let window = cx.open_offscreen_window(size(px(width), px(height)), |window, cx| {
+            manis_root(window, cx, |_| {
+                manis_ui::ManisApp::with_fixture_controller(endpoint)
+            })
+        })?;
+        let window: AnyWindowHandle = window.into();
+        refresh(cx, window)?;
+        cx.simulate_click(
+            window,
+            point(px(width - 200.0), px(76.0)),
+            Modifiers::none(),
+        );
+        settle_ui_for(cx, window, std::time::Duration::from_millis(800))?;
+        open_workspace(cx, window, width, SnapshotWorkspace::Activity)?;
+        save_screenshot(cx, window, &format!("stream-status-{label}-activity.png"))?;
+        open_workspace(cx, window, width, SnapshotWorkspace::Nodes)?;
+        save_screenshot(cx, window, &format!("stream-status-{label}-nodes.png"))?;
+        let toggle_x = width - if width >= 1280.0 { 550.0 } else { 205.0 };
+        cx.simulate_click(window, point(px(toggle_x), px(24.0)), Modifiers::none());
+        open_workspace(cx, window, width, SnapshotWorkspace::Logs)?;
+        save_screenshot(cx, window, &format!("stream-status-{label}-logs-dark.png"))?;
+        close_window(cx, window)?;
+        server.stop()?;
+    }
     Ok(())
 }
 
@@ -349,6 +593,16 @@ fn capture_managed_policy_settings(
         );
         refresh(cx, window)?;
         save_screenshot(cx, window, &format!("policy-settings-{label}-dialog.png"))?;
+        if label == "compact" {
+            scroll_window(cx, window, width - 90.0, height - 180.0, -480.0)?;
+            save_screenshot(cx, window, "policy-tolerance-compact.png")?;
+        } else {
+            cx.simulate_click(window, point(px(900.0), px(575.0)), Modifiers::none());
+            refresh(cx, window)?;
+            save_screenshot(cx, window, "policy-tolerance-menu.png")?;
+            cx.simulate_keystrokes(window, "escape");
+            refresh(cx, window)?;
+        }
         cx.simulate_keystrokes(window, "escape");
         refresh(cx, window)?;
         let toggle_x = width - if width >= 1280.0 { 550.0 } else { 205.0 };
@@ -1301,6 +1555,13 @@ fn validate_live_output(output: &std::path::Path) -> Result<(), Box<dyn std::err
 
 #[cfg(target_os = "macos")]
 fn spawn_mihomo_fixture() -> Result<(String, FixtureServer), Box<dyn std::error::Error>> {
+    spawn_mihomo_fixture_with_stream_failure(false)
+}
+
+#[cfg(target_os = "macos")]
+fn spawn_mihomo_fixture_with_stream_failure(
+    fail_streams: bool,
+) -> Result<(String, FixtureServer), Box<dyn std::error::Error>> {
     use std::io::{BufRead, BufReader, Write};
     use std::net::TcpListener;
     use std::sync::Arc;
@@ -1329,6 +1590,12 @@ fn spawn_mihomo_fixture() -> Result<(String, FixtureServer), Box<dyn std::error:
             let mut request_line = String::new();
             BufReader::new(stream.try_clone()?).read_line(&mut request_line)?;
             let path = request_line.split_whitespace().nth(1).unwrap_or("/");
+            if fail_streams
+                && (path.starts_with("/connections?interval=") || path.starts_with("/logs?level="))
+            {
+                stream.write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")?;
+                continue;
+            }
             if path.starts_with("/connections?interval=") {
                 let body = fixture_response("/connections");
                 let response = format!(

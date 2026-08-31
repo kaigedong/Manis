@@ -4,6 +4,9 @@ impl ManisApp {
         input: &Entity<SubscriptionTextInput>,
         cx: &mut Context<Self>,
     ) -> bool {
+        if self.configuration_transfer.active {
+            return false;
+        }
         let url = input.read(cx).value().trim().to_owned();
         let name = self
             .inputs
@@ -253,6 +256,9 @@ impl ManisApp {
     }
 
     fn persist_routing_rule_group_order(&mut self) {
+        if self.configuration_transfer.active {
+            return;
+        }
         self.sync_routing_rule_group_order();
         if let Some(store_dir) = self.subscription_store_dir.as_ref() {
             let _ =
@@ -310,6 +316,9 @@ impl ManisApp {
     }
 
     fn remove_qx_rule_source(&mut self, id: String, cx: &mut Context<Self>) {
+        if self.configuration_transfer.active {
+            return;
+        }
         let Some(store_dir) = self.subscription_store_dir.clone() else {
             return;
         };
@@ -388,6 +397,9 @@ impl ManisApp {
     }
 
     fn set_subscription_enabled(&mut self, id: &str, enabled: bool, cx: &mut Context<Self>) {
+        if self.configuration_transfer.active {
+            return;
+        }
         if self.source_refresh_busy() {
             return;
         }
@@ -506,6 +518,9 @@ impl ManisApp {
     }
 
     fn set_qx_rule_source_enabled(&mut self, id: String, enabled: bool, cx: &mut Context<Self>) {
+        if self.configuration_transfer.active {
+            return;
+        }
         if self.source_refresh_busy() {
             return;
         }
@@ -588,6 +603,9 @@ impl ManisApp {
     }
 
     fn update_qx_rule_source_target(&mut self, id: String, target: String, cx: &mut Context<Self>) {
+        if self.configuration_transfer.active {
+            return;
+        }
         if self.source_refresh_busy() || !self.qx_rule_targets().contains(&target) {
             return;
         }
@@ -713,6 +731,9 @@ impl ManisApp {
     }
 
     pub(super) fn refresh_qx_rule_source(&mut self, id: String, cx: &mut Context<Self>) {
+        if self.configuration_transfer.active {
+            return;
+        }
         if self.source_refresh_busy() {
             return;
         }

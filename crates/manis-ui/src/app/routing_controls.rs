@@ -4,6 +4,9 @@ impl ManisApp {
     /// The tray uses this to disable a menu item and explain itself instead of letting the user
     /// click an entry that would silently fail.
     pub(crate) fn proxy_mode_block(&self, requested: ProxyMode) -> Option<ProxyModeBlock> {
+        if self.configuration_transfer.active {
+            return Some(ProxyModeBlock::Busy);
+        }
         proxy_mode_block(
             requested,
             self.proxy_mode_busy,
@@ -37,6 +40,9 @@ impl ManisApp {
     }
 
     fn apply_proxy_mode(&mut self, requested: ProxyMode, cx: &mut Context<Self>) {
+        if self.configuration_transfer.active {
+            return;
+        }
         let language = self.language();
         let operation = begin_operation(
             "proxy.mode.requested",
@@ -214,6 +220,9 @@ impl ManisApp {
     }
 
     fn apply_routing_mode(&mut self, requested: RoutingMode, cx: &mut Context<Self>) {
+        if self.configuration_transfer.active {
+            return;
+        }
         let language = self.language();
         let operation = begin_operation(
             "routing.mode.requested",
@@ -354,6 +363,9 @@ impl ManisApp {
     }
 
     fn select_global_node(&mut self, selected: NodeIdentity, cx: &mut Context<Self>) {
+        if self.configuration_transfer.active {
+            return;
+        }
         let language = self.language();
         let selected_name = selected.node_name.clone();
         let operation = begin_operation(
@@ -481,6 +493,9 @@ impl ManisApp {
     }
 
     fn select_policy_node(&mut self, request: PolicySelectionRequest, cx: &mut Context<Self>) {
+        if self.configuration_transfer.active {
+            return;
+        }
         let PolicySelectionRequest {
             group_id,
             group_name,
@@ -510,7 +525,7 @@ impl ManisApp {
         let can_apply_now = matches!(self.controller, ControllerState::Connected { .. })
             && matches!(&*self.runtime, ControllerRuntime::Managed { .. });
         if !can_apply_now {
-            self.status = copy::app::deferred_policy_selection(language, &group_name, &node_name);
+            self.status = copy::app::deferred_policy_selection(language, &group_name, Self::policy_candidate_display_name(&node_name));
             cx.notify();
             return;
         }
@@ -547,7 +562,7 @@ impl ManisApp {
             }
         }
         self.policy_selection_busy = Some(node_name.clone());
-        self.status = copy::app::setting_policy_node(language, &group_name, &node_name);
+        self.status = copy::app::setting_policy_node(language, &group_name, Self::policy_candidate_display_name(&node_name));
         let completion = PolicySelectionRequest {
             group_id,
             group_name: group_name.clone(),
@@ -770,7 +785,7 @@ impl ManisApp {
                     format!("group={group_name}"),
                 );
                 self.status =
-                    copy::app::policy_selection_applied(self.language(), &group_name, &current);
+                    copy::app::policy_selection_applied(self.language(), &group_name, Self::policy_candidate_display_name(&current));
             }
             Err(error) => {
                 record_operation(
@@ -782,7 +797,7 @@ impl ManisApp {
                 self.status = copy::app::policy_selection_apply_failed(
                     self.language(),
                     &group_name,
-                    &node_name,
+                    Self::policy_candidate_display_name(&node_name),
                     &error.to_string(),
                 );
             }

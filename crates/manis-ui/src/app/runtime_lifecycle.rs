@@ -16,7 +16,7 @@ impl ManisApp {
     }
 
     fn check_for_app_update(&mut self, manual: bool, cx: &mut Context<Self>) {
-        if self.app_update_state.is_busy()
+        if self.configuration_transfer.active || self.app_update_state.is_busy()
             || matches!(self.app_update_state, AppUpdateState::Ready(_))
         {
             return;
@@ -135,6 +135,9 @@ impl ManisApp {
     }
 
     fn restart_with_app_update(&mut self, cx: &mut Context<Self>) {
+        if self.configuration_transfer.active {
+            return;
+        }
         let AppUpdateState::Ready(staged) = self.app_update_state.clone() else {
             return;
         };
@@ -187,6 +190,9 @@ impl ManisApp {
     }
 
     fn switch_kernel(&mut self, requested: KernelKind, cx: &mut Context<Self>) {
+        if self.configuration_transfer.active {
+            return;
+        }
         let language = self.language();
         if self.kernel_switch_state.is_busy() || self.runtime.kind() == requested {
             return;
@@ -255,6 +261,9 @@ impl ManisApp {
     }
 
     fn update_mihomo_core(&mut self, cx: &mut Context<Self>) {
+        if self.configuration_transfer.active {
+            return;
+        }
         if self.mihomo_core_update_state.is_busy() {
             return;
         }
@@ -350,7 +359,8 @@ impl ManisApp {
     }
 
     fn connect_mihomo(&mut self, cx: &mut Context<Self>) {
-        if matches!(self.controller, ControllerState::Connecting { .. }) {
+        if self.configuration_transfer.active
+            || matches!(self.controller, ControllerState::Connecting { .. }) {
             return;
         }
 
@@ -512,6 +522,9 @@ impl ManisApp {
     }
 
     fn sync_saved_node_selections(&mut self, cx: &mut Context<Self>) {
+        if self.configuration_transfer.active {
+            return;
+        }
         if !matches!(&*self.runtime, ControllerRuntime::Managed { .. })
             || !matches!(self.controller, ControllerState::Connected { .. })
         {
@@ -782,7 +795,7 @@ impl ManisApp {
             return;
         }
         self.managed_health_tick = self.managed_health_tick.wrapping_add(1);
-        if self.managed_health_tick >= 10 {
+        if self.managed_health_tick >= 10 && !self.configuration_transfer.is_replacing() {
             self.managed_health_tick = 0;
             if self.fail_safe_stopped_managed_kernel(cx) {
                 return;

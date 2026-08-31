@@ -70,6 +70,10 @@ through the UI so the product model remains the configuration source of truth.
 
 ## Diagnostics
 
+Controller connection problems appear in the shared status bar rather than replacing the network
+activity or log workspace. Connection snapshots use finite polling; a quiet log stream does not
+become a timeout merely because it has no new records.
+
 Enable redacted lifecycle events with:
 
 ```bash
@@ -83,6 +87,36 @@ Application lifecycle records in `logs/manis-events.log` use JSON Lines. Existin
 history is still readable. Both the UI and file retain operation IDs for correlating mode changes,
 source imports, and other operations. See [runtime foundations](architecture/runtime-foundations.md)
 for the HTTP, configuration, and diagnostics implementation choices and upgrade constraints.
+
+## Portable configuration and policy selection
+
+Under Configuration → General → Backup and migration, export a `.manis.json` file and import it on
+another Manis installation. Import accepts a file or clipboard text, validates it, previews item
+counts, and requires confirmation before replacing the destination configuration and restarting.
+This is a versioned Manis backup, not Mihomo YAML for other clients.
+
+The backup includes subscription URLs, individually saved nodes, policy groups, rule sources and
+cached rules, manual rules, routing and node selections, language, and core choice. It excludes core
+binaries, system permissions, the active proxy mode, logs, and latency results. Subscription nodes
+reload from their saved URLs on the destination. The file contains plaintext credentials: transfer
+it privately and never commit it or attach it to an issue.
+
+Before replacement, Manis disables proxy mode, stops its managed core, and backs up the old store
+under `configuration-backups` in the user-data directory. It does not merge configurations or
+automatically enable system proxy/TUN after restart. Validation failures do not change the store;
+write failures attempt rollback. The UI exposes the backup location for recovery.
+
+In a policy group's Node scope, choose “Select nodes or groups” and select **Proxy** to follow the
+manual selection on the Nodes page. This references the existing internal selector, not a copy of
+the currently chosen node. Switching the home-page exit redirects new connections without editing
+the policy; established connections are not forcibly closed. Both manual and automatic policies
+can include this candidate. Automatic policies expose the core's native switch tolerance in
+milliseconds, persisted as an optional `tolerance-ms` field; old policy files remain readable.
+Manis ships the official core without a custom tolerance patch.
+
+The sidebar reuses bundled SVG icons: wide windows retain labels, while narrow windows show icons
+with full-name tooltips. Synthetic UI examples: [configuration import preview](assets/configuration-import.png)
+and [Proxy candidate and sidebar icons](assets/proxy-candidate.png).
 
 ## Tests
 
@@ -125,6 +159,14 @@ For the light/dark appearance matrix, including minimum-size windows and overlay
 
 ```bash
 cargo run -p manis-ui --example snapshot --features snapshot-fixtures --locked -- --appearance
+```
+
+Focused synthetic captures for configuration migration, sidebar icons, and the Proxy picker:
+
+```bash
+cargo run -p manis-ui --example snapshot --features snapshot-fixtures --locked -- --configuration-transfer
+cargo run -p manis-ui --example snapshot --features snapshot-fixtures --locked -- --navigation-icons
+cargo run -p manis-ui --example snapshot --features snapshot-fixtures --locked -- --proxy-candidate
 ```
 
 See [Interface materials and hierarchy](interface-design.md) for surface, contrast, and visual

@@ -1066,6 +1066,13 @@ impl ManisApp {
                 popover_width,
                 cx,
             ));
+            nodes = nodes.child(self.policy_editor_tolerance_row(
+                draft,
+                language,
+                theme,
+                popover_width,
+                cx,
+            ));
         }
         nodes
     }
@@ -1098,6 +1105,45 @@ impl ManisApp {
         )
     }
 
+    fn policy_editor_tolerance_row(
+        &self,
+        draft: &ManagedPolicyDraft,
+        language: Language,
+        theme: Theme,
+        popover_width: f32,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let row = Self::policy_editor_popup_row(
+            "policy-editor-tolerance",
+            language.localized(copy::nodes::SWITCH_TOLERANCE),
+            format!("{} ms", draft.switch_tolerance_ms),
+            None,
+            theme,
+            PolicyEditorPopup::new(
+                PolicyEditorPopover::Tolerance,
+                self.managed_policies.editor_popover == Some(PolicyEditorPopover::Tolerance),
+                Self::policy_tolerance_menu(draft, theme, cx),
+                popover_width,
+                320.0,
+            )
+            .with_divider(false)
+            .disabled(self.managed_policies.mutation_state.is_busy()),
+            cx,
+        );
+        div()
+            .child(row)
+            .child(
+                div()
+                    .px_4()
+                    .pb_3()
+                    .text_size(TextRole::Metadata.size())
+                    .line_height(TextRole::Metadata.line_height())
+                    .text_color(theme.text_secondary)
+                    .child(language.localized(copy::nodes::SWITCH_TOLERANCE_HELP)),
+            )
+            .into_any_element()
+    }
+
     fn policy_editor_interval_row(
         &self,
         draft: &ManagedPolicyDraft,
@@ -1120,7 +1166,7 @@ impl ManisApp {
                 popover_width,
                 320.0,
             )
-            .with_divider(false)
+            .with_divider(true)
             .disabled(self.managed_policies.mutation_state.is_busy()),
             cx,
         )
@@ -1457,6 +1503,7 @@ impl ManisApp {
             ));
         }
         for member in inventory {
+            let is_proxy = member.source_id == "builtin" && member.node_name == "PROXY";
             let selected = draft.explicit_members.contains(&member);
             let member_for_click = member.clone();
             list = list.child(
@@ -1464,7 +1511,11 @@ impl ManisApp {
                     "policy-group-member-{}-{}",
                     member.source_id, member.node_name
                 ))
-                .label(member.node_name.clone())
+                .label(if is_proxy {
+                    "Proxy".to_owned()
+                } else {
+                    member.node_name.clone()
+                })
                 .checked(selected)
                 .tab_stop(true)
                 .cursor_pointer()
@@ -1481,6 +1532,9 @@ impl ManisApp {
                             .line_height(TextRole::Metadata.line_height())
                             .text_color(theme.text_tertiary)
                             .child(match member.source_id.as_str() {
+                                "builtin" if is_proxy => language
+                                    .localized(copy::nodes::FOLLOW_HOME_SELECTION)
+                                    .to_owned(),
                                 "builtin" => language.localized(copy::nodes::BUILT_IN).to_owned(),
                                 source if source.starts_with("policy:") => {
                                     language.message(Message::PolicyGroup).to_owned()
@@ -1540,6 +1594,35 @@ impl ManisApp {
             )
     }
 
+    fn policy_tolerance_menu(
+        draft: &ManagedPolicyDraft,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let mut choices = div().id("policy-tolerance-choices");
+        let mut values = vec![0, 50, 100, 150, 200, 300, 500];
+        if !values.contains(&draft.switch_tolerance_ms) {
+            values.push(draft.switch_tolerance_ms);
+            values.sort_unstable();
+        }
+        for milliseconds in values {
+            choices = choices.child(Self::policy_choice_row(
+                format!("policy-group-tolerance-{milliseconds}"),
+                format!("{milliseconds} ms"),
+                draft.switch_tolerance_ms == milliseconds,
+                theme,
+                cx.listener(move |this, _, _, cx| {
+                    if let Some(draft) = this.managed_policies.draft.as_mut() {
+                        draft.switch_tolerance_ms = milliseconds;
+                    }
+                    this.managed_policies.editor_popover = None;
+                    cx.notify();
+                }),
+            ));
+        }
+        choices
+    }
+
     fn policy_interval_menu(
         draft: &ManagedPolicyDraft,
         language: Language,
@@ -1597,7 +1680,7 @@ impl ManisApp {
     }
 
     fn policy_candidate_inventory(&self) -> Vec<NodeIdentity> {
-        let mut inventory = ["DIRECT", "REJECT"]
+        let mut inventory = ["PROXY", "DIRECT", "REJECT"]
             .into_iter()
             .filter_map(|name| NodeIdentity::new("builtin", name).ok())
             .collect::<Vec<_>>();
@@ -1676,14 +1759,30 @@ impl ManisApp {
             }
         }
         if matches!(group.matcher, PolicyCandidateMatcher::Explicit(_)) {
-            for name in ["DIRECT", "REJECT"] {
-                if group.matches("builtin", name) && seen.insert(name.to_owned()) {
+            for name in ["PROXY", "DIRECT", "REJECT"] {
+                let is_proxy = name == "PROXY";
+                let runtime_name = if is_proxy {
+                    manis_profile::MANIS_GLOBAL_GROUP_NAME
+                } else {
+                    name
+                };
+                if group.matches("builtin", name) && seen.insert(runtime_name.to_owned()) {
                     candidates.push(PolicyNode {
                         id: ProxyId::new(format!("builtin:{name}")),
-                        name: name.to_owned(),
-                        kind: PolicyCandidateKind::Node,
+                        name: runtime_name.to_owned(),
+                        kind: if is_proxy {
+                            PolicyCandidateKind::PolicyGroup
+                        } else {
+                            PolicyCandidateKind::Node
+                        },
                         provider: Some(language.localized(copy::nodes::BUILT_IN).to_owned()),
-                        detail: name.to_owned(),
+                        detail: if is_proxy {
+                            language
+                                .localized(copy::nodes::FOLLOW_HOME_SELECTION)
+                                .to_owned()
+                        } else {
+                            name.to_owned()
+                        },
                         latency_ms: None,
                         alive: None,
                     });
@@ -1865,6 +1964,7 @@ impl ManisApp {
             icon: ManagedPolicyIcon::None,
             strategy: ManagedPolicyStrategy::Manual,
             test_interval_secs: 600,
+            switch_tolerance_ms: ManagedPolicyGroup::DEFAULT_SWITCH_TOLERANCE_MS,
             matcher_kind: PolicyCandidateMatcherKind::All,
             explicit_members: BTreeSet::new(),
         });
@@ -1913,6 +2013,7 @@ impl ManisApp {
             icon: group.icon,
             strategy: group.strategy,
             test_interval_secs: group.test_interval_secs,
+            switch_tolerance_ms: group.switch_tolerance_ms,
             matcher_kind,
             explicit_members,
         });
@@ -1963,6 +2064,7 @@ impl ManisApp {
         }
         group.icon = draft.icon;
         group.strategy = draft.strategy;
+        group.switch_tolerance_ms = draft.switch_tolerance_ms;
         group
             .set_test_interval_secs(draft.test_interval_secs)
             .map_err(|_| ManagedPolicyDraftError::InvalidInterval)?;
@@ -2006,6 +2108,9 @@ impl ManisApp {
         dialog_window: Option<AnyWindowHandle>,
         cx: &mut Context<Self>,
     ) {
+        if self.configuration_transfer.active {
+            return;
+        }
         if self.managed_policies.mutation_state.is_busy() {
             return;
         }
@@ -2138,8 +2243,20 @@ impl ManisApp {
                 );
             }
         }
+        if saved {
+            self.refresh_after_managed_policy_change(cx);
+        }
         cx.notify();
         saved
+    }
+
+    fn refresh_after_managed_policy_change(&mut self, cx: &mut Context<Self>) {
+        // The runtime catalog describes the old configuration. Render the committed local
+        // groups immediately, including edits/removals, while a fresh snapshot is fetched.
+        self.catalog = None;
+        if matches!(self.controller, mihomo::ControllerState::Connected { .. }) {
+            self.connect_mihomo(cx);
+        }
     }
 
     fn remove_managed_policy_from_dialog(
@@ -2157,6 +2274,9 @@ impl ManisApp {
         dialog_window: Option<AnyWindowHandle>,
         cx: &mut Context<Self>,
     ) {
+        if self.configuration_transfer.active {
+            return;
+        }
         if self.managed_policies.mutation_state.is_busy() {
             return;
         }
@@ -2252,6 +2372,9 @@ impl ManisApp {
                     copy::configuration::subscription_store_error(self.language(), error)
                 );
             }
+        }
+        if removed {
+            self.refresh_after_managed_policy_change(cx);
         }
         cx.notify();
         removed
@@ -2995,6 +3118,216 @@ mod tests {
         ManagedPolicyRuntimeState,
     };
     use crate::mihomo::{LoadedProvider, LoadedProviderNode, ProxyDelayTarget};
+
+    #[test]
+    fn proxy_candidate_keeps_its_identity_when_the_homepage_exit_changes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::app::ManisApp;
+        use manis_core::{
+            ManagedPolicyGroup, NodeIdentity, PolicyCandidateKind, PolicyCandidateMatcher,
+        };
+        use manis_profile::MANIS_GLOBAL_GROUP_NAME;
+
+        let mut app = ManisApp::with_fixture_controller("http://127.0.0.1:1");
+        let proxy = NodeIdentity::new("builtin", "PROXY")?;
+        assert!(app.policy_candidate_inventory().contains(&proxy));
+        let mut group = ManagedPolicyGroup::new("policy-deadbeef", "Follow homepage")?;
+        group.set_matcher(PolicyCandidateMatcher::Explicit(BTreeSet::from([
+            proxy.clone()
+        ])))?;
+        for name in ["Tokyo", "Singapore"] {
+            app.managed_policies
+                .node_selections
+                .set_global(NodeIdentity::new("saved", name)?);
+            let candidates = app.managed_policy_candidate_nodes(&group);
+            assert_eq!(candidates.len(), 1);
+            assert_eq!(candidates[0].name, MANIS_GLOBAL_GROUP_NAME);
+            assert_eq!(candidates[0].kind, PolicyCandidateKind::PolicyGroup);
+            assert!(group.matches(&proxy.source_id, &proxy.node_name));
+        }
+        // The automatic all-nodes scope must not gain an extra selector candidate.
+        group.set_matcher(PolicyCandidateMatcher::All)?;
+        assert!(app.managed_policy_candidate_nodes(&group).is_empty());
+        Ok(())
+    }
+
+    #[gpui::test]
+    fn selecting_proxy_in_an_offline_policy_saves_the_dynamic_reference(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use crate::app::{ManisApp, PolicySelectionRequest};
+        use gpui::AppContext as _;
+        use manis_core::{
+            ManagedPolicyGroup, NodeIdentity, PolicyCandidateMatcher, PolicyGroupId, ProxyId,
+        };
+        use manis_profile::MANIS_GLOBAL_GROUP_NAME;
+
+        let app = cx.new(|_| ManisApp::with_fixture_controller("http://127.0.0.1:1"));
+        app.update(cx, |app, cx| {
+            let mut group = ManagedPolicyGroup::new("policy-deadbeef", "Follow homepage").unwrap();
+            group
+                .set_matcher(PolicyCandidateMatcher::Explicit(BTreeSet::from([
+                    NodeIdentity::new("builtin", "PROXY").unwrap(),
+                ])))
+                .unwrap();
+            app.managed_policies.groups.push(group.clone());
+            app.select_policy_node(
+                PolicySelectionRequest {
+                    group_id: PolicyGroupId::new(group.id),
+                    group_name: group.name.clone(),
+                    node_id: ProxyId::new("builtin:PROXY"),
+                    node_name: MANIS_GLOBAL_GROUP_NAME.to_owned(),
+                },
+                cx,
+            );
+            assert_eq!(
+                app.managed_policies
+                    .node_selections
+                    .policy_target(&group.name),
+                Some(MANIS_GLOBAL_GROUP_NAME)
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn saving_policy_replaces_stale_catalog_before_background_refresh(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use crate::app::{ManisApp, SourceMutation, SourceRuntimeApply};
+        use crate::mihomo::ControllerState;
+        use gpui::AppContext as _;
+        use manis_core::{
+            ManagedPolicyGroup, PolicyCatalog, PolicyGroup, PolicyGroupId, PolicyGroupKind,
+        };
+
+        let app = cx.new(|_| ManisApp::with_fixture_controller("http://127.0.0.1:1"));
+        app.update(cx, |app, cx| {
+            app.subscription_store_dir = None;
+            app.catalog = Some(PolicyCatalog::from_primary(
+                PolicyGroup {
+                    id: PolicyGroupId::new("Old"),
+                    name: "Old".to_owned(),
+                    kind: PolicyGroupKind::Selector,
+                    target: String::new(),
+                    nodes: Vec::new(),
+                    rules_total: 0,
+                    rules: Vec::new(),
+                },
+                Vec::new(),
+            ));
+            app.controller = ControllerState::Connected {
+                endpoint: "http://127.0.0.1:1".to_owned(),
+                version: "fixture".to_owned(),
+                active_connections: 0,
+                download_total: 0,
+                upload_total: 0,
+            };
+            let group = ManagedPolicyGroup::new("group-new", "New").expect("group");
+            assert!(app.finish_managed_policy_save(
+                Ok(SourceMutation {
+                    value: Some(group.clone()),
+                    apply: SourceRuntimeApply::MetadataOnly,
+                    rollback_error: None,
+                }),
+                cx
+            ));
+            assert!(
+                app.catalog.is_none(),
+                "render saved groups immediately instead of the old catalog"
+            );
+            assert_eq!(app.managed_policies.groups, vec![group]);
+            assert!(matches!(app.controller, ControllerState::Connecting { .. }));
+        });
+    }
+
+    #[gpui::test]
+    fn failed_policy_save_keeps_catalog_and_draft(cx: &mut gpui::TestAppContext) {
+        use crate::app::{ManisApp, SourceMutation, SourceRuntimeApply};
+        use gpui::AppContext as _;
+        use manis_core::{PolicyCatalog, PolicyGroup, PolicyGroupId, PolicyGroupKind};
+
+        let app = cx.new(|_| ManisApp::with_fixture_controller("http://127.0.0.1:1"));
+        app.update(cx, |app, cx| {
+            app.catalog = Some(PolicyCatalog::from_primary(
+                PolicyGroup {
+                    id: PolicyGroupId::new("Old"),
+                    name: "Old".to_owned(),
+                    kind: PolicyGroupKind::Selector,
+                    target: String::new(),
+                    nodes: Vec::new(),
+                    rules_total: 0,
+                    rules: Vec::new(),
+                },
+                Vec::new(),
+            ));
+            app.start_managed_policy_create(cx);
+            assert!(!app.finish_managed_policy_save(
+                Ok(SourceMutation {
+                    value: None,
+                    apply: SourceRuntimeApply::Failed("fixture validation failure".to_owned()),
+                    rollback_error: None,
+                }),
+                cx
+            ));
+            assert!(app.catalog.is_some());
+            assert!(app.managed_policies.groups.is_empty());
+            assert!(app.managed_policies.draft.is_some());
+        });
+    }
+
+    #[gpui::test]
+    fn offline_policy_changes_never_start_the_kernel(cx: &mut gpui::TestAppContext) {
+        use crate::app::{ManisApp, SourceMutation, SourceRuntimeApply};
+        use crate::mihomo::ControllerState;
+        use gpui::AppContext as _;
+        use manis_core::{
+            ManagedPolicyGroup, PolicyCatalog, PolicyGroup, PolicyGroupId, PolicyGroupKind,
+        };
+
+        let app = cx.new(|_| ManisApp::with_fixture_controller("http://127.0.0.1:1"));
+        app.update(cx, |app, cx| {
+            let mut group = ManagedPolicyGroup::new("group-edit", "Original").expect("group");
+            app.managed_policies.groups.push(group.clone());
+            group.name = "Renamed".to_owned();
+            assert!(app.finish_managed_policy_save(
+                Ok(SourceMutation {
+                    value: Some(group.clone()),
+                    apply: SourceRuntimeApply::MetadataOnly,
+                    rollback_error: None,
+                }),
+                cx
+            ));
+            assert_eq!(app.managed_policies.groups, vec![group.clone()]);
+            assert!(matches!(app.controller, ControllerState::Disconnected));
+
+            app.catalog = Some(PolicyCatalog::from_primary(
+                PolicyGroup {
+                    id: PolicyGroupId::new("Renamed"),
+                    name: "Renamed".to_owned(),
+                    kind: PolicyGroupKind::Selector,
+                    target: String::new(),
+                    nodes: Vec::new(),
+                    rules_total: 0,
+                    rules: Vec::new(),
+                },
+                Vec::new(),
+            ));
+            assert!(app.finish_managed_policy_removal(
+                Ok(SourceMutation {
+                    value: Some((group.id.clone(), group)),
+                    apply: SourceRuntimeApply::MetadataOnly,
+                    rollback_error: None,
+                }),
+                cx
+            ));
+            assert!(
+                app.catalog.is_none(),
+                "the deleted runtime row must disappear immediately"
+            );
+            assert!(app.managed_policies.groups.is_empty());
+            assert!(matches!(app.controller, ControllerState::Disconnected));
+        });
+    }
 
     #[test]
     fn counts_node_availability_across_providers() {

@@ -310,6 +310,9 @@ impl ManisApp {
     }
 
     fn submit_manual_rule(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.configuration_transfer.active {
+            return false;
+        }
         if self.manual_rule_editor_state == super::ManualRuleEditorState::Closed {
             return false;
         }
@@ -394,6 +397,9 @@ impl ManisApp {
     }
 
     fn remove_manual_rule(&mut self, index: usize, cx: &mut Context<Self>) {
+        if self.configuration_transfer.active {
+            return;
+        }
         if index >= self.manual_rules.len() {
             return;
         }
@@ -420,6 +426,9 @@ impl ManisApp {
     }
 
     fn set_manual_rule_enabled(&mut self, index: usize, enabled: bool, cx: &mut Context<Self>) {
+        if self.configuration_transfer.active {
+            return;
+        }
         let previous_rules = self.manual_rules.clone();
         let Some(rule) = self.manual_rules.get_mut(index) else {
             return;
@@ -458,6 +467,9 @@ impl ManisApp {
         previous_rules: Vec<crate::manual_rule::ManualRule>,
         cx: &mut Context<Self>,
     ) -> bool {
+        if self.configuration_transfer.active {
+            return false;
+        }
         let language = self.language();
         if self.routing_apply_state.is_busy() {
             language
@@ -601,6 +613,9 @@ impl ManisApp {
     }
 
     fn move_routing_rule_group(&mut self, group_id: &str, direction: i8, cx: &mut Context<Self>) {
+        if self.configuration_transfer.active {
+            return;
+        }
         if self.routing_apply_state.is_busy() {
             self.language()
                 .message(Message::RoutingApplyBusy)

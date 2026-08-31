@@ -497,6 +497,7 @@ struct ManagedPolicyDraft {
     icon: ManagedPolicyIcon,
     strategy: ManagedPolicyStrategy,
     test_interval_secs: u32,
+    switch_tolerance_ms: u16,
     matcher_kind: PolicyCandidateMatcherKind,
     explicit_members: BTreeSet<NodeIdentity>,
 }
@@ -514,6 +515,7 @@ enum PolicyEditorPopover {
     CandidateMode,
     CandidateNodes,
     Interval,
+    Tolerance,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -857,6 +859,7 @@ pub struct ManisApp {
     configuration_section: ConfigurationSection,
     configuration_scroll: gpui::ScrollHandle,
     configuration_add_section: Option<ConfigurationSection>,
+    configuration_transfer: configuration::ConfigurationTransfer,
     node_workspace: NodeWorkspaceState,
     workspace: PolicyWorkspaceState,
     expanded_policy_group: Option<PolicyGroupId>,
@@ -1030,6 +1033,7 @@ impl ManisApp {
             configuration_section: ConfigurationSection::default(),
             configuration_scroll: gpui::ScrollHandle::new(),
             configuration_add_section: None,
+            configuration_transfer: configuration::ConfigurationTransfer::default(),
             node_workspace,
             workspace: PolicyWorkspaceState::default(),
             expanded_policy_group: None,
@@ -1489,6 +1493,9 @@ impl ManisApp {
         request: SubscriptionImportRequest,
         cx: &mut Context<Self>,
     ) {
+        if self.configuration_transfer.active {
+            return;
+        }
         let SubscriptionImportRequest {
             input,
             name,
@@ -1709,6 +1716,9 @@ impl ManisApp {
     }
 
     fn refresh_imported_subscription(&mut self, id: String, cx: &mut Context<Self>) {
+        if self.configuration_transfer.active {
+            return;
+        }
         let language = self.language();
         let Some(store_dir) = self.subscription_store_dir.clone() else {
             return;
@@ -1868,7 +1878,7 @@ impl ManisApp {
     }
 
     fn refresh_next_due_source(&mut self, cx: &mut Context<Self>) {
-        if self.source_refresh_busy() {
+        if self.configuration_transfer.active || self.source_refresh_busy() {
             return;
         }
         let now = mihomo::current_unix_secs();
@@ -1914,6 +1924,9 @@ impl ManisApp {
     }
 
     fn remove_imported_subscription(&mut self, id: String, cx: &mut Context<Self>) {
+        if self.configuration_transfer.active {
+            return;
+        }
         let language = self.language();
         let Some(store_dir) = self.subscription_store_dir.clone() else {
             return;
@@ -2553,7 +2566,7 @@ impl Render for ManisApp {
             .child(self.chrome(theme, size_class, cx))
             .child(self.workspace_content(size_class, theme, window, cx))
             .children(gpui_component::Root::render_sheet_layer(window, cx))
-            .child(self.status_bar(theme, cx))
+            .child(self.status_bar(theme, size_class, cx))
     }
 }
 
@@ -2781,6 +2794,54 @@ mod tests {
         assert!(app.catalog.is_none());
         assert_eq!(app.workspace.selected_group, None);
         assert_eq!(app.workspace.selected_node, None);
+    }
+
+    #[test]
+    fn live_stream_failures_are_global_and_clear_after_recovery() {
+        use crate::mihomo::{LiveStreamPhase, LiveStreamStatus};
+        let mut app = ManisApp::with_fixture_controller("http://127.0.0.1:1");
+        app.controller = ControllerState::Connected {
+            endpoint: "http://127.0.0.1:1".to_owned(),
+            version: "fixture".to_owned(),
+            active_connections: 0,
+            download_total: 0,
+            upload_total: 0,
+        };
+        app.live_status = LiveStreamStatus {
+            activity: LiveStreamPhase::ControllerUnavailable,
+            logs: LiveStreamPhase::InterruptedHttp(401),
+        };
+        let issue = app
+            .live_status_issue()
+            .expect("stream failure must remain visible");
+        assert!(
+            issue.contains(
+                app.language()
+                    .message(crate::localization::Message::NetworkActivity)
+            )
+        );
+        assert!(
+            issue.contains("401"),
+            "a logs error must not be hidden by an activity error"
+        );
+        app.primary_workspace = manis_core::PrimaryWorkspace::Nodes;
+        assert_eq!(app.live_status_issue().as_deref(), Some(issue.as_str()));
+
+        app.live_status.activity = LiveStreamPhase::Live;
+        assert!(
+            app.live_status_issue()
+                .expect("logs still failing")
+                .contains("401")
+        );
+        app.live_status.logs = LiveStreamPhase::Live;
+        assert!(app.live_status_issue().is_none());
+
+        app.live_status.logs = LiveStreamPhase::ControllerUnavailable;
+        app.controller = ControllerState::Disconnected;
+        assert!(
+            app.live_status_issue().is_none(),
+            "do not override the disconnected state with stale stream errors"
+        );
     }
 
     #[test]

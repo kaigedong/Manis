@@ -291,32 +291,32 @@ impl ManisApp {
         let entries = [
             (
                 language.message(Message::Nodes),
-                language.message(Message::Nodes),
+                IconName::Globe,
                 PrimaryWorkspace::Nodes,
             ),
             (
                 language.message(Message::PolicyGroups),
-                language.localized(copy::app::GROUPS),
+                IconName::Network,
                 PrimaryWorkspace::Policies,
             ),
             (
                 language.message(Message::RoutingRules),
-                language.localized(copy::app::RULES),
+                IconName::Map,
                 PrimaryWorkspace::RoutingRules,
             ),
             (
                 language.message(Message::NetworkActivity),
-                language.localized(copy::app::ACTIVITY),
+                IconName::ChartPie,
                 PrimaryWorkspace::Activity,
             ),
             (
                 language.message(Message::Logs),
-                language.message(Message::Logs),
+                IconName::SquareTerminal,
                 PrimaryWorkspace::Logs,
             ),
             (
                 language.message(Message::Configuration),
-                language.message(Message::Configuration),
+                IconName::Settings,
                 PrimaryWorkspace::Configuration,
             ),
         ];
@@ -335,7 +335,7 @@ impl ManisApp {
             .flex_col()
             .gap(Space::Xs.px())
             .bg(theme.surface_base)
-            .children(entries.into_iter().map(|(label, short_label, workspace)| {
+            .children(entries.into_iter().map(|(label, icon, workspace)| {
                 let selected = workspace == self.primary_workspace;
                 div()
                     .id(format!("navigation-{workspace:?}"))
@@ -349,13 +349,15 @@ impl ManisApp {
                     .rounded(Radius::Row.px())
                     .flex()
                     .items_center()
+                    .gap(Space::Sm.px())
                     .text_size(TextRole::Label.size())
                     .line_height(TextRole::Label.line_height())
                     .when(!show_labels, |row| {
                         row.justify_center()
                             .px_0()
-                            .text_size(TextRole::Metadata.size())
-                            .line_height(TextRole::Metadata.line_height())
+                            .tooltip(move |window, cx| {
+                                gpui_component::tooltip::Tooltip::new(label).build(window, cx)
+                            })
                     })
                     .when(selected, |row| {
                         row.bg(theme.action_soft).text_color(theme.action_primary)
@@ -373,7 +375,8 @@ impl ManisApp {
                     } else {
                         TextRole::Metadata.weight()
                     })
-                    .child(if show_labels { label } else { short_label })
+                    .child(gpui_component::Icon::new(icon).size(px(18.0)))
+                    .when(show_labels, |row| row.child(label))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.open_primary_workspace(workspace, cx);
                     }))
@@ -684,7 +687,7 @@ impl ManisApp {
             for candidate in &view.candidates {
                 let current = view.selected_name.as_deref() == Some(candidate.name.as_str());
                 card = card.child(Self::node_row(
-                    candidate.clone(),
+                    candidate,
                     PolicyNodeRowContext {
                         source: self.policy_node_source_label(candidate, language),
                         selection: PolicySelectionRequest {
@@ -848,11 +851,11 @@ impl ManisApp {
         }
         card = card.child(Self::policy_candidate_table_header(language, theme));
         let selected_node = self.node_for_policy(&view.item);
-        for node in view.item.nodes.iter().cloned() {
+        for node in &view.item.nodes {
             let benchmark_state = self.managed_policies.benchmarks.get(&view.benchmark_key)
                 .map_or(GroupBenchmarkNodeState::Idle, |state| state.node_state(&node.name));
             let context = PolicyNodeRowContext {
-                source: self.policy_node_source_label(&node, language),
+                source: self.policy_node_source_label(node, language),
                 current: node.id == selected_node.id,
                 selection: PolicySelectionRequest {
                     group_id: view.item.id.clone(),
@@ -963,7 +966,7 @@ impl ManisApp {
         let target = copy::app::policy_identity(
             language,
             policy_kind_label(language, item.kind),
-            &item.target,
+            Self::policy_candidate_display_name(&item.target),
         );
         div()
             .min_w(px(0.0))
@@ -1086,7 +1089,7 @@ impl ManisApp {
     }
 
     fn node_row(
-        item: PolicyNode,
+        item: &PolicyNode,
         context: PolicyNodeRowContext,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
@@ -1106,7 +1109,9 @@ impl ManisApp {
             node_id,
             node_name,
         } = selection;
-        let detail = if item.detail.trim().is_empty() {
+        let detail = if item.name == manis_profile::MANIS_GLOBAL_GROUP_NAME {
+            language.localized(copy::nodes::FOLLOW_HOME_SELECTION).to_owned()
+        } else if item.detail.trim().is_empty() {
             language.localized(copy::app::UNKNOWN_TYPE).to_owned()
         } else {
             item.detail.clone()
@@ -1118,7 +1123,7 @@ impl ManisApp {
         let leading =
             Self::policy_node_leading(item.kind, manually_selectable, current, language, theme);
         let description = Self::policy_node_description(
-            item.name,
+            Self::policy_candidate_display_name(&item.name).to_owned(),
             detail,
             current,
             manually_selectable,
@@ -1137,8 +1142,8 @@ impl ManisApp {
             .gap(Space::Md.px())
             .border_t_1()
             .border_color(theme.outline_subtle)
-            .bg(if manually_selectable && current {
-                theme.action_soft
+            .bg(if current {
+                theme.selection_surface
             } else {
                 theme.surface_base
             })
@@ -1162,7 +1167,9 @@ impl ManisApp {
                     )),
             )
             .when(manually_selectable, |row| {
-                row.role(Role::RadioButton)
+                row.hover(move |row| row.bg(if current { theme.selection_surface } else { theme.surface_low }))
+                    .focus_visible(move |row| row.border_1().border_color(theme.focus_ring))
+                    .role(Role::RadioButton)
                     .aria_toggled(if current {
                         Toggled::True
                     } else {
@@ -1226,7 +1233,9 @@ impl ManisApp {
                     .text_size(TextRole::Body.size())
                     .line_height(TextRole::Body.line_height())
                     .font_weight(TextRole::Label.weight())
-                    .text_color(if manually_selectable {
+                    .text_color(if current {
+                        theme.selection_accent
+                    } else if manually_selectable {
                         theme.text_primary
                     } else {
                         theme.text_secondary
@@ -1237,7 +1246,7 @@ impl ManisApp {
                             language.localized(copy::app::CURRENT),
                             StatusTone::Neutral,
                             theme,
-                        )))
+                        ).bg(theme.selection_surface).text_color(theme.selection_accent)))
                     }),
             )
             .child(
@@ -1263,11 +1272,16 @@ impl ManisApp {
                 .rounded_full()
                 .border_2()
                 .border_color(if current {
-                    theme.action_primary
+                    theme.selection_accent
                 } else {
                     theme.outline_strong
                 })
-                .when(current, |dot| dot.bg(theme.action_primary));
+                .when(current, |dot| dot.bg(theme.selection_accent));
+        }
+        if current {
+            return div().size(px(22.0)).flex().items_center().justify_center()
+                .text_color(theme.selection_accent)
+                .child(gpui_component::Icon::new(IconName::Check).small());
         }
         div()
             .size(px(22.0))
@@ -1326,11 +1340,43 @@ impl ManisApp {
             )
     }
 
-    fn status_bar(&self, theme: Theme, cx: &mut Context<Self>) -> StatusBar {
+    fn live_status_issue(&self) -> Option<String> {
+        if !matches!(self.controller, ControllerState::Connected { .. }) {
+            return None;
+        }
+        let language = self.language();
+        let is_issue = |phase: &LiveStreamPhase| !matches!(phase,
+            LiveStreamPhase::Waiting | LiveStreamPhase::Connecting | LiveStreamPhase::Live
+        );
+        if self.live_status.activity == self.live_status.logs && is_issue(&self.live_status.activity) {
+            return Some(copy::app::live_stream_phase(language, &self.live_status.activity));
+        }
+        let issues = [
+            (Message::NetworkActivity, &self.live_status.activity),
+            (Message::Logs, &self.live_status.logs),
+        ]
+        .into_iter()
+        .filter(|(_, phase)| is_issue(phase))
+        .map(|(source, phase)| format!("{}：{}",
+            language.message(source), copy::app::live_stream_phase(language, phase)
+        ))
+        .collect::<Vec<_>>();
+        (!issues.is_empty()).then(|| issues.join(" · "))
+    }
+
+    fn status_bar(&self, theme: Theme, size_class: WindowSizeClass, cx: &mut Context<Self>) -> StatusBar {
+        let compact = size_class == WindowSizeClass::Compact;
         let language = self.language();
         let kernel_name = self.runtime.kind().display_name();
         let source = controller_status_label(&self.controller, kernel_name, language);
-        let values = status_bar_values(&self.controller, language, theme);
+        let mut values = status_bar_values(&self.controller, language, theme);
+        let issue = self.live_status_issue();
+        if issue.is_some() {
+            values.dot = theme.status_warning;
+            values.tone = StatusTone::Warning;
+        }
+        let status = issue.clone().unwrap_or_else(|| self.status.clone());
+        let tooltip = status.clone();
 
         let left = div()
             .flex()
@@ -1344,9 +1390,9 @@ impl ManisApp {
                     .gap(Space::Sm.px())
                     .flex_none()
                     .child(div().size(px(8.0)).rounded_full().bg(values.dot))
-                    .child(status_badge(source, values.tone, theme)),
+                    .when(!compact || issue.is_none(), |identity| identity.child(status_badge(source, values.tone, theme))),
             )
-            .child(
+            .when(issue.is_none(), |left| left.child(
                 div()
                     .min_w_0()
                     .truncate()
@@ -1355,15 +1401,19 @@ impl ManisApp {
                     .font_weight(TextRole::Data.weight())
                     .text_color(theme.text_secondary)
                     .child(values.endpoint),
-            )
+            ))
             .child(
                 div()
+                    .id("runtime-status-message")
+                    .role(Role::Status)
+                    .aria_label(status.clone())
                     .min_w_0()
                     .truncate()
                     .text_size(TextRole::Metadata.size())
                     .line_height(TextRole::Metadata.line_height())
-                    .text_color(theme.text_tertiary)
-                    .child(self.status.clone()),
+                    .text_color(if issue.is_some() { theme.status_warning } else { theme.text_tertiary })
+                    .tooltip(move |window, cx| gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx))
+                    .child(status),
             );
         let right = div()
             .flex()
@@ -1400,8 +1450,7 @@ impl ManisApp {
                     )
                 },
             )
-            .child(values.download)
-            .child(values.upload);
+            .when(!compact || issue.is_none(), |right| right.child(values.download).child(values.upload));
 
         StatusBar::new()
             .h(ControlSize::Icon.min_pointer_target())

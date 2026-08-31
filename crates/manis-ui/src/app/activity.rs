@@ -5,7 +5,7 @@ use manis_profile::{MANIS_GLOBAL_GROUP_NAME, QxRuleKind, QxRuleList};
 
 use super::{ManisApp, format_bytes};
 use crate::{
-    components::{ActionRole, StatusTone, action_button, empty_state, page_heading, status_badge},
+    components::{ActionRole, action_button, empty_state, page_heading},
     localization::{CountNoun, Language, Message, copy},
     theme::{ControlSize, Space, TextRole, Theme},
 };
@@ -101,11 +101,6 @@ impl ManisApp {
                             .items_center()
                             .gap(Space::Sm.px())
                             .when(compact, gpui::Styled::w_full)
-                            .child(status_badge(
-                                copy::app::live_stream_phase(language, &self.live_status.activity),
-                                StatusTone::Neutral,
-                                theme,
-                            ))
                             .when_some(self.inputs.activity_search.clone(), |tools, input| {
                                 tools.child(
                                     div()
