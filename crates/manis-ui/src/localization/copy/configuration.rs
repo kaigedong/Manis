@@ -8,7 +8,6 @@ pub(crate) const MANUAL_RULE_ENABLED: LocalizedText =
 pub(crate) const MANUAL_RULE_DISABLED: LocalizedText =
     LocalizedText::new("Manual rule disabled", "手动规则已禁用");
 
-pub(crate) const ACTIVE_RULES: LocalizedText = LocalizedText::new("Active rules", "生效规则");
 pub(crate) const ADD_AND_CONDITION: LocalizedText =
     LocalizedText::new("+ Add AND condition", "+ 添加“并且”条件");
 pub(crate) const ADD_AN_AND_CONDITION: LocalizedText =
@@ -251,11 +250,6 @@ pub(crate) const HTTPS_ONLY_UP_TO_1_MIB_INVALID_LINES_ARE_COUNTED: LocalizedText
         "HTTPS only · Up to 1 MiB · Invalid lines are counted separately",
         "只接受 HTTPS · 最多 1 MiB · 无效行会单独计数",
     );
-pub(crate) const INSPECT_THE_ORDERED_RULES_THAT_ACTUALLY_PARTICIPATE_IN_MATCHING_MANAGE:
-    LocalizedText = LocalizedText::new(
-    "Inspect the ordered rules that actually participate in matching; manage sources in Settings",
-    "查看最终参与匹配的有序规则；来源请前往配置页管理",
-);
 pub(crate) const INSTALLED: LocalizedText = LocalizedText::new("Installed", "已安装");
 pub(crate) const INTERFACE_LANGUAGE: LocalizedText =
     LocalizedText::new("Interface language", "界面语言");
@@ -453,7 +447,6 @@ pub(crate) const THIS_SOURCE_MUST_REMAIN_A_SINGLE_NODE_SHARE_LINK: LocalizedText
         "This source must remain a single-node share link",
         "此来源必须保持为单节点分享链接",
     );
-pub(crate) const TOP_DOWN: LocalizedText = LocalizedText::new("Top-down", "从上到下匹配");
 pub(crate) const UPDATED_JUST_NOW: LocalizedText =
     LocalizedText::new("Updated just now", "刚刚更新");
 pub(crate) const UPDATE_FAILED: LocalizedText = LocalizedText::new("Update failed", "更新失败");

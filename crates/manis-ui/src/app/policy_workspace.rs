@@ -445,6 +445,7 @@ impl ManisApp {
         let body = div()
             .id("offline-policy-scroll")
             .flex_1()
+            .min_h(px(0.0))
             .overflow_y_scroll()
             .p(if compact { Space::Md.px() } else { Space::Lg.px() });
         let body = if self.managed_policies.groups.is_empty() {
@@ -470,6 +471,7 @@ impl ManisApp {
             .flex_col()
             .child(
                 div()
+                    .flex_shrink_0()
                     .p(Space::Lg.px())
                     .border_b_1()
                     .border_color(theme.outline_subtle)
@@ -655,6 +657,7 @@ impl ManisApp {
     ) -> Div {
         let view = self.offline_policy_card_view(policy);
         let mut card = div()
+            .flex_shrink_0()
             .rounded(Radius::Pane.px())
             .border_1()
             .border_color(theme.outline_subtle)
@@ -744,6 +747,7 @@ impl ManisApp {
             div()
                 .id("policy-scroll")
                 .flex_1()
+                .min_h(px(0.0))
                 .overflow_y_scroll()
                 .p(if compact { Space::Md.px() } else { Space::Lg.px() })
                 .flex()
@@ -761,6 +765,7 @@ impl ManisApp {
             .bg(theme.surface_base)
             .child(
                 div()
+                    .flex_shrink_0()
                     .p(Space::Lg.px())
                     .border_b_1()
                     .border_color(theme.outline_subtle)
@@ -826,6 +831,7 @@ impl ManisApp {
     ) -> Div {
         let view = self.policy_list_card_view(item);
         let mut card = div()
+            .flex_shrink_0()
             .rounded(Radius::Pane.px())
             .border_1()
             .border_color(theme.outline_subtle)

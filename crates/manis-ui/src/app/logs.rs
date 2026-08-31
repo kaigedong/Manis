@@ -107,6 +107,7 @@ fn logs_rows(
     let mut rows = div()
         .id("logs-scroll")
         .flex_1()
+        .min_h_0()
         .overflow_y_scroll()
         .flex()
         .flex_col();
@@ -196,11 +197,12 @@ fn ui_log_row(entry: UiLogEntry, reference: String, theme: Theme) -> Div {
 
 fn log_row(reference: String, level: &str, body: Div, timestamp: String, theme: Theme) -> Div {
     div()
+        .flex_shrink_0()
         .min_h(px(52.0))
         .px(Space::Xl.px())
         .py(Space::Sm.px())
         .flex()
-        .items_start()
+        .items_center()
         .gap(Space::Md.px())
         .border_b_1()
         .border_color(theme.outline_subtle)

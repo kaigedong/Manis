@@ -130,6 +130,12 @@ Real-core tests are ignored by default. They must be enabled explicitly and use
 synthetic fixtures; a private subscription must never be committed or used in public test output.
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full workflow.
 
+Policy groups expand downward and scroll when needed without compressing adjacent cards. The routing
+rules page places its description, rule counts, and Add button in one header above the groups; group
+headers show a pointer cursor on hover. Log references, levels, messages, and timestamps are vertically
+centered within each row. See [List layout checks](docs/development.md#list-layout-checks) for the
+reproduction commands.
+
 ## Security and privacy
 
 Subscription URLs, tokens, node credentials, controller secrets, and generated core configurations
