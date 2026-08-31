@@ -2393,9 +2393,9 @@ proxies: []
         let store = root.join("subscriptions");
         let url = "https://rules.example.invalid/airports.list?token=fixture-secret";
         let content = r"
-# airports.list excerpt
-DOMAIN-KEYWORD,google,PROXY
-DOMAIN-SUFFIX,githubusercontent.com,PROXY
+# QX rule source fixture
+HOST-KEYWORD,google,PROXY
+HOST-SUFFIX,githubusercontent.com,PROXY
 IP-CIDR,192.0.2.0/24,DIRECT
 ";
 

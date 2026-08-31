@@ -51,6 +51,10 @@ format.
 - Live connections, route evidence, core logs, and redacted application diagnostics.
 - Mihomo as the primary managed core and a capability-gated sing-box adapter.
 
+QX rule-list import accepts `HOST` / `DOMAIN`, `HOST-SUFFIX` / `DOMAIN-SUFFIX`, and
+`HOST-KEYWORD` / `DOMAIN-KEYWORD`, regardless of case. Other rule types are skipped and
+counted in the import diagnostics; they are not silently converted to domain rules.
+
 The Manis source repository does not commit a prebuilt proxy core. Release builds download the
 stable asset for their architecture from the official Mihomo release, verify its upstream SHA-256,
 and include it as a first-launch seed. The application then uses and updates only its managed core.

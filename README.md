@@ -48,6 +48,10 @@ Manis 只尝试把一条路由链路直接呈现出来：
 - 活跃连接、真实路由证据、内核日志和脱敏的应用诊断。
 - 以 Mihomo 为主要托管内核，并提供按能力启用的 sing-box 适配器。
 
+QX 规则列表导入支持 `HOST` / `DOMAIN`、`HOST-SUFFIX` / `DOMAIN-SUFFIX` 和
+`HOST-KEYWORD` / `DOMAIN-KEYWORD`，不区分大小写。其他规则类型会跳过并计入导入诊断，
+不会被静默转换成域名规则。
+
 Manis 源码仓库不提交预编译代理内核。发行构建会从 Mihomo 官方 Release 下载对应架构的
 稳定版，校验上游 SHA-256 后作为首次启动种子；应用之后只使用并更新自己托管的内核。
 
