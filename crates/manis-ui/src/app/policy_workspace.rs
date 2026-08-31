@@ -363,6 +363,13 @@ impl ManisApp {
                         row.bg(theme.action_soft).text_color(theme.action_primary)
                     })
                     .when(!selected, |row| row.text_color(theme.text_secondary))
+                    .hover(move |row| {
+                        row.bg(if selected { theme.action_soft } else { theme.surface_high })
+                            .text_color(theme.text_primary)
+                    })
+                    .border_1()
+                    .border_color(gpui::rgba(0x0000_0000))
+                    .focus_visible(move |row| row.border_color(theme.focus_ring))
                     .font_weight(if selected {
                         TextRole::Label.weight()
                     } else {

@@ -1154,6 +1154,7 @@ impl ManisApp {
 
     pub(crate) fn attach_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.workspace.resize(window.viewport_size().width.as_f32());
+        crate::theme::sync_component_theme(self.theme(), self.dark, Some(window), cx);
         self.sync_window_inputs(window, cx);
         self.ensure_source_refresh_scheduler(cx);
         let _previous =

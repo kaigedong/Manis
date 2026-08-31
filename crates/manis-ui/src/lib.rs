@@ -44,9 +44,13 @@ impl gpui::Render for ManisRootView {
         use gpui::{ParentElement as _, Styled as _, div};
 
         div()
+            .relative()
             .size_full()
             .child(self.app.clone())
-            .children(gpui_component::Root::render_dialog_layer(window, cx))
+            .children(
+                gpui_component::Root::render_dialog_layer(window, cx)
+                    .map(|layer| div().absolute().inset_0().child(layer)),
+            )
     }
 }
 
