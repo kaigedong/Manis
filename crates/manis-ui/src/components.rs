@@ -47,12 +47,12 @@ pub(crate) fn style_action_button(button: Button, role: ActionRole, size: Contro
         .rounded(Radius::Control.px())
 }
 
-pub(crate) fn glass_dialog(dialog: Dialog, theme: Theme) -> Dialog {
+pub(crate) fn surface_dialog(dialog: Dialog, theme: Theme) -> Dialog {
     dialog
         .p_0()
         .rounded(Radius::Pane.px())
         .border_1()
-        .border_color(theme.outline_strong)
+        .border_color(theme.outline_subtle)
         .bg(theme.surface_overlay)
         .overflow_hidden()
 }
@@ -64,7 +64,7 @@ pub(crate) fn dialog_header_surface(theme: Theme) -> Div {
         .py_4()
         .border_b_1()
         .border_color(theme.outline_subtle)
-        .bg(theme.surface_base)
+        .bg(theme.surface_overlay)
 }
 
 pub(crate) fn dialog_footer_surface(theme: Theme) -> Div {
@@ -74,7 +74,7 @@ pub(crate) fn dialog_footer_surface(theme: Theme) -> Div {
         .py_3()
         .border_t_1()
         .border_color(theme.outline_subtle)
-        .bg(theme.surface_base)
+        .bg(theme.surface_overlay)
         .flex()
         .items_center()
         .justify_end()
@@ -110,8 +110,6 @@ pub(crate) fn status_badge(label: impl Into<SharedString>, tone: StatusTone, the
         .h(TextRole::Label.line_height() + Space::Sm.px())
         .px(Space::Sm.px())
         .rounded(Radius::Control.px())
-        .border_1()
-        .border_color(theme.outline_subtle)
         .bg(background)
         .text_color(foreground)
         .text_size(TextRole::Label.size())
@@ -163,6 +161,7 @@ fn heading(
     let detail = detail.into();
     div()
         .flex()
+        .flex_wrap()
         .w_full()
         .items_start()
         .justify_between()
@@ -170,7 +169,8 @@ fn heading(
         .child(
             div()
                 .flex_1()
-                .min_w_0()
+                // Actions wrap before explanatory text becomes a narrow column.
+                .min_w(px(180.0))
                 .child(
                     div()
                         .text_color(theme.text_primary)

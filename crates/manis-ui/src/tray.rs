@@ -98,26 +98,30 @@ pub fn open_window(cx: &mut App) -> gpui::Result<()> {
     let window_size = size(px(1420.0), px(900.0));
     let bounds = Bounds::centered(None, window_size, cx);
     let app = manis_app(cx);
-    cx.open_window(
-        WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(bounds)),
-            titlebar: Some(TitlebarOptions {
-                title: Some(crate::brand::PRODUCT_NAME.into()),
-                appears_transparent: true,
-                ..Default::default()
-            }),
-            window_background: WindowBackgroundAppearance::Blurred,
-            window_min_size: Some(size(
-                LayoutMetric::MinWindowWidth.px(),
-                LayoutMetric::MinWindowHeight.px(),
-            )),
-            is_resizable: true,
-            focus: true,
-            ..Default::default()
-        },
-        move |window, cx| cx.new(|cx| crate::root(app, window, cx)),
-    )?;
+    cx.open_window(main_window_options(bounds), move |window, cx| {
+        cx.new(|cx| crate::root(app, window, cx))
+    })?;
     Ok(())
+}
+
+fn main_window_options(bounds: Bounds<gpui::Pixels>) -> WindowOptions {
+    WindowOptions {
+        window_bounds: Some(WindowBounds::Windowed(bounds)),
+        titlebar: Some(TitlebarOptions {
+            title: Some(crate::brand::PRODUCT_NAME.into()),
+            // Integrate the title bar with our opaque chrome; this does not enable blur.
+            appears_transparent: true,
+            ..Default::default()
+        }),
+        window_background: WindowBackgroundAppearance::Opaque,
+        window_min_size: Some(size(
+            LayoutMetric::MinWindowWidth.px(),
+            LayoutMetric::MinWindowHeight.px(),
+        )),
+        is_resizable: true,
+        focus: true,
+        ..Default::default()
+    }
 }
 
 /// Installs the native status icon and its menu.
@@ -365,7 +369,17 @@ fn manis_icon_rgba() -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::manis_icon_rgba;
+    use super::{main_window_options, manis_icon_rgba};
+
+    #[test]
+    fn main_window_uses_an_opaque_native_backdrop() {
+        let options = main_window_options(gpui::Bounds::default());
+        assert!(matches!(
+            options.window_background,
+            gpui::WindowBackgroundAppearance::Opaque
+        ));
+        assert!(options.titlebar.unwrap().appears_transparent);
+    }
 
     #[test]
     fn tray_icon_is_rgba_and_contains_transparency() {

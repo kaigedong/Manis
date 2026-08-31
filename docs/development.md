@@ -106,6 +106,15 @@ use only a synthetic local fixture. The visual snapshot example writes generated
 cargo run -p manis-ui --example snapshot --features snapshot-fixtures
 ```
 
+For the light/dark appearance matrix, including minimum-size windows and overlays, use:
+
+```bash
+cargo run -p manis-ui --example snapshot --features snapshot-fixtures --locked -- --appearance
+```
+
+See [Interface materials and hierarchy](interface-design.md) for surface, contrast, and visual
+review requirements. Snapshot captures reject non-opaque application pixels.
+
 ## macOS bundle and TUN
 
 See `packaging/macos/README.md` for the fixed-purpose privileged helper, signing requirements, and

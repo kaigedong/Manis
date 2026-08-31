@@ -101,16 +101,14 @@ impl ManisApp {
             .py(Space::Sm.px())
             .rounded(Radius::Control.px())
             .border_1()
-            .border_color(if selected {
-                theme.action_primary
-            } else {
-                gpui::rgba(0x0000_0000)
-            })
+            .border_color(gpui::rgba(0x0000_0000))
             .bg(if selected {
                 theme.action_soft
             } else {
                 gpui::rgba(0x0000_0000)
             })
+            .hover(move |row| row.bg(if selected { theme.action_soft } else { theme.surface_high }))
+            .focus_visible(move |row| row.border_color(theme.focus_ring))
             .child(
                 div()
                     .flex()

@@ -980,7 +980,7 @@ impl ManisApp {
         let margin_top = ((viewport.height.as_f32() - estimated_height) / 2.0).max(16.0);
         let app = cx.entity();
 
-        glass_dialog(dialog, theme)
+        surface_dialog(dialog, theme)
             .width(px(dialog_width))
             .max_h(px((viewport.height.as_f32() - 32.0).max(320.0)))
             .margin_top(px(margin_top))

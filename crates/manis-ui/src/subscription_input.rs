@@ -252,7 +252,7 @@ impl gpui::Render for SubscriptionTextInput {
             .rounded(Radius::Control.px())
             .border_1()
             .border_color(if focused {
-                self.theme.action_primary
+                self.theme.focus_ring
             } else {
                 self.theme.outline_strong
             })
