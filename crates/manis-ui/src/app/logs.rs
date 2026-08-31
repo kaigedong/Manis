@@ -223,6 +223,7 @@ fn log_reference(reference: String, theme: Theme) -> Div {
 }
 
 fn log_level_badge(level: &str, theme: Theme) -> Div {
+    let color = log_level_color(level, theme);
     div()
         .w(px(72.0))
         .h(px(24.0))
@@ -231,11 +232,11 @@ fn log_level_badge(level: &str, theme: Theme) -> Div {
         .items_center()
         .justify_center()
         .rounded(Radius::Control.px())
-        .bg(theme.surface_low)
+        .bg(theme.surface_base.blend(color.opacity(0.1)))
         .text_size(TextRole::Label.size())
         .line_height(TextRole::Label.line_height())
         .font_weight(FontWeight::SEMIBOLD)
-        .text_color(log_level_color(level, theme))
+        .text_color(color)
         .child(level.to_uppercase())
 }
 
@@ -313,10 +314,11 @@ fn format_local_time(timestamp_ms: u128, offset_seconds: i32) -> String {
 /// separates failures from noise in either list.
 fn log_level_color(level: &str, theme: Theme) -> Rgba {
     match level.to_ascii_lowercase().as_str() {
-        "error" => theme.status_error,
+        "error" | "fatal" | "panic" => theme.status_error,
         "warn" | "warning" => theme.status_warning,
-        "info" => theme.action_primary,
-        "debug" | "trace" => theme.text_tertiary,
+        "info" => theme.log_info,
+        "debug" => theme.log_debug,
+        "trace" => theme.log_trace,
         _ => theme.text_secondary,
     }
 }
@@ -351,8 +353,9 @@ mod tests {
 
         assert_eq!(super::log_level_color("ERROR", theme), theme.status_error);
         assert_eq!(super::log_level_color("WARN", theme), theme.status_warning);
-        assert_eq!(super::log_level_color("INFO", theme), theme.action_primary);
-        assert_eq!(super::log_level_color("DEBUG", theme), theme.text_tertiary);
+        assert_eq!(super::log_level_color("INFO", theme), theme.log_info);
+        assert_eq!(super::log_level_color("DEBUG", theme), theme.log_debug);
+        assert_eq!(super::log_level_color("TRACE", theme), theme.log_trace);
     }
 
     #[test]
@@ -366,16 +369,32 @@ mod tests {
         );
         assert_eq!(super::log_level_color("warn", theme), theme.status_warning);
         assert_eq!(super::log_level_color("error", theme), theme.status_error);
-        assert_eq!(super::log_level_color("info", theme), theme.action_primary);
+        assert_eq!(super::log_level_color("fatal", theme), theme.status_error);
+        assert_eq!(super::log_level_color("panic", theme), theme.status_error);
+        assert_eq!(super::log_level_color("info", theme), theme.log_info);
+        assert_eq!(super::log_level_color("debug", theme), theme.log_debug);
+        assert_eq!(super::log_level_color("trace", theme), theme.log_trace);
         // An unknown level must stay legible rather than borrow a severity colour.
         assert_eq!(super::log_level_color("silly", theme), theme.text_secondary);
     }
 
     #[test]
-    fn error_and_warning_are_visually_distinct() {
+    fn log_levels_are_visually_distinct_in_both_themes() {
         for theme in [crate::theme::Theme::light(), crate::theme::Theme::dark()] {
-            assert_ne!(theme.status_error, theme.status_warning);
-            assert_ne!(theme.status_warning, theme.action_primary);
+            let colors = [
+                theme.log_trace,
+                theme.log_debug,
+                theme.log_info,
+                theme.status_warning,
+                theme.status_error,
+            ];
+            for (index, color) in colors.iter().enumerate() {
+                for other in &colors[index + 1..] {
+                    assert_ne!(color, other);
+                }
+                assert_ne!(*color, theme.action_primary);
+                assert_ne!(*color, theme.text_tertiary);
+            }
         }
     }
 

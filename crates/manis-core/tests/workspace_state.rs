@@ -274,9 +274,9 @@ fn replacing_a_data_source_keeps_size_but_resets_navigation_and_selection() {
 fn primary_workspace_switches_between_policy_operation_and_configuration() {
     let mut active = PrimaryWorkspace::default();
 
+    assert_eq!(active, PrimaryWorkspace::navigation_order()[0]);
+    active = PrimaryWorkspace::Policies;
     assert_eq!(active, PrimaryWorkspace::Policies);
-    active = PrimaryWorkspace::Nodes;
-    assert_eq!(active, PrimaryWorkspace::Nodes);
     active = PrimaryWorkspace::RoutingRules;
     assert_eq!(active, PrimaryWorkspace::RoutingRules);
     active = PrimaryWorkspace::Configuration;

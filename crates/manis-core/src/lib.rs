@@ -407,8 +407,8 @@ pub enum CompactNavigation {
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum PrimaryWorkspace {
-    #[default]
     Policies,
+    #[default]
     Nodes,
     RoutingRules,
     Activity,

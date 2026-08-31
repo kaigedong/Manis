@@ -3,8 +3,8 @@ use serde_json::{Map, Value, json};
 use super::{QuotedYaml, optional};
 use crate::{
     LogLevel, Name, OutboundProxy, PolicyGroup, PolicyGroupKind, Profile, ProfileError,
-    ProxyDnsServer, ProxyProviderSource, SUBSCRIPTION_METADATA_EXCLUDE_FILTER, VlessProxy,
-    VlessSecurity, VlessTransport, policy_name, render_rule,
+    ProxyDnsServer, ProxyProviderSource, VlessProxy, VlessSecurity, VlessTransport, policy_name,
+    render_rule,
 };
 
 pub(crate) fn render(profile: &Profile, tun_enabled: bool) -> Result<String, ProfileError> {
@@ -18,7 +18,6 @@ pub(crate) fn render(profile: &Profile, tun_enabled: bool) -> Result<String, Pro
         if matches!(provider.source, ProxyProviderSource::Http(_)) {
             value["interval"] = json!(provider.interval_secs);
         }
-        value["exclude-filter"] = json!(SUBSCRIPTION_METADATA_EXCLUDE_FILTER);
         value["proxy"] = json!("DIRECT");
         value["health-check"] = json!({
             "enable": provider.health_check.enabled,

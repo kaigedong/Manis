@@ -63,9 +63,9 @@ use stored_workspace::StoredWorkspace;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum ConfigurationSection {
+    #[default]
     General,
     Runtime,
-    #[default]
     ProxySources,
     RuleSources,
     Advanced,
@@ -579,7 +579,7 @@ impl PolicyDetailTab {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 struct GroupBenchmarkSummary {
     total: usize,
     succeeded: usize,
@@ -612,7 +612,7 @@ impl GroupBenchmarkSummary {
     }
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 enum GroupBenchmarkState {
     #[default]
     Idle,
@@ -650,6 +650,13 @@ impl GroupBenchmarkState {
 
     fn is_running(&self) -> bool {
         matches!(self, Self::Running { .. })
+    }
+
+    fn complete_delays(&self) -> Option<&BTreeMap<String, u16>> {
+        match self {
+            Self::Complete { delays, .. } => Some(delays),
+            _ => None,
+        }
     }
 
     fn record(&mut self, generation: u64, name: &str, delay: Option<u16>) -> bool {
@@ -783,6 +790,8 @@ impl Default for ProxySourceEditorState {
 struct WorkspaceInputs {
     qx_rule: Option<Entity<SubscriptionTextInput>>,
     qx_rule_events: Option<Subscription>,
+    qx_rule_name: Option<Entity<SubscriptionTextInput>>,
+    qx_rule_name_events: Option<Subscription>,
     policy_group_name: Option<Entity<SubscriptionTextInput>>,
     policy_group_filter: Option<Entity<SubscriptionTextInput>>,
     activity_search: Option<Entity<SubscriptionTextInput>>,
@@ -854,6 +863,7 @@ impl ManagedPolicyState {
     fn restored(
         groups: Vec<ManagedPolicyGroup>,
         node_selections: mihomo::NodeSelectionPreferences,
+        benchmarks: BTreeMap<String, GroupBenchmarkState>,
     ) -> Self {
         Self {
             groups,
@@ -861,7 +871,7 @@ impl ManagedPolicyState {
             draft: None,
             editor_popover: None,
             pending_benchmark_name: None,
-            benchmarks: BTreeMap::new(),
+            benchmarks,
             benchmark_generation: 0,
             active_benchmark_generation: None,
             runtime_states: BTreeMap::new(),
@@ -874,6 +884,7 @@ pub struct ManisApp {
     localizer: Localizer,
     primary_workspace: PrimaryWorkspace,
     configuration_section: ConfigurationSection,
+    configuration_scroll: gpui::ScrollHandle,
     configuration_add_section: Option<ConfigurationSection>,
     node_workspace: NodeWorkspaceState,
     workspace: PolicyWorkspaceState,
@@ -1034,6 +1045,7 @@ impl ManisApp {
             collapsed_groups,
             managed_policy_groups,
             node_selection_preferences,
+            benchmarks,
             routing_mode,
             error: source_store_error,
         } = stored_workspace;
@@ -1046,6 +1058,7 @@ impl ManisApp {
             localizer,
             primary_workspace: PrimaryWorkspace::default(),
             configuration_section: ConfigurationSection::default(),
+            configuration_scroll: gpui::ScrollHandle::new(),
             configuration_add_section: None,
             node_workspace,
             workspace: PolicyWorkspaceState::default(),
@@ -1072,6 +1085,7 @@ impl ManisApp {
             managed_policies: ManagedPolicyState::restored(
                 managed_policy_groups,
                 node_selection_preferences,
+                benchmarks,
             ),
             source_store_error,
             proxy_mode: ProxyMode::Off,
@@ -1327,8 +1341,18 @@ impl ManisApp {
     }
 
     fn ensure_qx_rule_input(&mut self, theme: Theme, window: &mut Window, cx: &mut Context<Self>) {
+        let language = self.language();
         if let Some(input) = self.inputs.qx_rule.as_ref() {
             input.update(cx, |input, cx| input.set_theme(theme, self.dark, cx));
+            if let Some(input) = self.inputs.qx_rule_name.as_ref() {
+                input.update(cx, |input, cx| {
+                    input.set_theme(theme, self.dark, cx);
+                    input.set_placeholder(
+                        language.localized(copy::configuration::RULE_SOURCE_NAME_PLACEHOLDER),
+                        cx,
+                    );
+                });
+            }
             return;
         }
         let input = cx.new(|cx| {
@@ -1352,6 +1376,29 @@ impl ManisApp {
         });
         self.inputs.qx_rule = Some(input);
         self.inputs.qx_rule_events = Some(events);
+        let name_input = cx.new(|cx| {
+            SubscriptionTextInput::new_field(
+                TextInputSpec::new(
+                    "qx-rule-name-input",
+                    language.localized(copy::configuration::RULE_SOURCE_NAME_PLACEHOLDER),
+                    96,
+                    theme,
+                    self.dark,
+                ),
+                window,
+                cx,
+            )
+        });
+        self.inputs.qx_rule_name_events = Some(cx.subscribe(
+            &name_input,
+            |this, _input, _: &SubscriptionInputChanged, cx| {
+                if this.rule_sources.feedback != QxRuleImportFeedback::Idle {
+                    this.rule_sources.feedback = QxRuleImportFeedback::Idle;
+                    cx.notify();
+                }
+            },
+        ));
+        self.inputs.qx_rule_name = Some(name_input);
     }
 
     fn ensure_policy_group_inputs(
@@ -2642,15 +2689,30 @@ mod tests {
     use manis_core::ProxyMode;
 
     use super::{
-        ControllerReadiness, DueRemoteSource, ImportedSubscription, ImportedSubscriptionState,
-        ManisApp, PolicyDetailTab, ProxyModeBlock, SourceRuntimeApply, TunSupport,
-        proxy_mode_block, tun_dns_log_details,
+        ControllerReadiness, DueRemoteSource, GroupBenchmarkState, GroupBenchmarkSummary,
+        ImportedSubscription, ImportedSubscriptionState, ManisApp, PolicyDetailTab, ProxyModeBlock,
+        SourceRuntimeApply, TunSupport, proxy_mode_block, stored_workspace, tun_dns_log_details,
     };
     use crate::subscription::SourceKind;
     use crate::{
         localization::Language,
         mihomo::{self, ControllerState},
     };
+
+    fn complete_benchmark(delay_name: &str, delay_ms: u16) -> GroupBenchmarkState {
+        GroupBenchmarkState::Complete {
+            generation: 1,
+            summary: GroupBenchmarkSummary {
+                total: 1,
+                succeeded: 1,
+                failed: 0,
+                minimum_ms: Some(delay_ms),
+                maximum_ms: Some(delay_ms),
+                average_ms: Some(delay_ms),
+            },
+            delays: BTreeMap::from([(delay_name.to_owned(), delay_ms)]),
+        }
+    }
 
     #[test]
     fn tun_dns_diagnostics_describe_the_platform_strategy() {
@@ -2778,6 +2840,7 @@ mod tests {
         };
         let mut rule_source = mihomo::StoredQxRuleSource {
             id: "qx-rule-source:fixture".to_owned(),
+            name: None,
             source: manis_profile::SecretUrl::parse_https("https://rules.example.invalid/list")
                 .expect("fixture rule URL"),
             enabled: true,
@@ -2939,6 +3002,56 @@ mod tests {
     }
 
     #[test]
+    fn runtime_snapshot_keeps_completed_manual_policy_benchmark_latency() {
+        let mut app = ManisApp::with_fixture_controller("http://127.0.0.1:9090");
+        let policy_id = PolicyGroupId::new("runtime-policy");
+        app.managed_policies.benchmarks.insert(
+            ManisApp::policy_group_benchmark_key(&policy_id),
+            complete_benchmark("Runtime node", 77),
+        );
+        let catalog = PolicyCatalog::try_new(vec![PolicyGroup {
+            id: policy_id.clone(),
+            name: "Runtime policy".to_owned(),
+            kind: PolicyGroupKind::Selector,
+            target: "Runtime node".to_owned(),
+            nodes: vec![PolicyNode {
+                id: ProxyId::new("runtime-node"),
+                name: "Runtime node".to_owned(),
+                kind: PolicyCandidateKind::Node,
+                provider: Some("Runtime provider".to_owned()),
+                detail: "VLESS".to_owned(),
+                latency_ms: Some(12),
+                alive: Some(true),
+            }],
+            rules_total: 1,
+            rules: Vec::new(),
+        }])
+        .expect("runtime policy catalog");
+
+        app.apply_mihomo_snapshot(
+            "http://127.0.0.1:9090".to_owned(),
+            mihomo::LoadedSnapshot {
+                catalog: Some(catalog),
+                providers: Vec::new(),
+                version: "fixture".to_owned(),
+                active_connections: 0,
+                download_total: 0,
+                upload_total: 0,
+                observed_routes: Vec::new(),
+                connections: Vec::new(),
+                runtime: manis_mihomo::RuntimeConfig::default(),
+            },
+        );
+
+        let selected = app
+            .catalog
+            .as_ref()
+            .expect("catalog")
+            .select(Some(&policy_id));
+        assert_eq!(selected.nodes[0].latency_ms, Some(77));
+    }
+
+    #[test]
     fn runtime_snapshot_without_user_policy_groups_still_connects_cleanly() {
         let mut app = ManisApp::with_fixture_controller("http://127.0.0.1:9090");
         app.workspace.replace_source_selection(
@@ -3039,6 +3152,64 @@ mod tests {
             Some("Tokyo")
         );
         fs::remove_dir_all(root).expect("remove selection fixture");
+    }
+
+    #[test]
+    fn app_startup_restores_completed_manual_benchmark_results() {
+        let root =
+            std::env::temp_dir().join(format!("manis-app-benchmarks-{}", std::process::id()));
+        if root.exists() {
+            fs::remove_dir_all(&root).expect("remove stale fixture");
+        }
+        let store = root.join("subscriptions");
+        let key = "source:fixture".to_owned();
+        let benchmarks = BTreeMap::from([(key.clone(), complete_benchmark("Tokyo", 64))]);
+        stored_workspace::save_group_benchmarks_in(&store, &benchmarks)
+            .expect("save benchmark state");
+
+        let app = ManisApp::with_fixture_controller_and_subscription_store(
+            "http://127.0.0.1:9090",
+            store,
+        );
+
+        assert_eq!(
+            app.managed_policies.benchmarks.get(&key),
+            benchmarks.get(&key)
+        );
+        fs::remove_dir_all(root).expect("remove benchmark fixture");
+    }
+
+    #[test]
+    fn starting_manual_benchmark_replaces_persisted_completed_result() {
+        let root = std::env::temp_dir().join(format!(
+            "manis-app-benchmark-replace-{}",
+            std::process::id()
+        ));
+        if root.exists() {
+            fs::remove_dir_all(&root).expect("remove stale fixture");
+        }
+        let store = root.join("subscriptions");
+        let key = "source:fixture".to_owned();
+        stored_workspace::save_group_benchmarks_in(
+            &store,
+            &BTreeMap::from([(key.clone(), complete_benchmark("Tokyo", 64))]),
+        )
+        .expect("save benchmark state");
+        let mut app = ManisApp::with_fixture_controller_and_subscription_store(
+            "http://127.0.0.1:9090",
+            store.clone(),
+        );
+
+        assert_eq!(app.begin_group_benchmark(key.clone()), Some(1));
+
+        let restored =
+            stored_workspace::load_group_benchmarks_in(&store).expect("load benchmark state");
+        assert!(!restored.contains_key(&key));
+        assert!(matches!(
+            app.managed_policies.benchmarks.get(&key),
+            Some(GroupBenchmarkState::Running { .. })
+        ));
+        fs::remove_dir_all(root).expect("remove benchmark fixture");
     }
 
     #[test]

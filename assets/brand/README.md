@@ -8,3 +8,7 @@
 Both source files use a `1254 × 1254` square view box and contain only embedded vector paths.
 Keep the SVG sources as the canonical assets and generate platform-specific raster formats during
 packaging where possible.
+
+The compact mark uses a filled rounded rectangle with transparent outer padding. Keep the
+background as a rounded rectangle rather than clipping a square: macOS `sips` does not preserve
+the rounded `clipPath` when generating the Dock icon. Do not add a white backing tile.

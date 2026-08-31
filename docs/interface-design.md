@@ -29,6 +29,9 @@ rendering; gpui-component still owns buttons, inputs, dialogs, popovers, focus, 
 - Primary actions are charcoal / near-white with inverse labels. Hover and pressed fills differ.
   Navigation and selected rows use neutral gray, not a brand-colored wash. Green, amber, red, and
   warm route accents communicate status, not general decoration.
+- Log level badges use blue for INFO, purple for DEBUG, cyan for TRACE, amber for WARN, and red
+  for ERROR/FATAL/PANIC, with a subtle matching fill. Keep log messages neutral for readability;
+  level labels remain visible so severity never depends on color alone.
 - Destructive buttons have an independent red-fill/white-label contrast pair; never derive their
   labels from the dark-mode primary button. Input caret, selection, tabs, scrollbars, and chrome are
   projected into the same component theme. Synchronize both legacy colors and render tokens.

@@ -6,6 +6,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::sync::Arc::new(manis_ui::Assets),
     );
     cx.update(manis_ui::init);
+    if std::env::args().any(|argument| argument == "--log-colors") {
+        capture_log_colors(&mut cx)?;
+        return Ok(());
+    }
     if std::env::args().any(|argument| argument == "--appearance") {
         capture_appearance(&mut cx)?;
         return Ok(());
@@ -72,6 +76,46 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     capture_connected(&mut cx)?;
     capture_data_page_coverage(&mut cx)?;
     capture_live_when_configured(&mut cx)?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn capture_log_colors(
+    cx: &mut gpui::VisualTestAppContext,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use gpui::{AnyWindowHandle, Modifiers, point, px, size};
+
+    for (width, height, label) in [(1420.0, 900.0, "wide"), (640.0, 560.0, "compact")] {
+        cx.update(manis_ui::init);
+        let (endpoint, server) = spawn_mihomo_fixture()?;
+        let window = cx.open_offscreen_window(size(px(width), px(height)), |window, cx| {
+            manis_root(window, cx, |_| {
+                manis_ui::ManisApp::with_fixture_controller(endpoint)
+            })
+        })?;
+        let window: AnyWindowHandle = window.into();
+        refresh(cx, window)?;
+        open_workspace(cx, window, width, SnapshotWorkspace::Logs)?;
+        settle_ui_animation(cx, window)?;
+        let refresh_position = if width >= 900.0 {
+            point(px(width - 45.0), px(76.0))
+        } else {
+            point(px(350.0), px(143.0))
+        };
+        cx.simulate_click(window, refresh_position, Modifiers::none());
+        settle_ui_for(cx, window, std::time::Duration::from_millis(600))?;
+        for (dark, mode) in [(false, "light"), (true, "dark")] {
+            if dark {
+                let toggle_x = width - if width >= 1280.0 { 550.0 } else { 205.0 };
+                cx.simulate_click(window, point(px(toggle_x), px(24.0)), Modifiers::none());
+                refresh(cx, window)?;
+            }
+            assert_appearance_mode(cx, window, dark)?;
+            save_screenshot(cx, window, &format!("log-colors-{label}-{mode}.png"))?;
+        }
+        close_window(cx, window)?;
+        server.stop()?;
+    }
     Ok(())
 }
 
@@ -630,6 +674,7 @@ fn capture_configuration_sections(
     cx: &mut gpui::VisualTestAppContext,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use gpui::{AnyWindowHandle, Modifiers, point, px, size};
+    use gpui_component::WindowExt as _;
     use manis_ui::ManisApp;
 
     let width = 1_420.0;
@@ -642,6 +687,9 @@ fn capture_configuration_sections(
     refresh(cx, window)?;
     open_workspace(cx, window, width, SnapshotWorkspace::Configuration)?;
 
+    save_screenshot(cx, window, "configuration-section-general.png")?;
+    cx.simulate_click(window, point(px(340.0), px(295.0)), Modifiers::none());
+    refresh(cx, window)?;
     save_screenshot(cx, window, "configuration-section-proxy-sources.png")?;
     cx.simulate_click(window, point(px(1_330.0), px(180.0)), Modifiers::none());
     settle_ui_animation(cx, window)?;
@@ -660,8 +708,11 @@ fn capture_configuration_sections(
     cx.simulate_click(window, point(px(340.0), px(350.0)), Modifiers::none());
     refresh(cx, window)?;
     save_screenshot(cx, window, "configuration-section-rule-sources.png")?;
-    cx.simulate_click(window, point(px(1_330.0), px(180.0)), Modifiers::none());
+    cx.simulate_click(window, point(px(1_330.0), px(220.0)), Modifiers::none());
     settle_ui_animation(cx, window)?;
+    if !cx.update_window(window, |_, window, cx| window.has_active_dialog(cx))? {
+        return Err("rule source fixture did not open the editor dialog".into());
+    }
     save_screenshot(cx, window, "configuration-rule-source-modal.png")?;
     cx.simulate_keystrokes(window, "escape");
     settle_ui_animation(cx, window)?;
@@ -669,7 +720,27 @@ fn capture_configuration_sections(
     cx.simulate_click(window, point(px(340.0), px(410.0)), Modifiers::none());
     refresh(cx, window)?;
     save_screenshot(cx, window, "configuration-section-advanced.png")?;
-    close_window(cx, window)
+    close_window(cx, window)?;
+
+    for (width, height, label) in [(1060.0, 800.0, "medium"), (640.0, 560.0, "compact")] {
+        let window = cx.open_offscreen_window(size(px(width), px(height)), |window, cx| {
+            manis_root(window, cx, |_| {
+                ManisApp::with_fixture_controller("http://127.0.0.1:9090")
+            })
+        })?;
+        let window: AnyWindowHandle = window.into();
+        refresh(cx, window)?;
+        open_workspace(cx, window, width, SnapshotWorkspace::Configuration)?;
+        save_screenshot(cx, window, &format!("configuration-{label}-general.png"))?;
+        scroll_window(cx, window, width - 60.0, height - 100.0, -440.0)?;
+        settle_ui_animation(cx, window)?;
+        save_screenshot(cx, window, &format!("configuration-{label}-scrolled.png"))?;
+        scroll_window(cx, window, width - 60.0, height - 100.0, -10_000.0)?;
+        settle_ui_animation(cx, window)?;
+        save_screenshot(cx, window, &format!("configuration-{label}-bottom.png"))?;
+        close_window(cx, window)?;
+    }
+    Ok(())
 }
 
 #[cfg(target_os = "macos")]
@@ -1237,8 +1308,11 @@ fn spawn_mihomo_fixture() -> Result<(String, FixtureServer), Box<dyn std::error:
             }
             if path.starts_with("/logs?level=") {
                 let body = concat!(
+                    "{\"type\":\"trace\",\"payload\":\"[DNS] cache lookup complete\"}\n",
+                    "{\"type\":\"debug\",\"payload\":\"[Router] policy group resolved\"}\n",
                     "{\"type\":\"info\",\"payload\":\"[TCP] Safari → openai.com matched DOMAIN-SUFFIX\"}\n",
-                    "{\"type\":\"warning\",\"payload\":\"provider https://fixture.invalid/private-token retrying\"}\n"
+                    "{\"type\":\"warning\",\"payload\":\"provider https://fixture.invalid/private-token retrying\"}\n",
+                    "{\"type\":\"error\",\"payload\":\"[TCP] connection timed out\"}\n"
                 );
                 let response = format!(
                     "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n{:X}\r\n{body}\r\n0\r\n\r\n",

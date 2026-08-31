@@ -1662,9 +1662,7 @@ impl ManisApp {
         } = view;
         let parsed = QxRuleList::parse(&source.content);
         let target = self.effective_rule_target(source.target_policy.as_str(), language);
-        let name = source.source.subscription_name().unwrap_or_else(|| {
-            copy::configuration::numbered_rule_source(language, source_index + 1)
-        });
+        let name = Self::qx_rule_source_name(source, source_index, language);
         let detail = Self::remote_rule_group_detail(source, parsed.rules.len(), &target, language);
         let target_select = self.qx_rule_source_target_select(
             source,
@@ -1959,5 +1957,4 @@ impl ManisApp {
             |group| group.name.clone(),
         )
     }
-
 }

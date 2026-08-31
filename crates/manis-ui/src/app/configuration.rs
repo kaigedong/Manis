@@ -44,6 +44,7 @@ const MANUAL_RULES_EXPANSION_KEY: &str = "routing-manual-rules";
 
 struct QxRuleSaveRequest {
     url: String,
+    name: String,
     target: String,
     editing_id: Option<String>,
     refresh_interval: RemoteSourceRefreshInterval,
@@ -147,36 +148,59 @@ impl SubscriptionCardActivity {
 fn save_qx_rule_source(
     runtime: &super::KernelRuntime,
     store_dir: &Path,
-    request: QxRuleSaveRequest,
+    request: &QxRuleSaveRequest,
 ) -> super::QxRuleImportResult {
-    let QxRuleSaveRequest {
-        url,
-        target,
-        editing_id,
-        refresh_interval,
-    } = request;
-    let content = download_qx_rule_document(&url).map_err(ImportQxRuleError::Download)?;
+    let existing = if let Some(id) = request.editing_id.as_ref() {
+        mihomo::load_qx_rule_sources_in(store_dir)
+            .map_err(ImportQxRuleError::Store)?
+            .into_iter()
+            .find(|source| &source.id == id)
+    } else {
+        None
+    };
+    if let Some(source) = existing.as_ref()
+        && source.source.expose_to(|url| url == request.url)
+        && source.target_policy.as_str() == request.target
+        && source.refresh_interval == request.refresh_interval
+    {
+        let stored = mihomo::update_qx_rule_source_name_in(store_dir, &source.id, &request.name)
+            .map_err(ImportQxRuleError::Store)?;
+        return Ok(ImportQxRuleSuccess::Imported {
+            stored,
+            apply: SourceRuntimeApply::MetadataOnly,
+        });
+    }
+    // Editing metadata must also work offline and must not count as a rule refresh.
+    let (content, last_success) = match existing {
+        Some(source) if source.source.expose_to(|url| url == request.url) => {
+            (source.content, source.last_successful_update_unix_secs)
+        }
+        _ => (
+            download_qx_rule_document(&request.url).map_err(ImportQxRuleError::Download)?,
+            mihomo::current_unix_secs(),
+        ),
+    };
     if QxRuleList::parse(&content).rules.is_empty() {
         return Err(ImportQxRuleError::InvalidDocument);
     }
-    if let Some(editing_id) = editing_id {
+    if let Some(editing_id) = request.editing_id.as_ref() {
         return replace_qx_rule_source(
             runtime,
             store_dir,
-            &editing_id,
-            &url,
-            &target,
+            editing_id,
+            request,
             &content,
-            refresh_interval,
+            last_success,
         );
     }
     create_qx_rule_source(
         runtime,
         store_dir,
-        &url,
-        &target,
+        &request.url,
+        &request.name,
+        &request.target,
         &content,
-        refresh_interval,
+        request.refresh_interval,
     )
 }
 
@@ -184,20 +208,20 @@ fn replace_qx_rule_source(
     runtime: &super::KernelRuntime,
     store_dir: &Path,
     id: &str,
-    url: &str,
-    target: &str,
+    request: &QxRuleSaveRequest,
     content: &str,
-    refresh_interval: RemoteSourceRefreshInterval,
+    last_success: u64,
 ) -> super::QxRuleImportResult {
     let transaction = super::mutate_saved_sources(runtime, store_dir, || {
         mihomo::replace_qx_rule_source_definition_in(
             store_dir,
             id,
-            url,
-            target,
+            &request.name,
+            &request.url,
+            &request.target,
             content,
-            refresh_interval,
-            mihomo::current_unix_secs(),
+            request.refresh_interval,
+            last_success,
         )
     })
     .map_err(ImportQxRuleError::Store)?;
@@ -217,12 +241,13 @@ fn create_qx_rule_source(
     runtime: &super::KernelRuntime,
     store_dir: &Path,
     url: &str,
+    name: &str,
     target: &str,
     content: &str,
     refresh_interval: RemoteSourceRefreshInterval,
 ) -> super::QxRuleImportResult {
     let transaction = super::mutate_saved_sources(runtime, store_dir, || {
-        let outcome = mihomo::save_qx_rule_source_in(store_dir, url, target, content)?;
+        let outcome = mihomo::save_named_qx_rule_source_in(store_dir, url, name, target, content)?;
         let mihomo::SaveQxRuleSourceOutcome::Created(mut stored) = outcome else {
             return Ok(outcome);
         };
@@ -554,27 +579,21 @@ impl ManisApp {
         let rule_busy = self.rule_sources.feedback == QxRuleImportFeedback::Importing
             || self.source_refresh_busy();
         let selected_section = self.configuration_section;
-        let detail: AnyElement = match selected_section {
-            ConfigurationSection::General => div()
+        let sections = [
+            div()
                 .flex()
                 .flex_col()
                 .gap(Space::Lg.px())
                 .child(self.language_panel(theme, compact, cx))
                 .child(self.app_update_panel(theme, compact, cx))
                 .into_any_element(),
-            ConfigurationSection::Runtime => {
-                self.kernel_panel(theme, compact, cx).into_any_element()
-            }
-            ConfigurationSection::ProxySources => {
-                self.source_panel(theme, compact, cx).into_any_element()
-            }
-            ConfigurationSection::RuleSources => self
-                .rule_source_manager(rule_input, rule_busy, theme, compact, cx)
+            self.kernel_panel(theme, compact, cx).into_any_element(),
+            self.source_panel(theme, compact, cx).into_any_element(),
+            self.rule_source_manager(rule_input, rule_busy, theme, compact, cx)
                 .into_any_element(),
-            ConfigurationSection::Advanced => self
-                .advanced_configuration_panel(theme, compact)
+            self.advanced_configuration_panel(theme, compact)
                 .into_any_element(),
-        };
+        ];
         let navigation = self.configuration_navigation(theme, compact, cx);
         let content = div()
             .id("configuration-detail-scroll")
@@ -582,9 +601,26 @@ impl ManisApp {
             .min_w(px(0.0))
             .min_h(px(0.0))
             .overflow_y_scroll()
-            .p(if compact { px(12.0) } else { px(24.0) })
+            .track_scroll(&self.configuration_scroll)
+            .px(if compact { px(12.0) } else { px(24.0) })
             .pb(px(56.0))
-            .child(div().w_full().max_w(px(900.0)).mx_auto().child(detail));
+            .children(ConfigurationSection::ALL.into_iter().zip(sections).map(
+                |(section, detail)| {
+                    div()
+                        .id(format!("configuration-section-{}", section.key()))
+                        .w_full()
+                        .max_w(px(900.0))
+                        .mx_auto()
+                        .pt(if compact { px(12.0) } else { px(24.0) })
+                        .child(detail)
+                },
+            ))
+            .on_scroll_wheel(cx.listener(|_, _, window, cx| {
+                // Read the offset after GPUI applies the wheel event, including momentum.
+                cx.defer_in(window, |this, _, cx| {
+                    this.sync_configuration_directory(cx);
+                });
+            }));
         div()
             .flex_1()
             .min_w(px(0.0))
@@ -622,10 +658,225 @@ mod tests {
     use manis_core::NodeWorkspaceState;
 
     use super::{
-        Language, MANUAL_RULES_EXPANSION_KEY, ManualRuleKeyboardAction,
+        ConfigurationSection, Language, MANUAL_RULES_EXPANSION_KEY, ManualRuleKeyboardAction,
         manual_rule_keyboard_action_for, rule_group_is_open, rule_source_expansion_key,
         source_update_label,
     };
+
+    #[test]
+    fn configuration_starts_at_the_first_directory_section() {
+        assert_eq!(
+            ConfigurationSection::default(),
+            ConfigurationSection::ALL[0]
+        );
+    }
+
+    #[test]
+    fn rule_source_rename_saves_offline_and_survives_restart() {
+        let store =
+            std::env::temp_dir().join(format!("manis-rule-source-rename-{}", std::process::id()));
+        let url = "https://127.0.0.1:1/rules.list";
+        let source = crate::mihomo::save_qx_rule_source_in(
+            &store,
+            url,
+            "DIRECT",
+            "DOMAIN-SUFFIX,example.com,DIRECT\n",
+        )
+        .expect("save source fixture")
+        .into_source();
+        let app = super::ManisApp::with_fixture_controller_and_subscription_store(
+            "http://127.0.0.1:1",
+            store.clone(),
+        );
+        let outcome = super::save_qx_rule_source(
+            &app.runtime,
+            &store,
+            &super::QxRuleSaveRequest {
+                url: url.to_owned(),
+                name: "  工作规则  ".to_owned(),
+                target: "DIRECT".to_owned(),
+                editing_id: Some(source.id.clone()),
+                refresh_interval: source.refresh_interval,
+            },
+        )
+        .unwrap_or_else(|_| {
+            panic!("renaming cached rules must not access the closed network port")
+        });
+        let super::ImportQxRuleSuccess::Imported { stored, .. } = outcome else {
+            panic!("rename must save successfully");
+        };
+        assert_eq!(stored.name.as_deref(), Some("工作规则"));
+        assert_eq!(stored.id, source.id);
+        assert_eq!(stored.content, source.content);
+        assert_eq!(
+            stored.last_successful_update_unix_secs,
+            source.last_successful_update_unix_secs
+        );
+        let restored = super::ManisApp::with_fixture_controller_and_subscription_store(
+            "http://127.0.0.1:1",
+            store.clone(),
+        );
+        assert_eq!(restored.rule_sources.sources, vec![stored.clone()]);
+        assert_eq!(
+            super::ManisApp::qx_rule_source_name(&stored, 0, Language::SimplifiedChinese),
+            "工作规则"
+        );
+        std::fs::remove_dir_all(store).expect("remove fixture");
+    }
+
+    #[gpui::test]
+    fn rule_source_name_editor_prefills_and_discards_unsaved_changes(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use gpui::AppContext as _;
+        let store =
+            std::env::temp_dir().join(format!("manis-rule-name-editor-{}", std::process::id()));
+        let source = crate::mihomo::save_qx_rule_source_in(
+            &store,
+            "https://127.0.0.1:1/rules.list",
+            "DIRECT",
+            "DOMAIN,example.com,DIRECT\n",
+        )
+        .expect("save fixture")
+        .into_source();
+        crate::mihomo::update_qx_rule_source_name_in(&store, &source.id, "我的规则")
+            .expect("name fixture");
+        cx.update(crate::init);
+        let mut app = None;
+        let (_, window_cx) = cx.add_window_view(|window, cx| {
+            let entity = cx.new(|_| {
+                super::ManisApp::with_fixture_controller_and_subscription_store(
+                    "http://127.0.0.1:1",
+                    store.clone(),
+                )
+            });
+            app = Some(entity.clone());
+            crate::root(entity, window, cx)
+        });
+        let app = app.expect("fixture app");
+        window_cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            app.update(cx, |app, cx| {
+                app.open_qx_rule_editor(source.id.clone(), cx);
+                let name = app.inputs.qx_rule_name.clone().expect("name input");
+                assert_eq!(name.read(cx).value(), "我的规则");
+                name.update(cx, |input, cx| {
+                    input.set_value_without_event("未保存名称", cx);
+                });
+                app.close_qx_rule_editor(cx);
+                app.open_qx_rule_editor(source.id.clone(), cx);
+                assert_eq!(name.read(cx).value(), "我的规则");
+                app.open_new_qx_rule_editor(cx);
+                assert_eq!(name.read(cx).value(), "");
+                assert_eq!(
+                    app.rule_sources.sources[0].name.as_deref(),
+                    Some("我的规则")
+                );
+            });
+        });
+        std::fs::remove_dir_all(store).expect("remove fixture");
+    }
+
+    #[test]
+    fn configuration_directory_follows_variable_height_sections_in_both_directions() {
+        use super::configuration_section_at_scroll;
+        use gpui::px;
+
+        let tops = [120.0, 480.0, 790.0, 1_450.0, 1_900.0].map(px);
+        for (offset, expected) in [
+            (120.0, ConfigurationSection::General),
+            (478.0, ConfigurationSection::General),
+            (480.0, ConfigurationSection::Runtime),
+            (1_200.0, ConfigurationSection::ProxySources),
+            (1_500.0, ConfigurationSection::RuleSources),
+            (1_900.0, ConfigurationSection::Advanced),
+            (500.0, ConfigurationSection::Runtime),
+            (120.0, ConfigurationSection::General),
+        ] {
+            assert_eq!(
+                configuration_section_at_scroll(&tops, px(offset), false),
+                expected
+            );
+        }
+        assert_eq!(
+            configuration_section_at_scroll(&tops, px(1_600.0), true),
+            ConfigurationSection::Advanced,
+            "the last short section is active when the viewport reaches the bottom",
+        );
+    }
+
+    #[gpui::test]
+    fn configuration_renders_one_scroll_document_and_directory_jumps_to_sections(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use super::ManisApp;
+        use gpui::{AppContext as _, ScrollDelta, ScrollWheelEvent, point, px};
+        use manis_core::PrimaryWorkspace;
+
+        cx.update(crate::init);
+        let mut app = None;
+        let (_, window_cx) = cx.add_window_view(|window, cx| {
+            let entity = cx.new(|_| ManisApp::with_fixture_controller("http://127.0.0.1:9090"));
+            app = Some(entity.clone());
+            crate::root(entity, window, cx)
+        });
+        let app = app.expect("fixture app");
+        window_cx.update(|window, cx| {
+            app.update(cx, |app, cx| {
+                assert_eq!(app.primary_workspace, PrimaryWorkspace::Nodes);
+                app.primary_workspace = PrimaryWorkspace::Configuration;
+                cx.notify();
+            });
+            window.draw(cx).clear(cx);
+            app.read_with(cx, |app, _| {
+                assert_eq!(app.configuration_section, ConfigurationSection::General);
+                assert_eq!(app.configuration_scroll.children_count(), 5);
+                assert_eq!(app.configuration_scroll.offset().y, px(0.0));
+            });
+
+            app.update(cx, |app, cx| {
+                app.scroll_to_configuration_section(ConfigurationSection::Runtime, cx);
+            });
+            window.draw(cx).clear(cx);
+            app.read_with(cx, |app, _| {
+                let scroll = &app.configuration_scroll;
+                let runtime = scroll.bounds_for_item(1).expect("runtime anchor");
+                assert!(
+                    (runtime.top() + scroll.offset().y - scroll.bounds().top()).abs() <= px(1.0)
+                );
+            });
+
+            app.update(cx, |app, cx| {
+                app.configuration_scroll
+                    .set_offset(point(px(0.0), -app.configuration_scroll.max_offset().y));
+                app.sync_configuration_directory(cx);
+                assert_eq!(app.configuration_section, ConfigurationSection::Advanced);
+                app.scroll_to_configuration_section(ConfigurationSection::General, cx);
+            });
+            window.draw(cx).clear(cx);
+            app.read_with(cx, |app, _| {
+                assert_eq!(app.configuration_scroll.offset().y, px(0.0));
+                assert_eq!(app.configuration_scroll.children_count(), 5);
+            });
+        });
+
+        let position = window_cx
+            .update(|_, cx| app.read_with(cx, |app, _| app.configuration_scroll.bounds().center()));
+        for (delta, expected) in [
+            (-10_000.0, ConfigurationSection::Advanced),
+            (10_000.0, ConfigurationSection::General),
+        ] {
+            window_cx.simulate_event(ScrollWheelEvent {
+                position,
+                delta: ScrollDelta::Pixels(point(px(0.0), px(delta))),
+                ..Default::default()
+            });
+            window_cx.update(|window, cx| {
+                window.draw(cx).clear(cx);
+                app.read_with(cx, |app, _| assert_eq!(app.configuration_section, expected));
+            });
+        }
+    }
 
     #[test]
     fn remote_rule_sources_start_open_and_remember_collapse() {

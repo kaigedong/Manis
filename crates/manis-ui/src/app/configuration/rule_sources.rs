@@ -91,19 +91,24 @@ impl ManisApp {
         if let Some(input) = self.inputs.qx_rule.as_ref() {
             input.update(cx, SubscriptionTextInput::clear_without_event);
         }
+        if let Some(input) = self.inputs.qx_rule_name.as_ref() {
+            input.update(cx, SubscriptionTextInput::clear_without_event);
+        }
         cx.notify();
     }
 
     fn open_qx_rule_editor(&mut self, id: String, cx: &mut Context<Self>) {
-        let Some(source) = self
+        let Some((index, source)) = self
             .rule_sources
             .sources
             .iter()
-            .find(|source| source.id == id)
+            .enumerate()
+            .find(|(_, source)| source.id == id)
         else {
             return;
         };
         let url = source.source.expose_to(str::to_owned);
+        let name = Self::qx_rule_source_name(source, index, self.language());
         let target = self.effective_rule_target(source.target_policy.as_str(), self.language());
         self.rule_sources.editor_source_id = Some(id);
         self.rule_sources.editor_refresh_interval = source.refresh_interval;
@@ -112,6 +117,9 @@ impl ManisApp {
         self.rule_sources.feedback = QxRuleImportFeedback::Idle;
         if let Some(input) = self.inputs.qx_rule.as_ref() {
             input.update(cx, |input, cx| input.set_value_without_event(url, cx));
+        }
+        if let Some(input) = self.inputs.qx_rule_name.as_ref() {
+            input.update(cx, |input, cx| input.set_value_without_event(name, cx));
         }
         cx.notify();
     }
@@ -123,7 +131,7 @@ impl ManisApp {
                 this.qx_rule_source_editor_modal(dialog, this.theme(), this.language(), window, cx)
             })
         });
-        if let Some(input) = self.inputs.qx_rule.as_ref() {
+        if let Some(input) = self.inputs.qx_rule_name.as_ref() {
             input.focus_handle(cx).focus(window, cx);
         }
         cx.notify();
@@ -134,6 +142,9 @@ impl ManisApp {
         self.rule_sources.editor_popover = super::QxRuleEditorPopover::None;
         self.rule_sources.feedback = QxRuleImportFeedback::Idle;
         if let Some(input) = self.inputs.qx_rule.as_ref() {
+            input.update(cx, SubscriptionTextInput::clear_without_event);
+        }
+        if let Some(input) = self.inputs.qx_rule_name.as_ref() {
             input.update(cx, SubscriptionTextInput::clear_without_event);
         }
         cx.notify();
@@ -167,9 +178,17 @@ impl ManisApp {
             .px_5()
             .py_4()
             .child(field_label(
-                language.localized(copy::configuration::RULE_URL),
+                language.localized(copy::configuration::SOURCE_NAME),
                 theme,
             ))
+            .child(
+                self.inputs
+                    .qx_rule_name
+                    .as_ref()
+                    .expect("QX rule name input is initialized before rendering")
+                    .clone(),
+            )
+            .child(field_label(language.localized(copy::configuration::RULE_URL), theme).mt_4())
             .child(input.clone())
             .child(
                 field_label(
@@ -192,7 +211,7 @@ impl ManisApp {
         surface_dialog(dialog, theme)
             .width(px(view.dialog_width))
             .max_h(px((viewport.height.as_f32() - 32.0).max(320.0)))
-            .margin_top(px(((viewport.height.as_f32() - 440.0) / 2.0).max(16.0)))
+            .margin_top(px(((viewport.height.as_f32() - 520.0) / 2.0).max(16.0)))
             .overlay(true)
             .overlay_closable(true)
             .keyboard(true)
@@ -523,10 +542,7 @@ impl ManisApp {
             None => RuleSourceRefreshPresentation::Idle,
         };
         RuleSourceCardPresentation {
-            name: source
-                .source
-                .subscription_name()
-                .unwrap_or_else(|| copy::configuration::numbered_rule_source(language, index + 1)),
+            name: Self::qx_rule_source_name(source, index, language),
             refresh,
             duplicate: matches!(
                 &self.rule_sources.feedback,
@@ -540,6 +556,18 @@ impl ManisApp {
                 language,
             ),
         }
+    }
+
+    pub(super) fn qx_rule_source_name(
+        source: &mihomo::StoredQxRuleSource,
+        index: usize,
+        language: Language,
+    ) -> String {
+        source
+            .name
+            .clone()
+            .or_else(|| source.source.subscription_name())
+            .unwrap_or_else(|| copy::configuration::numbered_rule_source(language, index + 1))
     }
 
     fn rule_source_card_header(
@@ -843,5 +871,4 @@ impl ManisApp {
         })
         .into_any_element()
     }
-
 }
