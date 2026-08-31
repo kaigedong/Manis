@@ -35,11 +35,19 @@ the remaining checklist.
 ## macOS package
 
 - [ ] The app, helper controller, privileged helper, and local installer use the intended bundle
-  identifiers and production signing identity.
-- [ ] The XPC client and parent requirements pin the Apple anchor and Team ID.
+  identifiers and signing mode.
+- [ ] GitHub ad-hoc builds install protocol v7 through administrator approval, pin exact
+  `Manis.app`, `manis-helperctl`, and privileged-helper cdhash requirements plus the invoking UID,
+  and require reapproval after an app version change.
+- [ ] Developer ID or Apple Development builds, when used, register through `SMAppService` and pin
+  the Apple anchor and Team ID for the XPC client and parent requirements.
 - [ ] `MANIS_ALLOW_INSECURE_LOCAL_HELPER` is absent from the release environment and bundle.
 - [ ] The bundled Mihomo checksum and provenance are recorded before packaging.
-- [ ] The app is signed, notarized, stapled, and tested on a clean macOS account.
+- [ ] Developer ID release candidates, when used, are signed, notarized, stapled, and tested on a
+  clean macOS account.
+- [ ] Ad-hoc GitHub release notes state that the archive is not notarized, Gatekeeper still warns
+  on first open, and users should install only the trusted official release after checksum
+  verification.
 - [ ] System proxy and TUN are each enabled, disabled, and restored after an abnormal exit.
 
 ## Arch Linux package

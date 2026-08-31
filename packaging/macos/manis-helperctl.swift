@@ -6,15 +6,8 @@ import Security
 
 private let serviceName = "dev.manis.app.helper"
 private let plistName = "dev.manis.app.helper.plist"
-private let parentRequirementKey = "ManisParentCodeSigningRequirement"
-private let insecureLocalKey = "ManisAllowInsecureLocalHelper"
 private let localInstallerName = "manis-local-helper-install"
 private let maximumCoreBytes: UInt64 = 128 * 1024 * 1024
-private let maximumReleaseMetadataBytes = 1024 * 1024
-private let maximumReleaseAssetBytes = 64 * 1024 * 1024
-private let latestMihomoRelease = URL(
-    string: "https://api.github.com/repos/MetaCubeX/mihomo/releases/latest"
-)!
 private let installedMihomo = URL(
     fileURLWithPath: "/Library/Application Support/Manis/bin/mihomo"
 )
@@ -123,7 +116,7 @@ private func parseCommand(_ arguments: [String]) throws -> Command {
 }
 
 private func registerService() throws {
-    if insecureLocalBuild() {
+    if administratorInstalledBuild {
         try installLocalService()
         return
     }
@@ -137,7 +130,7 @@ private func registerService() throws {
 }
 
 private func reinstallService() throws {
-    if insecureLocalBuild() {
+    if administratorInstalledBuild {
         try installLocalService()
         return
     }
@@ -164,9 +157,13 @@ private func reinstallService() throws {
     }
 }
 
-private func insecureLocalBuild() -> Bool {
-    (Bundle.main.object(forInfoDictionaryKey: insecureLocalKey) as? Bool) == true
-}
+// Compile this choice into the controller: an attacker must not be able to switch an approved
+// controller into another authentication mode by copying it into a different app's Info.plist.
+#if MANIS_ADMINISTRATOR_HELPER
+private let administratorInstalledBuild = true
+#else
+private let administratorInstalledBuild = false
+#endif
 
 private func sha256(_ url: URL) throws -> String {
     let handle = try FileHandle(forReadingFrom: url)
@@ -204,7 +201,9 @@ private func managedCore() throws -> (Data, String) {
     let digest = SHA256.hash(data: contents)
         .map { String(format: "%02x", $0) }
         .joined()
-    guard try coreDigestIsTrusted(digest) else {
+    // The administrator-installed daemon independently verifies provenance. Signed builds keep
+    // the controller's existing provenance check as well as the helper's sealed-bundle check.
+    guard try administratorInstalledBuild || signedBuildCoreDigestIsTrusted(digest) else {
         throw CliError.helper(
             "Manis-managed Mihomo does not match the sealed seed, installed TUN core, or official latest release"
         )
@@ -212,12 +211,9 @@ private func managedCore() throws -> (Data, String) {
     return (contents, digest)
 }
 
-private func coreDigestIsTrusted(_ digest: String) throws -> Bool {
+private func signedBuildCoreDigestIsTrusted(_ digest: String) throws -> Bool {
     let bundled = Bundle.main.bundleURL
-        .appendingPathComponent("Contents")
-        .appendingPathComponent("Resources")
-        .appendingPathComponent("mihomo")
-        .appendingPathComponent("mihomo")
+        .appendingPathComponent("Contents/Resources/mihomo/mihomo")
         .standardizedFileURL
     if FileManager.default.isExecutableFile(atPath: bundled.path), try sha256(bundled) == digest {
         return true
@@ -226,141 +222,12 @@ private func coreDigestIsTrusted(_ digest: String) throws -> Bool {
     if lstat(installedMihomo.path, &installedMetadata) == 0,
         installedMetadata.st_mode & S_IFMT == S_IFREG,
         installedMetadata.st_uid == 0,
-        installedMetadata.st_mode & 0o022 == 0,
-        try sha256(installedMihomo) == digest
+        installedMetadata.st_mode & 0o022 == 0
     {
-        return true
+        try ManisHelperSecurity.requireRootOwnedPath(installedMihomo.path, directory: false)
+        if try sha256(installedMihomo) == digest { return true }
     }
-    return try latestStableReleaseDigest() == digest
-}
-
-private func latestStableReleaseDigest() throws -> String {
-    let data = try downloadHTTPS(latestMihomoRelease, maximumBytes: maximumReleaseMetadataBytes)
-    guard
-        let release = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-        release["prerelease"] as? Bool == false,
-        let tag = release["tag_name"] as? String,
-        !tag.isEmpty,
-        let assets = release["assets"] as? [[String: Any]]
-    else {
-        throw CliError.helper("could not verify the official latest Mihomo release")
-    }
-    let expectedNames: [String]
-    #if arch(arm64)
-        expectedNames = [
-            "mihomo-darwin-arm64-go122-\(tag).gz",
-            "mihomo-darwin-arm64-\(tag).gz",
-        ]
-    #elseif arch(x86_64)
-        expectedNames = [
-            "mihomo-darwin-amd64-v2-go122-\(tag).gz",
-            "mihomo-darwin-amd64-v2-\(tag).gz",
-        ]
-    #else
-        throw CliError.helper("unsupported macOS architecture for Mihomo")
-    #endif
-    for name in expectedNames {
-        guard let asset = assets.first(where: { $0["name"] as? String == name }),
-            let value = asset["digest"] as? String,
-            value.hasPrefix("sha256:"),
-            let downloadValue = asset["browser_download_url"] as? String,
-            let downloadURL = URL(string: downloadValue),
-            downloadURL.scheme == "https"
-        else {
-            continue
-        }
-        let packageDigest = String(value.dropFirst("sha256:".count)).lowercased()
-        guard packageDigest.count == 64, packageDigest.allSatisfy(\.isHexDigit) else {
-            continue
-        }
-        let archive = try downloadHTTPS(downloadURL, maximumBytes: maximumReleaseAssetBytes)
-        let actualPackageDigest = SHA256.hash(data: archive)
-            .map { String(format: "%02x", $0) }
-            .joined()
-        guard actualPackageDigest == packageDigest else {
-            throw CliError.helper("official Mihomo release asset digest does not match")
-        }
-        return try unpackedGzipSha256(archive)
-    }
-    throw CliError.helper("official Mihomo release has no trusted digest for this Mac")
-}
-
-private func downloadHTTPS(_ url: URL, maximumBytes: Int) throws -> Data {
-    guard url.scheme == "https" else {
-        throw CliError.helper("trusted Mihomo release URL must use HTTPS")
-    }
-    let process = Process()
-    let output = Pipe()
-    process.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
-    process.arguments = [
-        "--fail",
-        "--silent",
-        "--show-error",
-        "--location",
-        "--proto", "=https",
-        "--proto-redir", "=https",
-        "--max-redirs", "5",
-        "--connect-timeout", "15",
-        "--max-time", "120",
-        "--max-filesize", String(maximumBytes),
-        "--header", "Accept: application/vnd.github+json",
-        "--user-agent", "Manis-mihomo-helper",
-        url.absoluteString,
-    ]
-    process.environment = [:]
-    process.standardInput = FileHandle.nullDevice
-    process.standardOutput = output
-    process.standardError = FileHandle.nullDevice
-    try process.run()
-    var data = Data()
-    var exceededLimit = false
-    while let chunk = try output.fileHandleForReading.read(upToCount: 1024 * 1024), !chunk.isEmpty {
-        if data.count > maximumBytes - chunk.count {
-            exceededLimit = true
-            process.terminate()
-        } else if !exceededLimit {
-            data.append(chunk)
-        }
-    }
-    process.waitUntilExit()
-    guard process.terminationStatus == 0, !data.isEmpty, !exceededLimit else {
-        throw CliError.helper("could not download trusted Mihomo release data")
-    }
-    return data
-}
-
-private func unpackedGzipSha256(_ archive: Data) throws -> String {
-    let process = Process()
-    let input = Pipe()
-    let output = Pipe()
-    process.executableURL = URL(fileURLWithPath: "/usr/bin/gzip")
-    process.arguments = ["-dc"]
-    process.environment = [:]
-    process.standardInput = input
-    process.standardOutput = output
-    process.standardError = FileHandle.nullDevice
-    try process.run()
-    DispatchQueue.global(qos: .utility).async {
-        try? input.fileHandleForWriting.write(contentsOf: archive)
-        try? input.fileHandleForWriting.close()
-    }
-    var hasher = SHA256()
-    var count = 0
-    var exceededLimit = false
-    while let chunk = try output.fileHandleForReading.read(upToCount: 1024 * 1024), !chunk.isEmpty {
-        count += chunk.count
-        if count > maximumCoreBytes {
-            exceededLimit = true
-            process.terminate()
-        } else if !exceededLimit {
-            hasher.update(data: chunk)
-        }
-    }
-    process.waitUntilExit()
-    guard process.terminationStatus == 0, count > 0, !exceededLimit else {
-        throw CliError.helper("official Mihomo release archive is invalid")
-    }
-    return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    return try MihomoReleaseVerifier.latestDigest() == digest
 }
 
 private func installLocalService() throws {
@@ -411,6 +278,7 @@ private func reinstallLocalService() throws {
     let installerHash = try sha256(installer)
     let helperHash = try sha256(helper)
     let mihomoHash = try sha256(mihomo)
+    let parentRequirement = try ManisHelperSecurity.pinnedRequirement(at: app, identifier: "dev.manis.app")
     let allowedUser = String(getuid())
 
     let script = #"""
@@ -421,8 +289,9 @@ private func reinstallLocalService() throws {
             set expectedHelperHash to item 4 of argv
             set expectedMihomoHash to item 5 of argv
             set allowedUser to item 6 of argv
-            set commandText to "set -e; temporary=$(/usr/bin/mktemp /var/tmp/manis-local-helper-install.XXXXXX); trap '/bin/rm -f \"$temporary\"' EXIT; /bin/cp " & quoted form of installerPath & " \"$temporary\"; actual=$(/usr/bin/shasum -a 256 \"$temporary\" | /usr/bin/cut -d ' ' -f 1); /bin/test \"$actual\" = " & quoted form of expectedInstallerHash & "; /bin/chmod 0700 \"$temporary\"; \"$temporary\" reinstall " & quoted form of appPath & " " & quoted form of expectedHelperHash & " " & quoted form of expectedMihomoHash & " " & quoted form of allowedUser
-            do shell script commandText with administrator privileges with prompt "Manis needs administrator access to install its local TUN helper."
+            set expectedParentRequirement to item 7 of argv
+            set commandText to "set -e; temporary=$(/usr/bin/mktemp /var/tmp/manis-local-helper-install.XXXXXX); trap '/bin/rm -f \"$temporary\"' EXIT; /bin/cp " & quoted form of installerPath & " \"$temporary\"; actual=$(/usr/bin/shasum -a 256 \"$temporary\" | /usr/bin/cut -d ' ' -f 1); /bin/test \"$actual\" = " & quoted form of expectedInstallerHash & "; /bin/chmod 0700 \"$temporary\"; \"$temporary\" reinstall " & quoted form of appPath & " " & quoted form of expectedParentRequirement & " " & quoted form of expectedHelperHash & " " & quoted form of expectedMihomoHash & " " & quoted form of allowedUser
+            do shell script commandText with administrator privileges with prompt ("Manis needs to install or update its TUN helper for: " & appPath)
         end run
         """#
     let process = Process()
@@ -430,6 +299,7 @@ private func reinstallLocalService() throws {
     process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
     process.arguments = [
         "-e", script, installer.path, app.path, installerHash, helperHash, mihomoHash, allowedUser,
+        parentRequirement,
     ]
     process.standardOutput = output
     process.standardError = output
@@ -447,39 +317,32 @@ private func reinstallLocalService() throws {
                 : message
         )
     }
-    print(message.isEmpty ? "registered local development helper" : message)
+    print(message.isEmpty ? "registered administrator-approved helper" : message)
 }
 
-private func validateParentProcess() throws {
-    guard let requirement = Bundle.main.object(forInfoDictionaryKey: parentRequirementKey) as? String,
-        !requirement.isEmpty
-    else {
-        throw CliError.helper("Manis parent code-signing requirement is missing")
+private func validateParentProcess(for command: Command) throws {
+    let app = Bundle.main.bundleURL.resolvingSymlinksInPath().standardizedFileURL
+    let requirement: String
+    if administratorInstalledBuild {
+        switch command {
+        case .register, .reinstall:
+            // A new version may request approval, but cannot call the daemon until the user
+            // approves its exact app and controller fingerprints in the root-owned policy.
+            requirement = try ManisHelperSecurity.pinnedRequirement(at: app, identifier: "dev.manis.app")
+        case .status, .stageCore, .start, .stop:
+            let approval = try ManisHelperSecurity.installedApproval()
+            let controller = app.appendingPathComponent("Contents/MacOS/manis-helperctl")
+            guard approval.user == getuid(),
+                try ManisHelperSecurity.pinnedRequirement(at: controller, identifier: "dev.manis.app.helperctl")
+                    == approval.client
+            else { throw CliError.helper("this Manis version requires administrator approval for TUN") }
+            requirement = approval.parent
+        }
+    } else {
+        // Derive the Team ID from our own signature, never from a caller-editable Info.plist.
+        requirement = try ManisHelperSecurity.ownTeamRequirement(identifier: "dev.manis.app")
     }
-    let allowInsecure = insecureLocalBuild()
-    if !allowInsecure
-        && (!requirement.contains("anchor apple generic")
-            || !requirement.contains("certificate leaf[subject.OU]")
-            || !requirement.contains("identifier \"dev.manis.app\""))
-    {
-        throw CliError.helper("Manis parent code-signing requirement is not production-grade")
-    }
-
-    var parentCode: SecCode?
-    let attributes = [kSecGuestAttributePid: NSNumber(value: getppid())] as CFDictionary
-    var status = SecCodeCopyGuestWithAttributes(nil, attributes, [], &parentCode)
-    guard status == errSecSuccess, let parentCode else {
-        throw CliError.helper("could not inspect Manis parent process")
-    }
-    var parentRequirement: SecRequirement?
-    status = SecRequirementCreateWithString(requirement as CFString, [], &parentRequirement)
-    guard status == errSecSuccess, let parentRequirement else {
-        throw CliError.helper("Manis parent code-signing requirement is invalid")
-    }
-    status = SecCodeCheckValidity(parentCode, [], parentRequirement)
-    guard status == errSecSuccess else {
-        throw CliError.helper("manis-helperctl must be launched directly by Manis.app")
-    }
+    try ManisHelperSecurity.validateParent(bundle: app, requirement: requirement)
 }
 
 private func callHelper(
@@ -487,6 +350,10 @@ private func callHelper(
     _ invoke: @escaping (ManisPrivilegedHelperProtocol, @escaping (String, Int32) -> Void) -> Void
 ) throws {
     let connection = NSXPCConnection(machServiceName: serviceName, options: .privileged)
+    let helperRequirement = try administratorInstalledBuild
+        ? ManisHelperSecurity.installedApproval().helper
+        : ManisHelperSecurity.ownTeamRequirement(identifier: "dev.manis.app.helper")
+    connection.setCodeSigningRequirement(helperRequirement)
     connection.remoteObjectInterface = NSXPCInterface(with: ManisPrivilegedHelperProtocol.self)
     connection.resume()
     defer { connection.invalidate() }
@@ -523,8 +390,8 @@ private func callHelper(
 }
 
 do {
-    try validateParentProcess()
     let command = try parseCommand(Array(CommandLine.arguments.dropFirst()))
+    try validateParentProcess(for: command)
     switch command {
     case .register:
         try registerService()
@@ -534,7 +401,7 @@ do {
         try callHelper(timeout: .seconds(2)) { helper, reply in helper.status(withReply: reply) }
     case .stageCore:
         let (contents, digest) = try managedCore()
-        try callHelper(timeout: .seconds(30)) { helper, reply in
+        try callHelper(timeout: .seconds(300)) { helper, reply in
             helper.stageCore(contents: contents, sha256: digest, withReply: reply)
         }
     case .stop:

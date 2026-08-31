@@ -95,6 +95,8 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Install Rust toolchain
         run: rustup show active-toolchain
+      - name: Test macOS helper signatures and authorization boundaries
+        run: bash packaging/macos/test-helper-security.sh
       - name: Restore Cargo cache
         id: cargo-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -304,8 +306,11 @@ jobs:
             cat > "$notes_file" <<'EOF'
           Automated test packages for macOS and Arch Linux.
 
-          The macOS archives are ad-hoc signed and not notarized. Normal proxy mode can be tested,
-          but the production TUN helper requires a Developer ID-signed and notarized application.
+          The macOS archives are ad-hoc signed and not notarized, so Gatekeeper still warns on
+          first open. Normal proxy mode can be tested. TUN is available after administrator
+          authorization without a paid Apple Developer Program account, and every changed Manis app
+          version must be approved again because the helper pins the exact app, helper controller,
+          privileged helper, and user ID.
           This release remains a draft until the maintainer release checklist is complete.
           EOF
           else
@@ -323,9 +328,12 @@ jobs:
               echo
               printf 'Commit: `%s`\n' "$GITHUB_SHA"
               echo
-              echo 'The macOS archives are ad-hoc signed and not notarized. Normal proxy mode can be'
-              echo 'tested, but the production TUN helper requires a Developer ID-signed and notarized'
-              echo 'application. The Arch Linux package is experimental and supports native Wayland.'
+              echo 'The macOS archives are ad-hoc signed and not notarized, so Gatekeeper still warns'
+              echo 'on first open. Normal proxy mode can be tested. TUN is available after administrator'
+              echo 'authorization without a paid Apple Developer Program account, and every changed'
+              echo 'Manis app version must be approved again because the helper pins the exact app,'
+              echo 'helper controller, privileged helper, and user ID.'
+              echo 'The Arch Linux package is experimental and supports native Wayland.'
               echo
               echo 'This rolling pre-release is replaced after every successful `main` build. Verify the'
               echo 'download with its accompanying `.sha256` file before installing it.'

@@ -28,6 +28,8 @@ jobs:
         run: rustup show active-toolchain
       - name: Check formatting
         run: cargo fmt --all -- --check
+      - name: Test macOS helper signatures and authorization boundaries
+        run: bash packaging/macos/test-helper-security.sh
       - name: Check all targets
         run: cargo check --workspace --all-targets --locked
       - name: Check snapshot fixture harness

@@ -150,9 +150,16 @@ impl ManisApp {
         cx.notify();
 
         let executor = cx.background_executor().clone();
+        let runtime = self.runtime.clone();
         cx.spawn(async move |this, cx| {
             let result = executor
                 .spawn(async move {
+                    // The approved controller belongs to the current bundle. Stop its core
+                    // before replacing that bundle, while its pinned signature still matches.
+                    runtime.stop_managed().map_err(|error| {
+                        record_event(LogLevel::Error, "app.update.stop.failed", error);
+                        AppUpdateError::InstallFailed
+                    })?;
                     app_update::install_staged_update(&staged, &app_path)
                 })
                 .await;
@@ -168,7 +175,11 @@ impl ManisApp {
                     }
                     cx.restart();
                 }
-                Err(error) => this.finish_app_update_failure(error, true, cx),
+                Err(error) => {
+                    // A stopped core must not leave system proxy or DNS settings pointing at it.
+                    this.shutdown_for_quit(cx).detach();
+                    this.finish_app_update_failure(error, true, cx);
+                }
             })
             .ok();
         })

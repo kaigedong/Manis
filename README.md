@@ -54,7 +54,7 @@ Manis 源码仓库不提交预编译代理内核。发行构建会从 Mihomo 官
 
 | 平台 | 编译目标 | 运行状态 |
 | --- | --- | --- |
-| macOS 13+ | 持续维护 | 主要开发平台；系统代理和 TUN 已进行人工测试 |
+| macOS 13+ | 持续维护 | 主要开发平台；系统代理已验证，TUN 通过管理员授权路径支持测试 |
 | Windows | 持续维护 | 实验性；托管 controller transport 尚未完成，暂不能启动 Mihomo |
 | Linux | 持续维护 | 实验性；仍需覆盖更多发行版与桌面环境 |
 
@@ -80,8 +80,11 @@ Wayland 的实验性 Arch Linux `x86_64` 软件包，并附带校验文件。每
 Arch Linux 使用 `.pkg.tar.zst` 软件包。版本标签产生的正式候选包仍只保存为 Draft Release。
 
 这些 macOS 包经过 ad-hoc 签名，但没有 Developer ID 签名和 Apple 公证，只适合测试。
-普通系统代理模式可以试用；生产 TUN helper 仍需要正式签名与公证。下载后应同时取得
-`.sha256` 文件并先校验压缩包。
+macOS 首次打开仍会显示 Gatekeeper 提示；请只使用可信的官方 Release，并同时取得
+`.sha256` 文件校验压缩包。GitHub 下载版默认支持 TUN，但首次启用 TUN，以及每次更换
+Manis 应用版本后再次启用 TUN，都需要管理员授权。该路径由 root-owned LaunchDaemon 固定
+批准时的应用、`manis-helperctl`、特权 helper 指纹和当前用户 ID，不需要付费 Apple
+开发者账号。Developer ID/SMAppService 签名路径仍作为维护者可选发布方式保留。
 
 ## 从源码运行
 
@@ -123,7 +126,8 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 其保存到平台用户数据目录，并从自身诊断日志中脱敏。明文 HTTP 订阅在网络上天然可见，应
 优先使用 HTTPS。
 
-macOS TUN 使用固定用途的特权 helper；仅供本地调试的不安全 helper 构建绝不能分发。
+macOS TUN 使用固定用途的特权 helper。GitHub ad-hoc 包通过管理员授权固定本版本代码指纹；
+旧的 `MANIS_ALLOW_INSECURE_LOCAL_HELPER` 本地调试绕过已经废弃，不能用于发布。
 测试特权能力前请阅读 [SECURITY.md](SECURITY.md)，安全漏洞请通过 GitHub 私有漏洞报告提交。
 
 ## 仓库结构
