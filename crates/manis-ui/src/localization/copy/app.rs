@@ -354,3 +354,8 @@ pub(crate) const VALIDATING_NODES_AND_IMPORTING_SUBSCRIPTION: LocalizedText = Lo
     "Validating nodes and importing subscription",
     "正在验证节点并导入订阅",
 );
+pub(crate) const WAIT_FOR_THE_PROXY_MODE_CHANGE_TO_FINISH_BEFORE_CHANGING_KERNELS: LocalizedText =
+    LocalizedText::new(
+        "Wait for the proxy mode change to finish before changing kernels",
+        "请等待代理模式切换完成后再更换内核",
+    );

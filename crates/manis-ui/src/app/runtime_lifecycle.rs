@@ -1,6 +1,7 @@
 use super::{
     AppUpdateState, GroupBenchmarkState, KernelSwitchState, ManagedPolicyRuntimeState, ManisApp,
-    MihomoCoreUpdateOutcome, MihomoCoreUpdateState, PolicyBenchmarkRun, perform_mihomo_core_update,
+    MihomoCoreUpdateOutcome, MihomoCoreUpdateState, PolicyBenchmarkRun, ProxyPorts,
+    apply_proxy_mode_transition, perform_mihomo_core_update,
 };
 use crate::{
     app_update::{self, AppUpdateError, AvailableUpdate},
@@ -89,6 +90,15 @@ impl ManisApp {
         if self.kernel_switch_state.is_busy() || self.runtime.kind() == requested {
             return;
         }
+        if self.proxy_mode_busy.is_some() {
+            language
+                .localized(
+                    copy::app::WAIT_FOR_THE_PROXY_MODE_CHANGE_TO_FINISH_BEFORE_CHANGING_KERNELS,
+                )
+                .clone_into(&mut self.status);
+            cx.notify();
+            return;
+        }
         let Some(store_dir) = self.subscription_store_dir.clone() else {
             language
                 .localized(copy::app::THE_LOCAL_CONFIGURATION_DIRECTORY_IS_UNAVAILABLE_THE_KERNEL_CANNOT_BE)
@@ -105,50 +115,90 @@ impl ManisApp {
         );
         let previous = self.runtime.clone();
         let previous_kind = previous.kind();
+        let previous_mode = self.proxy_mode;
+        self.proxy_mode_busy = Some(ProxyMode::Off);
+        let system_proxy = self.system_proxy.clone();
+        let tun_dns = self.tun_dns.clone();
         let executor = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
             let result = executor
                 .spawn(async move {
-                    let prepared = KernelRuntime::prepare_with_language(
+                    let previous_for_stop = previous.clone();
+                    let previous_for_restore = previous.clone();
+                    perform_kernel_switch(
                         requested,
-                        Some(&store_dir),
-                        language,
-                    )?;
-                    kernel::save_kernel_kind_in(&store_dir, requested)
-                        .map_err(|error| error.to_string())?;
-                    if let Err(message) = previous.stop_managed() {
-                        let _ = kernel::save_kernel_kind_in(&store_dir, previous_kind);
-                        return Err(message);
-                    }
-                    Ok::<_, String>(prepared)
+                        previous_kind,
+                        previous_mode,
+                        || {
+                            KernelRuntime::prepare_with_language(
+                                requested,
+                                Some(&store_dir),
+                                language,
+                            )
+                        },
+                        |kind| {
+                            kernel::save_kernel_kind_in(&store_dir, kind)
+                                .map(|_path| ())
+                                .map_err(|error| error.to_string())
+                        },
+                        |active| {
+                            apply_proxy_mode_transition(
+                                &previous_for_restore,
+                                &system_proxy,
+                                &tun_dns,
+                                active,
+                                ProxyMode::Off,
+                                ProxyPorts {
+                                    http: None,
+                                    socks: None,
+                                },
+                                language,
+                            )
+                        },
+                        || previous_for_stop.stop_managed(),
+                    )
                 })
                 .await;
             this.update(cx, |this, cx| {
-                let language = this.language();
-                this.kernel_switch_state = KernelSwitchState::Idle;
-                match result {
-                    Ok(runtime) => {
-                        this.runtime = runtime;
-                        this.controller = ControllerState::Disconnected;
-                        this.live_generation = this.live_generation.wrapping_add(1);
-                        this.live_runtime = None;
-                        this.proxy_mode = ProxyMode::Off;
-                        this.status =
-                            copy::app::switched_kernel(language, requested.display_name());
-                    }
-                    Err(message) => {
-                        this.status = copy::app::kernel_switch_failed(
-                            language,
-                            requested.display_name(),
-                            &message,
-                        );
-                    }
-                }
-                cx.notify();
+                this.finish_kernel_switch(requested, result, cx);
             })
             .ok();
         })
         .detach();
+        cx.notify();
+    }
+
+    fn finish_kernel_switch(
+        &mut self,
+        requested: KernelKind,
+        result: Result<KernelRuntime, KernelSwitchFailure>,
+        cx: &mut Context<Self>,
+    ) {
+        let language = self.language();
+        self.kernel_switch_state = KernelSwitchState::Idle;
+        if self.proxy_mode_busy == Some(ProxyMode::Off) {
+            self.proxy_mode_busy = None;
+        }
+        match result {
+            Ok(runtime) => {
+                self.runtime = runtime;
+                self.controller = ControllerState::Disconnected;
+                self.live_generation = self.live_generation.wrapping_add(1);
+                self.live_runtime = None;
+                self.proxy_mode = ProxyMode::Off;
+                self.status = copy::app::switched_kernel(language, requested.display_name());
+            }
+            Err(failure) => {
+                if failure.proxy_mode_restored {
+                    self.proxy_mode = ProxyMode::Off;
+                }
+                self.status = copy::app::kernel_switch_failed(
+                    language,
+                    requested.display_name(),
+                    &failure.message,
+                );
+            }
+        }
         cx.notify();
     }
 
@@ -822,5 +872,298 @@ impl ManisApp {
         };
         cx.notify();
         true
+    }
+}
+
+struct KernelSwitchFailure {
+    message: String,
+    proxy_mode_restored: bool,
+}
+
+fn perform_kernel_switch(
+    requested: KernelKind,
+    previous_kind: KernelKind,
+    previous_mode: ProxyMode,
+    prepare: impl FnOnce() -> Result<KernelRuntime, String>,
+    mut save_kernel_kind: impl FnMut(KernelKind) -> Result<(), String>,
+    restore_proxy_mode: impl FnOnce(ProxyMode) -> Result<(), String>,
+    stop_previous: impl FnOnce() -> Result<(), String>,
+) -> Result<KernelRuntime, KernelSwitchFailure> {
+    let prepared = prepare().map_err(|message| KernelSwitchFailure {
+        message,
+        proxy_mode_restored: false,
+    })?;
+    save_kernel_kind(requested).map_err(|message| KernelSwitchFailure {
+        message,
+        proxy_mode_restored: false,
+    })?;
+    let mut proxy_mode_restored = false;
+    if previous_mode != ProxyMode::Off {
+        if let Err(message) = restore_proxy_mode(previous_mode) {
+            let message = message_with_selection_rollback(message, save_kernel_kind(previous_kind));
+            return Err(KernelSwitchFailure {
+                message,
+                proxy_mode_restored: false,
+            });
+        }
+        proxy_mode_restored = true;
+    }
+    if let Err(message) = stop_previous() {
+        let message = message_with_selection_rollback(message, save_kernel_kind(previous_kind));
+        return Err(KernelSwitchFailure {
+            message,
+            proxy_mode_restored,
+        });
+    }
+    Ok(prepared)
+}
+
+fn message_with_selection_rollback(message: String, rollback: Result<(), String>) -> String {
+    match rollback {
+        Ok(()) => message,
+        Err(rollback) => {
+            format!("{message}; also could not restore the previous kernel selection: {rollback}")
+        }
+    }
+}
+
+#[cfg(test)]
+mod runtime_lifecycle_tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use manis_core::{KernelKind, ProxyMode};
+
+    use gpui::AppContext as _;
+
+    use super::{ControllerRuntime, KernelRuntime, ManisApp, perform_kernel_switch};
+
+    fn fixture_runtime() -> KernelRuntime {
+        KernelRuntime::mihomo(ControllerRuntime::Fixture {
+            endpoint: "http://127.0.0.1:9090".to_owned(),
+        })
+    }
+
+    #[test]
+    fn active_proxy_is_restored_before_previous_kernel_stops() {
+        let calls = Rc::new(RefCell::new(Vec::new()));
+        let prepared = fixture_runtime();
+
+        let result = perform_kernel_switch(
+            KernelKind::SingBox,
+            KernelKind::Mihomo,
+            ProxyMode::System,
+            {
+                let calls = calls.clone();
+                let prepared = prepared.clone();
+                move || {
+                    calls.borrow_mut().push("prepare".to_owned());
+                    Ok(prepared)
+                }
+            },
+            {
+                let calls = calls.clone();
+                move |kind| {
+                    calls
+                        .borrow_mut()
+                        .push(format!("save:{}", kind.persistence_key()));
+                    Ok(())
+                }
+            },
+            {
+                let calls = calls.clone();
+                move |mode| {
+                    calls.borrow_mut().push(format!("restore:{mode:?}->Off"));
+                    Ok(())
+                }
+            },
+            {
+                let calls = calls.clone();
+                move || {
+                    calls.borrow_mut().push("stop".to_owned());
+                    Ok(())
+                }
+            },
+        );
+
+        assert!(result.is_ok());
+        assert_eq!(
+            calls.borrow().as_slice(),
+            ["prepare", "save:sing-box", "restore:System->Off", "stop"]
+        );
+    }
+
+    #[gpui::test]
+    fn switching_kernel_reserves_proxy_mode_even_when_proxy_is_off(cx: &mut gpui::TestAppContext) {
+        let store = std::env::temp_dir().join(format!(
+            "manis-kernel-switch-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system time")
+                .as_nanos()
+        ));
+        let app = cx.new(|_| {
+            ManisApp::with_fixture_controller_and_subscription_store(
+                "http://127.0.0.1:9090",
+                store.join("subscriptions"),
+            )
+        });
+
+        app.update(cx, |app, cx| {
+            assert_eq!(app.proxy_mode, ProxyMode::Off);
+            assert!(app.proxy_mode_busy.is_none());
+
+            app.switch_kernel(KernelKind::SingBox, cx);
+
+            assert_eq!(app.proxy_mode_busy, Some(ProxyMode::Off));
+            app.apply_proxy_mode(ProxyMode::System, cx);
+            assert_eq!(app.proxy_mode, ProxyMode::Off);
+            assert_eq!(app.proxy_mode_busy, Some(ProxyMode::Off));
+        });
+        let _ = std::fs::remove_dir_all(store);
+    }
+
+    #[test]
+    fn proxy_cleanup_failure_keeps_previous_kernel_running_and_rolls_back_selection() {
+        let calls = Rc::new(RefCell::new(Vec::new()));
+        let prepared = fixture_runtime();
+
+        let result = perform_kernel_switch(
+            KernelKind::SingBox,
+            KernelKind::Mihomo,
+            ProxyMode::Tun,
+            {
+                let calls = calls.clone();
+                let prepared = prepared.clone();
+                move || {
+                    calls.borrow_mut().push("prepare".to_owned());
+                    Ok(prepared)
+                }
+            },
+            {
+                let calls = calls.clone();
+                move |kind| {
+                    calls
+                        .borrow_mut()
+                        .push(format!("save:{}", kind.persistence_key()));
+                    Ok(())
+                }
+            },
+            {
+                let calls = calls.clone();
+                move |mode| {
+                    calls.borrow_mut().push(format!("restore:{mode:?}->Off"));
+                    Err("restore failed".to_owned())
+                }
+            },
+            {
+                let calls = calls.clone();
+                move || {
+                    calls.borrow_mut().push("stop".to_owned());
+                    Ok(())
+                }
+            },
+        );
+
+        let Err(failure) = result else {
+            panic!("cleanup failure must abort the kernel switch");
+        };
+        assert_eq!(failure.message, "restore failed");
+        assert!(!failure.proxy_mode_restored);
+        assert_eq!(
+            calls.borrow().as_slice(),
+            [
+                "prepare",
+                "save:sing-box",
+                "restore:Tun->Off",
+                "save:mihomo"
+            ]
+        );
+    }
+
+    #[test]
+    fn stop_failure_reports_restored_proxy_mode() {
+        let calls = Rc::new(RefCell::new(Vec::new()));
+        let prepared = fixture_runtime();
+
+        let result = perform_kernel_switch(
+            KernelKind::SingBox,
+            KernelKind::Mihomo,
+            ProxyMode::System,
+            {
+                let calls = calls.clone();
+                let prepared = prepared.clone();
+                move || {
+                    calls.borrow_mut().push("prepare".to_owned());
+                    Ok(prepared)
+                }
+            },
+            {
+                let calls = calls.clone();
+                move |kind| {
+                    calls
+                        .borrow_mut()
+                        .push(format!("save:{}", kind.persistence_key()));
+                    Ok(())
+                }
+            },
+            {
+                let calls = calls.clone();
+                move |mode| {
+                    calls.borrow_mut().push(format!("restore:{mode:?}->Off"));
+                    Ok(())
+                }
+            },
+            {
+                let calls = calls.clone();
+                move || {
+                    calls.borrow_mut().push("stop".to_owned());
+                    Err("stop failed".to_owned())
+                }
+            },
+        );
+
+        let Err(failure) = result else {
+            panic!("stop failure must fail the kernel switch");
+        };
+        assert_eq!(failure.message, "stop failed");
+        assert!(failure.proxy_mode_restored);
+        assert_eq!(
+            calls.borrow().as_slice(),
+            [
+                "prepare",
+                "save:sing-box",
+                "restore:System->Off",
+                "stop",
+                "save:mihomo"
+            ]
+        );
+    }
+
+    #[test]
+    fn rollback_failure_is_reported_when_cleanup_fails() {
+        let prepared = fixture_runtime();
+
+        let result = perform_kernel_switch(
+            KernelKind::SingBox,
+            KernelKind::Mihomo,
+            ProxyMode::System,
+            move || Ok(prepared),
+            |kind| match kind {
+                KernelKind::SingBox => Ok(()),
+                KernelKind::Mihomo => Err("selection write failed".to_owned()),
+            },
+            |_mode| Err("restore failed".to_owned()),
+            || Ok(()),
+        );
+
+        let Err(failure) = result else {
+            panic!("cleanup failure must abort the kernel switch");
+        };
+        assert_eq!(
+            failure.message,
+            "restore failed; also could not restore the previous kernel selection: selection write failed"
+        );
     }
 }

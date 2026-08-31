@@ -120,10 +120,6 @@ pub(crate) const COULD_NOT_DETERMINE_WHERE_TO_SAVE_THE_RULE_SOURCE: LocalizedTex
     );
 pub(crate) const COULD_NOT_READ_MANUAL_RULES: LocalizedText =
     LocalizedText::new("Could not read manual rules: ", "无法读取手动分流规则：");
-pub(crate) const COULD_NOT_RESTORE_THE_PREVIOUS_SAVED_RULES: LocalizedText = LocalizedText::new(
-    "could not restore the previous saved rules: ",
-    "无法恢复先前保存的规则：",
-);
 pub(crate) const COULD_NOT_UPDATE_SOURCE: LocalizedText =
     LocalizedText::new("Could not update source", "无法更新来源");
 pub(crate) const COUNTRY_OR_REGION: LocalizedText =

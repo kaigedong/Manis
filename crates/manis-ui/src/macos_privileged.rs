@@ -1,6 +1,6 @@
 #![cfg(target_os = "macos")]
 
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
@@ -11,7 +11,7 @@ use manis_engine::{CommandSpec, ManagedChild, ProcessExit, ProcessSpawner, StdPr
 use crate::diagnostics::{LogLevel, record_event};
 
 const HELPER_CONTROL_NAME: &str = "manis-helperctl";
-const HELPER_PROTOCOL_VERSION: &str = "v7";
+const HELPER_PROTOCOL_VERSION: &str = "v8";
 const HELPER_REGISTRATION_ATTEMPTS: usize = 2;
 const LOCAL_INSTALLER_FAILURE_EXIT: i32 = 2;
 const HELPER_READY_ATTEMPTS: usize = 6;
@@ -46,7 +46,7 @@ impl MacosPrivilegedProcessSpawner {
             return Ok(None);
         }
         if let HelperStatus::Running { pid } = parse_helper_status(&status.stdout)? {
-            let stopped = run_control(&control, [OsStr::new("stop")])?;
+            let stopped = run_stop_control(&control, pid)?;
             if !stopped.status.success() {
                 return Err(control_error("stop recovered privileged Mihomo", &stopped));
             }
@@ -472,7 +472,7 @@ impl ManagedChild for PrivilegedManagedChild {
     }
 
     fn terminate(&mut self) -> io::Result<ProcessExit> {
-        let output = run_control(&self.control, [OsStr::new("stop")])?;
+        let output = run_stop_control(&self.control, self.pid)?;
         if !output.status.success() {
             record_event(
                 LogLevel::Error,
@@ -488,6 +488,19 @@ impl ManagedChild for PrivilegedManagedChild {
         );
         Ok(ProcessExit::success())
     }
+}
+
+fn run_stop_control(control: &Path, pid: u32) -> io::Result<Output> {
+    let args = stop_arguments(pid);
+    run_control(control, args.iter().map(OsString::as_os_str))
+}
+
+fn stop_arguments(pid: u32) -> [OsString; 3] {
+    [
+        OsString::from("stop"),
+        OsString::from("--pid"),
+        OsString::from(pid.to_string()),
+    ]
 }
 
 fn helper_control_path() -> io::Result<PathBuf> {
@@ -637,7 +650,7 @@ mod tests {
     use super::{
         HelperStatus, MacosPrivilegedProcessSpawner, is_current_status,
         is_expected_ordinary_process, is_terminal_registration_failure, parse_existing_tun_route,
-        parse_helper_status, parse_lsof_pids, parse_pid,
+        parse_helper_status, parse_lsof_pids, parse_pid, stop_arguments,
     };
 
     #[test]
@@ -681,19 +694,33 @@ mod tests {
         assert!(!is_current_status(b"stopped v4 not-started\n"));
         assert!(!is_current_status(b"stopped v5 not-started\n"));
         assert!(!is_current_status(b"stopped v6 not-started\n"));
-        assert!(is_current_status(b"stopped v7 not-started\n"));
-        assert!(is_current_status(b"running 42 v7\n"));
+        assert!(!is_current_status(b"stopped v7 not-started\n"));
+        assert!(!is_current_status(b"running 42 v7\n"));
+        assert!(is_current_status(b"stopped v8 not-started\n"));
+        assert!(is_current_status(b"running 42 v8\n"));
         assert_eq!(
-            parse_helper_status(b"running 42 v7\n").unwrap(),
+            parse_helper_status(b"running 42 v8\n").unwrap(),
             HelperStatus::Running { pid: 42 }
         );
         assert_eq!(
-            parse_helper_status(b"stopped v7 unexpected-signal-9\n").unwrap(),
+            parse_helper_status(b"stopped v8 unexpected-signal-9\n").unwrap(),
             HelperStatus::Stopped {
                 reason: "unexpected-signal-9".to_owned()
             }
         );
         assert!(parse_helper_status(b"stopped v3 bad reason\n").is_err());
+    }
+
+    #[test]
+    fn privileged_stop_requests_carry_the_expected_pid() {
+        assert_eq!(
+            stop_arguments(42),
+            [
+                std::ffi::OsString::from("stop"),
+                std::ffi::OsString::from("--pid"),
+                std::ffi::OsString::from("42"),
+            ]
+        );
     }
 
     #[test]

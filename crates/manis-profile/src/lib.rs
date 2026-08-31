@@ -1148,6 +1148,63 @@ pub fn write_private_atomic(
     file_name: &str,
     bytes: &[u8],
 ) -> Result<PathBuf, WriteError> {
+    let _guard = private_write_lock()?;
+    write_private_atomic_inner(runtime_dir, file_name, bytes)
+}
+
+static PRIVATE_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn private_write_lock() -> Result<std::sync::MutexGuard<'static, ()>, WriteError> {
+    PRIVATE_WRITE_LOCK.lock().map_err(|_| {
+        WriteError::Io(io::Error::other(
+            "private configuration write lock is poisoned",
+        ))
+    })
+}
+
+/// Replaces or deletes a private file only while its contents still match.
+///
+/// Returns `false` on a conflict without changing the file. Comparison and
+/// replacement are serialized with other private writes in this process.
+/// `None` represents an absent file, for both the expectation and replacement.
+///
+/// # Errors
+/// Returns a path-safety or I/O error without exposing the file contents.
+pub fn replace_private_if_unchanged(
+    runtime_dir: &Path,
+    file_name: &str,
+    expected: Option<&[u8]>,
+    replacement: Option<&[u8]>,
+) -> Result<bool, WriteError> {
+    let _guard = private_write_lock()?;
+    let path = private_write_path(runtime_dir, file_name)?;
+    let matches = match (fs::symlink_metadata(&path), expected) {
+        (Ok(metadata), Some(expected)) if metadata.len() == expected.len() as u64 => {
+            fs::read(&path).map_err(WriteError::Io)? == expected
+        }
+        (Err(error), None) if error.kind() == io::ErrorKind::NotFound => true,
+        (Err(error), _) if error.kind() != io::ErrorKind::NotFound => {
+            return Err(WriteError::Io(error));
+        }
+        _ => false,
+    };
+    if !matches {
+        return Ok(false);
+    }
+    match replacement {
+        Some(bytes) => {
+            write_private_atomic_inner(runtime_dir, file_name, bytes)?;
+        }
+        None if expected.is_some() => {
+            fs::remove_file(path).map_err(WriteError::Io)?;
+            sync_runtime_dir(runtime_dir)?;
+        }
+        None => {}
+    }
+    Ok(true)
+}
+
+fn private_write_path(runtime_dir: &Path, file_name: &str) -> Result<PathBuf, WriteError> {
     if !runtime_dir.is_absolute()
         || !runtime_dir.components().all(|component| {
             matches!(
@@ -1176,7 +1233,15 @@ pub fn write_private_atomic(
             return Err(WriteError::FinalPathNotFile);
         }
     }
+    Ok(final_path)
+}
 
+fn write_private_atomic_inner(
+    runtime_dir: &Path,
+    file_name: &str,
+    bytes: &[u8],
+) -> Result<PathBuf, WriteError> {
+    let final_path = private_write_path(runtime_dir, file_name)?;
     let (temp_path, mut temp_file) = create_private_temp(runtime_dir, file_name)?;
     let write_result = (|| -> Result<(), WriteError> {
         temp_file.write_all(bytes).map_err(WriteError::Io)?;
@@ -1959,4 +2024,41 @@ fn sync_runtime_dir(path: &Path) -> Result<(), WriteError> {
 #[cfg(not(unix))]
 fn sync_runtime_dir(_path: &Path) -> Result<(), WriteError> {
     Ok(())
+}
+
+#[cfg(test)]
+mod conditional_write_tests {
+    use super::*;
+
+    #[test]
+    fn conditional_writes_reject_later_saves_and_handle_create_delete() {
+        let dir = std::env::temp_dir().join(format!(
+            "manis-conditional-write-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        assert!(replace_private_if_unchanged(&dir, "state", None, Some(b"first")).unwrap());
+        write_private_atomic(&dir, "state", b"newer").unwrap();
+        assert!(!replace_private_if_unchanged(&dir, "state", Some(b"first"), None).unwrap());
+        assert_eq!(fs::read(dir.join("state")).unwrap(), b"newer");
+        assert!(replace_private_if_unchanged(&dir, "state", Some(b"newer"), None).unwrap());
+        assert!(!dir.join("state").exists());
+        assert!(
+            !replace_private_if_unchanged(&dir, "state", Some(b"newer"), Some(b"wrong")).unwrap()
+        );
+        assert!(replace_private_if_unchanged(&dir, "state", None, Some(b"restored")).unwrap());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn conditional_writes_reject_unsafe_names() {
+        let dir = std::env::temp_dir();
+        assert!(matches!(
+            replace_private_if_unchanged(&dir, "../state", None, Some(b"bytes")),
+            Err(WriteError::InvalidFileName)
+        ));
+    }
 }

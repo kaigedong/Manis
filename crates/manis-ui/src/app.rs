@@ -728,6 +728,7 @@ impl ManagedPolicyRuntimeState {
 }
 
 struct ProxySourceEditorState {
+    import_generation: u64,
     input: Option<Entity<SubscriptionTextInput>>,
     name_input: Option<Entity<SubscriptionTextInput>>,
     subscription_source_id: Option<String>,
@@ -741,9 +742,16 @@ struct ProxySourceEditorState {
     input_events: Option<Subscription>,
 }
 
+impl ProxySourceEditorState {
+    fn is_importing(&self) -> bool {
+        matches!(self.feedback, SubscriptionFeedback::Importing(_))
+    }
+}
+
 impl Default for ProxySourceEditorState {
     fn default() -> Self {
         Self {
+            import_generation: 0,
             input: None,
             name_input: None,
             subscription_source_id: None,
@@ -875,7 +883,7 @@ pub struct ManisApp {
     observed_routes: Vec<ObservedRouteEvidence>,
     source_providers: Vec<LoadedProvider>,
     subscription_preview_providers: Vec<LoadedProvider>,
-    subscription_preview_generation: u64,
+    subscription_action_generation: u64,
     subscription_store_dir: Option<PathBuf>,
     imported_subscriptions: Vec<ImportedSubscription>,
     saved_single_nodes: Vec<StoredSingleNode>,
@@ -1049,7 +1057,7 @@ impl ManisApp {
             observed_routes: Vec::new(),
             source_providers: Vec::new(),
             subscription_preview_providers: Vec::new(),
-            subscription_preview_generation: 0,
+            subscription_action_generation: 0,
             subscription_store_dir,
             imported_subscriptions,
             saved_single_nodes,
@@ -1292,7 +1300,9 @@ impl ManisApp {
             SubscriptionTextInput::new_with_language(language, theme, self.dark, window, cx)
         });
         let events = cx.subscribe(&input, |this, _input, _: &SubscriptionInputChanged, cx| {
-            if this.proxy_source_editor.feedback != SubscriptionFeedback::Idle {
+            if !this.proxy_source_editor.is_importing()
+                && this.proxy_source_editor.feedback != SubscriptionFeedback::Idle
+            {
                 this.proxy_source_editor.feedback = SubscriptionFeedback::Idle;
                 cx.notify();
             }
@@ -1495,7 +1505,10 @@ impl ManisApp {
         request: SubscriptionImportRequest,
         cx: &mut Context<Self>,
     ) {
-        if self.configuration_transfer.active {
+        if self.configuration_transfer.active
+            || self.source_refresh_busy()
+            || self.routing_apply_state.is_busy()
+        {
             return;
         }
         let SubscriptionImportRequest {
@@ -1517,8 +1530,9 @@ impl ManisApp {
             cx.notify();
             return;
         };
-        self.subscription_preview_generation = self.subscription_preview_generation.wrapping_add(1);
-        let generation = self.subscription_preview_generation;
+        self.proxy_source_editor.import_generation =
+            self.proxy_source_editor.import_generation.wrapping_add(1);
+        let generation = self.proxy_source_editor.import_generation;
         self.proxy_source_editor.feedback = SubscriptionFeedback::Importing(kind);
         language
             .localized(copy::app::VALIDATING_NODES_AND_IMPORTING_SUBSCRIPTION)
@@ -1538,10 +1552,10 @@ impl ManisApp {
                 .spawn(async move {
                     let providers = mihomo::preview_subscription(&input)
                         .map_err(ImportSubscriptionError::Preview)?;
-                    let mutation = mutate_saved_sources(&runtime, &store_dir, || {
+                    let mutation = mutate_saved_sources(&runtime, &store_dir, |store_dir| {
                         let mut subscription = if let Some(id) = editing_id.as_deref() {
                             mihomo::update_subscription_source_in(
-                                &store_dir,
+                                store_dir,
                                 id,
                                 &input,
                                 &name,
@@ -1550,7 +1564,7 @@ impl ManisApp {
                             )
                         } else {
                             mihomo::save_subscription_source_with_options_in(
-                                &store_dir,
+                                store_dir,
                                 &input,
                                 &name,
                                 refresh_interval,
@@ -1561,7 +1575,7 @@ impl ManisApp {
                             mihomo::discover_subscription_proxy_nameservers(&subscription.source);
                         if !proxy_nameservers.is_empty() {
                             subscription = mihomo::update_subscription_source_proxy_nameservers_in(
-                                &store_dir,
+                                store_dir,
                                 &subscription.id,
                                 &proxy_nameservers,
                             )?;
@@ -1576,15 +1590,6 @@ impl ManisApp {
                 })
                 .await;
             this.update(cx, |this, cx| {
-                if this.subscription_preview_generation != generation {
-                    return;
-                }
-                if let Some(input) = this.proxy_source_editor.input.as_ref() {
-                    input.update(cx, |input, cx| input.set_enabled(true, cx));
-                }
-                if let Some(input) = this.proxy_source_editor.name_input.as_ref() {
-                    input.update(cx, |input, cx| input.set_enabled(true, cx));
-                }
                 this.finish_subscription_import(generation, kind, result, cx);
             })
             .ok();
@@ -1600,6 +1605,15 @@ impl ManisApp {
         result: SubscriptionImportResult,
         cx: &mut Context<Self>,
     ) {
+        if self.proxy_source_editor.import_generation != generation {
+            return;
+        }
+        if let Some(input) = self.proxy_source_editor.input.as_ref() {
+            input.update(cx, |input, cx| input.set_enabled(true, cx));
+        }
+        if let Some(input) = self.proxy_source_editor.name_input.as_ref() {
+            input.update(cx, |input, cx| input.set_enabled(true, cx));
+        }
         let language = self.language();
         match result {
             Ok(SourceLoadOutcome {
@@ -1609,7 +1623,14 @@ impl ManisApp {
                 let subscription = mutation.value.expect("checked committed mutation");
                 let node_count: usize = providers.iter().map(|provider| provider.nodes.len()).sum();
                 let provider_count = providers.len();
-                self.merge_imported_subscription(subscription, &providers, generation, kind);
+                self.subscription_action_generation =
+                    self.subscription_action_generation.wrapping_add(1);
+                self.merge_imported_subscription(
+                    subscription,
+                    &providers,
+                    self.subscription_action_generation,
+                    kind,
+                );
                 self.subscription_preview_providers = providers;
                 self.proxy_source_editor.feedback = SubscriptionFeedback::Idle;
                 if let Some(input) = self.proxy_source_editor.input.as_ref() {
@@ -1687,6 +1708,7 @@ impl ManisApp {
                 ImportedSubscriptionState::None
             };
             existing.providers = providers.to_vec();
+            existing.generation = generation;
             existing.refresh_interval = subscription.refresh_interval;
             existing.last_successful_update_unix_secs =
                 subscription.last_successful_update_unix_secs;
@@ -1724,7 +1746,7 @@ impl ManisApp {
     }
 
     fn refresh_imported_subscription(&mut self, id: String, cx: &mut Context<Self>) {
-        if self.configuration_transfer.active {
+        if self.configuration_transfer.active || self.proxy_source_editor.is_importing() {
             return;
         }
         let language = self.language();
@@ -1749,8 +1771,8 @@ impl ManisApp {
         }
         let kind = source_kind(&subscription.source);
         let source = subscription.source.clone();
-        self.subscription_preview_generation = self.subscription_preview_generation.wrapping_add(1);
-        let generation = self.subscription_preview_generation;
+        self.subscription_action_generation = self.subscription_action_generation.wrapping_add(1);
+        let generation = self.subscription_action_generation;
         subscription.generation = generation;
         subscription.state = ImportedSubscriptionState::Refreshing(kind);
         language
@@ -1768,15 +1790,15 @@ impl ManisApp {
                         mihomo::discover_subscription_proxy_nameservers(&source);
                     let providers = mihomo::preview_imported_subscription(source)
                         .map_err(ImportSubscriptionError::Preview)?;
-                    let mutation = mutate_saved_sources(&runtime, &store_dir, || {
+                    let mutation = mutate_saved_sources(&runtime, &store_dir, |store_dir| {
                         let mut stored = mihomo::mark_subscription_source_update_success_in(
-                            &store_dir,
+                            store_dir,
                             &task_id,
                             mihomo::current_unix_secs(),
                         )?;
                         if !proxy_nameservers.is_empty() {
                             stored = mihomo::update_subscription_source_proxy_nameservers_in(
-                                &store_dir,
+                                store_dir,
                                 &task_id,
                                 &proxy_nameservers,
                             )?;
@@ -1877,12 +1899,15 @@ impl ManisApp {
     }
 
     fn source_refresh_busy(&self) -> bool {
-        self.imported_subscriptions.iter().any(|source| {
-            matches!(
-                source.state,
-                ImportedSubscriptionState::Refreshing(_) | ImportedSubscriptionState::Removing(_)
-            )
-        }) || self.rule_sources.feedback == QxRuleImportFeedback::Importing
+        self.proxy_source_editor.is_importing()
+            || self.imported_subscriptions.iter().any(|source| {
+                matches!(
+                    source.state,
+                    ImportedSubscriptionState::Refreshing(_)
+                        | ImportedSubscriptionState::Removing(_)
+                )
+            })
+            || self.rule_sources.feedback == QxRuleImportFeedback::Importing
             || self
                 .rule_sources
                 .refreshes
@@ -1938,7 +1963,7 @@ impl ManisApp {
     }
 
     fn remove_imported_subscription(&mut self, id: String, cx: &mut Context<Self>) {
-        if self.configuration_transfer.active {
+        if self.configuration_transfer.active || self.source_refresh_busy() {
             return;
         }
         let language = self.language();
@@ -1953,8 +1978,8 @@ impl ManisApp {
             return;
         };
         let kind = source_kind(&subscription.source);
-        self.subscription_preview_generation = self.subscription_preview_generation.wrapping_add(1);
-        let generation = self.subscription_preview_generation;
+        self.subscription_action_generation = self.subscription_action_generation.wrapping_add(1);
+        let generation = self.subscription_action_generation;
         subscription.generation = generation;
         self.proxy_source_editor.feedback = SubscriptionFeedback::Idle;
         subscription.state = ImportedSubscriptionState::Removing(kind);
@@ -1969,8 +1994,8 @@ impl ManisApp {
         cx.spawn(async move |this, cx| {
             let result = executor
                 .spawn(async move {
-                    mutate_saved_sources(&runtime, &store_dir, || {
-                        mihomo::remove_subscription_source_in(&store_dir, &remove_id)
+                    mutate_saved_sources(&runtime, &store_dir, |store_dir| {
+                        mihomo::remove_subscription_source_in(store_dir, &remove_id)
                     })
                 })
                 .await;
@@ -2006,9 +2031,10 @@ impl ManisApp {
                         this.status = format!(
                             "{}{}",
                             language.localized(copy::app::IMPORTED_SUBSCRIPTION_REMOVAL_FAILED),
-                            transaction
-                                .apply
-                                .status_suffix_after_source_rollback(language)
+                            transaction.apply.status_suffix_after_rollback_attempt(
+                                language,
+                                transaction.rollback_error.as_ref()
+                            )
                         );
                         trace_ui(UiEvent::SourceRemoveFailed);
                     }

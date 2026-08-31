@@ -210,7 +210,7 @@ fn replace_qx_rule_source(
     content: &str,
     last_success: u64,
 ) -> super::QxRuleImportResult {
-    let transaction = super::mutate_saved_sources(runtime, store_dir, || {
+    let transaction = super::mutate_saved_sources(runtime, store_dir, |store_dir| {
         mihomo::replace_qx_rule_source_definition_in(
             store_dir,
             id,
@@ -244,7 +244,7 @@ fn create_qx_rule_source(
     content: &str,
     refresh_interval: RemoteSourceRefreshInterval,
 ) -> super::QxRuleImportResult {
-    let transaction = super::mutate_saved_sources(runtime, store_dir, || {
+    let transaction = super::mutate_saved_sources(runtime, store_dir, |store_dir| {
         let outcome = mihomo::save_named_qx_rule_source_in(store_dir, url, name, target, content)?;
         let mihomo::SaveQxRuleSourceOutcome::Created(mut stored) = outcome else {
             return Ok(outcome);

@@ -2070,8 +2070,8 @@ impl ManisApp {
         cx.spawn(async move |this, cx| {
             let result = executor
                 .spawn(async move {
-                    super::mutate_saved_sources(&runtime, &store_dir, || {
-                        mihomo::save_managed_policy_in(&store_dir, &group).map(|()| group)
+                    super::mutate_saved_sources(&runtime, &store_dir, |store_dir| {
+                        mihomo::save_managed_policy_in(store_dir, &group).map(|()| group)
                     })
                 })
                 .await;
@@ -2232,8 +2232,8 @@ impl ManisApp {
         cx.spawn(async move |this, cx| {
             let result = executor
                 .spawn(async move {
-                    super::mutate_saved_sources(&runtime, &store_dir, || {
-                        mihomo::remove_managed_policy_in(&store_dir, &remove_id)
+                    super::mutate_saved_sources(&runtime, &store_dir, |store_dir| {
+                        mihomo::remove_managed_policy_in(store_dir, &remove_id)
                             .map(|()| (remove_id, group))
                     })
                 })

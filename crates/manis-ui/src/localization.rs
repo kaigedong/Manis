@@ -49,8 +49,6 @@ pub(crate) enum Message {
     RoutingApplyBusy,
     ManualRulesLocationUnavailable,
     ManualRulesSaveFailed,
-    RuleGroupOrderSaveFailed,
-    StoreTransactionUnavailable,
     StoreRollbackFailed,
 }
 
@@ -209,14 +207,6 @@ impl Language {
             Message::ManualRulesSaveFailed => {
                 ("Could not save manual rules: ", "无法保存手动分流规则：")
             }
-            Message::RuleGroupOrderSaveFailed => (
-                "Could not save routing rule group order",
-                "无法保存分流规则分组顺序",
-            ),
-            Message::StoreTransactionUnavailable => (
-                "Could not prepare a safe configuration update",
-                "无法准备安全的配置更新",
-            ),
             Message::StoreRollbackFailed => (
                 " · restoring the previous configuration also failed: ",
                 " · 恢复先前配置时也发生失败：",

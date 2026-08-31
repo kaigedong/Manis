@@ -7,7 +7,7 @@ The Rust app invokes `Contents/MacOS/manis-helperctl` with this stable contract:
 
 ```text
 manis-helperctl status
-  stdout: running <pid> v7 | stopped v7 <last-exit-reason>
+  stdout: running <pid> v8 | stopped v8 <last-exit-reason>
 
 manis-helperctl stage-core
   stdout: staged <sha256>
@@ -16,7 +16,7 @@ manis-helperctl stage-core
 manis-helperctl start --data-dir PATH --config PATH --controller PATH
   stdout: started <pid>
 
-manis-helperctl stop
+manis-helperctl stop --pid <pid>
   stdout: stopped
 
 manis-helperctl register

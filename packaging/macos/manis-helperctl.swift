@@ -21,7 +21,7 @@ protocol ManisPrivilegedHelperProtocol {
         controller: String,
         withReply reply: @escaping (String, Int32) -> Void
     )
-    func stop(withReply reply: @escaping (String, Int32) -> Void)
+    func stop(expectedPid: pid_t, withReply reply: @escaping (String, Int32) -> Void)
     func stageCore(
         contents: Data,
         sha256: String,
@@ -45,7 +45,7 @@ private enum CliError: Error, CustomStringConvertible {
                   manis-helperctl status
                   manis-helperctl stage-core
                   manis-helperctl start --data-dir PATH --config PATH --controller PATH
-                  manis-helperctl stop
+                  manis-helperctl stop --pid PID
                 """
         case .timeout:
             return "privileged helper did not reply"
@@ -72,7 +72,7 @@ private enum Command {
     case status
     case stageCore
     case start(dataDir: String, config: String, controller: String)
-    case stop
+    case stop(expectedPid: pid_t)
 }
 
 private func parseCommand(_ arguments: [String]) throws -> Command {
@@ -93,8 +93,11 @@ private func parseCommand(_ arguments: [String]) throws -> Command {
         guard arguments.count == 1 else { throw CliError.usage }
         return .stageCore
     case "stop":
-        guard arguments.count == 1 else { throw CliError.usage }
-        return .stop
+        guard arguments.count == 3,
+            arguments[1] == "--pid",
+            let expectedPid = parsePositivePid(arguments[2])
+        else { throw CliError.usage }
+        return .stop(expectedPid: expectedPid)
     case "start":
         guard arguments.count == 7 else { throw CliError.usage }
         var values: [String: String] = [:]
@@ -113,6 +116,13 @@ private func parseCommand(_ arguments: [String]) throws -> Command {
     default:
         throw CliError.usage
     }
+}
+
+private func parsePositivePid(_ value: String) -> pid_t? {
+    guard let pid = pid_t(value), pid > 0 else {
+        return nil
+    }
+    return pid
 }
 
 private func registerService() throws {
@@ -404,8 +414,8 @@ do {
         try callHelper(timeout: .seconds(300)) { helper, reply in
             helper.stageCore(contents: contents, sha256: digest, withReply: reply)
         }
-    case .stop:
-        try callHelper { helper, reply in helper.stop(withReply: reply) }
+    case .stop(let expectedPid):
+        try callHelper { helper, reply in helper.stop(expectedPid: expectedPid, withReply: reply) }
     case .start(let dataDir, let config, let controller):
         try callHelper { helper, reply in
             helper.start(dataDir: dataDir, config: config, controller: controller, withReply: reply)
