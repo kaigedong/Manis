@@ -58,7 +58,7 @@ and include it as a first-launch seed. The application then uses and updates onl
 
 | Platform | Build target | Runtime status |
 | --- | --- | --- |
-| macOS 13+ | Maintained | Primary development platform; system proxy and TUN tested manually |
+| macOS 13+ | Maintained | Primary development platform; system proxy verified, TUN supported for testing through administrator approval |
 | Windows | Maintained | Experimental; managed controller transport is not implemented yet |
 | Linux | Maintained | Experimental; native packages and desktop environments need broader testing |
 
@@ -82,9 +82,13 @@ pre-release on the [Releases page](https://github.com/kaigedong/Manis/releases),
 CachyOS and Arch Linux. Version tags continue to produce maintainer-only draft releases.
 
 The macOS archives are ad-hoc signed but do not have a Developer ID signature or Apple
-notarization, so they are test builds only. Normal system-proxy mode can be exercised; the
-production TUN helper still requires proper signing and notarization. Download the accompanying
-`.sha256` file and verify the archive before opening it.
+notarization, so they are test builds only. macOS Gatekeeper still warns on first open; use only a
+trusted official release and verify the archive with its accompanying `.sha256` file before opening
+it. GitHub downloads support TUN by default, but the first TUN enablement and every changed Manis
+app version require administrator authorization. That path installs a root-owned LaunchDaemon that
+pins the approved app, `manis-helperctl`, privileged-helper fingerprints, and the current user ID,
+and does not require a paid Apple Developer Program account. The Developer ID/SMAppService signed
+path remains available as an optional maintainer release route.
 
 ## Build from source
 
@@ -133,9 +137,11 @@ are private data. Manis stores them outside the repository in the platform user-
 redacts them from its own diagnostics. Plain HTTP subscriptions remain inherently observable on the
 network; HTTPS should be used whenever possible.
 
-The macOS TUN path uses a fixed-purpose privileged helper. Development-only insecure helper builds
-must never be distributed. Review [SECURITY.md](SECURITY.md) before testing privileged behavior and
-report vulnerabilities through GitHub private vulnerability reporting.
+The macOS TUN path uses a fixed-purpose privileged helper. GitHub ad-hoc packages pin this app
+version's code fingerprints through administrator approval; the old
+`MANIS_ALLOW_INSECURE_LOCAL_HELPER` local development bypass is obsolete and must not be used for
+distribution. Review [SECURITY.md](SECURITY.md) before testing privileged behavior and report
+vulnerabilities through GitHub private vulnerability reporting.
 
 ## Repository layout
 

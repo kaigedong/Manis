@@ -11,7 +11,7 @@ use manis_engine::{CommandSpec, ManagedChild, ProcessExit, ProcessSpawner, StdPr
 use crate::diagnostics::{LogLevel, record_event};
 
 const HELPER_CONTROL_NAME: &str = "manis-helperctl";
-const HELPER_PROTOCOL_VERSION: &str = "v6";
+const HELPER_PROTOCOL_VERSION: &str = "v7";
 const HELPER_REGISTRATION_ATTEMPTS: usize = 2;
 const LOCAL_INSTALLER_FAILURE_EXIT: i32 = 2;
 const HELPER_READY_ATTEMPTS: usize = 6;
@@ -680,14 +680,15 @@ mod tests {
         assert!(!is_current_status(b"stopped v3 not-started\n"));
         assert!(!is_current_status(b"stopped v4 not-started\n"));
         assert!(!is_current_status(b"stopped v5 not-started\n"));
-        assert!(is_current_status(b"stopped v6 not-started\n"));
-        assert!(is_current_status(b"running 42 v6\n"));
+        assert!(!is_current_status(b"stopped v6 not-started\n"));
+        assert!(is_current_status(b"stopped v7 not-started\n"));
+        assert!(is_current_status(b"running 42 v7\n"));
         assert_eq!(
-            parse_helper_status(b"running 42 v6\n").unwrap(),
+            parse_helper_status(b"running 42 v7\n").unwrap(),
             HelperStatus::Running { pid: 42 }
         );
         assert_eq!(
-            parse_helper_status(b"stopped v6 unexpected-signal-9\n").unwrap(),
+            parse_helper_status(b"stopped v7 unexpected-signal-9\n").unwrap(),
             HelperStatus::Stopped {
                 reason: "unexpected-signal-9".to_owned()
             }

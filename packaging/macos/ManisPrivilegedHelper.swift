@@ -4,14 +4,13 @@ import Darwin
 import Security
 
 private let serviceName = "dev.manis.app.helper"
-private let helperProtocolVersion = "v6"
+private let helperProtocolVersion = "v7"
 private let requiredClientRequirement =
     ProcessInfo.processInfo.environment["MANIS_REQUIRED_CLIENT_REQUIREMENT"] ?? ""
-private let allowInsecureLocalRequirement =
-    ProcessInfo.processInfo.environment["MANIS_ALLOW_INSECURE_LOCAL_HELPER"] == "1"
+private let administratorInstall =
+    ProcessInfo.processInfo.environment["MANIS_ADMINISTRATOR_INSTALL"] == "1"
 private let allowedLocalUserIdentifier =
     ProcessInfo.processInfo.environment["MANIS_LOCAL_ALLOWED_UID"].flatMap(uid_t.init)
-private let insecureLocalMihomoPath = "/Library/Application Support/Manis/bin/mihomo"
 private let managedMihomoPath = "/Library/Application Support/Manis/bin/mihomo"
 private let logPath = "/var/log/manis-mihomo-helper.log"
 private let maximumConfigBytes = 16 * 1024 * 1024
@@ -45,7 +44,7 @@ final class HelperDelegate: NSObject, NSXPCListenerDelegate {
         _ listener: NSXPCListener,
         shouldAcceptNewConnection connection: NSXPCConnection
     ) -> Bool {
-        if allowInsecureLocalRequirement {
+        if administratorInstall {
             guard let allowedLocalUserIdentifier,
                 connection.effectiveUserIdentifier == allowedLocalUserIdentifier
             else {
@@ -255,7 +254,11 @@ final class HelperCore {
                 else {
                     throw HelperError.invalidExecutable("managed Mihomo digest does not match")
                 }
-                if !allowInsecureLocalRequirement {
+                if administratorInstall {
+                    guard try administratorCoreDigestIsTrusted(actualDigest) else {
+                        throw HelperError.invalidExecutable("Mihomo is not the approved seed, installed core, or official latest release")
+                    }
+                } else {
                     try validateContainingBundleSeal()
                 }
                 try installManagedCore(contents)
@@ -289,15 +292,22 @@ final class HelperCore {
 }
 
 private func bundledMihomoPath() throws -> String {
-    if allowInsecureLocalRequirement {
-        guard ProcessInfo.processInfo.environment["MANIS_INSECURE_LOCAL_MIHOMO"]
-            == insecureLocalMihomoPath
-        else {
-            throw HelperError.invalidExecutable("local Mihomo path is not fixed by Manis")
-        }
-        return insecureLocalMihomoPath
-    }
     return managedMihomoPath
+}
+
+private func administratorCoreDigestIsTrusted(_ digest: String) throws -> Bool {
+    let approval = try ManisHelperSecurity.Approval(environment: ProcessInfo.processInfo.environment)
+    if digest == approval.seedSHA256 { return true }
+    // A client-supplied digest is only an integrity check, never authorization to execute code
+    // as root. Independently verify provenance, including after an in-app Mihomo update.
+    try ManisHelperSecurity.requireRootOwnedPath(managedMihomoPath, directory: false)
+    let installed = try Data(contentsOf: URL(fileURLWithPath: managedMihomoPath))
+    guard installed.count <= maximumCoreBytes else {
+        throw HelperError.invalidExecutable("installed Mihomo exceeds the safety limit")
+    }
+    let installedDigest = SHA256.hash(data: installed).map { String(format: "%02x", $0) }.joined()
+    if digest == installedDigest { return true }
+    return try digest == MihomoReleaseVerifier.latestDigest()
 }
 
 private func bundleContentsURL() throws -> URL {
@@ -398,13 +408,6 @@ private func validateRuntime(_ request: LaunchRequest, owner: uid_t) throws {
 private func validateExecutable(_ path: String) throws {
     guard path == (try bundledMihomoPath()) else {
         throw HelperError.invalidExecutable("privileged Mihomo binary must stay in Manis storage")
-    }
-    if allowInsecureLocalRequirement {
-        try requireRegularFile(path, owner: 0)
-        guard FileManager.default.isExecutableFile(atPath: path) else {
-            throw HelperError.invalidExecutable("local privileged Mihomo binary is not executable")
-        }
-        return
     }
     try requireRegularFile(path, owner: 0)
     guard FileManager.default.isExecutableFile(atPath: path) else {
@@ -778,16 +781,16 @@ if requiredClientRequirement.isEmpty {
     appendLog("MANIS_REQUIRED_CLIENT_REQUIREMENT is not configured")
     Foundation.exit(1)
 }
-if allowInsecureLocalRequirement
-    && (allowedLocalUserIdentifier == nil || allowedLocalUserIdentifier == 0)
-{
-    appendLog("MANIS_LOCAL_ALLOWED_UID is not configured")
-    Foundation.exit(1)
-}
-if !allowInsecureLocalRequirement
-    && (!requiredClientRequirement.contains("anchor apple generic")
-        || !requiredClientRequirement.contains("certificate leaf[subject.OU]")
-        || !requiredClientRequirement.contains("identifier \"dev.manis.app.helperctl\""))
+if administratorInstall {
+    do {
+        _ = try ManisHelperSecurity.Approval(environment: ProcessInfo.processInfo.environment)
+    } catch {
+        appendLog("invalid administrator approval: \(error)")
+        Foundation.exit(1)
+    }
+} else if !requiredClientRequirement.contains("anchor apple generic")
+    || !requiredClientRequirement.contains("certificate leaf[subject.OU]")
+    || !requiredClientRequirement.contains("identifier \"dev.manis.app.helperctl\"")
 {
     appendLog("client code-signing requirement is not production-grade")
     Foundation.exit(1)

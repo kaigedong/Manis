@@ -39,9 +39,15 @@ if [[ ! "$BUNDLE_BUILD" =~ ^[1-9][0-9]*$ ]]; then
   exit 1
 fi
 
-if [[ "${MANIS_ALLOW_INSECURE_LOCAL_HELPER:-0}" == "1" && -n "${MANIS_CODESIGN_IDENTITY:-}" ]]; then
-  echo "MANIS_ALLOW_INSECURE_LOCAL_HELPER cannot be combined with a signed production build" >&2
+if [[ "${MANIS_ALLOW_INSECURE_LOCAL_HELPER:-0}" == "1" ]]; then
+  echo "MANIS_ALLOW_INSECURE_LOCAL_HELPER is obsolete; the default build uses administrator-approved code fingerprints" >&2
   exit 1
+fi
+HELPER_SWIFT_FLAGS=()
+HELPER_INSTALL_MODE="smappservice"
+if [[ -z "${MANIS_CODESIGN_IDENTITY:-}" ]]; then
+  HELPER_SWIFT_FLAGS=(-D MANIS_ADMINISTRATOR_HELPER)
+  HELPER_INSTALL_MODE="administrator"
 fi
 if [[ -n "${MANIS_CODESIGN_IDENTITY:-}" ]]; then
   if [[ -z "${MANIS_CLIENT_REQUIREMENT:-}" || -z "${MANIS_PARENT_REQUIREMENT:-}" ]]; then
@@ -66,9 +72,7 @@ cp "$ROOT_DIR/packaging/macos/Info.plist" "$CONTENTS_DIR/Info.plist"
 plutil -replace CFBundleShortVersionString -string "$BUNDLE_VERSION" "$CONTENTS_DIR/Info.plist"
 plutil -replace CFBundleVersion -string "$BUNDLE_BUILD" "$CONTENTS_DIR/Info.plist"
 plutil -insert ManisParentCodeSigningRequirement -string "$PARENT_REQUIREMENT" "$CONTENTS_DIR/Info.plist"
-if [[ "${MANIS_ALLOW_INSECURE_LOCAL_HELPER:-0}" == "1" ]]; then
-  plutil -insert ManisAllowInsecureLocalHelper -bool YES "$CONTENTS_DIR/Info.plist"
-fi
+plutil -insert ManisHelperInstallMode -string "$HELPER_INSTALL_MODE" "$CONTENTS_DIR/Info.plist"
 cp "$CARGO_BUILD_DIR/release/manis-ui" "$MACOS_DIR/Manis"
 
 ICONSET_DIR="$BUILD_ROOT/Manis.iconset"
@@ -82,25 +86,20 @@ for icon_size in 16 32 128 256 512; do
 done
 iconutil -c icns "$ICONSET_DIR" -o "$CONTENTS_RESOURCES_DIR/Manis.icns"
 
-swiftc \
-  -framework Foundation \
-  -framework Security \
-  "$ROOT_DIR/packaging/macos/ManisPrivilegedHelper.swift" \
-  -o "$HELPER_TOOLS_DIR/$HELPER_ID"
-
-swiftc \
-  -framework CryptoKit \
-  -framework Foundation \
-  -framework ServiceManagement \
-  -framework Security \
-  "$ROOT_DIR/packaging/macos/manis-helperctl.swift" \
-  -o "$MACOS_DIR/manis-helperctl"
-
-swiftc \
-  -framework CryptoKit \
-  -framework Foundation \
-  "$ROOT_DIR/packaging/macos/manis-local-helper-install.swift" \
-  -o "$MACOS_DIR/manis-local-helper-install"
+# Keep the shared trust policy in one source while Swift's executable entrypoints stay standalone.
+compile_helper() {
+  local source="$1"
+  local output="$2"
+  local combined="$BUILD_ROOT/$(basename "$source")"
+  cat "$ROOT_DIR/packaging/macos/HelperSecurity.swift" \
+    "$ROOT_DIR/packaging/macos/MihomoReleaseVerifier.swift" "$source" > "$combined"
+  swiftc ${HELPER_SWIFT_FLAGS[@]+"${HELPER_SWIFT_FLAGS[@]}"} \
+    -framework CryptoKit -framework Foundation -framework ServiceManagement -framework Security \
+    "$combined" -o "$output"
+}
+compile_helper "$ROOT_DIR/packaging/macos/ManisPrivilegedHelper.swift" "$HELPER_TOOLS_DIR/$HELPER_ID"
+compile_helper "$ROOT_DIR/packaging/macos/manis-helperctl.swift" "$MACOS_DIR/manis-helperctl"
+compile_helper "$ROOT_DIR/packaging/macos/manis-local-helper-install.swift" "$MACOS_DIR/manis-local-helper-install"
 
 if [[ -z "$MIHOMO_SOURCE" ]]; then
   MIHOMO_SOURCE="$BUILD_ROOT/mihomo"
@@ -117,9 +116,6 @@ PLIST_OUT="$LAUNCH_DAEMONS_DIR/dev.manis.app.helper.plist"
 sed \
   -e "s#identifier \"dev.manis.app.helperctl\"#$CLIENT_REQUIREMENT#g" \
   "$ROOT_DIR/packaging/macos/dev.manis.app.helper.plist" > "$PLIST_OUT"
-if [[ "${MANIS_ALLOW_INSECURE_LOCAL_HELPER:-0}" == "1" ]]; then
-  plutil -insert EnvironmentVariables.MANIS_ALLOW_INSECURE_LOCAL_HELPER -string 1 "$PLIST_OUT"
-fi
 plutil -lint "$PLIST_OUT" >/dev/null
 
 if [[ -n "${MANIS_CODESIGN_IDENTITY:-}" ]]; then
@@ -128,15 +124,11 @@ if [[ -n "${MANIS_CODESIGN_IDENTITY:-}" ]]; then
   codesign --force --options runtime --identifier "$LOCAL_INSTALLER_ID" --sign "$MANIS_CODESIGN_IDENTITY" "$MACOS_DIR/manis-local-helper-install"
   codesign --force --options runtime --identifier "dev.manis.app" --sign "$MANIS_CODESIGN_IDENTITY" "$BUILD_APP_DIR"
 else
-  codesign --force --identifier "$HELPER_ID" --sign - "$HELPER_TOOLS_DIR/$HELPER_ID" >/dev/null 2>&1 || true
-  codesign --force --identifier "$HELPERCTL_ID" --sign - "$MACOS_DIR/manis-helperctl" >/dev/null 2>&1 || true
-  codesign --force --identifier "$LOCAL_INSTALLER_ID" --sign - "$MACOS_DIR/manis-local-helper-install" >/dev/null 2>&1 || true
-  codesign --force --identifier "dev.manis.app" --sign - "$BUILD_APP_DIR" >/dev/null 2>&1 || true
-  if [[ "${MANIS_ALLOW_INSECURE_LOCAL_HELPER:-0}" == "1" ]]; then
-    echo "warning: built with the local administrator-installed TUN helper; do not distribute" >&2
-  else
-    echo "warning: no MANIS_CODESIGN_IDENTITY set; helper registration is expected to fail on production macOS" >&2
-  fi
+  codesign --force --options runtime --identifier "$HELPER_ID" --sign - "$HELPER_TOOLS_DIR/$HELPER_ID"
+  codesign --force --options runtime --identifier "$HELPERCTL_ID" --sign - "$MACOS_DIR/manis-helperctl"
+  codesign --force --options runtime --identifier "$LOCAL_INSTALLER_ID" --sign - "$MACOS_DIR/manis-local-helper-install"
+  codesign --force --options runtime --identifier "dev.manis.app" --sign - "$BUILD_APP_DIR"
+  echo "ad-hoc build: TUN will request administrator approval and pin this app version" >&2
 fi
 
 if [[ -e "$APP_DIR" ]]; then
