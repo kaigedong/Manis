@@ -16,6 +16,9 @@ once the public API and configuration formats stabilize.
 
 ### Security
 
+- Remove vulnerable `glib` (GHSA-wrw7-89jp-8q8g / RUSTSEC-2024-0429) and the unmaintained GTK 3 Rust
+  bindings by using a GTK-free StatusNotifierItem tray on Linux. Remove both audit exceptions;
+  macOS and Windows retain their native tray backend with GTK features disabled.
 - Restricted controller endpoints, private credential storage, redacted diagnostics, owned-process
   lifecycle management, and fixed-purpose macOS privileged-helper boundaries.
 - Install Linux TUN capabilities with the package and restrict passwordless DNS repair to a

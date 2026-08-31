@@ -5,6 +5,7 @@ use gpui::{
     WindowBounds, WindowOptions, px, size,
 };
 use manis_core::ProxyMode;
+#[cfg(not(target_os = "linux"))]
 use tray_icon::{
     Icon, TrayIcon, TrayIconBuilder,
     menu::{CheckMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem},
@@ -18,12 +19,22 @@ use crate::{
     theme::LayoutMetric,
 };
 
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "linux")]
+use linux::ManisTray;
+
+#[cfg(not(target_os = "linux"))]
 const SHOW_MENU_ID: &str = "manis.tray.show";
+#[cfg(not(target_os = "linux"))]
 const QUIT_MENU_ID: &str = "manis.tray.quit";
+#[cfg(not(target_os = "linux"))]
 const SYSTEM_PROXY_MENU_ID: &str = "manis.tray.proxy.system";
+#[cfg(not(target_os = "linux"))]
 const TUN_PROXY_MENU_ID: &str = "manis.tray.proxy.tun";
 const TRAY_EVENT_INTERVAL: Duration = Duration::from_millis(100);
 
+#[cfg(not(target_os = "linux"))]
 struct ManisTray {
     _icon: TrayIcon,
     show_id: MenuId,
@@ -112,7 +123,8 @@ pub fn open_window(cx: &mut App) -> gpui::Result<()> {
 /// Installs the native status icon and its menu.
 ///
 /// The icon is created after GPUI's platform event loop has started, which is required by
-/// `tray-icon` on macOS and by the native event-loop integrations on Windows and Linux.
+/// `tray-icon` on macOS and by the native event-loop integration on Windows. Linux uses a
+/// D-Bus `StatusNotifierItem` service instead of a GTK event loop.
 ///
 /// # Errors
 /// Returns a redacted message when the platform tray cannot be initialized.
@@ -127,10 +139,31 @@ pub fn install(cx: &mut App) -> Result<(), &'static str> {
 /// Returns a redacted message when the platform tray cannot be initialized.
 pub(crate) fn install_with_language(cx: &mut App, language: Language) -> Result<(), &'static str> {
     #[cfg(target_os = "linux")]
-    gtk::init().map_err(|_error| {
-        language.localized(copy::tray::COULD_NOT_INITIALIZE_THE_LINUX_GTK_TRAY_EVENT_LOOP)
-    })?;
+    let tray = ManisTray::new(language)?;
+    #[cfg(not(target_os = "linux"))]
+    let tray = create_native_tray(language)?;
 
+    cx.set_global(tray);
+    // Only hide on close after a tray was successfully registered. Without a compatible desktop
+    // host, install fails and the application's normal window-close behavior remains in effect.
+    cx.set_quit_mode(QuitMode::Explicit);
+
+    let timer = cx.background_executor().clone();
+    cx.spawn(async move |cx| {
+        loop {
+            timer.timer(TRAY_EVENT_INTERVAL).await;
+            let should_quit = cx.update(drain_menu_events);
+            if should_quit {
+                break;
+            }
+        }
+    })
+    .detach();
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn create_native_tray(language: Language) -> Result<ManisTray, &'static str> {
     let show = MenuItem::with_id(
         SHOW_MENU_ID,
         language.localized(copy::tray::OPEN_MANIS),
@@ -187,39 +220,18 @@ pub(crate) fn install_with_language(cx: &mut App, language: Language) -> Result<
         .build()
         .map_err(|_error| language.localized(copy::tray::SYSTEM_TRAY_IS_UNAVAILABLE))?;
 
-    cx.set_global(ManisTray {
+    Ok(ManisTray {
         _icon: tray,
         show_id: show.id().clone(),
         quit_id: quit.id().clone(),
         system_proxy,
         tun_proxy,
         synced: None,
-    });
-    cx.set_quit_mode(QuitMode::Explicit);
-
-    let timer = cx.background_executor().clone();
-    cx.spawn(async move |cx| {
-        loop {
-            timer.timer(TRAY_EVENT_INTERVAL).await;
-            let should_quit = cx.update(drain_menu_events);
-            if should_quit {
-                break;
-            }
-        }
     })
-    .detach();
-    Ok(())
 }
 
+#[cfg(not(target_os = "linux"))]
 fn drain_menu_events(cx: &mut App) -> bool {
-    #[cfg(target_os = "linux")]
-    {
-        let gtk_events = gtk::glib::MainContext::default();
-        while gtk_events.pending() {
-            gtk_events.iteration(false);
-        }
-    }
-
     let (show_id, quit_id, system_id, tun_id) = {
         let tray = cx.global::<ManisTray>();
         (
@@ -244,6 +256,23 @@ fn drain_menu_events(cx: &mut App) -> bool {
     if should_quit {
         cx.quit();
         return true;
+    }
+    sync_proxy_menu(cx);
+    false
+}
+
+#[cfg(target_os = "linux")]
+fn drain_menu_events(cx: &mut App) -> bool {
+    let events = cx.global::<ManisTray>().events();
+    for event in events {
+        match event {
+            linux::TrayAction::Show => show_or_open_window(cx),
+            linux::TrayAction::Quit => {
+                cx.quit();
+                return true;
+            }
+            linux::TrayAction::ProxyMode(mode) => request_proxy_mode(cx, mode),
+        }
     }
     sync_proxy_menu(cx);
     false
@@ -282,6 +311,9 @@ fn sync_proxy_menu(cx: &mut App) {
         return;
     }
     tray.synced = Some(snapshot);
+    #[cfg(target_os = "linux")]
+    tray.sync(snapshot);
+    #[cfg(not(target_os = "linux"))]
     for (item, mode, block) in [
         (&tray.system_proxy, ProxyMode::System, snapshot.system_block),
         (&tray.tun_proxy, ProxyMode::Tun, snapshot.tun_block),

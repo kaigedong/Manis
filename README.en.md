@@ -91,8 +91,9 @@ production TUN helper still requires proper signing and notarization. Download t
 The repository pins its Rust toolchain in `rust-toolchain.toml` and its GPUI revision in
 `crates/manis-ui/Cargo.toml`.
 
-On macOS, install Xcode Command Line Tools. On Linux, install the Wayland/X11, GTK 3, fontconfig, and
-ALSA development packages required by GPUI. Then run:
+On macOS, install Xcode Command Line Tools. On Linux, install the Wayland/X11, fontconfig, and
+ALSA development packages required by GPUI. The Linux tray uses StatusNotifierItem over the session
+D-Bus without GTK 3; GNOME needs an AppIndicator extension to display it. Then run:
 
 ```bash
 git clone https://github.com/kaigedong/Manis.git

@@ -7,7 +7,18 @@ credential in a shell history, issue, screenshot, fixture, or commit.
 ## Toolchain and native dependencies
 
 Rust is pinned in `rust-toolchain.toml`. On macOS, install Xcode Command Line Tools. On Linux, install
-the Wayland/X11, GTK 3, fontconfig, and ALSA development packages listed in `.github/workflows/ci.yml`.
+the Wayland/X11, fontconfig, and ALSA development packages listed in `.github/workflows/ci.yml`.
+The Linux tray uses `ksni` over the session D-Bus, with no GTK or libappindicator dependency. A
+StatusNotifierItem host is required (for example, Plasma or GNOME with an AppIndicator extension).
+Without a compatible host, the app reports the tray as unavailable and retains normal window-close
+behavior instead of hiding into an inaccessible tray.
+
+Linux tray tests (the second command supplies its own mock host on a private session bus):
+
+```bash
+cargo test -p manis-ui --lib linux_tray --locked
+dbus-run-session -- cargo test -p manis-ui --lib linux_tray_dbus --locked -- --ignored
+```
 
 ```bash
 cargo run -p manis-ui

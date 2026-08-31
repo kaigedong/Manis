@@ -11,10 +11,6 @@ targets = [
 unmaintained = "workspace"
 unsound = "all"
 yanked = "warn"
-ignore = [
-    { id = "RUSTSEC-2024-0415", reason = "GTK 3 is currently required by the Linux tray stack; no safe drop-in upgrade is available" },
-    { id = "RUSTSEC-2024-0429", reason = "The affected glib release is required by GTK 3; Linux remains experimental until the UI and tray stack can migrate" },
-]
 
 [licenses]
 confidence-threshold = 0.93

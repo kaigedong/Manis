@@ -87,7 +87,8 @@ Arch Linux 使用 `.pkg.tar.zst` 软件包。版本标签产生的正式候选�
 
 仓库通过 `rust-toolchain.toml` 固定 Rust 工具链，并在 `crates/manis-ui/Cargo.toml` 中固定
 GPUI 版本。macOS 需要 Xcode Command Line Tools；Linux 需要 GPUI 使用的 Wayland/X11、
-GTK 3、fontconfig 与 ALSA 开发包。
+fontconfig 与 ALSA 开发包。Linux 托盘通过会话 D-Bus 使用 StatusNotifierItem 协议，
+不依赖 GTK 3；GNOME 需要启用 AppIndicator 扩展才能显示托盘。
 
 ```bash
 git clone https://github.com/kaigedong/Manis.git

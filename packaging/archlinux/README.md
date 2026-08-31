@@ -24,6 +24,10 @@ primary target; X11 remains available as a compatibility fallback. The build fet
 stable Mihomo release for x86_64 and verifies its GitHub release digest before packaging. sing-box
 is not bundled.
 
+The tray uses StatusNotifierItem over the user's session D-Bus and does not require GTK 3 or
+libappindicator. Plasma provides a compatible host; GNOME needs an AppIndicator extension. If no
+host is available, Manis keeps normal window-close behavior instead of hiding to an unavailable tray.
+
 Build on an up-to-date Arch Linux system:
 
 ```bash
