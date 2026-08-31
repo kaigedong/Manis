@@ -108,6 +108,8 @@ mod tests {
         cx: &mut gpui::TestAppContext,
     ) {
         cx.update(crate::init);
+        // Dialog animations use wall-clock time, not the test executor's clock.
+        cx.update(|cx| cx.set_reduce_motion(true));
         let mut app = None;
         let (_, cx) = cx.add_window_view(|window, cx| {
             let entity = cx.new(|_| ManisApp::with_fixture_controller("http://127.0.0.1:9090"));
@@ -122,15 +124,6 @@ mod tests {
             });
             window.draw(cx).clear(cx);
         });
-        for _ in 0..12 {
-            cx.executor()
-                .advance_clock(std::time::Duration::from_millis(25));
-            cx.update(|window, cx| {
-                window.refresh();
-                window.draw(cx).clear(cx);
-            });
-            cx.run_until_parked();
-        }
         assert!(cx.debug_bounds("manis-current-version").is_some());
         let github = cx.debug_bounds("about-github").expect("repository action");
         cx.simulate_click(github.center(), gpui::Modifiers::none());
