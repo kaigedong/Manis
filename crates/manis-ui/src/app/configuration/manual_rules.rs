@@ -485,47 +485,14 @@ impl ManisApp {
             cx.notify();
             return false;
         };
-        let store_snapshot = match mihomo::SubscriptionStoreSnapshot::capture(&store_dir) {
-            Ok(snapshot) => snapshot,
-            Err(_error) => {
-                language
-                    .message(Message::StoreTransactionUnavailable)
-                    .clone_into(&mut self.status);
-                cx.notify();
-                return false;
-            }
-        };
         let previous_order = self.rule_sources.group_order.clone();
         self.sync_routing_rule_group_order();
-        if mihomo::save_routing_rule_group_order_in(&store_dir, &self.rule_sources.group_order)
-            .is_err()
-        {
-            self.rule_sources.group_order = previous_order;
-            let _ = store_snapshot.restore(&store_dir);
-            language
-                .message(Message::RuleGroupOrderSaveFailed)
-                .clone_into(&mut self.status);
-            cx.notify();
-            return false;
-        }
-        if let Err(error) = crate::manual_rule::save_manual_rules_in(&store_dir, &self.manual_rules)
-        {
-            let _ = store_snapshot.clone().restore(&store_dir);
-            self.status = format!(
-                "{}{}",
-                language.message(Message::ManualRulesSaveFailed),
-                copy::configuration::manual_rule_store_error(language, error)
-            );
-            cx.notify();
-            return false;
-        }
         self.start_routing_runtime_apply(
             store_dir,
             completion,
             super::RoutingApplyRollback {
                 manual_rules: previous_rules,
                 group_order: previous_order,
-                store_snapshot,
             },
             cx,
         );
@@ -551,50 +518,41 @@ impl ManisApp {
         );
         let runtime = self.runtime.clone();
         let executor = cx.background_executor().clone();
-        let disk_rollback = rollback.clone();
+        let rules = self.manual_rules.clone();
+        let order = self.rule_sources.group_order.clone();
         cx.spawn(async move |this, cx| {
-            let (apply, rollback_error) = executor
+            let result = executor
                 .spawn(async move {
-                    let apply =
-                        SourceRuntimeApply::from_result(runtime.apply_saved_sources(&store_dir));
-                    let rollback_error = if apply.requires_source_rollback() {
-                        disk_rollback.store_snapshot.restore(&store_dir).err()
-                    } else {
-                        None
-                    };
-                    (apply, rollback_error)
+                    super::mutate_saved_sources(&runtime, &store_dir, |staged| {
+                        mihomo::save_routing_rule_group_order_in(staged, &order)?;
+                        crate::manual_rule::save_manual_rules_in(staged, &rules)
+                            .map_err(|_| SubscriptionStoreError::StoreUnavailable)
+                    })
                 })
                 .await;
             this.update(cx, |this, cx| {
                 this.routing_apply_state.finish();
-                if apply.requires_source_rollback() {
+                if !result.as_ref().is_ok_and(|transaction| transaction.value.is_some()) {
                     this.manual_rules = rollback.manual_rules;
                     this.rule_sources.group_order = rollback.group_order;
                 }
-                apply.reconcile_proxy_mode(&mut this.proxy_mode);
-                this.status = if let Some(rollback_error) = rollback_error {
-                    format!(
-                        "{}{} · {}{}",
-                        completion,
-                        apply.status_suffix(this.language()),
-                        this.language().localized(
-                            copy::configuration::COULD_NOT_RESTORE_THE_PREVIOUS_SAVED_RULES
-                        ),
-                        copy::configuration::subscription_store_error(
-                            this.language(),
-                            rollback_error,
-                        )
-                    )
-                } else {
-                    format!(
-                        "{}{}",
-                        completion,
-                        if apply.requires_source_rollback() {
-                            apply.status_suffix_after_source_rollback(this.language())
+                this.status = match result {
+                    Ok(transaction) => {
+                        transaction.apply.reconcile_proxy_mode(&mut this.proxy_mode);
+                        let suffix = if transaction.value.is_none() {
+                            transaction.apply.status_suffix_after_rollback_attempt(
+                                this.language(), transaction.rollback_error.as_ref(),
+                            )
                         } else {
-                            apply.status_suffix(this.language())
-                        }
-                    )
+                            transaction.apply.status_suffix(this.language())
+                        };
+                        format!("{completion}{suffix}")
+                    }
+                    Err(error) => format!(
+                        "{}{}",
+                        this.language().message(Message::ManualRulesSaveFailed),
+                        copy::configuration::subscription_store_error(this.language(), error),
+                    ),
                 };
                 cx.notify();
             })
@@ -633,27 +591,6 @@ impl ManisApp {
             self.rule_sources.group_order = previous;
             return;
         };
-        let store_snapshot = match mihomo::SubscriptionStoreSnapshot::capture(&store_dir) {
-            Ok(snapshot) => snapshot,
-            Err(_error) => {
-                self.rule_sources.group_order = previous;
-                self.language()
-                    .message(Message::StoreTransactionUnavailable)
-                    .clone_into(&mut self.status);
-                cx.notify();
-                return;
-            }
-        };
-        if mihomo::save_routing_rule_group_order_in(&store_dir, &self.rule_sources.group_order)
-            .is_err()
-        {
-            self.rule_sources.group_order = previous;
-            self.language()
-                .message(Message::RuleGroupOrderSaveFailed)
-                .clone_into(&mut self.status);
-            cx.notify();
-            return;
-        }
         let language = self.language();
         let completion = if direction < 0 {
             language.localized(copy::configuration::RULE_GROUP_MOVED_UP)
@@ -667,7 +604,6 @@ impl ManisApp {
             super::RoutingApplyRollback {
                 manual_rules: self.manual_rules.clone(),
                 group_order: previous,
-                store_snapshot,
             },
             cx,
         );

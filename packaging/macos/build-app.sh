@@ -92,7 +92,8 @@ compile_helper() {
   local output="$2"
   local combined="$BUILD_ROOT/$(basename "$source")"
   cat "$ROOT_DIR/packaging/macos/HelperSecurity.swift" \
-    "$ROOT_DIR/packaging/macos/MihomoReleaseVerifier.swift" "$source" > "$combined"
+    "$ROOT_DIR/packaging/macos/MihomoReleaseVerifier.swift" \
+    "$ROOT_DIR/packaging/macos/HelperProtocol.swift" "$source" > "$combined"
   swiftc ${HELPER_SWIFT_FLAGS[@]+"${HELPER_SWIFT_FLAGS[@]}"} \
     -framework CryptoKit -framework Foundation -framework ServiceManagement -framework Security \
     "$combined" -o "$output"

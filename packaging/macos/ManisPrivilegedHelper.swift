@@ -4,7 +4,6 @@ import Darwin
 import Security
 
 private let serviceName = "dev.manis.app.helper"
-private let helperProtocolVersion = "v7"
 private let requiredClientRequirement =
     ProcessInfo.processInfo.environment["MANIS_REQUIRED_CLIENT_REQUIREMENT"] ?? ""
 private let administratorInstall =
@@ -29,7 +28,7 @@ protocol ManisPrivilegedHelperProtocol {
         controller: String,
         withReply reply: @escaping (String, Int32) -> Void
     )
-    func stop(withReply reply: @escaping (String, Int32) -> Void)
+    func stop(expectedPid: pid_t, withReply reply: @escaping (String, Int32) -> Void)
     func stageCore(
         contents: Data,
         sha256: String,
@@ -90,8 +89,8 @@ final class HelperService: NSObject, ManisPrivilegedHelperProtocol {
         )
     }
 
-    func stop(withReply reply: @escaping (String, Int32) -> Void) {
-        core.stop(owner: clientUserIdentifier, withReply: reply)
+    func stop(expectedPid: pid_t, withReply reply: @escaping (String, Int32) -> Void) {
+        core.stop(owner: clientUserIdentifier, expectedPid: expectedPid, withReply: reply)
     }
 
     func stageCore(
@@ -115,14 +114,14 @@ final class HelperCore {
             reapExitedChild()
             if let process = child, process.isRunning {
                 guard childOwner == owner else {
-                    reply("stopped \(helperProtocolVersion) \(lastExitReason)", 0)
+                    reply("stopped \(manisHelperProtocolVersion) \(lastExitReason)", 0)
                     return
                 }
-                reply("running \(process.processIdentifier) \(helperProtocolVersion)", 0)
+                reply("running \(process.processIdentifier) \(manisHelperProtocolVersion)", 0)
             } else {
                 child = nil
                 childOwner = nil
-                reply("stopped \(helperProtocolVersion) \(lastExitReason)", 0)
+                reply("stopped \(manisHelperProtocolVersion) \(lastExitReason)", 0)
             }
         }
     }
@@ -199,11 +198,17 @@ final class HelperCore {
         }
     }
 
-    func stop(owner: uid_t, withReply reply: @escaping (String, Int32) -> Void) {
+    func stop(owner: uid_t, expectedPid: pid_t, withReply reply: @escaping (String, Int32) -> Void) {
         lock.withLock {
+            reapExitedChild()
             if let process = child, process.isRunning {
-                guard childOwner == owner else {
-                    reply("error Mihomo is owned by another user", 1)
+                if let error = validateMihomoStop(
+                    childOwner: childOwner,
+                    actualPid: process.processIdentifier,
+                    owner: owner,
+                    expectedPid: expectedPid
+                ) {
+                    reply("error \(error)", 1)
                     return
                 }
                 process.terminate()

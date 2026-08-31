@@ -58,6 +58,25 @@ for unsafe in ["identifier \"dev.manis.app.helperctl\"", pin("dev.manis.app.help
     malformed["MANIS_REQUIRED_CLIENT_REQUIREMENT"] = unsafe
     rejects("broad or foreign policy accepted") { _ = try ManisHelperSecurity.Approval(environment: malformed) }
 }
+check(manisHelperProtocolVersion == "v8", "helper protocol version not updated")
+check(
+    validateMihomoStop(childOwner: 501, actualPid: 42, owner: 501, expectedPid: 42) == nil,
+    "matching stop identity was rejected"
+)
+check(
+    validateMihomoStop(childOwner: 501, actualPid: 43, owner: 501, expectedPid: 42)?
+        .contains("pid mismatch") == true,
+    "mismatched stop pid was accepted"
+)
+check(
+    validateMihomoStop(childOwner: 502, actualPid: 42, owner: 501, expectedPid: 42)?
+        .contains("another user") == true,
+    "foreign stop owner was accepted"
+)
+check(
+    validateMihomoStop(childOwner: nil, actualPid: nil, owner: 501, expectedPid: 42) == nil,
+    "stopping an already-stopped helper should remain idempotent"
+)
 var rootUser = environment
 rootUser["MANIS_LOCAL_ALLOWED_UID"] = "0"
 rejects("root UID accepted for a client approval") { _ = try ManisHelperSecurity.Approval(environment: rootUser) }

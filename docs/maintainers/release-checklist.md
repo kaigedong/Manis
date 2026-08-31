@@ -36,7 +36,7 @@ the remaining checklist.
 
 - [ ] The app, helper controller, privileged helper, and local installer use the intended bundle
   identifiers and signing mode.
-- [ ] GitHub ad-hoc builds install protocol v7 through administrator approval, pin exact
+- [ ] GitHub ad-hoc builds install protocol v8 through administrator approval, pin exact
   `Manis.app`, `manis-helperctl`, and privileged-helper cdhash requirements plus the invoking UID,
   and require reapproval after an app version change.
 - [ ] Developer ID or Apple Development builds, when used, register through `SMAppService` and pin

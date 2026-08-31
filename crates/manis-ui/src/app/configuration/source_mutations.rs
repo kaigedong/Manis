@@ -333,8 +333,8 @@ impl ManisApp {
         cx.spawn(async move |this, cx| {
             let result = executor
                 .spawn(async move {
-                    super::mutate_saved_sources(&runtime, &store_dir, || {
-                        mihomo::remove_qx_rule_source_in(&store_dir, &id).map(|()| id.clone())
+                    super::mutate_saved_sources(&runtime, &store_dir, |store_dir| {
+                        mihomo::remove_qx_rule_source_in(store_dir, &id).map(|()| id.clone())
                     })
                 })
                 .await;
@@ -375,7 +375,7 @@ impl ManisApp {
                                 .localized(copy::configuration::REMOTE_QX_RULE_REMOVAL_FAILED),
                             transaction
                                 .apply
-                                .status_suffix_after_source_rollback(this.language())
+                                .status_suffix_after_rollback_attempt(this.language(), transaction.rollback_error.as_ref())
                         );
                     }
                     Err(error) => {
@@ -416,8 +416,8 @@ impl ManisApp {
         let previous_state = source.state;
         let previous_enabled = source.enabled;
         let kind = super::source_kind(&source.source);
-        self.subscription_preview_generation = self.subscription_preview_generation.wrapping_add(1);
-        let generation = self.subscription_preview_generation;
+        self.subscription_action_generation = self.subscription_action_generation.wrapping_add(1);
+        let generation = self.subscription_action_generation;
         source.generation = generation;
         source.state = ImportedSubscriptionState::Refreshing(kind);
         let completion = SubscriptionToggleCompletion {
@@ -436,8 +436,8 @@ impl ManisApp {
         cx.spawn(async move |this, cx| {
             let result = executor
                 .spawn(async move {
-                    super::mutate_saved_sources(&runtime, &store_dir, || {
-                        mihomo::update_subscription_source_enabled_in(&store_dir, &task_id, enabled)
+                    super::mutate_saved_sources(&runtime, &store_dir, |store_dir| {
+                        mihomo::update_subscription_source_enabled_in(store_dir, &task_id, enabled)
                     })
                 })
                 .await;
@@ -496,7 +496,7 @@ impl ManisApp {
                     language.localized(copy::configuration::FAILED_TO_CHANGE_SUBSCRIPTION_STATE),
                     transaction
                         .apply
-                        .status_suffix_after_source_rollback(language)
+                        .status_suffix_after_rollback_attempt(language, transaction.rollback_error.as_ref())
                 );
                 false
             }
@@ -541,8 +541,8 @@ impl ManisApp {
         cx.spawn(async move |this, cx| {
             let result = executor
                 .spawn(async move {
-                    super::mutate_saved_sources(&runtime, &store_dir, || {
-                        mihomo::update_qx_rule_source_enabled_in(&store_dir, &task_id, enabled)
+                    super::mutate_saved_sources(&runtime, &store_dir, |store_dir| {
+                        mihomo::update_qx_rule_source_enabled_in(store_dir, &task_id, enabled)
                     })
                 })
                 .await;
@@ -582,7 +582,7 @@ impl ManisApp {
                                 .localized(copy::configuration::FAILED_TO_CHANGE_RULE_SOURCE_STATE),
                             transaction
                                 .apply
-                                .status_suffix_after_source_rollback(this.language())
+                                .status_suffix_after_rollback_attempt(this.language(), transaction.rollback_error.as_ref())
                         );
                     }
                     Err(error) => {
@@ -647,8 +647,8 @@ impl ManisApp {
         cx.spawn(async move |this, cx| {
             let result = executor
                 .spawn(async move {
-                    super::mutate_saved_sources(&runtime, &store_dir, || {
-                        mihomo::update_qx_rule_source_target_in(&store_dir, &task_id, &target)
+                    super::mutate_saved_sources(&runtime, &store_dir, |store_dir| {
+                        mihomo::update_qx_rule_source_target_in(store_dir, &task_id, &target)
                     })
                 })
                 .await;
@@ -683,7 +683,7 @@ impl ManisApp {
                         .localized(copy::configuration::FAILED_TO_SAVE_RULE_SOURCE_POLICY),
                     transaction
                         .apply
-                        .status_suffix_after_source_rollback(self.language())
+                        .status_suffix_after_rollback_attempt(self.language(), transaction.rollback_error.as_ref())
                 );
             }
             Err(error) => {
@@ -770,9 +770,9 @@ impl ManisApp {
                     if parsed.rules.is_empty() {
                         return Err(ImportQxRuleError::InvalidDocument);
                     }
-                    let transaction = super::mutate_saved_sources(&runtime, &store_dir, || {
+                    let transaction = super::mutate_saved_sources(&runtime, &store_dir, |store_dir| {
                         mihomo::replace_qx_rule_source_content_in(
-                            &store_dir,
+                            store_dir,
                             &task_id,
                             &content,
                             mihomo::current_unix_secs(),
@@ -825,7 +825,7 @@ impl ManisApp {
                         .localized(copy::configuration::REMOTE_QX_RULE_UPDATE_FAILED),
                     transaction
                         .apply
-                        .status_suffix_after_source_rollback(self.language())
+                        .status_suffix_after_rollback_attempt(self.language(), transaction.rollback_error.as_ref())
                 );
             }
         }

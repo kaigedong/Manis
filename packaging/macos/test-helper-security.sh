@@ -9,9 +9,22 @@ for mode in administrator signed; do
   flags=()
   if [[ "$mode" == administrator ]]; then flags=(-D MANIS_ADMINISTRATOR_HELPER); fi
   for source in manis-helperctl ManisPrivilegedHelper manis-local-helper-install; do
-    cat "$ROOT/HelperSecurity.swift" "$ROOT/MihomoReleaseVerifier.swift" "$ROOT/$source.swift" > "$WORK/$source.swift"
+    if [[ "$source" == manis-helperctl || "$source" == ManisPrivilegedHelper ]]; then
+      cat "$ROOT/HelperSecurity.swift" "$ROOT/MihomoReleaseVerifier.swift" \
+        "$ROOT/HelperProtocol.swift" "$ROOT/$source.swift" > "$WORK/$source.swift"
+    else
+      cat "$ROOT/HelperSecurity.swift" "$ROOT/MihomoReleaseVerifier.swift" \
+        "$ROOT/$source.swift" > "$WORK/$source.swift"
+    fi
     swiftc ${flags[@]+"${flags[@]}"} "$WORK/$source.swift" -o "$WORK/$source-$mode"
   done
+done
+
+for mode in administrator signed; do
+  if "$WORK/manis-helperctl-$mode" stop > "$WORK/stop-bare-$mode.log" 2>&1; then
+    echo "helperctl accepted an unqualified stop in $mode mode" >&2; exit 1
+  fi
+  grep -q 'manis-helperctl stop --pid PID' "$WORK/stop-bare-$mode.log"
 done
 
 # No helper is installed and no administrator prompt is invoked by this test.
@@ -64,7 +77,7 @@ with gzip.open(sys.argv[1], 'wb') as archive:
     for _ in range(129):
         archive.write(chunk)
 PY
-cat "$ROOT/HelperSecurity.swift" "$ROOT/MihomoReleaseVerifier.swift" \
+cat "$ROOT/HelperSecurity.swift" "$ROOT/MihomoReleaseVerifier.swift" "$ROOT/HelperProtocol.swift" \
   "$ROOT/tests/HelperSecurityTests.swift" > "$WORK/tests.swift"
 swiftc "$WORK/tests.swift" -o "$WORK/tests"
 "$WORK/tests" "$WORK"

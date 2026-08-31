@@ -54,7 +54,7 @@ pub(crate) use routing_order::{
     load_routing_rule_group_order_in, move_routing_rule_group, normalized_routing_rule_group_order,
     save_routing_rule_group_order_in,
 };
-pub(crate) use store_snapshot::SubscriptionStoreSnapshot;
+pub(crate) use store_snapshot::{SourceStoreTransaction, SubscriptionStoreSnapshot};
 pub(crate) use workspace::*;
 use workspace::{
     apply_qx_rule_sources, decode_hex, next_stored_source_id, profile_mode, valid_stored_id,

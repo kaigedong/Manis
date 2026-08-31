@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{path::Path, sync::Mutex};
 
 use super::{
     GeneratedProfileApply, KernelRuntime, Language, LogLevel, Message, ProxyMode,
@@ -16,7 +16,6 @@ pub(super) enum SourceRuntimeApply {
 pub(super) struct RoutingApplyRollback {
     pub(super) manual_rules: Vec<crate::manual_rule::ManualRule>,
     pub(super) group_order: Vec<String>,
-    pub(super) store_snapshot: mihomo::SubscriptionStoreSnapshot,
 }
 
 pub(super) struct SourceMutation<T> {
@@ -28,13 +27,39 @@ pub(super) struct SourceMutation<T> {
 pub(super) fn mutate_saved_sources<T>(
     runtime: &KernelRuntime,
     store_dir: &Path,
-    mutation: impl FnOnce() -> Result<T, SubscriptionStoreError>,
+    mutation: impl FnOnce(&Path) -> Result<T, SubscriptionStoreError>,
 ) -> Result<SourceMutation<T>, SubscriptionStoreError> {
-    let snapshot = mihomo::SubscriptionStoreSnapshot::capture(store_dir)?;
-    let value = mutation()?;
-    let apply = SourceRuntimeApply::from_result(runtime.apply_saved_sources(store_dir));
+    mutate_saved_sources_with_apply(store_dir, mutation, || {
+        SourceRuntimeApply::from_result(runtime.apply_saved_sources(store_dir))
+    })
+}
+
+// This lock spans staging, installation, runtime activation and rollback, not
+// just the runtime call. UI preference writes remain independent and are never
+// restored by a source transaction.
+static SOURCE_TRANSACTION_LOCK: Mutex<()> = Mutex::new(());
+
+pub(super) fn mutate_saved_sources_with_apply<T>(
+    store_dir: &Path,
+    mutation: impl FnOnce(&Path) -> Result<T, SubscriptionStoreError>,
+    apply: impl FnOnce() -> SourceRuntimeApply,
+) -> Result<SourceMutation<T>, SubscriptionStoreError> {
+    let _guard = SOURCE_TRANSACTION_LOCK
+        .lock()
+        .map_err(|_| SubscriptionStoreError::StoreUnavailable)?;
+    let transaction = mihomo::SourceStoreTransaction::begin(store_dir)?;
+    let value = mutation(transaction.directory())?;
+    let mut changes = transaction.changes()?;
+    if let Err(error) = changes.install(store_dir) {
+        return Ok(SourceMutation {
+            value: None,
+            apply: SourceRuntimeApply::Failed(error.to_string()),
+            rollback_error: changes.rollback(store_dir).err(),
+        });
+    }
+    let apply = apply();
     if apply.requires_source_rollback() {
-        let rollback_error = snapshot.restore(store_dir).err();
+        let rollback_error = changes.rollback(store_dir).err();
         return Ok(SourceMutation {
             value: None,
             apply,
@@ -93,7 +118,11 @@ impl SourceRuntimeApply {
         language: Language,
         rollback_error: Option<&SubscriptionStoreError>,
     ) -> String {
-        let mut status = self.status_suffix_after_source_rollback(language);
+        let mut status = if rollback_error.is_some() {
+            self.status_suffix(language)
+        } else {
+            self.status_suffix_after_source_rollback(language)
+        };
         if let Some(error) = rollback_error {
             status.push_str(language.message(Message::StoreRollbackFailed));
             status.push_str(copy::configuration::subscription_store_error(
@@ -185,5 +214,105 @@ mod tests {
 
         assert!(apply.reconcile_proxy_mode(&mut mode));
         assert_eq!(mode, ProxyMode::Off);
+    }
+}
+
+#[cfg(all(test, not(windows)))]
+mod source_transaction_tests {
+    use super::*;
+    use crate::localization::{LanguagePreference, save_language_preference_in};
+    use std::{fs, sync::mpsc, time::Duration};
+
+    fn store(name: &str) -> std::path::PathBuf {
+        std::env::temp_dir()
+            .join(format!(
+                "manis-{name}-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ))
+            .join("subscriptions")
+    }
+
+    #[test]
+    fn failed_multistep_mutation_leaves_no_partial_subscription() {
+        let store = store("partial-mutation");
+        let runtime = crate::app::ManisApp::with_fixture_controller("http://127.0.0.1:1").runtime;
+        let result: Result<SourceMutation<()>, SubscriptionStoreError> =
+            mutate_saved_sources(&runtime, &store, |store| {
+                mihomo::save_imported_subscription_in(
+                    store,
+                    "https://example.invalid/subscription",
+                )?;
+                Err(SubscriptionStoreError::StoreUnavailable)
+            });
+        assert!(result.is_err());
+        let remaining = mihomo::load_subscription_sources_in(&store).unwrap();
+        if let Some(parent) = store.parent() {
+            let _ = fs::remove_dir_all(parent);
+        }
+        assert!(remaining.is_empty(), "failed mutation left a saved source");
+    }
+
+    #[test]
+    fn failed_apply_preserves_an_independent_language_save() {
+        let store = store("concurrent-language");
+        save_language_preference_in(&store, LanguagePreference::SimplifiedChinese).unwrap();
+        let runtime = crate::app::ManisApp::with_fixture_controller("http://127.0.0.1:1").runtime;
+        let (ready_tx, ready_rx) = mpsc::channel();
+        let (resume_tx, resume_rx) = mpsc::channel();
+        let transaction_store = store.clone();
+        let writer = std::thread::spawn(move || {
+            mutate_saved_sources(&runtime, &transaction_store, |staged| {
+                let source = mihomo::save_imported_subscription_in(
+                    staged,
+                    "https://example.invalid/subscription",
+                )?;
+                ready_tx.send(()).unwrap();
+                resume_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+                Ok(source)
+            })
+        });
+        ready_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        save_language_preference_in(&store, LanguagePreference::English).unwrap();
+        resume_tx.send(()).unwrap();
+        let result = writer.join().unwrap().unwrap();
+        assert!(result.apply.requires_source_rollback());
+        let actual = fs::read_to_string(store.join("language.preference")).unwrap();
+        fs::remove_dir_all(store.parent().unwrap()).unwrap();
+        assert_eq!(
+            actual, "en\n",
+            "rollback overwrote a successfully saved preference"
+        );
+    }
+    #[test]
+    fn failed_apply_reports_a_rollback_conflict_without_overwriting_newer_data() {
+        let store = store("apply-rollback-conflict");
+        manis_profile::write_private_atomic(&store, "source.state", b"before").unwrap();
+        let result = mutate_saved_sources_with_apply(
+            &store,
+            |staged| {
+                manis_profile::write_private_atomic(staged, "source.state", b"candidate")
+                    .map(|_| ())
+                    .map_err(|_| SubscriptionStoreError::StoreUnavailable)
+            },
+            || {
+                manis_profile::write_private_atomic(&store, "source.state", b"later save").unwrap();
+                SourceRuntimeApply::Failed("injected apply failure".to_owned())
+            },
+        )
+        .unwrap();
+        assert!(result.value.is_none());
+        assert!(result.rollback_error.is_some());
+        let status = result.apply.status_suffix_after_rollback_attempt(
+            Language::English,
+            result.rollback_error.as_ref(),
+        );
+        assert!(status.contains(Language::English.message(Message::StoreRollbackFailed)));
+        assert!(!status.contains(Language::English.message(Message::ChangesFailedAndRestored)));
+        assert_eq!(fs::read(store.join("source.state")).unwrap(), b"later save");
+        fs::remove_dir_all(store.parent().unwrap()).unwrap();
     }
 }
