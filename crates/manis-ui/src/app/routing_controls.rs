@@ -1,3 +1,21 @@
+use super::{
+    ControllerReadiness, ManagedPolicyRuntimeState, ManisApp, PolicySelectionRequest,
+    PreferencePersistence, ProxyModeBlock, RoutingModeApplyResult, TunSupport,
+    apply_proxy_mode_transition, controller_state_label, policy_target_is_selectable,
+    proxy_mode_block, proxy_mode_label, routing_mode_label,
+};
+use crate::{
+    diagnostics::{LogLevel, UiEvent, begin_operation, record_operation, trace_ui},
+    localization::copy,
+    mihomo::{self, ControllerRuntime, ControllerState},
+    system_proxy::ProxyPorts,
+};
+use gpui::Context;
+use manis_core::{
+    ManagedPolicyStrategy, NodeIdentity, PolicyGroupId, ProxyId, ProxyMode, RoutingMode,
+};
+use std::collections::BTreeSet;
+
 impl ManisApp {
     /// Reports why the requested proxy mode cannot be applied right now.
     ///
@@ -39,7 +57,7 @@ impl ManisApp {
         self.apply_proxy_mode(self.proxy_mode.toggled(selected), cx);
     }
 
-    fn apply_proxy_mode(&mut self, requested: ProxyMode, cx: &mut Context<Self>) {
+    pub(super) fn apply_proxy_mode(&mut self, requested: ProxyMode, cx: &mut Context<Self>) {
         if self.configuration_transfer.active {
             return;
         }
@@ -219,7 +237,7 @@ impl ManisApp {
         cx.notify();
     }
 
-    fn apply_routing_mode(&mut self, requested: RoutingMode, cx: &mut Context<Self>) {
+    pub(super) fn apply_routing_mode(&mut self, requested: RoutingMode, cx: &mut Context<Self>) {
         if self.configuration_transfer.active {
             return;
         }
@@ -288,10 +306,14 @@ impl ManisApp {
             let result = executor
                 .spawn(async move {
                     runtime.set_routing_mode(requested)?;
-                    let persistence = store_dir
-                        .as_deref()
-                        .map(|directory| mihomo::save_routing_mode_in(directory, requested))
-                        .transpose();
+                    let persistence = match store_dir.as_deref() {
+                        Some(directory) => match mihomo::save_routing_mode_in(directory, requested)
+                        {
+                            Ok(()) => PreferencePersistence::Saved,
+                            Err(error) => PreferencePersistence::Failed(error),
+                        },
+                        None => PreferencePersistence::Skipped,
+                    };
                     Ok::<_, mihomo::LoadError>(persistence)
                 })
                 .await;
@@ -304,7 +326,7 @@ impl ManisApp {
         cx.notify();
     }
 
-    fn finish_routing_mode_change(
+    pub(super) fn finish_routing_mode_change(
         &mut self,
         requested: RoutingMode,
         operation: u64,
@@ -319,7 +341,10 @@ impl ManisApp {
                     operation,
                     LogLevel::Info,
                     "routing.mode.succeeded",
-                    format!("active={requested:?} persisted={}", persistence.is_ok()),
+                    format!(
+                        "active={requested:?} persisted={}",
+                        !matches!(persistence, PreferencePersistence::Failed(_))
+                    ),
                 );
                 self.routing_mode = requested;
                 self.proxy_runtime.mode = requested;
@@ -339,7 +364,7 @@ impl ManisApp {
                         language.localized(copy::app::ENABLED)
                     ),
                 };
-                if persistence.is_err() {
+                if let PreferencePersistence::Failed(_error) = persistence {
                     self.status.push_str(
                         language.localized(copy::app::RESTART_PREFERENCE_COULD_NOT_BE_SAVED),
                     );
@@ -362,7 +387,7 @@ impl ManisApp {
         cx.notify();
     }
 
-    fn select_global_node(&mut self, selected: NodeIdentity, cx: &mut Context<Self>) {
+    pub(super) fn select_global_node(&mut self, selected: NodeIdentity, cx: &mut Context<Self>) {
         if self.configuration_transfer.active {
             return;
         }
@@ -492,7 +517,11 @@ impl ManisApp {
         cx.notify();
     }
 
-    fn select_policy_node(&mut self, request: PolicySelectionRequest, cx: &mut Context<Self>) {
+    pub(super) fn select_policy_node(
+        &mut self,
+        request: PolicySelectionRequest,
+        cx: &mut Context<Self>,
+    ) {
         if self.configuration_transfer.active {
             return;
         }
@@ -525,7 +554,11 @@ impl ManisApp {
         let can_apply_now = matches!(self.controller, ControllerState::Connected { .. })
             && matches!(&*self.runtime, ControllerRuntime::Managed { .. });
         if !can_apply_now {
-            self.status = copy::app::deferred_policy_selection(language, &group_name, Self::policy_candidate_display_name(&node_name));
+            self.status = copy::app::deferred_policy_selection(
+                language,
+                &group_name,
+                Self::policy_candidate_display_name(&node_name),
+            );
             cx.notify();
             return;
         }
@@ -562,7 +595,11 @@ impl ManisApp {
             }
         }
         self.policy_selection_busy = Some(node_name.clone());
-        self.status = copy::app::setting_policy_node(language, &group_name, Self::policy_candidate_display_name(&node_name));
+        self.status = copy::app::setting_policy_node(
+            language,
+            &group_name,
+            Self::policy_candidate_display_name(&node_name),
+        );
         let completion = PolicySelectionRequest {
             group_id,
             group_name: group_name.clone(),
@@ -784,8 +821,11 @@ impl ManisApp {
                     "policy.node.succeeded",
                     format!("group={group_name}"),
                 );
-                self.status =
-                    copy::app::policy_selection_applied(self.language(), &group_name, Self::policy_candidate_display_name(&current));
+                self.status = copy::app::policy_selection_applied(
+                    self.language(),
+                    &group_name,
+                    Self::policy_candidate_display_name(&current),
+                );
             }
             Err(error) => {
                 record_operation(
@@ -805,17 +845,17 @@ impl ManisApp {
         cx.notify();
     }
 
-    fn global_target_identity(&self) -> Option<&NodeIdentity> {
+    pub(super) fn global_target_identity(&self) -> Option<&NodeIdentity> {
         self.managed_policies.node_selections.global()
     }
 
-    fn global_target(&self) -> Option<&str> {
+    pub(super) fn global_target(&self) -> Option<&str> {
         self.global_target_identity()
             .map(|identity| identity.node_name.as_str())
             .or_else(|| self.runtime_global_target())
     }
 
-    fn runtime_global_target(&self) -> Option<&str> {
+    pub(super) fn runtime_global_target(&self) -> Option<&str> {
         self.policy_groups()
             .find(|group| group.name.eq_ignore_ascii_case("GLOBAL"))
             .map(|group| group.target.as_str())

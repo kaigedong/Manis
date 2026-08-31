@@ -1,5 +1,38 @@
+use super::{
+    GroupBenchmarkNodeState, GroupBenchmarkState, ManisApp, OfflinePolicyCardView,
+    PolicyListCardView, PolicyNodeRowContext, PolicySelectionRequest, compact_proxy_mode_label,
+    controller_status_label, policy_kind_label, policy_presentation::PolicyGroupIconView,
+    proxy_mode_label, routing_mode_label, status_bar_values,
+};
+use crate::{
+    assets, brand,
+    components::{ActionRole, StatusTone, action_button, empty_state, page_heading, status_badge},
+    diagnostics::{UiEvent, trace_ui},
+    localization::{CountNoun, Language, Message, copy},
+    mihomo::{ControllerState, LiveStreamPhase},
+    theme::{ControlSize, LayoutMetric, Radius, Space, TextRole, Theme},
+};
+use gpui::{
+    AnyElement, Context, Div, ParentElement, Role, Stateful, Styled, Toggled, div, img, prelude::*,
+    px,
+};
+use gpui_component::{
+    Disableable, IconName, Selectable, Sizable,
+    button::{Button, ButtonGroup, ButtonVariant, ButtonVariants},
+    status_bar::StatusBar,
+};
+use manis_core::{
+    ManagedPolicyGroup, ManagedPolicyIcon, ManagedPolicyStrategy, PolicyGroup, PolicyGroupId,
+    PolicyNode, PrimaryWorkspace, ProxyMode, RoutingMode, WindowSizeClass,
+};
+
 impl ManisApp {
-    fn chrome(&self, theme: Theme, size_class: WindowSizeClass, cx: &mut Context<Self>) -> Div {
+    pub(super) fn chrome(
+        &self,
+        theme: Theme,
+        size_class: WindowSizeClass,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let compact = size_class == WindowSizeClass::Compact;
         div()
             .h(ControlSize::Standard.height() + Space::Md.px())
@@ -190,7 +223,10 @@ impl ManisApp {
             )
             .accessibility_label(language.localized(copy::app::CHANGE_ROUTING_MODE))
             .loading(self.routing_mode_busy.is_some())
-            .when(self.routing_mode_busy.is_some(), gpui::Styled::cursor_default)
+            .when(
+                self.routing_mode_busy.is_some(),
+                gpui::Styled::cursor_default,
+            )
             .when(self.routing_mode_busy.is_none(), |button| {
                 button.icon(IconName::Redo2)
             })
@@ -254,7 +290,12 @@ impl ManisApp {
             .into_any_element()
     }
 
-    fn navigation(&self, theme: Theme, size_class: WindowSizeClass, cx: &mut Context<Self>) -> Div {
+    pub(super) fn navigation(
+        &self,
+        theme: Theme,
+        size_class: WindowSizeClass,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let language = self.language();
         let entries = [
             (
@@ -318,19 +359,21 @@ impl ManisApp {
                     .text_size(TextRole::Label.size())
                     .line_height(TextRole::Label.line_height())
                     .when(!show_labels, |row| {
-                        row.justify_center()
-                            .px_0()
-                            .tooltip(move |window, cx| {
-                                gpui_component::tooltip::Tooltip::new(label).build(window, cx)
-                            })
+                        row.justify_center().px_0().tooltip(move |window, cx| {
+                            gpui_component::tooltip::Tooltip::new(label).build(window, cx)
+                        })
                     })
                     .when(selected, |row| {
                         row.bg(theme.action_soft).text_color(theme.action_primary)
                     })
                     .when(!selected, |row| row.text_color(theme.text_secondary))
                     .hover(move |row| {
-                        row.bg(if selected { theme.action_soft } else { theme.surface_high })
-                            .text_color(theme.text_primary)
+                        row.bg(if selected {
+                            theme.action_soft
+                        } else {
+                            theme.surface_high
+                        })
+                        .text_color(theme.text_primary)
                     })
                     .border_1()
                     .border_color(gpui::rgba(0x0000_0000))
@@ -378,7 +421,12 @@ impl ManisApp {
         cx.notify();
     }
 
-    fn policy_section(&self, theme: Theme, compact: bool, cx: &mut Context<Self>) -> Stateful<Div> {
+    pub(super) fn policy_section(
+        &self,
+        theme: Theme,
+        compact: bool,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
         let language = self.language();
         let mut rows = div().flex_shrink_0().flex().flex_col().gap(Space::Sm.px());
         let policy_count;
@@ -417,9 +465,10 @@ impl ManisApp {
                         copy::app::ROUTING_RULES_CHOOSE_POLICY_GROUPS_POLICIES_CHOOSE_EXITS,
                     ),
                 ),
-                Some(Self::managed_policy_add_button(
-                    "add-policy-group-header", language, theme, cx,
-                ).into_any_element()),
+                Some(
+                    Self::managed_policy_add_button("add-policy-group-header", language, theme, cx)
+                        .into_any_element(),
+                ),
                 theme,
             ))
             .child(rows)
@@ -452,7 +501,10 @@ impl ManisApp {
         empty_state(title, description, None, theme)
     }
 
-    fn offline_policy_card_view(&self, policy: ManagedPolicyGroup) -> OfflinePolicyCardView {
+    pub(super) fn offline_policy_card_view(
+        &self,
+        policy: ManagedPolicyGroup,
+    ) -> OfflinePolicyCardView {
         let policy_group_id = PolicyGroupId::new(policy.id.clone());
         OfflinePolicyCardView {
             candidates: self.managed_policy_candidate_nodes(&policy),
@@ -533,7 +585,11 @@ impl ManisApp {
             ))
             .child(Self::offline_policy_identity(view, language, theme))
             .child(Self::policy_settings_button(
-                &view.policy.id, Some(view.policy.id.clone()), language, theme, cx,
+                &view.policy.id,
+                Some(view.policy.id.clone()),
+                language,
+                theme,
+                cx,
             ))
             .child(Self::offline_policy_summary(
                 candidate_count,
@@ -714,7 +770,7 @@ impl ManisApp {
         }))
     }
 
-    fn policy_list_card_view(&self, item: PolicyGroup) -> PolicyListCardView {
+    pub(super) fn policy_list_card_view(&self, item: PolicyGroup) -> PolicyListCardView {
         let benchmark_key = Self::policy_group_benchmark_key(&item.id);
         let editable_group_id = self.editable_policy_group_id(&item.name).map(str::to_owned);
         let expanded = self.expanded_policy_group.as_ref().is_some_and(|expanded| {
@@ -871,7 +927,11 @@ impl ManisApp {
             ))
             .child(Self::policy_list_identity(&view.item, language, theme))
             .child(Self::policy_settings_button(
-                view.item.id.as_str(), view.editable_group_id.clone(), language, theme, cx,
+                view.item.id.as_str(),
+                view.editable_group_id.clone(),
+                language,
+                theme,
+                cx,
             ))
             .child(Self::policy_list_summary(
                 view.item.nodes.len(),
@@ -980,7 +1040,7 @@ impl ManisApp {
         }))
     }
 
-    fn connection_button(&self, _theme: Theme, cx: &mut Context<Self>) -> Button {
+    pub(super) fn connection_button(&self, _theme: Theme, cx: &mut Context<Self>) -> Button {
         let connecting = matches!(self.controller, ControllerState::Connecting { .. });
         let language = self.language();
         action_button(
@@ -1018,14 +1078,10 @@ impl ManisApp {
             language,
             theme,
         } = context;
-        let PolicySelectionRequest {
-            group_id: policy_id,
-            group_name: policy_name,
-            node_id,
-            node_name,
-        } = selection;
         let detail = if item.name == manis_profile::MANIS_GLOBAL_GROUP_NAME {
-            language.localized(copy::nodes::FOLLOW_HOME_SELECTION).to_owned()
+            language
+                .localized(copy::nodes::FOLLOW_HOME_SELECTION)
+                .to_owned()
         } else if item.detail.trim().is_empty() {
             language.localized(copy::app::UNKNOWN_TYPE).to_owned()
         } else {
@@ -1034,7 +1090,11 @@ impl ManisApp {
         let idle_latency = item
             .latency_ms
             .map_or_else(|| "—".to_owned(), |latency| format!("{latency} ms"));
-        let spinner_id = format!("policy-node-{}-{}-latency", policy_id.as_str(), item.id.as_str());
+        let spinner_id = format!(
+            "policy-node-{}-{}-latency",
+            selection.group_id.as_str(),
+            item.id.as_str()
+        );
         let description = Self::policy_node_description(
             Self::policy_candidate_display_name(&item.name).to_owned(),
             detail,
@@ -1045,7 +1105,11 @@ impl ManisApp {
         );
         let source = Self::policy_node_source(source, current, manually_selectable, theme);
         div()
-            .id(format!("policy-node-{}-{}", policy_id.as_str(), item.id.as_str()))
+            .id(format!(
+                "policy-node-{}-{}",
+                selection.group_id.as_str(),
+                item.id.as_str()
+            ))
             .tab_stop(manually_selectable && !selection_busy)
             .min_h(px(64.0))
             .px(Space::Md.px())
@@ -1079,30 +1143,28 @@ impl ManisApp {
                     )),
             )
             .when(manually_selectable, |row| {
-                row.hover(move |row| row.bg(if current { theme.action_soft } else { theme.surface_low }))
-                    .focus_visible(move |row| row.border_1().border_color(theme.focus_ring))
-                    .role(Role::RadioButton)
-                    .aria_toggled(if current {
-                        Toggled::True
+                row.hover(move |row| {
+                    row.bg(if current {
+                        theme.action_soft
                     } else {
-                        Toggled::False
+                        theme.surface_low
                     })
-                    .focusable()
-                    .map(crate::components::primary_button_interaction)
-                    .cursor_pointer()
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if !selection_busy {
-                            this.select_policy_node(
-                                PolicySelectionRequest {
-                                    group_id: policy_id.clone(),
-                                    group_name: policy_name.clone(),
-                                    node_id: node_id.clone(),
-                                    node_name: node_name.clone(),
-                                },
-                                cx,
-                            );
-                        }
-                    }))
+                })
+                .focus_visible(move |row| row.border_1().border_color(theme.focus_ring))
+                .role(Role::RadioButton)
+                .aria_toggled(if current {
+                    Toggled::True
+                } else {
+                    Toggled::False
+                })
+                .focusable()
+                .map(crate::components::primary_button_interaction)
+                .cursor_pointer()
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if !selection_busy {
+                        this.select_policy_node(selection.clone(), cx);
+                    }
+                }))
             })
     }
 
@@ -1156,7 +1218,14 @@ impl ManisApp {
                     } else {
                         theme.text_secondary
                     })
-                    .child(div().min_w(px(0.0)).overflow_x_hidden().whitespace_nowrap().text_ellipsis().child(name))
+                    .child(
+                        div()
+                            .min_w(px(0.0))
+                            .overflow_x_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .child(name),
+                    )
                     .when(current, |name| {
                         name.child(div().flex_shrink_0().child(status_badge(
                             language.localized(copy::app::CURRENT),
@@ -1175,7 +1244,7 @@ impl ManisApp {
             )
     }
 
-    fn editable_policy_group_id(&self, policy_name: &str) -> Option<&str> {
+    pub(super) fn editable_policy_group_id(&self, policy_name: &str) -> Option<&str> {
         self.managed_policies
             .groups
             .iter()
@@ -1214,7 +1283,7 @@ impl ManisApp {
             )
     }
 
-    fn live_status_issue(&self) -> Option<String> {
+    pub(super) fn live_status_issue(&self) -> Option<String> {
         if !matches!(self.controller, ControllerState::Connected { .. }) {
             return None;
         }
@@ -1250,7 +1319,7 @@ impl ManisApp {
         (!issues.is_empty()).then(|| issues.join(" · "))
     }
 
-    fn status_bar(&self, theme: Theme, size_class: WindowSizeClass) -> StatusBar {
+    pub(super) fn status_bar(&self, theme: Theme, size_class: WindowSizeClass) -> StatusBar {
         let compact = size_class == WindowSizeClass::Compact;
         let language = self.language();
         let kernel_name = self.runtime.kind().display_name();
@@ -1276,18 +1345,22 @@ impl ManisApp {
                     .gap(Space::Sm.px())
                     .flex_none()
                     .child(div().size(px(8.0)).rounded_full().bg(values.dot))
-                    .when(!compact || issue.is_none(), |identity| identity.child(status_badge(source, values.tone, theme))),
+                    .when(!compact || issue.is_none(), |identity| {
+                        identity.child(status_badge(source, values.tone, theme))
+                    }),
             )
-            .when(issue.is_none(), |left| left.child(
-                div()
-                    .min_w_0()
-                    .truncate()
-                    .text_size(TextRole::Data.size())
-                    .line_height(TextRole::Data.line_height())
-                    .font_weight(TextRole::Data.weight())
-                    .text_color(theme.text_secondary)
-                    .child(values.endpoint),
-            ))
+            .when(issue.is_none(), |left| {
+                left.child(
+                    div()
+                        .min_w_0()
+                        .truncate()
+                        .text_size(TextRole::Data.size())
+                        .line_height(TextRole::Data.line_height())
+                        .font_weight(TextRole::Data.weight())
+                        .text_color(theme.text_secondary)
+                        .child(values.endpoint),
+                )
+            })
             .child(
                 div()
                     .id("runtime-status-message")
@@ -1297,8 +1370,14 @@ impl ManisApp {
                     .truncate()
                     .text_size(TextRole::Metadata.size())
                     .line_height(TextRole::Metadata.line_height())
-                    .text_color(if issue.is_some() { theme.status_warning } else { theme.text_tertiary })
-                    .tooltip(move |window, cx| gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx))
+                    .text_color(if issue.is_some() {
+                        theme.status_warning
+                    } else {
+                        theme.text_tertiary
+                    })
+                    .tooltip(move |window, cx| {
+                        gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
+                    })
                     .child(status),
             );
         let right = div()
@@ -1309,7 +1388,9 @@ impl ManisApp {
             .line_height(TextRole::Data.line_height())
             .font_weight(TextRole::Data.weight())
             .text_color(theme.text_secondary)
-            .when(!compact || issue.is_none(), |right| right.child(values.download).child(values.upload));
+            .when(!compact || issue.is_none(), |right| {
+                right.child(values.download).child(values.upload)
+            });
 
         StatusBar::new()
             .h(ControlSize::Standard.height())

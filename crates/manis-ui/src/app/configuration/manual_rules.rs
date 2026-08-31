@@ -1,12 +1,48 @@
+use gpui::{
+    AnyElement, Context, Div, Entity, Focusable, FontWeight, ParentElement, Role, Stateful, Styled,
+    Window, div, prelude::*, px,
+};
+use gpui_component::{
+    Disableable, IconName, WindowExt as _,
+    button::{Button, ButtonVariant, ButtonVariants},
+    collapsible::Collapsible,
+    dialog::Dialog,
+    menu::{ContextMenuExt, PopupMenuItem},
+};
+use manis_core::WindowSizeClass;
+use manis_profile::QxRuleKind;
+
+use crate::app::{
+    ManisApp, ManualRulePopover, QxRuleImportFeedback, QxRuleList, SourceRuntimeApply,
+};
+use crate::{
+    components::{
+        ActionRole, dialog_footer_surface, dialog_header_surface, empty_state, style_action_button,
+        surface_dialog,
+    },
+    diagnostics::{LogLevel, record_event},
+    localization::{Language, Message, copy},
+    mihomo::{self},
+    subscription_input::{SubscriptionTextInput, TextInputSpec},
+    theme::{ControlSize, Radius, Space, TextRole, Theme},
+};
+
+use super::{
+    MANUAL_RULES_EXPANSION_KEY, MAX_MANUAL_RULE_INPUT_BYTES, ManualRuleKeyboardAction,
+    RuleGroupRenderContext, field_label, manual_rule_error_label, manual_rule_keyboard_action,
+    manual_rule_kind_detail, manual_rule_placeholder, rule_group_is_open,
+    rule_source_expansion_key, source_update_label,
+};
+
 impl ManisApp {
-    fn open_manual_rule_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn open_manual_rule_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.manual_rule_editor_state.is_open() {
             if let Some(condition) = self.manual_rule_conditions.first() {
                 condition.input.focus_handle(cx).focus(window, cx);
             }
             return;
         }
-        self.manual_rule_editor_state = super::ManualRuleEditorState::Creating;
+        self.manual_rule_editor_state = crate::app::ManualRuleEditorState::Creating;
         self.manual_rule_popover = None;
         self.manual_rule_error = None;
         self.manual_rule_condition_count = 1;
@@ -40,7 +76,7 @@ impl ManisApp {
         let Some(rule) = self.manual_rules.get(index).cloned() else {
             return;
         };
-        self.manual_rule_editor_state = super::ManualRuleEditorState::Editing(index);
+        self.manual_rule_editor_state = crate::app::ManualRuleEditorState::Editing(index);
         self.manual_rule_popover = None;
         self.manual_rule_error = None;
         self.manual_rule_condition_count = if rule.is_final() {
@@ -107,7 +143,7 @@ impl ManisApp {
     }
 
     fn reset_manual_rule_editor_state(&mut self) {
-        self.manual_rule_editor_state = super::ManualRuleEditorState::Closed;
+        self.manual_rule_editor_state = crate::app::ManualRuleEditorState::Closed;
         self.manual_rule_popover = None;
         self.manual_rule_error = None;
     }
@@ -160,7 +196,7 @@ impl ManisApp {
                         cx,
                     )
                 });
-                super::ManualRuleConditionEditor { kind, input }
+                crate::app::ManualRuleConditionEditor { kind, input }
             })
             .collect();
         let Some(store_dir) = self.subscription_store_dir.as_ref() else {
@@ -313,7 +349,7 @@ impl ManisApp {
         if self.configuration_transfer.active {
             return false;
         }
-        if self.manual_rule_editor_state == super::ManualRuleEditorState::Closed {
+        if self.manual_rule_editor_state == crate::app::ManualRuleEditorState::Closed {
             return false;
         }
         if self.manual_rule_conditions[..self.manual_rule_condition_count]
@@ -522,7 +558,7 @@ impl ManisApp {
         self.start_routing_runtime_apply(
             store_dir,
             completion,
-            super::RoutingApplyRollback {
+            crate::app::RoutingApplyRollback {
                 manual_rules: previous_rules,
                 group_order: previous_order,
                 store_snapshot,
@@ -536,7 +572,7 @@ impl ManisApp {
         &mut self,
         store_dir: std::path::PathBuf,
         completion: String,
-        rollback: super::RoutingApplyRollback,
+        rollback: crate::app::RoutingApplyRollback,
         cx: &mut Context<Self>,
     ) {
         let started = self.routing_apply_state.begin();
@@ -604,7 +640,7 @@ impl ManisApp {
         cx.notify();
     }
 
-    fn sync_routing_rule_group_order(&mut self) {
+    pub(super) fn sync_routing_rule_group_order(&mut self) {
         self.rule_sources.group_order = mihomo::normalized_routing_rule_group_order(
             &self.rule_sources.group_order,
             !self.manual_rules.is_empty(),
@@ -664,7 +700,7 @@ impl ManisApp {
         self.start_routing_runtime_apply(
             store_dir,
             completion,
-            super::RoutingApplyRollback {
+            crate::app::RoutingApplyRollback {
                 manual_rules: self.manual_rules.clone(),
                 group_order: previous,
                 store_snapshot,
@@ -1135,7 +1171,10 @@ impl ManisApp {
                     ActionRole::Primary,
                     ControlSize::Standard,
                 )
-                .when(self.routing_apply_state.is_busy(), gpui::Styled::cursor_default)
+                .when(
+                    self.routing_apply_state.is_busy(),
+                    gpui::Styled::cursor_default,
+                )
                 .on_click(cx.listener(|this, _, window, cx| {
                     if this.submit_manual_rule(cx) {
                         window.close_dialog(cx);
@@ -1423,7 +1462,10 @@ impl ManisApp {
                     ActionRole::Secondary,
                     ControlSize::Icon,
                 )
-                .when(position == 0 || self.routing_apply_state.is_busy(), gpui::Styled::cursor_default)
+                .when(
+                    position == 0 || self.routing_apply_state.is_busy(),
+                    gpui::Styled::cursor_default,
+                )
                 .on_click(cx.listener(move |this, _, _, cx| {
                     cx.stop_propagation();
                     this.move_routing_rule_group(&up_id, -1, cx);
@@ -1442,7 +1484,10 @@ impl ManisApp {
                     ActionRole::Secondary,
                     ControlSize::Icon,
                 )
-                .when(position + 1 >= group_count || self.routing_apply_state.is_busy(), gpui::Styled::cursor_default)
+                .when(
+                    position + 1 >= group_count || self.routing_apply_state.is_busy(),
+                    gpui::Styled::cursor_default,
+                )
                 .on_click(cx.listener(move |this, _, _, cx| {
                     cx.stop_propagation();
                     this.move_routing_rule_group(&down_id, 1, cx);
@@ -1450,7 +1495,7 @@ impl ManisApp {
             )
     }
 
-    fn active_rules_summary(&self, language: Language) -> String {
+    pub(super) fn active_rules_summary(&self, language: Language) -> String {
         let remote_count = self
             .rule_sources
             .sources
@@ -1476,7 +1521,7 @@ impl ManisApp {
         copy::configuration::active_rule_summary(language, active_count, disabled_count)
     }
 
-    fn active_rules_panel(
+    pub(super) fn active_rules_panel(
         &self,
         theme: Theme,
         language: Language,
@@ -1675,7 +1720,9 @@ impl ManisApp {
             .rounded_tl(Radius::Pane.px())
             .rounded_tr(Radius::Pane.px())
             .when(!open, |header| {
-                header.rounded_bl(Radius::Pane.px()).rounded_br(Radius::Pane.px())
+                header
+                    .rounded_bl(Radius::Pane.px())
+                    .rounded_br(Radius::Pane.px())
             })
             .px(if compact { px(12.0) } else { px(16.0) })
             .py_3()
@@ -1865,7 +1912,7 @@ impl ManisApp {
             )
     }
 
-    fn qx_rule_import_feedback(&self, theme: Theme, language: Language) -> Div {
+    pub(super) fn qx_rule_import_feedback(&self, theme: Theme, language: Language) -> Div {
         let (message, color) = match &self.rule_sources.feedback {
             QxRuleImportFeedback::Idle => (
                 language
@@ -1925,7 +1972,7 @@ impl ManisApp {
             .child(message)
     }
 
-    fn qx_rule_targets(&self) -> Vec<String> {
+    pub(super) fn qx_rule_targets(&self) -> Vec<String> {
         let mut targets = self
             .managed_policies
             .groups
@@ -1936,7 +1983,7 @@ impl ManisApp {
         targets
     }
 
-    fn effective_rule_target(&self, target: &str, language: Language) -> String {
+    pub(super) fn effective_rule_target(&self, target: &str, language: Language) -> String {
         if target != "Proxy"
             || self
                 .managed_policies

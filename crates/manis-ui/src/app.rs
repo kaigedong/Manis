@@ -4,14 +4,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use gpui::{
-    AnyElement, Context, Div, Entity, FontWeight, IntoElement, ParentElement, Render, Role,
-    Stateful, Styled, Subscription, Task, Toggled, Window, div, img, prelude::*, px,
-};
-use gpui_component::{
-    Disableable, IconName, Selectable, Sizable,
-    button::{Button, ButtonGroup, ButtonVariant, ButtonVariants},
-    spinner::Spinner,
-    status_bar::StatusBar,
+    Context, Div, Entity, IntoElement, ParentElement, Render, Styled, Subscription, Task, Window,
+    div, prelude::*, px,
 };
 use manis_core::{
     KernelKind, ManagedPolicyGroup, ManagedPolicyIcon, ManagedPolicyStrategy, NodeIdentity,
@@ -22,29 +16,25 @@ use manis_mihomo::{Connection, ObservedRouteEvidence, RuntimeConfig};
 use manis_profile::{QxRuleList, SecretUrl};
 
 use crate::{
-    app_update::{self, AppUpdateError, AvailableUpdate},
-    assets, brand,
-    components::{
-        ActionRole, StatusTone, action_button, empty_state, page_heading, status_badge,
-        style_action_button,
-    },
+    app_update::{AppUpdateError, AvailableUpdate},
+    components::StatusTone,
     core_update,
     diagnostics::{
         self, LogLevel, UiEvent, begin_operation, record_event, record_operation, trace_ui,
     },
-    kernel::{self, KernelRuntime},
+    kernel::KernelRuntime,
     localization::{CountNoun, Language, LanguagePreference, Localizer, Message, copy},
     mihomo::{
         self, ControllerRuntime, ControllerState, GeneratedProfileApply, KernelLogEntry,
-        LiveRuntimeSession, LiveStreamPhase, LiveStreamStatus, LoadedProvider, LoadedSnapshot,
-        ManagedRuntimeHealth, RemoteSourceRefreshInterval, StoredQxRuleSource, StoredSingleNode,
-        StoredSubscription, SubscriptionPreviewError, SubscriptionStoreError,
+        LiveRuntimeSession, LiveStreamStatus, LoadedProvider, RemoteSourceRefreshInterval,
+        StoredQxRuleSource, StoredSingleNode, StoredSubscription, SubscriptionPreviewError,
+        SubscriptionStoreError,
     },
     rule_source::RuleDownloadError,
     subscription::{SourceKind, SubscriptionInputError, SubscriptionPreview},
     subscription_input::{SubscriptionInputChanged, SubscriptionTextInput, TextInputSpec},
     system_proxy::{ProxyPorts, SystemProxySession, TunDnsSession},
-    theme::{ControlSize, LayoutMetric, Radius, Space, TextRole, Theme},
+    theme::Theme,
 };
 
 mod about;
@@ -52,7 +42,11 @@ mod activity;
 mod configuration;
 mod logs;
 mod nodes;
+mod policy_presentation;
+mod policy_workspace;
 mod routing_apply;
+mod routing_controls;
+mod runtime_lifecycle;
 mod stored_workspace;
 
 use routing_apply::{
@@ -249,14 +243,25 @@ struct SubscriptionImportRequest {
     kind: SourceKind,
 }
 
+struct SourceLoadOutcome<T> {
+    providers: Vec<LoadedProvider>,
+    mutation: SourceMutation<T>,
+}
+
 type SubscriptionRefreshResult =
-    Result<(Vec<LoadedProvider>, SourceMutation<StoredSubscription>), ImportSubscriptionError>;
+    Result<SourceLoadOutcome<StoredSubscription>, ImportSubscriptionError>;
 type SubscriptionImportResult =
-    Result<(SourceMutation<StoredSubscription>, Vec<LoadedProvider>), ImportSubscriptionError>;
-type SingleNodeImportResult =
-    Result<(SourceMutation<StoredSingleNode>, Vec<LoadedProvider>), SubscriptionStoreError>;
+    Result<SourceLoadOutcome<StoredSubscription>, ImportSubscriptionError>;
+type SingleNodeImportResult = Result<SourceLoadOutcome<StoredSingleNode>, SubscriptionStoreError>;
 type QxRuleRefreshResult = Result<SourceMutation<StoredQxRuleSource>, ImportQxRuleError>;
-type RoutingModeApplyResult = Result<Result<Option<()>, SubscriptionStoreError>, mihomo::LoadError>;
+
+enum PreferencePersistence {
+    Saved,
+    Skipped,
+    Failed(SubscriptionStoreError),
+}
+
+type RoutingModeApplyResult = Result<PreferencePersistence, mihomo::LoadError>;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 enum QxRuleImportFeedback {
@@ -1533,7 +1538,7 @@ impl ManisApp {
                 .spawn(async move {
                     let providers = mihomo::preview_subscription(&input)
                         .map_err(ImportSubscriptionError::Preview)?;
-                    let transaction = mutate_saved_sources(&runtime, &store_dir, || {
+                    let mutation = mutate_saved_sources(&runtime, &store_dir, || {
                         let mut subscription = if let Some(id) = editing_id.as_deref() {
                             mihomo::update_subscription_source_in(
                                 &store_dir,
@@ -1564,7 +1569,10 @@ impl ManisApp {
                         Ok(subscription)
                     })
                     .map_err(ImportSubscriptionError::Store)?;
-                    Ok::<_, ImportSubscriptionError>((transaction, providers))
+                    Ok::<_, ImportSubscriptionError>(SourceLoadOutcome {
+                        providers,
+                        mutation,
+                    })
                 })
                 .await;
             this.update(cx, |this, cx| {
@@ -1594,8 +1602,11 @@ impl ManisApp {
     ) {
         let language = self.language();
         match result {
-            Ok((transaction, providers)) if transaction.value.is_some() => {
-                let subscription = transaction.value.expect("checked committed mutation");
+            Ok(SourceLoadOutcome {
+                providers,
+                mutation,
+            }) if mutation.value.is_some() => {
+                let subscription = mutation.value.expect("checked committed mutation");
                 let node_count: usize = providers.iter().map(|provider| provider.nodes.len()).sum();
                 let provider_count = providers.len();
                 self.merge_imported_subscription(subscription, &providers, generation, kind);
@@ -1610,25 +1621,25 @@ impl ManisApp {
                 self.configuration_add_section = None;
                 self.proxy_source_editor.subscription_source_id = None;
                 self.proxy_source_editor.error = None;
-                transaction.apply.reconcile_proxy_mode(&mut self.proxy_mode);
+                mutation.apply.reconcile_proxy_mode(&mut self.proxy_mode);
                 self.status = copy::app::subscription_imported(
                     language,
                     self.imported_subscriptions.len(),
                     provider_count,
                     node_count,
-                    &transaction.apply.status_suffix(language),
+                    &mutation.apply.status_suffix(language),
                 );
                 trace_ui(UiEvent::SourceImportSucceeded);
             }
-            Ok((transaction, _providers)) => {
+            Ok(SourceLoadOutcome { mutation, .. }) => {
                 self.proxy_source_editor.feedback =
                     SubscriptionFeedback::StoreFailed(SubscriptionStoreError::StoreUnavailable);
                 self.status = format!(
                     "{}{}",
-                    language.localized(copy::app::COULD_NOT_SAVE_SUBSCRIPTION),
-                    transaction.apply.status_suffix_after_rollback_attempt(
+                    language.localized(copy::app::SUBSCRIPTION_SAVE_FAILED_TITLE),
+                    mutation.apply.status_suffix_after_rollback_attempt(
                         language,
-                        transaction.rollback_error.as_ref(),
+                        mutation.rollback_error.as_ref(),
                     )
                 );
                 trace_ui(UiEvent::SourceImportFailed);
@@ -1646,7 +1657,7 @@ impl ManisApp {
                 self.proxy_source_editor.feedback = SubscriptionFeedback::StoreFailed(error);
                 self.status = format!(
                     "{}{}",
-                    language.localized(copy::app::COULD_NOT_SAVE_SUBSCRIPTION_2),
+                    language.localized(copy::app::SUBSCRIPTION_SAVE_FAILED_PREFIX),
                     copy::configuration::subscription_store_error(language, error)
                 );
                 trace_ui(UiEvent::SourceImportFailed);
@@ -1757,7 +1768,7 @@ impl ManisApp {
                         mihomo::discover_subscription_proxy_nameservers(&source);
                     let providers = mihomo::preview_imported_subscription(source)
                         .map_err(ImportSubscriptionError::Preview)?;
-                    let transaction = mutate_saved_sources(&runtime, &store_dir, || {
+                    let mutation = mutate_saved_sources(&runtime, &store_dir, || {
                         let mut stored = mihomo::mark_subscription_source_update_success_in(
                             &store_dir,
                             &task_id,
@@ -1773,7 +1784,10 @@ impl ManisApp {
                         Ok(stored)
                     })
                     .map_err(ImportSubscriptionError::Store)?;
-                    Ok::<_, ImportSubscriptionError>((providers, transaction))
+                    Ok::<_, ImportSubscriptionError>(SourceLoadOutcome {
+                        providers,
+                        mutation,
+                    })
                 })
                 .await;
             this.update(cx, |this, cx| {
@@ -1804,8 +1818,11 @@ impl ManisApp {
             return;
         }
         match result {
-            Ok((providers, transaction)) if transaction.value.is_some() => {
-                let stored = transaction.value.expect("checked committed mutation");
+            Ok(SourceLoadOutcome {
+                providers,
+                mutation,
+            }) if mutation.value.is_some() => {
+                let stored = mutation.value.expect("checked committed mutation");
                 let node_count: usize = providers.iter().map(|provider| provider.nodes.len()).sum();
                 subscription.providers = providers;
                 subscription.state = ImportedSubscriptionState::Ready(kind);
@@ -1815,22 +1832,22 @@ impl ManisApp {
                 self.rule_sources
                     .refresh_retry_not_before
                     .remove(&DueRemoteSource::Subscription(id.to_owned()).scheduler_key());
-                transaction.apply.reconcile_proxy_mode(&mut self.proxy_mode);
+                mutation.apply.reconcile_proxy_mode(&mut self.proxy_mode);
                 self.status = copy::app::subscription_updated(
                     language,
                     node_count,
-                    &transaction.apply.status_suffix(language),
+                    &mutation.apply.status_suffix(language),
                 );
                 trace_ui(UiEvent::SourceRestoreSucceeded);
             }
-            Ok((_providers, transaction)) => {
+            Ok(SourceLoadOutcome { mutation, .. }) => {
                 subscription.state = ImportedSubscriptionState::Pending(kind);
                 self.status = format!(
                     "{}{}",
-                    language.localized(copy::app::SUBSCRIPTION_UPDATE_FAILED),
-                    transaction.apply.status_suffix_after_rollback_attempt(
+                    language.localized(copy::app::SUBSCRIPTION_UPDATE_FAILED_TITLE),
+                    mutation.apply.status_suffix_after_rollback_attempt(
                         language,
-                        transaction.rollback_error.as_ref(),
+                        mutation.rollback_error.as_ref(),
                     )
                 );
                 trace_ui(UiEvent::SourceRestoreFailed);
@@ -1839,7 +1856,7 @@ impl ManisApp {
                 subscription.state = ImportedSubscriptionState::Unavailable(kind, error);
                 self.status = format!(
                     "{}{}",
-                    language.localized(copy::app::SUBSCRIPTION_UPDATE_FAILED_2),
+                    language.localized(copy::app::SUBSCRIPTION_UPDATE_FAILED_PREFIX),
                     copy::configuration::subscription_preview_error(language, error)
                 );
                 trace_ui(UiEvent::SourceRestoreFailed);
@@ -2013,11 +2030,6 @@ impl ManisApp {
         .detach();
     }
 }
-include!("app/policy_presentation.rs");
-include!("app/runtime_lifecycle.rs");
-include!("app/routing_controls.rs");
-include!("app/policy_workspace.rs");
-
 struct StatusBarValues {
     endpoint: String,
     download: String,
@@ -2422,7 +2434,7 @@ impl ProxyModeBlock {
     /// A short phrase that fits after a tray menu label.
     pub(crate) const fn tray_reason(self, language: Language) -> &'static str {
         match self {
-            Self::Busy => language.localized(copy::app::SWITCHING_2),
+            Self::Busy => language.localized(copy::app::SWITCHING_STATUS),
             Self::ControllerNotConnected => language.localized(copy::app::CONNECT_FIRST),
             Self::KernelHasNoTun => language.localized(copy::app::KERNEL_HAS_NO_TUN),
             Self::FixtureReadOnly => language.localized(copy::app::TEST_FIXTURE_IS_READ_ONLY),
@@ -2591,6 +2603,53 @@ mod tests {
                 average_ms: Some(delay_ms),
             },
             delays: BTreeMap::from([(delay_name.to_owned(), delay_ms)]),
+        }
+    }
+
+    #[gpui::test]
+    fn routing_mode_completion_preserves_apply_and_persistence_outcomes(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use gpui::AppContext as _;
+        use manis_core::RoutingMode;
+
+        for (result, applied, persistence_failed) in [
+            (Ok(super::PreferencePersistence::Saved), true, false),
+            (Ok(super::PreferencePersistence::Skipped), true, false),
+            (
+                Ok(super::PreferencePersistence::Failed(
+                    mihomo::SubscriptionStoreError::StoreUnavailable,
+                )),
+                true,
+                true,
+            ),
+            (
+                Err(mihomo::LoadError::Runtime("fixture failure".to_owned())),
+                false,
+                false,
+            ),
+        ] {
+            let app = cx.new(|_| ManisApp::with_fixture_controller("http://127.0.0.1:1"));
+            app.update(cx, |app, cx| {
+                app.routing_mode = RoutingMode::Rule;
+                app.proxy_runtime.mode = RoutingMode::Rule;
+                app.routing_mode_busy = Some(RoutingMode::Direct);
+                app.finish_routing_mode_change(RoutingMode::Direct, 0, result, cx);
+
+                let expected_mode = if applied {
+                    RoutingMode::Direct
+                } else {
+                    RoutingMode::Rule
+                };
+                assert_eq!(app.routing_mode, expected_mode);
+                assert_eq!(app.proxy_runtime.mode, expected_mode);
+                assert_eq!(app.routing_mode_busy, None);
+                let persistence_warning = app.language().localized(
+                    crate::localization::copy::app::RESTART_PREFERENCE_COULD_NOT_BE_SAVED,
+                );
+                assert_eq!(app.status.contains(persistence_warning), persistence_failed);
+                assert_eq!(app.status.contains("fixture failure"), !applied);
+            });
         }
     }
 

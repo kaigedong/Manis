@@ -1,3 +1,15 @@
+use gpui::{Context, Div, ParentElement, Styled, Window, div, prelude::*, px};
+use gpui_component::{Disableable, button::Button};
+
+use crate::app::ManisApp;
+use crate::{
+    components::{ActionRole, action_button},
+    localization::{Language, copy},
+    theme::{ControlSize, Space, TextRole, Theme},
+};
+
+use super::transfer::{TransferPresentation, TransferProgress};
+
 impl ManisApp {
     /// Opens the actual configuration editor against an isolated fixture store.
     #[cfg(feature = "snapshot-fixtures")]
@@ -12,7 +24,7 @@ impl ManisApp {
         }
     }
 
-    fn edit_configuration(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn edit_configuration(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let language = self.language();
         if !self.begin_configuration_transfer(
             language.localized(copy::backup::LOADING_CURRENT),
@@ -59,7 +71,7 @@ impl ManisApp {
         .detach();
     }
 
-    fn preview_configuration_edits(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn preview_configuration_edits(&mut self, cx: &mut Context<Self>) {
         if self.configuration_transfer.is_busy() || self.configuration_transfer.preview.is_some() {
             return;
         }
@@ -87,7 +99,11 @@ impl ManisApp {
         cx.notify();
     }
 
-    fn resume_configuration_editing(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn resume_configuration_editing(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.configuration_transfer.is_busy() {
             return;
         }
@@ -103,7 +119,12 @@ impl ManisApp {
         }
     }
 
-    fn configuration_editor_body(&self, theme: Theme, language: Language, window: &Window) -> Div {
+    pub(super) fn configuration_editor_body(
+        &self,
+        theme: Theme,
+        language: Language,
+        window: &Window,
+    ) -> Div {
         div()
             .flex()
             .flex_col()
@@ -128,7 +149,7 @@ impl ManisApp {
             .child(language.localized(copy::backup::SENSITIVE))
     }
 
-    fn configuration_editor_actions(
+    pub(super) fn configuration_editor_actions(
         &self,
         language: Language,
         cx: &mut Context<Self>,
@@ -151,7 +172,10 @@ impl ManisApp {
                 ControlSize::Standard,
             )
             .disabled(self.configuration_transfer.is_busy())
-            .when(self.configuration_transfer.is_busy(), gpui::Styled::cursor_default)
+            .when(
+                self.configuration_transfer.is_busy(),
+                gpui::Styled::cursor_default,
+            )
             .on_click(cx.listener(move |this, _, window, cx| {
                 if preview {
                     this.resume_configuration_editing(window, cx);

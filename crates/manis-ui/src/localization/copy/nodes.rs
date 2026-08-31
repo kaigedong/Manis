@@ -174,7 +174,8 @@ pub(crate) const THIS_POLICY_GROUP_IS_USED_BY_ANOTHER_POLICY_GROUP_AND: Localize
 pub(crate) const THIS_SOURCE_HAS_NO_NODES_TO_TEST: LocalizedText =
     LocalizedText::new("This source has no nodes to test", "当前来源没有可测速节点");
 pub(crate) const TYPE: LocalizedText = LocalizedText::new("Type", "类型");
-pub(crate) const UNAVAILABLE_2: LocalizedText = LocalizedText::new("Unavailable", "当前不可用");
+pub(crate) const SOURCE_UNAVAILABLE: LocalizedText =
+    LocalizedText::new("Unavailable", "当前不可用");
 pub(crate) const USING_MIHOMO_CACHE: LocalizedText =
     LocalizedText::new("Using Mihomo cache", "使用 Mihomo 缓存");
 

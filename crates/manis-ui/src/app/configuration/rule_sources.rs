@@ -1,5 +1,33 @@
+use gpui::{
+    AnyElement, Context, Div, Entity, Focusable, FontWeight, ParentElement, Role, Stateful, Styled,
+    Window, div, prelude::*, px,
+};
+use gpui_component::{
+    Disableable, Selectable, Sizable, WindowExt as _,
+    button::{Button, ButtonVariant, ButtonVariants},
+    checkbox::Checkbox,
+    dialog::Dialog,
+};
+
+use crate::app::{ManisApp, QxRuleImportFeedback, QxRuleSourceRefreshState};
+use crate::{
+    components::{
+        ActionRole, action_button, dialog_footer_surface, dialog_header_surface, empty_state,
+        row_action_button, section_heading, style_action_button, surface_dialog,
+    },
+    localization::{CountNoun, Language, Message, copy},
+    mihomo::{self, RemoteSourceRefreshInterval},
+    subscription_input::SubscriptionTextInput,
+    theme::{ControlSize, Radius, Space, TextRole, Theme},
+};
+
+use super::{
+    QxRuleEditorView, RuleSourceCardPresentation, RuleSourceRefreshPresentation, field_label,
+    panel_surface, refresh_interval_label, source_update_label,
+};
+
 impl ManisApp {
-    fn rule_source_manager(
+    pub(super) fn rule_source_manager(
         &self,
         _input: Entity<SubscriptionTextInput>,
         busy: bool,
@@ -72,10 +100,10 @@ impl ManisApp {
         panel
     }
 
-    fn open_new_qx_rule_editor(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn open_new_qx_rule_editor(&mut self, cx: &mut Context<Self>) {
         self.rule_sources.editor_source_id = None;
         self.rule_sources.editor_refresh_interval = RemoteSourceRefreshInterval::Manual;
-        self.rule_sources.editor_popover = super::QxRuleEditorPopover::None;
+        self.rule_sources.editor_popover = crate::app::QxRuleEditorPopover::None;
         self.rule_sources.feedback = QxRuleImportFeedback::Idle;
         if !self
             .qx_rule_targets()
@@ -93,7 +121,7 @@ impl ManisApp {
         cx.notify();
     }
 
-    fn open_qx_rule_editor(&mut self, id: String, cx: &mut Context<Self>) {
+    pub(super) fn open_qx_rule_editor(&mut self, id: String, cx: &mut Context<Self>) {
         let Some((index, source)) = self
             .rule_sources
             .sources
@@ -108,7 +136,7 @@ impl ManisApp {
         let target = self.effective_rule_target(source.target_policy.as_str(), self.language());
         self.rule_sources.editor_source_id = Some(id);
         self.rule_sources.editor_refresh_interval = source.refresh_interval;
-        self.rule_sources.editor_popover = super::QxRuleEditorPopover::None;
+        self.rule_sources.editor_popover = crate::app::QxRuleEditorPopover::None;
         self.rule_sources.target_policy = target;
         self.rule_sources.feedback = QxRuleImportFeedback::Idle;
         if let Some(input) = self.inputs.qx_rule.as_ref() {
@@ -133,9 +161,9 @@ impl ManisApp {
         cx.notify();
     }
 
-    fn close_qx_rule_editor(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn close_qx_rule_editor(&mut self, cx: &mut Context<Self>) {
         self.rule_sources.editor_source_id = None;
-        self.rule_sources.editor_popover = super::QxRuleEditorPopover::None;
+        self.rule_sources.editor_popover = crate::app::QxRuleEditorPopover::None;
         self.rule_sources.feedback = QxRuleImportFeedback::Idle;
         if let Some(input) = self.inputs.qx_rule.as_ref() {
             input.update(cx, SubscriptionTextInput::clear_without_event);
@@ -239,7 +267,7 @@ impl ManisApp {
                 theme,
                 cx.listener(move |this, _, _, cx| {
                     this.rule_sources.target_policy.clone_from(&target);
-                    this.rule_sources.editor_popover = super::QxRuleEditorPopover::None;
+                    this.rule_sources.editor_popover = crate::app::QxRuleEditorPopover::None;
                     this.rule_sources.feedback = QxRuleImportFeedback::Idle;
                     cx.notify();
                 }),
@@ -261,13 +289,13 @@ impl ManisApp {
             (view.dialog_width - 40.0).max(240.0),
             320.0,
         )
-        .open(self.rule_sources.editor_popover == super::QxRuleEditorPopover::Target)
+        .open(self.rule_sources.editor_popover == crate::app::QxRuleEditorPopover::Target)
         .on_open_change(move |open, _, cx| {
             app.update(cx, |this, cx| {
                 this.rule_sources.editor_popover = if *open {
-                    super::QxRuleEditorPopover::Target
+                    crate::app::QxRuleEditorPopover::Target
                 } else {
-                    super::QxRuleEditorPopover::None
+                    crate::app::QxRuleEditorPopover::None
                 };
                 cx.notify();
             });
@@ -298,7 +326,7 @@ impl ManisApp {
                 theme,
                 cx.listener(move |this, _, _, cx| {
                     this.rule_sources.editor_refresh_interval = interval;
-                    this.rule_sources.editor_popover = super::QxRuleEditorPopover::None;
+                    this.rule_sources.editor_popover = crate::app::QxRuleEditorPopover::None;
                     cx.notify();
                 }),
             ));
@@ -324,13 +352,13 @@ impl ManisApp {
             (view.dialog_width - 40.0).max(240.0),
             280.0,
         )
-        .open(self.rule_sources.editor_popover == super::QxRuleEditorPopover::Interval)
+        .open(self.rule_sources.editor_popover == crate::app::QxRuleEditorPopover::Interval)
         .on_open_change(move |open, _, cx| {
             app.update(cx, |this, cx| {
                 this.rule_sources.editor_popover = if *open {
-                    super::QxRuleEditorPopover::Interval
+                    crate::app::QxRuleEditorPopover::Interval
                 } else {
-                    super::QxRuleEditorPopover::None
+                    crate::app::QxRuleEditorPopover::None
                 };
                 cx.notify();
             });
@@ -636,7 +664,7 @@ impl ManisApp {
             })
             .when(!enabled, |header| {
                 header.child(Self::rule_source_state_label(
-                    language.localized(copy::configuration::DISABLED_2),
+                    language.localized(copy::configuration::SOURCE_DISABLED_LABEL),
                     theme.text_tertiary,
                 ))
             })
@@ -813,7 +841,7 @@ impl ManisApp {
         choices
     }
 
-    fn qx_rule_source_target_select(
+    pub(super) fn qx_rule_source_target_select(
         &self,
         source: &crate::mihomo::StoredQxRuleSource,
         enabled: bool,

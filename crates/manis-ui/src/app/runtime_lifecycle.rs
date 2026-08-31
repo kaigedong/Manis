@@ -1,12 +1,28 @@
+use super::{
+    AppUpdateState, GroupBenchmarkState, KernelSwitchState, ManagedPolicyRuntimeState, ManisApp,
+    MihomoCoreUpdateOutcome, MihomoCoreUpdateState, PolicyBenchmarkRun, perform_mihomo_core_update,
+};
+use crate::{
+    app_update::{self, AppUpdateError, AvailableUpdate},
+    core_update,
+    diagnostics::{LogLevel, UiEvent, begin_operation, record_event, record_operation, trace_ui},
+    kernel::{self, KernelRuntime},
+    localization::copy,
+    mihomo::{
+        self, ControllerRuntime, ControllerState, LiveRuntimeSession, LiveStreamPhase,
+        LiveStreamStatus, LoadedSnapshot, ManagedRuntimeHealth,
+    },
+};
+use gpui::Context;
+use manis_core::{KernelKind, ProxyMode};
+use std::time::Duration;
+
 impl ManisApp {
-    fn start_app_update_polling(cx: &mut Context<Self>) {
+    pub(super) fn start_app_update_polling(cx: &mut Context<Self>) {
         let timer = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
             loop {
-                if this
-                    .update(cx, Self::check_for_app_update)
-                    .is_err()
-                {
+                if this.update(cx, Self::check_for_app_update).is_err() {
                     break;
                 }
                 timer.timer(Duration::from_hours(1)).await;
@@ -35,7 +51,7 @@ impl ManisApp {
         .detach();
     }
 
-    fn finish_app_update_check(
+    pub(super) fn finish_app_update_check(
         &mut self,
         result: Result<Option<AvailableUpdate>, AppUpdateError>,
         previous: AppUpdateState,
@@ -65,7 +81,7 @@ impl ManisApp {
         };
     }
 
-    fn switch_kernel(&mut self, requested: KernelKind, cx: &mut Context<Self>) {
+    pub(super) fn switch_kernel(&mut self, requested: KernelKind, cx: &mut Context<Self>) {
         if self.configuration_transfer.active {
             return;
         }
@@ -136,7 +152,7 @@ impl ManisApp {
         cx.notify();
     }
 
-    fn update_mihomo_core(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn update_mihomo_core(&mut self, cx: &mut Context<Self>) {
         if self.configuration_transfer.active {
             return;
         }
@@ -234,9 +250,10 @@ impl ManisApp {
         self.start_live_runtime(&controller_endpoint, controller_secret.as_deref(), cx);
     }
 
-    fn connect_mihomo(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn connect_mihomo(&mut self, cx: &mut Context<Self>) {
         if self.configuration_transfer.active
-            || matches!(self.controller, ControllerState::Connecting { .. }) {
+            || matches!(self.controller, ControllerState::Connecting { .. })
+        {
             return;
         }
 
@@ -338,7 +355,7 @@ impl ManisApp {
         self.start_policy_group_benchmark(&policy_id, cx);
     }
 
-    fn apply_mihomo_snapshot(&mut self, endpoint: String, snapshot: LoadedSnapshot) {
+    pub(super) fn apply_mihomo_snapshot(&mut self, endpoint: String, snapshot: LoadedSnapshot) {
         trace_ui(UiEvent::MihomoConnectSucceeded);
         let mut catalog = snapshot.catalog;
         for (group, target) in self.managed_policies.node_selections.iter_policy_targets() {
@@ -495,7 +512,7 @@ impl ManisApp {
         .detach();
     }
 
-    fn start_policy_group_benchmark(
+    pub(super) fn start_policy_group_benchmark(
         &mut self,
         id: &manis_core::PolicyGroupId,
         cx: &mut Context<Self>,
@@ -537,8 +554,7 @@ impl ManisApp {
             cx.notify();
             return;
         };
-        self.status =
-            copy::app::testing_policy_candidates(language, &group.name, targets.len());
+        self.status = copy::app::testing_policy_candidates(language, &group.name, targets.len());
         trace_ui(UiEvent::GroupBenchmarkStarted);
 
         let runtime = self.runtime.clone();

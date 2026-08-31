@@ -359,7 +359,7 @@ impl ManisApp {
                             }
                             ImportedSubscriptionState::Unavailable(_, _)
                             | ImportedSubscriptionState::StoreError(_) => {
-                                language.localized(copy::nodes::UNAVAILABLE_2)
+                                language.localized(copy::nodes::SOURCE_UNAVAILABLE)
                             }
                             ImportedSubscriptionState::Removing(_) => {
                                 language.localized(copy::nodes::REMOVING)
