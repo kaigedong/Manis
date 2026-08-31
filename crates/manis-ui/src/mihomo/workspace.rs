@@ -1,9 +1,10 @@
 use super::{
     Error, IMPORTED_SUBSCRIPTION_FILE, LEGACY_GENERATED_PROXY_GROUP_NAME,
-    LEGACY_MANIS_QX_RULE_SOURCE_VERSION, LEGACY_MANIS_STORED_SUBSCRIPTION_VERSION,
-    LEGACY_MANIS_STORED_SUBSCRIPTION_VERSION_V2, LEGACY_RELAY_QX_RULE_SOURCE_VERSION,
-    LEGACY_RELAY_STORED_SUBSCRIPTION_VERSION, LEGACY_SAVED_SINGLE_NODE_VERSION, LoadError,
-    MANIS_GLOBAL_GROUP_NAME, MAX_QX_RULE_SOURCE_CONTENT_BYTES, MAX_QX_RULE_SOURCE_FILE_BYTES,
+    LEGACY_MANIS_QX_RULE_SOURCE_VERSION, LEGACY_MANIS_QX_RULE_SOURCE_VERSION_V2,
+    LEGACY_MANIS_STORED_SUBSCRIPTION_VERSION, LEGACY_MANIS_STORED_SUBSCRIPTION_VERSION_V2,
+    LEGACY_RELAY_QX_RULE_SOURCE_VERSION, LEGACY_RELAY_STORED_SUBSCRIPTION_VERSION,
+    LEGACY_SAVED_SINGLE_NODE_VERSION, LoadError, MANIS_GLOBAL_GROUP_NAME,
+    MAX_QX_RULE_SOURCE_CONTENT_BYTES, MAX_QX_RULE_SOURCE_FILE_BYTES,
     MAX_STORED_SUBSCRIPTION_FILE_BYTES, MAX_SUBSCRIPTION_FILE_BYTES,
     MAX_SUBSCRIPTION_PROXY_DNS_SERVERS, MAX_SUBSCRIPTION_SOURCE_NAME_BYTES, NEXT_STORED_SOURCE,
     Name, Ordering, Path, PathBuf, PolicyRef, Profile, ProfileMode, ProxyDnsServer,
@@ -120,6 +121,7 @@ impl fmt::Debug for StoredSingleNode {
 #[derive(Clone, Eq, PartialEq)]
 pub(crate) struct StoredQxRuleSource {
     pub id: String,
+    pub name: Option<String>,
     pub source: SecretUrl,
     pub enabled: bool,
     pub target_policy: Name,
@@ -150,6 +152,7 @@ impl fmt::Debug for StoredQxRuleSource {
         formatter
             .debug_struct("StoredQxRuleSource")
             .field("id", &self.id)
+            .field("name", &self.name)
             .field("source", &"<redacted>")
             .field("enabled", &self.enabled)
             .field("target_policy", &self.target_policy)
@@ -826,15 +829,27 @@ pub(crate) fn remove_single_node_source_in(
     Err(SubscriptionStoreError::StoreUnavailable)
 }
 
-#[cfg(not(windows))]
+#[cfg(all(not(windows), test))]
 pub(crate) fn save_qx_rule_source_in(
     directory: &Path,
     url_input: &str,
     target_policy: &str,
     content: &str,
 ) -> Result<SaveQxRuleSourceOutcome, SubscriptionStoreError> {
+    save_named_qx_rule_source_in(directory, url_input, "", target_policy, content)
+}
+
+#[cfg(not(windows))]
+pub(crate) fn save_named_qx_rule_source_in(
+    directory: &Path,
+    url_input: &str,
+    name: &str,
+    target_policy: &str,
+    content: &str,
+) -> Result<SaveQxRuleSourceOutcome, SubscriptionStoreError> {
     let source = SecretUrl::parse_https(url_input)
         .map_err(|_error| SubscriptionStoreError::InvalidSource)?;
+    let name = normalize_qx_rule_source_name(name)?;
     let target_policy =
         Name::parse(target_policy).map_err(|_error| SubscriptionStoreError::InvalidSource)?;
     let (rule_count, diagnostic_count) = validate_qx_rule_source_content(content)?;
@@ -847,19 +862,21 @@ pub(crate) fn save_qx_rule_source_in(
     let id = next_stored_source_id(QX_RULE_SOURCE_PREFIX);
     let file_name = format!("{id}{QX_RULE_SOURCE_SUFFIX}");
     let last_successful_update_unix_secs = current_unix_secs();
-    let contents = encode_qx_rule_source(
-        &id,
+    let contents = encode_qx_rule_source(QxRuleSourceEncoding {
+        id: &id,
         url_input,
-        &target_policy,
+        name: name.as_deref(),
+        target_policy: &target_policy,
         content,
-        true,
-        RemoteSourceRefreshInterval::Manual,
+        enabled: true,
+        refresh_interval: RemoteSourceRefreshInterval::Manual,
         last_successful_update_unix_secs,
-    )?;
+    })?;
     write_private_atomic(directory, &file_name, contents.as_bytes())
         .map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
     Ok(SaveQxRuleSourceOutcome::Created(StoredQxRuleSource {
         id,
+        name,
         source,
         enabled: true,
         target_policy,
@@ -872,6 +889,17 @@ pub(crate) fn save_qx_rule_source_in(
 }
 
 #[cfg(windows)]
+pub(crate) fn save_named_qx_rule_source_in(
+    _directory: &Path,
+    _url_input: &str,
+    _name: &str,
+    _target_policy: &str,
+    _content: &str,
+) -> Result<SaveQxRuleSourceOutcome, SubscriptionStoreError> {
+    Err(SubscriptionStoreError::StoreUnavailable)
+}
+
+#[cfg(all(windows, test))]
 pub(crate) fn save_qx_rule_source_in(
     _directory: &Path,
     _url_input: &str,
@@ -945,6 +973,7 @@ pub(crate) fn update_qx_rule_source_refresh_interval_in(
         QxRuleSourceWrite {
             id,
             url_input: &decoded.url_input,
+            name: decoded.stored.name.as_deref(),
             target_policy: decoded.stored.target_policy.as_str(),
             content: &decoded.stored.content,
             enabled: decoded.stored.enabled,
@@ -964,6 +993,38 @@ pub(crate) fn update_qx_rule_source_refresh_interval_in(
 }
 
 #[cfg(not(windows))]
+pub(crate) fn update_qx_rule_source_name_in(
+    directory: &Path,
+    id: &str,
+    name: &str,
+) -> Result<StoredQxRuleSource, SubscriptionStoreError> {
+    let name = normalize_qx_rule_source_name(name)?;
+    let decoded = read_qx_rule_source_by_id_in(directory, id)?;
+    write_qx_rule_source_in(
+        directory,
+        QxRuleSourceWrite {
+            id,
+            url_input: &decoded.url_input,
+            name: name.as_deref(),
+            target_policy: decoded.stored.target_policy.as_str(),
+            content: &decoded.stored.content,
+            enabled: decoded.stored.enabled,
+            refresh_interval: decoded.stored.refresh_interval,
+            last_successful_update_unix_secs: decoded.stored.last_successful_update_unix_secs,
+        },
+    )
+}
+
+#[cfg(windows)]
+pub(crate) fn update_qx_rule_source_name_in(
+    _directory: &Path,
+    _id: &str,
+    _name: &str,
+) -> Result<StoredQxRuleSource, SubscriptionStoreError> {
+    Err(SubscriptionStoreError::StoreUnavailable)
+}
+
+#[cfg(not(windows))]
 pub(crate) fn update_qx_rule_source_target_in(
     directory: &Path,
     id: &str,
@@ -975,6 +1036,7 @@ pub(crate) fn update_qx_rule_source_target_in(
         QxRuleSourceWrite {
             id,
             url_input: &decoded.url_input,
+            name: decoded.stored.name.as_deref(),
             target_policy,
             content: &decoded.stored.content,
             enabled: decoded.stored.enabled,
@@ -994,9 +1056,11 @@ pub(crate) fn update_qx_rule_source_target_in(
 }
 
 #[cfg(not(windows))]
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn replace_qx_rule_source_definition_in(
     directory: &Path,
     id: &str,
+    name: &str,
     url_input: &str,
     target_policy: &str,
     content: &str,
@@ -1004,11 +1068,13 @@ pub(crate) fn replace_qx_rule_source_definition_in(
     last_successful_update_unix_secs: u64,
 ) -> Result<StoredQxRuleSource, SubscriptionStoreError> {
     let decoded = read_qx_rule_source_by_id_in(directory, id)?;
+    let name = normalize_qx_rule_source_name(name)?;
     write_qx_rule_source_in(
         directory,
         QxRuleSourceWrite {
             id,
             url_input,
+            name: name.as_deref(),
             target_policy,
             content,
             enabled: decoded.stored.enabled,
@@ -1030,6 +1096,7 @@ pub(crate) fn update_qx_rule_source_enabled_in(
         QxRuleSourceWrite {
             id,
             url_input: &decoded.url_input,
+            name: decoded.stored.name.as_deref(),
             target_policy: decoded.stored.target_policy.as_str(),
             content: &decoded.stored.content,
             enabled,
@@ -1049,9 +1116,11 @@ pub(crate) fn update_qx_rule_source_enabled_in(
 }
 
 #[cfg(windows)]
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn replace_qx_rule_source_definition_in(
     _directory: &Path,
     _id: &str,
+    _name: &str,
     _url_input: &str,
     _target_policy: &str,
     _content: &str,
@@ -1075,6 +1144,7 @@ pub(crate) fn replace_qx_rule_source_content_in(
         QxRuleSourceWrite {
             id,
             url_input: &decoded.url_input,
+            name: decoded.stored.name.as_deref(),
             target_policy: decoded.stored.target_policy.as_str(),
             content,
             enabled: decoded.stored.enabled,
@@ -1336,6 +1406,14 @@ fn validate_subscription_source_name(name: &str) -> Result<String, SubscriptionS
     Ok(name.to_owned())
 }
 
+fn normalize_qx_rule_source_name(name: &str) -> Result<Option<String>, SubscriptionStoreError> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Ok(None);
+    }
+    validate_subscription_source_name(name).map(Some)
+}
+
 #[cfg(not(windows))]
 fn encode_subscription_source(
     id: &str,
@@ -1562,6 +1640,7 @@ fn read_qx_rule_source_by_id_in(
 struct QxRuleSourceWrite<'a> {
     id: &'a str,
     url_input: &'a str,
+    name: Option<&'a str>,
     target_policy: &'a str,
     content: &'a str,
     enabled: bool,
@@ -1576,23 +1655,29 @@ fn write_qx_rule_source_in(
 ) -> Result<StoredQxRuleSource, SubscriptionStoreError> {
     let source = SecretUrl::parse_https(write.url_input)
         .map_err(|_error| SubscriptionStoreError::InvalidSource)?;
+    let name = match write.name {
+        Some(name) => normalize_qx_rule_source_name(name)?,
+        None => None,
+    };
     let target_policy =
         Name::parse(write.target_policy).map_err(|_error| SubscriptionStoreError::InvalidSource)?;
     let (rule_count, diagnostic_count) = validate_qx_rule_source_content(write.content)?;
-    let contents = encode_qx_rule_source(
-        write.id,
-        write.url_input,
-        &target_policy,
-        write.content,
-        write.enabled,
-        write.refresh_interval,
-        write.last_successful_update_unix_secs,
-    )?;
+    let contents = encode_qx_rule_source(QxRuleSourceEncoding {
+        id: write.id,
+        url_input: write.url_input,
+        name: name.as_deref(),
+        target_policy: &target_policy,
+        content: write.content,
+        enabled: write.enabled,
+        refresh_interval: write.refresh_interval,
+        last_successful_update_unix_secs: write.last_successful_update_unix_secs,
+    })?;
     let file_name = qx_rule_source_file_name(write.id)?;
     write_private_atomic(directory, &file_name, contents.as_bytes())
         .map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
     Ok(StoredQxRuleSource {
         id: write.id.to_owned(),
+        name,
         source,
         enabled: write.enabled,
         target_policy,
@@ -1613,31 +1698,56 @@ fn qx_rule_source_file_name(id: &str) -> Result<String, SubscriptionStoreError> 
     }
 }
 
-fn encode_qx_rule_source(
-    id: &str,
-    url_input: &str,
-    target_policy: &Name,
-    content: &str,
+#[derive(Clone, Copy)]
+struct QxRuleSourceEncoding<'a> {
+    id: &'a str,
+    url_input: &'a str,
+    name: Option<&'a str>,
+    target_policy: &'a Name,
+    content: &'a str,
     enabled: bool,
     refresh_interval: RemoteSourceRefreshInterval,
     last_successful_update_unix_secs: u64,
+}
+
+fn encode_qx_rule_source(
+    write: QxRuleSourceEncoding<'_>,
 ) -> Result<String, SubscriptionStoreError> {
+    let QxRuleSourceEncoding {
+        id,
+        url_input,
+        name,
+        target_policy,
+        content,
+        enabled,
+        refresh_interval,
+        last_successful_update_unix_secs,
+    } = write;
     if !valid_stored_id(id, QX_RULE_SOURCE_PREFIX) {
         return Err(SubscriptionStoreError::InvalidSource);
     }
     SecretUrl::parse_https(url_input).map_err(|_error| SubscriptionStoreError::InvalidSource)?;
+    let name = match name {
+        Some(name) => normalize_qx_rule_source_name(name)?,
+        None => None,
+    };
     validate_qx_rule_source_content(content)?;
-    Ok([
+    let mut lines = vec![
         QX_RULE_SOURCE_VERSION.to_owned(),
         format!("id\t{id}"),
         format!("url\t{}", encode_hex(url_input)),
+    ];
+    if let Some(name) = name.as_ref() {
+        lines.push(format!("name\t{}", encode_hex(name)));
+    }
+    lines.extend([
         format!("target\t{}", encode_hex(target_policy.as_str())),
         format!("content\t{}", encode_hex(content)),
         format!("enabled\t{}", u8::from(enabled)),
         format!("refresh\t{}", refresh_interval.key()),
         format!("last-success\t{last_successful_update_unix_secs}"),
-    ]
-    .join("\n"))
+    ]);
+    Ok(lines.join("\n"))
 }
 
 fn decode_qx_rule_source(
@@ -1657,6 +1767,7 @@ fn decode_qx_rule_source_with_url(
         version,
         Some(
             QX_RULE_SOURCE_VERSION
+                | LEGACY_MANIS_QX_RULE_SOURCE_VERSION_V2
                 | LEGACY_MANIS_QX_RULE_SOURCE_VERSION
                 | LEGACY_RELAY_QX_RULE_SOURCE_VERSION
         )
@@ -1665,6 +1776,7 @@ fn decode_qx_rule_source_with_url(
     }
     let mut id = None;
     let mut url = None;
+    let mut name = None;
     let mut target = None;
     let mut content = None;
     let mut enabled = None;
@@ -1675,6 +1787,9 @@ fn decode_qx_rule_source_with_url(
         match fields.as_slice() {
             ["id", value] if id.is_none() => id = Some((*value).to_owned()),
             ["url", value] if url.is_none() => url = Some(decode_hex(value)?),
+            ["name", value] if version == Some(QX_RULE_SOURCE_VERSION) && name.is_none() => {
+                name = Some(validate_subscription_source_name(&decode_hex(value)?)?);
+            }
             ["target", value] if target.is_none() => target = Some(decode_hex(value)?),
             ["content", value] if content.is_none() => content = Some(decode_hex(value)?),
             ["enabled", value] if enabled.is_none() => {
@@ -1715,6 +1830,7 @@ fn decode_qx_rule_source_with_url(
     Ok(DecodedQxRuleSource {
         stored: StoredQxRuleSource {
             id,
+            name,
             source,
             enabled: enabled.unwrap_or(true),
             target_policy,

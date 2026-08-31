@@ -107,7 +107,8 @@ const SAVED_SINGLE_NODE_VERSION: &str = "manis-single-node-source-v1";
 const LEGACY_SAVED_SINGLE_NODE_VERSION: &str = "manis-vless-source-v1";
 const QX_RULE_SOURCE_PREFIX: &str = "qx-rule-";
 const QX_RULE_SOURCE_SUFFIX: &str = ".qxrules";
-const QX_RULE_SOURCE_VERSION: &str = "manis-qx-rule-source-v2";
+const QX_RULE_SOURCE_VERSION: &str = "manis-qx-rule-source-v3";
+const LEGACY_MANIS_QX_RULE_SOURCE_VERSION_V2: &str = "manis-qx-rule-source-v2";
 const LEGACY_MANIS_QX_RULE_SOURCE_VERSION: &str = "manis-qx-rule-source-v1";
 const LEGACY_RELAY_QX_RULE_SOURCE_VERSION: &str = "relay-qx-rule-source-v1";
 const MAX_QX_RULE_SOURCE_CONTENT_BYTES: usize = 1024 * 1024;
@@ -2410,6 +2411,7 @@ IP-CIDR,192.0.2.0/24,DIRECT
         let loaded = super::load_qx_rule_sources_in(&store)?;
 
         assert_eq!(loaded, vec![stored.clone()]);
+        assert_eq!(stored.name, None);
         assert_eq!(stored.target_policy.as_str(), "Proxy");
         assert_eq!(stored.content, content);
         assert_eq!(stored.rule_count, 2);
@@ -2431,6 +2433,7 @@ IP-CIDR,192.0.2.0/24,DIRECT
             return Err("duplicate QX rule URL was stored twice".into());
         };
         assert_eq!(existing.id, stored.id);
+        assert_eq!(existing.name, None);
         assert_eq!(existing.target_policy.as_str(), "Proxy");
         assert_eq!(existing.content, content);
         assert_eq!(super::load_qx_rule_sources_in(&store)?.len(), 1);
@@ -2447,6 +2450,146 @@ IP-CIDR,192.0.2.0/24,DIRECT
 
         super::remove_qx_rule_source_in(&store, &stored.id)?;
         assert!(super::load_qx_rule_sources_in(&store)?.is_empty());
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn qx_rule_source_custom_name_round_trips_and_can_reset()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = test_temp_dir("manis-qx-rule-name");
+        let store = root.join("subscriptions");
+        let stored = super::save_named_qx_rule_source_in(
+            &store,
+            "https://rules.example.invalid/airports.list?token=fixture-secret",
+            "  机场规则  ",
+            "Proxy",
+            "DOMAIN-SUFFIX,example.com,PROXY\n",
+        )?
+        .into_source();
+
+        assert_eq!(stored.name.as_deref(), Some("机场规则"));
+        let loaded = super::load_qx_rule_sources_in(&store)?;
+        assert_eq!(loaded, vec![stored.clone()]);
+        let entry = fs::read_dir(&store)?.next().ok_or("stored QX file")??;
+        let stored_text = fs::read_to_string(entry.path())?;
+        assert!(stored_text.starts_with(super::QX_RULE_SOURCE_VERSION));
+        assert!(stored_text.contains(&format!("name\t{}", super::encode_hex("机场规则"))));
+
+        let reset = super::update_qx_rule_source_name_in(&store, &stored.id, "   ")?;
+        assert_eq!(reset.name, None);
+        assert_eq!(
+            super::load_qx_rule_sources_in(&store)?
+                .into_iter()
+                .next()
+                .and_then(|source| source.name),
+            None
+        );
+
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn qx_rule_source_name_survives_existing_mutations() -> Result<(), Box<dyn std::error::Error>> {
+        let root = test_temp_dir("manis-qx-rule-name-preserve");
+        let store = root.join("subscriptions");
+        let stored = super::save_named_qx_rule_source_in(
+            &store,
+            "https://rules.example.invalid/old.list?token=fixture-secret",
+            "初始规则",
+            "Proxy",
+            "DOMAIN-SUFFIX,old.example,PROXY\n",
+        )?
+        .into_source();
+        let interval = super::update_qx_rule_source_refresh_interval_in(
+            &store,
+            &stored.id,
+            super::RemoteSourceRefreshInterval::Hourly,
+        )?;
+        let target = super::update_qx_rule_source_target_in(&store, &stored.id, "DIRECT")?;
+        let disabled = super::update_qx_rule_source_enabled_in(&store, &stored.id, false)?;
+        let refreshed = super::replace_qx_rule_source_content_in(
+            &store,
+            &stored.id,
+            "DOMAIN-SUFFIX,refresh.example,DIRECT\n",
+            321,
+        )?;
+        let edited = super::replace_qx_rule_source_definition_in(
+            &store,
+            &stored.id,
+            "编辑后的规则",
+            "https://rules.example.invalid/new.list?token=fixture-secret",
+            "Proxy",
+            "DOMAIN-SUFFIX,new.example,PROXY\n",
+            super::RemoteSourceRefreshInterval::Daily,
+            456,
+        )?;
+
+        assert_eq!(interval.name.as_deref(), Some("初始规则"));
+        assert_eq!(target.name.as_deref(), Some("初始规则"));
+        assert_eq!(disabled.name.as_deref(), Some("初始规则"));
+        assert_eq!(refreshed.name.as_deref(), Some("初始规则"));
+        assert_eq!(edited.id, stored.id);
+        assert_eq!(edited.name.as_deref(), Some("编辑后的规则"));
+        assert!(!edited.enabled);
+        assert_eq!(edited.target_policy.as_str(), "Proxy");
+        assert_eq!(
+            edited.source.expose_to(str::to_owned),
+            "https://rules.example.invalid/new.list?token=fixture-secret"
+        );
+        assert_eq!(
+            super::load_qx_rule_sources_in(&store)?
+                .into_iter()
+                .next()
+                .and_then(|source| source.name),
+            Some("编辑后的规则".to_owned())
+        );
+
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn qx_rule_source_invalid_name_does_not_damage_existing_file()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = test_temp_dir("manis-qx-rule-invalid-name");
+        let store = root.join("subscriptions");
+        let stored = super::save_named_qx_rule_source_in(
+            &store,
+            "https://rules.example.invalid/list?token=fixture-secret",
+            "Valid",
+            "Proxy",
+            "DOMAIN-SUFFIX,example.com,PROXY\n",
+        )?
+        .into_source();
+        let path = store.join(format!("{}{}", stored.id, super::QX_RULE_SOURCE_SUFFIX));
+        let before = fs::read_to_string(&path)?;
+
+        assert!(super::update_qx_rule_source_name_in(&store, &stored.id, "bad\nname").is_err());
+        assert_eq!(fs::read_to_string(&path)?, before);
+        assert_eq!(
+            super::load_qx_rule_sources_in(&store)?
+                .into_iter()
+                .next()
+                .and_then(|source| source.name),
+            Some("Valid".to_owned())
+        );
+        assert!(
+            super::save_named_qx_rule_source_in(
+                &store,
+                "https://rules.example.invalid/other.list",
+                &"长".repeat(49),
+                "Proxy",
+                "DOMAIN-SUFFIX,other.example,PROXY\n",
+            )
+            .is_err()
+        );
+        assert_eq!(super::load_qx_rule_sources_in(&store)?.len(), 1);
+
         fs::remove_dir_all(root)?;
         Ok(())
     }
@@ -2624,6 +2767,7 @@ IP-CIDR,192.0.2.0/24,DIRECT
         let edited = super::replace_qx_rule_source_definition_in(
             &store,
             &stored.id,
+            "",
             "https://rules.example.invalid/new.list",
             "DIRECT",
             "DOMAIN-SUFFIX,new.example,DIRECT\n",
@@ -2715,6 +2859,7 @@ IP-CIDR,192.0.2.0/24,DIRECT
             .next()
             .ok_or("legacy qx source")?;
         assert_eq!(loaded.id, id);
+        assert_eq!(loaded.name, None);
         assert_eq!(loaded.content, content);
         assert!(loaded.enabled);
         assert_eq!(
@@ -2722,6 +2867,52 @@ IP-CIDR,192.0.2.0/24,DIRECT
             super::RemoteSourceRefreshInterval::Manual
         );
         assert_eq!(loaded.last_successful_update_unix_secs, 0);
+
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn qx_rule_sources_read_legacy_v2_without_custom_name() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let root = test_temp_dir("manis-qx-rule-legacy-v2-name");
+        let store = root.join("subscriptions");
+        fs::create_dir(&store)?;
+        fs::set_permissions(&store, fs::Permissions::from_mode(0o700))?;
+        let id = "qx-rule-feed";
+        let content = "DOMAIN-KEYWORD,google,PROXY\n";
+        let legacy = [
+            super::LEGACY_MANIS_QX_RULE_SOURCE_VERSION_V2.to_owned(),
+            format!("id\t{id}"),
+            format!(
+                "url\t{}",
+                super::encode_hex("https://rules.example.invalid/list?token=fixture-secret")
+            ),
+            format!("target\t{}", super::encode_hex("Proxy")),
+            format!("content\t{}", super::encode_hex(content)),
+            "enabled\t1".to_owned(),
+            "refresh\t1h".to_owned(),
+            "last-success\t123".to_owned(),
+        ]
+        .join("\n");
+        let path = store.join(format!("{id}{}", super::QX_RULE_SOURCE_SUFFIX));
+        fs::write(&path, legacy)?;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
+
+        let loaded = super::load_qx_rule_sources_in(&store)?
+            .into_iter()
+            .next()
+            .ok_or("legacy v2 qx source")?;
+        assert_eq!(loaded.id, id);
+        assert_eq!(loaded.name, None);
+        assert_eq!(loaded.content, content);
+        assert!(loaded.enabled);
+        assert_eq!(
+            loaded.refresh_interval,
+            super::RemoteSourceRefreshInterval::Hourly
+        );
+        assert_eq!(loaded.last_successful_update_unix_secs, 123);
 
         fs::remove_dir_all(root)?;
         Ok(())
@@ -2798,6 +2989,7 @@ IP-CIDR,192.0.2.0/24,DIRECT
     -> Result<(), Box<dyn std::error::Error>> {
         let source = super::StoredQxRuleSource {
             id: "qx-rule-fixture-1".to_owned(),
+            name: None,
             source: manis_profile::SecretUrl::parse_https(
                 "https://rules.example.invalid/airports.list?token=fixture-secret",
             )?,
@@ -2841,6 +3033,7 @@ IP-CIDR,192.0.2.0/24,DIRECT
     -> Result<(), Box<dyn std::error::Error>> {
         let source = super::StoredQxRuleSource {
             id: "qx-rule-fixture-legacy-target".to_owned(),
+            name: None,
             source: manis_profile::SecretUrl::parse_https(
                 "https://rules.example.invalid/legacy.list",
             )?,

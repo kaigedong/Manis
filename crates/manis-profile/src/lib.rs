@@ -22,8 +22,6 @@ pub const LINUX_TUN_DEVICE: &str = "Meta";
 pub const LINUX_TUN_DNS_SERVER: &str = "198.18.0.2";
 /// Internal selector that keeps the node-page global exit independent from rule policy groups.
 pub const MANIS_GLOBAL_GROUP_NAME: &str = "__MANIS_GLOBAL__";
-const SUBSCRIPTION_METADATA_EXCLUDE_FILTER: &str =
-    "^(剩余流量|流量剩余|套餐到期|到期时间|过期时间|距离下次重置|下次重置|防失联|官网)";
 
 #[derive(Clone, Eq, PartialEq)]
 pub struct SecretUrl(String);

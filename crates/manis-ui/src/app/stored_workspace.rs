@@ -1,10 +1,27 @@
-use std::path::PathBuf;
+use std::collections::BTreeMap;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 use manis_core::{ManagedPolicyGroup, RoutingMode};
+use manis_profile::write_private_atomic;
+use serde::{Deserialize, Serialize};
+
+use crate::diagnostics::{LogLevel, record_event};
 
 use super::{
-    ImportedSubscription, StoredQxRuleSource, StoredSingleNode, SubscriptionStoreError, mihomo,
+    GroupBenchmarkState, ImportedSubscription, StoredQxRuleSource, StoredSingleNode,
+    SubscriptionStoreError, mihomo,
 };
+
+const BENCHMARK_STATE_FILE: &str = "benchmarks.state";
+const BENCHMARK_STATE_VERSION: u8 = 1;
+const MAX_BENCHMARK_STATE_BYTES: u64 = 4 * 1024 * 1024;
+
+#[derive(Deserialize, Serialize)]
+struct StoredBenchmarks {
+    version: u8,
+    benchmarks: BTreeMap<String, GroupBenchmarkState>,
+}
 
 pub(super) struct StoredWorkspace {
     pub(super) imported_subscriptions: Vec<ImportedSubscription>,
@@ -14,6 +31,7 @@ pub(super) struct StoredWorkspace {
     pub(super) collapsed_groups: Vec<String>,
     pub(super) managed_policy_groups: Vec<ManagedPolicyGroup>,
     pub(super) node_selection_preferences: mihomo::NodeSelectionPreferences,
+    pub(super) benchmarks: BTreeMap<String, GroupBenchmarkState>,
     pub(super) routing_mode: RoutingMode,
     pub(super) error: Option<SubscriptionStoreError>,
 }
@@ -30,6 +48,14 @@ impl StoredWorkspace {
         let collapsed = mihomo::load_collapsed_groups_in(directory);
         let policy_groups = mihomo::load_managed_policy_groups_in(directory);
         let node_selection_preferences = mihomo::load_node_selection_preferences_in(directory);
+        let benchmarks = load_group_benchmarks_in(directory);
+        if let Err(error) = &benchmarks {
+            record_event(
+                LogLevel::Warn,
+                "group_benchmark.restore_failed",
+                error.to_string(),
+            );
+        }
         let routing_mode = mihomo::load_routing_mode_in(directory);
         let error = [
             subscriptions.is_err(),
@@ -56,6 +82,7 @@ impl StoredWorkspace {
             collapsed_groups: collapsed.unwrap_or_default(),
             managed_policy_groups: policy_groups.unwrap_or_default(),
             node_selection_preferences: node_selection_preferences.unwrap_or_default(),
+            benchmarks: benchmarks.unwrap_or_default(),
             routing_mode: routing_mode.unwrap_or_default(),
             error,
         }
@@ -70,8 +97,133 @@ impl StoredWorkspace {
             collapsed_groups: Vec::new(),
             managed_policy_groups: Vec::new(),
             node_selection_preferences: mihomo::NodeSelectionPreferences::default(),
+            benchmarks: BTreeMap::new(),
             routing_mode: RoutingMode::Rule,
             error: None,
         }
+    }
+}
+
+pub(super) fn load_group_benchmarks_in(
+    directory: &Path,
+) -> Result<BTreeMap<String, GroupBenchmarkState>, SubscriptionStoreError> {
+    let path = directory.join(BENCHMARK_STATE_FILE);
+    if !path.exists() {
+        return Ok(BTreeMap::new());
+    }
+    let metadata =
+        fs::metadata(&path).map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
+    if metadata.len() > MAX_BENCHMARK_STATE_BYTES {
+        return Err(SubscriptionStoreError::StoredSourceUnavailable);
+    }
+    let contents = fs::read_to_string(&path)
+        .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
+    let mut stored: StoredBenchmarks = serde_json::from_str(&contents)
+        .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
+    if stored.version != BENCHMARK_STATE_VERSION {
+        return Err(SubscriptionStoreError::StoredSourceUnavailable);
+    }
+    stored
+        .benchmarks
+        .retain(|_, state| state.complete_delays().is_some());
+    Ok(stored.benchmarks)
+}
+
+pub(super) fn save_group_benchmarks_in(
+    directory: &Path,
+    benchmarks: &BTreeMap<String, GroupBenchmarkState>,
+) -> Result<(), SubscriptionStoreError> {
+    let stored = StoredBenchmarks {
+        version: BENCHMARK_STATE_VERSION,
+        benchmarks: benchmarks
+            .iter()
+            .filter(|(_, state)| state.complete_delays().is_some())
+            .map(|(key, state)| (key.clone(), state.clone()))
+            .collect(),
+    };
+    let contents = serde_json::to_vec(&stored)
+        .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
+    write_private_atomic(directory, BENCHMARK_STATE_FILE, &contents)
+        .map(|_| ())
+        .map_err(|_error| SubscriptionStoreError::StoreUnavailable)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+    use std::fs;
+
+    use crate::app::{GroupBenchmarkState, GroupBenchmarkSummary};
+
+    fn temp_store(name: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!("{name}-{}", std::process::id()));
+        if root.exists() {
+            fs::remove_dir_all(&root).expect("remove stale fixture");
+        }
+        root.join("subscriptions")
+    }
+
+    #[test]
+    fn group_benchmark_state_round_trips_only_completed_results() {
+        let store = temp_store("manis-group-benchmarks");
+        let complete = GroupBenchmarkState::Complete {
+            generation: 7,
+            summary: GroupBenchmarkSummary {
+                total: 2,
+                succeeded: 1,
+                failed: 1,
+                minimum_ms: Some(42),
+                maximum_ms: Some(42),
+                average_ms: Some(42),
+            },
+            delays: BTreeMap::from([("HK".to_owned(), 42)]),
+        };
+        let benchmarks = BTreeMap::from([
+            ("source:alpha".to_owned(), complete.clone()),
+            ("policy:beta".to_owned(), GroupBenchmarkState::running(8)),
+            (
+                "policy:gamma".to_owned(),
+                GroupBenchmarkState::Failed { generation: 9 },
+            ),
+        ]);
+
+        super::save_group_benchmarks_in(&store, &benchmarks).expect("save benchmark state");
+        let restored = super::load_group_benchmarks_in(&store).expect("load benchmark state");
+
+        assert_eq!(
+            restored,
+            BTreeMap::from([("source:alpha".to_owned(), complete)])
+        );
+
+        fs::remove_dir_all(store.parent().expect("fixture root")).expect("remove fixture");
+    }
+
+    #[test]
+    fn corrupt_group_benchmark_cache_does_not_mark_workspace_sources_broken() {
+        let store = temp_store("manis-corrupt-group-benchmarks");
+        fs::create_dir_all(&store).expect("create fixture store");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            fs::set_permissions(&store, fs::Permissions::from_mode(0o700))
+                .expect("make fixture store private");
+        }
+        let path = store.join(super::BENCHMARK_STATE_FILE);
+        fs::write(&path, "not json").expect("write corrupt cache");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
+                .expect("make fixture cache private");
+        }
+
+        let workspace = super::StoredWorkspace::load(Some(&store));
+
+        assert!(workspace.benchmarks.is_empty());
+        assert_eq!(workspace.error, None);
+
+        fs::remove_dir_all(store.parent().expect("fixture root")).expect("remove fixture");
     }
 }

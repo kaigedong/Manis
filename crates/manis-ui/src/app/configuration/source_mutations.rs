@@ -5,6 +5,12 @@ impl ManisApp {
         cx: &mut Context<Self>,
     ) -> bool {
         let url = input.read(cx).value().trim().to_owned();
+        let name = self
+            .inputs
+            .qx_rule_name
+            .as_ref()
+            .map(|input| input.read(cx).value().trim().to_owned())
+            .unwrap_or_default();
         let target = self.rule_sources.target_policy.clone();
         let editing_id = self.rule_sources.editor_source_id.clone();
         let refresh_interval = self.rule_sources.editor_refresh_interval;
@@ -55,6 +61,9 @@ impl ManisApp {
             .localized(copy::configuration::DOWNLOADING_AND_PARSING_QX_RULES)
             .clone_into(&mut self.status);
         input.update(cx, |input, cx| input.set_enabled(false, cx));
+        if let Some(input) = self.inputs.qx_rule_name.as_ref() {
+            input.update(cx, |input, cx| input.set_enabled(false, cx));
+        }
         let runtime = self.runtime.clone();
         let executor = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
@@ -63,8 +72,9 @@ impl ManisApp {
                     save_qx_rule_source(
                         &runtime,
                         &store_dir,
-                        QxRuleSaveRequest {
+                        &QxRuleSaveRequest {
                             url,
+                            name,
                             target,
                             editing_id,
                             refresh_interval,
@@ -138,6 +148,9 @@ impl ManisApp {
         if let Some(input) = self.inputs.qx_rule.as_ref() {
             input.update(cx, |input, cx| input.set_enabled(true, cx));
         }
+        if let Some(input) = self.inputs.qx_rule_name.as_ref() {
+            input.update(cx, |input, cx| input.set_enabled(true, cx));
+        }
         match result {
             Ok(ImportQxRuleSuccess::Imported { stored, apply }) => {
                 self.finish_imported_qx_rule(operation_id, stored, &apply, cx);
@@ -187,6 +200,9 @@ impl ManisApp {
             diagnostic_count,
         };
         if let Some(input) = self.inputs.qx_rule.as_ref() {
+            input.update(cx, SubscriptionTextInput::clear_without_event);
+        }
+        if let Some(input) = self.inputs.qx_rule_name.as_ref() {
             input.update(cx, SubscriptionTextInput::clear_without_event);
         }
         apply.reconcile_proxy_mode(&mut self.proxy_mode);

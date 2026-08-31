@@ -1533,6 +1533,7 @@ impl ManisApp {
             }
             _ => return,
         }
+        self.persist_group_benchmarks();
         cx.notify();
     }
 
@@ -1759,6 +1760,7 @@ impl ManisApp {
                     self.managed_policies
                         .benchmarks
                         .remove(&Self::managed_policy_benchmark_key(&group.id));
+                    self.persist_group_benchmarks();
                     self.managed_policies.runtime_states.remove(&group.id);
                     self.managed_policies.draft = None;
                     self.managed_policies.editor_popover = None;
@@ -1894,6 +1896,7 @@ impl ManisApp {
         self.managed_policies
             .benchmarks
             .remove(&Self::managed_policy_benchmark_key(&deleted_id));
+        self.persist_group_benchmarks();
         self.managed_policies.runtime_states.remove(&deleted_id);
         if self
             .managed_policies
@@ -1928,7 +1931,7 @@ impl ManisApp {
             this.language()
                 .localized(copy::nodes::SUBSCRIPTION_SOURCE_CONFIGURATION_OPENED)
                 .clone_into(&mut this.status);
-            cx.notify();
+            this.scroll_to_configuration_section(super::ConfigurationSection::ProxySources, cx);
         }))
     }
 
@@ -2241,7 +2244,7 @@ impl ManisApp {
         language: Language,
         theme: Theme,
         cx: &mut Context<Self>,
-    ) -> Div {
+    ) -> Stateful<Div> {
         let action = if presentation.collapsed {
             language.localized(copy::common::EXPAND)
         } else {
@@ -2255,7 +2258,7 @@ impl ManisApp {
                 language.localized(copy::nodes::NODE_SOURCE),
                 group.name
             ))
-            .with_variant(ButtonVariant::Ghost)
+            .with_variant(ButtonVariant::Text)
             .h_full()
             .flex_1()
             .px_0()
@@ -2279,6 +2282,7 @@ impl ManisApp {
         let benchmark_name = group.name.clone();
         let delay_targets = group.delay_targets();
         div()
+            .id(format!("source-group-surface-{}", group.id))
             .min_h(px(58.0))
             .px(if compact { px(12.0) } else { px(16.0) })
             .py_3()
@@ -2293,6 +2297,7 @@ impl ManisApp {
                     .rounded_br(Radius::Pane.px())
             })
             .bg(theme.surface_low)
+            .hover(move |header| header.bg(theme.action_soft))
             .child(Self::group_benchmark_icon(
                 &presentation.benchmark_key,
                 benchmarking,
@@ -2667,7 +2672,7 @@ impl ManisApp {
             this.language()
                 .localized(copy::nodes::SUBSCRIPTION_SOURCE_CONFIGURATION_OPENED)
                 .clone_into(&mut this.status);
-            cx.notify();
+            this.scroll_to_configuration_section(super::ConfigurationSection::ProxySources, cx);
         }))
         .into_any_element();
 

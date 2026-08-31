@@ -400,6 +400,8 @@ pub(crate) const SOME_LOCAL_SOURCES_COULD_NOT_BE_RESTORED: LocalizedText = Local
     "部分本地来源未能恢复",
 );
 pub(crate) const SOURCE_NAME: LocalizedText = LocalizedText::new("Source name", "来源名称");
+pub(crate) const RULE_SOURCE_NAME_PLACEHOLDER: LocalizedText =
+    LocalizedText::new("Leave blank to use the default name", "留空使用默认名称");
 pub(crate) const SOURCE_RECOGNITION_FAILED: LocalizedText =
     LocalizedText::new("Source recognition failed", "来源识别失败");
 pub(crate) const SOURCE_TYPE: LocalizedText = LocalizedText::new("Source type", "来源类型");

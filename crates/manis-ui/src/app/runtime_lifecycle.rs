@@ -460,6 +460,9 @@ impl ManisApp {
                 let _ = catalog.apply_selector_target(group, target);
             }
         }
+        if let Some(catalog) = catalog.as_mut() {
+            self.apply_completed_policy_benchmarks(catalog);
+        }
         let selection = catalog.as_ref().map(|catalog| {
             let primary = catalog.select(None);
             let selected_node = primary
@@ -746,6 +749,7 @@ impl ManisApp {
             }
             _ => return,
         }
+        self.persist_group_benchmarks();
         cx.notify();
     }
 

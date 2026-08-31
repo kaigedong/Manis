@@ -6,6 +6,7 @@ use super::{
 };
 
 pub(super) enum SourceRuntimeApply {
+    MetadataOnly,
     Applied(GeneratedProfileApply),
     Failed(String),
     ProxyModeLost(String),
@@ -125,7 +126,7 @@ impl SourceRuntimeApply {
 
     pub(super) fn status_suffix(&self, language: Language) -> String {
         match self {
-            Self::Applied(GeneratedProfileApply::Updated) => {
+            Self::MetadataOnly | Self::Applied(GeneratedProfileApply::Updated) => {
                 language.message(Message::ChangesApplied).to_owned()
             }
             Self::Applied(GeneratedProfileApply::Restarted) => language

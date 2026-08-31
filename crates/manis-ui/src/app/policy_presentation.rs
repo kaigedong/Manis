@@ -58,6 +58,33 @@ impl ManisApp {
         format!("policy:{}", id.as_str())
     }
 
+    fn persist_group_benchmarks(&self) {
+        let Some(store_dir) = self.subscription_store_dir.as_ref() else {
+            return;
+        };
+        if let Err(error) =
+            stored_workspace::save_group_benchmarks_in(store_dir, &self.managed_policies.benchmarks)
+        {
+            record_event(
+                LogLevel::Warn,
+                "group_benchmark.persistence_failed",
+                error.to_string(),
+            );
+        }
+    }
+
+    fn apply_completed_policy_benchmarks(&self, catalog: &mut PolicyCatalog) {
+        for (key, state) in &self.managed_policies.benchmarks {
+            let Some(group_id) = key.strip_prefix("policy:") else {
+                continue;
+            };
+            let Some(delays) = state.complete_delays() else {
+                continue;
+            };
+            let _ = catalog.apply_group_benchmark(&manis_core::PolicyGroupId::new(group_id), None, delays);
+        }
+    }
+
     fn begin_group_benchmark(&mut self, key: String) -> Option<u64> {
         if self.managed_policies.active_benchmark_generation.is_some() {
             return None;
@@ -69,6 +96,7 @@ impl ManisApp {
             .benchmarks
             .insert(key, GroupBenchmarkState::running(generation));
         self.managed_policies.active_benchmark_generation = Some(generation);
+        self.persist_group_benchmarks();
         Some(generation)
     }
 

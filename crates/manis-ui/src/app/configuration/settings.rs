@@ -1,4 +1,56 @@
+fn configuration_section_at_scroll(
+    section_tops: &[gpui::Pixels],
+    scroll_top: gpui::Pixels,
+    at_bottom: bool,
+) -> ConfigurationSection {
+    // The last section may be shorter than the viewport and never reach its top edge.
+    let index = if at_bottom {
+        section_tops.len().saturating_sub(1)
+    } else {
+        section_tops
+            .iter()
+            .rposition(|top| *top <= scroll_top + px(1.0))
+            .unwrap_or(0)
+    };
+    ConfigurationSection::ALL.get(index).copied().unwrap_or_default()
+}
+
 impl ManisApp {
+    pub(super) fn scroll_to_configuration_section(
+        &mut self,
+        section: ConfigurationSection,
+        cx: &mut Context<Self>,
+    ) {
+        let index = ConfigurationSection::ALL
+            .iter()
+            .position(|candidate| *candidate == section)
+            .expect("configuration section belongs to the directory");
+        self.configuration_section = section;
+        self.configuration_scroll.scroll_to_top_of_item(index);
+        cx.notify();
+    }
+
+    fn sync_configuration_directory(&mut self, cx: &mut Context<Self>) {
+        let scroll = &self.configuration_scroll;
+        let section_tops: Vec<_> = (0..ConfigurationSection::ALL.len())
+            .filter_map(|index| scroll.bounds_for_item(index).map(|bounds| bounds.top()))
+            .collect();
+        if section_tops.is_empty() {
+            return;
+        }
+        let at_bottom = scroll.max_offset().y > px(0.0)
+            && -scroll.offset().y >= scroll.max_offset().y - px(1.0);
+        let section = configuration_section_at_scroll(
+            &section_tops,
+            scroll.bounds().top() - scroll.offset().y,
+            at_bottom,
+        );
+        if self.configuration_section != section {
+            self.configuration_section = section;
+            cx.notify();
+        }
+    }
+
     fn configuration_navigation(&self, theme: Theme, compact: bool, cx: &mut Context<Self>) -> Div {
         let language = self.language();
         let navigation = div()
@@ -152,8 +204,13 @@ impl ManisApp {
                 )
             })
             .on_click(cx.listener(move |this, _, _, cx| {
-                this.configuration_section = section;
-                cx.notify();
+                this.scroll_to_configuration_section(section, cx);
+            }))
+            .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
+                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                    this.scroll_to_configuration_section(section, cx);
+                    cx.stop_propagation();
+                }
             }))
     }
 

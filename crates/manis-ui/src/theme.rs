@@ -28,6 +28,9 @@ pub(crate) struct Theme {
     pub status_success: Rgba,
     pub status_warning: Rgba,
     pub status_error: Rgba,
+    pub log_info: Rgba,
+    pub log_debug: Rgba,
+    pub log_trace: Rgba,
 }
 
 impl Theme {
@@ -58,6 +61,9 @@ impl Theme {
             status_success: rgb(0x00692a),
             status_warning: rgb(0x875500),
             status_error: rgb(0xb42318),
+            log_info: rgb(0x1d4ed8),
+            log_debug: rgb(0x7e22ce),
+            log_trace: rgb(0x0e7490),
         }
     }
 
@@ -86,6 +92,9 @@ impl Theme {
             status_success: rgb(0x73d499),
             status_warning: rgb(0xf0c36a),
             status_error: rgb(0xff9a96),
+            log_info: rgb(0x93c5fd),
+            log_debug: rgb(0xd8b4fe),
+            log_trace: rgb(0x67e8f9),
         }
     }
 }
@@ -478,6 +487,15 @@ mod tests {
                 }
             }
             assert_contrast(theme.route_trace, theme.route_soft, 4.5);
+            for level in [
+                theme.log_info,
+                theme.log_debug,
+                theme.log_trace,
+                theme.status_warning,
+                theme.status_error,
+            ] {
+                assert_contrast(level, theme.surface_base.blend(level.opacity(0.1)), 4.5);
+            }
         }
     }
 
