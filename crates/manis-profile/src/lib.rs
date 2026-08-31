@@ -1756,11 +1756,15 @@ fn is_ip_cidr(value: &str) -> bool {
 }
 
 fn parse_qx_rule_kind(value: &str) -> Option<QxRuleKind> {
-    if value.eq_ignore_ascii_case("DOMAIN") {
+    if value.eq_ignore_ascii_case("DOMAIN") || value.eq_ignore_ascii_case("HOST") {
         Some(QxRuleKind::Domain)
-    } else if value.eq_ignore_ascii_case("DOMAIN-KEYWORD") {
+    } else if value.eq_ignore_ascii_case("DOMAIN-KEYWORD")
+        || value.eq_ignore_ascii_case("HOST-KEYWORD")
+    {
         Some(QxRuleKind::DomainKeyword)
-    } else if value.eq_ignore_ascii_case("DOMAIN-SUFFIX") {
+    } else if value.eq_ignore_ascii_case("DOMAIN-SUFFIX")
+        || value.eq_ignore_ascii_case("HOST-SUFFIX")
+    {
         Some(QxRuleKind::DomainSuffix)
     } else {
         None

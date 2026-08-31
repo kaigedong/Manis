@@ -964,12 +964,31 @@ DOMAIN,bad.example,DIRECT,unexpected
 }
 
 #[test]
+fn quantumult_x_host_aliases_match_domain_rules_case_insensitively() {
+    for (host_kind, domain_kind, value) in [
+        ("HOST", "DOMAIN", "service.example.com"),
+        ("HOST-SUFFIX", "DOMAIN-SUFFIX", "example.com"),
+        ("HOST-KEYWORD", "DOMAIN-KEYWORD", "example"),
+    ] {
+        let expected = QxRuleList::parse(&format!("{domain_kind},{value},Example"));
+        assert_eq!(expected.rules.len(), 1);
+        for spelling in [host_kind.to_owned(), host_kind.to_ascii_lowercase()] {
+            let parsed = QxRuleList::parse(&format!("  {spelling}, {value}, Example  \r\n"));
+            assert_eq!(
+                parsed, expected,
+                "QX alias {spelling} must retain its semantics"
+            );
+        }
+    }
+}
+
+#[test]
 fn quantumult_x_rule_list_maps_source_policies_to_local_profile_rules() {
     let parsed = QxRuleList::parse(
         r"
-DOMAIN-KEYWORD,google,PROXY
-DOMAIN-SUFFIX,githubusercontent.com,PROXY
-DOMAIN,example.com,proxy
+HOST-KEYWORD,google,PROXY
+host-suffix,githubusercontent.com,PROXY
+HoSt,example.com,proxy
 ",
     );
     assert!(parsed.diagnostics.is_empty());
