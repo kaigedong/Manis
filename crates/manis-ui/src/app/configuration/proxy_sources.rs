@@ -8,6 +8,8 @@ impl ManisApp {
             ActionRole::Primary,
             ControlSize::Compact,
         )
+        .disabled(self.proxy_source_editor.is_importing())
+        .when(self.proxy_source_editor.is_importing(), gpui::Styled::cursor_default)
         .on_click(cx.listener(|this, _, window, cx| {
             this.open_new_subscription_editor(cx);
             this.open_proxy_source_dialog(window, cx);
@@ -57,6 +59,8 @@ impl ManisApp {
                             ActionRole::Primary,
                             ControlSize::Compact,
                         )
+                        .disabled(self.proxy_source_editor.is_importing())
+                        .when(self.proxy_source_editor.is_importing(), gpui::Styled::cursor_default)
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.open_new_subscription_editor(cx);
                             this.open_proxy_source_dialog(window, cx);
@@ -74,6 +78,9 @@ impl ManisApp {
     }
 
     fn open_new_subscription_editor(&mut self, cx: &mut Context<Self>) {
+        if self.proxy_source_editor.is_importing() {
+            return;
+        }
         self.proxy_source_editor.subscription_source_id = None;
         self.proxy_source_editor.single_node_source_id = None;
         self.proxy_source_editor.kind = ProxySourceEditorKind::Subscription;
@@ -92,6 +99,9 @@ impl ManisApp {
     }
 
     fn open_subscription_editor(&mut self, id: String, cx: &mut Context<Self>) {
+        if self.proxy_source_editor.is_importing() {
+            return;
+        }
         let Some(subscription) = self
             .imported_subscriptions
             .iter()
@@ -119,6 +129,9 @@ impl ManisApp {
     }
 
     fn open_single_node_editor(&mut self, id: String, cx: &mut Context<Self>) {
+        if self.proxy_source_editor.is_importing() {
+            return;
+        }
         let Some(saved) = self.saved_single_nodes.iter().find(|saved| saved.id == id) else {
             return;
         };
@@ -142,6 +155,9 @@ impl ManisApp {
     }
 
     fn open_proxy_source_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.proxy_source_editor.is_importing() {
+            return;
+        }
         let app = cx.entity();
         window.open_dialog(cx, move |dialog, window, cx| {
             app.update(cx, |this, cx| {
@@ -156,6 +172,10 @@ impl ManisApp {
     }
 
     fn close_subscription_editor(&mut self, cx: &mut Context<Self>) {
+        // Closing the dialog does not cancel its background import.
+        if self.proxy_source_editor.is_importing() {
+            return;
+        }
         self.configuration_add_section = None;
         self.proxy_source_editor.subscription_source_id = None;
         self.proxy_source_editor.single_node_source_id = None;
@@ -534,7 +554,10 @@ impl ManisApp {
         input: &Entity<SubscriptionTextInput>,
         cx: &mut Context<Self>,
     ) -> bool {
-        if self.configuration_transfer.active {
+        if self.configuration_transfer.active
+            || self.source_refresh_busy()
+            || self.routing_apply_state.is_busy()
+        {
             return false;
         }
         let name = self
@@ -626,7 +649,10 @@ impl ManisApp {
         preview: crate::subscription::SubscriptionPreview,
         cx: &mut Context<Self>,
     ) -> bool {
-        if self.configuration_transfer.active {
+        if self.configuration_transfer.active
+            || self.source_refresh_busy()
+            || self.routing_apply_state.is_busy()
+        {
             return false;
         }
         let Some(store_dir) = self.subscription_store_dir.clone() else {
@@ -639,8 +665,9 @@ impl ManisApp {
             cx.notify();
             return false;
         };
-        self.subscription_preview_generation = self.subscription_preview_generation.wrapping_add(1);
-        let generation = self.subscription_preview_generation;
+        self.proxy_source_editor.import_generation =
+            self.proxy_source_editor.import_generation.wrapping_add(1);
+        let generation = self.proxy_source_editor.import_generation;
         self.proxy_source_editor.feedback = SubscriptionFeedback::Importing(SourceKind::SingleNode);
         self.language()
             .localized(copy::configuration::VALIDATING_AND_SAVING_SINGLE_NODE_SOURCE)
@@ -656,10 +683,10 @@ impl ManisApp {
             let result = executor
                 .spawn(async move {
                     let providers = mihomo::preview_single_node(&input_value)?;
-                    let transaction = super::mutate_saved_sources(&runtime, &store_dir, || {
+                    let transaction = super::mutate_saved_sources(&runtime, &store_dir, |store_dir| {
                         if let Some(id) = editing_id {
                             mihomo::update_single_node_source_in(
-                                &store_dir,
+                                store_dir,
                                 &id,
                                 &input_value,
                                 &name,
@@ -667,7 +694,7 @@ impl ManisApp {
                             )
                         } else {
                             mihomo::save_single_node_source_with_options_in(
-                                &store_dir,
+                                store_dir,
                                 &input_value,
                                 &name,
                                 enabled,
@@ -694,7 +721,7 @@ impl ManisApp {
         result: super::SingleNodeImportResult,
         cx: &mut Context<Self>,
     ) {
-        if self.subscription_preview_generation != generation {
+        if self.proxy_source_editor.import_generation != generation {
             return;
         }
         if let Some(input) = self.proxy_source_editor.input.as_ref() {
@@ -735,7 +762,7 @@ impl ManisApp {
                 language.localized(copy::configuration::SINGLE_NODE_SOURCE_SAVE_FAILED),
                 transaction
                     .apply
-                    .status_suffix_after_source_rollback(language)
+                    .status_suffix_after_rollback_attempt(language, transaction.rollback_error.as_ref())
             );
             trace_ui(UiEvent::SourceImportFailed);
             cx.notify();
@@ -759,6 +786,9 @@ impl ManisApp {
             input.update(cx, SubscriptionTextInput::clear_without_event);
         }
         self.configuration_add_section = None;
+        self.proxy_source_editor.subscription_source_id = None;
+        self.proxy_source_editor.single_node_source_id = None;
+        self.proxy_source_editor.error = None;
         self.status = copy::configuration::single_node_saved(
             language,
             &transaction.apply.status_suffix(language),
@@ -1213,7 +1243,10 @@ impl ManisApp {
     }
 
     fn set_single_node_enabled(&mut self, id: String, enabled: bool, cx: &mut Context<Self>) {
-        if self.configuration_transfer.active {
+        if self.configuration_transfer.active
+            || self.source_refresh_busy()
+            || self.routing_apply_state.is_busy()
+        {
             return;
         }
         let Some(store_dir) = self.subscription_store_dir.clone() else {
@@ -1227,8 +1260,8 @@ impl ManisApp {
         cx.spawn(async move |this, cx| {
             let result = executor
                 .spawn(async move {
-                    super::mutate_saved_sources(&runtime, &store_dir, || {
-                        mihomo::update_single_node_source_enabled_in(&store_dir, &id, enabled)
+                    super::mutate_saved_sources(&runtime, &store_dir, |store_dir| {
+                        mihomo::update_single_node_source_enabled_in(store_dir, &id, enabled)
                     })
                 })
                 .await;
@@ -1279,7 +1312,10 @@ impl ManisApp {
     }
 
     fn remove_saved_single_node(&mut self, id: String, cx: &mut Context<Self>) {
-        if self.configuration_transfer.active {
+        if self.configuration_transfer.active
+            || self.source_refresh_busy()
+            || self.routing_apply_state.is_busy()
+        {
             return;
         }
         let Some(store_dir) = self.subscription_store_dir.clone() else {
@@ -1293,8 +1329,8 @@ impl ManisApp {
         cx.spawn(async move |this, cx| {
             let result = executor
                 .spawn(async move {
-                    super::mutate_saved_sources(&runtime, &store_dir, || {
-                        mihomo::remove_single_node_source_in(&store_dir, &id).map(|()| id.clone())
+                    super::mutate_saved_sources(&runtime, &store_dir, |store_dir| {
+                        mihomo::remove_single_node_source_in(store_dir, &id).map(|()| id.clone())
                     })
                 })
                 .await;
@@ -1376,5 +1412,161 @@ impl ManisApp {
                         .child(recovery),
                 )
             })
+    }
+}
+
+#[cfg(test)]
+mod subscription_import_concurrency_tests {
+    use crate::app::*;
+
+    fn source_fixture() -> ImportedSubscription {
+        ImportedSubscription {
+            id: "subscription:import-concurrency".to_owned(),
+            name: "Existing source".to_owned(),
+            source: manis_profile::SecretUrl::parse_subscription("http://127.0.0.1:1/subscription")
+                .expect("fixture URL"),
+            enabled: true,
+            state: ImportedSubscriptionState::Ready(SourceKind::HttpSubscription),
+            providers: Vec::new(),
+            generation: 7,
+            refresh_interval: RemoteSourceRefreshInterval::Hourly,
+            last_successful_update_unix_secs: 0,
+        }
+    }
+
+    fn app_fixture() -> ManisApp {
+        let store =
+            std::env::temp_dir().join(format!("manis-import-concurrency-{}", std::process::id()));
+        let mut app =
+            ManisApp::with_fixture_controller_and_subscription_store("http://127.0.0.1:1", store);
+        app.imported_subscriptions = vec![source_fixture()];
+        app
+    }
+
+    #[gpui::test]
+    fn scheduled_refresh_waits_for_editor_import(cx: &mut gpui::TestAppContext) {
+        let app = cx.new(|_| app_fixture());
+        app.update(cx, |app, cx| {
+            app.proxy_source_editor.import_generation = 41;
+            app.proxy_source_editor.feedback =
+                SubscriptionFeedback::Importing(SourceKind::HttpsSubscription);
+
+            app.refresh_next_due_source(cx);
+
+            assert_eq!(app.proxy_source_editor.import_generation, 41);
+            assert_eq!(
+                app.imported_subscriptions[0].state,
+                ImportedSubscriptionState::Ready(SourceKind::HttpSubscription)
+            );
+            assert!(app.rule_sources.refresh_retry_not_before.is_empty());
+        });
+    }
+
+    #[gpui::test]
+    fn source_toggle_preserves_editor_completion_token(cx: &mut gpui::TestAppContext) {
+        let app = cx.new(|_| app_fixture());
+        app.update(cx, |app, cx| {
+            app.proxy_source_editor.import_generation = 41;
+            app.set_subscription_enabled("subscription:import-concurrency", false, cx);
+            assert!(matches!(
+                app.imported_subscriptions[0].state,
+                ImportedSubscriptionState::Refreshing(_)
+            ));
+            app.proxy_source_editor.feedback =
+                SubscriptionFeedback::Importing(SourceKind::SingleNode);
+            app.finish_single_node_import(
+                41,
+                crate::subscription::SubscriptionPreview {
+                    kind: SourceKind::SingleNode,
+                    nodes: Vec::new(),
+                },
+                Err(SubscriptionStoreError::StoreUnavailable),
+                cx,
+            );
+            assert!(matches!(
+                app.proxy_source_editor.feedback,
+                SubscriptionFeedback::StoreFailed(SubscriptionStoreError::StoreUnavailable)
+            ));
+        });
+    }
+
+    #[gpui::test]
+    fn edited_source_ignores_an_older_refresh_callback(cx: &mut gpui::TestAppContext) {
+        let app = cx.new(|_| app_fixture());
+        app.update(cx, |app, cx| {
+            let previous = app.imported_subscriptions[0].clone();
+            app.merge_imported_subscription(
+                StoredSubscription {
+                    id: previous.id.clone(),
+                    name: "Edited source".to_owned(),
+                    source: previous.source,
+                    enabled: false,
+                    refresh_interval: RemoteSourceRefreshInterval::Manual,
+                    last_successful_update_unix_secs: 20,
+                    proxy_server_nameservers: Vec::new(),
+                },
+                &[],
+                42,
+                SourceKind::HttpSubscription,
+            );
+            app.finish_subscription_refresh(
+                &previous.id,
+                previous.generation,
+                SourceKind::HttpSubscription,
+                Err(ImportSubscriptionError::Store(
+                    SubscriptionStoreError::StoreUnavailable,
+                )),
+                cx,
+            );
+            assert_eq!(
+                app.imported_subscriptions[0].state,
+                ImportedSubscriptionState::None
+            );
+            assert_eq!(app.imported_subscriptions[0].generation, 42);
+        });
+    }
+
+    #[gpui::test]
+    fn closing_or_reopening_editor_preserves_an_inflight_import(cx: &mut gpui::TestAppContext) {
+        let app = cx.new(|_| app_fixture());
+        app.update(cx, |app, cx| {
+            app.proxy_source_editor.feedback =
+                SubscriptionFeedback::Importing(SourceKind::HttpsSubscription);
+            app.proxy_source_editor.subscription_source_id = Some("being-edited".to_owned());
+
+            app.close_subscription_editor(cx);
+            app.open_new_subscription_editor(cx);
+
+            assert!(matches!(
+                app.proxy_source_editor.feedback,
+                SubscriptionFeedback::Importing(SourceKind::HttpsSubscription)
+            ));
+            assert_eq!(
+                app.proxy_source_editor.subscription_source_id.as_deref(),
+                Some("being-edited")
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn older_editor_completion_does_not_replace_current_import(cx: &mut gpui::TestAppContext) {
+        let app = cx.new(|_| app_fixture());
+        app.update(cx, |app, cx| {
+            app.proxy_source_editor.import_generation = 42;
+            app.proxy_source_editor.feedback =
+                SubscriptionFeedback::Importing(SourceKind::HttpsSubscription);
+            app.finish_subscription_import(
+                41,
+                SourceKind::HttpsSubscription,
+                Err(ImportSubscriptionError::Store(
+                    SubscriptionStoreError::StoreUnavailable,
+                )),
+                cx,
+            );
+            assert!(matches!(
+                app.proxy_source_editor.feedback,
+                SubscriptionFeedback::Importing(SourceKind::HttpsSubscription)
+            ));
+        });
     }
 }

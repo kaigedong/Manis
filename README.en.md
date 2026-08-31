@@ -128,6 +128,12 @@ subscription or individual node is added, Manis validates and writes the generat
 its private runtime directory. The controller endpoint is also assigned by Manis, not configured by
 the user.
 
+Source and routing-rule edits are staged privately before committing only the changed files.
+A failed save or runtime apply does not restore unrelated settings from an old directory snapshot.
+If a file changes again before rollback, Manis preserves its newer contents and reports the restore
+failure. Kernel switching first turns off the active proxy and restores the related system settings;
+if cleanup fails, the previous kernel remains running.
+
 ## Configuration backup and editing
 
 Under Settings → General → Backup and migration, export a complete `.manis.json` file and import it
