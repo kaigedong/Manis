@@ -6,6 +6,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::sync::Arc::new(manis_ui::Assets),
     );
     cx.update(manis_ui::init);
+    if std::env::args().any(|argument| argument == "--policy-scrolling") {
+        return capture_policy_scrolling(&mut cx);
+    }
     if std::env::args().any(|argument| argument == "--proxy-candidate") {
         capture_proxy_candidate(&mut cx)?;
         return Ok(());
@@ -97,6 +100,138 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     capture_data_page_coverage(&mut cx)?;
     capture_live_when_configured(&mut cx)?;
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn capture_policy_scrolling(
+    cx: &mut gpui::VisualTestAppContext,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use gpui::{AnyWindowHandle, Modifiers, point, px, size};
+
+    let store = std::env::temp_dir().join(format!("manis-policy-scroll-{}", std::process::id()));
+    manis_profile::write_private_atomic(&store, "language.preference", b"zh-CN")?;
+    let (endpoint, server) = spawn_mihomo_fixture_with_response(false, policy_scroll_response)?;
+    for (width, height, label) in [(1420_u16, 900_u16, "wide"), (640, 560, "compact")] {
+        let logical_width = u32::from(width);
+        let (width, height) = (f32::from(width), f32::from(height));
+        cx.update(manis_ui::init);
+        let window_endpoint = endpoint.clone();
+        let window_store = store.clone();
+        let window = cx.open_offscreen_window(size(px(width), px(height)), |window, cx| {
+            manis_root(window, cx, |_| {
+                manis_ui::ManisApp::with_fixture_controller_and_subscription_store(
+                    window_endpoint,
+                    window_store,
+                )
+            })
+        })?;
+        let window: AnyWindowHandle = window.into();
+        refresh(cx, window)?;
+        cx.simulate_click(
+            window,
+            point(px(width - 200.0), px(76.0)),
+            Modifiers::none(),
+        );
+        settle_ui_for(cx, window, std::time::Duration::from_millis(600))?;
+        open_workspace(cx, window, width, SnapshotWorkspace::PolicyGroups)?;
+        for (dark, mode) in [(false, "light"), (true, "dark")] {
+            if dark {
+                let toggle_x = width - if width >= 1280.0 { 550.0 } else { 205.0 };
+                cx.simulate_click(window, point(px(toggle_x), px(24.0)), Modifiers::none());
+                refresh(cx, window)?;
+            }
+            // Expanding the second group must leave the complete first card unchanged.
+            let before = cx.capture_screenshot(window)?;
+            cx.simulate_click(window, point(px(320.0), px(264.0)), Modifiers::none());
+            refresh(cx, window)?;
+            save_screenshot(
+                cx,
+                window,
+                &format!("policy-scroll-{label}-{mode}-second.png"),
+            )?;
+            let after = cx.capture_screenshot(window)?;
+            let to_pixel = |coordinate: u32| coordinate * after.width() / logical_width;
+            let left = if width >= 1280.0 { 250 } else { 90 };
+            for y in to_pixel(150)..to_pixel(215) {
+                for x in to_pixel(left)..to_pixel(logical_width - 30) {
+                    assert_eq!(
+                        before.get_pixel(x, y),
+                        after.get_pixel(x, y),
+                        "{label}/{mode}: expanding the second group moved or clipped the first card"
+                    );
+                }
+            }
+            scroll_window(cx, window, width - 50.0, height - 100.0, -10_000.0)?;
+            save_screenshot(
+                cx,
+                window,
+                &format!("policy-scroll-{label}-{mode}-bottom.png"),
+            )?;
+            let bottom = cx.capture_screenshot(window)?;
+            assert!(after != bottom, "long policy content must scroll");
+            scroll_window(cx, window, width - 50.0, height - 100.0, 10_000.0)?;
+            // Switch to an all-node group at the top, then verify the following cards at the end.
+            cx.simulate_click(window, point(px(320.0), px(172.0)), Modifiers::none());
+            refresh(cx, window)?;
+            save_screenshot(
+                cx,
+                window,
+                &format!("policy-scroll-{label}-{mode}-first.png"),
+            )?;
+            scroll_window(cx, window, width - 50.0, height - 100.0, -10_000.0)?;
+            save_screenshot(
+                cx,
+                window,
+                &format!("policy-scroll-{label}-{mode}-first-bottom.png"),
+            )?;
+            scroll_window(cx, window, width - 50.0, height - 100.0, 10_000.0)?;
+            cx.simulate_click(window, point(px(320.0), px(172.0)), Modifiers::none());
+            refresh(cx, window)?;
+        }
+        close_window(cx, window)?;
+    }
+    server.stop()?;
+    std::fs::remove_dir_all(store)?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn policy_scroll_response(path: &str) -> String {
+    use serde_json::json;
+
+    if path == "/providers/proxies" {
+        return r#"{"providers":{}}"#.to_owned();
+    }
+    if path != "/proxies" {
+        return fixture_response(path).to_owned();
+    }
+    let nodes: Vec<_> = (1..=50)
+        .map(|index| format!("测试节点 {index:02}"))
+        .collect();
+    let mut proxies = serde_json::Map::new();
+    for name in &nodes {
+        proxies.insert(
+            name.clone(),
+            json!({
+                "name": name, "type": "Trojan", "alive": true,
+                "provider-name": "测试来源", "history": [{"delay": 42}]
+            }),
+        );
+    }
+    for name in [
+        "01 全部节点",
+        "02 自动选择",
+        "03 日常使用",
+        "04 最后一个策略组",
+    ] {
+        proxies.insert(
+            name.to_owned(),
+            json!({
+                "name": name, "type": "Selector", "now": nodes[0], "all": nodes, "alive": true
+            }),
+        );
+    }
+    json!({"proxies": proxies}).to_string()
 }
 
 #[cfg(target_os = "macos")]
@@ -1098,6 +1233,7 @@ fn capture_routing_rules(
     let store = root.join("subscriptions");
     std::fs::create_dir_all(&store)?;
     std::fs::set_permissions(&store, std::fs::Permissions::from_mode(0o700))?;
+    manis_profile::write_private_atomic(&store, "language.preference", b"zh-CN")?;
     let content = concat!(
         "DOMAIN-SUFFIX,openai.com,PROXY\n",
         "DOMAIN-SUFFIX,google.com,PROXY\n",
@@ -1140,6 +1276,11 @@ fn capture_routing_rules(
         (1420.0, 900.0, "routing-rules-wide.png"),
         (720.0, 720.0, "routing-rules-compact.png"),
     ] {
+        manis_profile::write_private_atomic(
+            &store,
+            "workspace.state",
+            b"routing-manual-rules\nrouting-rule-source:qx-rule-deadbeef",
+        )?;
         let window_store = store.clone();
         let window = cx.open_offscreen_window(size(px(width), px(height)), |window, cx| {
             manis_root(window, cx, |_| {
@@ -1158,10 +1299,16 @@ fn capture_routing_rules(
         }
         open_workspace(cx, window, width, SnapshotWorkspace::RoutingRules)?;
         save_screenshot(cx, window, file_name)?;
+        let toggle_x = width - if width >= 1280.0 { 550.0 } else { 205.0 };
+        cx.simulate_click(window, point(px(toggle_x), px(24.0)), Modifiers::none());
+        refresh(cx, window)?;
+        save_screenshot(cx, window, &file_name.replace(".png", "-dark.png"))?;
+        cx.simulate_click(window, point(px(toggle_x), px(24.0)), Modifiers::none());
+        refresh(cx, window)?;
         if width >= 1_280.0 {
             capture_routing_rule_interactions(cx, window)?;
         } else {
-            cx.simulate_click(window, point(px(654.0), px(157.0)), Modifiers::none());
+            cx.simulate_click(window, point(px(654.0), px(80.0)), Modifiers::none());
             settle_ui_animation(cx, window)?;
             save_screenshot(cx, window, "routing-rules-compact-add-modal.png")?;
         }
@@ -1179,23 +1326,23 @@ fn capture_routing_rule_interactions(
 ) -> Result<(), Box<dyn std::error::Error>> {
     use gpui::{Modifiers, point, px};
 
-    cx.simulate_click(window, point(px(700.0), px(260.0)), Modifiers::none());
+    cx.simulate_click(window, point(px(700.0), px(180.0)), Modifiers::none());
     settle_ui_animation(cx, window)?;
     save_screenshot(cx, window, "routing-rules-wide-manual-accordion-open.png")?;
-    cx.simulate_click(window, point(px(700.0), px(330.0)), Modifiers::none());
+    cx.simulate_click(window, point(px(700.0), px(250.0)), Modifiers::none());
     settle_ui_animation(cx, window)?;
     save_screenshot(cx, window, "routing-rules-wide-manual-edit-modal.png")?;
     cx.simulate_keystrokes(window, "escape");
     settle_ui_animation(cx, window)?;
-    cx.simulate_click(window, point(px(700.0), px(260.0)), Modifiers::none());
+    cx.simulate_click(window, point(px(700.0), px(180.0)), Modifiers::none());
     settle_ui_animation(cx, window)?;
-    cx.simulate_click(window, point(px(700.0), px(348.0)), Modifiers::none());
+    cx.simulate_click(window, point(px(700.0), px(250.0)), Modifiers::none());
     settle_ui_animation(cx, window)?;
     save_screenshot(cx, window, "routing-rules-wide-remote-accordion-open.png")?;
-    cx.simulate_click(window, point(px(700.0), px(348.0)), Modifiers::none());
+    cx.simulate_click(window, point(px(700.0), px(250.0)), Modifiers::none());
     settle_ui_animation(cx, window)?;
 
-    cx.simulate_click(window, point(px(1_286.0), px(190.0)), Modifiers::none());
+    cx.simulate_click(window, point(px(1_366.0), px(80.0)), Modifiers::none());
     settle_ui_animation(cx, window)?;
     save_screenshot(cx, window, "routing-rules-wide-add-modal.png")?;
     cx.simulate_click(window, point(px(500.0), px(370.0)), Modifiers::none());
@@ -1562,6 +1709,14 @@ fn spawn_mihomo_fixture() -> Result<(String, FixtureServer), Box<dyn std::error:
 fn spawn_mihomo_fixture_with_stream_failure(
     fail_streams: bool,
 ) -> Result<(String, FixtureServer), Box<dyn std::error::Error>> {
+    spawn_mihomo_fixture_with_response(fail_streams, |path| fixture_response(path).to_owned())
+}
+
+#[cfg(target_os = "macos")]
+fn spawn_mihomo_fixture_with_response(
+    fail_streams: bool,
+    response_body: fn(&str) -> String,
+) -> Result<(String, FixtureServer), Box<dyn std::error::Error>> {
     use std::io::{BufRead, BufReader, Write};
     use std::net::TcpListener;
     use std::sync::Arc;
@@ -1597,7 +1752,7 @@ fn spawn_mihomo_fixture_with_stream_failure(
                 continue;
             }
             if path.starts_with("/connections?interval=") {
-                let body = fixture_response("/connections");
+                let body = response_body("/connections");
                 let response = format!(
                     "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n{:X}\r\n{body}\n\r\n0\r\n\r\n",
                     body.len() + 1
@@ -1620,7 +1775,7 @@ fn spawn_mihomo_fixture_with_stream_failure(
                 stream.write_all(response.as_bytes())?;
                 continue;
             }
-            let body = fixture_response(path);
+            let body = response_body(path);
             let response = format!(
                 "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                 body.len()

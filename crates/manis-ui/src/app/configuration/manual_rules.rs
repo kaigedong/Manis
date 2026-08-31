@@ -1438,13 +1438,7 @@ impl ManisApp {
             )
     }
 
-    fn active_rules_panel(
-        &self,
-        theme: Theme,
-        language: Language,
-        compact: bool,
-        cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
+    fn active_rules_summary(&self, language: Language) -> String {
         let remote_count = self
             .rule_sources
             .sources
@@ -1467,19 +1461,33 @@ impl ManisApp {
         let disabled_manual_count = self.manual_rules.len() - enabled_manual_count;
         let active_count = enabled_manual_count + remote_count;
         let disabled_count = disabled_manual_count + disabled_remote_count;
+        copy::configuration::active_rule_summary(language, active_count, disabled_count)
+    }
+
+    fn active_rules_panel(
+        &self,
+        theme: Theme,
+        language: Language,
+        compact: bool,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let disabled_manual_count = self
+            .manual_rules
+            .iter()
+            .filter(|rule| !rule.is_enabled())
+            .count();
         let group_order = mihomo::normalized_routing_rule_group_order(
             &self.rule_sources.group_order,
             !self.manual_rules.is_empty(),
             &self.rule_sources.sources,
         );
-        let mut list = Self::active_rules_panel_shell(
-            active_count,
-            disabled_count,
-            compact,
-            language,
-            theme,
-            cx,
-        );
+        let mut list = div()
+            .id("active-routing-rules")
+            .w_full()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .gap(Space::Sm.px());
         let mut rule_order = 1;
         for (position, group_id) in group_order.iter().enumerate() {
             if group_id == mihomo::MANUAL_ROUTING_RULE_GROUP_ID {
@@ -1529,70 +1537,6 @@ impl ManisApp {
             );
         }
         list
-    }
-
-    fn active_rules_panel_shell(
-        active_count: usize,
-        disabled_count: usize,
-        compact: bool,
-        language: Language,
-        theme: Theme,
-        cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
-        let summary =
-            copy::configuration::active_rule_summary(language, active_count, disabled_count);
-        div()
-            .id("active-routing-rules")
-            .w_full()
-            .flex_1()
-            .min_w(px(0.0))
-            .p(if compact {
-                Space::Md.px()
-            } else {
-                Space::Lg.px()
-            })
-            .rounded(Radius::Pane.px())
-            .border_1()
-            .border_color(theme.outline_subtle)
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap(Space::Md.px())
-                    .child(section_heading(
-                        language.localized(copy::configuration::ACTIVE_RULES),
-                        language.localized(
-                            copy::configuration::GROUPS_MATCH_FROM_TOP_TO_BOTTOM_USE_THE_ARROWS_TO,
-                        ),
-                        None,
-                        theme,
-                    ))
-                    .child(
-                        div()
-                            .flex_shrink_0()
-                            .flex()
-                            .items_center()
-                            .gap(Space::Sm.px())
-                            .child(status_badge(summary, StatusTone::Route, theme))
-                            .child(
-                                action_button(
-                                    "open-manual-rule-editor",
-                                    language.message(Message::AddRule),
-                                    ActionRole::Primary,
-                                    ControlSize::Compact,
-                                )
-                                .cursor_pointer()
-                                .bg(theme.action_primary)
-                                .text_color(theme.action_on_primary)
-                                .on_click(cx.listener(
-                                    |this, _, window, cx| {
-                                        this.open_manual_rule_editor(window, cx);
-                                    },
-                                )),
-                            ),
-                    ),
-            )
     }
 
     fn manual_rule_group(
@@ -1692,6 +1636,7 @@ impl ManisApp {
         let header = Button::new(format!("rule-group-toggle-{key}"))
             .with_variant(ButtonVariant::Ghost)
             .accessibility_label(format!("{action} {name}"))
+            .cursor_pointer()
             .toggled(open)
             .w_full()
             .h_auto()
@@ -1713,7 +1658,7 @@ impl ManisApp {
             }));
         div()
             .id(format!("routing-rule-group-{key}"))
-            .mt(Space::Lg.px())
+            .flex_shrink_0()
             .rounded(Radius::Pane.px())
             .overflow_hidden()
             .border_1()

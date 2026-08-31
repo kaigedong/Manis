@@ -846,28 +846,42 @@ impl ManisApp {
             .flex()
             .flex_col()
             .bg(theme.surface_base)
-            .child(Self::workspace_header(
-                language.message(Message::RoutingRules),
-                language.localized(copy::configuration::INSPECT_THE_ORDERED_RULES_THAT_ACTUALLY_PARTICIPATE_IN_MATCHING_MANAGE),
-                language.localized(copy::configuration::TOP_DOWN),
-                StatusTone::Route,
-                theme,
-                compact,
-            ))
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .p(Space::Lg.px())
+                    .border_b_1()
+                    .border_color(theme.outline_subtle)
+                    .child(page_heading(
+                        language.message(Message::RoutingRules),
+                        format!(
+                            "{} · {}",
+                            self.active_rules_summary(language),
+                            language.localized(copy::configuration::GROUPS_MATCH_FROM_TOP_TO_BOTTOM_USE_THE_ARROWS_TO),
+                        ),
+                        Some(
+                            action_button(
+                                "open-manual-rule-editor",
+                                language.message(Message::AddRule),
+                                ActionRole::Primary,
+                                ControlSize::Compact,
+                            )
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.open_manual_rule_editor(window, cx);
+                            }))
+                            .into_any_element(),
+                        ),
+                        theme,
+                    )),
+            )
             .child(
                 div()
                     .id("routing-rules-scroll")
                     .flex_1()
-                    .min_h(px(0.0))
+                    .min_h_0()
                     .overflow_y_scroll()
-                    .p(if compact { px(12.0) } else { px(20.0) })
-                    .pb(px(56.0))
-                    .child(
-                        div()
-                            .max_w(px(1040.0))
-                            .mx_auto()
-                            .child(self.active_rules_panel(theme, language, compact, cx)),
-                    ),
+                    .p(if compact { Space::Md.px() } else { Space::Lg.px() })
+                    .child(self.active_rules_panel(theme, language, compact, cx)),
             )
     }
 

@@ -144,7 +144,11 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 余量，减轻小幅延迟波动造成的切换；本项目不附加自定义内核补丁。
 
 侧栏使用内置 SVG 图标，宽窗口保留文字，窄窗口悬停可查看完整名称。控制器连接异常统一显示
-在状态栏。英文说明和合成数据截图见 [开发文档](docs/development.md#portable-configuration-and-policy-selection)。
+在状态栏。英文说明和复现命令见 [开发文档](docs/development.md#portable-configuration-and-policy-selection)。
+
+策略组按内容向下展开，超出窗口后滚动，不会挤压其他策略组。分流规则页将说明、规则统计和
+添加按钮集中在顶部，下方直接展示规则组；组标题悬停显示手形光标。日志编号、级别、内容和
+时间在每行中垂直居中。复现命令见 [列表布局检查](docs/development.md#list-layout-checks)。
 
 ## 安全与隐私
 

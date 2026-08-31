@@ -172,6 +172,23 @@ cargo run -p manis-ui --example snapshot --features snapshot-fixtures --locked -
 See [Interface materials and hierarchy](interface-design.md) for surface, contrast, and visual
 review requirements. Snapshot captures reject non-opaque application pixels.
 
+## List layout checks
+
+These macOS captures use synthetic data and do not require a real subscription:
+
+```bash
+cargo run -p manis-ui --example snapshot --features snapshot-fixtures --locked -- --policy-scrolling
+cargo run -p manis-ui --example snapshot --features snapshot-fixtures --locked -- --routing-rules
+cargo run -p manis-ui --example snapshot --features snapshot-fixtures --locked -- --log-colors
+```
+
+The policy fixture contains four groups with 50 nodes each. It asserts that expanding the second group
+leaves the first card unchanged and that scrolling changes the visible content. Captures cover the
+first and second expanded groups, the final node and following cards, wide/compact windows, and both
+themes. The rules capture covers disclosure, edit/add dialogs, and the single page header; the log
+capture includes single-line and wrapped messages with centered metadata and severity badges. Re-run
+the commands above to reproduce these captures locally.
+
 ## macOS bundle and TUN
 
 See `packaging/macos/README.md` for the fixed-purpose privileged helper, signing requirements, and
