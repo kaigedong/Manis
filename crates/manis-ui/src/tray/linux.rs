@@ -119,7 +119,7 @@ impl ksni::Tray for LinuxTray {
 
     fn icon_pixmap(&self) -> Vec<ksni::Icon> {
         let mut data = manis_icon_rgba();
-        for pixel in data.chunks_exact_mut(4) {
+        for pixel in data.as_chunks_mut::<4>().0 {
             // SNI requires ARGB in network byte order, not RGBA or native-endian u32s.
             pixel.rotate_right(1);
         }
@@ -261,10 +261,12 @@ mod tests {
         assert_eq!(icon.data.len(), 32 * 32 * 4);
         for (argb, rgba) in icon
             .data
-            .chunks_exact(4)
-            .zip(manis_icon_rgba().chunks_exact(4))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(manis_icon_rgba().as_chunks::<4>().0)
         {
-            assert_eq!(argb, [rgba[3], rgba[0], rgba[1], rgba[2]]);
+            assert_eq!(*argb, [rgba[3], rgba[0], rgba[1], rgba[2]]);
         }
     }
 }
