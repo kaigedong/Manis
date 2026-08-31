@@ -90,11 +90,21 @@ The default verification path is offline and deterministic:
 
 ```bash
 cargo fmt --all -- --check
-cargo check --workspace --all-targets --locked
-cargo check -p manis-ui --example snapshot --features snapshot-fixtures --locked
 cargo test --workspace --all-targets --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo check -p manis-ui --example snapshot --features snapshot-fixtures --locked
 ```
+
+Clippy type-checks all workspace targets as well as linting them; a separate workspace-wide
+`cargo check` is useful for a quick local check but redundant in the full verification sequence.
+
+CI caches Cargo's registry, Git dependencies, and compiled artifacts separately for each OS and
+architecture. Cache keys include the pinned toolchain, CI configuration, lockfile, and manifests;
+dependency changes can reuse compatible artifacts, and only successful jobs save a new cache.
+The first run still builds dependencies; later runs reuse them without skipping tests or linting.
+CI disables incremental compilation and uses `line-tables-only` debug information for both dev and
+test profiles to reduce build/cache size while keeping file and line information in backtraces.
+These environment overrides do not change local development or release profiles.
 
 Optional dependency policy checks:
 

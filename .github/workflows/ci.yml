@@ -15,6 +15,11 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # CI reuses complete dependency artifacts, not local incremental sessions.
+  CARGO_INCREMENTAL: "0"
+  # Keep file/line backtraces without generating full debugger type information.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  CARGO_PROFILE_TEST_DEBUG: line-tables-only
 
 jobs:
   quality:
@@ -30,15 +35,35 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Test macOS helper signatures and authorization boundaries
         run: bash packaging/macos/test-helper-security.sh
-      - name: Check all targets
-        run: cargo check --workspace --all-targets --locked
-      - name: Check snapshot fixture harness
-        run: cargo check -p manis-ui --example snapshot --features snapshot-fixtures --locked
+      - name: Restore Cargo cache
+        id: cargo-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/
+            ~/.cargo/git/
+            target/
+          # Keep CI artifacts separate from release builds and incompatible toolchains.
+          key: cargo-ci-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', '.github/workflows/ci.yml') }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}
+          restore-keys: |
+            cargo-ci-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', '.github/workflows/ci.yml') }}-
       - name: Run tests
         # Keep successful runs readable while preserving libtest's failure details.
         run: cargo test --workspace --all-targets --locked --quiet
-      - name: Run Clippy
+      - name: Check and lint all targets
+        # Clippy also type-checks every target, so a separate cargo check is redundant.
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Check snapshot fixture harness
+        run: cargo check -p manis-ui --example snapshot --features snapshot-fixtures --locked
+      - name: Save Cargo cache
+        if: steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/
+            ~/.cargo/git/
+            target/
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   platform-check:
     if: github.event_name != 'pull_request' || github.event.action != 'closed'
@@ -64,6 +89,17 @@ jobs:
           libxcb-xfixes0-dev libxkbcommon-dev
       - name: Install Rust toolchain
         run: rustup show active-toolchain
+      - name: Restore Cargo cache
+        id: cargo-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/
+            ~/.cargo/git/
+            target/
+          key: cargo-ci-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', '.github/workflows/ci.yml') }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}
+          restore-keys: |
+            cargo-ci-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', '.github/workflows/ci.yml') }}-
       - name: Check workspace
         run: cargo check --workspace --all-targets --locked
       - name: Test restricted controller transports
@@ -86,3 +122,12 @@ jobs:
       - name: Test Linux privileged helper boundary
         if: runner.os == 'Linux'
         run: cargo test -p manis-linux-helper --locked --quiet
+      - name: Save Cargo cache
+        if: steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/
+            ~/.cargo/git/
+            target/
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
