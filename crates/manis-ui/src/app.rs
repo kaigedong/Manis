@@ -598,6 +598,8 @@ enum GroupBenchmarkState {
     },
     Failed {
         generation: u64,
+        #[serde(default)]
+        message: Option<String>,
     },
 }
 
@@ -676,11 +678,14 @@ impl GroupBenchmarkState {
         true
     }
 
-    fn fail(&mut self, generation: u64) -> bool {
+    fn fail(&mut self, generation: u64, message: Option<String>) -> bool {
         if !matches!(self, Self::Running { generation: current, .. } if *current == generation) {
             return false;
         }
-        *self = Self::Failed { generation };
+        *self = Self::Failed {
+            generation,
+            message,
+        };
         true
     }
 }
@@ -2606,6 +2611,57 @@ mod tests {
             },
             delays: BTreeMap::from([(delay_name.to_owned(), delay_ms)]),
         }
+    }
+
+    #[test]
+    fn benchmark_failure_keeps_the_reason_and_ignores_stale_results() {
+        let mut state = GroupBenchmarkState::running(2);
+        assert!(!state.fail(1, Some("stale failure".to_owned())));
+        assert!(state.is_running());
+        assert!(state.fail(2, Some("HTTP 404".to_owned())));
+        assert_eq!(
+            state,
+            GroupBenchmarkState::Failed {
+                generation: 2,
+                message: Some("HTTP 404".to_owned()),
+            }
+        );
+        assert!(!state.fail(1, Some("stale failure".to_owned())));
+        let old: GroupBenchmarkState = serde_json::from_str(r#"{"Failed":{"generation":1}}"#)
+            .expect("old benchmark state still loads");
+        assert!(matches!(
+            old,
+            GroupBenchmarkState::Failed { message: None, .. }
+        ));
+    }
+
+    #[test]
+    fn benchmark_failures_distinguish_probes_from_controller_connections() {
+        use manis_mihomo::MihomoError;
+        let describe = |error| {
+            ManisApp::benchmark_failure_description(
+                Language::SimplifiedChinese,
+                &mihomo::LoadError::Mihomo(error),
+            )
+        };
+        for (code, detail) in [(404, "HTTP 404"), (503, "测速网址"), (504, "超时上限 5 秒")]
+        {
+            let message = describe(MihomoError::HttpStatus {
+                status_code: code,
+                reason: "fixture".to_owned(),
+                body_preview: "private response must not reach the UI".to_owned(),
+            });
+            assert!(message.contains(detail));
+            assert!(!message.contains("请检查 Mihomo 连接"));
+            assert!(!message.contains("private response"));
+        }
+        let timeout = describe(MihomoError::Io(std::io::ErrorKind::TimedOut.into()));
+        assert!(timeout.contains("读取上限 9 秒"));
+        let unavailable = describe(MihomoError::Io(
+            std::io::ErrorKind::ConnectionRefused.into(),
+        ));
+        assert!(unavailable.contains("无法访问本地内核"));
+        assert_ne!(timeout, unavailable);
     }
 
     #[test]

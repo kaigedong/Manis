@@ -569,6 +569,16 @@ impl ProxyDelayTarget {
         }
     }
 
+    pub(crate) fn from_policy_node(node: &manis_core::PolicyNode) -> Self {
+        if node.kind == manis_core::PolicyCandidateKind::Node
+            && let Some(provider) = node.provider.as_deref().filter(|name| !name.is_empty())
+        {
+            Self::provider(provider, node.name.clone())
+        } else {
+            Self::direct(node.name.clone())
+        }
+    }
+
     pub(crate) fn name(&self) -> &str {
         &self.name
     }
@@ -595,6 +605,7 @@ fn load_subscription_provider(providers: &[manis_mihomo::ProxyProvider]) -> Vec<
 pub(crate) enum LoadError {
     Mihomo(MihomoError),
     Engine(EngineError),
+    NoLatencyResults,
     Runtime(String),
     ProxyModeLost(String),
 }
@@ -604,6 +615,9 @@ impl fmt::Display for LoadError {
         match self {
             Self::Mihomo(error) => error.fmt(formatter),
             Self::Engine(error) => error.fmt(formatter),
+            Self::NoLatencyResults => {
+                formatter.write_str("Mihomo returned no positive node latency measurements")
+            }
             Self::Runtime(message) | Self::ProxyModeLost(message) => formatter.write_str(message),
         }
     }
@@ -614,7 +628,7 @@ impl Error for LoadError {
         match self {
             Self::Mihomo(error) => Some(error),
             Self::Engine(error) => Some(error),
-            Self::Runtime(_) | Self::ProxyModeLost(_) => None,
+            Self::NoLatencyResults | Self::Runtime(_) | Self::ProxyModeLost(_) => None,
         }
     }
 }
@@ -1518,38 +1532,6 @@ fn delay_controller_config(config: ControllerConfig) -> ControllerConfig {
     config.with_timeouts(connect_timeout, GROUP_DELAY_CONTROLLER_READ_TIMEOUT)
 }
 
-fn fetch_proxy_delays_bounded(
-    endpoint: &str,
-    candidate_names: &[String],
-    controller_secret: Option<&str>,
-) -> Result<BTreeMap<String, u16>, LoadError> {
-    fetch_proxy_delays_bounded_with_progress(
-        endpoint,
-        candidate_names,
-        controller_secret,
-        |_name, _delay| {},
-    )
-}
-
-fn fetch_proxy_delays_bounded_with_progress(
-    endpoint: &str,
-    candidate_names: &[String],
-    controller_secret: Option<&str>,
-    on_result: impl FnMut(&str, Option<u16>),
-) -> Result<BTreeMap<String, u16>, LoadError> {
-    let targets = candidate_names
-        .iter()
-        .cloned()
-        .map(ProxyDelayTarget::direct)
-        .collect::<Vec<_>>();
-    fetch_proxy_delay_targets_bounded_with_progress(
-        endpoint,
-        &targets,
-        controller_secret,
-        on_result,
-    )
-}
-
 fn fetch_proxy_delay_targets_bounded_with_progress(
     endpoint: &str,
     targets: &[ProxyDelayTarget],
@@ -1563,7 +1545,7 @@ fn fetch_proxy_delay_targets_bounded_with_progress(
     }
     let worker_count = targets.len().min(GROUP_DELAY_WORKERS);
     let chunk_size = targets.len().div_ceil(worker_count);
-    let delays = thread::scope(|scope| {
+    let (delays, first_error) = thread::scope(|scope| {
         let (sender, receiver) = mpsc::channel();
         let handles = targets
             .chunks(chunk_size)
@@ -1581,12 +1563,14 @@ fn fetch_proxy_delay_targets_bounded_with_progress(
             .collect::<Vec<_>>();
         drop(sender);
         let mut delays = BTreeMap::new();
+        let mut first_error = None;
         for (target, result) in receiver {
             match result {
-                Ok(delay) => {
+                Ok(delay) if delay > 0 => {
                     on_result(target.name(), Some(delay));
                     delays.insert(target.name, delay);
                 }
+                Ok(_) => on_result(target.name(), None),
                 Err(error) => {
                     on_result(target.name(), None);
                     record_event(
@@ -1598,19 +1582,17 @@ fn fetch_proxy_delay_targets_bounded_with_progress(
                             target.name()
                         ),
                     );
+                    first_error.get_or_insert(error);
                 }
             }
         }
         for handle in handles {
             drop(handle.join());
         }
-        delays
+        (delays, first_error)
     });
     if delays.is_empty() {
-        return Err(LoadError::Runtime(
-            "all node benchmarks failed; check the Mihomo connection and network, then try again"
-                .to_owned(),
-        ));
+        return Err(first_error.map_or(LoadError::NoLatencyResults, LoadError::from));
     }
     Ok(delays)
 }
@@ -3575,9 +3557,12 @@ IP-CIDR,192.0.2.0/24,DIRECT
             Ok(())
         });
         let runtime = super::ControllerRuntime::Fixture { endpoint };
-        let delays = runtime.test_proxy_candidates_delay(
-            "Local Group",
-            &["Working Node".to_owned(), "Offline Node".to_owned()],
+        let delays = runtime.test_proxy_delay_targets_with_progress(
+            &[
+                super::ProxyDelayTarget::direct("Working Node"),
+                super::ProxyDelayTarget::direct("Offline Node"),
+            ],
+            |_name, _delay| {},
         )?;
         server.join().map_err(|_| "fixture server panicked")??;
         assert_eq!(delays.get("Working Node"), Some(&64));
@@ -3710,7 +3695,7 @@ IP-CIDR,192.0.2.0/24,DIRECT
                 let mut request_line = String::new();
                 BufReader::new(stream.try_clone()?).read_line(&mut request_line)?;
                 let body = if request_line.contains("/group/Auto%20HK/delay?") {
-                    r#"{"HK-01":68,"HK-02":29}"#
+                    r#"{"HK-01":68,"HK-02":29,"HK-03":0,"unrelated":42}"#
                 } else {
                     r#"{"name":"Auto HK","type":"URLTest","now":"HK-02","all":["HK-01","HK-02"]}"#
                 };
@@ -3725,14 +3710,20 @@ IP-CIDR,192.0.2.0/24,DIRECT
         });
         let runtime = super::ControllerRuntime::Fixture { endpoint };
 
-        let result = runtime
-            .test_policy_group_delay("Auto HK", &["HK-01".to_owned(), "HK-02".to_owned()])?;
+        let result = runtime.test_policy_group_delay(
+            "Auto HK",
+            &[
+                super::ProxyDelayTarget::direct("HK-01"),
+                super::ProxyDelayTarget::direct("HK-02"),
+            ],
+        )?;
         let requests = server.join().map_err(|_| "fixture server panicked")??;
 
         assert!(requests[0].contains("GET /group/Auto%20HK/delay?"));
         assert!(requests[1].contains("GET /proxies/Auto%20HK HTTP/1.1"));
         assert_eq!(result.current.as_deref(), Some("HK-02"));
         assert_eq!(result.delays.get("HK-02"), Some(&29));
+        assert_eq!(result.delays.len(), 2);
         Ok(())
     }
 
@@ -3768,14 +3759,153 @@ IP-CIDR,192.0.2.0/24,DIRECT
         });
         let runtime = super::ControllerRuntime::Fixture { endpoint };
 
-        let result = runtime
-            .test_policy_group_delay("Auto HK", &["HK-01".to_owned(), "HK-02".to_owned()])?;
+        let result = runtime.test_policy_group_delay(
+            "Auto HK",
+            &[
+                super::ProxyDelayTarget::direct("HK-01"),
+                super::ProxyDelayTarget::direct("HK-02"),
+            ],
+        )?;
         server.join().map_err(|_| "fixture server panicked")??;
 
         assert_eq!(result.current.as_deref(), Some("HK-01"));
         assert_eq!(result.delays.get("HK-01"), Some(&42));
         assert!(!result.delays.contains_key("HK-02"));
         Ok(())
+    }
+
+    #[test]
+    fn policy_benchmark_fallback_keeps_subscription_provider_identity()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for (group_status, group_body) in [
+            (504, r#"{"message":"test timed out"}"#),
+            (200, "{}"),
+            (200, r#"{"HK 01":0,"unrelated":42}"#),
+        ] {
+            let listener = TcpListener::bind("127.0.0.1:0")?;
+            listener.set_nonblocking(true)?;
+            let endpoint = format!("http://{}", listener.local_addr()?);
+            let server = std::thread::spawn(move || -> std::io::Result<Vec<String>> {
+                let deadline = std::time::Instant::now() + Duration::from_secs(3);
+                let mut requests = Vec::new();
+                while requests.len() < 3 && std::time::Instant::now() < deadline {
+                    let (mut stream, _) = match listener.accept() {
+                        Ok(connection) => connection,
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            std::thread::sleep(Duration::from_millis(5));
+                            continue;
+                        }
+                        Err(error) => return Err(error),
+                    };
+                    stream.set_read_timeout(Some(Duration::from_secs(1)))?;
+                    let mut request = String::new();
+                    BufReader::new(stream.try_clone()?).read_line(&mut request)?;
+                    let (status, body) = if request.contains("/group/Auto%20HK/delay?") {
+                        (group_status, group_body)
+                    } else if request
+                        .contains("/providers/proxies/Subscription%201/HK%2001/healthcheck?")
+                    {
+                        (200, r#"{"delay":42}"#)
+                    } else if request.starts_with("GET /proxies/Auto%20HK HTTP/") {
+                        (200, r#"{"type":"URLTest","now":"HK 01","all":["HK 01"]}"#)
+                    } else {
+                        (404, r#"{"message":"Resource not found"}"#)
+                    };
+                    write!(
+                        stream,
+                        "HTTP/1.1 {status} Result\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    )?;
+                    requests.push(request);
+                }
+                Ok(requests)
+            });
+            let runtime = super::ControllerRuntime::Fixture { endpoint };
+            let result = runtime.test_policy_group_delay(
+                "Auto HK",
+                &[super::ProxyDelayTarget::provider("Subscription 1", "HK 01")],
+            );
+            let requests = server.join().map_err(|_| "fixture server panicked")??;
+            assert!(
+                requests.iter().any(|path| path
+                    .contains("/providers/proxies/Subscription%201/HK%2001/healthcheck?")),
+                "provider-owned fallback must not call /proxies/HK%2001/delay: {requests:?}"
+            );
+            assert_eq!(result?.delays.get("HK 01"), Some(&42));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn policy_benchmark_reports_fallback_error_and_rejects_zero_delay()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for (status, body) in [(503, ""), (200, r#"{"delay":0}"#)] {
+            let listener = TcpListener::bind("127.0.0.1:0")?;
+            let endpoint = format!("http://{}", listener.local_addr()?);
+            let server = std::thread::spawn(move || -> std::io::Result<()> {
+                for (status, body) in [(404, ""), (status, body)] {
+                    let (mut stream, _) = listener.accept()?;
+                    let mut line = String::new();
+                    BufReader::new(stream.try_clone()?).read_line(&mut line)?;
+                    write!(
+                        stream,
+                        "HTTP/1.1 {status} Result\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    )?;
+                }
+                Ok(())
+            });
+            let runtime = super::ControllerRuntime::Fixture { endpoint };
+            let result = runtime.test_policy_group_delay(
+                "Auto HK",
+                &[super::ProxyDelayTarget::provider("Subscription 1", "HK 01")],
+            );
+            server.join().map_err(|_| "fixture server panicked")??;
+            if status == 503 {
+                assert!(matches!(
+                    result,
+                    Err(super::LoadError::Mihomo(
+                        manis_mihomo::MihomoError::HttpStatus {
+                            status_code: 503,
+                            ..
+                        }
+                    ))
+                ));
+            } else {
+                assert!(matches!(result, Err(super::LoadError::NoLatencyResults)));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn policy_benchmark_targets_distinguish_provider_nodes_from_nested_groups() {
+        use super::ProxyDelayTarget;
+        use manis_core::{PolicyCandidateKind, PolicyNode, ProxyId};
+        let mut candidate = PolicyNode {
+            id: ProxyId::new("node"),
+            name: "HK 01".to_owned(),
+            kind: PolicyCandidateKind::Node,
+            provider: Some("Subscription 1".to_owned()),
+            detail: "Trojan".to_owned(),
+            latency_ms: None,
+            alive: None,
+        };
+        assert_eq!(
+            ProxyDelayTarget::from_policy_node(&candidate),
+            ProxyDelayTarget::provider("Subscription 1", "HK 01")
+        );
+        candidate.kind = PolicyCandidateKind::PolicyGroup;
+        assert_eq!(
+            ProxyDelayTarget::from_policy_node(&candidate),
+            ProxyDelayTarget::direct("HK 01")
+        );
+        candidate.kind = PolicyCandidateKind::Node;
+        candidate.provider = None;
+        assert_eq!(
+            ProxyDelayTarget::from_policy_node(&candidate),
+            ProxyDelayTarget::direct("HK 01")
+        );
     }
 
     #[test]

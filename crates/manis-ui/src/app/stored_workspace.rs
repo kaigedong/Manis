@@ -183,7 +183,10 @@ mod tests {
             ("policy:beta".to_owned(), GroupBenchmarkState::running(8)),
             (
                 "policy:gamma".to_owned(),
-                GroupBenchmarkState::Failed { generation: 9 },
+                GroupBenchmarkState::Failed {
+                    generation: 9,
+                    message: None,
+                },
             ),
         ]);
 

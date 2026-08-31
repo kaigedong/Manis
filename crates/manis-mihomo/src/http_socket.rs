@@ -139,6 +139,8 @@ struct SocketTransport {
     buffers: LazyBuffers,
     cancelled: Option<Arc<AtomicBool>>,
     response_timeout: Option<Duration>,
+    response_deadline: Option<Instant>,
+    response_headers_done: bool,
 }
 
 impl std::fmt::Debug for SocketTransport {
@@ -167,15 +169,22 @@ impl Transport for SocketTransport {
         let started = Instant::now();
         // ureq carries the preceding send-phase deadline into response reads. The
         // request has already been sent; that deadline must not cut off an idle
-        // live stream. Write deadlines still apply in transmit_output above.
-        let budget = if self.cancelled.is_some()
+        // live stream. Anchor the receive budget so partial headers cannot keep
+        // refreshing the response wait. Write deadlines still apply in
+        // transmit_output above.
+        let using_response_budget = !self.response_headers_done
             && matches!(
                 timeout.reason,
-                ureq::Timeout::SendRequest | ureq::Timeout::SendBody
-            ) {
-            self.response_timeout
+                ureq::Timeout::SendRequest | ureq::Timeout::SendBody | ureq::Timeout::RecvResponse
+            );
+        let (budget, timeout_reason) = if using_response_budget {
+            let deadline = self
+                .response_timeout
+                .map(|budget| *self.response_deadline.get_or_insert(started + budget));
+            let remaining = deadline.map(|deadline| deadline.saturating_duration_since(started));
+            (remaining, ureq::Timeout::RecvResponse)
         } else {
-            timeout.not_zero().map(|t| *t)
+            (timeout.not_zero().map(|t| *t), timeout.reason)
         };
         loop {
             if self
@@ -191,7 +200,7 @@ impl Transport for SocketTransport {
                     budget
                         .checked_sub(started.elapsed())
                         .filter(|remaining| !remaining.is_zero())
-                        .ok_or(ureq::Error::Timeout(timeout.reason))?,
+                        .ok_or(ureq::Error::Timeout(timeout_reason))?,
                 ),
                 None => None,
             };
@@ -206,6 +215,16 @@ impl Transport for SocketTransport {
             {
                 Ok(amount) => {
                     self.buffers.input_appended(amount);
+                    if !self.response_headers_done
+                        && self
+                            .buffers
+                            .input()
+                            .windows(4)
+                            .any(|window| window == b"\r\n\r\n")
+                    {
+                        self.response_headers_done = true;
+                        self.response_deadline = None;
+                    }
                     return Ok(amount > 0);
                 }
                 Err(error)
@@ -216,7 +235,7 @@ impl Transport for SocketTransport {
                 {
                     // Remain inside this I/O call: ureq retains partially decoded headers/chunks.
                     if self.cancelled.is_none() {
-                        return Err(ureq::Error::Timeout(timeout.reason));
+                        return Err(ureq::Error::Timeout(timeout_reason));
                     }
                 }
                 Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
@@ -240,6 +259,8 @@ pub(crate) fn agent(
         buffers: LazyBuffers::new(config.input_buffer_size(), config.output_buffer_size()),
         cancelled,
         response_timeout: config.timeouts().recv_response,
+        response_deadline: None,
+        response_headers_done: false,
     };
     ureq::Agent::with_parts(
         config,

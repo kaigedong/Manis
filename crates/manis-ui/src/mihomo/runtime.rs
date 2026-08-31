@@ -6,7 +6,6 @@ use std::{
 
 use manis_core::{KernelKind, RoutingMode};
 use manis_engine::{EngineManager, ReadinessPolicy, validate_managed_config};
-use manis_mihomo::MihomoError;
 
 use crate::diagnostics::{LogLevel, record_event};
 
@@ -15,8 +14,8 @@ use super::{
     ManagedGeneratedProfile, ManagedPolicyRuntimeSnapshot, ManagedRuntimeHealth,
     PolicyGroupBenchmarkSnapshot, ProxyDelayTarget, RuntimeProfileSource, RuntimeSnapshot,
     compile_managed_generated_profile, fetch_group_delay, fetch_policy_group,
-    fetch_proxy_delay_targets_bounded_with_progress, fetch_proxy_delays_bounded, load,
-    load_sing_box, managed_apply, managed_engine_config, readiness_probe, reload_mihomo_config,
+    fetch_proxy_delay_targets_bounded_with_progress, load, load_sing_box, managed_apply,
+    managed_engine_config, readiness_probe, reload_mihomo_config,
     render_generated_profile_with_tun, running_managed_endpoint, select_global_node_at_endpoint,
     select_policy_group_candidate, set_routing_mode, validate_managed_runtime,
 };
@@ -644,54 +643,6 @@ impl ControllerRuntime {
         select_global_node_at_endpoint(&endpoint, selected_name, controller_secret.as_deref())
     }
 
-    pub(crate) fn test_proxy_candidates_delay(
-        &self,
-        group_name: &str,
-        candidate_names: &[String],
-    ) -> Result<std::collections::BTreeMap<String, u16>, LoadError> {
-        if candidate_names.is_empty() {
-            return Err(LoadError::Runtime(
-                "the current group has no nodes that can be benchmarked".to_owned(),
-            ));
-        }
-        let controller_secret = self.controller_secret();
-        let (endpoint, managed) = match self {
-            #[cfg(any(test, feature = "snapshot-fixtures"))]
-            Self::Fixture { endpoint } => (endpoint.clone(), false),
-            Self::Managed { manager, .. } => {
-                let endpoint = {
-                    let mut manager = manager.lock().map_err(|_poisoned| {
-                        LoadError::Runtime(MANAGED_KERNEL_LOCK_POISONED.to_owned())
-                    })?;
-                    match manager.running_endpoint()? {
-                        Some(endpoint) => endpoint,
-                        None => manager.start()?,
-                    }
-                };
-                (endpoint.uri(), true)
-            }
-            Self::Invalid { message } => return Err(LoadError::Runtime(message.clone())),
-        };
-
-        if managed {
-            match fetch_group_delay(&endpoint, group_name, controller_secret.as_deref()) {
-                Ok(delays) => {
-                    let candidates = candidate_names.iter().collect::<BTreeSet<_>>();
-                    return Ok(delays
-                        .into_iter()
-                        .filter(|(name, _delay)| candidates.contains(name))
-                        .collect());
-                }
-                Err(MihomoError::HttpStatus {
-                    status_code: 404, ..
-                }) => {}
-                Err(error) => return Err(error.into()),
-            }
-        }
-
-        fetch_proxy_delays_bounded(&endpoint, candidate_names, controller_secret.as_deref())
-    }
-
     pub(crate) fn test_proxy_delay_targets_with_progress(
         &self,
         targets: &[ProxyDelayTarget],
@@ -732,7 +683,7 @@ impl ControllerRuntime {
     pub(crate) fn test_policy_group_delay(
         &self,
         group_name: &str,
-        candidate_names: &[String],
+        targets: &[ProxyDelayTarget],
     ) -> Result<PolicyGroupBenchmarkSnapshot, LoadError> {
         let controller_secret = self.controller_secret();
         let endpoint = match self {
@@ -752,29 +703,34 @@ impl ControllerRuntime {
             }
             Self::Invalid { message } => return Err(LoadError::Runtime(message.clone())),
         };
-        let candidates = candidate_names.iter().collect::<BTreeSet<_>>();
-        let group_delays = fetch_group_delay(&endpoint, group_name, controller_secret.as_deref());
-        let delays = match group_delays {
+        let candidates = targets
+            .iter()
+            .map(ProxyDelayTarget::name)
+            .collect::<BTreeSet<_>>();
+        let delays = match fetch_group_delay(&endpoint, group_name, controller_secret.as_deref()) {
             Ok(delays) => delays
                 .into_iter()
-                .filter(|(name, _delay)| candidates.contains(name))
+                .filter(|(name, delay)| candidates.contains(name.as_str()) && *delay > 0)
                 .collect::<BTreeMap<_, _>>(),
-            Err(group_error) => {
-                match fetch_proxy_delays_bounded(
-                    &endpoint,
-                    candidate_names,
-                    controller_secret.as_deref(),
-                ) {
-                    Ok(delays) => delays,
-                    Err(_fallback_error) => return Err(group_error.into()),
-                }
+            Err(error) => {
+                record_event(
+                    LogLevel::Warn,
+                    "group.delay.fallback",
+                    format!("group={group_name} error={error}"),
+                );
+                BTreeMap::new()
             }
         };
-        if delays.is_empty() {
-            return Err(LoadError::Runtime(
-                "Mihomo returned no valid node latency measurements".to_owned(),
-            ));
-        }
+        let delays = if delays.is_empty() {
+            fetch_proxy_delay_targets_bounded_with_progress(
+                &endpoint,
+                targets,
+                controller_secret.as_deref(),
+                |_name, _delay| {},
+            )?
+        } else {
+            delays
+        };
         let current = fetch_policy_group(&endpoint, group_name, controller_secret.as_deref())
             .ok()
             .and_then(|group| group.current);

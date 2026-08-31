@@ -93,11 +93,38 @@ pub(crate) const IMPORTED_SUBSCRIPTION_REMOVED: LocalizedText =
     LocalizedText::new("Imported subscription removed", "已移除导入订阅");
 pub(crate) const KERNEL_HAS_NO_TUN: LocalizedText =
     LocalizedText::new("kernel has no TUN", "当前内核无 TUN");
-pub(crate) const LATENCY_TEST_FAILED_THIS_POLICY_GROUP_RETURNED_NO_DELAY_DATA: LocalizedText =
-    LocalizedText::new(
-        "Latency test failed · this policy group returned no delay data",
-        "测速失败 · 当前策略组未返回延迟，请检查 Mihomo 连接后重试",
-    );
+pub(crate) const BENCHMARK_ACCESS_DENIED: LocalizedText = LocalizedText::new(
+    "The controller denied the latency request (HTTP 401/403); check controller access permissions",
+    "内核拒绝了测速请求（HTTP 401/403），请检查控制器访问权限",
+);
+pub(crate) const BENCHMARK_TARGET_MISSING: LocalizedText = LocalizedText::new(
+    "The node or latency endpoint was not found (HTTP 404); refresh nodes and retry",
+    "内核找不到节点或测速接口（HTTP 404），请刷新节点后重试",
+);
+pub(crate) const BENCHMARK_PROBE_TIMEOUT: LocalizedText = LocalizedText::new(
+    "The kernel could not complete the probe to www.gstatic.com/generate_204 (5-second probe limit); this does not mean the proxy is disconnected",
+    "内核未能完成对测速网址 www.gstatic.com/generate_204 的探测（超时上限 5 秒），不代表代理已断开",
+);
+pub(crate) const BENCHMARK_PROBE_FAILED: LocalizedText = LocalizedText::new(
+    "The node could not complete the probe to www.gstatic.com/generate_204 (HTTP 503); other traffic may still work",
+    "节点无法完成对测速网址 www.gstatic.com/generate_204 的探测（HTTP 503），其他网络访问仍可能正常",
+);
+pub(crate) const BENCHMARK_RESPONSE_TIMEOUT: LocalizedText = LocalizedText::new(
+    "The latency request timed out (9-second response limit); this does not mean the proxy is disconnected",
+    "测速请求超时（结果读取上限 9 秒），不代表代理已断开",
+);
+pub(crate) const BENCHMARK_CONTROLLER_UNREACHABLE: LocalizedText = LocalizedText::new(
+    "Could not access the local controller's latency endpoint; check the running kernel",
+    "无法访问本地内核的测速接口，请检查内核运行状态",
+);
+pub(crate) const BENCHMARK_INVALID_RESPONSE: LocalizedText = LocalizedText::new(
+    "The controller returned latency data that Manis could not decode",
+    "内核返回的测速数据格式异常，Manis 无法解析",
+);
+pub(crate) const BENCHMARK_NO_RESULTS: LocalizedText = LocalizedText::new(
+    "The controller responded, but no node returned a valid latency; other traffic may still work",
+    "内核已响应，但没有节点返回有效延迟，其他网络访问仍可能正常",
+);
 pub(crate) const LIGHT: LocalizedText = LocalizedText::new("Light", "浅色");
 pub(crate) const LIGHT_THEME_ENABLED: LocalizedText =
     LocalizedText::new("Light theme enabled", "已切换到浅色主题");
