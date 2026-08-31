@@ -874,6 +874,7 @@ impl ManisApp {
                             ActionRole::Secondary,
                             ControlSize::Standard,
                         )
+                        .when(disabled, gpui::Styled::cursor_default)
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.choose_configuration_export(window, cx);
                         })),
@@ -886,6 +887,7 @@ impl ManisApp {
                             ActionRole::Secondary,
                             ControlSize::Standard,
                         )
+                        .when(disabled, gpui::Styled::cursor_default)
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.choose_configuration_import(window, cx);
                         })),
@@ -898,6 +900,7 @@ impl ManisApp {
                             ActionRole::Secondary,
                             ControlSize::Standard,
                         )
+                        .when(disabled, gpui::Styled::cursor_default)
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.edit_configuration(window, cx);
                         })),
@@ -1145,6 +1148,7 @@ impl ManisApp {
                     ActionRole::Secondary,
                     ControlSize::Standard,
                 )
+                .when(busy, gpui::Styled::cursor_default)
                 .on_click(cx.listener(|this, _, window, cx| {
                     this.cancel_configuration_transfer(window, cx);
                 })),
@@ -1160,6 +1164,7 @@ impl ManisApp {
                         ActionRole::Primary,
                         ControlSize::Standard,
                     )
+                    .when(busy, gpui::Styled::cursor_default)
                     .on_click(
                         cx.listener(|this, _, window, cx| this.replace_configuration(window, cx)),
                     ),

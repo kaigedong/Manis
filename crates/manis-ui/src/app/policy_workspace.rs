@@ -93,6 +93,7 @@ impl ManisApp {
             )
             .accessibility_label(language.localized(copy::app::CHANGE_PROXY_MODE))
             .loading(self.proxy_mode_busy.is_some())
+            .when(self.proxy_mode_busy.is_some(), gpui::Styled::cursor_default)
             .when(self.proxy_mode_busy.is_none(), |button| {
                 button.icon(IconName::Redo2)
             })
@@ -189,6 +190,7 @@ impl ManisApp {
             )
             .accessibility_label(language.localized(copy::app::CHANGE_ROUTING_MODE))
             .loading(self.routing_mode_busy.is_some())
+            .when(self.routing_mode_busy.is_some(), gpui::Styled::cursor_default)
             .when(self.routing_mode_busy.is_none(), |button| {
                 button.icon(IconName::Redo2)
             })
@@ -698,6 +700,7 @@ impl ManisApp {
         )
         .debug_selector(move || selector.clone())
         .disabled(!editable)
+        .when(!editable, gpui::Styled::cursor_default)
         .accessibility_label(language.localized(if editable {
             copy::common::EDIT_POLICY_GROUP
         } else {
@@ -996,6 +999,7 @@ impl ManisApp {
         )
         .tab_stop(!connecting)
         .loading(connecting)
+        .when(connecting, gpui::Styled::cursor_default)
         .on_click(cx.listener(|this, _, _, cx| this.connect_mihomo(cx)))
     }
 

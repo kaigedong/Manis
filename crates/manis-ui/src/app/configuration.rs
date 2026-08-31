@@ -25,8 +25,8 @@ use crate::{
     app_update,
     components::{
         ActionRole, StatusTone, action_button, dialog_footer_surface, dialog_header_surface,
-        empty_state, page_heading, section_heading, status_badge, style_action_button,
-        surface_dialog,
+        empty_state, page_heading, row_action_button, section_heading, status_badge,
+        style_action_button, surface_dialog,
     },
     diagnostics::{LogLevel, UiEvent, begin_operation, record_event, record_operation, trace_ui},
     localization::{

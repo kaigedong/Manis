@@ -315,6 +315,7 @@ impl ManisApp {
             ActionRole::Secondary,
             ControlSize::Standard,
         )
+        .when(running, gpui::Styled::cursor_default)
         .w(ControlSize::Standard.height())
         .px_0()
         .rounded_full()
@@ -347,6 +348,7 @@ impl ManisApp {
             ActionRole::Secondary,
             ControlSize::Icon,
         )
+        .when(running, gpui::Styled::cursor_default)
         .flex_shrink_0()
         .when(!running, |button| {
             button.child(

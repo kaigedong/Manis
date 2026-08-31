@@ -151,6 +151,7 @@ impl ManisApp {
                 ControlSize::Standard,
             )
             .disabled(self.configuration_transfer.is_busy())
+            .when(self.configuration_transfer.is_busy(), gpui::Styled::cursor_default)
             .on_click(cx.listener(move |this, _, window, cx| {
                 if preview {
                     this.resume_configuration_editing(window, cx);

@@ -213,7 +213,8 @@ fn capture_source_cards(
     use gpui::{AnyWindowHandle, AppContext as _, Modifiers, point, px, size};
     let store = std::env::temp_dir().join(format!("manis-source-cards-{}", std::process::id()));
     write_source_cards_fixture(&store)?;
-    for (width, height, label) in [(1420.0, 900.0, "wide"), (640.0, 560.0, "compact")] {
+    for (logical_width, height, label) in [(1420_u16, 900.0, "wide"), (640, 560.0, "compact")] {
+        let width = f32::from(logical_width);
         cx.update(manis_ui::init);
         let mut app = None;
         let window_store = store.clone();
@@ -250,12 +251,7 @@ fn capture_source_cards(
                     window,
                     &format!("source-cards-{label}-{mode}-{section}.png"),
                 )?;
-                let hover_y = match (rules, label) {
-                    (true, "wide") => 400.0,
-                    (false, "wide") => 295.0,
-                    (true, _) => 325.0,
-                    (false, _) => 330.0,
-                };
+                let hover_y = 295.0;
                 let before_hover = cx.capture_screenshot(window)?;
                 cx.simulate_mouse_move(
                     window,
@@ -279,11 +275,90 @@ fn capture_source_cards(
                     changed > 20_000,
                     "{label}/{mode}/{section}: hover must highlight the entire card"
                 );
+                verify_source_control_hover(
+                    cx,
+                    window,
+                    logical_width,
+                    false,
+                    &format!("source-cards-{label}-{mode}-{section}"),
+                )?;
+                if !rules {
+                    verify_source_control_hover(
+                        cx,
+                        window,
+                        logical_width,
+                        true,
+                        &format!("source-cards-{label}-{mode}-single-node"),
+                    )?;
+                }
             }
         }
         close_window(cx, window)?;
     }
     std::fs::remove_dir_all(store)?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn verify_source_control_hover(
+    cx: &mut gpui::VisualTestAppContext,
+    window: gpui::AnyWindowHandle,
+    width: u16,
+    second_row: bool,
+    name: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use gpui::{Modifiers, point, px};
+    cx.simulate_mouse_move(window, point(px(20.0), px(20.0)), None, Modifiers::none());
+    refresh(cx, window)?;
+    let normal = cx.capture_screenshot(window)?;
+    let wide = width > 1000;
+    let offset: u16 = if second_row { 106 } else { 0 };
+    let scale = normal.width() / u32::from(width);
+    let sample_x = u32::from(width - 180) * scale;
+    let sample_y = u32::from(295 + offset) * scale;
+    let offset = f32::from(offset);
+    let width = f32::from(width);
+    let sample = point(px(width - 180.0), px(295.0 + offset));
+    cx.simulate_mouse_move(window, sample, None, Modifiers::none());
+    refresh(cx, window)?;
+    assert_ne!(
+        normal.get_pixel(sample_x, sample_y),
+        cx.capture_screenshot(window)?.get_pixel(sample_x, sample_y),
+        "{name}: row body must keep its edit hover"
+    );
+    let button_y = if wide { 335.0 } else { 343.0 } + offset;
+    let mut controls = vec![
+        (
+            "remove",
+            point(px(width - if wide { 90.0 } else { 65.0 }), px(button_y)),
+        ),
+        (
+            "checkbox",
+            point(
+                px(if wide { 522.0 } else { 102.0 }),
+                px(if wide { 312.0 } else { 320.0 } + offset),
+            ),
+        ),
+    ];
+    if !second_row {
+        controls.push((
+            "refresh",
+            point(px(width - if wide { 165.0 } else { 140.0 }), px(button_y)),
+        ));
+    }
+    for (control, position) in controls {
+        cx.simulate_mouse_move(window, position, None, Modifiers::none());
+        refresh(cx, window)?;
+        let hovered = cx.capture_screenshot(window)?;
+        assert_eq!(
+            normal.get_pixel(sample_x, sample_y),
+            hovered.get_pixel(sample_x, sample_y),
+            "{name}/{control}: nested controls must not highlight the row"
+        );
+        if control == "remove" {
+            save_screenshot(cx, window, &format!("{name}-{control}-hover.png"))?;
+        }
+    }
     Ok(())
 }
 

@@ -708,6 +708,7 @@ impl ManisApp {
                     ActionRole::Secondary,
                     ControlSize::Compact,
                 )
+                .when(updating || !enabled, gpui::Styled::cursor_default)
                 .on_click(cx.listener(|this, _, _, cx| this.update_mihomo_core(cx))),
             )
     }
@@ -767,6 +768,7 @@ impl ManisApp {
                 ))
                 .selected(selected)
                 .disabled(!enabled)
+                .when(!enabled, gpui::Styled::cursor_default)
                 .on_click(cx.listener(move |this, _, _, cx| {
                     if enabled {
                         this.switch_kernel(kind, cx);
