@@ -859,6 +859,8 @@ impl ManisApp {
     ) -> Stateful<Div> {
         let card_edit_id = subscription.id.clone();
         let controls_enabled = presentation.controls_enabled;
+        let toggle_id = subscription.id.clone();
+        let enabled = subscription.enabled;
         div()
             .id(format!("subscription-card-{card_edit_id}"))
             .role(Role::Button)
@@ -873,31 +875,54 @@ impl ManisApp {
             .border_1()
             .border_color(theme.outline_subtle)
             .bg(theme.surface_low)
-            .child(Self::subscription_card_header(
-                subscription,
-                presentation,
-                language,
-                theme,
-                cx,
-            ))
+            .flex()
+            .items_center()
+            .gap_2()
+            .when(controls_enabled, |card| {
+                card.hover(move |card| card.bg(theme.action_soft))
+            })
+            .child(
+                Checkbox::new(format!("subscription-enabled-{toggle_id}"))
+                    .aria_label(subscription.name.clone())
+                    .flex_shrink_0()
+                    .checked(enabled)
+                    .disabled(!controls_enabled)
+                    .tab_stop(controls_enabled)
+                    .when(controls_enabled, gpui::Styled::cursor_pointer)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        if controls_enabled {
+                            this.set_subscription_enabled(&toggle_id, !enabled, cx);
+                        }
+                    })),
+            )
             .child(
                 div()
-                    .mt_1()
-                    .ml_7()
-                    .overflow_x_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .text_size(TextRole::Metadata.size())
-                    .text_color(theme.text_tertiary)
-                    .child(subscription.source.expose_to(str::to_owned)),
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .child(Self::subscription_card_header(
+                        subscription,
+                        presentation,
+                        theme,
+                    ))
+                    .child(
+                        div()
+                            .mt_1()
+                            .overflow_x_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .text_size(TextRole::Metadata.size())
+                            .text_color(theme.text_tertiary)
+                            .child(subscription.source.expose_to(str::to_owned)),
+                    )
+                    .child(Self::subscription_card_actions(
+                        subscription,
+                        presentation,
+                        language,
+                        theme,
+                        cx,
+                    )),
             )
-            .child(Self::subscription_card_actions(
-                subscription,
-                presentation,
-                language,
-                theme,
-                cx,
-            ))
             .on_click(cx.listener(move |this, _, window, cx| {
                 if controls_enabled {
                     this.open_subscription_editor(card_edit_id.clone(), cx);
@@ -909,31 +934,13 @@ impl ManisApp {
     fn subscription_card_header(
         subscription: &super::ImportedSubscription,
         presentation: &SubscriptionCardPresentation,
-        _language: Language,
         theme: Theme,
-        cx: &mut Context<Self>,
     ) -> Div {
-        let toggle_id = subscription.id.clone();
         let enabled = subscription.enabled;
-        let controls_enabled = presentation.controls_enabled;
         div()
             .flex()
             .items_center()
             .gap_2()
-            .child(
-                Checkbox::new(format!("subscription-enabled-{toggle_id}"))
-                    .label("")
-                    .checked(enabled)
-                    .disabled(!controls_enabled)
-                    .tab_stop(controls_enabled)
-                    .cursor_pointer()
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        cx.stop_propagation();
-                        if controls_enabled {
-                            this.set_subscription_enabled(&toggle_id, !enabled, cx);
-                        }
-                    })),
-            )
             .child(
                 div()
                     .flex_1()
@@ -988,7 +995,6 @@ impl ManisApp {
         let busy = presentation.activity.is_busy();
         div()
             .mt_1()
-            .ml_7()
             .flex()
             .items_center()
             .gap_2()
@@ -1072,6 +1078,8 @@ impl ManisApp {
     ) -> Stateful<Div> {
         let card_edit_id = saved.id.clone();
         let node = saved.source.preview();
+        let toggle_id = saved.id.clone();
+        let enabled = saved.enabled;
         div()
             .id(format!("single-node-card-{card_edit_id}"))
             .role(Role::Button)
@@ -1086,60 +1094,20 @@ impl ManisApp {
             .border_1()
             .border_color(theme.outline_subtle)
             .bg(theme.surface_low)
-            .child(Self::saved_single_node_header(
-                saved,
-                node,
-                controls_enabled,
-                theme,
-                cx,
-            ))
-            .child(
-                div()
-                    .mt_1()
-                    .ml_7()
-                    .overflow_x_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .text_size(TextRole::Metadata.size())
-                    .text_color(theme.text_tertiary)
-                    .child(saved.source.expose_to(str::to_owned)),
-            )
-            .child(Self::saved_single_node_actions(
-                saved,
-                node,
-                controls_enabled,
-                language,
-                theme,
-                cx,
-            ))
-            .on_click(cx.listener(move |this, _, window, cx| {
-                if controls_enabled {
-                    this.open_single_node_editor(card_edit_id.clone(), cx);
-                    this.open_proxy_source_dialog(window, cx);
-                }
-            }))
-    }
-
-    fn saved_single_node_header(
-        saved: &mihomo::StoredSingleNode,
-        node: &crate::subscription::SourceNodePreview,
-        controls_enabled: bool,
-        theme: Theme,
-        cx: &mut Context<Self>,
-    ) -> Div {
-        let toggle_id = saved.id.clone();
-        let enabled = saved.enabled;
-        div()
             .flex()
             .items_center()
             .gap_2()
+            .when(controls_enabled, |card| {
+                card.hover(move |card| card.bg(theme.action_soft))
+            })
             .child(
                 Checkbox::new(format!("single-node-enabled-{toggle_id}"))
-                    .label("")
+                    .aria_label(saved.name.clone())
+                    .flex_shrink_0()
                     .checked(enabled)
                     .disabled(!controls_enabled)
                     .tab_stop(controls_enabled)
-                    .cursor_pointer()
+                    .when(controls_enabled, gpui::Styled::cursor_pointer)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         cx.stop_propagation();
                         if controls_enabled {
@@ -1151,32 +1119,70 @@ impl ManisApp {
                 div()
                     .flex_1()
                     .min_w(px(0.0))
-                    .flex()
-                    .items_center()
-                    .gap_2()
+                    .child(Self::saved_single_node_header(saved, node, theme))
                     .child(
                         div()
-                            .min_w(px(0.0))
+                            .mt_1()
                             .overflow_x_hidden()
                             .whitespace_nowrap()
                             .text_ellipsis()
-                            .text_size(TextRole::Label.size())
-                            .font_weight(TextRole::Label.weight())
-                            .text_color(if enabled {
-                                theme.text_primary
-                            } else {
-                                theme.text_secondary
-                            })
-                            .child(saved.name.clone()),
-                    )
-                    .child(
-                        div()
-                            .flex_shrink_0()
                             .text_size(TextRole::Metadata.size())
                             .text_color(theme.text_tertiary)
-                            .child(node.protocol),
-                    ),
+                            .child(saved.source.expose_to(str::to_owned)),
+                    )
+                    .child(Self::saved_single_node_actions(
+                        saved,
+                        node,
+                        controls_enabled,
+                        language,
+                        theme,
+                        cx,
+                    )),
             )
+            .on_click(cx.listener(move |this, _, window, cx| {
+                if controls_enabled {
+                    this.open_single_node_editor(card_edit_id.clone(), cx);
+                    this.open_proxy_source_dialog(window, cx);
+                }
+            }))
+    }
+
+    fn saved_single_node_header(
+        saved: &mihomo::StoredSingleNode,
+        node: &crate::subscription::SourceNodePreview,
+        theme: Theme,
+    ) -> Div {
+        let enabled = saved.enabled;
+        div().flex().items_center().gap_2().child(
+            div()
+                .flex_1()
+                .min_w(px(0.0))
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    div()
+                        .min_w(px(0.0))
+                        .overflow_x_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .text_size(TextRole::Label.size())
+                        .font_weight(TextRole::Label.weight())
+                        .text_color(if enabled {
+                            theme.text_primary
+                        } else {
+                            theme.text_secondary
+                        })
+                        .child(saved.name.clone()),
+                )
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .text_size(TextRole::Metadata.size())
+                        .text_color(theme.text_tertiary)
+                        .child(node.protocol),
+                ),
+        )
     }
 
     fn saved_single_node_actions(
@@ -1190,7 +1196,6 @@ impl ManisApp {
         let remove_id = saved.id.clone();
         div()
             .mt_1()
-            .ml_7()
             .flex()
             .items_center()
             .gap_2()

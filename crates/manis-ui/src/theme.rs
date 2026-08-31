@@ -22,8 +22,6 @@ pub(crate) struct Theme {
     pub action_on_primary: Rgba,
     pub action_soft: Rgba,
     pub focus_ring: Rgba,
-    pub selection_surface: Rgba,
-    pub selection_accent: Rgba,
     pub modal_scrim: Rgba,
     pub route_trace: Rgba,
     pub route_soft: Rgba,
@@ -57,8 +55,6 @@ impl Theme {
             action_on_primary: rgb(0xffffff),
             action_soft: rgb(0xededed),
             focus_ring: rgb(0x2563eb),
-            selection_surface: rgb(0xeff6ff),
-            selection_accent: rgb(0x1d4ed8),
             modal_scrim: rgba(0x00000040),
             route_trace: rgb(0x923b0f),
             route_soft: rgb(0xfff5f0),
@@ -90,8 +86,6 @@ impl Theme {
             action_on_primary: rgb(0x0d0d0d),
             action_soft: rgb(0x393939),
             focus_ring: rgb(0x8cb4ff),
-            selection_surface: rgb(0x1e3048),
-            selection_accent: rgb(0x93c5fd),
             modal_scrim: rgba(0x00000066),
             route_trace: rgb(0xffb790),
             route_soft: rgb(0x362820),
@@ -489,14 +483,6 @@ mod tests {
                 }
             }
             assert_contrast(theme.route_trace, theme.route_soft, 4.5);
-            for foreground in [
-                theme.selection_accent,
-                theme.text_primary,
-                theme.text_secondary,
-                theme.text_tertiary,
-            ] {
-                assert_contrast(foreground, theme.selection_surface, 4.5);
-            }
             for level in [
                 theme.log_info,
                 theme.log_debug,

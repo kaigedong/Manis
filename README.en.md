@@ -116,6 +116,19 @@ subscription or individual node is added, Manis validates and writes the generat
 its private runtime directory. The controller endpoint is also assigned by Manis, not configured by
 the user.
 
+## Configuration backup and editing
+
+Under Settings → General → Backup and migration, export a complete `.manis.json` file and import it
+on another device. Export and file import show only the system file picker; import opens a preview
+after the selected file passes validation. **Edit configuration** opens the current complete
+configuration in a text editor. Edit it directly or paste an exported file, then validate and preview.
+You can return to editing or cancel without changing the stored configuration.
+
+Only **Replace and restart** applies the preview: Manis stops its proxy and core, backs up the old
+configuration, replaces it and restarts. This is Manis's backup format, not Mihomo YAML. It contains
+plaintext credentials; keep it private. Core binaries, TUN permissions, logs and latency results
+are excluded, and importing does not enable a proxy.
+
 ## Development checks
 
 ```bash
@@ -130,7 +143,12 @@ Real-core tests are ignored by default. They must be enabled explicitly and use
 synthetic fixtures; a private subscription must never be committed or used in public test output.
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full workflow.
 
-Policy groups expand downward and scroll when needed without compressing adjacent cards. The routing
+Proxy and rule sources in Settings highlight the full card on hover, with enable checkboxes centered
+vertically against the complete card content.
+
+The current policy outlet uses the same neutral selection fill as the Nodes page, retaining its
+selection mark and Current outlet label. Policy groups expand downward and scroll when needed without
+compressing adjacent cards. The routing
 rules page places its description, rule counts, and Add button in one header above the groups; group
 headers show a pointer cursor on hover. Log references, levels, messages, and timestamps are vertically
 centered within each row. See [List layout checks](docs/development.md#list-layout-checks) for the
