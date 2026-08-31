@@ -166,6 +166,7 @@ compact windows, light and dark), sidebar icons, and the Proxy picker:
 
 ```bash
 cargo run -p manis-ui --example snapshot --features snapshot-fixtures --locked -- --configuration-transfer
+cargo run -p manis-ui --example snapshot --features snapshot-fixtures --locked -- --app-updates
 cargo run -p manis-ui --example snapshot --features snapshot-fixtures --locked -- --source-cards
 cargo run -p manis-ui --example snapshot --features snapshot-fixtures --locked -- --navigation-icons
 cargo run -p manis-ui --example snapshot --features snapshot-fixtures --locked -- --proxy-candidate
@@ -179,7 +180,7 @@ review requirements. Snapshot captures reject non-opaque application pixels.
 These macOS captures use synthetic data and do not require a real subscription:
 
 ```bash
-cargo run -p manis-ui --example snapshot --features snapshot-fixtures --locked -- --policy-scrolling
+cargo run -p manis-ui --example snapshot --features snapshot-fixtures --locked -- --merged-nodes
 cargo run -p manis-ui --example snapshot --features snapshot-fixtures --locked -- --routing-rules
 cargo run -p manis-ui --example snapshot --features snapshot-fixtures --locked -- --log-colors
 ```

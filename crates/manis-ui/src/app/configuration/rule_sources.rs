@@ -349,6 +349,7 @@ impl ManisApp {
             .aria_label(label.clone())
             .tab_stop(true)
             .focusable()
+            .map(crate::components::primary_button_interaction)
             .cursor_pointer()
             .px_3()
             .py_2()
@@ -470,6 +471,7 @@ impl ManisApp {
             .aria_label(language.localized(copy::configuration::EDIT_THIS_RULE_SOURCE))
             .tab_stop(controls_enabled)
             .focusable()
+            .map(crate::components::primary_button_interaction)
             .when(controls_enabled, gpui::Styled::cursor_pointer)
             .mt(Space::Sm.px())
             .p(Space::Md.px())
@@ -491,6 +493,7 @@ impl ManisApp {
                 Checkbox::new(format!("qx-rule-enabled-{toggle_id}"))
                     .aria_label(presentation.name.clone())
                     .flex_shrink_0()
+                    .map(crate::components::primary_button_interaction)
                     .checked(enabled)
                     .disabled(!controls_enabled)
                     .tab_stop(controls_enabled)
@@ -766,6 +769,7 @@ impl ManisApp {
             let source_id = source_id.to_owned();
             choices = choices.child(
                 Button::new(format!("qx-rule-source-target-{source_id}-{target_id}"))
+                    .map(crate::components::primary_button_interaction)
                     .accessibility_label(format!("Target {target}"))
                     .selected(selected)
                     .with_variant(ButtonVariant::Text)

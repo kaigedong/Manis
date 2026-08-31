@@ -174,8 +174,6 @@ pub(crate) const ONLY_A_CANDIDATE_INSIDE_A_MANUAL_POLICY_CAN_BE_SELECTED: Locali
         "Only a candidate inside a manual policy can be selected",
         "只能选择手动策略组中的候选节点",
     );
-pub(crate) const POLICY_GROUPS_OPENED: LocalizedText =
-    LocalizedText::new("Policy groups opened", "已打开策略组工作区");
 pub(crate) const POLICY_GROUPS_UNAVAILABLE: LocalizedText =
     LocalizedText::new("Policy groups unavailable", "暂时无法读取策略组");
 pub(crate) const POLICY_GROUP_BENCHMARK_FAILED: LocalizedText =

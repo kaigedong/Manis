@@ -1,5 +1,6 @@
 use crate::localization::LocalizedText;
 
+pub(crate) const ABOUT_MANIS: LocalizedText = LocalizedText::new("About Manis", "关于 Manis");
 #[cfg(not(target_os = "linux"))]
 pub(crate) const COULD_NOT_CREATE_THE_SYSTEM_TRAY_ICON: LocalizedText = LocalizedText::new(
     "Could not create the system tray icon",

@@ -20,6 +20,7 @@ use crate::{
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum TrayAction {
     Show,
+    About,
     Quit,
     ProxyMode(ProxyMode),
 }
@@ -159,6 +160,12 @@ impl ksni::Tray for LinuxTray {
             self.proxy_item(ProxyMode::Tun).into(),
             ksni::MenuItem::Separator,
             StandardItem {
+                label: language.localized(copy::tray::ABOUT_MANIS).into(),
+                activate: Box::new(|tray: &mut Self| tray.send(TrayAction::About)),
+                ..Default::default()
+            }
+            .into(),
+            StandardItem {
                 label: language.localized(copy::tray::QUIT_MANIS).into(),
                 activate: Box::new(|tray: &mut Self| tray.send(TrayAction::Quit)),
                 ..Default::default()
@@ -182,7 +189,7 @@ mod tests {
     #[test]
     fn linux_tray_starts_with_proxy_actions_disabled() {
         let (tray, _) = fixture();
-        assert_eq!(tray.menu().len(), 7);
+        assert_eq!(tray.menu().len(), 8);
         for mode in [ProxyMode::System, ProxyMode::Tun] {
             let item = tray.proxy_item(mode);
             assert!(!item.enabled);
@@ -216,10 +223,19 @@ mod tests {
                     tray.title(),
                     language.localized(copy::tray::MANIS_RULE_ROUTING)
                 );
-                let MenuItem::Standard(open) = tray.menu().remove(0) else {
+                let mut menu = tray.menu();
+                let MenuItem::Standard(open) = menu.remove(0) else {
                     panic!("first menu item should open Manis");
                 };
                 assert_eq!(open.label, language.localized(copy::tray::OPEN_MANIS));
+                let MenuItem::Standard(about) = menu.remove(5) else {
+                    panic!("about item should appear before quit");
+                };
+                assert_eq!(about.label, language.localized(copy::tray::ABOUT_MANIS));
+                let MenuItem::Standard(quit) = menu.remove(5) else {
+                    panic!("quit item should follow about");
+                };
+                assert_eq!(quit.label, language.localized(copy::tray::QUIT_MANIS));
             }
         }
     }
@@ -246,6 +262,7 @@ mod tests {
                 TrayAction::Show,
                 TrayAction::ProxyMode(ProxyMode::System),
                 TrayAction::ProxyMode(ProxyMode::Tun),
+                TrayAction::About,
                 TrayAction::Quit,
             ]
         );

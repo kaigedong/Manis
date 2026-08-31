@@ -950,7 +950,6 @@ impl ManisApp {
             || self.routing_apply_state.is_busy()
             || self.kernel_switch_state.is_busy()
             || self.mihomo_core_update_state.is_busy()
-            || self.app_update_state.is_busy()
             || self.proxy_mode_busy.is_some()
             || self.routing_mode_busy.is_some()
             || self.global_selection_busy.is_some()

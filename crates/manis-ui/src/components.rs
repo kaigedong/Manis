@@ -37,7 +37,7 @@ pub(crate) fn action_button(
 }
 
 pub(crate) fn style_action_button(button: Button, role: ActionRole, size: ControlSize) -> Button {
-    button
+    primary_button_interaction(button)
         .with_variant(role.variant())
         .with_size(gpui_component::Size::Small)
         .h(size.height())
@@ -55,6 +55,16 @@ pub(crate) fn style_action_button(button: Button, role: ActionRole, size: Contro
         .when(size == ControlSize::Icon, |button| {
             button.px_0().w(size.height())
         })
+}
+
+/// Secondary presses must not focus or depress ordinary controls. Do not stop
+/// propagation: rows with a context menu still need to receive the right click.
+pub(crate) fn primary_button_interaction<E: gpui::InteractiveElement>(element: E) -> E {
+    element.capture_any_mouse_down(|event, window, _| {
+        if event.button != gpui::MouseButton::Left {
+            window.prevent_default();
+        }
+    })
 }
 
 pub(crate) fn disclosure_icon(expanded: bool, theme: Theme) -> Icon {
@@ -547,7 +557,101 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    fn secondary_clicks_do_not_focus_or_activate_buttons(cx: &mut gpui::TestAppContext) {
+        cx.update(crate::init);
+        let clicks = std::rc::Rc::new(std::cell::Cell::new(0));
+        let (_, cx) = cx.add_window_view(|_, _| ButtonHarness {
+            clicks: clicks.clone(),
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let button = cx.debug_bounds("enabled").unwrap();
+        for mouse_button in [gpui::MouseButton::Right, gpui::MouseButton::Middle] {
+            cx.simulate_event(gpui::MouseDownEvent {
+                button: mouse_button,
+                position: button.center(),
+                ..Default::default()
+            });
+            cx.simulate_event(gpui::MouseUpEvent {
+                button: mouse_button,
+                position: button.center(),
+                ..Default::default()
+            });
+            cx.update(|window, cx| {
+                assert!(
+                    window.focused(cx).is_none(),
+                    "secondary click must not take focus"
+                );
+            });
+        }
+        assert_eq!(clicks.get(), 0);
+        cx.simulate_click(button.center(), Modifiers::none());
+        assert_eq!(clicks.get(), 1, "primary click must still activate once");
+        cx.update(|window, cx| {
+            window.focus_next(cx);
+            assert!(
+                window.focused(cx).is_some(),
+                "keyboard traversal must still work"
+            );
+            window.draw(cx).clear(cx);
+        });
+        for key in ["enter", "space"] {
+            let keystroke = gpui::Keystroke::parse(key).unwrap();
+            cx.simulate_event(gpui::KeyDownEvent {
+                keystroke: keystroke.clone(),
+                is_held: false,
+                prefer_character_input: false,
+            });
+            cx.simulate_event(gpui::KeyUpEvent { keystroke });
+        }
+        assert_eq!(clicks.get(), 3, "keyboard activation must still work");
+    }
+
     struct FoundationHarness;
+
+    struct ContextMenuHarness(std::rc::Rc<std::cell::Cell<usize>>);
+
+    impl Render for ContextMenuHarness {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl gpui::IntoElement {
+            use gpui::StatefulInteractiveElement as _;
+            use gpui_component::menu::{ContextMenuExt as _, PopupMenuItem};
+            let opened = self.0.clone();
+            super::primary_button_interaction(
+                div()
+                    .id("context-row")
+                    .debug_selector(|| "context-row".into())
+                    .size(px(100.))
+                    .focusable()
+                    .child("Rule"),
+            )
+            .context_menu(move |menu, _, _| {
+                opened.set(opened.get() + 1);
+                menu.item(PopupMenuItem::new("Edit"))
+            })
+        }
+    }
+
+    #[gpui::test]
+    fn secondary_click_guard_preserves_explicit_context_menus(cx: &mut gpui::TestAppContext) {
+        cx.update(crate::init);
+        let opened = std::rc::Rc::new(std::cell::Cell::new(0));
+        let (_, cx) = cx.add_window_view(|_, _| ContextMenuHarness(opened.clone()));
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let bounds = cx.debug_bounds("context-row").unwrap();
+        cx.simulate_event(gpui::MouseDownEvent {
+            button: gpui::MouseButton::Right,
+            position: bounds.center(),
+            ..Default::default()
+        });
+        cx.simulate_event(gpui::MouseUpEvent {
+            button: gpui::MouseButton::Right,
+            position: bounds.center(),
+            ..Default::default()
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert_eq!(opened.get(), 1, "the explicit menu must still open once");
+    }
 
     impl Render for FoundationHarness {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl gpui::IntoElement {

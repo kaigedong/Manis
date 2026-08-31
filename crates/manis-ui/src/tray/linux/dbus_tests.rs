@@ -124,6 +124,7 @@ fn linux_tray_dbus_registration_menu_updates_actions_and_shutdown() {
     assert_eq!(i32::try_from(&tun["toggle-state"]).unwrap(), 1);
     for (label, action) in [
         ("Open Manis", TrayAction::Show),
+        ("About Manis", TrayAction::About),
         ("Quit Manis", TrayAction::Quit),
     ] {
         click(&menu, menu_item(&menu, label).0);

@@ -112,6 +112,8 @@ impl ManisApp {
             let pending = self.proxy_mode_busy == Some(mode);
             modes = modes.child(
                 Button::new(format!("proxy-mode-{mode:?}"))
+                    .map(crate::components::primary_button_interaction)
+                    .debug_selector(move || format!("proxy-mode-{mode:?}"))
                     .accessibility_label(proxy_mode_label(language, mode))
                     .label(if pending {
                         match mode {
@@ -204,6 +206,8 @@ impl ManisApp {
             let selected = mode == self.routing_mode;
             modes = modes.child(
                 Button::new(format!("routing-mode-{mode:?}"))
+                    .map(crate::components::primary_button_interaction)
+                    .debug_selector(move || format!("routing-mode-{mode:?}"))
                     .accessibility_label(routing_mode_label(language, mode))
                     .label(if self.routing_mode_busy == Some(mode) {
                         language.localized(copy::app::SWITCHING)
@@ -257,11 +261,6 @@ impl ManisApp {
                 PrimaryWorkspace::Nodes,
             ),
             (
-                language.message(Message::PolicyGroups),
-                IconName::Network,
-                PrimaryWorkspace::Policies,
-            ),
-            (
                 language.message(Message::RoutingRules),
                 IconName::Map,
                 PrimaryWorkspace::RoutingRules,
@@ -301,10 +300,12 @@ impl ManisApp {
                 let selected = workspace == self.primary_workspace;
                 div()
                     .id(format!("navigation-{workspace:?}"))
+                    .debug_selector(move || format!("navigation-{workspace:?}"))
                     .role(Role::Button)
                     .aria_label(label)
                     .tab_stop(true)
                     .focusable()
+                    .map(crate::components::primary_button_interaction)
                     .cursor_pointer()
                     .h(ControlSize::Standard.height())
                     .px(Space::Md.px())
@@ -349,10 +350,6 @@ impl ManisApp {
         self.primary_workspace = workspace;
         let language = self.language();
         let (event, status) = match workspace {
-            PrimaryWorkspace::Policies => (
-                UiEvent::WorkspacePoliciesOpened,
-                language.localized(copy::app::POLICY_GROUPS_OPENED),
-            ),
             PrimaryWorkspace::Nodes => (
                 UiEvent::WorkspaceNodesOpened,
                 language.localized(copy::app::NODES_OPENED),
@@ -379,8 +376,54 @@ impl ManisApp {
         cx.notify();
     }
 
-    fn empty_policy_workspace(&self, theme: Theme, compact: bool, cx: &mut Context<Self>) -> Div {
+    fn policy_section(&self, theme: Theme, compact: bool, cx: &mut Context<Self>) -> Stateful<Div> {
         let language = self.language();
+        let mut rows = div().flex_shrink_0().flex().flex_col().gap(Space::Sm.px());
+        let policy_count;
+        if self.catalog.is_some() {
+            policy_count = self.policy_groups().count();
+            for item in self.policy_groups().cloned() {
+                rows = rows.child(self.policy_list_card(item, language, theme, cx));
+            }
+        } else {
+            policy_count = self.managed_policies.groups.len();
+            for policy in self.managed_policies.groups.clone() {
+                rows = rows.child(self.offline_policy_card(policy, language, theme, cx));
+            }
+        }
+        if policy_count == 0 {
+            rows = rows.child(self.empty_policy_content(language, theme));
+        }
+        div()
+            .id("node-policies-section")
+            .debug_selector(|| "node-policies-section".to_owned())
+            .flex_shrink_0()
+            .min_w(px(0.0))
+            .border_t_1()
+            .border_color(theme.outline_subtle)
+            .px(if compact { px(12.0) } else { px(24.0) })
+            .py(Space::Lg.px())
+            .flex()
+            .flex_col()
+            .gap(Space::Lg.px())
+            .child(page_heading(
+                language.message(Message::PolicyGroups),
+                format!(
+                    "{} · {}",
+                    language.count(CountNoun::PolicyGroup, policy_count),
+                    language.localized(
+                        copy::app::ROUTING_RULES_CHOOSE_POLICY_GROUPS_POLICIES_CHOOSE_EXITS,
+                    ),
+                ),
+                Some(Self::managed_policy_add_button(
+                    "add-policy-group-header", language, theme, cx,
+                ).into_any_element()),
+                theme,
+            ))
+            .child(rows)
+    }
+
+    fn empty_policy_content(&self, language: Language, theme: Theme) -> Div {
         let (title, description) = match &self.controller {
             ControllerState::Disconnected => (
                 language.message(Message::NoPolicyGroups),
@@ -404,61 +447,7 @@ impl ManisApp {
             ),
         };
 
-        let body = div()
-            .id("offline-policy-scroll")
-            .flex_1()
-            .min_h(px(0.0))
-            .overflow_y_scroll()
-            .p(if compact { Space::Md.px() } else { Space::Lg.px() });
-        let body = if self.managed_policies.groups.is_empty() {
-            body.child(
-                div()
-                    .max_w(px(620.0))
-                    .child(empty_state(title, description, None, theme)),
-            )
-        } else {
-            let rows = self.managed_policies.groups.clone().into_iter().fold(
-                div().flex().flex_col().gap(Space::Sm.px()),
-                |rows, policy| rows.child(self.offline_policy_card(policy, language, theme, cx)),
-            );
-            body.child(rows)
-        };
-
-        div()
-            .h_full()
-            .flex_1()
-            .min_w(px(0.0))
-            .bg(theme.surface_base)
-            .flex()
-            .flex_col()
-            .child(
-                div()
-                    .flex_shrink_0()
-                    .p(Space::Lg.px())
-                    .border_b_1()
-                    .border_color(theme.outline_subtle)
-                    .child(page_heading(
-                        language.message(Message::PolicyGroups),
-                        language.localized(
-                            copy::app::ROUTING_RULES_CHOOSE_POLICY_GROUPS_POLICIES_CHOOSE_EXITS,
-                        ),
-                        Some(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap(Space::Sm.px())
-                                .child(Self::managed_policy_add_button(
-                                    "add-policy-group-empty",
-                                    language,
-                                    theme,
-                                    cx,
-                                ))
-                                .into_any_element(),
-                        ),
-                        theme,
-                    )),
-            )
-            .child(body)
+        empty_state(title, description, None, theme)
     }
 
     fn offline_policy_card_view(&self, policy: ManagedPolicyGroup) -> OfflinePolicyCardView {
@@ -498,10 +487,15 @@ impl ManisApp {
         };
         div()
             .id(format!("saved-policy-header-{}", view.policy.id))
+            .debug_selector({
+                let id = view.policy.id.clone();
+                move || format!("saved-policy-header-{id}")
+            })
             .role(Role::Button)
             .aria_label(format!("{action} {}", view.policy.name))
             .tab_stop(true)
             .focusable()
+            .map(crate::components::primary_button_interaction)
             .cursor_pointer()
             .min_h(px(64.0))
             .px(Space::Lg.px())
@@ -618,7 +612,9 @@ impl ManisApp {
         cx: &mut Context<Self>,
     ) -> Div {
         let view = self.offline_policy_card_view(policy);
+        let card_id = format!("saved-policy-card-{}", view.policy.id);
         let mut card = div()
+            .debug_selector(move || card_id.clone())
             .flex_shrink_0()
             .rounded(Radius::Pane.px())
             .border_1()
@@ -689,6 +685,7 @@ impl ManisApp {
         cx: &mut Context<Self>,
     ) -> Button {
         let editable = group_id.is_some();
+        let selector = format!("policy-settings-{row_id}");
         action_button(
             format!("policy-settings-{row_id}"),
             if editable {
@@ -699,6 +696,7 @@ impl ManisApp {
             ActionRole::Secondary,
             ControlSize::Compact,
         )
+        .debug_selector(move || selector.clone())
         .disabled(!editable)
         .accessibility_label(language.localized(if editable {
             copy::common::EDIT_POLICY_GROUP
@@ -711,63 +709,6 @@ impl ManisApp {
                 this.open_managed_policy_settings(id, window, cx);
             }
         }))
-    }
-
-    fn policy_list(&self, theme: Theme, compact: bool, cx: &mut Context<Self>) -> Div {
-        let language = self.language();
-        let policy_count = self.policy_groups().count();
-        let rows = self.policy_groups().cloned().fold(
-            div()
-                .id("policy-scroll")
-                .flex_1()
-                .min_h(px(0.0))
-                .overflow_y_scroll()
-                .p(if compact { Space::Md.px() } else { Space::Lg.px() })
-                .flex()
-                .flex_col()
-                .gap(Space::Sm.px()),
-            |rows, item| rows.child(self.policy_list_card(item, language, theme, cx)),
-        );
-
-        div()
-            .flex_1()
-            .min_w(px(0.0))
-            .h_full()
-            .flex()
-            .flex_col()
-            .bg(theme.surface_base)
-            .child(
-                div()
-                    .flex_shrink_0()
-                    .p(Space::Lg.px())
-                    .border_b_1()
-                    .border_color(theme.outline_subtle)
-                    .child(page_heading(
-                        language.message(Message::PolicyGroups),
-                        format!(
-                            "{} · {}",
-                            language.count(CountNoun::PolicyGroup, policy_count),
-                            language.localized(
-                                copy::app::ROUTING_RULES_CHOOSE_POLICY_GROUPS_POLICIES_CHOOSE_EXITS
-                            )
-                        ),
-                        Some(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap(Space::Sm.px())
-                                .child(Self::managed_policy_add_button(
-                                    "add-policy-group-header",
-                                    language,
-                                    theme,
-                                    cx,
-                                ))
-                                .into_any_element(),
-                        ),
-                        theme,
-                    )),
-            )
-            .child(rows)
     }
 
     fn policy_list_card_view(&self, item: PolicyGroup) -> PolicyListCardView {
@@ -803,7 +744,9 @@ impl ManisApp {
         cx: &mut Context<Self>,
     ) -> Div {
         let view = self.policy_list_card_view(item);
+        let card_id = format!("policy-card-{}", view.item.id.as_str());
         let mut card = div()
+            .debug_selector(move || card_id.clone())
             .flex_shrink_0()
             .rounded(Radius::Pane.px())
             .border_1()
@@ -881,10 +824,15 @@ impl ManisApp {
         };
         div()
             .id(format!("policy-{}", view.item.id.as_str()))
+            .debug_selector({
+                let id = view.item.id.clone();
+                move || format!("policy-{}", id.as_str())
+            })
             .role(Role::Button)
             .aria_label(format!("{action} {}", view.item.name))
             .tab_stop(true)
             .focusable()
+            .map(crate::components::primary_button_interaction)
             .cursor_pointer()
             .min_h(px(64.0))
             .px(Space::Lg.px())
@@ -1022,6 +970,7 @@ impl ManisApp {
             ActionRole::Primary,
             ControlSize::Compact,
         )
+        .debug_selector(move || id.to_owned())
         .accessibility_label(language.message(Message::AddPolicyGroup))
         .on_click(cx.listener(|this, _, window, cx| {
             this.open_managed_policy_create(window, cx);
@@ -1135,6 +1084,7 @@ impl ManisApp {
                         Toggled::False
                     })
                     .focusable()
+                    .map(crate::components::primary_button_interaction)
                     .cursor_pointer()
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if !selection_busy {
@@ -1296,7 +1246,7 @@ impl ManisApp {
         (!issues.is_empty()).then(|| issues.join(" · "))
     }
 
-    fn status_bar(&self, theme: Theme, size_class: WindowSizeClass, cx: &mut Context<Self>) -> StatusBar {
+    fn status_bar(&self, theme: Theme, size_class: WindowSizeClass) -> StatusBar {
         let compact = size_class == WindowSizeClass::Compact;
         let language = self.language();
         let kernel_name = self.runtime.kind().display_name();
@@ -1355,32 +1305,6 @@ impl ManisApp {
             .line_height(TextRole::Data.line_height())
             .font_weight(TextRole::Data.weight())
             .text_color(theme.text_secondary)
-            .when_some(
-                match &self.app_update_state {
-                    AppUpdateState::Ready(staged) => Some(staged.version.clone()),
-                    _ => None,
-                },
-                |right, version| {
-                    right.child(
-                        style_action_button(
-                            Button::new("status-bar-restart-update")
-                                .accessibility_label(
-                                    language.localized(copy::app_update::RESTART_AND_UPDATE),
-                                )
-                                .label(format!(
-                                    "{} · {version}",
-                                    language.localized(copy::app_update::RESTART_AND_UPDATE)
-                                ))
-                                .icon(IconName::Redo2),
-                            ActionRole::Primary,
-                            ControlSize::Compact,
-                        )
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.restart_with_app_update(cx);
-                        })),
-                    )
-                },
-            )
             .when(!compact || issue.is_none(), |right| right.child(values.download).child(values.upload));
 
         StatusBar::new()

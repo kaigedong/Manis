@@ -30,6 +30,7 @@ impl ManisApp {
             .expect("configuration section belongs to the directory");
         self.configuration_section = section;
         self.configuration_scroll.scroll_to_top_of_item(index);
+        self.configuration_navigation_scroll.scroll_to_item(index);
         cx.notify();
     }
 
@@ -50,6 +51,12 @@ impl ManisApp {
         );
         if self.configuration_section != section {
             self.configuration_section = section;
+            if let Some(index) = ConfigurationSection::ALL
+                .iter()
+                .position(|item| *item == section)
+            {
+                self.configuration_navigation_scroll.scroll_to_item(index);
+            }
             cx.notify();
         }
     }
@@ -97,7 +104,11 @@ impl ManisApp {
                 } else {
                     Space::Sm.px()
                 })
-                .when(compact, gpui::StatefulInteractiveElement::overflow_x_scroll)
+                .when(compact, |items| {
+                    items
+                        .overflow_x_scroll()
+                        .track_scroll(&self.configuration_navigation_scroll)
+                })
                 .when(!compact, gpui::Styled::flex_col)
                 .children(ConfigurationSection::ALL.into_iter().map(|section| {
                     self.configuration_navigation_item(section, theme, compact, cx)
@@ -138,6 +149,7 @@ impl ManisApp {
             ConfigurationSection::Advanced => language
                 .localized(copy::configuration::MANAGED_2)
                 .to_owned(),
+            ConfigurationSection::Updates => String::new(),
         };
         div()
             .id(format!("configuration-nav-{}", section.key()))
@@ -150,6 +162,7 @@ impl ManisApp {
             })
             .tab_stop(true)
             .focusable()
+            .map(crate::components::primary_button_interaction)
             .cursor_pointer()
             .min_w(if compact { px(104.0) } else { px(0.0) })
             .px(Space::Md.px())
@@ -352,128 +365,60 @@ impl ManisApp {
             )
     }
 
-    fn app_update_panel(
-        &self,
-        theme: Theme,
-        compact: bool,
-        cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
+    fn app_update_panel(&self, theme: Theme, compact: bool) -> Stateful<Div> {
         let language = self.language();
-        let (status, tone) = self.app_update_status(language);
-        let (button_label, ready, busy, supported) = self.app_update_action(language);
-
+        let label = language.localized(copy::app_update::OPEN_GITHUB);
         panel_surface("configuration-app-update", compact, theme)
+            .debug_selector(|| "app-update-panel".to_owned())
             .child(section_heading(
-                language.localized(copy::app_update::AUTOMATIC_UPDATES),
-                language.localized(copy::app_update::AUTOMATIC_UPDATES_DETAIL),
-                Some(status_badge(status, tone, theme).into_any_element()),
+                language.localized(copy::app_update::APP_UPDATES),
+                language.localized(copy::app_update::CHECK_AUTOMATICALLY_DETAIL),
+                None,
                 theme,
             ))
             .child(
                 div()
                     .mt(Space::Md.px())
                     .flex()
+                    .flex_wrap()
                     .items_center()
                     .justify_between()
                     .gap(Space::Md.px())
-                    .child(
-                        div()
-                            .text_size(TextRole::Metadata.size())
-                            .line_height(TextRole::Metadata.line_height())
-                            .text_color(theme.text_secondary)
-                            .child(copy::app_update::current_version(
-                                language,
-                                app_update::current_version(),
-                            )),
-                    )
+                    .child(Self::version_information(language, theme))
                     .child(
                         style_action_button(
-                            Button::new("app-update-action")
-                                .accessibility_label(button_label)
-                                .label(button_label)
-                                .icon(IconName::Redo2)
-                                .loading(busy)
-                                .disabled(!supported || busy)
-                                .tab_stop(supported && !busy),
-                            if ready {
-                                ActionRole::Primary
-                            } else {
-                                ActionRole::Secondary
-                            },
+                            Button::new("app-update-github")
+                                .debug_selector(|| "app-update-github".to_owned())
+                                .accessibility_label(label)
+                                .label(label)
+                                .icon(IconName::ExternalLink),
+                            ActionRole::Secondary,
                             ControlSize::Compact,
                         )
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            if matches!(this.app_update_state, AppUpdateState::Ready(_)) {
-                                this.restart_with_app_update(cx);
-                            } else {
-                                this.check_for_app_update(true, cx);
-                            }
-                        })),
+                        .on_click(|_, _, cx| cx.open_url(app_update::RELEASES_URL)),
                     ),
+            )
+            .child(
+                div()
+                    .mt(Space::Sm.px())
+                    .min_h(px(40.0))
+                    .text_size(TextRole::Metadata.size())
+                    .line_height(TextRole::Metadata.line_height())
+                    .text_color(theme.text_secondary)
+                    .child(self.app_update_status(language)),
             )
     }
 
-    fn app_update_status(&self, language: Language) -> (String, StatusTone) {
+    fn app_update_status(&self, language: Language) -> String {
         match &self.app_update_state {
-            AppUpdateState::Idle => (
-                copy::app_update::current_version(language, app_update::current_version()),
-                StatusTone::Neutral,
-            ),
-            AppUpdateState::Checking => (
-                language.localized(copy::app_update::CHECKING).to_owned(),
-                StatusTone::Neutral,
-            ),
-            AppUpdateState::Downloading(version) => (
-                format!(
-                    "{} · {version}",
-                    language.localized(copy::app_update::DOWNLOADING)
-                ),
-                StatusTone::Neutral,
-            ),
-            AppUpdateState::Ready(staged) => (
-                copy::app_update::ready_version(language, &staged.version),
-                StatusTone::Success,
-            ),
-            AppUpdateState::Installing(version) => (
-                format!(
-                    "{} · {version}",
-                    language.localized(copy::app_update::INSTALLING)
-                ),
-                StatusTone::Warning,
-            ),
-            AppUpdateState::Current => (
-                language.localized(copy::app_update::UP_TO_DATE).to_owned(),
-                StatusTone::Success,
-            ),
-            AppUpdateState::Failed(error) => (
-                copy::app_update::error(language, *error).to_owned(),
-                StatusTone::Error,
-            ),
-            AppUpdateState::Unsupported => (
-                language.localized(copy::app_update::UNSUPPORTED).to_owned(),
-                StatusTone::Neutral,
-            ),
+            AppUpdateState::Idle => language.localized(copy::app_update::CHECK_PENDING).to_owned(),
+            AppUpdateState::Checking => language.localized(copy::app_update::CHECKING).to_owned(),
+            AppUpdateState::Available(update) => {
+                copy::app_update::available_version(language, &update.version)
+            }
+            AppUpdateState::Current => language.localized(copy::app_update::UP_TO_DATE).to_owned(),
+            AppUpdateState::Failed(error) => copy::app_update::error(language, *error).to_owned(),
         }
-    }
-
-    fn app_update_action(&self, language: Language) -> (&'static str, bool, bool, bool) {
-        let ready = matches!(self.app_update_state, AppUpdateState::Ready(_));
-        let busy = self.app_update_state.is_busy();
-        let supported = !matches!(self.app_update_state, AppUpdateState::Unsupported);
-        let button_label = if ready {
-            language.localized(copy::app_update::RESTART_AND_UPDATE)
-        } else if matches!(self.app_update_state, AppUpdateState::Failed(_)) {
-            language.localized(copy::app_update::TRY_AGAIN)
-        } else if matches!(self.app_update_state, AppUpdateState::Checking) {
-            language.localized(copy::app_update::CHECKING)
-        } else if matches!(self.app_update_state, AppUpdateState::Downloading(_)) {
-            language.localized(copy::app_update::DOWNLOADING)
-        } else if matches!(self.app_update_state, AppUpdateState::Installing(_)) {
-            language.localized(copy::app_update::INSTALLING)
-        } else {
-            language.localized(copy::app_update::CHECK_FOR_UPDATES)
-        };
-        (button_label, ready, busy, supported)
     }
 
     fn language_option(
@@ -501,6 +446,7 @@ impl ManisApp {
             })
             .tab_stop(true)
             .focusable()
+            .map(crate::components::primary_button_interaction)
             .cursor_pointer()
             .min_h(px(52.0))
             .px(Space::Md.px())

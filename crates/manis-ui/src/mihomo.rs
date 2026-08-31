@@ -3797,6 +3797,8 @@ IP-CIDR,192.0.2.0/24,DIRECT
                         }
                         Err(error) => return Err(error),
                     };
+                    // Accepted sockets can inherit nonblocking mode on macOS.
+                    stream.set_nonblocking(false)?;
                     stream.set_read_timeout(Some(Duration::from_secs(1)))?;
                     let mut request = String::new();
                     BufReader::new(stream.try_clone()?).read_line(&mut request)?;

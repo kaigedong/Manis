@@ -22,7 +22,7 @@ use manis_mihomo::{Connection, ObservedRouteEvidence, RuntimeConfig};
 use manis_profile::{QxRuleList, SecretUrl};
 
 use crate::{
-    app_update::{self, AppUpdateError, StagedUpdate},
+    app_update::{self, AppUpdateError, AvailableUpdate},
     assets, brand,
     components::{
         ActionRole, StatusTone, action_button, empty_state, page_heading, status_badge,
@@ -47,6 +47,7 @@ use crate::{
     theme::{ControlSize, LayoutMetric, Radius, Space, TextRole, Theme},
 };
 
+mod about;
 mod activity;
 mod configuration;
 mod logs;
@@ -68,6 +69,7 @@ enum ConfigurationSection {
     ProxySources,
     RuleSources,
     Advanced,
+    Updates,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -78,12 +80,13 @@ enum ProxySourceEditorKind {
 }
 
 impl ConfigurationSection {
-    const ALL: [Self; 5] = [
+    const ALL: [Self; 6] = [
         Self::General,
         Self::Runtime,
         Self::ProxySources,
         Self::RuleSources,
         Self::Advanced,
+        Self::Updates,
     ];
 
     const fn key(self) -> &'static str {
@@ -93,6 +96,7 @@ impl ConfigurationSection {
             Self::ProxySources => "proxy-sources",
             Self::RuleSources => "rule-sources",
             Self::Advanced => "advanced",
+            Self::Updates => "updates",
         }
     }
 }
@@ -124,21 +128,9 @@ enum MihomoCoreUpdateOutcome {
 enum AppUpdateState {
     Idle,
     Checking,
-    Downloading(String),
-    Ready(StagedUpdate),
-    Installing(String),
+    Available(AvailableUpdate),
     Current,
     Failed(AppUpdateError),
-    Unsupported,
-}
-
-impl AppUpdateState {
-    const fn is_busy(&self) -> bool {
-        matches!(
-            self,
-            Self::Checking | Self::Downloading(_) | Self::Installing(_)
-        )
-    }
 }
 
 fn perform_mihomo_core_update(
@@ -863,6 +855,7 @@ pub struct ManisApp {
     primary_workspace: PrimaryWorkspace,
     configuration_section: ConfigurationSection,
     configuration_scroll: gpui::ScrollHandle,
+    configuration_navigation_scroll: gpui::ScrollHandle,
     configuration_add_section: Option<ConfigurationSection>,
     configuration_transfer: configuration::ConfigurationTransfer,
     node_workspace: NodeWorkspaceState,
@@ -1037,6 +1030,7 @@ impl ManisApp {
             primary_workspace: PrimaryWorkspace::default(),
             configuration_section: ConfigurationSection::default(),
             configuration_scroll: gpui::ScrollHandle::new(),
+            configuration_navigation_scroll: gpui::ScrollHandle::new(),
             configuration_add_section: None,
             configuration_transfer: configuration::ConfigurationTransfer::default(),
             node_workspace,
@@ -2535,17 +2529,6 @@ impl ManisApp {
                 self.primary_workspace == PrimaryWorkspace::Configuration,
                 |main| main.child(self.configuration_workspace(theme, size_class, cx)),
             )
-            .when(
-                self.primary_workspace == PrimaryWorkspace::Policies,
-                |main| {
-                    let compact = size_class == WindowSizeClass::Compact;
-                    if self.catalog.is_some() {
-                        main.child(self.policy_list(theme, compact, cx))
-                    } else {
-                        main.child(self.empty_policy_workspace(theme, compact, cx))
-                    }
-                },
-            )
     }
 }
 
@@ -2571,7 +2554,7 @@ impl Render for ManisApp {
             .child(self.chrome(theme, size_class, cx))
             .child(self.workspace_content(size_class, theme, window, cx))
             .children(gpui_component::Root::render_sheet_layer(window, cx))
-            .child(self.status_bar(theme, size_class, cx))
+            .child(self.status_bar(theme, size_class))
     }
 }
 

@@ -1,29 +1,20 @@
 use std::error::Error;
 use std::fmt;
-use std::fs;
-use std::io::{Read as _, Write as _};
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use serde::Deserialize;
 use sha2::{Digest as _, Sha256};
 use ureq::{Agent, ResponseExt as _};
 
-#[cfg(target_os = "linux")]
-mod linux;
-#[cfg(target_os = "macos")]
-mod macos;
-
 const RELEASE_API: &str = "https://api.github.com/repos/kaigedong/Manis/releases/tags/latest";
+pub(crate) const REPOSITORY_URL: &str = "https://github.com/kaigedong/Manis";
+pub(crate) const RELEASES_URL: &str = "https://github.com/kaigedong/Manis/releases/tag/latest";
 const MANIFEST_NAME: &str = "manis-update.json";
 const MANIFEST_SCHEMA_VERSION: u32 = 1;
 const MAX_RELEASE_METADATA_BYTES: u64 = 1024 * 1024;
 const MAX_MANIFEST_BYTES: u64 = 256 * 1024;
-const MAX_PACKAGE_BYTES: u64 = 512 * 1024 * 1024;
-const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(180);
+const METADATA_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_REDIRECTS: u32 = 5;
-static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
 struct Version([u64; 3]);
@@ -31,48 +22,29 @@ struct Version([u64; 3]);
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct AvailableUpdate {
     pub(crate) version: String,
-    asset: ManifestAsset,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct StagedUpdate {
-    pub(crate) version: String,
-    payload: PathBuf,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum AppUpdateError {
-    UnsupportedInstallation,
-    DataDirUnavailable,
     NetworkUnavailable,
     InvalidMetadata,
     InsecureRedirect,
-    MissingAsset,
+    MissingMetadata,
     InvalidDigest,
     DigestMismatch,
-    PackageTooLarge,
-    InvalidPackage,
-    PermissionDenied,
-    InstallFailed,
-    Io,
+    MetadataTooLarge,
 }
 
 impl fmt::Display for AppUpdateError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
-            Self::UnsupportedInstallation => "this installation cannot be updated automatically",
-            Self::DataDirUnavailable => "the Manis data directory is unavailable",
             Self::NetworkUnavailable => "the update service is unavailable",
             Self::InvalidMetadata => "the update metadata is invalid",
-            Self::InsecureRedirect => "the update download left HTTPS",
-            Self::MissingAsset => "no update is available for this platform",
-            Self::InvalidDigest => "the update checksum is invalid",
-            Self::DigestMismatch => "the downloaded update failed verification",
-            Self::PackageTooLarge => "the update package exceeds the safety limit",
-            Self::InvalidPackage => "the update package is invalid",
-            Self::PermissionDenied => "administrator authorization was cancelled or denied",
-            Self::InstallFailed => "the operating system could not install the update",
-            Self::Io => "the update could not be staged on this device",
+            Self::InsecureRedirect => "the update metadata left HTTPS",
+            Self::MissingMetadata => "the update manifest is unavailable",
+            Self::InvalidDigest => "the update metadata checksum is invalid",
+            Self::DigestMismatch => "the update metadata failed verification",
+            Self::MetadataTooLarge => "the update metadata exceeds the safety limit",
         })
     }
 }
@@ -100,16 +72,6 @@ struct UpdateManifest {
     schema_version: u32,
     version: String,
     commit: String,
-    assets: Vec<ManifestAsset>,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
-struct ManifestAsset {
-    platform: String,
-    architecture: String,
-    name: String,
-    sha256: String,
-    size: u64,
 }
 
 pub(crate) const fn current_version() -> &'static str {
@@ -119,56 +81,14 @@ pub(crate) const fn current_version() -> &'static str {
     }
 }
 
-pub(crate) fn installation_supported(app_path: &Path) -> bool {
-    if cfg!(target_os = "macos") {
-        app_path
-            .extension()
-            .is_some_and(|extension| extension == "app")
-            && app_path.file_name().is_some_and(|name| name == "Manis.app")
-    } else if cfg!(target_os = "linux") {
-        fs::canonicalize(app_path).is_ok_and(|path| path == Path::new("/usr/bin/manis"))
-            && Path::new("/usr/bin/pacman").is_file()
-            && Path::new("/usr/bin/pkexec").is_file()
-            && linux_package_owner_is_upstream()
-    } else {
-        false
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn linux_package_owner_is_upstream() -> bool {
-    std::process::Command::new("/usr/bin/pacman")
-        .args(["-Qoq", "/usr/bin/manis"])
-        .output()
-        .is_ok_and(|output| output.status.success() && package_owner_is_upstream(&output.stdout))
-}
-
-#[cfg(not(target_os = "linux"))]
-const fn linux_package_owner_is_upstream() -> bool {
-    false
-}
-
-#[cfg(any(target_os = "linux", test))]
-fn package_owner_is_upstream(output: &[u8]) -> bool {
-    String::from_utf8_lossy(output).trim() == "manis"
-}
-
 pub(crate) fn check_for_update() -> Result<Option<AvailableUpdate>, AppUpdateError> {
     let release_bytes = download_bytes(RELEASE_API, MAX_RELEASE_METADATA_BYTES)?;
-    let release: GithubRelease =
-        serde_json::from_slice(&release_bytes).map_err(|_error| AppUpdateError::InvalidMetadata)?;
-    if release.draft
-        || !release.prerelease
-        || release.tag_name != "latest"
-        || !is_git_commit(&release.target_commitish)
-    {
-        return Err(AppUpdateError::InvalidMetadata);
-    }
+    let release = parse_release(&release_bytes)?;
     let manifest_asset = release
         .assets
         .iter()
         .find(|asset| asset.name == MANIFEST_NAME)
-        .ok_or(AppUpdateError::MissingAsset)?;
+        .ok_or(AppUpdateError::MissingMetadata)?;
     let manifest_digest = manifest_asset
         .digest
         .as_deref()
@@ -183,6 +103,19 @@ pub(crate) fn check_for_update() -> Result<Option<AvailableUpdate>, AppUpdateErr
     )
 }
 
+fn parse_release(bytes: &[u8]) -> Result<GithubRelease, AppUpdateError> {
+    let release: GithubRelease =
+        serde_json::from_slice(bytes).map_err(|_error| AppUpdateError::InvalidMetadata)?;
+    if release.draft
+        || !release.prerelease
+        || release.tag_name != "latest"
+        || !is_git_commit(&release.target_commitish)
+    {
+        return Err(AppUpdateError::InvalidMetadata);
+    }
+    Ok(release)
+}
+
 fn select_available_update(
     manifest_bytes: &[u8],
     installed_version: &str,
@@ -190,74 +123,20 @@ fn select_available_update(
 ) -> Result<Option<AvailableUpdate>, AppUpdateError> {
     let manifest: UpdateManifest =
         serde_json::from_slice(manifest_bytes).map_err(|_error| AppUpdateError::InvalidMetadata)?;
-    let fetched = Version::parse(&manifest.version)?;
-    let installed = Version::parse(installed_version)?;
     if manifest.schema_version != MANIFEST_SCHEMA_VERSION
         || !is_git_commit(&manifest.commit)
         || release_commit.is_some_and(|commit| !commit.eq_ignore_ascii_case(&manifest.commit))
-        || fetched <= installed
     {
-        return if fetched <= installed {
-            Ok(None)
-        } else {
-            Err(AppUpdateError::InvalidMetadata)
-        };
+        return Err(AppUpdateError::InvalidMetadata);
     }
-    let platform = std::env::consts::OS;
-    let architecture = std::env::consts::ARCH;
-    let asset = manifest
-        .assets
-        .into_iter()
-        .find(|asset| asset.platform == platform && asset.architecture == architecture)
-        .ok_or(AppUpdateError::MissingAsset)?;
-    validate_manifest_asset(&asset, &manifest.version)?;
+    let fetched = Version::parse(&manifest.version)?;
+    let installed = Version::parse(installed_version)?;
+    if fetched <= installed {
+        return Ok(None);
+    }
     Ok(Some(AvailableUpdate {
         version: manifest.version,
-        asset,
     }))
-}
-
-pub(crate) fn stage_update(update: &AvailableUpdate) -> Result<StagedUpdate, AppUpdateError> {
-    let root = update_root()?;
-    let archive = root.join(&update.asset.name);
-    if !verified_file(&archive, update.asset.size, &update.asset.sha256) {
-        remove_file_if_exists(&archive);
-        download_package(&update.asset, &archive)?;
-    }
-
-    #[cfg(target_os = "macos")]
-    let payload = macos::prepare_bundle(&root, &archive, &update.version)?;
-    #[cfg(not(target_os = "macos"))]
-    let payload = archive;
-
-    Ok(StagedUpdate {
-        version: update.version.clone(),
-        payload,
-    })
-}
-
-pub(crate) fn install_staged_update(
-    update: &StagedUpdate,
-    app_path: &Path,
-) -> Result<Option<PathBuf>, AppUpdateError> {
-    if !installation_supported(app_path) {
-        return Err(AppUpdateError::UnsupportedInstallation);
-    }
-    #[cfg(target_os = "macos")]
-    {
-        macos::install_bundle(&update.payload, app_path, &update.version)?;
-        Ok(None)
-    }
-    #[cfg(target_os = "linux")]
-    {
-        linux::install_package(&update.payload, &update.version)?;
-        Ok(Some(PathBuf::from("/usr/bin/manis")))
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    {
-        let _ = update;
-        Err(AppUpdateError::UnsupportedInstallation)
-    }
 }
 
 impl Version {
@@ -286,97 +165,6 @@ fn is_git_commit(value: &str) -> bool {
     value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
-fn validate_manifest_asset(asset: &ManifestAsset, version: &str) -> Result<(), AppUpdateError> {
-    if asset.size == 0 || asset.size > MAX_PACKAGE_BYTES || !is_sha256(&asset.sha256) {
-        return Err(AppUpdateError::InvalidMetadata);
-    }
-    let safe_name = Path::new(&asset.name)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name == asset.name);
-    let expected_name = match (asset.platform.as_str(), asset.architecture.as_str()) {
-        ("macos", "aarch64") => format!("Manis-{version}-macos-arm64-unsigned.zip"),
-        ("macos", "x86_64") => format!("Manis-{version}-macos-x86_64-unsigned.zip"),
-        ("linux", "x86_64") => format!("manis-{version}-1-x86_64.pkg.tar.zst"),
-        _ => return Err(AppUpdateError::MissingAsset),
-    };
-    if safe_name && asset.name == expected_name {
-        Ok(())
-    } else {
-        Err(AppUpdateError::InvalidMetadata)
-    }
-}
-
-fn update_root() -> Result<PathBuf, AppUpdateError> {
-    let root = crate::brand::data_dir()
-        .ok_or(AppUpdateError::DataDirUnavailable)?
-        .join("updates");
-    fs::create_dir_all(&root).map_err(|_error| AppUpdateError::Io)?;
-    let metadata = fs::symlink_metadata(&root).map_err(|_error| AppUpdateError::Io)?;
-    if metadata.file_type().is_symlink() || !metadata.is_dir() {
-        return Err(AppUpdateError::Io);
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        fs::set_permissions(&root, fs::Permissions::from_mode(0o700))
-            .map_err(|_error| AppUpdateError::Io)?;
-    }
-    Ok(root)
-}
-
-fn download_package(asset: &ManifestAsset, target: &Path) -> Result<(), AppUpdateError> {
-    let temporary = unique_sibling(target, "part");
-    let result = (|| {
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temporary)
-            .map_err(|_error| AppUpdateError::Io)?;
-        let agent = https_agent();
-        let mut response = agent
-            .get(format!(
-                "https://github.com/kaigedong/Manis/releases/download/latest/{}",
-                asset.name
-            ))
-            .call()
-            .map_err(|error| map_request_error(&error))?;
-        require_https(&response)?;
-        let mut reader = response.body_mut().as_reader();
-        let mut hasher = Sha256::new();
-        let mut received = 0_u64;
-        let mut buffer = [0_u8; 16 * 1024];
-        loop {
-            let count = reader
-                .read(&mut buffer)
-                .map_err(|_error| AppUpdateError::NetworkUnavailable)?;
-            if count == 0 {
-                break;
-            }
-            received = received
-                .checked_add(count as u64)
-                .ok_or(AppUpdateError::PackageTooLarge)?;
-            if received > asset.size || received > MAX_PACKAGE_BYTES {
-                return Err(AppUpdateError::PackageTooLarge);
-            }
-            hasher.update(&buffer[..count]);
-            file.write_all(&buffer[..count])
-                .map_err(|_error| AppUpdateError::Io)?;
-        }
-        if received != asset.size
-            || !format!("{:x}", hasher.finalize()).eq_ignore_ascii_case(&asset.sha256)
-        {
-            return Err(AppUpdateError::DigestMismatch);
-        }
-        file.sync_all().map_err(|_error| AppUpdateError::Io)?;
-        fs::rename(&temporary, target).map_err(|_error| AppUpdateError::Io)
-    })();
-    if result.is_err() {
-        remove_file_if_exists(&temporary);
-    }
-    result
-}
-
 fn download_bytes(url: &str, max_bytes: u64) -> Result<Vec<u8>, AppUpdateError> {
     let agent = https_agent();
     let mut response = agent
@@ -384,30 +172,43 @@ fn download_bytes(url: &str, max_bytes: u64) -> Result<Vec<u8>, AppUpdateError> 
         .call()
         .map_err(|error| map_request_error(&error))?;
     require_https(&response)?;
+    read_limited_body(&mut response, max_bytes)
+}
+
+fn read_limited_body(
+    response: &mut ureq::http::Response<ureq::Body>,
+    max_bytes: u64,
+) -> Result<Vec<u8>, AppUpdateError> {
     response
         .body_mut()
         .with_config()
         .limit(max_bytes + 1)
         .read_to_vec()
         .map_err(|error| match error {
-            ureq::Error::BodyExceedsLimit(_) => AppUpdateError::PackageTooLarge,
+            ureq::Error::BodyExceedsLimit(_) => AppUpdateError::MetadataTooLarge,
             _ => AppUpdateError::NetworkUnavailable,
         })
-        .and_then(|bytes| {
-            if bytes.len() as u64 > max_bytes {
-                Err(AppUpdateError::PackageTooLarge)
-            } else {
-                Ok(bytes)
-            }
-        })
+        .and_then(|bytes| enforce_body_limit(bytes, max_bytes))
+}
+
+fn enforce_body_limit(bytes: Vec<u8>, max_bytes: u64) -> Result<Vec<u8>, AppUpdateError> {
+    if bytes.len() as u64 > max_bytes {
+        Err(AppUpdateError::MetadataTooLarge)
+    } else {
+        Ok(bytes)
+    }
 }
 
 fn https_agent() -> Agent {
     Agent::config_builder()
         .https_only(true)
         .max_redirects(MAX_REDIRECTS)
-        .timeout_global(Some(DOWNLOAD_TIMEOUT))
-        .user_agent(concat!("Manis/", env!("CARGO_PKG_VERSION"), " App-Updater"))
+        .timeout_global(Some(METADATA_TIMEOUT))
+        .user_agent(concat!(
+            "Manis/",
+            env!("CARGO_PKG_VERSION"),
+            " App-Update-Check"
+        ))
         .build()
         .into()
 }
@@ -454,61 +255,22 @@ fn verify_digest(bytes: &[u8], expected: &str) -> Result<(), AppUpdateError> {
     }
 }
 
-fn verified_file(path: &Path, expected_size: u64, expected_digest: &str) -> bool {
-    let Ok(metadata) = fs::symlink_metadata(path) else {
-        return false;
-    };
-    if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() != expected_size {
-        return false;
-    }
-    let Ok(mut file) = fs::File::open(path) else {
-        return false;
-    };
-    let mut hasher = Sha256::new();
-    let mut buffer = [0_u8; 16 * 1024];
-    loop {
-        let Ok(count) = file.read(&mut buffer) else {
-            return false;
-        };
-        if count == 0 {
-            break;
-        }
-        hasher.update(&buffer[..count]);
-    }
-    format!("{:x}", hasher.finalize()).eq_ignore_ascii_case(expected_digest)
-}
-
-pub(super) fn unique_sibling(path: &Path, purpose: &str) -> PathBuf {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    let name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("manis");
-    let counter = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
-    parent.join(format!(
-        ".{name}.{purpose}.{}.{}",
-        std::process::id(),
-        counter
-    ))
-}
-
-fn remove_file_if_exists(path: &Path) {
-    if path.is_file() {
-        let _ = fs::remove_file(path);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn manifest(version: &str, architecture: &str, name: &str) -> Vec<u8> {
+    const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
+
+    fn release(asset_name: &str, digest: Option<&str>) -> Vec<u8> {
+        let digest = digest.map_or_else(|| "null".to_owned(), |digest| format!(r#""{digest}""#));
         format!(
-            r#"{{"schema_version":1,"version":"{version}","commit":"0123456789abcdef0123456789abcdef01234567","assets":[{{"platform":"{}","architecture":"{architecture}","name":"{name}","sha256":"{}","size":42}}]}}"#,
-            std::env::consts::OS,
-            "a".repeat(64)
+            r#"{{"tag_name":"latest","target_commitish":"{COMMIT}","draft":false,"prerelease":true,"assets":[{{"name":"{asset_name}","browser_download_url":"https://example.test/{asset_name}","digest":{digest}}}]}}"#
         )
         .into_bytes()
+    }
+
+    fn manifest(version: &str) -> Vec<u8> {
+        format!(r#"{{"schema_version":1,"version":"{version}","commit":"{COMMIT}"}}"#).into_bytes()
     }
 
     #[test]
@@ -518,65 +280,126 @@ mod tests {
     }
 
     #[test]
-    fn only_the_upstream_arch_package_enables_self_update() {
-        assert!(package_owner_is_upstream(b"manis\n"));
-        assert!(!package_owner_is_upstream(b"manis-bin\n"));
-        assert!(!package_owner_is_upstream(b""));
+    fn newer_manifest_reports_available_update_without_binary_asset() {
+        assert_eq!(
+            select_available_update(&manifest("0.1.101"), "0.1.100", Some(COMMIT)).unwrap(),
+            Some(AvailableUpdate {
+                version: "0.1.101".to_owned(),
+            })
+        );
     }
 
     #[test]
-    fn current_or_older_release_is_ignored() {
-        let bytes = manifest("0.1.100", std::env::consts::ARCH, "unused");
+    fn current_or_older_manifest_is_ignored_on_every_platform() {
         assert_eq!(
-            select_available_update(&bytes, "0.1.100", None).unwrap(),
+            select_available_update(&manifest("0.1.100"), "0.1.100", Some(COMMIT)).unwrap(),
             None
         );
         assert_eq!(
-            select_available_update(&bytes, "0.1.101", None).unwrap(),
+            select_available_update(&manifest("0.1.99"), "0.1.100", Some(COMMIT)).unwrap(),
             None
         );
     }
 
     #[test]
     fn manifest_must_belong_to_the_release_commit() {
-        let version = "0.1.101";
-        let name = match (std::env::consts::OS, std::env::consts::ARCH) {
-            ("macos", "aarch64") => format!("Manis-{version}-macos-arm64-unsigned.zip"),
-            ("macos", "x86_64") => format!("Manis-{version}-macos-x86_64-unsigned.zip"),
-            ("linux", "x86_64") => format!("manis-{version}-1-x86_64.pkg.tar.zst"),
-            _ => return,
-        };
-        let bytes = manifest(version, std::env::consts::ARCH, &name);
         assert_eq!(
             select_available_update(
-                &bytes,
+                &manifest("0.1.101"),
                 "0.1.100",
-                Some("ffffffffffffffffffffffffffffffffffffffff")
+                Some("ffffffffffffffffffffffffffffffffffffffff"),
             ),
             Err(AppUpdateError::InvalidMetadata)
         );
     }
 
     #[test]
-    fn release_asset_must_have_the_exact_platform_filename() {
-        let version = "0.1.101";
-        let name = match (std::env::consts::OS, std::env::consts::ARCH) {
-            ("macos", "aarch64") => format!("Manis-{version}-macos-arm64-unsigned.zip"),
-            ("macos", "x86_64") => format!("Manis-{version}-macos-x86_64-unsigned.zip"),
-            ("linux", "x86_64") => format!("manis-{version}-1-x86_64.pkg.tar.zst"),
-            _ => return,
-        };
-        let bytes = manifest(version, std::env::consts::ARCH, &name);
+    fn release_metadata_must_describe_the_rolling_latest_prerelease() {
         assert!(
-            select_available_update(&bytes, "0.1.100", None)
-                .unwrap()
-                .is_some()
+            parse_release(&release(
+                MANIFEST_NAME,
+                Some(&format!("sha256:{}", "a".repeat(64)))
+            ))
+            .is_ok()
         );
 
-        let unsafe_bytes = manifest(version, std::env::consts::ARCH, "../Manis.zip");
+        let stable = br#"{"tag_name":"v0.1.101","target_commitish":"0123456789abcdef0123456789abcdef01234567","draft":false,"prerelease":false,"assets":[]}"#;
+        assert!(matches!(
+            parse_release(stable),
+            Err(AppUpdateError::InvalidMetadata)
+        ));
+    }
+
+    #[test]
+    fn release_requires_a_manifest_asset_with_github_digest() {
+        let parsed = parse_release(&release(
+            "Manis.zip",
+            Some(&format!("sha256:{}", "a".repeat(64))),
+        ))
+        .unwrap();
+        assert!(
+            parsed
+                .assets
+                .iter()
+                .all(|asset| asset.name != MANIFEST_NAME)
+        );
+
+        let release = parse_release(&release(MANIFEST_NAME, None)).unwrap();
+        let digest = release
+            .assets
+            .iter()
+            .find(|asset| asset.name == MANIFEST_NAME)
+            .and_then(|asset| asset.digest.as_deref())
+            .ok_or(AppUpdateError::InvalidDigest)
+            .and_then(parse_github_digest);
+        assert_eq!(digest, Err(AppUpdateError::InvalidDigest));
+    }
+
+    #[test]
+    fn rejects_invalid_metadata_and_versions() {
         assert_eq!(
-            select_available_update(&unsafe_bytes, "0.1.100", None),
+            select_available_update(br#"{"schema_version":2,"version":"0.1.101","commit":"0123456789abcdef0123456789abcdef01234567"}"#, "0.1.100", Some(COMMIT)),
             Err(AppUpdateError::InvalidMetadata)
         );
+        assert_eq!(
+            select_available_update(
+                br#"{"schema_version":2,"version":"0.1.100","commit":"0123456789abcdef0123456789abcdef01234567"}"#,
+                "0.1.100",
+                Some(COMMIT)
+            ),
+            Err(AppUpdateError::InvalidMetadata)
+        );
+        assert_eq!(
+            select_available_update(
+                br#"{"schema_version":2,"version":"0.1.99","commit":"0123456789abcdef0123456789abcdef01234567"}"#,
+                "0.1.100",
+                Some(COMMIT)
+            ),
+            Err(AppUpdateError::InvalidMetadata)
+        );
+        assert_eq!(
+            select_available_update(&manifest("0.1.x"), "0.1.100", Some(COMMIT)),
+            Err(AppUpdateError::InvalidMetadata)
+        );
+    }
+
+    #[test]
+    fn verifies_manifest_digest() {
+        let bytes = manifest("0.1.101");
+        let digest = format!("{:x}", Sha256::digest(&bytes));
+        assert_eq!(verify_digest(&bytes, &digest), Ok(()));
+        assert_eq!(
+            verify_digest(&bytes, &"0".repeat(64)),
+            Err(AppUpdateError::DigestMismatch)
+        );
+    }
+
+    #[test]
+    fn metadata_bodies_are_bounded() {
+        assert_eq!(
+            enforce_body_limit(b"abc".to_vec(), 2),
+            Err(AppUpdateError::MetadataTooLarge)
+        );
+        assert_eq!(enforce_body_limit(b"ab".to_vec(), 2), Ok(b"ab".to_vec()));
     }
 }

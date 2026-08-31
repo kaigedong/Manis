@@ -6,6 +6,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::sync::Arc::new(manis_ui::Assets),
     );
     cx.update(manis_ui::init);
+    if std::env::args().any(|argument| argument == "--app-updates") {
+        return capture_app_updates(&mut cx);
+    }
     if std::env::args().any(|argument| argument == "--buttons") {
         return capture_buttons(&mut cx);
     }
@@ -13,7 +16,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return capture_source_cards(&mut cx);
     }
     if std::env::args().any(|argument| argument == "--policy-scrolling") {
-        return capture_policy_scrolling(&mut cx);
+        return capture_merged_nodes(&mut cx);
     }
     if std::env::args().any(|argument| argument == "--proxy-candidate") {
         return capture_proxy_candidate(&mut cx);
@@ -30,44 +33,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if std::env::args().any(|argument| argument == "--nodes-toolbar") {
         return capture_nodes_toolbar(&mut cx);
     }
+    if std::env::args().any(|argument| argument == "--merged-nodes") {
+        return capture_merged_nodes(&mut cx);
+    }
     if std::env::args().any(|argument| argument == "--log-colors") {
         return capture_log_colors(&mut cx);
     }
     if std::env::args().any(|argument| argument == "--appearance") {
-        capture_appearance(&mut cx)?;
-        return Ok(());
+        return capture_appearance(&mut cx);
     }
     if std::env::args().any(|argument| argument == "--policy-settings") {
-        capture_managed_policy_settings(&mut cx)?;
-        return Ok(());
+        return capture_managed_policy_settings(&mut cx);
     }
     if std::env::args().any(|argument| argument == "--automatic-policy") {
-        capture_automatic_policy(&mut cx)?;
-        return Ok(());
+        return capture_automatic_policy(&mut cx);
     }
     if std::env::args().any(|argument| argument == "--routing-rules") {
-        capture_routing_rules(&mut cx)?;
-        return Ok(());
+        return capture_routing_rules(&mut cx);
     }
     if std::env::args().any(|argument| argument == "--medium-sheet") {
-        capture_medium_sheet(&mut cx)?;
-        return Ok(());
+        return capture_medium_sheet(&mut cx);
     }
     if std::env::args().any(|argument| argument == "--data-pages") {
-        capture_data_page_coverage(&mut cx)?;
-        return Ok(());
+        return capture_data_page_coverage(&mut cx);
     }
     if std::env::args().any(|argument| argument == "--connected") {
-        capture_connected(&mut cx)?;
-        return Ok(());
+        return capture_connected(&mut cx);
     }
     if std::env::args().any(|argument| argument == "--configuration-sections") {
-        capture_configuration_sections(&mut cx)?;
-        return Ok(());
+        return capture_configuration_sections(&mut cx);
     }
     if std::env::args().any(|argument| argument == "--compact-flow") {
-        capture_compact_flow(&mut cx)?;
-        return Ok(());
+        return capture_compact_flow(&mut cx);
     }
     capture(&mut cx, 1420.0, 900.0, "native-wide.png")?;
     capture_automatic_policy(&mut cx)?;
@@ -103,6 +100,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[cfg(target_os = "macos")]
+fn verify_secondary_click(
+    cx: &mut gpui::VisualTestAppContext,
+    window: gpui::AnyWindowHandle,
+    position: gpui::Point<gpui::Pixels>,
+    screenshot: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use gpui::{Modifiers, MouseButton};
+    cx.simulate_mouse_move(window, position, None, Modifiers::none());
+    refresh(cx, window)?;
+    let hover = cx.capture_screenshot(window)?;
+    for button in [MouseButton::Right, MouseButton::Middle] {
+        cx.simulate_mouse_down(window, position, button, Modifiers::none());
+        refresh(cx, window)?;
+        assert_eq!(
+            hover,
+            cx.capture_screenshot(window)?,
+            "{screenshot}: secondary press changed the page"
+        );
+        cx.simulate_mouse_up(window, position, button, Modifiers::none());
+        refresh(cx, window)?;
+        assert_eq!(
+            hover,
+            cx.capture_screenshot(window)?,
+            "{screenshot}: secondary click changed the page"
+        );
+    }
+    save_screenshot(cx, window, screenshot)
+}
+
+#[cfg(target_os = "macos")]
 fn capture_buttons(cx: &mut gpui::VisualTestAppContext) -> Result<(), Box<dyn std::error::Error>> {
     use gpui::{AppContext as _, Modifiers, MouseButton, point, px, size};
     for (dark, mode) in [(false, "light"), (true, "dark")] {
@@ -126,6 +153,23 @@ fn capture_buttons(cx: &mut gpui::VisualTestAppContext) -> Result<(), Box<dyn st
             "{mode}: hover must change the button fill"
         );
         save_screenshot(cx, window, &format!("buttons-{mode}-hover.png"))?;
+        for button in [MouseButton::Right, MouseButton::Middle] {
+            cx.simulate_mouse_down(window, position, button, Modifiers::none());
+            refresh(cx, window)?;
+            let secondary = cx.capture_screenshot(window)?;
+            // Ignore the loading spinner elsewhere in the gallery.
+            for y in 48 * scale..96 * scale {
+                for x in 20 * scale..140 * scale {
+                    assert_eq!(
+                        hover.get_pixel(x, y),
+                        secondary.get_pixel(x, y),
+                        "{mode}: {button:?} must not paint a focus ring or pressed state"
+                    );
+                }
+            }
+            cx.simulate_mouse_up(window, position, button, Modifiers::none());
+        }
+        save_screenshot(cx, window, &format!("buttons-{mode}-secondary-click.png"))?;
         cx.simulate_mouse_down(window, position, MouseButton::Left, Modifiers::none());
         refresh(cx, window)?;
         let pressed = cx.capture_screenshot(window)?;
@@ -146,6 +190,15 @@ fn capture_buttons(cx: &mut gpui::VisualTestAppContext) -> Result<(), Box<dyn st
         );
         cx.simulate_mouse_move(window, point(px(600.0), px(380.0)), None, Modifiers::none());
         cx.simulate_keystrokes(window, "tab");
+        cx.update_window(window, |_, window, cx| {
+            if window.focused(cx).is_none() {
+                window.focus_next(cx);
+            }
+            assert!(
+                window.focused(cx).is_some(),
+                "keyboard focus must be reachable"
+            );
+        })?;
         refresh(cx, window)?;
         save_screenshot(cx, window, &format!("buttons-{mode}-focus.png"))?;
         close_window(cx, window)?;
@@ -281,138 +334,6 @@ fn write_source_cards_fixture(store: &std::path::Path) -> Result<(), Box<dyn std
 }
 
 #[cfg(target_os = "macos")]
-fn capture_policy_scrolling(
-    cx: &mut gpui::VisualTestAppContext,
-) -> Result<(), Box<dyn std::error::Error>> {
-    use gpui::{AnyWindowHandle, Modifiers, point, px, size};
-
-    let store = std::env::temp_dir().join(format!("manis-policy-scroll-{}", std::process::id()));
-    manis_profile::write_private_atomic(&store, "language.preference", b"zh-CN")?;
-    let (endpoint, server) = spawn_mihomo_fixture_with_response(false, policy_scroll_response)?;
-    for (width, height, label) in [(1420_u16, 900_u16, "wide"), (640, 560, "compact")] {
-        let logical_width = u32::from(width);
-        let (width, height) = (f32::from(width), f32::from(height));
-        cx.update(manis_ui::init);
-        let window_endpoint = endpoint.clone();
-        let window_store = store.clone();
-        let window = cx.open_offscreen_window(size(px(width), px(height)), |window, cx| {
-            manis_root(window, cx, |_| {
-                manis_ui::ManisApp::with_fixture_controller_and_subscription_store(
-                    window_endpoint,
-                    window_store,
-                )
-            })
-        })?;
-        let window: AnyWindowHandle = window.into();
-        refresh(cx, window)?;
-        cx.simulate_click(
-            window,
-            point(px(width - 200.0), px(76.0)),
-            Modifiers::none(),
-        );
-        settle_ui_for(cx, window, std::time::Duration::from_millis(600))?;
-        open_workspace(cx, window, width, SnapshotWorkspace::PolicyGroups)?;
-        for (dark, mode) in [(false, "light"), (true, "dark")] {
-            if dark {
-                let toggle_x = width - if width >= 1280.0 { 550.0 } else { 205.0 };
-                cx.simulate_click(window, point(px(toggle_x), px(24.0)), Modifiers::none());
-                refresh(cx, window)?;
-            }
-            // Expanding the second group must leave the complete first card unchanged.
-            let before = cx.capture_screenshot(window)?;
-            cx.simulate_click(window, point(px(320.0), px(264.0)), Modifiers::none());
-            refresh(cx, window)?;
-            save_screenshot(
-                cx,
-                window,
-                &format!("policy-scroll-{label}-{mode}-second.png"),
-            )?;
-            let after = cx.capture_screenshot(window)?;
-            let to_pixel = |coordinate: u32| coordinate * after.width() / logical_width;
-            let left = if width >= 1280.0 { 250 } else { 90 };
-            for y in to_pixel(150)..to_pixel(215) {
-                for x in to_pixel(left)..to_pixel(logical_width - 30) {
-                    assert_eq!(
-                        before.get_pixel(x, y),
-                        after.get_pixel(x, y),
-                        "{label}/{mode}: expanding the second group moved or clipped the first card"
-                    );
-                }
-            }
-            scroll_window(cx, window, width - 50.0, height - 100.0, -10_000.0)?;
-            save_screenshot(
-                cx,
-                window,
-                &format!("policy-scroll-{label}-{mode}-bottom.png"),
-            )?;
-            let bottom = cx.capture_screenshot(window)?;
-            assert!(after != bottom, "long policy content must scroll");
-            scroll_window(cx, window, width - 50.0, height - 100.0, 10_000.0)?;
-            // Switch to an all-node group at the top, then verify the following cards at the end.
-            cx.simulate_click(window, point(px(320.0), px(172.0)), Modifiers::none());
-            refresh(cx, window)?;
-            save_screenshot(
-                cx,
-                window,
-                &format!("policy-scroll-{label}-{mode}-first.png"),
-            )?;
-            scroll_window(cx, window, width - 50.0, height - 100.0, -10_000.0)?;
-            save_screenshot(
-                cx,
-                window,
-                &format!("policy-scroll-{label}-{mode}-first-bottom.png"),
-            )?;
-            scroll_window(cx, window, width - 50.0, height - 100.0, 10_000.0)?;
-            cx.simulate_click(window, point(px(320.0), px(172.0)), Modifiers::none());
-            refresh(cx, window)?;
-        }
-        close_window(cx, window)?;
-    }
-    server.stop()?;
-    std::fs::remove_dir_all(store)?;
-    Ok(())
-}
-
-#[cfg(target_os = "macos")]
-fn policy_scroll_response(path: &str) -> String {
-    use serde_json::json;
-
-    if path == "/providers/proxies" {
-        return r#"{"providers":{}}"#.to_owned();
-    }
-    if path != "/proxies" {
-        return fixture_response(path).to_owned();
-    }
-    let nodes: Vec<_> = (1..=50)
-        .map(|index| format!("测试节点 {index:02}"))
-        .collect();
-    let mut proxies = serde_json::Map::new();
-    for name in &nodes {
-        proxies.insert(
-            name.clone(),
-            json!({
-                "name": name, "type": "Trojan", "alive": true,
-                "provider-name": "测试来源", "history": [{"delay": 42}]
-            }),
-        );
-    }
-    for (name, kind) in [
-        ("01 全部节点", "Selector"),
-        ("02 自动选择", "URLTest"),
-        ("03 日常使用", "Fallback"),
-        ("04 最后一个策略组", "LoadBalance"),
-    ] {
-        proxies.insert(
-            name.to_owned(),
-            json!({
-                "name": name, "type": kind, "now": nodes[0], "all": nodes, "alive": true
-            }),
-        );
-    }
-    json!({"proxies": proxies}).to_string()
-}
-
-#[cfg(target_os = "macos")]
 fn capture_proxy_candidate(
     cx: &mut gpui::VisualTestAppContext,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -439,7 +360,7 @@ fn capture_proxy_candidate(
         })?;
         let window: AnyWindowHandle = window.into();
         refresh(cx, window)?;
-        open_workspace(cx, window, width, SnapshotWorkspace::PolicyGroups)?;
+        open_policy_section(cx, window, width)?;
         cx.simulate_click(window, point(px(320.0), px(172.0)), Modifiers::none());
         refresh(cx, window)?;
         save_screenshot(cx, window, &format!("proxy-candidate-{label}-row.png"))?;
@@ -522,7 +443,6 @@ fn capture_navigation_icons(
             SnapshotWorkspace::Activity,
             SnapshotWorkspace::Logs,
             SnapshotWorkspace::Configuration,
-            SnapshotWorkspace::PolicyGroups,
         ] {
             open_workspace(cx, window, width, workspace)?;
         }
@@ -534,6 +454,63 @@ fn capture_navigation_icons(
         close_window(cx, window)?;
     }
     std::fs::remove_dir_all(store)?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn capture_app_updates(
+    cx: &mut gpui::VisualTestAppContext,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use gpui::{AnyWindowHandle, AppContext as _, Modifiers, point, px, size};
+    let root = std::env::temp_dir().join(format!("manis-update-snapshot-{}", std::process::id()));
+    let store = root.join("subscriptions");
+    manis_profile::write_private_atomic(&store, "language.preference", b"zh-CN")?;
+    for (width, height, label) in [(1420.0, 900.0, "wide"), (640.0, 560.0, "compact")] {
+        cx.update(manis_ui::init);
+        let mut app = None;
+        let window_store = store.clone();
+        let window = cx.open_offscreen_window(size(px(width), px(height)), |window, cx| {
+            let entity = cx.new(|_| {
+                manis_ui::ManisApp::with_fixture_controller_and_subscription_store(
+                    "http://127.0.0.1:1",
+                    window_store,
+                )
+            });
+            app = Some(entity.clone());
+            cx.new(|cx| manis_ui::root(entity, window, cx))
+        })?;
+        let app = app.ok_or("missing update fixture")?;
+        let window: AnyWindowHandle = window.into();
+        refresh(cx, window)?;
+        open_workspace(cx, window, width, SnapshotWorkspace::Configuration)?;
+        for (failed, suffix) in [(false, "available"), (true, "failed")] {
+            cx.update_window(window, |_, _, cx| {
+                app.update(cx, |app, cx| app.show_app_update_fixture(failed, cx));
+            })?;
+            refresh(cx, window)?;
+            save_screenshot(cx, window, &format!("app-updates-{label}-{suffix}.png"))?;
+        }
+        let toggle_x = width - if width >= 1280.0 { 550.0 } else { 205.0 };
+        cx.simulate_click(window, point(px(toggle_x), px(24.0)), Modifiers::none());
+        refresh(cx, window)?;
+        save_screenshot(cx, window, &format!("app-updates-{label}-dark.png"))?;
+        cx.update_window(window, |_, window, cx| {
+            app.update(cx, |app, cx| app.show_about_fixture(window, cx));
+        })?;
+        settle_ui_animation(cx, window)?;
+        save_screenshot(cx, window, &format!("about-{label}-dark.png"))?;
+        cx.simulate_keystrokes(window, "escape");
+        settle_ui_animation(cx, window)?;
+        cx.simulate_click(window, point(px(toggle_x), px(24.0)), Modifiers::none());
+        refresh(cx, window)?;
+        cx.update_window(window, |_, window, cx| {
+            app.update(cx, |app, cx| app.show_about_fixture(window, cx));
+        })?;
+        settle_ui_animation(cx, window)?;
+        save_screenshot(cx, window, &format!("about-{label}.png"))?;
+        close_window(cx, window)?;
+    }
+    std::fs::remove_dir_all(root)?;
     Ok(())
 }
 
@@ -661,11 +638,7 @@ fn capture_stream_status(
         })?;
         let window: AnyWindowHandle = window.into();
         refresh(cx, window)?;
-        cx.simulate_click(
-            window,
-            point(px(width - 200.0), px(76.0)),
-            Modifiers::none(),
-        );
+        cx.simulate_click(window, point(px(width - 80.0), px(90.0)), Modifiers::none());
         settle_ui_for(cx, window, std::time::Duration::from_millis(800))?;
         open_workspace(cx, window, width, SnapshotWorkspace::Activity)?;
         save_screenshot(cx, window, &format!("stream-status-{label}-activity.png"))?;
@@ -704,11 +677,7 @@ fn capture_nodes_toolbar(
         if label == "minimum" {
             save_screenshot(cx, window, "nodes-toolbar-minimum-empty.png")?;
         }
-        cx.simulate_click(
-            window,
-            point(px(width - 200.0), px(76.0)),
-            Modifiers::none(),
-        );
+        cx.simulate_click(window, point(px(width - 80.0), px(90.0)), Modifiers::none());
         settle_ui_for(cx, window, std::time::Duration::from_millis(600))?;
         for (dark, mode) in [(false, "light"), (true, "dark")] {
             if dark {
@@ -722,6 +691,75 @@ fn capture_nodes_toolbar(
         close_window(cx, window)?;
         server.stop()?;
     }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn capture_merged_nodes(
+    cx: &mut gpui::VisualTestAppContext,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use gpui::{AnyWindowHandle, AppContext as _, Modifiers, point, px, size};
+    let store = std::env::temp_dir().join(format!("manis-merged-nodes-{}", std::process::id()));
+    manis_profile::write_private_atomic(&store, "language.preference", b"zh-CN")?;
+    for (width, height, label) in [(1420.0, 900.0, "wide"), (640.0, 560.0, "compact")] {
+        cx.update(manis_ui::init);
+        let mut app = None;
+        let window_store = store.clone();
+        let window = cx.open_offscreen_window(size(px(width), px(height)), |window, cx| {
+            let entity = cx.new(|_| {
+                manis_ui::ManisApp::with_fixture_controller_and_subscription_store(
+                    "http://127.0.0.1:1",
+                    window_store,
+                )
+            });
+            app = Some(entity.clone());
+            cx.new(|cx| manis_ui::root(entity, window, cx))
+        })?;
+        let app = app.ok_or("missing merged nodes app")?;
+        let window: AnyWindowHandle = window.into();
+        refresh(cx, window)?;
+        save_screenshot(cx, window, &format!("merged-nodes-{label}-empty.png"))?;
+        for (dark, mode) in [(false, "light"), (true, "dark")] {
+            if dark {
+                let toggle_x = width - if width >= 1280.0 { 550.0 } else { 205.0 };
+                cx.simulate_click(window, point(px(toggle_x), px(24.0)), Modifiers::none());
+            }
+            cx.update_window(window, |_, _, cx| {
+                app.update(cx, |app, cx| app.show_merged_nodes_fixture(false, cx));
+            })?;
+            refresh(cx, window)?;
+            save_screenshot(cx, window, &format!("merged-nodes-{label}-{mode}.png"))?;
+            verify_secondary_click(
+                cx,
+                window,
+                point(px(width - 100.0), px(188.0)),
+                &format!("merged-nodes-{label}-{mode}-secondary-click.png"),
+            )?;
+            cx.update_window(window, |_, _, cx| {
+                app.update(cx, |app, cx| app.show_merged_nodes_fixture(true, cx));
+            })?;
+            refresh(cx, window)?;
+            save_screenshot(
+                cx,
+                window,
+                &format!("merged-nodes-{label}-{mode}-expanded.png"),
+            )?;
+            let top = cx.capture_screenshot(window)?;
+            scroll_window(cx, window, width - 50.0, height - 100.0, -10_000.0)?;
+            save_screenshot(
+                cx,
+                window,
+                &format!("merged-nodes-{label}-{mode}-bottom.png"),
+            )?;
+            assert!(
+                top != cx.capture_screenshot(window)?,
+                "long groups must scroll"
+            );
+            scroll_window(cx, window, width - 50.0, height - 100.0, 10_000.0)?;
+        }
+        close_window(cx, window)?;
+    }
+    std::fs::remove_dir_all(store)?;
     Ok(())
 }
 
@@ -800,11 +838,7 @@ fn capture_appearance_at_size(
     let app = app.ok_or("missing appearance app")?;
     let window: AnyWindowHandle = window.into();
     refresh(cx, window)?;
-    cx.simulate_click(
-        window,
-        point(px(width - 200.0), px(76.0)),
-        Modifiers::none(),
-    );
+    cx.simulate_click(window, point(px(width - 80.0), px(90.0)), Modifiers::none());
     settle_ui_for(cx, window, std::time::Duration::from_millis(600))?;
     let toggle_x = width - if width >= 1280.0 { 550.0 } else { 205.0 };
     for (dark, mode) in [(false, "light"), (true, "dark")] {
@@ -814,7 +848,6 @@ fn capture_appearance_at_size(
         }
         for (workspace, name) in [
             (SnapshotWorkspace::Nodes, "nodes"),
-            (SnapshotWorkspace::PolicyGroups, "policies"),
             (SnapshotWorkspace::RoutingRules, "rules"),
             (SnapshotWorkspace::Activity, "activity"),
             (SnapshotWorkspace::Logs, "logs"),
@@ -932,13 +965,9 @@ fn capture_managed_policy_settings(
         let window: AnyWindowHandle = window.into();
         refresh(cx, window)?;
         save_screenshot(cx, window, &format!("policy-home-{label}.png"))?;
-        cx.simulate_click(
-            window,
-            point(px(width - 200.0), px(76.0)),
-            Modifiers::none(),
-        );
+        cx.simulate_click(window, point(px(width - 80.0), px(90.0)), Modifiers::none());
         settle_ui_for(cx, window, std::time::Duration::from_millis(600))?;
-        open_workspace(cx, window, width, SnapshotWorkspace::PolicyGroups)?;
+        open_policy_section(cx, window, width)?;
         save_screenshot(cx, window, &format!("policy-flat-{label}-collapsed.png"))?;
         cx.simulate_click(window, point(px(320.0), px(172.0)), Modifiers::none());
         refresh(cx, window)?;
@@ -988,9 +1017,9 @@ fn capture_automatic_policy(
     let window: AnyWindowHandle = window.into();
 
     refresh(cx, window)?;
-    cx.simulate_click(window, point(px(1_220.0), px(76.0)), Modifiers::none());
+    cx.simulate_click(window, point(px(1_340.0), px(126.0)), Modifiers::none());
     settle_ui_for(cx, window, std::time::Duration::from_millis(600))?;
-    open_workspace(cx, window, 1_420.0, SnapshotWorkspace::PolicyGroups)?;
+    open_policy_section(cx, window, 1_420.0)?;
     save_screenshot(cx, window, "native-wide-policy-groups-collapsed.png")?;
     cx.simulate_click(window, point(px(380.0), px(172.0)), Modifiers::none());
     refresh(cx, window)?;
@@ -1442,7 +1471,6 @@ fn capture_routing_rules(
     cx: &mut gpui::VisualTestAppContext,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use gpui::{AnyWindowHandle, Modifiers, point, px, size};
-    use manis_ui::ManisApp;
     use std::os::unix::fs::PermissionsExt;
 
     let root = std::env::temp_dir().join(format!(
@@ -1482,17 +1510,17 @@ fn capture_routing_rules(
         .join("\n"),
     )?;
     std::fs::set_permissions(source_file, std::fs::Permissions::from_mode(0o600))?;
-    let manual_file = store.join("manual-routing-rules.state");
-    std::fs::write(
-        &manual_file,
+    manis_profile::write_private_atomic(
+        &store,
+        "manual-routing-rules.state",
         concat!(
             "manis.manual-routing-rules.v3\n",
             "legacy-direct-rules-migrated\t1\n",
             "rule\t1\tDIRECT\thost-suffix\tgithub.com\tdst-port\t22\n",
             "rule\t0\tProxy\thost-keyword\tgoogle",
-        ),
+        )
+        .as_bytes(),
     )?;
-    std::fs::set_permissions(manual_file, std::fs::Permissions::from_mode(0o600))?;
 
     for (width, height, file_name) in [
         (1420.0, 900.0, "routing-rules-wide.png"),
@@ -1506,7 +1534,7 @@ fn capture_routing_rules(
         let window_store = store.clone();
         let window = cx.open_offscreen_window(size(px(width), px(height)), |window, cx| {
             manis_root(window, cx, |_| {
-                ManisApp::with_fixture_controller_and_subscription_store(
+                manis_ui::ManisApp::with_fixture_controller_and_subscription_store(
                     "http://127.0.0.1:9090",
                     window_store,
                 )
@@ -1521,6 +1549,12 @@ fn capture_routing_rules(
         }
         open_workspace(cx, window, width, SnapshotWorkspace::RoutingRules)?;
         save_screenshot(cx, window, file_name)?;
+        verify_secondary_click(
+            cx,
+            window,
+            point(px(width - 80.0), px(190.0)),
+            &file_name.replace(".png", "-secondary-click.png"),
+        )?;
         let toggle_x = width - if width >= 1280.0 { 550.0 } else { 205.0 };
         cx.simulate_click(window, point(px(toggle_x), px(24.0)), Modifiers::none());
         refresh(cx, window)?;
@@ -1705,7 +1739,7 @@ fn capture_connected(
     let window: AnyWindowHandle = window.into();
 
     refresh(cx, window)?;
-    cx.simulate_click(window, point(px(1_220.0), px(76.0)), Modifiers::none());
+    cx.simulate_click(window, point(px(1_340.0), px(126.0)), Modifiers::none());
     settle_ui_for(cx, window, std::time::Duration::from_millis(600))?;
     refresh(cx, window)?;
     save_screenshot(cx, window, "native-wide-connected.png")?;
@@ -1714,7 +1748,7 @@ fn capture_connected(
     refresh(cx, window)?;
     save_screenshot(cx, window, "nodes-wide-connected-global.png")?;
 
-    open_workspace(cx, window, 1_420.0, SnapshotWorkspace::PolicyGroups)?;
+    open_policy_section(cx, window, 1_420.0)?;
 
     cx.simulate_click(window, point(px(270.0), px(236.0)), Modifiers::none());
     settle_ui_for(cx, window, std::time::Duration::from_millis(600))?;
@@ -1762,7 +1796,7 @@ fn capture_activity_wide_dark_connected(
     let window: AnyWindowHandle = window.into();
 
     refresh(cx, window)?;
-    cx.simulate_click(window, point(px(1_220.0), px(76.0)), Modifiers::none());
+    cx.simulate_click(window, point(px(1_340.0), px(126.0)), Modifiers::none());
     settle_ui_animation(cx, window)?;
     cx.simulate_click(window, point(px(850.0), px(24.0)), Modifiers::none());
     settle_ui_animation(cx, window)?;
@@ -2111,7 +2145,6 @@ fn fixture_response(path: &str) -> &'static str {
 #[derive(Clone, Copy)]
 enum SnapshotWorkspace {
     Nodes,
-    PolicyGroups,
     RoutingRules,
     Activity,
     Logs,
@@ -2130,14 +2163,23 @@ fn open_workspace(
     let x = if width >= 1_280.0 { 110.0 } else { 30.0 };
     let y = match workspace {
         SnapshotWorkspace::Nodes => 76.0,
-        SnapshotWorkspace::PolicyGroups => 117.0,
-        SnapshotWorkspace::RoutingRules => 158.0,
-        SnapshotWorkspace::Activity => 199.0,
-        SnapshotWorkspace::Logs => 240.0,
-        SnapshotWorkspace::Configuration => 284.0,
+        SnapshotWorkspace::RoutingRules => 117.0,
+        SnapshotWorkspace::Activity => 158.0,
+        SnapshotWorkspace::Logs => 199.0,
+        SnapshotWorkspace::Configuration => 240.0,
     };
     cx.simulate_click(window, point(px(x), px(y)), Modifiers::none());
     refresh(cx, window)
+}
+
+#[cfg(target_os = "macos")]
+fn open_policy_section(
+    cx: &mut gpui::VisualTestAppContext,
+    window: gpui::AnyWindowHandle,
+    width: f32,
+) -> Result<(), Box<dyn std::error::Error>> {
+    open_workspace(cx, window, width, SnapshotWorkspace::Nodes)?;
+    scroll_window(cx, window, width - 50.0, 300.0, -220.0)
 }
 
 #[cfg(target_os = "macos")]
