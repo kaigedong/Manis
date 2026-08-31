@@ -1,10 +1,14 @@
 use std::collections::VecDeque;
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
+
+use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
+use tracing::field::{Field, Visit};
+use tracing_subscriber::{Layer, layer::Context, prelude::*};
 
 const TRACE_ENV: &str = "MANIS_UI_TRACE";
 const LEGACY_RELAY_TRACE_ENV: &str = "RELAY_UI_TRACE";
@@ -15,9 +19,11 @@ const MAX_LOG_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_DETAIL_CHARS: usize = 800;
 static NEXT_LOG_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 static NEXT_OPERATION_ID: AtomicU64 = AtomicU64::new(1);
-static DIAGNOSTICS: OnceLock<Mutex<Diagnostics>> = OnceLock::new();
+static DIAGNOSTICS: OnceLock<Arc<Mutex<Diagnostics>>> = OnceLock::new();
+static EVENT_DISPATCH: OnceLock<tracing::Dispatch> = OnceLock::new();
+const EVENT_TARGET: &str = "manis::events";
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 pub(crate) struct UiLogEntry {
     pub sequence: u64,
     pub timestamp_ms: u128,
@@ -33,17 +39,6 @@ pub(crate) enum LogLevel {
     Info,
     Warn,
     Error,
-}
-
-impl LogLevel {
-    const fn as_str(self) -> &'static str {
-        match self {
-            Self::Debug => "DEBUG",
-            Self::Info => "INFO",
-            Self::Warn => "WARN",
-            Self::Error => "ERROR",
-        }
-    }
 }
 
 #[derive(Default)]
@@ -137,7 +132,7 @@ pub(crate) fn initialize(root: Option<&Path>) {
         return;
     };
     let path = root.join(LOG_DIRECTORY).join(LOG_FILE);
-    let diagnostics = DIAGNOSTICS.get_or_init(|| Mutex::new(Diagnostics::default()));
+    let diagnostics = diagnostics_state();
     let mut diagnostics = diagnostics
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -145,7 +140,7 @@ pub(crate) fn initialize(root: Option<&Path>) {
         return;
     }
     diagnostics.path = Some(path.clone());
-    if let Ok(contents) = fs::read_to_string(&path) {
+    if let Ok(contents) = read_history(&path) {
         for entry in contents.lines().filter_map(parse_line) {
             NEXT_LOG_SEQUENCE.fetch_max(entry.sequence.saturating_add(1), Ordering::Relaxed);
             if let Some(operation_id) = entry.operation_id {
@@ -185,35 +180,104 @@ pub(crate) fn record_event(level: LogLevel, event: &'static str, detail: impl In
     record(level, None, event, Some(detail.into()));
 }
 
-fn record(level: LogLevel, operation_id: Option<u64>, event: &str, detail: Option<String>) {
-    let timestamp_ms = now_ms();
-    let sequence = NEXT_LOG_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    let entry = UiLogEntry {
-        sequence,
-        timestamp_ms,
-        level: level.as_str().to_owned(),
-        operation_id,
-        event: sanitize_fragment(event),
-        detail: detail.map(|value| sanitize_detail(&value)),
-    };
-    let diagnostics = DIAGNOSTICS.get_or_init(|| Mutex::new(Diagnostics::default()));
-    let mut diagnostics = diagnostics
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if let Some(path) = diagnostics.path.as_deref() {
-        append_line(path, &entry);
-    }
-    push_bounded(&mut diagnostics.logs, entry.clone());
-    drop(diagnostics);
+fn diagnostics_state() -> &'static Arc<Mutex<Diagnostics>> {
+    DIAGNOSTICS.get_or_init(|| Arc::new(Mutex::new(Diagnostics::default())))
+}
 
-    if trace_enabled() {
-        eprintln!("{}", format_line(&entry));
+fn record(level: LogLevel, operation_id: Option<u64>, event: &str, detail: Option<String>) {
+    // Sanitize before emission, not just at the file sink. This dispatch is deliberately private:
+    // it neither replaces GPUI's subscriber nor captures third-party HTTP/proxy request logs.
+    let event = sanitize_fragment(event);
+    let detail = detail.map(|value| sanitize_detail(&value));
+    let dispatch = EVENT_DISPATCH
+        .get_or_init(|| event_dispatch(Arc::clone(diagnostics_state()), trace_enabled()));
+    tracing::dispatcher::with_default(dispatch, || {
+        macro_rules! emit {
+            ($level:expr) => {
+                tracing::event!(target: "manis::events", $level, operation_id, event = event.as_str(), detail = detail.as_deref())
+            };
+        }
+        match level {
+            LogLevel::Debug => emit!(tracing::Level::DEBUG),
+            LogLevel::Info => emit!(tracing::Level::INFO),
+            LogLevel::Warn => emit!(tracing::Level::WARN),
+            LogLevel::Error => emit!(tracing::Level::ERROR),
+        }
+    });
+}
+
+fn event_dispatch(state: Arc<Mutex<Diagnostics>>, stderr: bool) -> tracing::Dispatch {
+    tracing::Dispatch::new(tracing_subscriber::registry().with(
+        EventLayer { state, stderr }.with_filter(tracing_subscriber::filter::filter_fn(
+            |metadata| metadata.target() == EVENT_TARGET,
+        )),
+    ))
+}
+
+struct EventLayer {
+    state: Arc<Mutex<Diagnostics>>,
+    stderr: bool,
+}
+
+impl<S: tracing::Subscriber> Layer<S> for EventLayer {
+    fn on_event(&self, event: &tracing::Event<'_>, _context: Context<'_, S>) {
+        let mut fields = EventFields::default();
+        event.record(&mut fields);
+        let Some(name) = fields.event else {
+            return;
+        };
+        let mut diagnostics = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let entry = UiLogEntry {
+            // Assign under the ring/file lock so concurrent operations remain sequence ordered.
+            sequence: NEXT_LOG_SEQUENCE.fetch_add(1, Ordering::Relaxed),
+            timestamp_ms: now_ms(),
+            level: event.metadata().level().as_str().to_owned(),
+            operation_id: fields.operation_id,
+            event: name,
+            detail: fields.detail,
+        };
+        if let Some(path) = diagnostics.path.as_deref() {
+            append_line(path, &entry);
+        }
+        if self.stderr {
+            eprintln!("{}", format_line(&entry));
+        }
+        push_bounded(&mut diagnostics.logs, entry);
+    }
+}
+
+#[derive(Default)]
+struct EventFields {
+    operation_id: Option<u64>,
+    event: Option<String>,
+    detail: Option<String>,
+}
+
+impl Visit for EventFields {
+    fn record_u64(&mut self, field: &Field, value: u64) {
+        if field.name() == "operation_id" {
+            self.operation_id = Some(value);
+        }
+    }
+
+    fn record_str(&mut self, field: &Field, value: &str) {
+        match field.name() {
+            "event" => self.event = Some(sanitize_fragment(value)),
+            "detail" => self.detail = Some(sanitize_detail(value)),
+            _ => {}
+        }
+    }
+
+    fn record_debug(&mut self, _field: &Field, _value: &dyn std::fmt::Debug) {
+        // Unknown/debug fields are not diagnostic data; never stringify arbitrary secret objects.
     }
 }
 
 pub(crate) fn recent_ui_logs() -> Vec<UiLogEntry> {
-    DIAGNOSTICS
-        .get_or_init(|| Mutex::new(Diagnostics::default()))
+    diagnostics_state()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .logs
@@ -259,20 +323,47 @@ fn append_line(path: &Path, entry: &UiLogEntry) {
 }
 
 fn format_line(entry: &UiLogEntry) -> String {
-    format!(
-        "{}\t{}\t{}\t{}\t{}\t{}",
-        entry.timestamp_ms,
-        entry.sequence,
-        entry.level,
-        entry
-            .operation_id
-            .map_or_else(|| "-".to_owned(), |value| value.to_string()),
-        entry.event,
-        entry.detail.as_deref().unwrap_or("-")
-    )
+    serde_json::to_string(entry).expect("primitive diagnostic fields serialize as JSON")
+}
+
+/// Restore bounded history even if an external process has enlarged the file.
+fn read_history(path: &Path) -> std::io::Result<String> {
+    let mut file = fs::File::open(path)?;
+    let truncated = file.metadata()?.len() > MAX_LOG_BYTES;
+    if truncated {
+        file.seek(SeekFrom::End(
+            -i64::try_from(MAX_LOG_BYTES).expect("log limit fits i64"),
+        ))?;
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_LOG_BYTES).read_to_end(&mut bytes)?;
+    if truncated {
+        // The tail may start in the middle of a UTF-8 character or a JSON/legacy record.
+        let start = bytes
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .map_or(bytes.len(), |pos| pos + 1);
+        bytes.drain(..start);
+    }
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 fn parse_line(line: &str) -> Option<UiLogEntry> {
+    if line.len() > 16 * 1024 {
+        return None;
+    }
+    let mut entry: UiLogEntry = if line.starts_with('{') {
+        serde_json::from_str(line).ok()?
+    } else {
+        parse_legacy_line(line)?
+    };
+    entry.event = sanitize_fragment(&entry.event);
+    entry.level = sanitize_fragment(&entry.level);
+    entry.detail = entry.detail.map(|detail| sanitize_detail(&detail));
+    Some(entry)
+}
+
+fn parse_legacy_line(line: &str) -> Option<UiLogEntry> {
     let mut fields = line.splitn(6, '\t');
     let timestamp_ms = fields.next()?.parse().ok()?;
     let sequence = fields.next()?.parse().ok()?;
@@ -350,9 +441,147 @@ fn trace_enabled() -> bool {
 
 #[cfg(test)]
 mod tests {
+
+    struct TestDirectory(std::path::PathBuf);
+
+    impl TestDirectory {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "manis-diagnostics-{}-{}-{}",
+                std::process::id(),
+                super::now_ms(),
+                super::NEXT_OPERATION_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            ));
+            std::fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn tracing_persists_redacted_json_and_ignores_foreign_and_debug_fields() {
+        use std::sync::{Arc, Mutex};
+        let root = TestDirectory::new();
+        let path = root.0.join("logs/manis-events.log");
+        let state = Arc::new(Mutex::new(super::Diagnostics {
+            path: Some(path.clone()),
+            ..Default::default()
+        }));
+        let dispatch = super::event_dispatch(Arc::clone(&state), false);
+        tracing::dispatcher::with_default(&dispatch, || {
+            tracing::info!(target: "third_party", event = "foreign.event", detail = "must-not-be-captured");
+            tracing::warn!(target: "manis::events", event = "proxy.mode.failed", operation_id = 91_u64,
+                detail = "source=https://example.invalid/?token=private token=private",
+                unexpected_secret = ?vec!["must-not-be-captured"]);
+        });
+        let logs = state.lock().unwrap().logs.clone();
+        assert_eq!(logs.len(), 1);
+        let entry = &logs[0];
+        assert_eq!(entry.operation_id, Some(91));
+        assert_eq!(entry.level, "WARN");
+        let disk = std::fs::read_to_string(&path).unwrap();
+        let document: serde_json::Value = serde_json::from_str(&disk).unwrap();
+        assert_eq!(document["operation_id"], 91);
+        assert!(!disk.contains("private"));
+        assert!(!disk.contains("example.invalid"));
+        assert!(!disk.contains("must-not-be-captured"));
+        assert_eq!(parse_line(disk.trim_end()), Some(entry.clone()));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+            assert_eq!(
+                std::fs::metadata(path.parent().unwrap())
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o700
+            );
+        }
+    }
+
+    #[test]
+    fn legacy_history_remains_readable_and_is_sanitized() {
+        let entry =
+            parse_line("42\t7\tINFO\t3\tproxy.mode.requested\tfrom=off token=private").unwrap();
+        assert_eq!(entry.sequence, 7);
+        assert_eq!(entry.timestamp_ms, 42);
+        assert_eq!(entry.operation_id, Some(3));
+        assert_eq!(entry.detail.as_deref(), Some("from=off <redacted-token>"));
+        assert_eq!(parse_line(&format_line(&entry)), Some(entry));
+        assert!(parse_line("{broken").is_none());
+        assert!(parse_line(&"x".repeat(16 * 1024 + 1)).is_none());
+    }
+
+    #[test]
+    fn concurrent_tracing_events_keep_bounded_ordered_history() {
+        use std::sync::{Arc, Mutex};
+        let state = Arc::new(Mutex::new(super::Diagnostics::default()));
+        let dispatch = super::event_dispatch(Arc::clone(&state), false);
+        let workers = (0_u64..4).map(|id| {
+            let dispatch = dispatch.clone();
+            std::thread::spawn(move || tracing::dispatcher::with_default(&dispatch, || {
+                for _ in 0..150 {
+                    tracing::info!(target: "manis::events", event = "test.concurrent", operation_id = id);
+                }
+            }))
+        }).collect::<Vec<_>>();
+        for worker in workers {
+            worker.join().unwrap();
+        }
+        let logs = state
+            .lock()
+            .unwrap()
+            .logs
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(logs.len(), super::UI_LOG_CAPACITY);
+        assert!(
+            logs.windows(2)
+                .all(|pair| pair[0].sequence < pair[1].sequence)
+        );
+        assert!(logs.iter().all(|entry| entry.operation_id.is_some()));
+    }
+
+    #[test]
+    fn rotation_keeps_previous_log_and_json_file_is_immediately_readable() {
+        let root = TestDirectory::new();
+        let path = root.0.join("events.log");
+        let file = std::fs::File::create(&path).unwrap();
+        file.set_len(super::MAX_LOG_BYTES + 1).unwrap();
+        drop(file);
+        let entry = UiLogEntry {
+            sequence: 1,
+            timestamp_ms: 2,
+            level: "INFO".into(),
+            operation_id: None,
+            event: "test.rotation".into(),
+            detail: None,
+        };
+        super::append_line(&path, &entry);
+        assert_eq!(
+            std::fs::metadata(path.with_extension("log.previous"))
+                .unwrap()
+                .len(),
+            super::MAX_LOG_BYTES + 1
+        );
+        assert_eq!(
+            parse_line(super::read_history(&path).unwrap().trim_end()),
+            Some(entry)
+        );
+    }
     use super::{
-        LogLevel, UiEvent, UiLogEntry, format_line, parse_line, recent_ui_logs, sanitize_detail,
-        trace_ui,
+        UiEvent, UiLogEntry, format_line, parse_line, recent_ui_logs, sanitize_detail, trace_ui,
     };
 
     #[test]
@@ -360,7 +589,7 @@ mod tests {
         let entry = UiLogEntry {
             sequence: 7,
             timestamp_ms: 42,
-            level: LogLevel::Info.as_str().to_owned(),
+            level: "INFO".to_owned(),
             operation_id: Some(3),
             event: "proxy.mode.requested".to_owned(),
             detail: Some("from=off to=tun".to_owned()),
@@ -385,7 +614,11 @@ mod tests {
     fn ui_trace_keeps_a_safe_in_memory_log_even_when_stderr_trace_is_disabled() {
         trace_ui(UiEvent::WorkspaceLogsOpened);
         let logs = recent_ui_logs();
-        let entry = logs.last().expect("the event should enter the ring buffer");
+        let entry = logs
+            .iter()
+            .rev()
+            .find(|entry| entry.event == "workspace.logs.opened")
+            .expect("the event should enter the ring buffer");
 
         assert_eq!(entry.event, "workspace.logs.opened");
         assert_eq!(entry.level, "DEBUG");

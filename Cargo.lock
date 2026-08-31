@@ -3766,11 +3766,17 @@ dependencies = [
  "num-traits",
  "serde",
  "serde_json",
+ "ureq",
 ]
 
 [[package]]
 name = "manis-profile"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde-saphyr",
+ "serde_json",
+]
 
 [[package]]
 name = "manis-ui"
@@ -3790,6 +3796,8 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "tracing",
+ "tracing-subscriber",
  "tray-icon",
  "ureq",
  "zbus",

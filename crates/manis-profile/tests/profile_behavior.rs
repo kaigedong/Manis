@@ -319,10 +319,12 @@ fn manual_reality_tcp_profile_renders_as_sing_box_json() {
     assert!(json.contains("\"fingerprint\": \"chrome\""));
     assert!(json.contains("\"type\": \"selector\""));
     assert!(json.contains("\"tag\": \"GLOBAL\""));
-    assert!(
-        json.contains(
-            "\"clash_mode\": \"Global\", \"action\": \"route\", \"outbound\": \"GLOBAL\""
-        )
+    let document: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(
+        document["route"]["rules"][1],
+        serde_json::json!({
+            "clash_mode": "Global", "action": "route", "outbound": "GLOBAL"
+        })
     );
     assert!(!json.contains("\"rule_set\": \"geoip-cn\""));
     assert!(json.contains("\"external_controller\": \"127.0.0.1:19090\""));
@@ -356,8 +358,14 @@ fn terminal_match_maps_to_mihomo_match_and_sing_box_route_final() {
 
     assert!(yaml.trim_end().ends_with("\"MATCH,__MANIS_GLOBAL__\""));
     assert!(json.contains("\"final\": \"__MANIS_GLOBAL__\""));
+    let document: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert_eq!(
-        json.matches("\"domain_suffix\": [\"example.com\"]").count(),
+        document["route"]["rules"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|rule| rule["domain_suffix"] == serde_json::json!(["example.com"]))
+            .count(),
         1
     );
 }
@@ -473,8 +481,15 @@ fn sing_box_translates_wildcards_and_cidr_but_rejects_ip_asn() {
     );
     let options = SingBoxOptions::new("127.0.0.1:19090", "fixture-controller-secret");
     let json = render_sing_box_json(&profile, &options).expect("supported rules should translate");
-    assert!(json.contains(r#""domain_regex": ["^.*\\.example\\..om$"]"#));
-    assert!(json.contains(r#""ip_cidr": ["192.0.2.0/24"]"#));
+    let document: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(
+        document["route"]["rules"][2]["domain_regex"],
+        serde_json::json!([r"^.*\.example\..om$"])
+    );
+    assert_eq!(
+        document["route"]["rules"][3]["ip_cidr"],
+        serde_json::json!(["192.0.2.0/24"])
+    );
 
     profile.rules.insert(
         0,
@@ -738,7 +753,11 @@ fn destination_port_rules_render_to_sing_box_json() {
     )
     .expect("supported profile should render");
 
-    assert!(json.contains("\"port\": [22], \"action\": \"route\", \"outbound\": \"direct\""));
+    let document: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(
+        document["route"]["rules"][2],
+        serde_json::json!({"port": [22], "action": "route", "outbound": "direct"})
+    );
 }
 
 #[test]
@@ -782,9 +801,15 @@ fn domain_and_port_rules_render_exactly_for_both_kernels() {
         &SingBoxOptions::new("127.0.0.1:19090", "fixture-controller-secret"),
     )
     .expect("compound rule should render");
-    assert!(json.contains(
-        "\"type\": \"logical\", \"mode\": \"and\", \"rules\": [{ \"ip_cidr\": [\"192.0.2.10/32\"] }, { \"port\": [22] }]"
-    ));
+    let document: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(
+        document["route"]["rules"][2],
+        serde_json::json!({
+            "type": "logical", "mode": "and",
+            "rules": [{"ip_cidr": ["192.0.2.10/32"]}, {"port": [22]}],
+            "action": "route", "outbound": "direct"
+        })
+    );
 }
 
 #[test]
@@ -1058,7 +1083,10 @@ fn empty_managed_profile_is_a_direct_only_bootstrap_config() {
     let yaml = render_mihomo_yaml(&profile).expect("empty managed profile should render");
 
     assert!(yaml.contains("mixed-port: 17890"));
-    assert!(yaml.contains("proxies:\nproxy-providers:\nproxy-groups:\n"));
+    let document: serde_json::Value = serde_saphyr::from_str(&yaml).unwrap();
+    assert_eq!(document["proxies"], serde_json::json!([]));
+    assert_eq!(document["proxy-providers"], serde_json::json!({}));
+    assert_eq!(document["proxy-groups"], serde_json::json!([]));
     assert!(yaml.contains("rules:\n  - \"MATCH,DIRECT\""));
     assert!(!yaml.contains("__MANIS_GLOBAL__"));
 }

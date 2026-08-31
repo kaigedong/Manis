@@ -64,6 +64,8 @@ jobs:
         run: rustup show active-toolchain
       - name: Check workspace
         run: cargo check --workspace --all-targets --locked
+      - name: Test restricted controller transports
+        run: cargo test -p manis-mihomo --all-targets --locked --quiet
       - name: Test Linux profile rendering
         if: runner.os == 'Linux'
         run: cargo test -p manis-profile --locked --quiet
@@ -76,6 +78,9 @@ jobs:
       - name: Test Linux tray on an isolated D-Bus session
         if: runner.os == 'Linux'
         run: dbus-run-session -- cargo test -p manis-ui --lib linux_tray_dbus --locked --quiet -- --ignored
+      - name: Test Linux structured diagnostics
+        if: runner.os == 'Linux'
+        run: cargo test -p manis-ui --lib diagnostics::tests --locked --quiet
       - name: Test Linux privileged helper boundary
         if: runner.os == 'Linux'
         run: cargo test -p manis-linux-helper --locked --quiet
