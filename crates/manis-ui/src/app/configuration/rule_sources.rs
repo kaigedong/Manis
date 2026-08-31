@@ -29,7 +29,6 @@ use super::{
 impl ManisApp {
     pub(super) fn rule_source_manager(
         &self,
-        _input: Entity<SubscriptionTextInput>,
         busy: bool,
         theme: Theme,
         compact: bool,
@@ -620,7 +619,7 @@ impl ManisApp {
             .name
             .clone()
             .or_else(|| source.source.subscription_name())
-            .unwrap_or_else(|| copy::configuration::numbered_rule_source(language, index + 1))
+            .unwrap_or_else(|| copy::common::numbered_rule_source(language, index + 1))
     }
 
     fn rule_source_card_header(
@@ -739,7 +738,6 @@ impl ManisApp {
                 refreshing,
                 refresh_enabled,
                 language,
-                theme,
                 cx,
             ))
             .child(
@@ -765,7 +763,6 @@ impl ManisApp {
         refreshing: bool,
         enabled: bool,
         language: Language,
-        _theme: Theme,
         cx: &mut Context<Self>,
     ) -> Button {
         row_action_button(

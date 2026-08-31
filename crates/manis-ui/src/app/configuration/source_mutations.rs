@@ -3,7 +3,7 @@ use manis_profile::SecretUrl;
 
 use crate::app::{
     ImportQxRuleError, ImportQxRuleSuccess, ImportedSubscriptionState, ManisApp,
-    QxRuleImportFeedback, QxRuleList, QxRuleSourceRefreshState, SourceRuntimeApply,
+    QxRuleImportFeedback, QxRuleList, QxRuleSourceRefreshState, SourceMutation, SourceRuntimeApply,
 };
 use crate::{
     diagnostics::{LogLevel, begin_operation, record_event, record_operation},
@@ -360,8 +360,7 @@ impl ManisApp {
                     return;
                 }
                 match result {
-                    Ok(transaction) if transaction.value.is_some() => {
-                        let id = transaction.value.expect("checked committed mutation");
+                    Ok(SourceMutation::Committed { value: id, apply }) => {
                         this.rule_sources.sources.retain(|source| source.id != id);
                         this.sync_routing_rule_group_order();
                         if let Some(store_dir) = this.subscription_store_dir.as_ref() {
@@ -376,13 +375,16 @@ impl ManisApp {
                         );
                         this.rule_sources.feedback = QxRuleImportFeedback::Idle;
                         let language = this.language();
-                        transaction.apply.reconcile_proxy_mode(&mut this.proxy_mode);
+                        apply.reconcile_proxy_mode(&mut this.proxy_mode);
                         this.status = copy::configuration::qx_rules_removed(
                             language,
-                            &transaction.apply.status_suffix(language),
+                            &apply.status_suffix(language),
                         );
                     }
-                    Ok(transaction) => {
+                    Ok(SourceMutation::RollbackAttempted {
+                        apply,
+                        rollback_error,
+                    }) => {
                         this.rule_sources.feedback = QxRuleImportFeedback::StoreFailed(
                             SubscriptionStoreError::StoreUnavailable,
                         );
@@ -390,9 +392,9 @@ impl ManisApp {
                             "{}{}",
                             this.language()
                                 .localized(copy::configuration::REMOTE_QX_RULE_REMOVAL_FAILED),
-                            transaction.apply.status_suffix_after_rollback_attempt(
+                            apply.status_suffix_after_rollback_attempt(
                                 this.language(),
-                                transaction.rollback_error.as_ref()
+                                rollback_error.as_ref()
                             )
                         );
                     }
@@ -494,15 +496,17 @@ impl ManisApp {
             return;
         }
         let refresh_after_enable = match result {
-            Ok(transaction) if transaction.value.is_some() => {
-                let stored = transaction.value.expect("checked committed mutation");
+            Ok(SourceMutation::Committed {
+                value: stored,
+                apply,
+            }) => {
                 source.enabled = stored.enabled;
                 source.state = if stored.enabled {
                     ImportedSubscriptionState::Pending(completion.kind)
                 } else {
                     ImportedSubscriptionState::None
                 };
-                transaction.apply.reconcile_proxy_mode(&mut self.proxy_mode);
+                apply.reconcile_proxy_mode(&mut self.proxy_mode);
                 self.status = format!(
                     "{}{}",
                     if stored.enabled {
@@ -510,20 +514,20 @@ impl ManisApp {
                     } else {
                         language.localized(copy::configuration::SUBSCRIPTION_DISABLED)
                     },
-                    transaction.apply.status_suffix(language)
+                    apply.status_suffix(language)
                 );
                 stored.enabled
             }
-            Ok(transaction) => {
+            Ok(SourceMutation::RollbackAttempted {
+                apply,
+                rollback_error,
+            }) => {
                 source.enabled = completion.previous_enabled;
                 source.state = completion.previous_state;
                 self.status = format!(
                     "{}{}",
                     language.localized(copy::configuration::FAILED_TO_CHANGE_SUBSCRIPTION_STATE),
-                    transaction.apply.status_suffix_after_rollback_attempt(
-                        language,
-                        transaction.rollback_error.as_ref()
-                    )
+                    apply.status_suffix_after_rollback_attempt(language, rollback_error.as_ref())
                 );
                 false
             }
@@ -584,8 +588,10 @@ impl ManisApp {
                 }
                 this.rule_sources.target_updates.remove(&id);
                 match result {
-                    Ok(transaction) if transaction.value.is_some() => {
-                        let stored = transaction.value.expect("checked committed mutation");
+                    Ok(SourceMutation::Committed {
+                        value: stored,
+                        apply,
+                    }) => {
                         let language = this.language();
                         let enabled = stored.enabled;
                         if let Some(source) = this
@@ -596,7 +602,7 @@ impl ManisApp {
                         {
                             *source = stored;
                         }
-                        transaction.apply.reconcile_proxy_mode(&mut this.proxy_mode);
+                        apply.reconcile_proxy_mode(&mut this.proxy_mode);
                         this.status = format!(
                             "{}{}",
                             if enabled {
@@ -604,17 +610,20 @@ impl ManisApp {
                             } else {
                                 language.localized(copy::configuration::RULE_SOURCE_DISABLED)
                             },
-                            transaction.apply.status_suffix(language)
+                            apply.status_suffix(language)
                         );
                     }
-                    Ok(transaction) => {
+                    Ok(SourceMutation::RollbackAttempted {
+                        apply,
+                        rollback_error,
+                    }) => {
                         this.status = format!(
                             "{}{}",
                             this.language()
                                 .localized(copy::configuration::FAILED_TO_CHANGE_RULE_SOURCE_STATE),
-                            transaction.apply.status_suffix_after_rollback_attempt(
+                            apply.status_suffix_after_rollback_attempt(
                                 this.language(),
-                                transaction.rollback_error.as_ref()
+                                rollback_error.as_ref()
                             )
                         );
                     }
@@ -714,17 +723,23 @@ impl ManisApp {
         }
         self.rule_sources.target_updates.remove(id);
         match result {
-            Ok(transaction) if transaction.value.is_some() => {
-                self.finish_successful_qx_rule_target_update(id, transaction);
+            Ok(SourceMutation::Committed {
+                value: stored,
+                apply,
+            }) => {
+                self.finish_successful_qx_rule_target_update(id, stored, &apply);
             }
-            Ok(transaction) => {
+            Ok(SourceMutation::RollbackAttempted {
+                apply,
+                rollback_error,
+            }) => {
                 self.status = format!(
                     "{}{}",
                     self.language()
                         .localized(copy::configuration::FAILED_TO_SAVE_RULE_SOURCE_POLICY),
-                    transaction.apply.status_suffix_after_rollback_attempt(
+                    apply.status_suffix_after_rollback_attempt(
                         self.language(),
-                        transaction.rollback_error.as_ref()
+                        rollback_error.as_ref()
                     )
                 );
             }
@@ -743,12 +758,9 @@ impl ManisApp {
     fn finish_successful_qx_rule_target_update(
         &mut self,
         id: &str,
-        mut transaction: crate::app::SourceMutation<mihomo::StoredQxRuleSource>,
+        stored: mihomo::StoredQxRuleSource,
+        apply: &SourceRuntimeApply,
     ) {
-        let stored = transaction
-            .value
-            .take()
-            .expect("checked committed mutation");
         let language = self.language();
         let target = stored.target_policy.as_str().to_owned();
         if let Some(source) = self
@@ -759,11 +771,11 @@ impl ManisApp {
         {
             *source = stored;
         }
-        transaction.apply.reconcile_proxy_mode(&mut self.proxy_mode);
+        apply.reconcile_proxy_mode(&mut self.proxy_mode);
         self.status = format!(
             "{} {target}{}",
             language.localized(copy::configuration::RULE_SOURCE_POLICY_SET_TO),
-            transaction.apply.status_suffix(language)
+            apply.status_suffix(language)
         );
         record_event(
             LogLevel::Info,
@@ -849,11 +861,17 @@ impl ManisApp {
             return;
         }
         match result {
-            Ok(transaction) if transaction.value.is_some() => {
-                self.finish_successful_qx_rule_refresh(id, transaction);
+            Ok(SourceMutation::Committed {
+                value: stored,
+                apply,
+            }) => {
+                self.finish_successful_qx_rule_refresh(id, stored, &apply);
             }
             Err(error) => self.finish_failed_qx_rule_refresh(id, generation, &error),
-            Ok(transaction) => {
+            Ok(SourceMutation::RollbackAttempted {
+                apply,
+                rollback_error,
+            }) => {
                 let message = "runtime apply failed".to_owned();
                 self.rule_sources.refreshes.insert(
                     id.to_owned(),
@@ -866,9 +884,9 @@ impl ManisApp {
                     "{}{}",
                     self.language()
                         .localized(copy::configuration::REMOTE_QX_RULE_UPDATE_FAILED),
-                    transaction.apply.status_suffix_after_rollback_attempt(
+                    apply.status_suffix_after_rollback_attempt(
                         self.language(),
-                        transaction.rollback_error.as_ref()
+                        rollback_error.as_ref()
                     )
                 );
             }
@@ -879,12 +897,9 @@ impl ManisApp {
     fn finish_successful_qx_rule_refresh(
         &mut self,
         id: &str,
-        mut transaction: crate::app::SourceMutation<mihomo::StoredQxRuleSource>,
+        stored: mihomo::StoredQxRuleSource,
+        apply: &SourceRuntimeApply,
     ) {
-        let stored = transaction
-            .value
-            .take()
-            .expect("checked committed mutation");
         let language = self.language();
         let rule_count = stored.rule_count;
         if let Some(source) = self
@@ -899,12 +914,12 @@ impl ManisApp {
         self.rule_sources
             .refresh_retry_not_before
             .remove(&crate::app::DueRemoteSource::QxRule(id.to_owned()).scheduler_key());
-        transaction.apply.reconcile_proxy_mode(&mut self.proxy_mode);
+        apply.reconcile_proxy_mode(&mut self.proxy_mode);
         self.status = copy::configuration::qx_rules_applied(
             language,
             copy::configuration::QxRuleAction::Updated,
             rule_count,
-            &transaction.apply.status_suffix(language),
+            &apply.status_suffix(language),
         );
     }
 

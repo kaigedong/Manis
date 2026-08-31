@@ -39,7 +39,12 @@ pub(crate) const fn error(language: Language, error: AppUpdateError) -> &'static
             "Update check unavailable. View releases on GitHub.",
             "暂时无法检查更新，可前往 GitHub 查看。",
         ),
-        _ => LocalizedText::new(
+        AppUpdateError::InvalidMetadata
+        | AppUpdateError::InsecureRedirect
+        | AppUpdateError::MissingMetadata
+        | AppUpdateError::InvalidDigest
+        | AppUpdateError::DigestMismatch
+        | AppUpdateError::MetadataTooLarge => LocalizedText::new(
             "Could not verify version information. View releases on GitHub.",
             "无法验证版本信息，可前往 GitHub 查看。",
         ),

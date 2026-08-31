@@ -31,12 +31,12 @@ impl ControllerRuntime {
         }
     }
 
-    fn controller_secret(&self) -> Option<String> {
+    fn controller_secret(&self) -> Option<&str> {
         match self {
             Self::Managed {
                 generated_profile: Some(spec),
                 ..
-            } => spec.controller_secret.clone(),
+            } => spec.controller_secret.as_deref(),
             #[cfg(any(test, feature = "snapshot-fixtures"))]
             Self::Fixture { .. } => None,
             Self::Managed { .. } | Self::Invalid { .. } => None,
@@ -245,9 +245,8 @@ impl ControllerRuntime {
                 payload.len()
             ),
         );
-        let result =
-            reload_mihomo_config(&endpoint, &payload, enabled, controller_secret.as_deref())
-                .map_err(LoadError::from);
+        let result = reload_mihomo_config(&endpoint, &payload, enabled, controller_secret)
+            .map_err(LoadError::from);
         if result.is_ok() {
             record_event(
                 LogLevel::Info,
@@ -595,7 +594,7 @@ impl ControllerRuntime {
             }
             Self::Invalid { message } => return Err(LoadError::Runtime(message.clone())),
         };
-        let result = set_routing_mode(&endpoint, mode, controller_secret.as_deref());
+        let result = set_routing_mode(&endpoint, mode, controller_secret);
         match &result {
             Ok(()) => record_event(
                 LogLevel::Info,
@@ -640,7 +639,7 @@ impl ControllerRuntime {
                 })?
                 .uri()
         };
-        select_global_node_at_endpoint(&endpoint, selected_name, controller_secret.as_deref())
+        select_global_node_at_endpoint(&endpoint, selected_name, controller_secret)
     }
 
     pub(crate) fn test_proxy_delay_targets_with_progress(
@@ -675,7 +674,7 @@ impl ControllerRuntime {
         fetch_proxy_delay_targets_bounded_with_progress(
             &endpoint,
             targets,
-            controller_secret.as_deref(),
+            controller_secret,
             on_result,
         )
     }
@@ -707,7 +706,7 @@ impl ControllerRuntime {
             .iter()
             .map(ProxyDelayTarget::name)
             .collect::<BTreeSet<_>>();
-        let delays = match fetch_group_delay(&endpoint, group_name, controller_secret.as_deref()) {
+        let delays = match fetch_group_delay(&endpoint, group_name, controller_secret) {
             Ok(delays) => delays
                 .into_iter()
                 .filter(|(name, delay)| candidates.contains(name.as_str()) && *delay > 0)
@@ -725,13 +724,13 @@ impl ControllerRuntime {
             fetch_proxy_delay_targets_bounded_with_progress(
                 &endpoint,
                 targets,
-                controller_secret.as_deref(),
+                controller_secret,
                 |_name, _delay| {},
             )?
         } else {
             delays
         };
-        let current = fetch_policy_group(&endpoint, group_name, controller_secret.as_deref())
+        let current = fetch_policy_group(&endpoint, group_name, controller_secret)
             .ok()
             .and_then(|group| group.current);
         Ok(PolicyGroupBenchmarkSnapshot { delays, current })
@@ -767,12 +766,7 @@ impl ControllerRuntime {
                 })?
                 .uri()
         };
-        select_policy_group_candidate(
-            &endpoint,
-            group_name,
-            selected_name,
-            controller_secret.as_deref(),
-        )
+        select_policy_group_candidate(&endpoint, group_name, selected_name, controller_secret)
     }
 
     pub(crate) fn apply_saved_sources(

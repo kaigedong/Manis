@@ -389,7 +389,6 @@ fn parse_legacy_line(line: &str) -> Option<UiLogEntry> {
 
 fn sanitize_detail(value: &str) -> String {
     let mut sanitized = value
-        .replace(['\r', '\n', '\t'], " ")
         .split_whitespace()
         .map(|word| {
             let lower = word.to_ascii_lowercase();
@@ -397,11 +396,11 @@ fn sanitize_detail(value: &str) -> String {
                 .iter()
                 .any(|prefix| lower.contains(prefix))
             {
-                "<redacted-url>".to_owned()
+                "<redacted-url>"
             } else if lower.contains("token=") {
-                "<redacted-token>".to_owned()
+                "<redacted-token>"
             } else {
-                word.to_owned()
+                word
             }
         })
         .collect::<Vec<_>>()

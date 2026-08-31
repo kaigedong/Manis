@@ -241,9 +241,9 @@ where
     /// field is not an object or `null`, the PATCH request fails, or TUN does not remain active.
     pub fn set_tun_enabled(&self, enabled: bool) -> Result<(), MihomoError> {
         let tun = if enabled {
-            let config = self.fetch_json::<Value>(CONFIGS_ENDPOINT)?;
-            let mut tun = match config.get("tun") {
-                Some(Value::Object(tun)) => tun.clone(),
+            let mut config = self.fetch_json::<Value>(CONFIGS_ENDPOINT)?;
+            let mut tun = match config.get_mut("tun").map(Value::take) {
+                Some(Value::Object(tun)) => tun,
                 Some(Value::Null) | None => Map::new(),
                 Some(_other) => {
                     return Err(MihomoError::InvalidResponse(

@@ -529,3 +529,51 @@ fn editor_prefills_current_configuration_and_preserves_invalid_edits(
     assert_eq!(std::fs::read(store.join("routing.mode")).unwrap(), original);
     std::fs::remove_dir_all(store.parent().unwrap()).unwrap();
 }
+
+#[gpui::test]
+fn replacement_stop_failure_clears_runtime_only_after_proxy_shutdown(
+    cx: &mut gpui::TestAppContext,
+) {
+    for proxy_off in [false, true] {
+        let app = cx.new(|_| {
+            ManisApp::with_fixture_controller_and_subscription_store(
+                "http://127.0.0.1:1",
+                unique_temp_store("manis-replacement-stop"),
+            )
+        });
+        app.update(cx, |app, cx| {
+            app.proxy_mode = manis_core::ProxyMode::Tun;
+            app.live_generation = 41;
+            app.controller = crate::mihomo::ControllerState::Connecting {
+                endpoint: "http://127.0.0.1:1".to_owned(),
+            };
+            app.configuration_transfer.active = true;
+            app.configuration_transfer.progress = super::TransferProgress::Replacing;
+            let result = if proxy_off {
+                super::ConfigurationReplacementOutcome::KernelStopFailed
+            } else {
+                super::ConfigurationReplacementOutcome::ProxyStopFailed
+            };
+            app.finish_configuration_replacement(result, app.language(), cx);
+            assert_eq!(
+                app.proxy_mode,
+                if proxy_off {
+                    manis_core::ProxyMode::Off
+                } else {
+                    manis_core::ProxyMode::Tun
+                },
+            );
+            assert_eq!(app.live_generation, if proxy_off { 42 } else { 41 });
+            assert_eq!(
+                matches!(app.controller, crate::mihomo::ControllerState::Disconnected),
+                proxy_off,
+            );
+            assert!(!app.configuration_transfer.is_busy());
+            assert!(app.configuration_transfer.failed);
+            assert_eq!(
+                app.status,
+                app.language().localized(super::copy::backup::STOP_FAILED)
+            );
+        });
+    }
+}

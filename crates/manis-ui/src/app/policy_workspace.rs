@@ -432,12 +432,12 @@ impl ManisApp {
         let policy_count;
         if self.catalog.is_some() {
             policy_count = self.policy_groups().count();
-            for item in self.policy_groups().cloned() {
+            for item in self.policy_groups() {
                 rows = rows.child(self.policy_list_card(item, language, theme, cx));
             }
         } else {
             policy_count = self.managed_policies.groups.len();
-            for policy in self.managed_policies.groups.clone() {
+            for policy in &self.managed_policies.groups {
                 rows = rows.child(self.offline_policy_card(policy, language, theme, cx));
             }
         }
@@ -501,13 +501,13 @@ impl ManisApp {
         empty_state(title, description, None, theme)
     }
 
-    pub(super) fn offline_policy_card_view(
+    pub(super) fn offline_policy_card_view<'a>(
         &self,
-        policy: ManagedPolicyGroup,
-    ) -> OfflinePolicyCardView {
+        policy: &'a ManagedPolicyGroup,
+    ) -> OfflinePolicyCardView<'a> {
         let policy_group_id = PolicyGroupId::new(policy.id.clone());
         OfflinePolicyCardView {
-            candidates: self.managed_policy_candidate_nodes(&policy),
+            candidates: self.managed_policy_candidate_nodes(policy),
             selected_name: self
                 .managed_policies
                 .node_selections
@@ -523,7 +523,7 @@ impl ManisApp {
     }
 
     fn offline_policy_header(
-        view: &OfflinePolicyCardView,
+        view: &OfflinePolicyCardView<'_>,
         language: Language,
         theme: Theme,
         cx: &mut Context<Self>,
@@ -608,7 +608,7 @@ impl ManisApp {
     }
 
     fn offline_policy_identity(
-        view: &OfflinePolicyCardView,
+        view: &OfflinePolicyCardView<'_>,
         language: Language,
         theme: Theme,
     ) -> Div {
@@ -664,7 +664,7 @@ impl ManisApp {
 
     fn offline_policy_card(
         &self,
-        policy: ManagedPolicyGroup,
+        policy: &ManagedPolicyGroup,
         language: Language,
         theme: Theme,
         cx: &mut Context<Self>,
@@ -770,7 +770,10 @@ impl ManisApp {
         }))
     }
 
-    pub(super) fn policy_list_card_view(&self, item: PolicyGroup) -> PolicyListCardView {
+    pub(super) fn policy_list_card_view<'a>(
+        &self,
+        item: &'a PolicyGroup,
+    ) -> PolicyListCardView<'a> {
         let benchmark_key = Self::policy_group_benchmark_key(&item.id);
         let editable_group_id = self.editable_policy_group_id(&item.name).map(str::to_owned);
         let expanded = self.expanded_policy_group.as_ref().is_some_and(|expanded| {
@@ -797,7 +800,7 @@ impl ManisApp {
 
     fn policy_list_card(
         &self,
-        item: PolicyGroup,
+        item: &PolicyGroup,
         language: Language,
         theme: Theme,
         cx: &mut Context<Self>,
@@ -829,7 +832,7 @@ impl ManisApp {
             return card.child(Self::empty_policy_candidates(language, theme));
         }
         card = card.child(Self::policy_candidate_table_header(language, theme));
-        let selected_node = self.node_for_policy(&view.item);
+        let selected_node = self.node_for_policy(view.item);
         for node in &view.item.nodes {
             let benchmark_state = self
                 .managed_policies
@@ -859,12 +862,12 @@ impl ManisApp {
     }
 
     fn policy_list_header(
-        view: &PolicyListCardView,
+        view: &PolicyListCardView<'_>,
         language: Language,
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let benchmarkable = Self::policy_group_benchmarkable(&view.item);
+        let benchmarkable = Self::policy_group_benchmarkable(view.item);
         let benchmarking = view.benchmarking;
         let benchmark_id = view.item.id.clone();
         let item_id = view.item.id.clone();
@@ -925,7 +928,7 @@ impl ManisApp {
                     }
                 }),
             ))
-            .child(Self::policy_list_identity(&view.item, language, theme))
+            .child(Self::policy_list_identity(view.item, language, theme))
             .child(Self::policy_settings_button(
                 view.item.id.as_str(),
                 view.editable_group_id.clone(),

@@ -310,13 +310,6 @@ pub(crate) fn source_nodes(language: Language, kind: &str, count: usize) -> Stri
     }
 }
 
-pub(crate) fn numbered_rule_source(language: Language, index: usize) -> String {
-    match language {
-        Language::English => format!("Rule source {index}"),
-        Language::SimplifiedChinese => format!("规则源 {index}"),
-    }
-}
-
 pub(crate) fn rule_source_counts(language: Language, rules: usize, skipped: usize) -> String {
     match language {
         Language::English => format!("{rules} rules · {skipped} skipped"),

@@ -18,10 +18,15 @@ pub(super) struct RoutingApplyRollback {
     pub(super) group_order: Vec<String>,
 }
 
-pub(super) struct SourceMutation<T> {
-    pub(super) value: Option<T>,
-    pub(super) apply: SourceRuntimeApply,
-    pub(super) rollback_error: Option<SubscriptionStoreError>,
+pub(super) enum SourceMutation<T> {
+    Committed {
+        value: T,
+        apply: SourceRuntimeApply,
+    },
+    RollbackAttempted {
+        apply: SourceRuntimeApply,
+        rollback_error: Option<SubscriptionStoreError>,
+    },
 }
 
 pub(super) fn mutate_saved_sources<T>(
@@ -51,8 +56,7 @@ pub(super) fn mutate_saved_sources_with_apply<T>(
     let value = mutation(transaction.directory())?;
     let mut changes = transaction.changes()?;
     if let Err(error) = changes.install(store_dir) {
-        return Ok(SourceMutation {
-            value: None,
+        return Ok(SourceMutation::RollbackAttempted {
             apply: SourceRuntimeApply::Failed(error.to_string()),
             rollback_error: changes.rollback(store_dir).err(),
         });
@@ -60,17 +64,12 @@ pub(super) fn mutate_saved_sources_with_apply<T>(
     let apply = apply();
     if apply.requires_source_rollback() {
         let rollback_error = changes.rollback(store_dir).err();
-        return Ok(SourceMutation {
-            value: None,
+        return Ok(SourceMutation::RollbackAttempted {
             apply,
             rollback_error,
         });
     }
-    Ok(SourceMutation {
-        value: Some(value),
-        apply,
-        rollback_error: None,
-    })
+    Ok(SourceMutation::Committed { value, apply })
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -279,7 +278,7 @@ mod source_transaction_tests {
         save_language_preference_in(&store, LanguagePreference::English).unwrap();
         resume_tx.send(()).unwrap();
         let result = writer.join().unwrap().unwrap();
-        assert!(result.apply.requires_source_rollback());
+        assert!(matches!(result, SourceMutation::RollbackAttempted { .. }));
         let actual = fs::read_to_string(store.join("language.preference")).unwrap();
         fs::remove_dir_all(store.parent().unwrap()).unwrap();
         assert_eq!(
@@ -287,6 +286,32 @@ mod source_transaction_tests {
             "rollback overwrote a successfully saved preference"
         );
     }
+    #[test]
+    fn losing_tun_after_activation_keeps_the_committed_source() {
+        let store = store("committed-after-tun-loss");
+        manis_profile::write_private_atomic(&store, "source.state", b"before").unwrap();
+        let result = mutate_saved_sources_with_apply(
+            &store,
+            |staged| {
+                manis_profile::write_private_atomic(staged, "source.state", b"candidate")
+                    .map(|_| "saved source")
+                    .map_err(|_| SubscriptionStoreError::StoreUnavailable)
+            },
+            || SourceRuntimeApply::ProxyModeLost("injected TUN restore failure".to_owned()),
+        )
+        .unwrap();
+
+        let SourceMutation::Committed { value, apply } = result else {
+            panic!("TUN loss after activation must not roll back the source");
+        };
+        assert_eq!(value, "saved source");
+        let mut mode = ProxyMode::Tun;
+        assert!(apply.reconcile_proxy_mode(&mut mode));
+        assert_eq!(mode, ProxyMode::Off);
+        assert_eq!(fs::read(store.join("source.state")).unwrap(), b"candidate");
+        fs::remove_dir_all(store.parent().unwrap()).unwrap();
+    }
+
     #[test]
     fn failed_apply_reports_a_rollback_conflict_without_overwriting_newer_data() {
         let store = store("apply-rollback-conflict");
@@ -304,12 +329,16 @@ mod source_transaction_tests {
             },
         )
         .unwrap();
-        assert!(result.value.is_none());
-        assert!(result.rollback_error.is_some());
-        let status = result.apply.status_suffix_after_rollback_attempt(
-            Language::English,
-            result.rollback_error.as_ref(),
-        );
+        let SourceMutation::RollbackAttempted {
+            apply,
+            rollback_error,
+        } = result
+        else {
+            panic!("a failed apply must attempt rollback");
+        };
+        assert!(rollback_error.is_some());
+        let status =
+            apply.status_suffix_after_rollback_attempt(Language::English, rollback_error.as_ref());
         assert!(status.contains(Language::English.message(Message::StoreRollbackFailed)));
         assert!(!status.contains(Language::English.message(Message::ChangesFailedAndRestored)));
         assert_eq!(fs::read(store.join("source.state")).unwrap(), b"later save");

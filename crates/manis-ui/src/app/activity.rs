@@ -217,9 +217,7 @@ impl ManisApp {
                         .name
                         .clone()
                         .or_else(|| source.source.subscription_name())
-                        .unwrap_or_else(|| {
-                            copy::activity::numbered_rule_source(language, index + 1)
-                        }),
+                        .unwrap_or_else(|| copy::common::numbered_rule_source(language, index + 1)),
                 );
             }
         }

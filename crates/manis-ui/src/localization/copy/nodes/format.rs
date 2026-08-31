@@ -29,18 +29,19 @@ pub(crate) fn selected_count(language: Language, count: usize) -> String {
 }
 
 pub(crate) fn interval(language: Language, seconds: u32) -> String {
-    match (seconds, language) {
-        (60, Language::English) => "1 min".to_owned(),
-        (60, Language::SimplifiedChinese) => "1 分钟".to_owned(),
-        (300, Language::English) => "5 min".to_owned(),
-        (300, Language::SimplifiedChinese) => "5 分钟".to_owned(),
-        (600, Language::English) => "10 min".to_owned(),
-        (600, Language::SimplifiedChinese) => "10 分钟".to_owned(),
-        (1_800, Language::English) => "30 min".to_owned(),
-        (1_800, Language::SimplifiedChinese) => "30 分钟".to_owned(),
-        (seconds, Language::English) => format!("{seconds} sec"),
-        (seconds, Language::SimplifiedChinese) => format!("{seconds} 秒"),
-    }
+    let label = match seconds {
+        60 => super::INTERVAL_1_MINUTE,
+        300 => super::INTERVAL_5_MINUTES,
+        600 => super::INTERVAL_10_MINUTES,
+        1_800 => super::INTERVAL_30_MINUTES,
+        _ => {
+            return match language {
+                Language::English => format!("{seconds} sec"),
+                Language::SimplifiedChinese => format!("{seconds} 秒"),
+            };
+        }
+    };
+    language.localized(label).to_owned()
 }
 
 pub(crate) fn candidate_selection_title(language: Language, selected: usize) -> String {

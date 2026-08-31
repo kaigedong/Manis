@@ -294,8 +294,12 @@ fn environment_locale() -> Option<String> {
     ["LANGUAGE", "LC_ALL", "LC_MESSAGES", "LANG"]
         .into_iter()
         .filter_map(|key| std::env::var(key).ok())
-        .flat_map(|value| value.split(':').map(str::to_owned).collect::<Vec<_>>())
-        .find(|value| !value.trim().is_empty() && !is_neutral_locale(value))
+        .find_map(|value| {
+            value
+                .split(':')
+                .find(|locale| !locale.trim().is_empty() && !is_neutral_locale(locale))
+                .map(str::to_owned)
+        })
 }
 
 fn is_neutral_locale(locale: &str) -> bool {

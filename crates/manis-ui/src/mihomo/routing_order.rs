@@ -25,18 +25,20 @@ pub(crate) fn normalized_routing_rule_group_order(
     let mut seen = BTreeSet::new();
     let mut order = stored_order
         .iter()
-        .filter(|id| {
-            (has_manual_rules && id.as_str() == MANUAL_ROUTING_RULE_GROUP_ID)
-                || source_ids.contains(id.as_str())
+        .filter_map(|id| {
+            let id = id.as_str();
+            let retained =
+                (has_manual_rules && id == MANUAL_ROUTING_RULE_GROUP_ID) || source_ids.contains(id);
+            retained.then_some(id)
         })
-        .filter(|id| seen.insert((*id).clone()))
-        .cloned()
+        .filter(|id| seen.insert(*id))
+        .map(str::to_owned)
         .collect::<Vec<_>>();
-    if has_manual_rules && seen.insert(MANUAL_ROUTING_RULE_GROUP_ID.to_owned()) {
+    if has_manual_rules && seen.insert(MANUAL_ROUTING_RULE_GROUP_ID) {
         order.insert(0, MANUAL_ROUTING_RULE_GROUP_ID.to_owned());
     }
     for source in sources {
-        if seen.insert(source.id.clone()) {
+        if seen.insert(source.id.as_str()) {
             order.push(source.id.clone());
         }
     }
@@ -122,10 +124,9 @@ pub(crate) fn load_routing_rule_group_order_in(
     }
     let mut seen = BTreeSet::new();
     lines
-        .map(str::to_owned)
         .map(|id| {
-            if valid_routing_rule_group_id(&id) && seen.insert(id.clone()) {
-                Ok(id)
+            if valid_routing_rule_group_id(id) && seen.insert(id) {
+                Ok(id.to_owned())
             } else {
                 Err(SubscriptionStoreError::StoredSourceUnavailable)
             }

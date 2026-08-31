@@ -935,7 +935,7 @@ pub(crate) fn load(
     endpoint: &str,
     controller_secret: Option<&str>,
 ) -> Result<LoadedSnapshot, LoadError> {
-    Ok(loaded_snapshot(&fetch_snapshot(
+    Ok(loaded_snapshot(fetch_snapshot(
         endpoint,
         controller_secret,
     )?))
@@ -945,26 +945,28 @@ pub(crate) fn load_sing_box(
     endpoint: &str,
     controller_secret: Option<&str>,
 ) -> Result<LoadedSnapshot, LoadError> {
-    Ok(loaded_snapshot(&fetch_sing_box_snapshot(
+    Ok(loaded_snapshot(fetch_sing_box_snapshot(
         endpoint,
         controller_secret,
     )?))
 }
 
-fn loaded_snapshot(snapshot: &MihomoSnapshot) -> LoadedSnapshot {
-    let catalog = to_policy_catalog(snapshot).ok();
+fn loaded_snapshot(snapshot: MihomoSnapshot) -> LoadedSnapshot {
+    let catalog = to_policy_catalog(&snapshot).ok();
     let providers = load_providers(&snapshot.providers);
-    let version = snapshot
-        .version
-        .version
-        .clone()
-        .unwrap_or_else(|| "unknown version".to_owned());
-    let active_connections = snapshot.connections.connections.len();
-    let download_total = snapshot.connections.download_total;
-    let upload_total = snapshot.connections.upload_total;
     let observed_routes = snapshot.observed_routes();
-    let connections = snapshot.connections.connections.clone();
-    let runtime = snapshot.runtime.clone();
+    let MihomoSnapshot {
+        version,
+        connections,
+        runtime,
+        ..
+    } = snapshot;
+    let version = version
+        .version
+        .unwrap_or_else(|| "unknown version".to_owned());
+    let active_connections = connections.connections.len();
+    let download_total = connections.download_total;
+    let upload_total = connections.upload_total;
 
     LoadedSnapshot {
         catalog,
@@ -974,7 +976,7 @@ fn loaded_snapshot(snapshot: &MihomoSnapshot) -> LoadedSnapshot {
         download_total,
         upload_total,
         observed_routes,
-        connections,
+        connections: connections.connections,
         runtime,
     }
 }
