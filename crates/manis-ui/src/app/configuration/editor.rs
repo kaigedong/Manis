@@ -16,7 +16,7 @@ impl ManisApp {
         let language = self.language();
         if !self.begin_configuration_transfer(
             language.localized(copy::backup::LOADING_CURRENT),
-            TransferPresentation::Inline,
+            TransferPresentation::StatusBar,
             window,
             cx,
         ) {
@@ -29,7 +29,7 @@ impl ManisApp {
         let executor = cx.background_executor().clone();
         cx.spawn_in(window, async move |this, cx| {
             let result = executor
-                .spawn(async move { crate::config_backup::export_backup(&store) })
+                .spawn(async move { crate::config_backup::read_configuration_for_editing(&store) })
                 .await;
             this.update_in(cx, |this, window, cx| match result {
                 Ok(text) => {
@@ -72,6 +72,9 @@ impl ManisApp {
         self.language()
             .localized(copy::backup::READING)
             .clone_into(&mut self.configuration_transfer.message);
+        self.configuration_transfer
+            .message
+            .clone_into(&mut self.status);
         let executor = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
             let result = executor

@@ -120,9 +120,11 @@ the user.
 
 Under Settings → General → Backup and migration, export a complete `.manis.json` file and import it
 on another device. Export and file import show only the system file picker; import opens a preview
-after the selected file passes validation. **Edit configuration** opens the current complete
+after the selected file passes validation. Progress and results appear in the bottom status bar
+without resizing the settings card. **Edit configuration** opens the current complete
 configuration in a text editor. Edit it directly or paste an exported file, then validate and preview.
-You can return to editing or cancel without changing the stored configuration.
+Even a configuration with stale policy references can be opened for repair, but invalid drafts cannot
+be applied. You can return to editing or cancel without changing the stored configuration.
 
 Only **Replace and restart** applies the preview: Manis stops its proxy and core, backs up the old
 configuration, replaces it and restarts. This is Manis's backup format, not Mihomo YAML. It contains
@@ -146,8 +148,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full workflow.
 Proxy and rule sources in Settings highlight the full card on hover, with enable checkboxes centered
 vertically against the complete card content.
 
-The current policy outlet uses the same neutral selection fill as the Nodes page, retaining its
-selection mark and Current outlet label. Policy groups expand downward and scroll when needed without
+Automatic and manual policy groups use the same neutral selection fill and Current outlet label,
+without leading radio circles or checkmarks. Policy groups expand downward and scroll when needed without
 compressing adjacent cards. The routing
 rules page places its description, rule counts, and Add button in one header above the groups; group
 headers show a pointer cursor on hover. Log references, levels, messages, and timestamps are vertically

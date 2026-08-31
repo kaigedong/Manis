@@ -345,16 +345,16 @@ fn policy_scroll_response(path: &str) -> String {
             }),
         );
     }
-    for name in [
-        "01 全部节点",
-        "02 自动选择",
-        "03 日常使用",
-        "04 最后一个策略组",
+    for (name, kind) in [
+        ("01 全部节点", "Selector"),
+        ("02 自动选择", "URLTest"),
+        ("03 日常使用", "Fallback"),
+        ("04 最后一个策略组", "LoadBalance"),
     ] {
         proxies.insert(
             name.to_owned(),
             json!({
-                "name": name, "type": "Selector", "now": nodes[0], "all": nodes, "alive": true
+                "name": name, "type": kind, "now": nodes[0], "all": nodes, "alive": true
             }),
         );
     }

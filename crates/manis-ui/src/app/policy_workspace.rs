@@ -1126,8 +1126,6 @@ impl ManisApp {
             .latency_ms
             .map_or_else(|| "—".to_owned(), |latency| format!("{latency} ms"));
         let spinner_id = format!("policy-node-{}-{}-latency", policy_id.as_str(), item.id.as_str());
-        let leading =
-            Self::policy_node_leading(item.kind, manually_selectable, current, language, theme);
         let description = Self::policy_node_description(
             Self::policy_candidate_display_name(&item.name).to_owned(),
             detail,
@@ -1136,7 +1134,7 @@ impl ManisApp {
             language,
             theme,
         );
-        let source = Self::policy_node_source(source, manually_selectable, theme);
+        let source = Self::policy_node_source(source, current, manually_selectable, theme);
         div()
             .id(format!("policy-node-{}-{}", policy_id.as_str(), item.id.as_str()))
             .tab_stop(manually_selectable && !selection_busy)
@@ -1153,7 +1151,6 @@ impl ManisApp {
             } else {
                 theme.surface_base
             })
-            .child(leading)
             .child(description)
             .child(source)
             .child(
@@ -1199,7 +1196,12 @@ impl ManisApp {
             })
     }
 
-    fn policy_node_source(source: String, manually_selectable: bool, theme: Theme) -> Div {
+    fn policy_node_source(
+        source: String,
+        current: bool,
+        manually_selectable: bool,
+        theme: Theme,
+    ) -> Div {
         div()
             .w(px(100.0))
             .flex_shrink_0()
@@ -1208,7 +1210,7 @@ impl ManisApp {
             .text_ellipsis()
             .text_size(TextRole::Metadata.size())
             .line_height(TextRole::Metadata.line_height())
-            .text_color(if manually_selectable {
+            .text_color(if current || manually_selectable {
                 theme.text_secondary
             } else {
                 theme.text_tertiary
@@ -1261,48 +1263,6 @@ impl ManisApp {
                     .text_color(theme.text_tertiary)
                     .child(detail),
             )
-    }
-
-    fn policy_node_leading(
-        kind: manis_core::PolicyCandidateKind,
-        manually_selectable: bool,
-        current: bool,
-        language: Language,
-        theme: Theme,
-    ) -> Div {
-        if manually_selectable {
-            return div()
-                .size(px(18.0))
-                .rounded_full()
-                .border_2()
-                .border_color(if current {
-                    theme.action_primary
-                } else {
-                    theme.outline_strong
-                })
-                .when(current, |dot| dot.bg(theme.action_primary));
-        }
-        if current {
-            return div().size(px(22.0)).flex().items_center().justify_center()
-                .text_color(theme.text_primary)
-                .child(gpui_component::Icon::new(IconName::Check).small());
-        }
-        div()
-            .size(px(22.0))
-            .rounded(Radius::Control.px())
-            .bg(theme.surface_high)
-            .text_size(TextRole::Metadata.size())
-            .line_height(TextRole::Metadata.line_height())
-            .font_weight(TextRole::Label.weight())
-            .text_color(theme.text_tertiary)
-            .flex()
-            .items_center()
-            .justify_center()
-            .child(if kind == manis_core::PolicyCandidateKind::PolicyGroup {
-                language.localized(copy::app::G)
-            } else {
-                language.localized(copy::app::N)
-            })
     }
 
     fn editable_policy_group_id(&self, policy_name: &str) -> Option<&str> {

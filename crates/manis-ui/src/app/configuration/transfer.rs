@@ -10,7 +10,7 @@ enum TransferProgress {
 enum TransferPresentation {
     #[default]
     Dialog,
-    Inline,
+    StatusBar,
 }
 
 #[derive(Default)]
@@ -40,6 +40,89 @@ mod transfer_tests {
     use super::ManisApp;
     use gpui::{AppContext as _, ClipboardItem};
     use gpui_component::WindowExt as _;
+
+    struct BackupPanelHarness(gpui::Entity<ManisApp>);
+
+    impl gpui::Render for BackupPanelHarness {
+        fn render(
+            &mut self,
+            _: &mut gpui::Window,
+            cx: &mut gpui::Context<Self>,
+        ) -> impl gpui::IntoElement {
+            use gpui::{InteractiveElement as _, ParentElement as _, Styled as _};
+            gpui::div()
+                .w(gpui::px(640.0))
+                .child(self.0.update(cx, |app, cx| {
+                    app.configuration_transfer_panel(crate::theme::Theme::light(), true, cx)
+                        .debug_selector(|| "backup-card".into())
+                }))
+        }
+    }
+
+    #[gpui::test]
+    fn transfer_feedback_stays_in_status_bar_without_resizing_the_card(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(crate::init);
+        let app = cx.new(|_| {
+            ManisApp::with_fixture_controller_and_subscription_store(
+                "http://127.0.0.1:1",
+                unique_temp_store("manis-transfer-layout"),
+            )
+        });
+        let (_, cx) = cx.add_window_view(|_, _| BackupPanelHarness(app.clone()));
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let initial = cx.debug_bounds("backup-card").expect("backup card renders");
+        for (pending, finished, failed) in [
+            (
+                super::copy::backup::EXPORTING,
+                super::copy::backup::EXPORTED,
+                false,
+            ),
+            (
+                super::copy::backup::READING,
+                super::copy::backup::INVALID,
+                true,
+            ),
+            (
+                super::copy::backup::LOADING_CURRENT,
+                super::copy::backup::EDIT_FAILED,
+                true,
+            ),
+        ] {
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    let message = app.language().localized(pending);
+                    assert!(app.begin_configuration_transfer(
+                        message,
+                        super::TransferPresentation::StatusBar,
+                        window,
+                        cx
+                    ));
+                    assert_eq!(app.status, message);
+                });
+                window.draw(cx).clear(cx);
+            });
+            assert_eq!(
+                cx.debug_bounds("backup-card"),
+                Some(initial),
+                "progress must not resize the card"
+            );
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    let message = app.language().localized(finished);
+                    app.finish_configuration_transfer(message, failed, cx);
+                    assert_eq!(app.status, message);
+                });
+                window.draw(cx).clear(cx);
+            });
+            assert_eq!(
+                cx.debug_bounds("backup-card"),
+                Some(initial),
+                "results must not resize the card"
+            );
+        }
+    }
 
     #[gpui::test]
     fn file_export_produces_an_importable_backup_without_changing_sources(
@@ -327,6 +410,69 @@ mod transfer_tests {
     }
 
     #[gpui::test]
+    fn editor_opens_dangling_policy_references_but_requires_repair_before_preview(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use manis_core::{ManagedPolicyGroup, NodeIdentity, PolicyCandidateMatcher};
+        cx.update(crate::init);
+        let store = unique_temp_store("manis-editor-dangling-policy");
+        let mut group = ManagedPolicyGroup::new("policy-1", "Test group").unwrap();
+        group.matcher = PolicyCandidateMatcher::Explicit(
+            [NodeIdentity::new("policy:policy-2", "Removed group").unwrap()]
+                .into_iter()
+                .collect(),
+        );
+        crate::mihomo::save_managed_policy_in(&store, &group).unwrap();
+        let original = std::fs::read(store.join("policy-1.policy")).unwrap();
+        assert!(crate::config_backup::export_backup(&store).is_err());
+        let mut app = None;
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            let entity = cx.new(|_| {
+                ManisApp::with_fixture_controller_and_subscription_store(
+                    "http://127.0.0.1:1",
+                    store.clone(),
+                )
+            });
+            app = Some(entity.clone());
+            crate::root(entity, window, cx)
+        });
+        let app = app.unwrap();
+        cx.update(|window, cx| app.update(cx, |app, cx| app.edit_configuration(window, cx)));
+        cx.run_until_parked();
+        let editor = app.read_with(cx, |app, _| {
+            app.configuration_transfer
+                .editor
+                .clone()
+                .expect("invalid references must remain editable")
+        });
+        let draft = editor.read_with(cx, |editor, _| editor.value());
+        let document: serde_json::Value = serde_json::from_str(&draft).unwrap();
+        assert_eq!(
+            document["files"][0]["contents"],
+            String::from_utf8(original.clone()).unwrap()
+        );
+        cx.update(|window, cx| {
+            assert!(window.has_active_dialog(cx));
+            app.update(cx, ManisApp::preview_configuration_edits);
+        });
+        cx.run_until_parked();
+        app.read_with(cx, |app, _| {
+            assert!(app.configuration_transfer.preview.is_none());
+            assert!(app.configuration_transfer.failed);
+            assert!(app.configuration_transfer.active);
+        });
+        assert_eq!(editor.read_with(cx, |editor, _| editor.value()), draft);
+        assert_eq!(
+            std::fs::read(store.join("policy-1.policy")).unwrap(),
+            original
+        );
+        cx.update(|window, cx| {
+            app.update(cx, |app, cx| app.cancel_configuration_transfer(window, cx));
+        });
+        std::fs::remove_dir_all(store.parent().unwrap()).unwrap();
+    }
+
+    #[gpui::test]
     fn editor_prefills_current_configuration_and_preserves_invalid_edits(
         cx: &mut gpui::TestAppContext,
     ) {
@@ -458,7 +604,7 @@ impl ManisApp {
         let language = self.language();
         if !self.begin_configuration_transfer(
             language.localized(copy::backup::EXPORTING),
-            TransferPresentation::Inline,
+            TransferPresentation::StatusBar,
             window,
             cx,
         ) {
@@ -525,7 +671,7 @@ impl ManisApp {
         let language = self.language();
         if !self.begin_configuration_transfer(
             language.localized(copy::backup::READING),
-            TransferPresentation::Inline,
+            TransferPresentation::StatusBar,
             window,
             cx,
         ) {
@@ -782,11 +928,6 @@ impl ManisApp {
                     .text_color(theme.text_secondary)
                     .child(language.localized(copy::backup::EXCLUDED)),
             )
-            .when(
-                self.configuration_transfer.presentation == TransferPresentation::Inline
-                    && !self.configuration_transfer.message.is_empty(),
-                |panel| panel.child(self.configuration_transfer_feedback(theme, language)),
-            )
             .when_some(
                 self.subscription_store_dir
                     .as_deref()
@@ -805,40 +946,6 @@ impl ManisApp {
                     )
                 },
             )
-    }
-
-    fn configuration_transfer_feedback(&self, theme: Theme, language: Language) -> Div {
-        let state = &self.configuration_transfer;
-        div()
-            .mt(Space::Md.px())
-            .flex()
-            .flex_wrap()
-            .items_center()
-            .gap(Space::Sm.px())
-            .child(
-                div()
-                    .id("configuration-transfer-status")
-                    .role(Role::Status)
-                    .text_size(TextRole::Metadata.size())
-                    .line_height(TextRole::Metadata.line_height())
-                    .text_color(if state.failed {
-                        theme.status_error
-                    } else {
-                        theme.text_secondary
-                    })
-                    .child(state.message.clone()),
-            )
-            .when_some(state.output_path.clone(), |row, path| {
-                row.child(
-                    action_button(
-                        "configuration-export-show",
-                        language.localized(copy::backup::SHOW_FILE),
-                        ActionRole::Secondary,
-                        ControlSize::Compact,
-                    )
-                    .on_click(move |_, _, cx| cx.reveal_path(&path)),
-                )
-            })
     }
 
     fn configuration_mutation_busy(&self) -> bool {
@@ -919,7 +1026,7 @@ impl ManisApp {
         cx: &mut Context<Self>,
     ) {
         self.configuration_transfer.progress = TransferProgress::Idle;
-        if self.configuration_transfer.presentation == TransferPresentation::Inline {
+        if self.configuration_transfer.presentation == TransferPresentation::StatusBar {
             self.configuration_transfer.active = false;
         }
         self.configuration_transfer.failed = failed;
