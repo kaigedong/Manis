@@ -24,14 +24,15 @@ impl ManisApp {
             .as_ref()
             .map(|input| input.read(cx).value().trim().to_owned())
             .unwrap_or_default();
+        let normalized_query = query.to_lowercase();
         let logs = recent_ui_logs()
             .into_iter()
-            .filter(|entry| ui_log_matches_query(entry, &query))
+            .filter(|entry| ui_log_matches_query(entry, &normalized_query))
             .collect::<Vec<_>>();
         let kernel_logs = self
             .kernel_logs
             .iter()
-            .filter(|entry| kernel_log_matches_query(entry, &query))
+            .filter(|entry| kernel_log_matches_query(entry, &normalized_query))
             .collect::<Vec<_>>();
         let count = logs.len() + kernel_logs.len();
         let language = self.language();
@@ -249,11 +250,10 @@ fn log_timestamp(timestamp: String, theme: Theme) -> Div {
         .child(timestamp)
 }
 
-fn ui_log_matches_query(entry: &UiLogEntry, query: &str) -> bool {
-    if query.is_empty() {
+fn ui_log_matches_query(entry: &UiLogEntry, normalized_query: &str) -> bool {
+    if normalized_query.is_empty() {
         return true;
     }
-    let query = query.to_lowercase();
     let operation = entry
         .operation_id
         .map(|operation| format!("op-{operation:04}"));
@@ -265,18 +265,17 @@ fn ui_log_matches_query(entry: &UiLogEntry, query: &str) -> bool {
     ]
     .into_iter()
     .flatten()
-    .any(|value| value.to_lowercase().contains(&query))
-        || entry.sequence.to_string().contains(&query)
+    .any(|value| value.to_lowercase().contains(normalized_query))
+        || entry.sequence.to_string().contains(normalized_query)
 }
 
-fn kernel_log_matches_query(entry: &KernelLogEntry, query: &str) -> bool {
-    if query.is_empty() {
+fn kernel_log_matches_query(entry: &KernelLogEntry, normalized_query: &str) -> bool {
+    if normalized_query.is_empty() {
         return true;
     }
-    let query = query.to_lowercase();
-    entry.level.to_lowercase().contains(&query)
-        || entry.payload.to_lowercase().contains(&query)
-        || format!("k#{:04}", entry.sequence).contains(&query)
+    entry.level.to_lowercase().contains(normalized_query)
+        || entry.payload.to_lowercase().contains(normalized_query)
+        || format!("k#{:04}", entry.sequence).contains(normalized_query)
 }
 
 fn logs_summary(language: Language, count: usize) -> String {
@@ -420,7 +419,7 @@ mod tests {
         };
 
         for query in ["proxy", "ERROR", "timed out", "op-0005", "12", ""] {
-            assert!(super::ui_log_matches_query(&entry, query));
+            assert!(super::ui_log_matches_query(&entry, &query.to_lowercase()));
         }
         assert!(!super::ui_log_matches_query(&entry, "routing"));
     }

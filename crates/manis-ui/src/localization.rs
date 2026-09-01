@@ -5,6 +5,8 @@ use std::process::Command;
 
 use manis_profile::write_private_atomic;
 
+use crate::diagnostics::{LogLevel, record_event};
+
 pub(crate) mod copy;
 
 const LANGUAGE_PREFERENCE_FILE: &str = "language.preference";
@@ -261,9 +263,20 @@ pub(crate) struct Localizer {
 impl Localizer {
     #[must_use]
     pub(crate) fn load(directory: Option<&Path>) -> Self {
-        let preference = directory
-            .and_then(|directory| load_language_preference_in(directory).ok())
-            .unwrap_or_default();
+        let preference = match directory {
+            Some(directory) => match load_language_preference_in(directory) {
+                Ok(preference) => preference,
+                Err(error) => {
+                    record_event(
+                        LogLevel::Warn,
+                        "localization.preference.load_failed",
+                        error.to_string(),
+                    );
+                    LanguagePreference::default()
+                }
+            },
+            None => LanguagePreference::default(),
+        };
         Self {
             preference,
             system_locale: detect_system_locale(),
@@ -375,7 +388,12 @@ pub(crate) fn load_language_preference_in(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Ok(LanguagePreference::FollowSystem);
         }
-        Err(_error) => return Err(LanguagePreferenceError::Unavailable),
+        Err(error) => {
+            return Err(LanguagePreferenceError::unavailable(
+                "inspect language preference",
+                error,
+            ));
+        }
     };
     if metadata.file_type().is_symlink()
         || !metadata.is_file()
@@ -383,7 +401,8 @@ pub(crate) fn load_language_preference_in(
     {
         return Err(LanguagePreferenceError::UnsafeFile);
     }
-    let value = fs::read_to_string(path).map_err(|_error| LanguagePreferenceError::Unavailable)?;
+    let value = fs::read_to_string(path)
+        .map_err(|error| LanguagePreferenceError::unavailable("read language preference", error))?;
     LanguagePreference::parse(value.trim_end_matches(['\r', '\n']))
         .ok_or(LanguagePreferenceError::InvalidValue)
 }
@@ -394,27 +413,51 @@ pub(crate) fn save_language_preference_in(
 ) -> Result<PathBuf, LanguagePreferenceError> {
     let contents = format!("{}\n", preference.persistence_key());
     write_private_atomic(directory, LANGUAGE_PREFERENCE_FILE, contents.as_bytes())
-        .map_err(|_error| LanguagePreferenceError::Unavailable)
+        .map_err(|error| LanguagePreferenceError::unavailable("save language preference", error))
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Debug)]
 pub(crate) enum LanguagePreferenceError {
-    Unavailable,
+    Unavailable {
+        operation: &'static str,
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
     UnsafeFile,
     InvalidValue,
+}
+
+impl LanguagePreferenceError {
+    fn unavailable(
+        operation: &'static str,
+        source: impl std::error::Error + Send + Sync + 'static,
+    ) -> Self {
+        Self::Unavailable {
+            operation,
+            source: Box::new(source),
+        }
+    }
 }
 
 impl std::fmt::Display for LanguagePreferenceError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(match self {
-            Self::Unavailable => "language preference could not be read or saved",
+            Self::Unavailable { operation, source } => {
+                return write!(formatter, "{operation} failed: {source}");
+            }
             Self::UnsafeFile => "language preference is not a safe regular file",
             Self::InvalidValue => "language preference contains an unknown value",
         })
     }
 }
 
-impl std::error::Error for LanguagePreferenceError {}
+impl std::error::Error for LanguagePreferenceError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Unavailable { source, .. } => Some(source.as_ref()),
+            Self::UnsafeFile | Self::InvalidValue => None,
+        }
+    }
+}
 
 #[cfg(all(test, not(windows)))]
 mod tests {
@@ -633,5 +676,20 @@ mod tests {
         }
 
         fs::remove_dir_all(root).expect("remove fixture");
+    }
+
+    #[test]
+    fn preference_io_errors_keep_their_source() {
+        let error = super::LanguagePreferenceError::unavailable(
+            "read language preference",
+            std::io::Error::other("fixture failure"),
+        );
+
+        assert!(std::error::Error::source(&error).is_some());
+        assert!(error.to_string().contains("fixture failure"));
+        assert_eq!(
+            copy::configuration::language_preference_error(Language::English, &error),
+            "The language preference could not be read or saved"
+        );
     }
 }

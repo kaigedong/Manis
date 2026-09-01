@@ -89,7 +89,7 @@ fn policy_catalog_requires_a_group_and_preserves_runtime_data() -> Result<(), Em
         id: PolicyGroupId::new(String::from("AI 自动选择")),
         name: String::from("AI 自动选择"),
         kind: PolicyGroupKind::UrlTest,
-        target: String::from("新加坡 SG-02"),
+        target: Some(String::from("新加坡 SG-02")),
         nodes: vec![PolicyNode {
             id: ProxyId::new(String::from("新加坡 SG-02")),
             name: String::from("新加坡 SG-02"),
@@ -112,7 +112,7 @@ fn policy_catalog_requires_a_group_and_preserves_runtime_data() -> Result<(), Em
     let catalog = PolicyCatalog::try_new(vec![group])?;
     let selected = catalog.select(Some(&PolicyGroupId::new("AI 自动选择")));
 
-    assert_eq!(selected.target, "新加坡 SG-02");
+    assert_eq!(selected.target.as_deref(), Some("新加坡 SG-02"));
     assert_eq!(selected.nodes[0].kind, PolicyCandidateKind::PolicyGroup);
     assert_eq!(selected.nodes[0].latency_ms, Some(54));
     assert_eq!(selected.rules[0].hit_count, Some(9));
@@ -128,7 +128,7 @@ fn policy_catalog_applies_fresh_group_delays_and_automatic_winner() -> Result<()
         id: PolicyGroupId::new("auto-hk"),
         name: "我的香港优选".to_owned(),
         kind: PolicyGroupKind::UrlTest,
-        target: "HK-01".to_owned(),
+        target: Some("HK-01".to_owned()),
         nodes: vec![
             PolicyNode {
                 id: ProxyId::new("HK-01"),
@@ -158,7 +158,7 @@ fn policy_catalog_applies_fresh_group_delays_and_automatic_winner() -> Result<()
     assert!(catalog.apply_group_benchmark(&PolicyGroupId::new("auto-hk"), Some("HK-02"), &delays,));
 
     let selected = catalog.select(Some(&PolicyGroupId::new("auto-hk")));
-    assert_eq!(selected.target, "HK-02");
+    assert_eq!(selected.target.as_deref(), Some("HK-02"));
     assert_eq!(selected.nodes[0].latency_ms, None);
     assert_eq!(selected.nodes[0].alive, Some(false));
     assert_eq!(selected.nodes[1].latency_ms, Some(31));
@@ -175,7 +175,7 @@ fn policy_catalog_records_validated_selector_targets_by_id_or_name()
             id: PolicyGroupId::new("global-id"),
             name: "GLOBAL".to_owned(),
             kind: PolicyGroupKind::Selector,
-            target: "DIRECT".to_owned(),
+            target: Some("DIRECT".to_owned()),
             nodes: vec![
                 PolicyNode {
                     id: ProxyId::new("DIRECT"),
@@ -203,7 +203,7 @@ fn policy_catalog_records_validated_selector_targets_by_id_or_name()
             id: PolicyGroupId::new("auto"),
             name: "Auto".to_owned(),
             kind: PolicyGroupKind::UrlTest,
-            target: "Proxy".to_owned(),
+            target: Some("Proxy".to_owned()),
             nodes: vec![PolicyNode {
                 id: ProxyId::new("Proxy"),
                 name: "Proxy".to_owned(),
@@ -223,21 +223,21 @@ fn policy_catalog_records_validated_selector_targets_by_id_or_name()
         catalog
             .select(Some(&PolicyGroupId::new("global-id")))
             .target,
-        "Proxy"
+        Some("Proxy".to_owned())
     );
     assert!(catalog.apply_selector_target("GLOBAL", "DIRECT"));
     assert_eq!(
         catalog
             .select(Some(&PolicyGroupId::new("global-id")))
             .target,
-        "DIRECT"
+        Some("DIRECT".to_owned())
     );
     assert!(!catalog.apply_selector_target("GLOBAL", "Missing"));
     assert!(!catalog.apply_selector_target("missing-group", "Proxy"));
     assert!(!catalog.apply_selector_target("Auto", "Proxy"));
     assert_eq!(
         catalog.select(Some(&PolicyGroupId::new("auto"))).target,
-        "Proxy"
+        Some("Proxy".to_owned())
     );
     Ok(())
 }
@@ -271,14 +271,11 @@ fn replacing_a_data_source_keeps_size_but_resets_navigation_and_selection() {
 }
 
 #[test]
-fn primary_workspace_switches_between_nodes_and_configuration() {
-    let mut active = PrimaryWorkspace::default();
-
-    assert_eq!(active, PrimaryWorkspace::navigation_order()[0]);
-    active = PrimaryWorkspace::RoutingRules;
-    assert_eq!(active, PrimaryWorkspace::RoutingRules);
-    active = PrimaryWorkspace::Configuration;
-    assert_eq!(active, PrimaryWorkspace::Configuration);
+fn primary_workspace_defaults_to_the_first_navigation_item() {
+    assert_eq!(
+        PrimaryWorkspace::default(),
+        PrimaryWorkspace::navigation_order()[0]
+    );
 }
 
 #[test]

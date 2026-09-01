@@ -108,7 +108,9 @@ impl SourceRuntimeApply {
                 "{}{message}",
                 language.message(Message::ChangesFailedAndRestored)
             ),
-            _ => self.status_suffix(language),
+            Self::MetadataOnly
+            | Self::Applied(GeneratedProfileApply::Updated | GeneratedProfileApply::Restarted)
+            | Self::ProxyModeLost(_) => self.status_suffix(language),
         }
     }
 

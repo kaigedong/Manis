@@ -1,7 +1,12 @@
 use gpui::{AnyElement, Div, FontWeight, ParentElement, Styled, div, prelude::*, px};
 use manis_core::WindowSizeClass;
 use manis_mihomo::Connection;
-use manis_profile::{MANIS_GLOBAL_GROUP_NAME, QxRuleKind, QxRuleList};
+
+mod matching;
+mod search;
+
+use matching::ActivityRuleMatcher;
+use search::{ConnectionSearchText, user_route_stages};
 
 use super::{ManisApp, format_bytes};
 use crate::{
@@ -9,6 +14,12 @@ use crate::{
     localization::{CountNoun, Language, Message, copy},
     theme::{ControlSize, Space, TextRole, Theme},
 };
+
+struct ActivityConnectionView<'connection, 'matcher> {
+    connection: &'connection Connection,
+    rule_group: Option<&'matcher str>,
+    search_text: ConnectionSearchText,
+}
 
 impl ManisApp {
     pub(super) fn activity_workspace(
@@ -24,19 +35,40 @@ impl ManisApp {
             .as_ref()
             .map(|input| input.read(cx).value().trim().to_owned())
             .unwrap_or_default();
+        let normalized_query = query.to_lowercase();
         let language = self.language();
+        let group_order = crate::mihomo::normalized_routing_rule_group_order(
+            &self.rule_sources.group_order,
+            !self.manual_rules.is_empty(),
+            &self.rule_sources.sources,
+        );
+        let rule_matcher = ActivityRuleMatcher::new(
+            &group_order,
+            &self.manual_rules,
+            &self.rule_sources.sources,
+            language,
+        );
         let visible_connections = self
             .active_connections
             .iter()
-            .filter(|connection| {
-                connection_matches_query(connection, &query)
-                    || self
-                        .route_rule_group_label(connection, language)
-                        .is_some_and(|group| group.to_lowercase().contains(&query.to_lowercase()))
+            .map(|connection| {
+                let rule_group = rule_matcher.matching_group(connection);
+                ActivityConnectionView {
+                    connection,
+                    rule_group,
+                    search_text: ConnectionSearchText::new(connection, rule_group),
+                }
             })
+            .filter(|view| view.search_text.matches(&normalized_query))
             .collect::<Vec<_>>();
-        let total_upload: u64 = visible_connections.iter().map(|item| item.upload).sum();
-        let total_download: u64 = visible_connections.iter().map(|item| item.download).sum();
+        let total_upload: u64 = visible_connections
+            .iter()
+            .map(|item| item.connection.upload)
+            .sum();
+        let total_download: u64 = visible_connections
+            .iter()
+            .map(|item| item.connection.download)
+            .sum();
         let visible_count = visible_connections.len();
         let total_count = self.active_connections.len();
         let summary = activity_summary(
@@ -58,7 +90,7 @@ impl ManisApp {
         )
         .on_click(cx.listener(|this, _, _, cx| this.connect_mihomo(cx)))
         .into_any_element();
-        let rows = self.activity_rows(
+        let rows = Self::activity_rows(
             &visible_connections,
             query.is_empty(),
             compact,
@@ -74,46 +106,54 @@ impl ManisApp {
             .flex()
             .flex_col()
             .bg(theme.surface_base)
-            .child(
-                div()
-                    .flex_shrink_0()
-                    .px(Space::Xl.px())
-                    .py(Space::Lg.px())
-                    .flex()
-                    .items_center()
-                    .gap(Space::Lg.px())
-                    .when(compact, |header| header.flex_col().items_start())
-                    .border_b_1()
-                    .border_color(theme.outline_subtle)
-                    .child(div().flex_1().min_w_0().child(page_heading(
-                        language.message(Message::NetworkActivity),
-                        summary,
-                        None,
-                        theme,
-                    )))
-                    .child(
-                        div()
-                            .flex_shrink_0()
-                            .flex()
-                            .items_center()
-                            .gap(Space::Sm.px())
-                            .when(compact, gpui::Styled::w_full)
-                            .when_some(self.inputs.activity_search.clone(), |tools, input| {
-                                tools.child(
-                                    div()
-                                        .w(if compact { px(210.0) } else { px(320.0) })
-                                        .child(input),
-                                )
-                            })
-                            .child(reconnect),
-                    ),
-            )
+            .child(self.activity_header(compact, summary, reconnect, language, theme))
             .child(rows)
     }
 
-    fn activity_rows(
+    fn activity_header(
         &self,
-        visible_connections: &[&Connection],
+        compact: bool,
+        summary: String,
+        reconnect: AnyElement,
+        language: Language,
+        theme: Theme,
+    ) -> Div {
+        div()
+            .flex_shrink_0()
+            .px(Space::Xl.px())
+            .py(Space::Lg.px())
+            .flex()
+            .items_center()
+            .gap(Space::Lg.px())
+            .when(compact, |header| header.flex_col().items_start())
+            .border_b_1()
+            .border_color(theme.outline_subtle)
+            .child(div().flex_1().min_w_0().child(page_heading(
+                language.message(Message::NetworkActivity),
+                summary,
+                None,
+                theme,
+            )))
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    .gap(Space::Sm.px())
+                    .when(compact, gpui::Styled::w_full)
+                    .when_some(self.inputs.activity_search.clone(), |tools, input| {
+                        tools.child(
+                            div()
+                                .w(if compact { px(210.0) } else { px(320.0) })
+                                .child(input),
+                        )
+                    })
+                    .child(reconnect),
+            )
+    }
+
+    fn activity_rows(
+        visible_connections: &[ActivityConnectionView<'_, '_>],
         no_query: bool,
         compact: bool,
         language: Language,
@@ -162,10 +202,10 @@ impl ManisApp {
                 )
             }));
         } else {
-            for connection in visible_connections.iter().copied() {
+            for view in visible_connections {
                 rows = rows.child(activity_row(
-                    connection,
-                    self.route_rule_group_label(connection, language).as_deref(),
+                    view.connection,
+                    view.rule_group,
                     theme,
                     compact,
                     language,
@@ -174,54 +214,6 @@ impl ManisApp {
         }
 
         rows
-    }
-}
-
-impl ManisApp {
-    /// Recovers the Manis routing-rule group because Mihomo's connection chain only contains
-    /// policy groups and the final node. Iterating in configured group order mirrors compilation
-    /// order and therefore preserves first-match semantics when rule sources overlap.
-    fn route_rule_group_label(
-        &self,
-        connection: &Connection,
-        language: Language,
-    ) -> Option<String> {
-        let group_order = crate::mihomo::normalized_routing_rule_group_order(
-            &self.rule_sources.group_order,
-            !self.manual_rules.is_empty(),
-            &self.rule_sources.sources,
-        );
-        for group_id in group_order {
-            if group_id == crate::mihomo::MANUAL_ROUTING_RULE_GROUP_ID {
-                if self
-                    .manual_rules
-                    .iter()
-                    .any(|rule| manual_rule_matches_connection(rule, connection))
-                {
-                    return Some(language.localized(copy::common::MANUAL_RULES).to_owned());
-                }
-                continue;
-            }
-            let Some((index, source)) = self
-                .rule_sources
-                .sources
-                .iter()
-                .enumerate()
-                .find(|(_, source)| source.enabled && source.id == group_id)
-            else {
-                continue;
-            };
-            if qx_source_matches_connection(&source.content, connection) {
-                return Some(
-                    source
-                        .name
-                        .clone()
-                        .or_else(|| source.source.subscription_name())
-                        .unwrap_or_else(|| copy::common::numbered_rule_source(language, index + 1)),
-                );
-            }
-        }
-        None
     }
 }
 
@@ -248,28 +240,6 @@ fn activity_summary(
         format_bytes(total_download),
         format_bytes(total_upload)
     )
-}
-
-fn connection_matches_query(connection: &Connection, query: &str) -> bool {
-    if query.is_empty() {
-        return true;
-    }
-    let query = query.to_lowercase();
-    [
-        connection.metadata.sniff_host.as_deref(),
-        connection.metadata.host.as_deref(),
-        connection.metadata.destination_ip.as_deref(),
-        connection.metadata.remote_destination.as_deref(),
-        connection.metadata.destination_port.as_deref(),
-        connection.metadata.process.as_deref(),
-        connection.metadata.process_path.as_deref(),
-        connection.rule.as_deref(),
-        connection.rule_payload.as_deref(),
-    ]
-    .into_iter()
-    .flatten()
-    .chain(user_route_stages(&connection.chains))
-    .any(|value| value.to_lowercase().contains(&query))
 }
 
 fn activity_row(
@@ -363,12 +333,6 @@ fn activity_row(
         )
 }
 
-fn user_route_stages(chains: &[String]) -> impl DoubleEndedIterator<Item = &str> {
-    chains.iter().map(|stage| stage.trim()).filter(|stage| {
-        !stage.is_empty() && *stage != MANIS_GLOBAL_GROUP_NAME && *stage != "GLOBAL"
-    })
-}
-
 fn route_stage_label(stage: &str, language: Language) -> &str {
     match stage {
         "DIRECT" => language.localized(copy::common::DIRECT),
@@ -392,51 +356,6 @@ fn route_summary_with_group(
         );
     let route = stages.by_ref().collect::<Vec<_>>().join(" → ");
     (!route.is_empty()).then_some(route)
-}
-
-fn normalized_rule_kind(value: &str) -> String {
-    value
-        .chars()
-        .filter(char::is_ascii_alphanumeric)
-        .flat_map(char::to_lowercase)
-        .collect()
-}
-
-fn manual_rule_matches_connection(
-    rule: &crate::manual_rule::ManualRule,
-    connection: &Connection,
-) -> bool {
-    if !rule.is_enabled() {
-        return false;
-    }
-    let Some(kind) = connection.rule.as_deref().map(str::trim) else {
-        return false;
-    };
-    if rule.is_final() {
-        return kind.eq_ignore_ascii_case("Match");
-    }
-    let [condition] = rule.conditions() else {
-        return false;
-    };
-    normalized_rule_kind(kind) == normalized_rule_kind(condition.kind().display_label())
-        && connection.rule_payload.as_deref().map(str::trim) == Some(condition.parameter())
-}
-
-fn qx_source_matches_connection(content: &str, connection: &Connection) -> bool {
-    let Some(kind) = connection.rule.as_deref().map(normalized_rule_kind) else {
-        return false;
-    };
-    let Some(payload) = connection.rule_payload.as_deref().map(str::trim) else {
-        return false;
-    };
-    QxRuleList::parse(content).rules.into_iter().any(|rule| {
-        let source_kind = match rule.kind {
-            QxRuleKind::Domain => "domain",
-            QxRuleKind::DomainKeyword => "domainkeyword",
-            QxRuleKind::DomainSuffix => "domainsuffix",
-        };
-        kind == source_kind && rule.value == payload
-    })
 }
 
 fn connection_metadata(connection: &Connection, language: Language) -> String {
@@ -504,39 +423,6 @@ fn connection_target(connection: &Connection, language: Language) -> String {
 #[cfg(test)]
 mod tests {
     use manis_mihomo::{Connection, ConnectionMetadata};
-
-    #[test]
-    fn activity_filter_matches_target_process_rule_and_route() {
-        let connection = Connection {
-            id: Some("fixture".to_owned()),
-            metadata: ConnectionMetadata {
-                host: Some("www.example.com".to_owned()),
-                process: Some("Browser".to_owned()),
-                destination_port: Some("443".to_owned()),
-                ..ConnectionMetadata::default()
-            },
-            upload: 12,
-            download: 34,
-            start: None,
-            chains: vec![
-                "Hong Kong".to_owned(),
-                "__MANIS_GLOBAL__".to_owned(),
-                "GLOBAL".to_owned(),
-            ],
-            provider_chains: Vec::new(),
-            rule: Some("DomainSuffix".to_owned()),
-            rule_payload: Some("example.com".to_owned()),
-        };
-
-        for query in ["EXAMPLE", "browser", "domainsuffix", "hong kong", ""] {
-            assert!(super::connection_matches_query(&connection, query));
-        }
-        assert!(!super::connection_matches_query(&connection, "telegram"));
-        assert!(!super::connection_matches_query(
-            &connection,
-            "__manis_global__"
-        ));
-    }
 
     #[test]
     fn route_summary_hides_runtime_groups_and_reads_from_policy_to_node() {

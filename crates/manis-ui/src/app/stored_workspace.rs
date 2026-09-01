@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use manis_core::{ManagedPolicyGroup, RoutingMode};
 use manis_profile::write_private_atomic;
@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 use crate::diagnostics::{LogLevel, record_event};
 
 use super::{
-    GroupBenchmarkState, ImportedSubscription, StoredQxRuleSource, StoredSingleNode,
-    SubscriptionStoreError, mihomo,
+    GeneratedProfileApply, GroupBenchmarkState, ImportedSubscription, KernelRuntime, Language,
+    ManisApp, StoredQxRuleSource, StoredSingleNode, SubscriptionStoreError, copy, mihomo,
 };
 
 const BENCHMARK_STATE_FILE: &str = "benchmarks.state";
@@ -37,7 +37,7 @@ pub(super) struct StoredWorkspace {
 }
 
 impl StoredWorkspace {
-    pub(super) fn load(directory: Option<&PathBuf>) -> Self {
+    pub(super) fn load(directory: Option<&Path>) -> Self {
         let Some(directory) = directory else {
             return Self::empty();
         };
@@ -146,6 +146,40 @@ pub(super) fn save_group_benchmarks_in(
     write_private_atomic(directory, BENCHMARK_STATE_FILE, &contents)
         .map(|_| ())
         .map_err(|_error| SubscriptionStoreError::StoreUnavailable)
+}
+
+impl ManisApp {
+    pub(in crate::app) fn restored_workspace_status(
+        runtime: &KernelRuntime,
+        directory: Option<&Path>,
+        workspace: &StoredWorkspace,
+        language: Language,
+    ) -> String {
+        let Some(directory) = directory else {
+            return runtime.initial_status_in(language);
+        };
+        let has_saved_configuration = !workspace.imported_subscriptions.is_empty()
+            || !workspace.saved_single_nodes.is_empty()
+            || !workspace.qx_rule_sources.is_empty()
+            || !workspace.managed_policy_groups.is_empty()
+            || workspace.routing_mode != RoutingMode::Rule;
+        if !has_saved_configuration {
+            return runtime.initial_status_in(language);
+        }
+        match runtime.apply_saved_sources(directory) {
+            Ok(GeneratedProfileApply::Updated) => language
+                .localized(copy::app::SAVED_SOURCES_ARE_READY)
+                .to_owned(),
+            Ok(GeneratedProfileApply::Restarted) => language
+                .localized(copy::app::SAVED_SOURCES_ARE_READY_AND_MIHOMO_WAS_RESTARTED)
+                .to_owned(),
+            Err(error) => format!(
+                "{}{error}",
+                language
+                    .localized(copy::app::SAVED_SOURCES_WERE_LOADED_BUT_THE_CHANGES_COULD_NOT_BE)
+            ),
+        }
+    }
 }
 
 #[cfg(test)]

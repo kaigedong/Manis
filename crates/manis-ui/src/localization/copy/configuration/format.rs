@@ -8,10 +8,10 @@ use crate::{
 
 pub(crate) const fn language_preference_error(
     language: Language,
-    error: LanguagePreferenceError,
+    error: &LanguagePreferenceError,
 ) -> &'static str {
     match (language, error) {
-        (Language::English, LanguagePreferenceError::Unavailable) => {
+        (Language::English, LanguagePreferenceError::Unavailable { .. }) => {
             "The language preference could not be read or saved"
         }
         (Language::English, LanguagePreferenceError::UnsafeFile) => {
@@ -20,7 +20,7 @@ pub(crate) const fn language_preference_error(
         (Language::English, LanguagePreferenceError::InvalidValue) => {
             "The saved language preference is not recognized"
         }
-        (Language::SimplifiedChinese, LanguagePreferenceError::Unavailable) => {
+        (Language::SimplifiedChinese, LanguagePreferenceError::Unavailable { .. }) => {
             "无法读取或保存语言偏好"
         }
         (Language::SimplifiedChinese, LanguagePreferenceError::UnsafeFile) => {
@@ -79,9 +79,10 @@ pub(crate) const fn subscription_input_error(
         (Language::English, SubscriptionInputError::InvalidPreset) => {
             "The subscription URL is valid, but its default profile could not be created"
         }
-        (Language::English, SubscriptionInputError::InvalidVless) => {
-            "The single-node link is invalid; check its protocol, server, and parameters"
-        }
+        (
+            Language::English,
+            SubscriptionInputError::InvalidVless | SubscriptionInputError::InvalidSingleNode,
+        ) => "The single-node link is invalid; check its protocol, server, and parameters",
         (Language::SimplifiedChinese, SubscriptionInputError::Empty) => {
             "请输入订阅链接或单节点分享链接"
         }
@@ -94,9 +95,10 @@ pub(crate) const fn subscription_input_error(
         (Language::SimplifiedChinese, SubscriptionInputError::InvalidPreset) => {
             "订阅地址有效，但无法生成默认策略"
         }
-        (Language::SimplifiedChinese, SubscriptionInputError::InvalidVless) => {
-            "单节点链接无效，请检查协议、服务器和参数"
-        }
+        (
+            Language::SimplifiedChinese,
+            SubscriptionInputError::InvalidVless | SubscriptionInputError::InvalidSingleNode,
+        ) => "单节点链接无效，请检查协议、服务器和参数",
     }
 }
 

@@ -62,6 +62,7 @@ pub(crate) enum SubscriptionInputError {
     TooLong,
     InvalidPreset,
     InvalidVless,
+    InvalidSingleNode,
 }
 
 impl fmt::Display for SubscriptionInputError {
@@ -73,7 +74,7 @@ impl fmt::Display for SubscriptionInputError {
             }
             Self::TooLong => "source URL exceeds the supported length",
             Self::InvalidPreset => "subscription URL is valid but its default profile is not",
-            Self::InvalidVless => "single-node share link is invalid",
+            Self::InvalidVless | Self::InvalidSingleNode => "single-node share link is invalid",
         })
     }
 }
@@ -173,13 +174,13 @@ fn parse_generic_single_node(input: &str) -> Result<SourceNodePreview, Subscript
         || input.chars().any(char::is_control)
         || input.len() > MAX_SUBSCRIPTION_BYTES
     {
-        return Err(SubscriptionInputError::InvalidVless);
+        return Err(SubscriptionInputError::InvalidSingleNode);
     }
     let (scheme, remainder) = input
         .split_once("://")
-        .ok_or(SubscriptionInputError::InvalidVless)?;
+        .ok_or(SubscriptionInputError::InvalidSingleNode)?;
     if remainder.is_empty() || remainder.chars().any(char::is_whitespace) {
-        return Err(SubscriptionInputError::InvalidVless);
+        return Err(SubscriptionInputError::InvalidSingleNode);
     }
     let protocol = match scheme {
         "vmess" => "VMess",
@@ -191,7 +192,7 @@ fn parse_generic_single_node(input: &str) -> Result<SourceNodePreview, Subscript
         "tuic" => "TUIC",
         "wireguard" => "WireGuard",
         _ if scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https") => {
-            return Err(SubscriptionInputError::InvalidVless);
+            return Err(SubscriptionInputError::InvalidSingleNode);
         }
         _ => "Single node",
     };
@@ -442,5 +443,17 @@ mod tests {
         assert_eq!(error, SubscriptionInputError::UnsupportedSource);
         assert!(!format!("{error:?}").contains(input));
         assert!(!error.to_string().contains("private-token"));
+    }
+
+    #[test]
+    fn generic_single_node_failures_are_not_reported_as_vless_parse_errors() {
+        assert_eq!(
+            validate_single_node_preview("https://subscription.example.invalid/profile"),
+            Err(SubscriptionInputError::InvalidSingleNode)
+        );
+        assert_eq!(
+            validate_single_node_preview("ss://with whitespace"),
+            Err(SubscriptionInputError::InvalidSingleNode)
+        );
     }
 }

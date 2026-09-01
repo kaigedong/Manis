@@ -1,5 +1,6 @@
 use std::error::Error;
 use std::fmt;
+use std::io;
 use std::time::Duration;
 
 use manis_profile::SecretUrl;
@@ -83,7 +84,10 @@ fn map_request_error(error: &ureq::Error) -> RuleDownloadError {
 fn map_body_error(error: &ureq::Error) -> RuleDownloadError {
     match error {
         ureq::Error::BodyExceedsLimit(_) => RuleDownloadError::DocumentTooLarge,
-        _ => RuleDownloadError::InvalidText,
+        ureq::Error::Io(error) if error.kind() == io::ErrorKind::InvalidData => {
+            RuleDownloadError::InvalidText
+        }
+        _ => RuleDownloadError::NetworkUnavailable,
     }
 }
 

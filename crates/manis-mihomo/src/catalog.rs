@@ -90,10 +90,7 @@ pub fn to_policy_catalog(snapshot: &MihomoSnapshot) -> Result<PolicyCatalog, Emp
                 id: PolicyGroupId::new(group.name.clone()),
                 name: group.name,
                 kind: policy_group_kind(group.kind),
-                target: group
-                    .current
-                    .or_else(|| group.nodes.first().cloned())
-                    .unwrap_or_else(|| "暂无可用节点".to_owned()),
+                target: group.current.or_else(|| group.nodes.first().cloned()),
                 nodes,
                 rules_total: rules.len(),
                 rules,

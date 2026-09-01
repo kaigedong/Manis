@@ -13,6 +13,12 @@ use super::{
     read_private_source_allow_empty_max, require_clean_absolute_store, write_private_atomic,
 };
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MoveDirection {
+    Up,
+    Down,
+}
+
 pub(crate) fn normalized_routing_rule_group_order(
     stored_order: &[String],
     has_manual_rules: bool,
@@ -45,17 +51,17 @@ pub(crate) fn normalized_routing_rule_group_order(
     order
 }
 
-pub(crate) fn move_routing_rule_group(order: &mut [String], group_id: &str, direction: i8) -> bool {
-    if !matches!(direction, -1 | 1) {
-        return false;
-    }
+pub(crate) fn move_routing_rule_group(
+    order: &mut [String],
+    group_id: &str,
+    direction: MoveDirection,
+) -> bool {
     let Some(index) = order.iter().position(|id| id == group_id) else {
         return false;
     };
-    let target = if direction < 0 {
-        index.checked_sub(1)
-    } else {
-        index.checked_add(1).filter(|target| *target < order.len())
+    let target = match direction {
+        MoveDirection::Up => index.checked_sub(1),
+        MoveDirection::Down => index.checked_add(1).filter(|target| *target < order.len()),
     };
     let Some(target) = target else {
         return false;

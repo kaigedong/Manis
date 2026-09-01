@@ -45,17 +45,22 @@ fn load_subscription_inputs(
 ) -> Result<SubscriptionInputs, LoadError> {
     let mut subscriptions = base_subscription.into_iter().collect::<Vec<_>>();
     let stored = load_subscription_sources_in(store_dir)
-        .map_err(|_error| {
-            LoadError::Runtime("saved subscription sources could not be read".to_owned())
+        .map_err(|error| {
+            LoadError::Runtime(format!(
+                "saved subscription sources could not be read: {error}"
+            ))
         })?
         .into_iter()
         .filter(|stored| stored.enabled)
         .collect::<Vec<_>>();
-    if kernel == KernelKind::SingBox && !stored.is_empty() {
-        return Err(LoadError::Runtime(
-            "sing-box cannot read Clash subscriptions yet; use manual VLESS nodes instead"
-                .to_owned(),
-        ));
+    match kernel {
+        KernelKind::SingBox if !stored.is_empty() => {
+            return Err(LoadError::Runtime(
+                "sing-box cannot read Clash subscriptions yet; use manual VLESS nodes instead"
+                    .to_owned(),
+            ));
+        }
+        KernelKind::Mihomo | KernelKind::SingBox => {}
     }
     let mut indexes = HashMap::new();
     let mut nameservers = Vec::new();
@@ -81,8 +86,10 @@ fn load_subscription_inputs(
 
 fn load_enabled_single_nodes(store_dir: &Path) -> Result<Vec<StoredSingleNode>, LoadError> {
     load_single_node_sources_in(store_dir)
-        .map_err(|_error| {
-            LoadError::Runtime("saved single-node sources could not be read".to_owned())
+        .map_err(|error| {
+            LoadError::Runtime(format!(
+                "saved single-node sources could not be read: {error}"
+            ))
         })
         .map(|nodes| nodes.into_iter().filter(|stored| stored.enabled).collect())
 }
@@ -93,32 +100,35 @@ fn compile_single_node_inputs(
     subscription_count: usize,
     provider_indexes: &mut HashMap<String, usize>,
 ) -> Result<(Vec<String>, Vec<VlessProxy>), LoadError> {
-    if kernel == KernelKind::Mihomo {
-        let paths = nodes
-            .iter()
-            .enumerate()
-            .map(|(offset, stored)| {
-                provider_indexes.insert(stored.id.clone(), subscription_count + offset);
-                format!("./single_nodes/{}.txt", stored.id)
-            })
-            .collect();
-        return Ok((paths, Vec::new()));
-    }
-    let nodes = nodes
-        .iter()
-        .map(|stored| {
-            stored
-                .source
-                .expose_to(VlessProxy::parse_share_link)
-                .map_err(|_error| {
-                    LoadError::Runtime(
-                        "sing-box currently supports only manual VLESS single-node sources"
-                            .to_owned(),
-                    )
+    match kernel {
+        KernelKind::Mihomo => {
+            let paths = nodes
+                .iter()
+                .enumerate()
+                .map(|(offset, stored)| {
+                    provider_indexes.insert(stored.id.clone(), subscription_count + offset);
+                    format!("./single_nodes/{}.txt", stored.id)
                 })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok((Vec::new(), nodes))
+                .collect();
+            Ok((paths, Vec::new()))
+        }
+        KernelKind::SingBox => {
+            let nodes = nodes
+                .iter()
+                .map(|stored| {
+                    stored
+                        .source
+                        .expose_to(VlessProxy::parse_share_link)
+                        .map_err(|error| {
+                            LoadError::Runtime(format!(
+                                "sing-box currently supports only manual VLESS single-node sources: {error}"
+                            ))
+                        })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok((Vec::new(), nodes))
+        }
+    }
 }
 
 fn build_base_profile(
@@ -131,7 +141,7 @@ fn build_base_profile(
 ) -> Result<(Profile, Option<Rule>), LoadError> {
     let mixed_port = configured_mixed_port().map_err(LoadError::Runtime)?;
     let policy_groups = load_managed_policy_groups_in(store_dir)
-        .map_err(|_error| LoadError::Runtime("policy groups could not be read".to_owned()))?;
+        .map_err(|error| LoadError::Runtime(format!("policy groups could not be read: {error}")))?;
     let user_groups = compile_managed_policy_groups(
         &policy_groups,
         provider_indexes,
@@ -168,15 +178,19 @@ fn apply_saved_routing(
     profile: &mut Profile,
     bootstrap_fallback: Option<Rule>,
 ) -> Result<(), LoadError> {
-    let routing_mode = load_routing_mode_in(store_dir)
-        .map_err(|_error| LoadError::Runtime("saved routing mode could not be read".to_owned()))?;
+    let routing_mode = load_routing_mode_in(store_dir).map_err(|error| {
+        LoadError::Runtime(format!("saved routing mode could not be read: {error}"))
+    })?;
     profile.set_mode(profile_mode(routing_mode));
-    let sources = load_qx_rule_sources_in(store_dir)
-        .map_err(|_error| LoadError::Runtime("QX rule sources could not be read".to_owned()))?;
+    let sources = load_qx_rule_sources_in(store_dir).map_err(|error| {
+        LoadError::Runtime(format!("QX rule sources could not be read: {error}"))
+    })?;
     let manual_rules = crate::manual_rule::load_manual_rules_in(store_dir)
         .map_err(|error| LoadError::Runtime(error.to_string()))?;
-    let stored_order = load_routing_rule_group_order_in(store_dir).map_err(|_error| {
-        LoadError::Runtime("saved routing rule group order could not be read".to_owned())
+    let stored_order = load_routing_rule_group_order_in(store_dir).map_err(|error| {
+        LoadError::Runtime(format!(
+            "saved routing rule group order could not be read: {error}"
+        ))
     })?;
     let order =
         normalized_routing_rule_group_order(&stored_order, !manual_rules.is_empty(), &sources);
