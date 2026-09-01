@@ -1,13 +1,15 @@
 use super::{
-    Arc, AtomicBool, BINARY_ENV, Component, ControllerEndpoint, ControllerRuntime, DATA_DIR_ENV,
+    Arc, AtomicBool, Component, ControllerEndpoint, ControllerRuntime, DATA_DIR_ENV,
     DEFAULT_MANAGED_MIXED_PORT, EngineManager, GENERATED_PROFILE_FILE, KernelKind,
-    LEGACY_RELAY_BINARY_ENV, LEGACY_RELAY_DATA_DIR_ENV, LEGACY_RELAY_MIXED_PORT_ENV,
-    LEGACY_RELAY_SING_BOX_BINARY_ENV, MIXED_PORT_ENV, ManagedGeneratedProfile, Mutex, Path,
-    PathBuf, ReadinessPolicy, RuntimeProfileSource, SING_BOX_BINARY_ENV, SING_BOX_PROFILE_FILE,
-    TcpListener, UNSUPPORTED_MIHOMO_RUNTIME_ENV, brand, canonical_binary, compile_saved_profile,
-    core_update, env, managed_engine_config, readiness_probe, render_generated_profile,
+    LEGACY_RELAY_DATA_DIR_ENV, LEGACY_RELAY_MIXED_PORT_ENV, LEGACY_RELAY_SING_BOX_BINARY_ENV,
+    MIXED_PORT_ENV, ManagedGeneratedProfile, Mutex, Path, PathBuf, ReadinessPolicy,
+    RuntimeProfileSource, SING_BOX_BINARY_ENV, SING_BOX_PROFILE_FILE, TcpListener,
+    UNSUPPORTED_MIHOMO_RUNTIME_ENV, brand, canonical_binary, compile_saved_profile, core_update,
+    env, managed_engine_config, readiness_probe, render_generated_profile,
     sync_single_node_provider_files, validate_managed_config, write_private_atomic,
 };
+#[cfg(debug_assertions)]
+use super::{BINARY_ENV, LEGACY_RELAY_BINARY_ENV};
 #[cfg(unix)]
 use super::{Read, fs};
 
