@@ -359,6 +359,51 @@ fn file_import_only_opens_preview_after_selection_and_validation(cx: &mut gpui::
     std::fs::remove_dir_all(store.parent().unwrap()).unwrap();
 }
 
+#[cfg(unix)]
+#[gpui::test]
+fn file_import_reports_when_the_selected_file_is_not_readable(cx: &mut gpui::TestAppContext) {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    cx.update(crate::init);
+    let store = unique_temp_store("manis-import-permission");
+    crate::mihomo::save_routing_mode_in(&store, manis_core::RoutingMode::Direct)
+        .expect("fixture mode");
+    let input = store.parent().unwrap().join("input.json");
+    crate::config_backup::export_to_file(&store, &input).expect("valid fixture");
+    std::fs::set_permissions(&input, std::fs::Permissions::from_mode(0o000))
+        .expect("deny fixture read access");
+    let mut app = None;
+    let (_, cx) = cx.add_window_view(|window, cx| {
+        let entity = cx.new(|_| {
+            ManisApp::with_fixture_controller_and_subscription_store(
+                "http://127.0.0.1:1",
+                store.clone(),
+            )
+        });
+        app = Some(entity.clone());
+        crate::root(entity, window, cx)
+    });
+    let app = app.expect("fixture app");
+
+    cx.update(|window, cx| {
+        app.update(cx, |app, cx| app.choose_configuration_import(window, cx));
+    });
+    cx.simulate_path_prompt_response(|_| Some(vec![input.clone()]));
+    cx.run_until_parked();
+
+    app.read_with(cx, |app, _| {
+        assert!(app.configuration_transfer.failed);
+        assert_eq!(
+            app.status,
+            app.language()
+                .localized(super::copy::backup::IMPORT_PERMISSION_DENIED)
+        );
+    });
+    std::fs::set_permissions(&input, std::fs::Permissions::from_mode(0o600))
+        .expect("restore fixture permissions");
+    std::fs::remove_dir_all(store.parent().unwrap()).expect("remove fixture");
+}
+
 #[gpui::test]
 fn editor_opens_dangling_policy_references_but_requires_repair_before_preview(
     cx: &mut gpui::TestAppContext,

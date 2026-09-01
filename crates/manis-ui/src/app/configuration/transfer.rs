@@ -212,10 +212,23 @@ impl ManisApp {
                     return;
                 }
             };
+            let input = path.clone();
             let result = executor
                 .spawn(async move { crate::config_backup::read_backup(&path) })
                 .await;
             this.update_in(cx, |this, window, cx| {
+                match &result {
+                    Ok(_) => record_event(
+                        LogLevel::Info,
+                        "configuration.import.read_succeeded",
+                        format!("path={}", input.display()),
+                    ),
+                    Err(error) => record_event(
+                        LogLevel::Error,
+                        "configuration.import.read_failed",
+                        format!("path={} error={error}", input.display()),
+                    ),
+                }
                 this.finish_configuration_preview(result, cx);
                 if this.configuration_transfer.preview.is_some() {
                     this.open_configuration_transfer_dialog(window, cx);
@@ -242,8 +255,14 @@ impl ManisApp {
                     .clone_into(&mut self.status);
                 cx.notify();
             }
-            Err(_) => self.finish_configuration_transfer(
-                self.language().localized(copy::backup::INVALID),
+            Err(error) => self.finish_configuration_transfer(
+                self.language().localized(
+                    if error == crate::config_backup::BackupError::PermissionDenied {
+                        copy::backup::IMPORT_PERMISSION_DENIED
+                    } else {
+                        copy::backup::INVALID
+                    },
+                ),
                 true,
                 cx,
             ),

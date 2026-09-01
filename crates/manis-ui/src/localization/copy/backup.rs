@@ -47,6 +47,10 @@ pub(crate) const EXPORT_CANCELLED: LocalizedText =
     LocalizedText::new("Configuration export cancelled.", "已取消导出配置。");
 pub(crate) const IMPORT_CANCELLED: LocalizedText =
     LocalizedText::new("Configuration import cancelled.", "已取消导入配置。");
+pub(crate) const IMPORT_PERMISSION_DENIED: LocalizedText = LocalizedText::new(
+    "Manis could not read the selected file. Select it again and grant access in the open dialog.",
+    "Manis 无法读取所选文件。请重新选择，并在打开对话框中授权访问。",
+);
 pub(crate) const READING: LocalizedText =
     LocalizedText::new("Validating configuration…", "正在校验配置…");
 pub(crate) const IMPORTING: LocalizedText = LocalizedText::new(

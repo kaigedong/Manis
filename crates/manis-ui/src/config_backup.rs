@@ -459,6 +459,12 @@ mod tests {
             exported.files.get("routing.mode").map(String::as_str),
             Some("direct")
         );
+        fs::set_permissions(&destination, fs::Permissions::from_mode(0o000))?;
+        assert!(matches!(
+            super::read_backup(&destination),
+            Err(super::BackupError::PermissionDenied)
+        ));
+        fs::set_permissions(&destination, fs::Permissions::from_mode(0o600))?;
         fs::remove_dir_all(root)?;
         Ok(())
     }

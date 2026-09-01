@@ -60,12 +60,14 @@ pub(super) fn read_private_portable_file(
 }
 
 pub(super) fn read_bounded_text_file(path: &Path, max_bytes: u64) -> Result<String, BackupError> {
-    let metadata = fs::symlink_metadata(path).map_err(|_error| BackupError::Unavailable)?;
+    let metadata = fs::symlink_metadata(path).map_err(|error| map_external_file_error(&error))?;
     if metadata.file_type().is_symlink() || !metadata.is_file() {
         return Err(BackupError::UnsafePath);
     }
-    let file = fs::File::open(path).map_err(|_error| BackupError::Unavailable)?;
-    let opened_metadata = file.metadata().map_err(|_error| BackupError::Unavailable)?;
+    let file = fs::File::open(path).map_err(|error| map_external_file_error(&error))?;
+    let opened_metadata = file
+        .metadata()
+        .map_err(|error| map_external_file_error(&error))?;
     if opened_metadata.len() > max_bytes {
         return Err(BackupError::Oversized);
     }
@@ -76,7 +78,13 @@ pub(super) fn read_from_file(file: fs::File, max_bytes: u64) -> Result<String, B
     let mut contents = String::new();
     file.take(max_bytes + 1)
         .read_to_string(&mut contents)
-        .map_err(|_error| BackupError::InvalidFormat)?;
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::PermissionDenied {
+                BackupError::PermissionDenied
+            } else {
+                BackupError::InvalidFormat
+            }
+        })?;
     if contents.len() as u64 > max_bytes {
         return Err(BackupError::Oversized);
     }
@@ -187,7 +195,7 @@ pub(super) fn write_authorized_external_file(path: &Path, bytes: &[u8]) -> Resul
         .and_then(std::ffi::OsStr::to_str)
         .ok_or(BackupError::UnsafePath)?;
     let parent_metadata =
-        fs::symlink_metadata(parent).map_err(|error| map_external_write_error(&error))?;
+        fs::symlink_metadata(parent).map_err(|error| map_external_file_error(&error))?;
     if parent_metadata.file_type().is_symlink() || !parent_metadata.is_dir() {
         return Err(BackupError::UnsafePath);
     }
@@ -206,7 +214,7 @@ pub(super) fn write_authorized_external_file(path: &Path, bytes: &[u8]) -> Resul
             .truncate(false)
             .mode(0o600)
             .open(path)
-            .map_err(|error| map_external_write_error(&error))?
+            .map_err(|error| map_external_file_error(&error))?
     };
     #[cfg(not(unix))]
     let mut file = fs::OpenOptions::new()
@@ -214,22 +222,22 @@ pub(super) fn write_authorized_external_file(path: &Path, bytes: &[u8]) -> Resul
         .create(true)
         .truncate(false)
         .open(path)
-        .map_err(|error| map_external_write_error(&error))?;
+        .map_err(|error| map_external_file_error(&error))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
         file.set_permissions(fs::Permissions::from_mode(0o600))
-            .map_err(|error| map_external_write_error(&error))?;
+            .map_err(|error| map_external_file_error(&error))?;
     }
     file.set_len(0)
-        .map_err(|error| map_external_write_error(&error))?;
+        .map_err(|error| map_external_file_error(&error))?;
     file.write_all(bytes)
-        .map_err(|error| map_external_write_error(&error))?;
+        .map_err(|error| map_external_file_error(&error))?;
     file.sync_all()
-        .map_err(|error| map_external_write_error(&error))
+        .map_err(|error| map_external_file_error(&error))
 }
 
-fn map_external_write_error(error: &std::io::Error) -> BackupError {
+fn map_external_file_error(error: &std::io::Error) -> BackupError {
     if error.kind() == std::io::ErrorKind::PermissionDenied {
         BackupError::PermissionDenied
     } else {
