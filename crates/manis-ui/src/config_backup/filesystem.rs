@@ -143,7 +143,7 @@ pub(super) fn backup_current_store(directory: &Path, backup_dir: &Path) -> Resul
             .map_err(|_error| BackupError::Unavailable)?;
     }
     if let Ok(text) = export_backup(directory) {
-        write_private_atomic(backup_dir, "previous.manis.json", text.as_bytes())
+        write_private_atomic(backup_dir, "previous.json", text.as_bytes())
             .map_err(|_error| BackupError::Unavailable)?;
     }
     Ok(())
@@ -178,17 +178,16 @@ pub(super) fn create_backup_dir(directory: &Path) -> Result<PathBuf, BackupError
     Err(BackupError::Unavailable)
 }
 
-pub(super) fn write_external_file_atomic(path: &Path, bytes: &[u8]) -> Result<(), BackupError> {
+pub(super) fn write_authorized_external_file(path: &Path, bytes: &[u8]) -> Result<(), BackupError> {
     if !path.is_absolute() {
         return Err(BackupError::UnsafePath);
     }
     let parent = path.parent().ok_or(BackupError::UnsafePath)?;
-    let name = path
-        .file_name()
+    path.file_name()
         .and_then(std::ffi::OsStr::to_str)
         .ok_or(BackupError::UnsafePath)?;
     let parent_metadata =
-        fs::symlink_metadata(parent).map_err(|_error| BackupError::Unavailable)?;
+        fs::symlink_metadata(parent).map_err(|error| map_external_write_error(&error))?;
     if parent_metadata.file_type().is_symlink() || !parent_metadata.is_dir() {
         return Err(BackupError::UnsafePath);
     }
@@ -198,39 +197,44 @@ pub(super) fn write_external_file_atomic(path: &Path, bytes: &[u8]) -> Result<()
         return Err(BackupError::UnsafePath);
     }
     validate_clean_absolute_path(parent)?;
-    let temporary = parent.join(format!(
-        ".{name}.tmp-{}-{:x}",
-        std::process::id(),
-        current_unix_nanos()
-    ));
     #[cfg(unix)]
     let mut file = {
         use std::os::unix::fs::OpenOptionsExt as _;
         fs::OpenOptions::new()
             .write(true)
-            .create_new(true)
+            .create(true)
+            .truncate(false)
             .mode(0o600)
-            .open(&temporary)
-            .map_err(|_error| BackupError::Unavailable)?
+            .open(path)
+            .map_err(|error| map_external_write_error(&error))?
     };
     #[cfg(not(unix))]
     let mut file = fs::OpenOptions::new()
         .write(true)
-        .create_new(true)
-        .open(&temporary)
-        .map_err(|_error| BackupError::Unavailable)?;
-    let result = (|| -> Result<(), BackupError> {
-        file.write_all(bytes)
-            .map_err(|_error| BackupError::Unavailable)?;
-        file.sync_all().map_err(|_error| BackupError::Unavailable)?;
-        drop(file);
-        fs::rename(&temporary, path).map_err(|_error| BackupError::Unavailable)?;
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&temporary);
+        .create(true)
+        .truncate(false)
+        .open(path)
+        .map_err(|error| map_external_write_error(&error))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        file.set_permissions(fs::Permissions::from_mode(0o600))
+            .map_err(|error| map_external_write_error(&error))?;
     }
-    result
+    file.set_len(0)
+        .map_err(|error| map_external_write_error(&error))?;
+    file.write_all(bytes)
+        .map_err(|error| map_external_write_error(&error))?;
+    file.sync_all()
+        .map_err(|error| map_external_write_error(&error))
+}
+
+fn map_external_write_error(error: &std::io::Error) -> BackupError {
+    if error.kind() == std::io::ErrorKind::PermissionDenied {
+        BackupError::PermissionDenied
+    } else {
+        BackupError::Unavailable
+    }
 }
 
 pub(super) fn validate_file_name(name: &str) -> Result<(), BackupError> {

@@ -23,7 +23,7 @@ use filesystem::{
     backup_current_store, create_backup_dir, current_unix_nanos, current_unix_secs, max_file_bytes,
     portable_store_paths, read_bounded_text_file, read_private_portable_file,
     remove_current_store_files, require_clean_absolute_path, validate_file_name,
-    write_external_file_atomic, write_files,
+    write_authorized_external_file, write_files,
 };
 use restore::validate_store;
 pub(crate) use restore::{backup_root, restore};
@@ -105,6 +105,7 @@ impl std::error::Error for ImportError {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum BackupError {
     Unavailable,
+    PermissionDenied,
     UnsafePath,
     Oversized,
     InvalidFormat,
@@ -115,6 +116,7 @@ impl fmt::Display for BackupError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
             Self::Unavailable => "configuration backup is unavailable",
+            Self::PermissionDenied => "permission to write the configuration backup was denied",
             Self::UnsafePath => "configuration backup path is not safe",
             Self::Oversized => "configuration backup is too large",
             Self::InvalidFormat => "configuration backup format is invalid or unsupported",
@@ -203,7 +205,7 @@ pub(crate) fn export_to_file(directory: &Path, path: &Path) -> Result<(), Backup
         return Err(BackupError::UnsafePath);
     }
     let contents = export_backup(directory)?;
-    write_external_file_atomic(path, contents.as_bytes())
+    write_authorized_external_file(path, contents.as_bytes())
 }
 
 // A fresh install may not have a source directory yet. Resolve its existing ancestors too,
@@ -435,12 +437,39 @@ mod tests {
     }
 
     #[test]
+    fn export_writes_the_authorized_file_without_creating_a_sibling()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let store = temp_store("manis-backup-authorized-target");
+        crate::mihomo::save_routing_mode_in(&store, RoutingMode::Direct)?;
+        let root = store.parent().expect("root");
+        let destination = root.join("Manis.json");
+        fs::write(&destination, "stale")?;
+        fs::set_permissions(root, fs::Permissions::from_mode(0o500))?;
+
+        let result = super::export_to_file(&store, &destination);
+        let unauthorized = super::export_to_file(&store, &root.join("not-authorized.json"));
+
+        fs::set_permissions(root, fs::Permissions::from_mode(0o700))?;
+        assert_eq!(result, Ok(()));
+        assert_eq!(unauthorized, Err(super::BackupError::PermissionDenied));
+        let exported = super::read_backup(&destination)?;
+        assert_eq!(
+            exported.files.get("routing.mode").map(String::as_str),
+            Some("direct")
+        );
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
     fn oversized_files_and_symlinked_store_roots_are_rejected_before_changes()
     -> Result<(), Box<dyn std::error::Error>> {
         let store = temp_store("manis-backup-boundaries");
         crate::mihomo::save_routing_mode_in(&store, RoutingMode::Direct)?;
         let root = store.parent().expect("root");
-        let oversized = root.join("oversized.manis.json");
+        let oversized = root.join("oversized.json");
         fs::File::create(&oversized)?.set_len(super::MAX_BACKUP_TEXT_BYTES + 1)?;
         assert!(matches!(
             super::read_backup(&oversized),
@@ -569,7 +598,7 @@ mod tests {
             fs::read_to_string(target.join("future-local.state"))?,
             "keep me"
         );
-        let previous = fs::read_to_string(result.backup_dir.join("previous.manis.json"))?;
+        let previous = fs::read_to_string(result.backup_dir.join("previous.json"))?;
         let previous = super::prepare_import(&previous)?;
         assert_eq!(previous.summary(), &super::BackupSummary::default());
 

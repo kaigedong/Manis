@@ -11,6 +11,7 @@ use crate::{
         ActionRole, dialog_footer_surface, dialog_header_surface, section_heading,
         style_action_button, surface_dialog,
     },
+    diagnostics::{LogLevel, record_event},
     localization::{Language, Message, copy},
     mihomo::{self},
     theme::{ControlSize, Space, TextRole, Theme},
@@ -99,7 +100,7 @@ impl ManisApp {
             .expect("store checked above");
         let initial = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
             .map_or_else(|| store.clone(), std::path::PathBuf::from);
-        let prompt = cx.prompt_for_new_path(&initial, Some("Manis.manis.json"));
+        let prompt = cx.prompt_for_new_path(&initial, Some("Manis.json"));
         let executor = cx.background_executor().clone();
         cx.spawn_in(window, async move |this, cx| {
             let path = match prompt.await {
@@ -132,16 +133,32 @@ impl ManisApp {
                 .spawn(async move { crate::config_backup::export_to_file(&store, &path) })
                 .await;
             this.update(cx, |this, cx| {
-                if result.is_ok() {
-                    this.configuration_transfer.output_path = Some(output);
-                }
-                this.finish_configuration_transfer(
-                    language.localized(if result.is_ok() {
+                let message = match result {
+                    Ok(()) => {
+                        record_event(
+                            LogLevel::Info,
+                            "configuration.export.succeeded",
+                            format!("path={}", output.display()),
+                        );
+                        this.configuration_transfer.output_path = Some(output);
                         copy::backup::EXPORTED
-                    } else {
-                        copy::backup::EXPORT_FAILED
-                    }),
-                    result.is_err(),
+                    }
+                    Err(error) => {
+                        record_event(
+                            LogLevel::Error,
+                            "configuration.export.failed",
+                            format!("path={} error={error}", output.display()),
+                        );
+                        if error == crate::config_backup::BackupError::PermissionDenied {
+                            copy::backup::EXPORT_PERMISSION_DENIED
+                        } else {
+                            copy::backup::EXPORT_FAILED
+                        }
+                    }
+                };
+                this.finish_configuration_transfer(
+                    language.localized(message),
+                    message != copy::backup::EXPORTED,
                     cx,
                 );
             })

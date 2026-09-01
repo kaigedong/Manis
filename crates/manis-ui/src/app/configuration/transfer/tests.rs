@@ -98,7 +98,7 @@ fn file_export_produces_an_importable_backup_without_changing_sources(
     let store = root.join("subscriptions");
     crate::mihomo::save_routing_mode_in(&store, manis_core::RoutingMode::Direct)
         .expect("fixture routing");
-    let output = root.join("export.manis.json");
+    let output = root.join("export.json");
     let mut app = None;
     let (_, cx) = cx.add_window_view(|window, cx| {
         let entity = cx.new(|_| {
@@ -183,10 +183,7 @@ fn failed_export_unlocks_configuration_and_reports_the_error_without_a_dialog(
     let store = unique_temp_store("manis-export-failure");
     crate::mihomo::save_routing_mode_in(&store, manis_core::RoutingMode::Direct)
         .expect("fixture routing");
-    let output = store
-        .parent()
-        .expect("fixture root")
-        .join("directory.manis.json");
+    let output = store.parent().expect("fixture root").join("directory.json");
     std::fs::create_dir(&output).expect("directory cannot be overwritten by export");
     let original = std::fs::read(store.join("routing.mode")).expect("fixture routing");
     let mut app = None;
@@ -316,7 +313,7 @@ fn file_import_only_opens_preview_after_selection_and_validation(cx: &mut gpui::
     crate::mihomo::save_routing_mode_in(&store, manis_core::RoutingMode::Direct)
         .expect("fixture mode");
     let original = std::fs::read(store.join("routing.mode")).expect("fixture contents");
-    let input = store.parent().unwrap().join("input.manis.json");
+    let input = store.parent().unwrap().join("input.json");
     std::fs::write(&input, "not a backup").expect("invalid fixture");
     let mut app = None;
     let (_, cx) = cx.add_window_view(|window, cx| {
