@@ -48,6 +48,7 @@ pub(super) fn asset_priority(name: &str, platform: Platform) -> Option<usize> {
     let name = name.to_ascii_lowercase();
     if name.contains("alpha")
         || name.contains("compatible")
+        || name.contains("-go")
         || name.ends_with(".sha256")
         || ArchiveKind::from_asset_name(&name).is_none()
     {
@@ -63,8 +64,8 @@ pub(super) fn asset_priority(name: &str, platform: Platform) -> Option<usize> {
 impl Platform {
     fn preferred_asset_markers(self) -> &'static [&'static str] {
         match self {
-            Self::MacosArm64 => &["mihomo-darwin-arm64-go122", "mihomo-darwin-arm64"],
-            Self::MacosX64 => &["mihomo-darwin-amd64-v2-go122", "mihomo-darwin-amd64-v2"],
+            Self::MacosArm64 => &["mihomo-darwin-arm64"],
+            Self::MacosX64 => &["mihomo-darwin-amd64-v2"],
             Self::LinuxX64 => &["mihomo-linux-amd64-v2", "mihomo-linux-amd64"],
             Self::WindowsX64 => &["mihomo-windows-amd64-v2", "mihomo-windows-amd64"],
         }

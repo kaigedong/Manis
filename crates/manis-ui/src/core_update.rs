@@ -298,6 +298,48 @@ mod tests {
     }
 
     #[test]
+    fn ignores_go_version_specific_macos_assets() {
+        let release = r#"{
+            "tag_name": "v1.19.30",
+            "prerelease": false,
+            "assets": [
+                {
+                    "name": "mihomo-darwin-arm64-go122-v1.19.30.gz",
+                    "browser_download_url": "https://example.test/darwin-go122.gz",
+                    "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                },
+                {
+                    "name": "mihomo-darwin-arm64-v1.19.30.gz",
+                    "browser_download_url": "https://example.test/darwin.gz",
+                    "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                }
+            ]
+        }"#;
+
+        let asset = select_release_asset(release, Platform::MacosArm64).expect("select asset");
+
+        assert_eq!(asset.name, "mihomo-darwin-arm64-v1.19.30.gz");
+    }
+
+    #[test]
+    fn rejects_release_with_only_go_version_specific_asset() {
+        let release = r#"{
+            "tag_name": "v1.19.30",
+            "prerelease": false,
+            "assets": [{
+                "name": "mihomo-darwin-arm64-go122-v1.19.30.gz",
+                "browser_download_url": "https://example.test/darwin-go122.gz",
+                "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }]
+        }"#;
+
+        assert_eq!(
+            select_release_asset(release, Platform::MacosArm64),
+            Err(CoreUpdateError::MissingAsset)
+        );
+    }
+
+    #[test]
     fn rejects_release_asset_without_sha256_digest() {
         let release = r#"{
             "tag_name": "v1.19.30",
