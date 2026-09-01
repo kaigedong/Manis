@@ -94,7 +94,7 @@ fn install_profile(
     prepared: &PreparedProfile,
 ) -> Result<GeneratedProfileApply, LoadError> {
     let final_path = spec.data_dir.join(prepared.final_name);
-    let previous_config = fs::read(&final_path).ok();
+    let previous_config = read_previous_config(&final_path)?;
     write_private_atomic(
         &spec.data_dir,
         prepared.final_name,
@@ -143,6 +143,16 @@ fn install_profile(
     } else {
         GeneratedProfileApply::Updated
     })
+}
+
+fn read_previous_config(path: &Path) -> Result<Option<Vec<u8>>, LoadError> {
+    match fs::read(path) {
+        Ok(config) => Ok(Some(config)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(LoadError::Runtime(format!(
+            "managed configuration could not be read: {error}"
+        ))),
+    }
 }
 
 fn tun_was_enabled(
@@ -196,11 +206,20 @@ fn rollback_failed_restart(
     let restart_error = error.to_string();
     let mut rollback_running = false;
     if let Some(previous_config) = rollback.previous_config {
-        let _ = write_private_atomic(
+        if let Err(rollback_error) = write_private_atomic(
             &rollback.spec.data_dir,
             rollback.final_name,
             &previous_config,
-        );
+        ) {
+            let message = format!(
+                "new configuration failed to start ({restart_error}); restoring the previous configuration file failed: {rollback_error}"
+            );
+            return Err(if rollback.restore_tun {
+                LoadError::ProxyModeLost(message)
+            } else {
+                LoadError::Runtime(message)
+            });
+        }
         let rollback_config = managed_engine_config_for_privilege(
             rollback.spec,
             rollback.spec.data_dir.join(rollback.final_name),
@@ -336,5 +355,47 @@ mod linux_tests {
         assert!(error.contains("rebind failed"));
         assert!(error.contains("DNS cleanup: succeeded"));
         assert!(error.contains("TUN cleanup: succeeded"));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use super::read_previous_config;
+    use crate::mihomo::LoadError;
+
+    #[test]
+    fn missing_previous_config_is_allowed_for_first_install() {
+        let path = std::env::temp_dir().join(format!(
+            "manis-managed-previous-missing-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_dir_all(&path);
+
+        assert_eq!(
+            read_previous_config(&path).expect("missing file is allowed"),
+            None
+        );
+    }
+
+    #[test]
+    fn previous_config_read_errors_are_propagated() {
+        let path = std::env::temp_dir().join(format!(
+            "manis-managed-previous-directory-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&path);
+        fs::create_dir(&path).expect("create directory");
+
+        let error = read_previous_config(&path).expect_err("directory read must fail");
+        assert!(matches!(
+            error,
+            LoadError::Runtime(message)
+                if message.contains("managed configuration could not be read")
+        ));
+
+        fs::remove_dir_all(path).expect("cleanup");
     }
 }

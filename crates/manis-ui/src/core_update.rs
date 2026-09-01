@@ -727,9 +727,6 @@ fn rename_replace(from: &Path, to: &Path) -> std::io::Result<()> {
 
 #[cfg(not(unix))]
 fn rename_replace(from: &Path, to: &Path) -> std::io::Result<()> {
-    if to.exists() {
-        fs::remove_file(to)?;
-    }
     fs::rename(from, to)
 }
 
@@ -1063,6 +1060,19 @@ mod tests {
 
         assert_eq!(fs::read(&target).expect("read target"), b"new core");
         assert!(!staged.exists());
+
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn replace_failure_keeps_existing_core() {
+        let root = test_temp_dir("manis-core-replace-failure");
+        let target = root.join("mihomo");
+        let staged = root.join("missing-stage");
+        fs::write(&target, b"old core").expect("write target");
+
+        assert!(rename_replace(&staged, &target).is_err());
+        assert_eq!(fs::read(&target).expect("read target"), b"old core");
 
         fs::remove_dir_all(root).expect("cleanup");
     }
