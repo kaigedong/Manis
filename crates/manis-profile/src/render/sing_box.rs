@@ -245,12 +245,28 @@ fn rule_sets(profile: &Profile) -> Vec<Value> {
             }
             Rule::All { conditions, .. } => {
                 for condition in conditions {
-                    if let RuleCondition::GeoIp { country, .. } = condition {
-                        countries.insert(country.to_ascii_lowercase());
+                    match condition {
+                        RuleCondition::GeoIp { country, .. } => {
+                            countries.insert(country.to_ascii_lowercase());
+                        }
+                        RuleCondition::Domain(_)
+                        | RuleCondition::DomainKeyword(_)
+                        | RuleCondition::DomainSuffix(_)
+                        | RuleCondition::DomainWildcard(_)
+                        | RuleCondition::IpCidr { .. }
+                        | RuleCondition::IpAsn { .. }
+                        | RuleCondition::DstPort(_) => {}
                     }
                 }
             }
-            _ => {}
+            Rule::Domain { .. }
+            | Rule::DomainKeyword { .. }
+            | Rule::DomainSuffix { .. }
+            | Rule::DomainWildcard { .. }
+            | Rule::IpCidr { .. }
+            | Rule::IpAsn { .. }
+            | Rule::DstPort { .. }
+            | Rule::Match { .. } => {}
         }
     }
     countries.iter().map(|country| json!({

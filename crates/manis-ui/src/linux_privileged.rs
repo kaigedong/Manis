@@ -13,7 +13,7 @@ pub(crate) enum LinuxPrivilegeError {
     UnsafePackagedCore,
     Inspect(std::io::Error),
     Authorization(std::io::Error),
-    AuthorizationDenied(Option<i32>),
+    AuthorizationCanceled,
     VerificationFailed,
     DnsHelperUnavailable,
     UnsafeDnsHelper,
@@ -36,14 +36,9 @@ impl fmt::Display for LinuxPrivilegeError {
             Self::Authorization(error) => {
                 write!(formatter, "Linux TUN authorization could not be started: {error}")
             }
-            Self::AuthorizationDenied(Some(126)) => {
+            Self::AuthorizationCanceled => {
                 formatter.write_str("Linux TUN authorization was canceled")
             }
-            Self::AuthorizationDenied(code) => write!(
-                formatter,
-                "Linux TUN authorization was denied{}",
-                code.map_or_else(String::new, |code| format!(" (exit code {code})"))
-            ),
             Self::VerificationFailed => formatter.write_str(
                 "the packaged Mihomo core lacks Linux TUN capabilities; reinstall or upgrade manis-bin",
             ),
@@ -108,7 +103,7 @@ fn request_tun_dns_helper(action: TunDnsHelperAction) -> Result<(), LinuxPrivile
     if status.success() {
         Ok(())
     } else if status.code() == Some(126) {
-        Err(LinuxPrivilegeError::AuthorizationDenied(status.code()))
+        Err(LinuxPrivilegeError::AuthorizationCanceled)
     } else {
         Err(LinuxPrivilegeError::DnsHelperFailed(status.code()))
     }

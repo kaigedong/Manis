@@ -7,6 +7,9 @@ use std::sync::{
 };
 use std::time::Duration;
 
+use serde::de::IgnoredAny;
+use ureq::http::Method;
+
 use crate::http::{Target, body_error};
 use crate::{ConnectionsState, ControllerConfig, MihomoError, MihomoLogEntry};
 
@@ -104,7 +107,8 @@ impl LiveController {
             Self::UnixSocket { config, path } => Target::Unix(config, path),
         };
         let result = (|| {
-            let mut response = target.response("GET", path, None, Some(Arc::clone(cancelled)))?;
+            let mut response =
+                target.response(Method::GET, path, None, Some(Arc::clone(cancelled)))?;
             read_frames(response.body_mut().as_reader(), cancelled, receive)
         })();
         if cancelled.load(Ordering::Relaxed) {
@@ -176,7 +180,7 @@ impl FrameBuffer {
                 return Ok(());
             }
             let mut stream =
-                serde_json::Deserializer::from_slice(&self.bytes).into_iter::<serde_json::Value>();
+                serde_json::Deserializer::from_slice(&self.bytes).into_iter::<IgnoredAny>();
             match stream.next() {
                 Some(Ok(_value)) => {
                     let consumed = stream.byte_offset();
@@ -212,7 +216,8 @@ fn emit_frame(
 
 #[cfg(test)]
 mod tests {
-    use super::FrameBuffer;
+    use super::{FrameBuffer, emit_frame};
+    use crate::MihomoError;
 
     #[test]
     fn frames_emit_split_and_adjacent_json() {
@@ -234,5 +239,66 @@ mod tests {
         let mut buffer = FrameBuffer::default();
         let input = vec![b' '; super::STREAM_FRAME_LIMIT + 1];
         assert!(buffer.push(&input, &mut |_| Ok(())).is_err());
+    }
+
+    #[test]
+    fn invalid_utf8_frame_is_rejected() {
+        let error = emit_frame(&[0xff], &mut |_| Ok(())).expect_err("invalid UTF-8 must fail");
+
+        assert!(matches!(
+            error,
+            MihomoError::InvalidResponse(message) if message == "stream frame was not UTF-8"
+        ));
+    }
+
+    #[test]
+    fn non_eof_json_error_is_rejected_immediately() {
+        let mut buffer = FrameBuffer::default();
+        let error = buffer
+            .push(b"}", &mut |_| Ok(()))
+            .expect_err("invalid JSON must fail");
+
+        assert!(matches!(
+            error,
+            MihomoError::InvalidResponse(message) if message == "stream contained invalid JSON"
+        ));
+    }
+
+    #[test]
+    fn whitespace_only_final_frame_is_ignored() {
+        let mut buffer = FrameBuffer {
+            bytes: b" \n\t".to_vec(),
+        };
+        let mut called = false;
+
+        buffer
+            .finish(&mut |_| {
+                called = true;
+                Ok(())
+            })
+            .expect("whitespace should be accepted");
+
+        assert!(!called);
+    }
+
+    #[test]
+    fn incomplete_final_json_is_left_to_the_typed_receiver() {
+        let mut buffer = FrameBuffer::default();
+        buffer
+            .push(b"{\"a\":", &mut |_| Ok(()))
+            .expect("incomplete JSON should remain buffered");
+
+        let error = buffer
+            .finish(&mut |frame| {
+                serde_json::from_str::<serde_json::Value>(frame)
+                    .map(|_| ())
+                    .map_err(|source| MihomoError::Json {
+                        endpoint: "/test".to_owned(),
+                        source,
+                    })
+            })
+            .expect_err("typed parsing must reject incomplete final JSON");
+
+        assert!(matches!(error, MihomoError::Json { .. }));
     }
 }

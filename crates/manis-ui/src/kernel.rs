@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::Read as _;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 
@@ -31,9 +32,20 @@ impl KernelRuntime {
 
     #[must_use]
     pub(crate) fn configured(store_dir: Option<&Path>, language: Language) -> Self {
-        let kind = store_dir
-            .and_then(|directory| load_kernel_kind_in(directory).ok())
-            .unwrap_or_default();
+        let kind = match store_dir {
+            Some(directory) => match load_kernel_kind_in(directory) {
+                Ok(kind) => kind,
+                Err(error) => {
+                    return Self {
+                        kind: KernelKind::default(),
+                        controller: ControllerRuntime::Invalid {
+                            message: error.message(language).to_owned(),
+                        },
+                    };
+                }
+            },
+            None => KernelKind::default(),
+        };
         match Self::prepare_with_language(kind, store_dir, language) {
             Ok(runtime) => runtime,
             Err(message) => Self {
@@ -113,19 +125,37 @@ impl KernelRuntime {
         state: &ControllerState,
         language: Language,
     ) -> &'static str {
-        match (self.kind, &self.controller, state) {
-            (_, _, ControllerState::Connecting { .. }) => {
-                language.localized(copy::kernel::CONNECTING)
+        match state {
+            ControllerState::Connecting { .. } => language.localized(copy::kernel::CONNECTING),
+            ControllerState::Connected { .. } => language.localized(copy::kernel::REFRESH),
+            ControllerState::Disconnected | ControllerState::Failed { .. } => {
+                match (self.kind, &self.controller) {
+                    (KernelKind::Mihomo, ControllerRuntime::Managed { .. }) => {
+                        language.localized(copy::kernel::START_MIHOMO)
+                    }
+                    (KernelKind::SingBox, ControllerRuntime::Managed { .. }) => {
+                        language.localized(copy::kernel::START_SING_BOX)
+                    }
+                    #[cfg(any(test, feature = "snapshot-fixtures"))]
+                    (
+                        KernelKind::Mihomo,
+                        ControllerRuntime::Fixture { .. } | ControllerRuntime::Invalid { .. },
+                    ) => language.message(Message::ConnectMihomo),
+                    #[cfg(not(any(test, feature = "snapshot-fixtures")))]
+                    (KernelKind::Mihomo, ControllerRuntime::Invalid { .. }) => {
+                        language.message(Message::ConnectMihomo)
+                    }
+                    #[cfg(any(test, feature = "snapshot-fixtures"))]
+                    (
+                        KernelKind::SingBox,
+                        ControllerRuntime::Fixture { .. } | ControllerRuntime::Invalid { .. },
+                    ) => language.localized(copy::kernel::CONNECT_SING_BOX),
+                    #[cfg(not(any(test, feature = "snapshot-fixtures")))]
+                    (KernelKind::SingBox, ControllerRuntime::Invalid { .. }) => {
+                        language.localized(copy::kernel::CONNECT_SING_BOX)
+                    }
+                }
             }
-            (_, _, ControllerState::Connected { .. }) => language.localized(copy::kernel::REFRESH),
-            (KernelKind::Mihomo, ControllerRuntime::Managed { .. }, _) => {
-                language.localized(copy::kernel::START_MIHOMO)
-            }
-            (KernelKind::SingBox, ControllerRuntime::Managed { .. }, _) => {
-                language.localized(copy::kernel::START_SING_BOX)
-            }
-            (KernelKind::Mihomo, _, _) => language.message(Message::ConnectMihomo),
-            (KernelKind::SingBox, _, _) => language.localized(copy::kernel::CONNECT_SING_BOX),
         }
     }
 }
@@ -153,9 +183,37 @@ pub(crate) fn load_kernel_kind_in(directory: &Path) -> Result<KernelKind, Kernel
     {
         return Err(KernelSelectionError::UnsafeFile);
     }
-    let value = fs::read_to_string(path).map_err(|_error| KernelSelectionError::Unavailable)?;
+    let file = fs::File::open(&path).map_err(|_error| KernelSelectionError::Unavailable)?;
+    let opened = file
+        .metadata()
+        .map_err(|_error| KernelSelectionError::Unavailable)?;
+    if !opened.is_file()
+        || opened.len() > MAX_KERNEL_SELECTION_BYTES
+        || !same_file(&metadata, &opened)
+    {
+        return Err(KernelSelectionError::UnsafeFile);
+    }
+    let mut value = String::new();
+    file.take(MAX_KERNEL_SELECTION_BYTES + 1)
+        .read_to_string(&mut value)
+        .map_err(|_error| KernelSelectionError::Unavailable)?;
+    if value.len() as u64 > MAX_KERNEL_SELECTION_BYTES {
+        return Err(KernelSelectionError::UnsafeFile);
+    }
     KernelKind::parse(value.trim_end_matches(['\r', '\n']))
         .ok_or(KernelSelectionError::InvalidValue)
+}
+
+#[cfg(unix)]
+fn same_file(expected: &fs::Metadata, opened: &fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt as _;
+
+    expected.dev() == opened.dev() && expected.ino() == opened.ino()
+}
+
+#[cfg(not(unix))]
+fn same_file(_expected: &fs::Metadata, _opened: &fs::Metadata) -> bool {
+    true
 }
 
 pub(crate) fn save_kernel_kind_in(
@@ -223,6 +281,29 @@ mod tests {
             KernelKind::SingBox
         );
 
+        fs::remove_dir_all(root).expect("remove fixture");
+    }
+
+    #[test]
+    fn configured_runtime_surfaces_an_invalid_saved_selection() {
+        let root = std::env::temp_dir().join(format!(
+            "manis-kernel-selection-invalid-{}",
+            std::process::id()
+        ));
+        if root.exists() {
+            fs::remove_dir_all(&root).expect("remove stale fixture");
+        }
+        fs::create_dir_all(&root).expect("create fixture directory");
+        fs::write(root.join(super::KERNEL_SELECTION_FILE), "unknown\n")
+            .expect("write invalid selection");
+
+        let runtime =
+            super::KernelRuntime::configured(Some(&root), crate::localization::Language::English);
+
+        assert!(matches!(
+            runtime.controller,
+            crate::mihomo::ControllerRuntime::Invalid { .. }
+        ));
         fs::remove_dir_all(root).expect("remove fixture");
     }
 }

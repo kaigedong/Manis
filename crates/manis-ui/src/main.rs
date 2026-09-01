@@ -14,7 +14,11 @@ fn main() {
         if let Err(message) = install_tray(cx) {
             eprintln!("manis_ui level=WARN event=tray.unavailable message={message}");
         }
-        open_window(cx).expect("failed to open Manis GPUI window");
-        cx.activate(true);
+        if let Err(message) = open_window(cx) {
+            eprintln!("manis_ui level=ERROR event=window.open_failed message={message}");
+            cx.quit();
+        } else {
+            cx.activate(true);
+        }
     });
 }

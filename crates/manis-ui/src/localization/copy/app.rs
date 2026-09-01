@@ -280,8 +280,6 @@ pub(crate) const TEST_FIXTURES_CANNOT_ENABLE_TUN: LocalizedText = LocalizedText:
 );
 pub(crate) const TEST_FIXTURE_IS_READ_ONLY: LocalizedText =
     LocalizedText::new("test fixture is read-only", "测试快照只读");
-pub(crate) const THE_KERNEL_RETURNED_NO_GROUP_MEMBERS: LocalizedText =
-    LocalizedText::new("The kernel returned no group members", "内核未返回组内节点");
 pub(crate) const THE_LOCAL_CONFIGURATION_DIRECTORY_IS_UNAVAILABLE_THE_KERNEL_CANNOT_BE:
     LocalizedText = LocalizedText::new(
     "The local configuration directory is unavailable; the kernel cannot be changed",

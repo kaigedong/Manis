@@ -14,8 +14,7 @@ use gpui::{
 use manis_core::WindowSizeClass;
 
 use super::{
-    ConfigurationSection, ImportQxRuleError, ImportQxRuleSuccess, ImportedSubscriptionState,
-    ManisApp, QxRuleImportFeedback, QxRuleList, SourceRuntimeApply,
+    ConfigurationSection, ImportedSubscriptionState, ManisApp, QxRuleList, SourceRuntimeApply,
 };
 use crate::{
     components::StatusTone,
@@ -33,6 +32,14 @@ mod proxy_sources;
 mod rule_sources;
 mod settings;
 mod source_mutations;
+pub(in crate::app) use manual_rules::{
+    ManualRuleConditionEditor, ManualRuleEditorState, ManualRulePopover,
+};
+pub(in crate::app) use proxy_sources::ProxySourceEditorState;
+pub(in crate::app) use source_mutations::{
+    ImportQxRuleError, ImportQxRuleSuccess, QxRuleEditorPopover, QxRuleImportFeedback,
+    QxRuleImportResult, QxRuleSourceRefreshState, RuleSourceState,
+};
 mod transfer;
 
 pub(super) use transfer::ConfigurationTransfer;
@@ -851,7 +858,7 @@ mod tests {
 
     #[test]
     fn configuration_directory_follows_variable_height_sections_in_both_directions() {
-        use super::settings::configuration_section_at_scroll;
+        use super::settings::navigation::configuration_section_at_scroll;
         use gpui::px;
 
         let tops = [120.0, 480.0, 790.0, 1_450.0, 1_900.0, 2_300.0].map(px);

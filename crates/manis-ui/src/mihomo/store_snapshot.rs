@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::io::Read as _;
 use std::path::{Path, PathBuf};
 
 use manis_profile::write_private_atomic;
@@ -21,22 +22,19 @@ impl SubscriptionStoreSnapshot {
         let mut files = BTreeMap::new();
         let mut total_bytes = 0_u64;
         for path in private_store_entries(directory)?.unwrap_or_default() {
-            let metadata = fs::symlink_metadata(&path)
-                .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
-            if metadata.file_type().is_symlink() || !metadata.is_file() {
-                return Err(SubscriptionStoreError::StoredSourceUnavailable);
-            }
-            total_bytes = total_bytes
-                .checked_add(metadata.len())
-                .filter(|total| *total <= MAX_SNAPSHOT_BYTES)
-                .ok_or(SubscriptionStoreError::StoreUnavailable)?;
             let name = path
                 .file_name()
                 .and_then(|name| name.to_str())
                 .ok_or(SubscriptionStoreError::StoredSourceUnavailable)?
                 .to_owned();
-            let bytes =
-                fs::read(path).map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
+            let remaining = MAX_SNAPSHOT_BYTES
+                .checked_sub(total_bytes)
+                .ok_or(SubscriptionStoreError::StoreUnavailable)?;
+            let bytes = read_snapshot_file(&path, remaining)?;
+            total_bytes = total_bytes
+                .checked_add(bytes.len() as u64)
+                .filter(|total| *total <= MAX_SNAPSHOT_BYTES)
+                .ok_or(SubscriptionStoreError::StoreUnavailable)?;
             files.insert(name, bytes);
         }
         Ok(Self { files })
@@ -61,7 +59,17 @@ impl SubscriptionStoreSnapshot {
                 .and_then(|name| name.to_str())
                 .ok_or(SubscriptionStoreError::StoredSourceUnavailable)?;
             if !self.files.contains_key(name) {
-                fs::remove_file(path).map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
+                let current = Some(read_snapshot_file(&path, MAX_SNAPSHOT_BYTES)?);
+                if !manis_profile::replace_private_if_unchanged(
+                    directory,
+                    name,
+                    current.as_deref(),
+                    None,
+                )
+                .map_err(|_error| SubscriptionStoreError::StoreUnavailable)?
+                {
+                    return Err(SubscriptionStoreError::StoreUnavailable);
+                }
             }
         }
         for (name, bytes) in self.files {
@@ -216,14 +224,70 @@ impl SourceStoreChanges {
 fn read_file(directory: &Path, name: &str) -> Result<Option<Vec<u8>>, SubscriptionStoreError> {
     let path = directory.join(name);
     match fs::symlink_metadata(&path) {
-        Ok(metadata) if metadata.is_file() && metadata.len() <= MAX_SNAPSHOT_BYTES => {
-            fs::read(path)
-                .map(Some)
-                .map_err(|_| SubscriptionStoreError::StoreUnavailable)
+        Ok(metadata) if metadata.is_file() => {
+            read_snapshot_file(&path, MAX_SNAPSHOT_BYTES).map(Some)
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         _ => Err(SubscriptionStoreError::StoredSourceUnavailable),
     }
+}
+
+#[cfg(not(windows))]
+fn read_snapshot_file(path: &Path, max_bytes: u64) -> Result<Vec<u8>, SubscriptionStoreError> {
+    let file = open_snapshot_file(path)?;
+    let metadata = file
+        .metadata()
+        .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
+    if !metadata.is_file() {
+        return Err(SubscriptionStoreError::StoredSourceUnavailable);
+    }
+    let mut bytes = Vec::new();
+    file.take(max_bytes.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
+    if bytes.len() as u64 > max_bytes {
+        return Err(SubscriptionStoreError::StoreUnavailable);
+    }
+    Ok(bytes)
+}
+
+#[cfg(not(windows))]
+fn open_snapshot_file(path: &Path) -> Result<fs::File, SubscriptionStoreError> {
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.custom_flags(0o00400000);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.custom_flags(0x0100);
+    }
+    options
+        .open(path)
+        .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)
+}
+
+#[cfg(windows)]
+fn read_snapshot_file(path: &Path, max_bytes: u64) -> Result<Vec<u8>, SubscriptionStoreError> {
+    let file =
+        fs::File::open(path).map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
+    let metadata = file
+        .metadata()
+        .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
+    if !metadata.is_file() || metadata.len() > max_bytes {
+        return Err(SubscriptionStoreError::StoredSourceUnavailable);
+    }
+    let mut bytes = Vec::new();
+    file.take(max_bytes.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
+    if bytes.len() as u64 > max_bytes {
+        return Err(SubscriptionStoreError::StoreUnavailable);
+    }
+    Ok(bytes)
 }
 
 #[cfg(all(test, not(windows)))]
@@ -232,7 +296,7 @@ mod tests {
 
     use manis_profile::write_private_atomic;
 
-    use super::SubscriptionStoreSnapshot;
+    use super::{SubscriptionStoreSnapshot, read_snapshot_file};
 
     #[test]
     fn restore_reinstates_changed_deleted_and_new_files() -> Result<(), Box<dyn std::error::Error>>
@@ -255,6 +319,47 @@ mod tests {
         assert_eq!(fs::read(store.join("changed.state"))?, b"before");
         assert_eq!(fs::read(store.join("deleted.state"))?, b"keep");
         assert!(!store.join("new.state").exists());
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn snapshot_reader_rejects_actual_bytes_past_the_remaining_limit()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = std::env::temp_dir().join(format!(
+            "manis-store-snapshot-limit-{}-{}",
+            std::process::id(),
+            super::super::current_unix_nanos()
+        ));
+        fs::create_dir_all(&root)?;
+        let path = root.join("source");
+        fs::write(&path, b"abcd")?;
+
+        assert_eq!(read_snapshot_file(&path, 4)?, b"abcd");
+        assert!(read_snapshot_file(&path, 3).is_err());
+
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn snapshot_reader_rejects_symbolic_links() -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "manis-store-snapshot-link-{}-{}",
+            std::process::id(),
+            super::super::current_unix_nanos()
+        ));
+        fs::create_dir_all(&root)?;
+        let target = root.join("target");
+        let link = root.join("source");
+        fs::write(&target, b"secret")?;
+        symlink(&target, &link)?;
+
+        assert!(read_snapshot_file(&link, 64).is_err());
+
         fs::remove_dir_all(root)?;
         Ok(())
     }

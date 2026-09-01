@@ -214,44 +214,57 @@ pub(crate) fn preview_single_node(
     {
         let binary =
             discover_preview_binary().map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
-        let workspace = PreviewWorkspace::create()
-            .map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
-        write_private_atomic(workspace.path(), "single-node.txt", input.as_bytes())
-            .map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
-        let mixed_port =
-            reserve_preview_port().map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
-        let profile = Profile::qx_sources_with_groups_and_local_providers(
-            Vec::new(),
-            vec!["./single-node.txt".to_owned()],
-            Vec::new(),
-            Vec::new(),
-            mixed_port,
-        )
-        .map_err(|_error| SubscriptionStoreError::InvalidSource)?;
-        let yaml =
-            render_mihomo_yaml(&profile).map_err(|_error| SubscriptionStoreError::InvalidSource)?;
-        let config_file = write_private_atomic(workspace.path(), "preview.yaml", yaml.as_bytes())
-            .map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
-        let controller = ControllerEndpoint::UnixSocket(workspace.path().join("controller.sock"));
-        let config =
-            ManagedEngineConfig::new(binary, config_file, workspace.path().to_owned(), controller);
-        let mut manager = EngineManager::new(
-            config,
-            ReadinessPolicy::default(),
-            Box::new(MihomoReadinessProbe),
-        );
-        let endpoint = manager
-            .start()
+        for attempt in 0..PREVIEW_ENGINE_START_ATTEMPTS {
+            let workspace = PreviewWorkspace::create()
+                .map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
+            write_private_atomic(workspace.path(), "single-node.txt", input.as_bytes())
+                .map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
+            let mixed_port = reserve_preview_port()
+                .map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
+            let profile = Profile::qx_sources_with_groups_and_local_providers(
+                Vec::new(),
+                vec!["./single-node.txt".to_owned()],
+                Vec::new(),
+                Vec::new(),
+                mixed_port,
+            )
             .map_err(|_error| SubscriptionStoreError::InvalidSource)?;
-        let providers = wait_for_preview_providers(&endpoint)
-            .map_err(|_error| SubscriptionStoreError::InvalidSource);
-        let _ = manager.stop();
-        providers
+            let yaml = render_mihomo_yaml(&profile)
+                .map_err(|_error| SubscriptionStoreError::InvalidSource)?;
+            let config_file =
+                write_private_atomic(workspace.path(), "preview.yaml", yaml.as_bytes())
+                    .map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
+            let controller =
+                ControllerEndpoint::UnixSocket(workspace.path().join("controller.sock"));
+            let config = ManagedEngineConfig::new(
+                binary.clone(),
+                config_file,
+                workspace.path().to_owned(),
+                controller,
+            );
+            let mut manager = EngineManager::new(
+                config,
+                ReadinessPolicy::default(),
+                Box::new(MihomoReadinessProbe),
+            );
+            let endpoint = match manager.start() {
+                Ok(endpoint) => endpoint,
+                Err(_) if attempt + 1 < PREVIEW_ENGINE_START_ATTEMPTS => continue,
+                Err(_) => return Err(SubscriptionStoreError::InvalidSource),
+            };
+            let providers = wait_for_preview_providers(&endpoint)
+                .map_err(|_error| SubscriptionStoreError::InvalidSource);
+            manager
+                .stop()
+                .map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
+            return providers;
+        }
+        Err(SubscriptionStoreError::InvalidSource)
     }
 }
 
 pub(crate) fn preview_imported_subscription(
-    subscription: SecretUrl,
+    subscription: &SecretUrl,
 ) -> Result<Vec<LoadedProvider>, SubscriptionPreviewError> {
     let binary = discover_preview_binary()?;
     preview_secret_subscription_with_binary(subscription, &binary)
@@ -263,11 +276,11 @@ pub(super) fn preview_subscription_with_binary(
 ) -> Result<Vec<LoadedProvider>, SubscriptionPreviewError> {
     let subscription = SecretUrl::parse_subscription(input)
         .map_err(|_error| SubscriptionPreviewError::InvalidSource)?;
-    preview_secret_subscription_with_binary(subscription, binary)
+    preview_secret_subscription_with_binary(&subscription, binary)
 }
 
 pub(super) fn preview_secret_subscription_with_binary(
-    subscription: SecretUrl,
+    subscription: &SecretUrl,
     binary: &Path,
 ) -> Result<Vec<LoadedProvider>, SubscriptionPreviewError> {
     #[cfg(not(unix))]
@@ -279,31 +292,42 @@ pub(super) fn preview_secret_subscription_with_binary(
     #[cfg(unix)]
     {
         let binary = canonical_binary(binary)?;
-        let workspace = PreviewWorkspace::create()
-            .map_err(|_error| SubscriptionPreviewError::WorkspaceUnavailable)?;
-        let mixed_port = reserve_preview_port()?;
-        let profile = Profile::subscription_preview(subscription, mixed_port)
-            .map_err(|_error| SubscriptionPreviewError::ProfileUnavailable)?;
-        let yaml = render_mihomo_yaml(&profile)
-            .map_err(|_error| SubscriptionPreviewError::ProfileUnavailable)?;
-        let config_file = write_private_atomic(workspace.path(), "preview.yaml", yaml.as_bytes())
-            .map_err(|_error| SubscriptionPreviewError::WorkspaceUnavailable)?;
-        let controller = ControllerEndpoint::UnixSocket(workspace.path().join("controller.sock"));
-        let config =
-            ManagedEngineConfig::new(binary, config_file, workspace.path().to_owned(), controller);
-        let mut manager = EngineManager::new(
-            config,
-            ReadinessPolicy::default(),
-            Box::new(MihomoReadinessProbe),
-        );
-        let endpoint = manager
-            .start()
-            .map_err(|_error| SubscriptionPreviewError::EngineUnavailable)?;
-        let providers = wait_for_preview_providers(&endpoint);
-        manager
-            .stop()
-            .map_err(|_error| SubscriptionPreviewError::EngineUnavailable)?;
-        providers
+        for attempt in 0..PREVIEW_ENGINE_START_ATTEMPTS {
+            let workspace = PreviewWorkspace::create()
+                .map_err(|_error| SubscriptionPreviewError::WorkspaceUnavailable)?;
+            let mixed_port = reserve_preview_port()?;
+            let profile = Profile::subscription_preview(subscription.clone(), mixed_port)
+                .map_err(|_error| SubscriptionPreviewError::ProfileUnavailable)?;
+            let yaml = render_mihomo_yaml(&profile)
+                .map_err(|_error| SubscriptionPreviewError::ProfileUnavailable)?;
+            let config_file =
+                write_private_atomic(workspace.path(), "preview.yaml", yaml.as_bytes())
+                    .map_err(|_error| SubscriptionPreviewError::WorkspaceUnavailable)?;
+            let controller =
+                ControllerEndpoint::UnixSocket(workspace.path().join("controller.sock"));
+            let config = ManagedEngineConfig::new(
+                binary.clone(),
+                config_file,
+                workspace.path().to_owned(),
+                controller,
+            );
+            let mut manager = EngineManager::new(
+                config,
+                ReadinessPolicy::default(),
+                Box::new(MihomoReadinessProbe),
+            );
+            let endpoint = match manager.start() {
+                Ok(endpoint) => endpoint,
+                Err(_) if attempt + 1 < PREVIEW_ENGINE_START_ATTEMPTS => continue,
+                Err(_) => return Err(SubscriptionPreviewError::EngineUnavailable),
+            };
+            let providers = wait_for_preview_providers(&endpoint);
+            manager
+                .stop()
+                .map_err(|_error| SubscriptionPreviewError::EngineUnavailable)?;
+            return providers;
+        }
+        Err(SubscriptionPreviewError::EngineUnavailable)
     }
 }
 
@@ -368,3 +392,4 @@ fn wait_for_preview_providers(
         Err(_) => Err(SubscriptionPreviewError::ProviderUnavailable),
     }
 }
+use std::fs;

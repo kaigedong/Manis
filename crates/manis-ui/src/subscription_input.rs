@@ -154,11 +154,9 @@ impl SubscriptionTextInput {
     }
 
     pub(crate) fn set_theme(&mut self, theme: Theme, dark: bool, cx: &mut Context<Self>) {
-        if self.dark != dark {
-            self.theme = theme;
-            self.dark = dark;
-            cx.notify();
-        }
+        self.theme = theme;
+        self.dark = dark;
+        cx.notify();
     }
 
     pub(crate) fn set_language(&mut self, language: Language, cx: &mut Context<Self>) {
@@ -354,6 +352,36 @@ mod tests {
             input.read_with(cx, |input, _| assert_eq!(input.value(), ""));
         });
         assert_eq!(changed.get(), 0);
+    }
+
+    #[gpui::test]
+    fn same_dark_mode_theme_updates_stored_theme(cx: &mut gpui::TestAppContext) {
+        cx.update(gpui_component::init);
+
+        let mut input = None;
+        let (_, window_cx) = cx.add_window_view(|window, cx| {
+            let entity = cx.new(|cx| {
+                SubscriptionTextInput::new_field(
+                    TextInputSpec::new("test-input", "placeholder", 128, Theme::light(), false),
+                    window,
+                    cx,
+                )
+            });
+            input = Some(entity.clone());
+            InputHarness { input: entity }
+        });
+        let input = input.expect("test input should be created");
+        let mut theme = Theme::light();
+        theme.window_backdrop = Theme::dark().window_backdrop;
+
+        window_cx.update(|window, cx| {
+            input.update(cx, |input, cx| input.set_theme(theme, false, cx));
+            window.draw(cx).clear(cx);
+            input.read_with(cx, |input, _| {
+                assert_eq!(input.theme.window_backdrop, theme.window_backdrop);
+                assert!(!input.dark);
+            });
+        });
     }
 
     #[gpui::test]

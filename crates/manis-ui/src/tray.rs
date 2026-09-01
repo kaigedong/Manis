@@ -14,6 +14,7 @@ use tray_icon::{
 use crate::{
     ManisApp,
     app::ProxyModeBlock,
+    diagnostics::{LogLevel, record_event},
     localization::{Language, Localizer, copy},
     mihomo,
     theme::LayoutMetric,
@@ -78,19 +79,41 @@ fn manis_app(cx: &mut App) -> Entity<ManisApp> {
 
 /// Opens the main Manis window, or activates it if it is already open.
 pub fn show_or_open_window(cx: &mut App) {
+    if let Err(error) = try_show_or_open_window(cx) {
+        record_event(
+            LogLevel::Error,
+            "tray.window.open_failed",
+            error.to_string(),
+        );
+    }
+}
+
+fn try_show_or_open_window(cx: &mut App) -> gpui::Result<()> {
     if let Some(window) = cx
         .windows()
         .into_iter()
         .find(|window| window.downcast::<gpui_component::Root>().is_some())
+        && window
+            .update(cx, |_, window, _| window.activate_window())
+            .is_ok()
     {
-        let _ = window.update(cx, |_, window, _| window.activate_window());
         cx.activate(true);
-        return;
+        return Ok(());
     }
 
-    if open_window(cx).is_ok() {
-        cx.activate(true);
-    }
+    open_window(cx)?;
+    cx.activate(true);
+    Ok(())
+}
+
+fn main_window(cx: &mut App) -> Option<AnyWindowHandle> {
+    cx.windows()
+        .into_iter()
+        .find(|window| window.downcast::<gpui_component::Root>().is_some())
+}
+
+fn log_tray_error(event: &'static str, error: impl std::fmt::Display) {
+    record_event(LogLevel::Error, event, error.to_string());
 }
 
 /// Opens a new Manis window.
@@ -308,37 +331,42 @@ fn request_proxy_mode(cx: &mut App, selected: ProxyMode) {
 }
 
 fn open_about_dialog(cx: &mut App) {
+    if let Err(error) = try_open_about_dialog(cx) {
+        log_tray_error("tray.about.open_failed", error);
+    }
+}
+
+fn try_open_about_dialog(cx: &mut App) -> gpui::Result<()> {
     let app = manis_app(cx);
-    if let Some(window) = activate_main_window(cx) {
-        let _ = window.update(cx, |_, window, cx| {
-            app.update(cx, |app, cx| app.open_about_dialog(window, cx));
-        });
+    if let Some(window) = main_window(cx)
+        && open_about_dialog_in_window(window, &app, cx).is_ok()
+    {
         cx.activate(true);
-        return;
+        return Ok(());
     }
 
     let window_size = size(px(1420.0), px(900.0));
     let bounds = Bounds::centered(None, window_size, cx);
     let root_app = app.clone();
-    let Ok(window) = cx.open_window(main_window_options(bounds), move |window, cx| {
+    let window = cx.open_window(main_window_options(bounds), move |window, cx| {
         cx.new(|cx| crate::root(root_app, window, cx))
-    }) else {
-        return;
-    };
+    })?;
     let window: AnyWindowHandle = window.into();
-    let _ = window.update(cx, |_, window, cx| {
-        app.update(cx, |app, cx| app.open_about_dialog(window, cx));
-    });
+    open_about_dialog_in_window(window, &app, cx)?;
     cx.activate(true);
+    Ok(())
 }
 
-fn activate_main_window(cx: &mut App) -> Option<AnyWindowHandle> {
-    let window = cx
-        .windows()
-        .into_iter()
-        .find(|window| window.downcast::<gpui_component::Root>().is_some())?;
-    let _ = window.update(cx, |_, window, _| window.activate_window());
-    Some(window)
+fn open_about_dialog_in_window(
+    window: AnyWindowHandle,
+    app: &Entity<ManisApp>,
+    cx: &mut App,
+) -> gpui::Result<()> {
+    window.update(cx, |_, window, cx| {
+        window.activate_window();
+        app.update(cx, |app, cx| app.open_about_dialog(window, cx));
+    })?;
+    Ok(())
 }
 
 /// Mirrors the live proxy mode onto the tray check items.

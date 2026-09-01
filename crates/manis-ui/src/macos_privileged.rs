@@ -10,6 +10,8 @@ use manis_engine::{CommandSpec, ManagedChild, ProcessExit, ProcessSpawner, StdPr
 
 use crate::diagnostics::{LogLevel, record_event};
 
+mod reclaim;
+
 const HELPER_CONTROL_NAME: &str = "manis-helperctl";
 const HELPER_PROTOCOL_VERSION: &str = "v8";
 const HELPER_REGISTRATION_ATTEMPTS: usize = 2;
@@ -19,11 +21,6 @@ const HELPER_READY_DELAY: Duration = Duration::from_millis(450);
 const ROUTE_COMMAND: &str = "/sbin/route";
 const TUN_ROUTE_RELEASE_ATTEMPTS: usize = 10;
 const TUN_ROUTE_RELEASE_DELAY: Duration = Duration::from_millis(50);
-const LSOF_COMMAND: &str = "/usr/sbin/lsof";
-const PS_COMMAND: &str = "/bin/ps";
-const KILL_COMMAND: &str = "/bin/kill";
-const ORDINARY_CORE_STOP_ATTEMPTS: usize = 20;
-const ORDINARY_CORE_STOP_DELAY: Duration = Duration::from_millis(50);
 
 /// Process adapter backed by Manis's signed, root launch daemon.
 ///
@@ -147,41 +144,11 @@ impl MacosPrivilegedProcessSpawner {
     /// Stops an unprivileged Manis core left behind by an earlier UI process.
     ///
     /// The controller socket identifies the candidate process, but is not sufficient proof of
-    /// ownership on its own. The complete process command must also equal the exact launch shape
-    /// for the current Manis runtime before it is terminated.
+    /// ownership on its own. The executable identity must also match the Manis-managed runtime
+    /// before the process is terminated; flat argv text is not used as an authorization boundary.
     pub(crate) fn reclaim_stale_ordinary(spec: &CommandSpec) -> io::Result<()> {
         let request = Self::parse_launch(spec)?;
-        for pid in controller_owner_pids(request.controller)? {
-            let Some(command) = process_command(pid)? else {
-                continue;
-            };
-            if !is_expected_ordinary_process(&command, spec) {
-                record_event(
-                    LogLevel::Error,
-                    "helper.recovery.ordinary_core_rejected",
-                    format!("pid={pid} reason=launch_mismatch"),
-                );
-                return Err(io::Error::new(
-                    io::ErrorKind::PermissionDenied,
-                    format!(
-                        "Manis controller socket is owned by an unexpected process (pid {pid})"
-                    ),
-                ));
-            }
-
-            record_event(
-                LogLevel::Info,
-                "helper.recovery.ordinary_core_detected",
-                format!("pid={pid}"),
-            );
-            stop_expected_ordinary_process(pid, spec)?;
-            record_event(
-                LogLevel::Info,
-                "helper.recovery.ordinary_core_stopped",
-                format!("pid={pid}"),
-            );
-        }
-        Ok(())
+        reclaim::reclaim_stale_ordinary(spec, request.controller)
     }
 
     fn parse_launch(spec: &CommandSpec) -> io::Result<LaunchRequest<'_>> {
@@ -210,99 +177,6 @@ impl MacosPrivilegedProcessSpawner {
             controller,
         })
     }
-}
-
-fn controller_owner_pids(controller: &Path) -> io::Result<Vec<u32>> {
-    let output = Command::new(LSOF_COMMAND)
-        .args([OsStr::new("-t"), OsStr::new("--"), controller.as_os_str()])
-        .env_clear()
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()?;
-    if output.stdout.is_empty() {
-        return Ok(Vec::new());
-    }
-    parse_lsof_pids(&output.stdout)
-}
-
-fn parse_lsof_pids(bytes: &[u8]) -> io::Result<Vec<u32>> {
-    String::from_utf8_lossy(bytes)
-        .lines()
-        .map(|line| {
-            line.trim()
-                .parse::<u32>()
-                .ok()
-                .filter(|pid| *pid > 0)
-                .ok_or_else(|| {
-                    io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "lsof returned an invalid process identifier",
-                    )
-                })
-        })
-        .collect()
-}
-
-fn process_command(pid: u32) -> io::Result<Option<String>> {
-    let output = Command::new(PS_COMMAND)
-        .args(["-ww", "-p", &pid.to_string(), "-o", "command="])
-        .env_clear()
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()?;
-    if !output.status.success() {
-        return Ok(None);
-    }
-    let command = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    Ok((!command.is_empty()).then_some(command))
-}
-
-fn expected_process_command(spec: &CommandSpec) -> String {
-    let mut command = spec.program().to_string_lossy().into_owned();
-    for argument in spec.args() {
-        command.push(' ');
-        command.push_str(&argument.to_string_lossy());
-    }
-    command
-}
-
-fn is_expected_ordinary_process(command: &str, spec: &CommandSpec) -> bool {
-    command == expected_process_command(spec)
-}
-
-fn stop_expected_ordinary_process(pid: u32, spec: &CommandSpec) -> io::Result<()> {
-    match process_command(pid)? {
-        Some(command) if is_expected_ordinary_process(&command, spec) => {}
-        Some(_) | None => return Ok(()),
-    }
-
-    let signal = Command::new(KILL_COMMAND)
-        .args(["-TERM", &pid.to_string()])
-        .env_clear()
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .output()?;
-    if !signal.status.success() && process_command(pid)?.is_some() {
-        return Err(control_error("stop stale ordinary Mihomo", &signal));
-    }
-
-    for attempt in 0..ORDINARY_CORE_STOP_ATTEMPTS {
-        match process_command(pid)? {
-            None => return Ok(()),
-            Some(command) if !is_expected_ordinary_process(&command, spec) => return Ok(()),
-            Some(_) if attempt + 1 < ORDINARY_CORE_STOP_ATTEMPTS => {
-                std::thread::sleep(ORDINARY_CORE_STOP_DELAY);
-            }
-            Some(_) => {}
-        }
-    }
-    Err(io::Error::new(
-        io::ErrorKind::TimedOut,
-        format!("stale ordinary Mihomo pid {pid} did not stop after SIGTERM"),
-    ))
 }
 
 pub(crate) fn existing_tun_route() -> io::Result<Option<String>> {
@@ -649,8 +523,8 @@ mod tests {
 
     use super::{
         HelperStatus, MacosPrivilegedProcessSpawner, is_current_status,
-        is_expected_ordinary_process, is_terminal_registration_failure, parse_existing_tun_route,
-        parse_helper_status, parse_lsof_pids, parse_pid, stop_arguments,
+        is_terminal_registration_failure, parse_existing_tun_route, parse_helper_status, parse_pid,
+        stop_arguments,
     };
 
     #[test]
@@ -769,29 +643,5 @@ mod tests {
         .launch_command();
 
         assert!(MacosPrivilegedProcessSpawner::parse_launch(&launch).is_err());
-    }
-
-    #[test]
-    fn recognizes_only_the_exact_manis_ordinary_process() {
-        let root = PathBuf::from("/Users/example/Library/Application Support/Manis/mihomo");
-        let launch = ManagedEngineConfig::new(
-            PathBuf::from("/Applications/Manis.app/Contents/Resources/mihomo/mihomo"),
-            root.join("manis-generated.yaml"),
-            root.clone(),
-            ControllerEndpoint::UnixSocket(root.join("controller.sock")),
-        )
-        .launch_command();
-        let manis = "/Applications/Manis.app/Contents/Resources/mihomo/mihomo -d /Users/example/Library/Application Support/Manis/mihomo -f /Users/example/Library/Application Support/Manis/mihomo/manis-generated.yaml -ext-ctl-unix /Users/example/Library/Application Support/Manis/mihomo/controller.sock";
-        let clash_verge = "/Applications/Clash Verge.app/Contents/MacOS/verge-mihomo -d /Users/example/Library/Application Support/io.github.clash-verge-rev.clash-verge-rev -f /Users/example/Library/Application Support/io.github.clash-verge-rev.clash-verge-rev/clash-verge.yaml -ext-ctl-unix /tmp/verge/verge-mihomo.sock";
-
-        assert!(is_expected_ordinary_process(manis, &launch));
-        assert!(!is_expected_ordinary_process(clash_verge, &launch));
-    }
-
-    #[test]
-    fn parses_only_positive_lsof_process_identifiers() {
-        assert_eq!(parse_lsof_pids(b"20372\n42\n").unwrap(), vec![20372, 42]);
-        assert!(parse_lsof_pids(b"20372\nnot-a-pid\n").is_err());
-        assert!(parse_lsof_pids(b"0\n").is_err());
     }
 }

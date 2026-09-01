@@ -45,6 +45,7 @@ pub(crate) enum LogLevel {
 struct Diagnostics {
     logs: VecDeque<UiLogEntry>,
     path: Option<PathBuf>,
+    durable_error: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -228,7 +229,7 @@ impl<S: tracing::Subscriber> Layer<S> for EventLayer {
             .state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let entry = UiLogEntry {
+        let mut entry = UiLogEntry {
             // Assign under the ring/file lock so concurrent operations remain sequence ordered.
             sequence: NEXT_LOG_SEQUENCE.fetch_add(1, Ordering::Relaxed),
             timestamp_ms: now_ms(),
@@ -238,7 +239,21 @@ impl<S: tracing::Subscriber> Layer<S> for EventLayer {
             detail: fields.detail,
         };
         if let Some(path) = diagnostics.path.as_deref() {
-            append_line(path, &entry);
+            match append_line(path, &entry) {
+                Ok(()) => diagnostics.durable_error = None,
+                Err(error) => {
+                    let message = error.to_string();
+                    if diagnostics.durable_error.as_deref() != Some(message.as_str()) {
+                        eprintln!("Manis durable diagnostic log failed: {message}");
+                    }
+                    diagnostics.durable_error = Some(message);
+                    let detail = match entry.detail.take() {
+                        Some(detail) => format!("{detail} · durable diagnostic sink failed"),
+                        None => "durable diagnostic sink failed".to_owned(),
+                    };
+                    entry.detail = Some(sanitize_detail(&detail));
+                }
+            }
         }
         if self.stderr {
             eprintln!("{}", format_line(&entry));
@@ -291,21 +306,27 @@ fn push_bounded(logs: &mut VecDeque<UiLogEntry>, entry: UiLogEntry) {
     logs.push_back(entry);
 }
 
-fn append_line(path: &Path, entry: &UiLogEntry) {
-    let Some(parent) = path.parent() else {
-        return;
-    };
-    if fs::create_dir_all(parent).is_err() {
-        return;
-    }
+fn append_line(path: &Path, entry: &UiLogEntry) -> std::io::Result<()> {
+    let parent = path.parent().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "diagnostic log path has no parent",
+        )
+    })?;
+    fs::create_dir_all(parent)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
-        let _ = fs::set_permissions(parent, fs::Permissions::from_mode(0o700));
+        fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
     }
-    if fs::metadata(path).is_ok_and(|metadata| metadata.len() > MAX_LOG_BYTES) {
-        let previous = path.with_extension("log.previous");
-        let _ = fs::rename(path, previous);
+    match fs::metadata(path) {
+        Ok(metadata) if metadata.len() > MAX_LOG_BYTES => {
+            let previous = path.with_extension("log.previous");
+            fs::rename(path, previous)?;
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
     }
     let mut options = OpenOptions::new();
     options.create(true).append(true);
@@ -314,10 +335,8 @@ fn append_line(path: &Path, entry: &UiLogEntry) {
         use std::os::unix::fs::OpenOptionsExt as _;
         options.mode(0o600);
     }
-    let Ok(mut file) = options.open(path) else {
-        return;
-    };
-    let _ = writeln!(file, "{}", format_line(entry));
+    let mut file = options.open(path)?;
+    writeln!(file, "{}", format_line(entry))
 }
 
 fn format_line(entry: &UiLogEntry) -> String {
@@ -388,28 +407,51 @@ fn parse_legacy_line(line: &str) -> Option<UiLogEntry> {
 }
 
 fn sanitize_detail(value: &str) -> String {
-    let mut sanitized = value
-        .split_whitespace()
-        .map(|word| {
-            let lower = word.to_ascii_lowercase();
-            if ["http://", "https://", "vless://"]
-                .iter()
-                .any(|prefix| lower.contains(prefix))
-            {
-                "<redacted-url>"
-            } else if lower.contains("token=") {
-                "<redacted-token>"
-            } else {
-                word
+    let mut sanitized = String::with_capacity(value.len().min(MAX_DETAIL_CHARS));
+    let mut written = 0;
+    let mut truncated = false;
+    for word in value.split_whitespace() {
+        let replacement = if ["http://", "https://", "vless://"]
+            .iter()
+            .any(|prefix| contains_ascii_case_insensitive(word, prefix))
+        {
+            "<redacted-url>"
+        } else if contains_ascii_case_insensitive(word, "token=") {
+            "<redacted-token>"
+        } else {
+            word
+        };
+        if !sanitized.is_empty() {
+            if written == MAX_DETAIL_CHARS {
+                truncated = true;
+                break;
             }
-        })
-        .collect::<Vec<_>>()
-        .join(" ");
-    if sanitized.chars().count() > MAX_DETAIL_CHARS {
-        sanitized = sanitized.chars().take(MAX_DETAIL_CHARS).collect();
+            sanitized.push(' ');
+            written += 1;
+        }
+        for character in replacement.chars() {
+            if written == MAX_DETAIL_CHARS {
+                truncated = true;
+                break;
+            }
+            sanitized.push(character);
+            written += 1;
+        }
+        if truncated {
+            break;
+        }
+    }
+    if truncated {
         sanitized.push('…');
     }
     sanitized
+}
+
+fn contains_ascii_case_insensitive(value: &str, needle: &str) -> bool {
+    value
+        .as_bytes()
+        .windows(needle.len())
+        .any(|candidate| candidate.eq_ignore_ascii_case(needle.as_bytes()))
 }
 
 fn sanitize_fragment(value: &str) -> String {
@@ -565,7 +607,7 @@ mod tests {
             event: "test.rotation".into(),
             detail: None,
         };
-        super::append_line(&path, &entry);
+        super::append_line(&path, &entry).expect("rotate and append diagnostic entry");
         assert_eq!(
             std::fs::metadata(path.with_extension("log.previous"))
                 .unwrap()
@@ -575,6 +617,54 @@ mod tests {
         assert_eq!(
             parse_line(super::read_history(&path).unwrap().trim_end()),
             Some(entry)
+        );
+    }
+
+    #[test]
+    fn durable_append_reports_an_unusable_parent() {
+        let root = TestDirectory::new();
+        let blocker = root.0.join("not-a-directory");
+        std::fs::write(&blocker, b"blocker").expect("create blocking file");
+        let entry = UiLogEntry {
+            sequence: 1,
+            timestamp_ms: 2,
+            level: "ERROR".into(),
+            operation_id: None,
+            event: "test.persistence".into(),
+            detail: None,
+        };
+
+        assert!(super::append_line(&blocker.join("events.log"), &entry).is_err());
+    }
+
+    #[test]
+    fn tracing_exposes_a_durable_sink_failure_in_memory() {
+        use std::sync::{Arc, Mutex};
+
+        let root = TestDirectory::new();
+        let blocker = root.0.join("not-a-directory");
+        std::fs::write(&blocker, b"blocker").expect("create blocking file");
+        let state = Arc::new(Mutex::new(super::Diagnostics {
+            path: Some(blocker.join("events.log")),
+            ..Default::default()
+        }));
+        let dispatch = super::event_dispatch(Arc::clone(&state), false);
+
+        tracing::dispatcher::with_default(&dispatch, || {
+            tracing::error!(
+                target: "manis::events",
+                event = "test.persistence",
+                detail = "original detail"
+            );
+        });
+
+        let diagnostics = state.lock().expect("inspect diagnostics");
+        assert!(diagnostics.durable_error.is_some());
+        assert!(
+            diagnostics.logs[0]
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("durable diagnostic sink failed"))
         );
     }
     use super::{
@@ -605,6 +695,14 @@ mod tests {
         assert!(!detail.contains("example.invalid"));
         assert!(!detail.contains('\n'));
         assert!(detail.contains("<redacted-url>"));
+    }
+
+    #[test]
+    fn dynamic_details_stop_at_the_persisted_character_limit() {
+        let detail = sanitize_detail(&"a".repeat(super::MAX_DETAIL_CHARS + 100));
+
+        assert_eq!(detail.chars().count(), super::MAX_DETAIL_CHARS + 1);
+        assert!(detail.ends_with('…'));
     }
 
     #[test]

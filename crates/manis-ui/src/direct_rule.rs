@@ -6,6 +6,8 @@
 use std::fmt;
 #[cfg(not(windows))]
 use std::fs;
+#[cfg(not(windows))]
+use std::io::Read as _;
 use std::path::Path;
 
 const DIRECT_RULES_FILE: &str = "direct-rules.state";
@@ -88,6 +90,7 @@ fn is_domain_suffix(value: &str) -> bool {
     }
     value.split('.').all(|label| {
         !label.is_empty()
+            && label.len() <= 63
             && !label.starts_with('-')
             && !label.ends_with('-')
             && label
@@ -148,8 +151,36 @@ pub(crate) fn load_direct_rules_in(
     if !metadata.is_file() || metadata.len() > MAX_DIRECT_RULES_FILE_BYTES {
         return Err(DirectRuleStoreError::Corrupt);
     }
-    let contents = fs::read_to_string(&path).map_err(|_error| DirectRuleStoreError::Corrupt)?;
+    let file = fs::File::open(&path).map_err(|_error| DirectRuleStoreError::Corrupt)?;
+    let opened = file
+        .metadata()
+        .map_err(|_error| DirectRuleStoreError::Corrupt)?;
+    if !opened.is_file()
+        || opened.len() > MAX_DIRECT_RULES_FILE_BYTES
+        || !same_file(&metadata, &opened)
+    {
+        return Err(DirectRuleStoreError::Corrupt);
+    }
+    let mut contents = String::new();
+    file.take(MAX_DIRECT_RULES_FILE_BYTES + 1)
+        .read_to_string(&mut contents)
+        .map_err(|_error| DirectRuleStoreError::Corrupt)?;
+    if contents.len() as u64 > MAX_DIRECT_RULES_FILE_BYTES {
+        return Err(DirectRuleStoreError::Corrupt);
+    }
     decode_direct_rules(&contents)
+}
+
+#[cfg(unix)]
+fn same_file(expected: &fs::Metadata, opened: &fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt as _;
+
+    expected.dev() == opened.dev() && expected.ino() == opened.ino()
+}
+
+#[cfg(all(not(unix), not(windows)))]
+fn same_file(_expected: &fs::Metadata, _opened: &fs::Metadata) -> bool {
+    true
 }
 
 #[cfg(windows)]
@@ -189,6 +220,18 @@ mod tests {
         assert_eq!(
             DirectRule::parse("  SSH.GitHub.com "),
             Ok(DirectRule::DomainSuffix("ssh.github.com".to_owned()))
+        );
+    }
+
+    #[test]
+    fn domain_labels_respect_the_dns_length_limit() {
+        let valid = format!("{}.example", "a".repeat(63));
+        let invalid = format!("{}.example", "a".repeat(64));
+
+        assert!(DirectRule::parse(&valid).is_ok());
+        assert_eq!(
+            DirectRule::parse(&invalid),
+            Err(DirectRuleError::InvalidDomain)
         );
     }
 

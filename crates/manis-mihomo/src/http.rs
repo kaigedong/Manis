@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, atomic::AtomicBool};
 
 use serde_json::Value;
-use ureq::http::{Request, Response};
+use ureq::http::{Method, Request, Response};
 
 use crate::http_socket::{self, Socket};
 use crate::{ControllerConfig, MihomoError};
@@ -102,7 +102,7 @@ impl Default for StdHttpTransport {
 
 impl ControllerTransport for StdHttpTransport {
     fn get(&self, config: &ControllerConfig, path: &str) -> Result<String, MihomoError> {
-        Target::Loopback(config).request("GET", path, None, self.body_limit)
+        Target::Loopback(config).request(Method::GET, path, None, self.body_limit)
     }
 
     fn patch_json(
@@ -111,7 +111,7 @@ impl ControllerTransport for StdHttpTransport {
         path: &str,
         body: &Value,
     ) -> Result<String, MihomoError> {
-        Target::Loopback(config).request("PATCH", path, Some(body), self.body_limit)
+        Target::Loopback(config).request(Method::PATCH, path, Some(body), self.body_limit)
     }
 
     fn put_json(
@@ -120,7 +120,7 @@ impl ControllerTransport for StdHttpTransport {
         path: &str,
         body: &Value,
     ) -> Result<String, MihomoError> {
-        Target::Loopback(config).request("PUT", path, Some(body), self.body_limit)
+        Target::Loopback(config).request(Method::PUT, path, Some(body), self.body_limit)
     }
 }
 
@@ -157,7 +157,7 @@ impl UnixSocketTransport {
 #[cfg(unix)]
 impl ControllerTransport for UnixSocketTransport {
     fn get(&self, config: &ControllerConfig, path: &str) -> Result<String, MihomoError> {
-        Target::Unix(config, &self.socket_path).request("GET", path, None, self.body_limit)
+        Target::Unix(config, &self.socket_path).request(Method::GET, path, None, self.body_limit)
     }
 
     fn patch_json(
@@ -166,7 +166,12 @@ impl ControllerTransport for UnixSocketTransport {
         path: &str,
         body: &Value,
     ) -> Result<String, MihomoError> {
-        Target::Unix(config, &self.socket_path).request("PATCH", path, Some(body), self.body_limit)
+        Target::Unix(config, &self.socket_path).request(
+            Method::PATCH,
+            path,
+            Some(body),
+            self.body_limit,
+        )
     }
 
     fn put_json(
@@ -175,7 +180,12 @@ impl ControllerTransport for UnixSocketTransport {
         path: &str,
         body: &Value,
     ) -> Result<String, MihomoError> {
-        Target::Unix(config, &self.socket_path).request("PUT", path, Some(body), self.body_limit)
+        Target::Unix(config, &self.socket_path).request(
+            Method::PUT,
+            path,
+            Some(body),
+            self.body_limit,
+        )
     }
 }
 
@@ -188,7 +198,7 @@ pub(crate) enum Target<'a> {
 impl Target<'_> {
     pub(crate) fn response(
         &self,
-        method: &str,
+        method: Method,
         path: &str,
         body: Option<&Value>,
         cancelled: Option<Arc<AtomicBool>>,
@@ -269,7 +279,7 @@ impl Target<'_> {
 
     fn request(
         &self,
-        method: &str,
+        method: Method,
         path: &str,
         body: Option<&Value>,
         limit: usize,
@@ -308,7 +318,7 @@ pub(crate) fn validate_unix_socket_path(socket_path: &Path) -> Result<(), Mihomo
 
 fn build_request(
     config: &ControllerConfig,
-    method: &str,
+    method: Method,
     path: &str,
     body: Option<&Value>,
     include_authorization: bool,
@@ -375,12 +385,13 @@ pub(crate) fn body_error(error: io::Error) -> MihomoError {
 mod tests {
     use super::build_request;
     use crate::ControllerConfig;
+    use ureq::http::Method;
 
     #[test]
     fn request_builder_omits_empty_secret() {
         let request = build_request(
             &ControllerConfig::default().with_secret(""),
-            "GET",
+            Method::GET,
             "/version",
             None,
             true,
@@ -394,7 +405,7 @@ mod tests {
         assert!(
             build_request(
                 &ControllerConfig::default().with_secret("token\r\nX-Injected: yes"),
-                "GET",
+                Method::GET,
                 "/version",
                 None,
                 true
@@ -411,7 +422,9 @@ mod tests {
             "/version#ignored",
             "https://example.com",
         ] {
-            assert!(build_request(&ControllerConfig::default(), "GET", path, None, true).is_err());
+            assert!(
+                build_request(&ControllerConfig::default(), Method::GET, path, None, true).is_err()
+            );
         }
     }
 
@@ -419,7 +432,7 @@ mod tests {
     fn authorization_header_debug_is_redacted() {
         let request = build_request(
             &ControllerConfig::default().with_secret("secret-token"),
-            "GET",
+            Method::GET,
             "/version",
             None,
             true,
