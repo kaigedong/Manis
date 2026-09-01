@@ -90,7 +90,7 @@ for the HTTP, configuration, and diagnostics implementation choices and upgrade 
 
 ## Portable configuration and policy selection
 
-Under Configuration → General → Backup and migration, export a `.manis.json` file and import it on
+Under Configuration → General → Backup and migration, export a `.json` file and import it on
 another Manis installation. Import accepts a file or clipboard text, validates it, previews item
 counts, and requires confirmation before replacing the destination configuration and restarting.
 This is a versioned Manis backup, not Mihomo YAML for other clients.

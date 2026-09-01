@@ -4,6 +4,7 @@ use gpui_component::{Disableable, button::Button};
 use crate::app::ManisApp;
 use crate::{
     components::{ActionRole, action_button},
+    diagnostics::{LogLevel, record_event},
     localization::{Language, copy},
     theme::{ControlSize, Space, TextRole, Theme},
 };
@@ -60,11 +61,18 @@ impl ManisApp {
                     editor.update(cx, |editor, cx| editor.focus(window, cx));
                     cx.notify();
                 }
-                Err(_) => this.finish_configuration_transfer(
-                    language.localized(copy::backup::EDIT_FAILED),
-                    true,
-                    cx,
-                ),
+                Err(error) => {
+                    record_event(
+                        LogLevel::Error,
+                        "configuration.edit.load_failed",
+                        error.to_string(),
+                    );
+                    this.finish_configuration_transfer(
+                        language.localized(copy::backup::EDIT_FAILED),
+                        true,
+                        cx,
+                    );
+                }
             })
             .ok();
         })

@@ -98,7 +98,7 @@ fn file_export_produces_an_importable_backup_without_changing_sources(
     let store = root.join("subscriptions");
     crate::mihomo::save_routing_mode_in(&store, manis_core::RoutingMode::Direct)
         .expect("fixture routing");
-    let output = root.join("export.manis.json");
+    let output = root.join("export.json");
     let mut app = None;
     let (_, cx) = cx.add_window_view(|window, cx| {
         let entity = cx.new(|_| {
@@ -183,10 +183,7 @@ fn failed_export_unlocks_configuration_and_reports_the_error_without_a_dialog(
     let store = unique_temp_store("manis-export-failure");
     crate::mihomo::save_routing_mode_in(&store, manis_core::RoutingMode::Direct)
         .expect("fixture routing");
-    let output = store
-        .parent()
-        .expect("fixture root")
-        .join("directory.manis.json");
+    let output = store.parent().expect("fixture root").join("directory.json");
     std::fs::create_dir(&output).expect("directory cannot be overwritten by export");
     let original = std::fs::read(store.join("routing.mode")).expect("fixture routing");
     let mut app = None;
@@ -316,7 +313,7 @@ fn file_import_only_opens_preview_after_selection_and_validation(cx: &mut gpui::
     crate::mihomo::save_routing_mode_in(&store, manis_core::RoutingMode::Direct)
         .expect("fixture mode");
     let original = std::fs::read(store.join("routing.mode")).expect("fixture contents");
-    let input = store.parent().unwrap().join("input.manis.json");
+    let input = store.parent().unwrap().join("input.json");
     std::fs::write(&input, "not a backup").expect("invalid fixture");
     let mut app = None;
     let (_, cx) = cx.add_window_view(|window, cx| {
@@ -360,6 +357,51 @@ fn file_import_only_opens_preview_after_selection_and_validation(cx: &mut gpui::
     });
     assert_eq!(std::fs::read(store.join("routing.mode")).unwrap(), original);
     std::fs::remove_dir_all(store.parent().unwrap()).unwrap();
+}
+
+#[cfg(unix)]
+#[gpui::test]
+fn file_import_reports_when_the_selected_file_is_not_readable(cx: &mut gpui::TestAppContext) {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    cx.update(crate::init);
+    let store = unique_temp_store("manis-import-permission");
+    crate::mihomo::save_routing_mode_in(&store, manis_core::RoutingMode::Direct)
+        .expect("fixture mode");
+    let input = store.parent().unwrap().join("input.json");
+    crate::config_backup::export_to_file(&store, &input).expect("valid fixture");
+    std::fs::set_permissions(&input, std::fs::Permissions::from_mode(0o000))
+        .expect("deny fixture read access");
+    let mut app = None;
+    let (_, cx) = cx.add_window_view(|window, cx| {
+        let entity = cx.new(|_| {
+            ManisApp::with_fixture_controller_and_subscription_store(
+                "http://127.0.0.1:1",
+                store.clone(),
+            )
+        });
+        app = Some(entity.clone());
+        crate::root(entity, window, cx)
+    });
+    let app = app.expect("fixture app");
+
+    cx.update(|window, cx| {
+        app.update(cx, |app, cx| app.choose_configuration_import(window, cx));
+    });
+    cx.simulate_path_prompt_response(|_| Some(vec![input.clone()]));
+    cx.run_until_parked();
+
+    app.read_with(cx, |app, _| {
+        assert!(app.configuration_transfer.failed);
+        assert_eq!(
+            app.status,
+            app.language()
+                .localized(super::copy::backup::IMPORT_PERMISSION_DENIED)
+        );
+    });
+    std::fs::set_permissions(&input, std::fs::Permissions::from_mode(0o600))
+        .expect("restore fixture permissions");
+    std::fs::remove_dir_all(store.parent().unwrap()).expect("remove fixture");
 }
 
 #[gpui::test]

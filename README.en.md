@@ -136,7 +136,7 @@ if cleanup fails, the previous kernel remains running.
 
 ## Configuration backup and editing
 
-Under Settings → General → Backup and migration, export a complete `.manis.json` file and import it
+Under Settings → General → Backup and migration, export a complete `.json` file and import it
 on another device. Export and file import show only the system file picker; import opens a preview
 after the selected file passes validation. Progress and results appear in the bottom status bar
 without resizing the settings card. **Edit configuration** opens the current complete
