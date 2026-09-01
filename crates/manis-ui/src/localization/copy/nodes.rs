@@ -65,21 +65,20 @@ pub(crate) const GROUP_NAME_CANNOT_BE_EMPTY_OR_CONTAIN_NEWLINES_CONTROL_CHARACTE
     );
 pub(crate) const GROUP_SAVED: LocalizedText = LocalizedText::new("Group saved", "分组已保存");
 pub(crate) const ICON: LocalizedText = LocalizedText::new("Icon", "图标");
-pub(crate) const IMPORT_A_SUBSCRIPTION_OR_ADD_A_VLESS_NODE_NODES_WILL: LocalizedText =
+pub(crate) const IMPORT_A_SUBSCRIPTION_OR_ADD_A_SINGLE_NODE_NODES_WILL: LocalizedText =
     LocalizedText::new(
-        "Import a subscription or add a VLESS node; nodes will then appear here automatically.",
-        "导入订阅或添加 VLESS 节点后，节点会自动出现在这里。",
+        "Import a subscription or add a single node; nodes will then appear here automatically.",
+        "导入订阅或添加单节点后，节点会自动出现在这里。",
     );
 pub(crate) const IMPORT_NODES_OR_CREATE_ANOTHER_POLICY_GROUP_BEFORE_MAKING_A: LocalizedText =
     LocalizedText::new(
         "Import nodes or create another policy group before making a selection.",
         "请先导入节点或创建其他策略组，再进行选择。",
     );
-pub(crate) const INDIVIDUALLY_ADDED_VLESS_NODES_PRIVATE_LOCAL_STORAGE: LocalizedText =
-    LocalizedText::new(
-        "Individually added VLESS nodes · private local storage",
-        "单独添加的 VLESS 节点 · 私有本机存储",
-    );
+pub(crate) const INDIVIDUALLY_ADDED_NODES_PRIVATE_LOCAL_STORAGE: LocalizedText = LocalizedText::new(
+    "Individually added nodes · private local storage",
+    "单独添加的节点 · 私有本机存储",
+);
 pub(crate) const MANIS_IS_LOADING_NODES_FROM_YOUR_SAVED_SUBSCRIPTIONS: LocalizedText =
     LocalizedText::new(
         "Manis is loading nodes from your saved subscriptions.",

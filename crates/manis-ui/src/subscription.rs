@@ -126,6 +126,10 @@ impl SingleNodeSource {
         &self.preview
     }
 
+    pub(crate) fn is_vless(&self) -> bool {
+        matches!(self.preview.detail, SourceNodeDetail::Vless { .. })
+    }
+
     pub(crate) fn expose_to<T>(&self, use_value: impl FnOnce(&str) -> T) -> T {
         use_value(&self.value)
     }

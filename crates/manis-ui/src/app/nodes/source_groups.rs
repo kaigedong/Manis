@@ -563,7 +563,7 @@ impl ManisApp {
             .child(empty_state(
                 language.message(Message::NoNodes),
                 language
-                    .localized(copy::nodes::IMPORT_A_SUBSCRIPTION_OR_ADD_A_VLESS_NODE_NODES_WILL),
+                    .localized(copy::nodes::IMPORT_A_SUBSCRIPTION_OR_ADD_A_SINGLE_NODE_NODES_WILL),
                 Some(action),
                 theme,
             ))

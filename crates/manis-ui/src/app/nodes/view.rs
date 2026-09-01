@@ -214,9 +214,7 @@ impl ManisApp {
                     id: "saved".to_owned(),
                     name: language.localized(copy::common::SAVED).to_owned(),
                     detail: language
-                        .localized(
-                            copy::nodes::INDIVIDUALLY_ADDED_VLESS_NODES_PRIVATE_LOCAL_STORAGE,
-                        )
+                        .localized(copy::nodes::INDIVIDUALLY_ADDED_NODES_PRIVATE_LOCAL_STORAGE)
                         .to_owned(),
                     providers: Vec::new(),
                     runtime_provider_names: Vec::new(),
