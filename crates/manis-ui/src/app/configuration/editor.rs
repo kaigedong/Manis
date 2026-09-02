@@ -1,4 +1,4 @@
-use gpui::{Context, Div, ParentElement, Styled, Window, div, prelude::*, px};
+use gpui::{ClipboardItem, Context, Div, ParentElement, Styled, Window, div, prelude::*, px};
 use gpui_component::{Disableable, button::Button};
 
 use crate::app::ManisApp;
@@ -48,6 +48,7 @@ impl ManisApp {
                 Ok(text) => {
                     let editor = cx.new(|cx| {
                         gpui_component::input::EditorState::new(window, cx)
+                            .language("json")
                             .soft_wrap(true)
                             .default_value(text)
                     });
@@ -127,11 +128,53 @@ impl ManisApp {
         }
     }
 
+    pub(super) fn copy_configuration_to_clipboard(&mut self, cx: &mut Context<Self>) {
+        let Some(editor) = &self.configuration_transfer.editor else {
+            return;
+        };
+        cx.write_to_clipboard(ClipboardItem::new_string(
+            editor.read(cx).value().to_string(),
+        ));
+        self.language()
+            .localized(copy::backup::COPIED)
+            .clone_into(&mut self.status);
+        cx.notify();
+    }
+
+    pub(super) fn replace_configuration_from_clipboard(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) else {
+            self.language()
+                .localized(copy::backup::CLIPBOARD_EMPTY)
+                .clone_into(&mut self.status);
+            cx.notify();
+            return;
+        };
+        let Some(editor) = &self.configuration_transfer.editor else {
+            return;
+        };
+        editor.update(cx, |editor, cx| {
+            editor.set_value(text, window, cx);
+            editor.focus(window, cx);
+        });
+        self.configuration_transfer.preview = None;
+        self.configuration_transfer.failed = false;
+        self.configuration_transfer.message.clear();
+        self.language()
+            .localized(copy::backup::PASTED)
+            .clone_into(&mut self.status);
+        cx.notify();
+    }
+
     pub(super) fn configuration_editor_body(
         &self,
         theme: Theme,
         language: Language,
         window: &Window,
+        cx: &mut Context<Self>,
     ) -> Div {
         div()
             .flex()
@@ -142,12 +185,42 @@ impl ManisApp {
             .line_height(TextRole::Metadata.line_height())
             .text_color(theme.text_secondary)
             .child(language.localized(copy::backup::EDIT_DETAIL))
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .gap(Space::Sm.px())
+                    .child(
+                        action_button(
+                            "configuration-editor-copy",
+                            language.localized(copy::backup::COPY_ALL),
+                            ActionRole::Secondary,
+                            ControlSize::Compact,
+                        )
+                        .disabled(self.configuration_transfer.is_busy())
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.copy_configuration_to_clipboard(cx);
+                        })),
+                    )
+                    .child(
+                        action_button(
+                            "configuration-editor-paste",
+                            language.localized(copy::backup::PASTE_REPLACE),
+                            ActionRole::Secondary,
+                            ControlSize::Compact,
+                        )
+                        .disabled(self.configuration_transfer.is_busy())
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.replace_configuration_from_clipboard(window, cx);
+                        })),
+                    ),
+            )
             .when_some(
                 self.configuration_transfer.editor.as_ref(),
                 |body, editor| {
                     body.child(
                         gpui_component::input::Editor::new(editor)
-                            .aria_label(language.localized(copy::backup::EDIT))
+                            .aria_label(language.localized(copy::backup::EDITOR_TITLE))
                             .h(px((window.viewport_size().height.as_f32() - 320.0)
                                 .clamp(160.0, 560.0)))
                             .disabled(self.configuration_transfer.is_busy()),

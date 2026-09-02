@@ -21,9 +21,8 @@ mod restore;
 
 use filesystem::{
     backup_current_store, create_backup_dir, current_unix_nanos, current_unix_secs, max_file_bytes,
-    portable_store_paths, read_bounded_text_file, read_private_portable_file,
-    remove_current_store_files, require_clean_absolute_path, validate_file_name,
-    write_authorized_external_file, write_files,
+    portable_store_paths, read_private_portable_file, remove_current_store_files,
+    require_clean_absolute_path, validate_file_name, write_files,
 };
 use restore::validate_store;
 pub(crate) use restore::{backup_root, restore};
@@ -190,45 +189,6 @@ pub(crate) fn read_configuration_for_editing(directory: &Path) -> Result<String,
     Ok(text)
 }
 
-pub(crate) fn read_backup(path: &Path) -> Result<PreparedBackup, BackupError> {
-    let text = read_bounded_text_file(path, MAX_BACKUP_TEXT_BYTES)?;
-    prepare_import(&text)
-}
-
-pub(crate) fn export_to_file(directory: &Path, path: &Path) -> Result<(), BackupError> {
-    require_clean_absolute_path(directory)?;
-    let destination_parent = path.parent().ok_or(BackupError::UnsafePath)?;
-    let destination_parent =
-        fs::canonicalize(destination_parent).map_err(|_| BackupError::Unavailable)?;
-    let store = resolve_directory(directory)?;
-    if destination_parent.starts_with(store) {
-        return Err(BackupError::UnsafePath);
-    }
-    let contents = export_backup(directory)?;
-    write_authorized_external_file(path, contents.as_bytes())
-}
-
-// A fresh install may not have a source directory yet. Resolve its existing ancestors too,
-// so a symlinked parent cannot bypass the export destination check.
-fn resolve_directory(path: &Path) -> Result<PathBuf, BackupError> {
-    let mut ancestor = path;
-    let mut missing = Vec::new();
-    let mut resolved = loop {
-        match fs::canonicalize(ancestor) {
-            Ok(path) => break path,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                missing.push(ancestor.file_name().ok_or(BackupError::UnsafePath)?);
-                ancestor = ancestor.parent().ok_or(BackupError::UnsafePath)?;
-            }
-            Err(_) => return Err(BackupError::Unavailable),
-        }
-    };
-    for component in missing.into_iter().rev() {
-        resolved.push(component);
-    }
-    Ok(resolved)
-}
-
 pub(crate) fn prepare_import(text: &str) -> Result<PreparedBackup, BackupError> {
     if text.len() as u64 > MAX_BACKUP_TEXT_BYTES {
         return Err(BackupError::Oversized);
@@ -312,7 +272,10 @@ impl Drop for TempStore {
 mod tests {
     use std::fs;
 
-    use manis_core::{ManagedPolicyGroup, ManagedPolicyStrategy, RoutingMode};
+    use manis_core::{
+        ManagedPolicyGroup, ManagedPolicyStrategy, NodeIdentity, PolicyCandidateMatcher,
+        RoutingMode,
+    };
 
     fn temp_store(name: &str) -> std::path::PathBuf {
         let root = std::env::temp_dir().join(format!(
@@ -415,72 +378,36 @@ mod tests {
     }
 
     #[test]
-    fn export_cannot_overwrite_the_live_store_even_through_a_directory_alias()
+    fn configuration_editor_keeps_migrated_policy_files_referenced_by_new_policies()
     -> Result<(), Box<dyn std::error::Error>> {
-        let store = temp_store("manis-backup-protected-target");
-        crate::mihomo::save_routing_mode_in(&store, RoutingMode::Direct)?;
-        let path = store.join("routing.mode");
-        let before = fs::read(&path)?;
-        assert_eq!(
-            super::export_to_file(&store, &path),
-            Err(super::BackupError::UnsafePath)
+        let store = temp_store("manis-backup-migrated-policy");
+        let legacy = ManagedPolicyGroup::new("group-deadbeef-0", "Legacy group")?;
+        crate::mihomo::save_managed_policy_in(&store, &legacy)?;
+        let mut parent = ManagedPolicyGroup::new("policy-cafebabe-0", "Parent")?;
+        parent.matcher = PolicyCandidateMatcher::Explicit(
+            [NodeIdentity::new(
+                "policy:group-deadbeef-0",
+                "Legacy group",
+            )?]
+            .into_iter()
+            .collect(),
         );
-        let alias = store.parent().expect("root").join("alias");
-        std::os::unix::fs::symlink(&store, &alias)?;
-        assert_eq!(
-            super::export_to_file(&store, &alias.join("routing.mode")),
-            Err(super::BackupError::UnsafePath)
-        );
-        assert_eq!(fs::read(&path)?, before);
-        fs::remove_dir_all(store.parent().expect("root"))?;
+        crate::mihomo::save_managed_policy_in(&store, &parent)?;
+
+        let text = super::read_configuration_for_editing(&store)?;
+        assert!(text.contains("group-deadbeef-0.policy"));
+        assert_eq!(super::prepare_import(&text)?.summary().policy_groups, 2);
+
+        fs::remove_dir_all(store.parent().expect("store root"))?;
         Ok(())
     }
 
     #[test]
-    fn export_writes_the_authorized_file_without_creating_a_sibling()
-    -> Result<(), Box<dyn std::error::Error>> {
-        use std::os::unix::fs::PermissionsExt as _;
-
-        let store = temp_store("manis-backup-authorized-target");
-        crate::mihomo::save_routing_mode_in(&store, RoutingMode::Direct)?;
-        let root = store.parent().expect("root");
-        let destination = root.join("Manis.json");
-        fs::write(&destination, "stale")?;
-        fs::set_permissions(root, fs::Permissions::from_mode(0o500))?;
-
-        let result = super::export_to_file(&store, &destination);
-        let unauthorized = super::export_to_file(&store, &root.join("not-authorized.json"));
-
-        fs::set_permissions(root, fs::Permissions::from_mode(0o700))?;
-        assert_eq!(result, Ok(()));
-        assert_eq!(unauthorized, Err(super::BackupError::PermissionDenied));
-        let exported = super::read_backup(&destination)?;
-        assert_eq!(
-            exported.files.get("routing.mode").map(String::as_str),
-            Some("direct")
-        );
-        fs::set_permissions(&destination, fs::Permissions::from_mode(0o000))?;
-        assert!(matches!(
-            super::read_backup(&destination),
-            Err(super::BackupError::PermissionDenied)
-        ));
-        fs::set_permissions(&destination, fs::Permissions::from_mode(0o600))?;
-        fs::remove_dir_all(root)?;
-        Ok(())
-    }
-
-    #[test]
-    fn oversized_files_and_symlinked_store_roots_are_rejected_before_changes()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn symlinked_store_roots_are_rejected_before_changes() -> Result<(), Box<dyn std::error::Error>>
+    {
         let store = temp_store("manis-backup-boundaries");
         crate::mihomo::save_routing_mode_in(&store, RoutingMode::Direct)?;
         let root = store.parent().expect("root");
-        let oversized = root.join("oversized.json");
-        fs::File::create(&oversized)?.set_len(super::MAX_BACKUP_TEXT_BYTES + 1)?;
-        assert!(matches!(
-            super::read_backup(&oversized),
-            Err(super::BackupError::Oversized)
-        ));
         let alias = root.join("alias");
         std::os::unix::fs::symlink(&store, &alias)?;
         assert!(matches!(

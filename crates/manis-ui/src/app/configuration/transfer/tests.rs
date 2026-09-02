@@ -21,6 +21,25 @@ impl gpui::Render for BackupPanelHarness {
 }
 
 #[gpui::test]
+fn configuration_panel_uses_the_in_app_editor_as_its_only_transfer_entry(
+    cx: &mut gpui::TestAppContext,
+) {
+    cx.update(crate::init);
+    let app = cx.new(|_| {
+        ManisApp::with_fixture_controller_and_subscription_store(
+            "http://127.0.0.1:1",
+            unique_temp_store("manis-editor-entry"),
+        )
+    });
+    let (_, cx) = cx.add_window_view(|_, _| BackupPanelHarness(app));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+
+    assert!(cx.debug_bounds("configuration-edit").is_some());
+    assert!(cx.debug_bounds("configuration-export").is_none());
+    assert!(cx.debug_bounds("configuration-import").is_none());
+}
+
+#[gpui::test]
 fn transfer_feedback_stays_in_status_bar_without_resizing_the_card(cx: &mut gpui::TestAppContext) {
     cx.update(crate::init);
     let app = cx.new(|_| {
@@ -33,11 +52,6 @@ fn transfer_feedback_stays_in_status_bar_without_resizing_the_card(cx: &mut gpui
     cx.update(|window, cx| window.draw(cx).clear(cx));
     let initial = cx.debug_bounds("backup-card").expect("backup card renders");
     for (pending, finished, failed) in [
-        (
-            super::copy::backup::EXPORTING,
-            super::copy::backup::EXPORTED,
-            false,
-        ),
         (
             super::copy::backup::READING,
             super::copy::backup::INVALID,
@@ -81,144 +95,6 @@ fn transfer_feedback_stays_in_status_bar_without_resizing_the_card(cx: &mut gpui
             "results must not resize the card"
         );
     }
-}
-
-#[gpui::test]
-fn file_export_produces_an_importable_backup_without_changing_sources(
-    cx: &mut gpui::TestAppContext,
-) {
-    cx.update(crate::init);
-    let root = std::env::temp_dir().join(format!(
-        "manis-transfer-export-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos()
-    ));
-    let store = root.join("subscriptions");
-    crate::mihomo::save_routing_mode_in(&store, manis_core::RoutingMode::Direct)
-        .expect("fixture routing");
-    let output = root.join("export.json");
-    let mut app = None;
-    let (_, cx) = cx.add_window_view(|window, cx| {
-        let entity = cx.new(|_| {
-            ManisApp::with_fixture_controller_and_subscription_store(
-                "http://127.0.0.1:1",
-                store.clone(),
-            )
-        });
-        app = Some(entity.clone());
-        crate::root(entity, window, cx)
-    });
-    let app = app.expect("fixture app");
-    cx.update(|window, cx| {
-        app.update(cx, |app, cx| app.choose_configuration_export(window, cx));
-        assert!(
-            !window.has_active_dialog(cx),
-            "export must only show the system save dialog"
-        );
-    });
-    assert!(cx.did_prompt_for_new_path());
-    cx.simulate_new_path_selection(|_| Some(output.clone()));
-    cx.run_until_parked();
-    let preview = crate::config_backup::read_backup(&output).expect("export is importable");
-    assert_eq!(preview.summary().subscriptions, 0);
-    assert_eq!(
-        crate::mihomo::load_routing_mode_in(&store).expect("source mode"),
-        manis_core::RoutingMode::Direct
-    );
-    app.read_with(cx, |app, _| {
-        assert!(!app.configuration_transfer.active);
-        assert!(!app.configuration_transfer.failed);
-        assert!(!app.configuration_transfer.is_busy());
-        assert_eq!(
-            app.configuration_transfer.output_path.as_ref(),
-            Some(&output)
-        );
-    });
-    cx.update(|window, cx| assert!(!window.has_active_dialog(cx)));
-    std::fs::remove_dir_all(root).expect("remove fixture");
-}
-
-#[gpui::test]
-fn cancelling_export_does_not_open_a_dialog_or_write_configuration(cx: &mut gpui::TestAppContext) {
-    cx.update(crate::init);
-    let store = unique_temp_store("manis-export-cancel");
-    let mut app = None;
-    let (_, cx) = cx.add_window_view(|window, cx| {
-        let entity = cx.new(|_| {
-            ManisApp::with_fixture_controller_and_subscription_store(
-                "http://127.0.0.1:1",
-                store.clone(),
-            )
-        });
-        app = Some(entity.clone());
-        crate::root(entity, window, cx)
-    });
-    let app = app.expect("fixture app");
-    cx.update(|window, cx| {
-        app.update(cx, |app, cx| app.choose_configuration_export(window, cx));
-        assert!(!window.has_active_dialog(cx));
-    });
-    assert!(cx.did_prompt_for_new_path());
-    cx.simulate_new_path_selection(|_| None);
-    cx.run_until_parked();
-    app.read_with(cx, |app, _| {
-        assert!(!app.configuration_transfer.active);
-        assert!(!app.configuration_transfer.is_busy());
-        assert!(app.configuration_transfer.output_path.is_none());
-    });
-    cx.update(|window, cx| assert!(!window.has_active_dialog(cx)));
-    assert!(
-        !store.exists(),
-        "cancelling export must not write configuration"
-    );
-}
-
-#[gpui::test]
-fn failed_export_unlocks_configuration_and_reports_the_error_without_a_dialog(
-    cx: &mut gpui::TestAppContext,
-) {
-    cx.update(crate::init);
-    let store = unique_temp_store("manis-export-failure");
-    crate::mihomo::save_routing_mode_in(&store, manis_core::RoutingMode::Direct)
-        .expect("fixture routing");
-    let output = store.parent().expect("fixture root").join("directory.json");
-    std::fs::create_dir(&output).expect("directory cannot be overwritten by export");
-    let original = std::fs::read(store.join("routing.mode")).expect("fixture routing");
-    let mut app = None;
-    let (_, cx) = cx.add_window_view(|window, cx| {
-        let entity = cx.new(|_| {
-            ManisApp::with_fixture_controller_and_subscription_store(
-                "http://127.0.0.1:1",
-                store.clone(),
-            )
-        });
-        app = Some(entity.clone());
-        crate::root(entity, window, cx)
-    });
-    let app = app.expect("fixture app");
-    cx.update(|window, cx| {
-        app.update(cx, |app, cx| app.choose_configuration_export(window, cx));
-    });
-    cx.simulate_new_path_selection(|_| Some(output));
-    cx.run_until_parked();
-    app.read_with(cx, |app, _| {
-        assert!(!app.configuration_transfer.active);
-        assert!(!app.configuration_transfer.is_busy());
-        assert!(app.configuration_transfer.failed);
-        assert!(app.configuration_transfer.output_path.is_none());
-        assert_eq!(
-            app.status,
-            app.language().localized(super::copy::backup::EXPORT_FAILED)
-        );
-    });
-    cx.update(|window, cx| assert!(!window.has_active_dialog(cx)));
-    assert_eq!(
-        std::fs::read(store.join("routing.mode")).expect("routing unchanged"),
-        original
-    );
-    std::fs::remove_dir_all(store.parent().expect("fixture root")).expect("remove fixture");
 }
 
 #[gpui::test]
@@ -270,138 +146,6 @@ fn unique_temp_store(prefix: &str) -> std::path::PathBuf {
     std::env::temp_dir()
         .join(format!("{prefix}-{}-{nanos:x}", std::process::id()))
         .join("subscriptions")
-}
-
-#[gpui::test]
-fn cancelling_file_selection_unlocks_configuration_without_writing(cx: &mut gpui::TestAppContext) {
-    cx.update(crate::init);
-    let store = unique_temp_store("manis-transfer-cancel");
-    let mut app = None;
-    let (_, cx) = cx.add_window_view(|window, cx| {
-        let entity = cx.new(|_| {
-            ManisApp::with_fixture_controller_and_subscription_store(
-                "http://127.0.0.1:1",
-                store.clone(),
-            )
-        });
-        app = Some(entity.clone());
-        crate::root(entity, window, cx)
-    });
-    let app = app.expect("fixture app");
-    cx.update(|window, cx| {
-        app.update(cx, |app, cx| app.choose_configuration_import(window, cx));
-        assert!(
-            !window.has_active_dialog(cx),
-            "only the native picker should open"
-        );
-    });
-    assert!(cx.did_prompt_for_paths());
-    cx.simulate_path_prompt_response(|options| {
-        assert!(options.files && !options.directories && !options.multiple);
-        None
-    });
-    cx.run_until_parked();
-    app.read_with(cx, |app, _| assert!(!app.configuration_transfer.active));
-    cx.update(|window, cx| assert!(!window.has_active_dialog(cx)));
-    assert!(!store.exists(), "cancelling must not create configuration");
-}
-
-#[gpui::test]
-fn file_import_only_opens_preview_after_selection_and_validation(cx: &mut gpui::TestAppContext) {
-    cx.update(crate::init);
-    let store = unique_temp_store("manis-import-preview");
-    crate::mihomo::save_routing_mode_in(&store, manis_core::RoutingMode::Direct)
-        .expect("fixture mode");
-    let original = std::fs::read(store.join("routing.mode")).expect("fixture contents");
-    let input = store.parent().unwrap().join("input.json");
-    std::fs::write(&input, "not a backup").expect("invalid fixture");
-    let mut app = None;
-    let (_, cx) = cx.add_window_view(|window, cx| {
-        let entity = cx.new(|_| {
-            ManisApp::with_fixture_controller_and_subscription_store(
-                "http://127.0.0.1:1",
-                store.clone(),
-            )
-        });
-        app = Some(entity.clone());
-        crate::root(entity, window, cx)
-    });
-    let app = app.unwrap();
-    cx.update(|window, cx| {
-        app.update(cx, |app, cx| app.choose_configuration_import(window, cx));
-        assert!(!window.has_active_dialog(cx));
-    });
-    cx.simulate_path_prompt_response(|_| Some(vec![input.clone()]));
-    cx.run_until_parked();
-    cx.update(|window, cx| assert!(!window.has_active_dialog(cx)));
-    app.read_with(cx, |app, _| {
-        assert!(app.configuration_transfer.failed);
-        assert!(!app.configuration_transfer.active);
-    });
-    crate::config_backup::export_to_file(&store, &input).expect("valid fixture");
-    cx.update(|window, cx| {
-        app.update(cx, |app, cx| app.choose_configuration_import(window, cx));
-        assert!(!window.has_active_dialog(cx));
-    });
-    cx.simulate_path_prompt_response(|_| Some(vec![input.clone()]));
-    cx.run_until_parked();
-    cx.update(|window, cx| assert!(window.has_active_dialog(cx)));
-    app.read_with(cx, |app, _| {
-        assert!(
-            app.configuration_transfer.active,
-            "preview must keep the mutation lock"
-        );
-        assert!(!app.configuration_transfer.failed);
-        assert!(!app.configuration_transfer.is_busy());
-        assert!(app.configuration_transfer.preview.is_some());
-    });
-    assert_eq!(std::fs::read(store.join("routing.mode")).unwrap(), original);
-    std::fs::remove_dir_all(store.parent().unwrap()).unwrap();
-}
-
-#[cfg(unix)]
-#[gpui::test]
-fn file_import_reports_when_the_selected_file_is_not_readable(cx: &mut gpui::TestAppContext) {
-    use std::os::unix::fs::PermissionsExt as _;
-
-    cx.update(crate::init);
-    let store = unique_temp_store("manis-import-permission");
-    crate::mihomo::save_routing_mode_in(&store, manis_core::RoutingMode::Direct)
-        .expect("fixture mode");
-    let input = store.parent().unwrap().join("input.json");
-    crate::config_backup::export_to_file(&store, &input).expect("valid fixture");
-    std::fs::set_permissions(&input, std::fs::Permissions::from_mode(0o000))
-        .expect("deny fixture read access");
-    let mut app = None;
-    let (_, cx) = cx.add_window_view(|window, cx| {
-        let entity = cx.new(|_| {
-            ManisApp::with_fixture_controller_and_subscription_store(
-                "http://127.0.0.1:1",
-                store.clone(),
-            )
-        });
-        app = Some(entity.clone());
-        crate::root(entity, window, cx)
-    });
-    let app = app.expect("fixture app");
-
-    cx.update(|window, cx| {
-        app.update(cx, |app, cx| app.choose_configuration_import(window, cx));
-    });
-    cx.simulate_path_prompt_response(|_| Some(vec![input.clone()]));
-    cx.run_until_parked();
-
-    app.read_with(cx, |app, _| {
-        assert!(app.configuration_transfer.failed);
-        assert_eq!(
-            app.status,
-            app.language()
-                .localized(super::copy::backup::IMPORT_PERMISSION_DENIED)
-        );
-    });
-    std::fs::set_permissions(&input, std::fs::Permissions::from_mode(0o600))
-        .expect("restore fixture permissions");
-    std::fs::remove_dir_all(store.parent().unwrap()).expect("remove fixture");
 }
 
 #[gpui::test]
@@ -476,9 +220,6 @@ fn editor_prefills_current_configuration_and_preserves_invalid_edits(
     crate::mihomo::save_routing_mode_in(&store, manis_core::RoutingMode::Direct)
         .expect("fixture routing");
     let original = std::fs::read(store.join("routing.mode")).unwrap();
-    cx.write_to_clipboard(ClipboardItem::new_string(
-        "not the current configuration".to_owned(),
-    ));
     let mut app = None;
     let (_, cx) = cx.add_window_view(|window, cx| {
         let entity = cx.new(|_| {
@@ -494,7 +235,6 @@ fn editor_prefills_current_configuration_and_preserves_invalid_edits(
     cx.update(|window, cx| app.update(cx, |app, cx| app.edit_configuration(window, cx)));
     cx.run_until_parked();
     let editor = app.read_with(cx, |app, _| {
-        assert!(app.configuration_transfer.active);
         assert!(app.configuration_transfer.preview.is_none());
         app.configuration_transfer
             .editor
@@ -512,16 +252,20 @@ fn editor_prefills_current_configuration_and_preserves_invalid_edits(
                 && file["contents"] == String::from_utf8(original.clone()).unwrap())
     );
     cx.update(|window, cx| {
-        assert!(window.has_active_dialog(cx));
-        editor.update(cx, |editor, cx| {
-            editor.set_value("invalid edits", window, cx);
+        app.update(cx, ManisApp::copy_configuration_to_clipboard);
+        assert_eq!(
+            cx.read_from_clipboard().and_then(|item| item.text()),
+            Some(current.to_string())
+        );
+        cx.write_to_clipboard(ClipboardItem::new_string("invalid edits".to_owned()));
+        app.update(cx, |app, cx| {
+            app.replace_configuration_from_clipboard(window, cx);
         });
         app.update(cx, ManisApp::preview_configuration_edits);
     });
     cx.run_until_parked();
     app.read_with(cx, |app, _| {
         assert!(app.configuration_transfer.failed);
-        assert!(!app.configuration_transfer.is_busy());
         assert!(app.configuration_transfer.preview.is_none());
         assert!(app.configuration_transfer.active);
     });

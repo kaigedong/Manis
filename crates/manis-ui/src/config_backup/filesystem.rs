@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::{Read as _, Write as _};
+use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -55,21 +55,6 @@ pub(super) fn read_private_portable_file(
         {
             return Err(BackupError::UnsafePath);
         }
-    }
-    read_from_file(file, max_bytes)
-}
-
-pub(super) fn read_bounded_text_file(path: &Path, max_bytes: u64) -> Result<String, BackupError> {
-    let metadata = fs::symlink_metadata(path).map_err(|error| map_external_file_error(&error))?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return Err(BackupError::UnsafePath);
-    }
-    let file = fs::File::open(path).map_err(|error| map_external_file_error(&error))?;
-    let opened_metadata = file
-        .metadata()
-        .map_err(|error| map_external_file_error(&error))?;
-    if opened_metadata.len() > max_bytes {
-        return Err(BackupError::Oversized);
     }
     read_from_file(file, max_bytes)
 }
@@ -186,65 +171,6 @@ pub(super) fn create_backup_dir(directory: &Path) -> Result<PathBuf, BackupError
     Err(BackupError::Unavailable)
 }
 
-pub(super) fn write_authorized_external_file(path: &Path, bytes: &[u8]) -> Result<(), BackupError> {
-    if !path.is_absolute() {
-        return Err(BackupError::UnsafePath);
-    }
-    let parent = path.parent().ok_or(BackupError::UnsafePath)?;
-    path.file_name()
-        .and_then(std::ffi::OsStr::to_str)
-        .ok_or(BackupError::UnsafePath)?;
-    let parent_metadata =
-        fs::symlink_metadata(parent).map_err(|error| map_external_file_error(&error))?;
-    if parent_metadata.file_type().is_symlink() || !parent_metadata.is_dir() {
-        return Err(BackupError::UnsafePath);
-    }
-    if let Ok(metadata) = fs::symlink_metadata(path)
-        && (metadata.file_type().is_symlink() || !metadata.is_file())
-    {
-        return Err(BackupError::UnsafePath);
-    }
-    validate_clean_absolute_path(parent)?;
-    #[cfg(unix)]
-    let mut file = {
-        use std::os::unix::fs::OpenOptionsExt as _;
-        fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .mode(0o600)
-            .open(path)
-            .map_err(|error| map_external_file_error(&error))?
-    };
-    #[cfg(not(unix))]
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(path)
-        .map_err(|error| map_external_file_error(&error))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        file.set_permissions(fs::Permissions::from_mode(0o600))
-            .map_err(|error| map_external_file_error(&error))?;
-    }
-    file.set_len(0)
-        .map_err(|error| map_external_file_error(&error))?;
-    file.write_all(bytes)
-        .map_err(|error| map_external_file_error(&error))?;
-    file.sync_all()
-        .map_err(|error| map_external_file_error(&error))
-}
-
-fn map_external_file_error(error: &std::io::Error) -> BackupError {
-    if error.kind() == std::io::ErrorKind::PermissionDenied {
-        BackupError::PermissionDenied
-    } else {
-        BackupError::Unavailable
-    }
-}
-
 pub(super) fn validate_file_name(name: &str) -> Result<(), BackupError> {
     if is_portable_file_name(name) {
         Ok(())
@@ -269,6 +195,7 @@ pub(super) fn is_portable_file_name(name: &str) -> bool {
         || portable_prefixed_name(name, "saved-", ".vless")
         || portable_prefixed_name(name, "qx-rule-", ".qxrules")
         || portable_prefixed_name(name, "policy-", ".policy")
+        || portable_prefixed_name(name, "group-", ".policy")
         || portable_prefixed_name(name, "group-", ".group")
 }
 
@@ -329,12 +256,6 @@ pub(super) fn require_clean_absolute_path(path: &Path) -> Result<(), BackupError
     } else {
         Err(BackupError::UnsafePath)
     }
-}
-
-pub(super) fn validate_clean_absolute_path(path: &Path) -> Result<(), BackupError> {
-    require_clean_absolute_path(path)?;
-    let canonical = fs::canonicalize(path).map_err(|_error| BackupError::Unavailable)?;
-    require_clean_absolute_path(&canonical)
 }
 
 pub(super) fn read_bounded_binary_file(
