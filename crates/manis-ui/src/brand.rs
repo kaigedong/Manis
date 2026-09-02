@@ -5,6 +5,10 @@ use std::path::{Path, PathBuf};
 
 pub(crate) const PRODUCT_NAME: &str = "Manis";
 
+pub(crate) fn config_dir() -> Option<PathBuf> {
+    platform_config_dir()
+}
+
 pub(crate) fn data_dir() -> Option<PathBuf> {
     platform_data_dirs().and_then(|(manis, legacy)| {
         let selected = select_data_dir(&manis, &legacy)?;
@@ -117,11 +121,25 @@ fn platform_data_dirs() -> Option<(PathBuf, PathBuf)> {
     })
 }
 
+#[cfg(target_os = "macos")]
+fn platform_config_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .map(|home| home.join("Library/Application Support/Manis"))
+}
+
 #[cfg(windows)]
 fn platform_data_dirs() -> Option<(PathBuf, PathBuf)> {
     std::env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
         .map(|root| (root.join("Manis"), root.join("Relay")))
+}
+
+#[cfg(windows)]
+fn platform_config_dir() -> Option<PathBuf> {
+    std::env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .map(|root| root.join("Manis"))
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -139,8 +157,25 @@ fn platform_data_dirs() -> Option<(PathBuf, PathBuf)> {
         })
 }
 
+#[cfg(all(unix, not(target_os = "macos")))]
+fn platform_config_dir() -> Option<PathBuf> {
+    std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .map(|root| root.join("manis"))
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .map(PathBuf::from)
+                .map(|home| home.join(".config/manis"))
+        })
+}
+
 #[cfg(not(any(unix, windows)))]
 fn platform_data_dirs() -> Option<(PathBuf, PathBuf)> {
+    None
+}
+
+#[cfg(not(any(unix, windows)))]
+fn platform_config_dir() -> Option<PathBuf> {
     None
 }
 

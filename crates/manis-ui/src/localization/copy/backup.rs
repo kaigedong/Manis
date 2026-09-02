@@ -2,14 +2,14 @@ use crate::localization::LocalizedText;
 
 pub(crate) const TITLE: LocalizedText = LocalizedText::new("Configuration editor", "配置编辑器");
 pub(crate) const DETAIL: LocalizedText = LocalizedText::new(
-    "Open the complete JSON configuration to copy, replace or edit it directly in Manis.",
-    "在 Manis 中打开完整 JSON 配置，可直接复制、粘贴替换或修改。",
+    "Open config.toml to copy, replace or edit the complete configuration directly in Manis.",
+    "在 Manis 中打开完整的 config.toml，可直接复制、粘贴替换或修改。",
 );
 pub(crate) const EDIT: LocalizedText = LocalizedText::new("Open configuration", "打开配置");
 pub(crate) const EDITOR_TITLE: LocalizedText = LocalizedText::new("Edit configuration", "编辑配置");
 pub(crate) const EDIT_DETAIL: LocalizedText = LocalizedText::new(
-    "This is the current complete Manis configuration. Copy it for migration, paste another complete configuration to replace it, or edit it here. Manis validates and previews changes before applying them.",
-    "下方是当前完整的 Manis 配置。可复制内容用于迁移，粘贴另一份完整配置进行替换，也可直接修改。Manis 会在应用前校验并预览更改。",
+    "This is the current complete config.toml. Comments are preserved when Manis changes individual values. Copy it for migration, paste another complete configuration to replace it, or edit it here. Manis validates and previews changes before applying them.",
+    "下方是当前完整的 config.toml。Manis 修改单项配置时会保留其中的注释。可复制内容用于迁移、粘贴另一份完整配置进行替换，也可直接修改；应用前会先校验并预览更改。",
 );
 pub(crate) const LOADING_CURRENT: LocalizedText =
     LocalizedText::new("Loading current configuration…", "正在读取当前配置…");
@@ -75,8 +75,8 @@ pub(crate) const NO_STORE: LocalizedText = LocalizedText::new(
     "本地配置目录不可用。",
 );
 pub(crate) const INVALID: LocalizedText = LocalizedText::new(
-    "The JSON configuration is invalid, unsupported or too large. No configuration was changed; return to the editor to fix it.",
-    "JSON 配置无效、版本不支持或内容过大。当前配置未改动，请返回编辑器修正。",
+    "The TOML configuration is invalid, unsupported or too large. No configuration was changed; return to the editor to fix it.",
+    "TOML 配置无效、版本不支持或内容过大。当前配置未改动，请返回编辑器修正。",
 );
 pub(crate) const STOP_FAILED: LocalizedText = LocalizedText::new(
     "Could not safely stop the proxy or core. Applying was cancelled; your configuration is unchanged.",

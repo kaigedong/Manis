@@ -48,7 +48,8 @@ impl StoredWorkspace {
         let collapsed = mihomo::load_collapsed_groups_in(directory);
         let policy_groups = mihomo::load_managed_policy_groups_in(directory);
         let node_selection_preferences = mihomo::load_node_selection_preferences_in(directory);
-        let benchmarks = load_group_benchmarks_in(directory);
+        let benchmark_dir = benchmark_store_dir(directory);
+        let benchmarks = load_group_benchmarks_in(&benchmark_dir);
         if let Err(error) = &benchmarks {
             record_event(
                 LogLevel::Warn,
@@ -101,6 +102,17 @@ impl StoredWorkspace {
             routing_mode: RoutingMode::Rule,
             error: None,
         }
+    }
+}
+
+pub(super) fn benchmark_store_dir(configuration_directory: &Path) -> std::path::PathBuf {
+    if crate::brand::config_dir().as_deref() == Some(configuration_directory) {
+        crate::brand::data_dir().map_or_else(
+            || configuration_directory.to_owned(),
+            |directory| directory.join("cache"),
+        )
+    } else {
+        configuration_directory.to_owned()
     }
 }
 

@@ -1,17 +1,24 @@
 use std::collections::BTreeSet;
-#[cfg(not(windows))]
-use std::fs;
 use std::path::Path;
 
+#[cfg(not(windows))]
+use super::require_clean_absolute_store;
 use super::{
     MANUAL_ROUTING_RULE_GROUP_ID, MAX_ROUTING_RULE_GROUP_ORDER_FILE_BYTES, MAX_ROUTING_RULE_GROUPS,
     QX_RULE_SOURCE_PREFIX, ROUTING_RULE_GROUP_ORDER_FILE, ROUTING_RULE_GROUP_ORDER_VERSION,
     StoredQxRuleSource, SubscriptionStoreError, valid_stored_id,
 };
+
 #[cfg(not(windows))]
-use super::{
-    read_private_source_allow_empty_max, require_clean_absolute_store, write_private_atomic,
-};
+fn write_private_atomic(
+    directory: &Path,
+    file_name: &str,
+    bytes: &[u8],
+) -> Result<std::path::PathBuf, crate::config_toml::ConfigTomlError> {
+    let contents = std::str::from_utf8(bytes)
+        .map_err(|_error| crate::config_toml::ConfigTomlError::InvalidFormat)?;
+    crate::config_toml::write_entry(directory, file_name, contents)
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum MoveDirection {
@@ -116,13 +123,14 @@ pub(crate) fn load_routing_rule_group_order_in(
     directory: &Path,
 ) -> Result<Vec<String>, SubscriptionStoreError> {
     require_clean_absolute_store(directory)?;
-    let path = directory.join(ROUTING_RULE_GROUP_ORDER_FILE);
-    let contents = match fs::symlink_metadata(&path) {
-        Ok(_) => {
-            read_private_source_allow_empty_max(&path, MAX_ROUTING_RULE_GROUP_ORDER_FILE_BYTES)?
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(_error) => return Err(SubscriptionStoreError::StoredSourceUnavailable),
+    let Some(contents) = crate::config_toml::read_entry(
+        directory,
+        ROUTING_RULE_GROUP_ORDER_FILE,
+        MAX_ROUTING_RULE_GROUP_ORDER_FILE_BYTES,
+    )
+    .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?
+    else {
+        return Ok(Vec::new());
     };
     let mut lines = contents.lines();
     if lines.next() != Some(ROUTING_RULE_GROUP_ORDER_VERSION) {

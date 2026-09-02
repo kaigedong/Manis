@@ -1,13 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::io::Read as _;
 use std::path::{Path, PathBuf};
 
-use manis_profile::write_private_atomic;
-
 use super::SubscriptionStoreError;
-#[cfg(not(windows))]
-use super::{private_store_entries, require_clean_absolute_store};
 
 const MAX_SNAPSHOT_BYTES: u64 = 64 * 1024 * 1024;
 
@@ -17,71 +12,21 @@ pub(crate) struct SubscriptionStoreSnapshot {
 }
 
 impl SubscriptionStoreSnapshot {
-    #[cfg(not(windows))]
     pub(crate) fn capture(directory: &Path) -> Result<Self, SubscriptionStoreError> {
-        let mut files = BTreeMap::new();
-        let mut total_bytes = 0_u64;
-        for path in private_store_entries(directory)?.unwrap_or_default() {
-            let name = path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .ok_or(SubscriptionStoreError::StoredSourceUnavailable)?
-                .to_owned();
-            let remaining = MAX_SNAPSHOT_BYTES
-                .checked_sub(total_bytes)
-                .ok_or(SubscriptionStoreError::StoreUnavailable)?;
-            let bytes = read_snapshot_file(&path, remaining)?;
-            total_bytes = total_bytes
-                .checked_add(bytes.len() as u64)
+        let entries = crate::config_toml::entries(directory)
+            .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
+        let total_bytes = entries.values().try_fold(0_u64, |total, contents| {
+            total
+                .checked_add(contents.len() as u64)
                 .filter(|total| *total <= MAX_SNAPSHOT_BYTES)
-                .ok_or(SubscriptionStoreError::StoreUnavailable)?;
-            files.insert(name, bytes);
-        }
+                .ok_or(SubscriptionStoreError::StoreUnavailable)
+        })?;
+        let _ = total_bytes;
+        let files = entries
+            .into_iter()
+            .map(|(name, contents)| (name, contents.into_bytes()))
+            .collect();
         Ok(Self { files })
-    }
-
-    #[cfg(windows)]
-    pub(crate) fn capture(_directory: &Path) -> Result<Self, SubscriptionStoreError> {
-        Err(SubscriptionStoreError::StoreUnavailable)
-    }
-
-    #[cfg(not(windows))]
-    pub(crate) fn restore(self, directory: &Path) -> Result<(), SubscriptionStoreError> {
-        require_clean_absolute_store(directory)?;
-        for path in private_store_entries(directory)?.unwrap_or_default() {
-            let metadata = fs::symlink_metadata(&path)
-                .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
-            if metadata.file_type().is_symlink() || !metadata.is_file() {
-                return Err(SubscriptionStoreError::StoredSourceUnavailable);
-            }
-            let name = path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .ok_or(SubscriptionStoreError::StoredSourceUnavailable)?;
-            if !self.files.contains_key(name) {
-                let current = Some(read_snapshot_file(&path, MAX_SNAPSHOT_BYTES)?);
-                if !manis_profile::replace_private_if_unchanged(
-                    directory,
-                    name,
-                    current.as_deref(),
-                    None,
-                )
-                .map_err(|_error| SubscriptionStoreError::StoreUnavailable)?
-                {
-                    return Err(SubscriptionStoreError::StoreUnavailable);
-                }
-            }
-        }
-        for (name, bytes) in self.files {
-            write_private_atomic(directory, &name, &bytes)
-                .map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
-        }
-        Ok(())
-    }
-
-    #[cfg(windows)]
-    pub(crate) fn restore(self, _directory: &Path) -> Result<(), SubscriptionStoreError> {
-        Err(SubscriptionStoreError::StoreUnavailable)
     }
 }
 
@@ -113,8 +58,13 @@ impl SourceStoreTransaction {
                 Ok(()) => {
                     let transaction = Self { staged, before };
                     for (name, bytes) in &transaction.before.files {
-                        write_private_atomic(&transaction.staged, name, bytes)
-                            .map_err(|_| SubscriptionStoreError::StoreUnavailable)?;
+                        crate::config_toml::write_entry(
+                            &transaction.staged,
+                            name,
+                            std::str::from_utf8(bytes)
+                                .map_err(|_| SubscriptionStoreError::StoredSourceUnavailable)?,
+                        )
+                        .map_err(|_| SubscriptionStoreError::StoreUnavailable)?;
                     }
                     return Ok(transaction);
                 }
@@ -178,11 +128,21 @@ impl SourceStoreChanges {
             // A write can fail after rename (for example while syncing the
             // directory), so include the attempted file in rollback as well.
             self.installed += 1;
-            if !manis_profile::replace_private_if_unchanged(
+            if !crate::config_toml::replace_entry_if_unchanged(
                 directory,
                 &change.name,
-                change.before.as_deref(),
-                change.after.as_deref(),
+                change
+                    .before
+                    .as_deref()
+                    .map(std::str::from_utf8)
+                    .transpose()
+                    .map_err(|_| SubscriptionStoreError::StoredSourceUnavailable)?,
+                change
+                    .after
+                    .as_deref()
+                    .map(std::str::from_utf8)
+                    .transpose()
+                    .map_err(|_| SubscriptionStoreError::StoredSourceUnavailable)?,
             )
             .map_err(|_| SubscriptionStoreError::StoreUnavailable)?
             {
@@ -197,11 +157,21 @@ impl SourceStoreChanges {
         for change in self.changes[..self.installed].iter().rev() {
             let restored = (|| {
                 // Preserve a later writer even when it touched the same file.
-                if manis_profile::replace_private_if_unchanged(
+                if crate::config_toml::replace_entry_if_unchanged(
                     directory,
                     &change.name,
-                    change.after.as_deref(),
-                    change.before.as_deref(),
+                    change
+                        .after
+                        .as_deref()
+                        .map(std::str::from_utf8)
+                        .transpose()
+                        .map_err(|_| SubscriptionStoreError::StoredSourceUnavailable)?,
+                    change
+                        .before
+                        .as_deref()
+                        .map(std::str::from_utf8)
+                        .transpose()
+                        .map_err(|_| SubscriptionStoreError::StoredSourceUnavailable)?,
                 )
                 .map_err(|_| SubscriptionStoreError::StoreUnavailable)?
                 {
@@ -222,147 +192,9 @@ impl SourceStoreChanges {
 }
 
 fn read_file(directory: &Path, name: &str) -> Result<Option<Vec<u8>>, SubscriptionStoreError> {
-    let path = directory.join(name);
-    match fs::symlink_metadata(&path) {
-        Ok(metadata) if metadata.is_file() => {
-            read_snapshot_file(&path, MAX_SNAPSHOT_BYTES).map(Some)
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        _ => Err(SubscriptionStoreError::StoredSourceUnavailable),
-    }
-}
-
-#[cfg(not(windows))]
-fn read_snapshot_file(path: &Path, max_bytes: u64) -> Result<Vec<u8>, SubscriptionStoreError> {
-    let file = open_snapshot_file(path)?;
-    let metadata = file
-        .metadata()
-        .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
-    if !metadata.is_file() {
-        return Err(SubscriptionStoreError::StoredSourceUnavailable);
-    }
-    let mut bytes = Vec::new();
-    file.take(max_bytes.saturating_add(1))
-        .read_to_end(&mut bytes)
-        .map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
-    if bytes.len() as u64 > max_bytes {
-        return Err(SubscriptionStoreError::StoreUnavailable);
-    }
-    Ok(bytes)
-}
-
-#[cfg(not(windows))]
-fn open_snapshot_file(path: &Path) -> Result<fs::File, SubscriptionStoreError> {
-    let mut options = fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(target_os = "linux")]
-    {
-        use std::os::unix::fs::OpenOptionsExt as _;
-        options.custom_flags(0o00400000);
-    }
-    #[cfg(target_os = "macos")]
-    {
-        use std::os::unix::fs::OpenOptionsExt as _;
-        options.custom_flags(0x0100);
-    }
-    options
-        .open(path)
+    crate::config_toml::read_entry(directory, name, MAX_SNAPSHOT_BYTES)
+        .map(|contents| contents.map(String::into_bytes))
         .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)
-}
-
-#[cfg(windows)]
-fn read_snapshot_file(path: &Path, max_bytes: u64) -> Result<Vec<u8>, SubscriptionStoreError> {
-    let file =
-        fs::File::open(path).map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
-    let metadata = file
-        .metadata()
-        .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
-    if !metadata.is_file() || metadata.len() > max_bytes {
-        return Err(SubscriptionStoreError::StoredSourceUnavailable);
-    }
-    let mut bytes = Vec::new();
-    file.take(max_bytes.saturating_add(1))
-        .read_to_end(&mut bytes)
-        .map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
-    if bytes.len() as u64 > max_bytes {
-        return Err(SubscriptionStoreError::StoreUnavailable);
-    }
-    Ok(bytes)
-}
-
-#[cfg(all(test, not(windows)))]
-mod tests {
-    use std::fs;
-
-    use manis_profile::write_private_atomic;
-
-    use super::{SubscriptionStoreSnapshot, read_snapshot_file};
-
-    #[test]
-    fn restore_reinstates_changed_deleted_and_new_files() -> Result<(), Box<dyn std::error::Error>>
-    {
-        let root = std::env::temp_dir().join(format!(
-            "manis-store-snapshot-{}-{}",
-            std::process::id(),
-            super::super::current_unix_nanos()
-        ));
-        let store = root.join("subscriptions");
-        write_private_atomic(&store, "changed.state", b"before")?;
-        write_private_atomic(&store, "deleted.state", b"keep")?;
-        let snapshot = SubscriptionStoreSnapshot::capture(&store)?;
-
-        write_private_atomic(&store, "changed.state", b"after")?;
-        fs::remove_file(store.join("deleted.state"))?;
-        write_private_atomic(&store, "new.state", b"remove")?;
-        snapshot.restore(&store)?;
-
-        assert_eq!(fs::read(store.join("changed.state"))?, b"before");
-        assert_eq!(fs::read(store.join("deleted.state"))?, b"keep");
-        assert!(!store.join("new.state").exists());
-        fs::remove_dir_all(root)?;
-        Ok(())
-    }
-
-    #[test]
-    fn snapshot_reader_rejects_actual_bytes_past_the_remaining_limit()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let root = std::env::temp_dir().join(format!(
-            "manis-store-snapshot-limit-{}-{}",
-            std::process::id(),
-            super::super::current_unix_nanos()
-        ));
-        fs::create_dir_all(&root)?;
-        let path = root.join("source");
-        fs::write(&path, b"abcd")?;
-
-        assert_eq!(read_snapshot_file(&path, 4)?, b"abcd");
-        assert!(read_snapshot_file(&path, 3).is_err());
-
-        fs::remove_dir_all(root)?;
-        Ok(())
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn snapshot_reader_rejects_symbolic_links() -> Result<(), Box<dyn std::error::Error>> {
-        use std::os::unix::fs::symlink;
-
-        let root = std::env::temp_dir().join(format!(
-            "manis-store-snapshot-link-{}-{}",
-            std::process::id(),
-            super::super::current_unix_nanos()
-        ));
-        fs::create_dir_all(&root)?;
-        let target = root.join("target");
-        let link = root.join("source");
-        fs::write(&target, b"secret")?;
-        symlink(&target, &link)?;
-
-        assert!(read_snapshot_file(&link, 64).is_err());
-
-        fs::remove_dir_all(root)?;
-        Ok(())
-    }
 }
 
 #[cfg(all(test, not(windows)))]
@@ -377,30 +209,42 @@ mod transaction_tests {
         ))
     }
 
+    fn write(directory: &Path, name: &str, contents: &str) {
+        crate::config_toml::write_entry(directory, name, contents).expect("write entry");
+    }
+
+    fn remove(directory: &Path, name: &str) {
+        crate::config_toml::remove_entry(directory, name).expect("remove entry");
+    }
+
+    fn read(directory: &Path, name: &str) -> Option<String> {
+        crate::config_toml::read_entry(directory, name, MAX_SNAPSHOT_BYTES).expect("read entry")
+    }
+
     #[test]
     fn rollback_only_restores_installed_changes() {
         let store = store("rollback");
-        write_private_atomic(&store, "changed", b"before").unwrap();
-        write_private_atomic(&store, "removed", b"original").unwrap();
-        write_private_atomic(&store, "language.preference", b"zh-CN").unwrap();
+        write(&store, "routing.mode", "rule");
+        write(&store, "kernel.kind", "mihomo");
+        write(&store, "language.preference", "zh-CN");
         let staged = SourceStoreTransaction::begin(&store).unwrap();
-        write_private_atomic(staged.directory(), "changed", b"after").unwrap();
-        fs::remove_file(staged.directory().join("removed")).unwrap();
-        write_private_atomic(staged.directory(), "added", b"new").unwrap();
+        write(staged.directory(), "routing.mode", "global");
+        remove(staged.directory(), "kernel.kind");
+        write(staged.directory(), "workspace.state", "new");
         let mut changes = staged.changes().unwrap();
-        write_private_atomic(&store, "language.preference", b"en").unwrap();
+        write(&store, "language.preference", "en");
         changes.install(&store).unwrap();
-        assert_eq!(fs::read(store.join("changed")).unwrap(), b"after");
-        assert!(!store.join("removed").exists());
-        write_private_atomic(&store, "unrelated", b"independent setting").unwrap();
+        assert_eq!(read(&store, "routing.mode").as_deref(), Some("global"));
+        assert_eq!(read(&store, "kernel.kind"), None);
+        write(&store, "node-selection.state", "independent setting");
         changes.rollback(&store).unwrap();
-        assert_eq!(fs::read(store.join("changed")).unwrap(), b"before");
-        assert_eq!(fs::read(store.join("removed")).unwrap(), b"original");
-        assert!(!store.join("added").exists());
-        assert_eq!(fs::read(store.join("language.preference")).unwrap(), b"en");
+        assert_eq!(read(&store, "routing.mode").as_deref(), Some("rule"));
+        assert_eq!(read(&store, "kernel.kind").as_deref(), Some("mihomo"));
+        assert_eq!(read(&store, "workspace.state"), None);
+        assert_eq!(read(&store, "language.preference").as_deref(), Some("en"));
         assert_eq!(
-            fs::read(store.join("unrelated")).unwrap(),
-            b"independent setting"
+            read(&store, "node-selection.state").as_deref(),
+            Some("independent setting")
         );
         fs::remove_dir_all(store).unwrap();
     }
@@ -408,41 +252,41 @@ mod transaction_tests {
     #[test]
     fn commit_rejects_a_concurrent_change_to_the_same_file() {
         let store = store("conflict");
-        write_private_atomic(&store, "source", b"before").unwrap();
+        write(&store, "routing.mode", "rule");
         let staged = SourceStoreTransaction::begin(&store).unwrap();
-        write_private_atomic(staged.directory(), "source", b"candidate").unwrap();
+        write(staged.directory(), "routing.mode", "global");
         let mut changes = staged.changes().unwrap();
-        write_private_atomic(&store, "source", b"newer save").unwrap();
+        write(&store, "routing.mode", "direct");
         assert!(changes.install(&store).is_err());
         changes.rollback(&store).unwrap();
-        assert_eq!(fs::read(store.join("source")).unwrap(), b"newer save");
+        assert_eq!(read(&store, "routing.mode").as_deref(), Some("direct"));
         fs::remove_dir_all(store).unwrap();
     }
 
     #[test]
     fn rollback_reports_conflicts_and_still_restores_other_files() {
         let store = store("rollback-conflict");
-        write_private_atomic(&store, "a", b"before a").unwrap();
-        write_private_atomic(&store, "b", b"before b").unwrap();
+        write(&store, "routing.mode", "rule");
+        write(&store, "language.preference", "system");
         let staged = SourceStoreTransaction::begin(&store).unwrap();
-        write_private_atomic(staged.directory(), "a", b"candidate a").unwrap();
-        write_private_atomic(staged.directory(), "b", b"candidate b").unwrap();
+        write(staged.directory(), "routing.mode", "global");
+        write(staged.directory(), "language.preference", "zh-CN");
         let mut changes = staged.changes().unwrap();
         changes.install(&store).unwrap();
-        write_private_atomic(&store, "b", b"newer save").unwrap();
+        write(&store, "language.preference", "en");
         assert!(changes.rollback(&store).is_err());
-        assert_eq!(fs::read(store.join("a")).unwrap(), b"before a");
-        assert_eq!(fs::read(store.join("b")).unwrap(), b"newer save");
+        assert_eq!(read(&store, "routing.mode").as_deref(), Some("rule"));
+        assert_eq!(read(&store, "language.preference").as_deref(), Some("en"));
         fs::remove_dir_all(store).unwrap();
     }
 
     #[test]
     fn abandoned_staging_removes_private_files_without_touching_live_store() {
         let store = store("abandoned");
-        write_private_atomic(&store, "source", b"before").unwrap();
+        write(&store, "routing.mode", "rule");
         let staged = SourceStoreTransaction::begin(&store).unwrap();
         let path = staged.directory().to_owned();
-        write_private_atomic(&path, "source", b"partial save").unwrap();
+        write(&path, "routing.mode", "global");
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt as _;
@@ -451,7 +295,7 @@ mod transaction_tests {
                 0o700
             );
             assert_eq!(
-                fs::metadata(path.join("source"))
+                fs::metadata(path.join("config.toml"))
                     .unwrap()
                     .permissions()
                     .mode()
@@ -461,7 +305,7 @@ mod transaction_tests {
         }
         drop(staged);
         assert!(!path.exists());
-        assert_eq!(fs::read(store.join("source")).unwrap(), b"before");
+        assert_eq!(read(&store, "routing.mode").as_deref(), Some("rule"));
         fs::remove_dir_all(store).unwrap();
     }
 }

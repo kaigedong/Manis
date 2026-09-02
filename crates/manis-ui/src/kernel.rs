@@ -1,13 +1,9 @@
-use std::fs;
-use std::io::Read as _;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 
-use manis_core::{KernelCapabilities, KernelKind};
-use manis_profile::write_private_atomic;
-
 use crate::localization::{Language, Message, copy};
 use crate::mihomo::{self, ControllerRuntime, ControllerState, LoadError, RuntimeSnapshot};
+use manis_core::{KernelCapabilities, KernelKind};
 
 const KERNEL_SELECTION_FILE: &str = "kernel.kind";
 const MAX_KERNEL_SELECTION_BYTES: u64 = 32;
@@ -169,51 +165,22 @@ impl Deref for KernelRuntime {
 }
 
 pub(crate) fn load_kernel_kind_in(directory: &Path) -> Result<KernelKind, KernelSelectionError> {
-    let path = directory.join(KERNEL_SELECTION_FILE);
-    let metadata = match fs::symlink_metadata(&path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(KernelKind::Mihomo);
-        }
-        Err(_error) => return Err(KernelSelectionError::Unavailable),
+    let Some(value) = crate::config_toml::read_entry(
+        directory,
+        KERNEL_SELECTION_FILE,
+        MAX_KERNEL_SELECTION_BYTES,
+    )
+    .map_err(|error| match error {
+        crate::config_toml::ConfigTomlError::UnsafePath
+        | crate::config_toml::ConfigTomlError::Oversized => KernelSelectionError::UnsafeFile,
+        crate::config_toml::ConfigTomlError::Unavailable
+        | crate::config_toml::ConfigTomlError::InvalidFormat => KernelSelectionError::Unavailable,
+    })?
+    else {
+        return Ok(KernelKind::Mihomo);
     };
-    if metadata.file_type().is_symlink()
-        || !metadata.is_file()
-        || metadata.len() > MAX_KERNEL_SELECTION_BYTES
-    {
-        return Err(KernelSelectionError::UnsafeFile);
-    }
-    let file = fs::File::open(&path).map_err(|_error| KernelSelectionError::Unavailable)?;
-    let opened = file
-        .metadata()
-        .map_err(|_error| KernelSelectionError::Unavailable)?;
-    if !opened.is_file()
-        || opened.len() > MAX_KERNEL_SELECTION_BYTES
-        || !same_file(&metadata, &opened)
-    {
-        return Err(KernelSelectionError::UnsafeFile);
-    }
-    let mut value = String::new();
-    file.take(MAX_KERNEL_SELECTION_BYTES + 1)
-        .read_to_string(&mut value)
-        .map_err(|_error| KernelSelectionError::Unavailable)?;
-    if value.len() as u64 > MAX_KERNEL_SELECTION_BYTES {
-        return Err(KernelSelectionError::UnsafeFile);
-    }
     KernelKind::parse(value.trim_end_matches(['\r', '\n']))
         .ok_or(KernelSelectionError::InvalidValue)
-}
-
-#[cfg(unix)]
-fn same_file(expected: &fs::Metadata, opened: &fs::Metadata) -> bool {
-    use std::os::unix::fs::MetadataExt as _;
-
-    expected.dev() == opened.dev() && expected.ino() == opened.ino()
-}
-
-#[cfg(not(unix))]
-fn same_file(_expected: &fs::Metadata, _opened: &fs::Metadata) -> bool {
-    true
 }
 
 pub(crate) fn save_kernel_kind_in(
@@ -221,7 +188,7 @@ pub(crate) fn save_kernel_kind_in(
     kind: KernelKind,
 ) -> Result<PathBuf, KernelSelectionError> {
     let contents = format!("{}\n", kind.persistence_key());
-    write_private_atomic(directory, KERNEL_SELECTION_FILE, contents.as_bytes())
+    crate::config_toml::write_entry(directory, KERNEL_SELECTION_FILE, &contents)
         .map_err(|_error| KernelSelectionError::Unavailable)
 }
 
