@@ -36,7 +36,7 @@ pub(in crate::app) use model::{
 fn platform_chrome_left_padding() -> gpui::Pixels {
     if cfg!(target_os = "macos") {
         // A transparent macOS title bar extends application content underneath the traffic
-        // lights. Reserve their native control area before rendering the Manis brand.
+        // lights. Reserve their native control area before rendering application chrome.
         px(78.0)
     } else {
         Space::Lg.px()

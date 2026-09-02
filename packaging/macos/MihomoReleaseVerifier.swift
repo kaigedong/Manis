@@ -24,12 +24,10 @@ enum MihomoReleaseVerifier {
         let expectedNames: [String]
         #if arch(arm64)
             expectedNames = [
-                "mihomo-darwin-arm64-go122-\(tag).gz",
                 "mihomo-darwin-arm64-\(tag).gz",
             ]
         #elseif arch(x86_64)
             expectedNames = [
-                "mihomo-darwin-amd64-v2-go122-\(tag).gz",
                 "mihomo-darwin-amd64-v2-\(tag).gz",
             ]
         #else

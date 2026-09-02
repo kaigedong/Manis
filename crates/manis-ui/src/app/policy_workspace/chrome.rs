@@ -43,24 +43,27 @@ impl ManisApp {
             .flex_shrink_0()
             .flex()
             .items_center()
-            .gap(Space::Sm.px())
-            .child(
-                div()
-                    .size(ControlSize::Icon.min_pointer_target() - Space::Sm.px())
-                    .flex_shrink_0()
-                    .rounded(Radius::Control.px() - px(2.0))
-                    .overflow_hidden()
-                    .child(img(assets::BRAND_MARK_PATH).size_full()),
-            )
-            .when(!compact, |brand| {
-                brand.child(
-                    div()
-                        .text_size(TextRole::SectionTitle.size())
-                        .line_height(TextRole::SectionTitle.line_height())
-                        .font_weight(TextRole::SectionTitle.weight())
-                        .text_color(theme.text_primary)
-                        .child(brand::PRODUCT_NAME),
-                )
+            .when(!cfg!(target_os = "macos"), |brand| {
+                brand
+                    .gap(Space::Sm.px())
+                    .child(
+                        div()
+                            .size(ControlSize::Icon.min_pointer_target() - Space::Sm.px())
+                            .flex_shrink_0()
+                            .rounded(Radius::Control.px() - px(2.0))
+                            .overflow_hidden()
+                            .child(img(assets::BRAND_MARK_PATH).size_full()),
+                    )
+                    .when(!compact, |brand| {
+                        brand.child(
+                            div()
+                                .text_size(TextRole::SectionTitle.size())
+                                .line_height(TextRole::SectionTitle.line_height())
+                                .font_weight(TextRole::SectionTitle.weight())
+                                .text_color(theme.text_primary)
+                                .child(brand::PRODUCT_NAME),
+                        )
+                    })
             })
     }
 
