@@ -281,7 +281,9 @@ mod source_transaction_tests {
         resume_tx.send(()).unwrap();
         let result = writer.join().unwrap().unwrap();
         assert!(matches!(result, SourceMutation::RollbackAttempted { .. }));
-        let actual = fs::read_to_string(store.join("language.preference")).unwrap();
+        let actual = crate::config_toml::read_entry(&store, "language.preference", 32)
+            .unwrap()
+            .unwrap();
         fs::remove_dir_all(store.parent().unwrap()).unwrap();
         assert_eq!(
             actual, "en\n",
@@ -291,11 +293,11 @@ mod source_transaction_tests {
     #[test]
     fn losing_tun_after_activation_keeps_the_committed_source() {
         let store = store("committed-after-tun-loss");
-        manis_profile::write_private_atomic(&store, "source.state", b"before").unwrap();
+        crate::config_toml::write_entry(&store, "routing.mode", "rule").unwrap();
         let result = mutate_saved_sources_with_apply(
             &store,
             |staged| {
-                manis_profile::write_private_atomic(staged, "source.state", b"candidate")
+                crate::config_toml::write_entry(staged, "routing.mode", "global")
                     .map(|_| "saved source")
                     .map_err(|_| SubscriptionStoreError::StoreUnavailable)
             },
@@ -310,23 +312,28 @@ mod source_transaction_tests {
         let mut mode = ProxyMode::Tun;
         assert!(apply.reconcile_proxy_mode(&mut mode));
         assert_eq!(mode, ProxyMode::Off);
-        assert_eq!(fs::read(store.join("source.state")).unwrap(), b"candidate");
+        assert_eq!(
+            crate::config_toml::read_entry(&store, "routing.mode", 32)
+                .unwrap()
+                .as_deref(),
+            Some("global")
+        );
         fs::remove_dir_all(store.parent().unwrap()).unwrap();
     }
 
     #[test]
     fn failed_apply_reports_a_rollback_conflict_without_overwriting_newer_data() {
         let store = store("apply-rollback-conflict");
-        manis_profile::write_private_atomic(&store, "source.state", b"before").unwrap();
+        crate::config_toml::write_entry(&store, "routing.mode", "rule").unwrap();
         let result = mutate_saved_sources_with_apply(
             &store,
             |staged| {
-                manis_profile::write_private_atomic(staged, "source.state", b"candidate")
+                crate::config_toml::write_entry(staged, "routing.mode", "global")
                     .map(|_| ())
                     .map_err(|_| SubscriptionStoreError::StoreUnavailable)
             },
             || {
-                manis_profile::write_private_atomic(&store, "source.state", b"later save").unwrap();
+                crate::config_toml::write_entry(&store, "routing.mode", "direct").unwrap();
                 SourceRuntimeApply::Failed("injected apply failure".to_owned())
             },
         )
@@ -343,7 +350,12 @@ mod source_transaction_tests {
             apply.status_suffix_after_rollback_attempt(Language::English, rollback_error.as_ref());
         assert!(status.contains(Language::English.message(Message::StoreRollbackFailed)));
         assert!(!status.contains(Language::English.message(Message::ChangesFailedAndRestored)));
-        assert_eq!(fs::read(store.join("source.state")).unwrap(), b"later save");
+        assert_eq!(
+            crate::config_toml::read_entry(&store, "routing.mode", 32)
+                .unwrap()
+                .as_deref(),
+            Some("direct")
+        );
         fs::remove_dir_all(store.parent().unwrap()).unwrap();
     }
 }

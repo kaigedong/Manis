@@ -3,26 +3,18 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
-
 use crate::localization::LanguagePreference;
 use crate::mihomo::{self, SubscriptionStoreError};
 
-const BACKUP_SCHEMA: &str = "manis.configuration-backup";
-const BACKUP_VERSION: u8 = 1;
 const MAX_BACKUP_TEXT_BYTES: u64 = 64 * 1024 * 1024;
-const MAX_BACKUP_FILES: usize = 512;
-const MAX_PORTABLE_FILE_BYTES: u64 = 4 * 1024 * 1024;
-const MAX_SMALL_STATE_BYTES: u64 = 512 * 1024;
 const BACKUP_DIRECTORY_NAME: &str = "configuration-backups";
 
 mod filesystem;
 mod restore;
 
 use filesystem::{
-    backup_current_store, create_backup_dir, current_unix_nanos, current_unix_secs, max_file_bytes,
-    portable_store_paths, read_private_portable_file, remove_current_store_files,
-    require_clean_absolute_path, validate_file_name, write_files,
+    backup_current_store, backup_root as backup_storage_root, create_backup_dir,
+    current_unix_nanos, require_clean_absolute_path,
 };
 use restore::validate_store;
 pub(crate) use restore::{backup_root, restore};
@@ -38,6 +30,7 @@ pub(crate) struct BackupSummary {
 
 #[derive(Clone)]
 pub(crate) struct PreparedBackup {
+    source: String,
     files: BTreeMap<String, String>,
     summary: BackupSummary,
 }
@@ -53,7 +46,8 @@ impl fmt::Debug for PreparedBackup {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("PreparedBackup")
-            .field("file_count", &self.files.len())
+            .field("source_bytes", &self.source.len())
+            .field("entry_count", &self.files.len())
             .field("summary", &self.summary)
             .finish_non_exhaustive()
     }
@@ -104,7 +98,6 @@ impl std::error::Error for ImportError {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum BackupError {
     Unavailable,
-    PermissionDenied,
     UnsafePath,
     Oversized,
     InvalidFormat,
@@ -114,116 +107,58 @@ pub(crate) enum BackupError {
 impl fmt::Display for BackupError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
-            Self::Unavailable => "configuration backup is unavailable",
-            Self::PermissionDenied => "permission to write the configuration backup was denied",
-            Self::UnsafePath => "configuration backup path is not safe",
-            Self::Oversized => "configuration backup is too large",
-            Self::InvalidFormat => "configuration backup format is invalid or unsupported",
-            Self::InvalidConfiguration => "configuration backup contains invalid configuration",
+            Self::Unavailable => "configuration is unavailable",
+            Self::UnsafePath => "configuration path is not safe",
+            Self::Oversized => "configuration is too large",
+            Self::InvalidFormat => "configuration TOML is invalid or unsupported",
+            Self::InvalidConfiguration => "configuration contains invalid values or references",
         })
     }
 }
 
 impl std::error::Error for BackupError {}
 
+impl From<crate::config_toml::ConfigTomlError> for BackupError {
+    fn from(error: crate::config_toml::ConfigTomlError) -> Self {
+        match error {
+            crate::config_toml::ConfigTomlError::Unavailable => Self::Unavailable,
+            crate::config_toml::ConfigTomlError::UnsafePath => Self::UnsafePath,
+            crate::config_toml::ConfigTomlError::InvalidFormat => Self::InvalidFormat,
+            crate::config_toml::ConfigTomlError::Oversized => Self::Oversized,
+        }
+    }
+}
+
 impl From<SubscriptionStoreError> for BackupError {
-    fn from(_error: SubscriptionStoreError) -> Self {
+    fn from(_: SubscriptionStoreError) -> Self {
         Self::InvalidConfiguration
     }
 }
 
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct BackupDocument {
-    schema: String,
-    version: u8,
-    created_unix_secs: u64,
-    files: Vec<BackupFile>,
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct BackupFile {
-    name: String,
-    contents: String,
-}
-
-pub(crate) fn export_backup(directory: &Path) -> Result<String, BackupError> {
-    let text = read_configuration_for_editing(directory)?;
-    prepare_import(&text)?;
-    Ok(text)
-}
-
-// Reading a draft must not require valid configuration: the editor is also used to
-// repair stale references. Keep path, permission and size checks here; validate on apply.
 pub(crate) fn read_configuration_for_editing(directory: &Path) -> Result<String, BackupError> {
-    let mut files = Vec::new();
-    let mut total = 0_u64;
-    for path in portable_store_paths(directory)? {
-        let name = path
-            .file_name()
-            .and_then(std::ffi::OsStr::to_str)
-            .ok_or(BackupError::UnsafePath)?
-            .to_owned();
-        let contents = read_private_portable_file(&path, max_file_bytes(&name)?)?;
-        total = total
-            .checked_add(contents.len() as u64)
-            .filter(|total| *total <= MAX_BACKUP_TEXT_BYTES)
-            .ok_or(BackupError::Oversized)?;
-        files.push(BackupFile { name, contents });
-        if files.len() > MAX_BACKUP_FILES {
-            return Err(BackupError::Oversized);
-        }
-    }
-    let document = BackupDocument {
-        schema: BACKUP_SCHEMA.to_owned(),
-        version: BACKUP_VERSION,
-        created_unix_secs: current_unix_secs(),
-        files,
-    };
-    let text =
-        serde_json::to_string_pretty(&document).map_err(|_error| BackupError::Unavailable)?;
-    if text.len() as u64 > MAX_BACKUP_TEXT_BYTES {
-        return Err(BackupError::Oversized);
-    }
-    Ok(text)
+    crate::config_toml::read_source(directory).map_err(Into::into)
+}
+
+#[cfg(test)]
+pub(crate) fn export_backup(directory: &Path) -> Result<String, BackupError> {
+    let source = read_configuration_for_editing(directory)?;
+    prepare_import(&source)?;
+    Ok(source)
 }
 
 pub(crate) fn prepare_import(text: &str) -> Result<PreparedBackup, BackupError> {
     if text.len() as u64 > MAX_BACKUP_TEXT_BYTES {
         return Err(BackupError::Oversized);
     }
-    let document: BackupDocument =
-        serde_json::from_str(text).map_err(|_error| BackupError::InvalidFormat)?;
-    if document.schema != BACKUP_SCHEMA || document.version != BACKUP_VERSION {
-        return Err(BackupError::InvalidFormat);
-    }
-    if document.files.len() > MAX_BACKUP_FILES {
-        return Err(BackupError::Oversized);
-    }
-
-    let mut files = BTreeMap::new();
-    let mut total = 0_u64;
-    for file in document.files {
-        validate_file_name(&file.name)?;
-        let max_bytes = max_file_bytes(&file.name)?;
-        let len = file.contents.len() as u64;
-        if len > max_bytes {
-            return Err(BackupError::Oversized);
-        }
-        total = total
-            .checked_add(len)
-            .filter(|total| *total <= MAX_BACKUP_TEXT_BYTES)
-            .ok_or(BackupError::Oversized)?;
-        if files.insert(file.name, file.contents).is_some() {
-            return Err(BackupError::InvalidFormat);
-        }
-    }
-
+    let files = crate::config_toml::entries_from_source(text)?;
     let temp = TempStore::new()?;
-    write_files(temp.store_dir(), &files)?;
+    crate::config_toml::replace_source(temp.store_dir(), text)?;
     let summary = validate_store(temp.store_dir(), &files)?;
-    Ok(PreparedBackup { files, summary })
+    Ok(PreparedBackup {
+        source: text.to_owned(),
+        files,
+        summary,
+    })
 }
 
 struct TempStore {
@@ -235,7 +170,7 @@ impl TempStore {
     fn new() -> Result<Self, BackupError> {
         for _ in 0..80 {
             let root = std::env::temp_dir().join(format!(
-                "manis-configuration-backup-{}-{:x}",
+                "manis-configuration-{}-{:x}",
                 std::process::id(),
                 current_unix_nanos()
             ));
@@ -245,13 +180,15 @@ impl TempStore {
                     {
                         use std::os::unix::fs::PermissionsExt as _;
                         fs::set_permissions(&root, fs::Permissions::from_mode(0o700))
-                            .map_err(|_error| BackupError::Unavailable)?;
+                            .map_err(|_| BackupError::Unavailable)?;
                     }
-                    let store = root.join("subscriptions");
-                    return Ok(Self { root, store });
+                    return Ok(Self {
+                        store: root.join("config"),
+                        root,
+                    });
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-                Err(_error) => return Err(BackupError::Unavailable),
+                Err(_) => return Err(BackupError::Unavailable),
             }
         }
         Err(BackupError::Unavailable)
@@ -268,274 +205,74 @@ impl Drop for TempStore {
     }
 }
 
-#[cfg(all(test, not(windows)))]
+#[cfg(test)]
 mod tests {
-    use std::fs;
+    use super::*;
 
-    use manis_core::{
-        ManagedPolicyGroup, ManagedPolicyStrategy, NodeIdentity, PolicyCandidateMatcher,
-        RoutingMode,
-    };
-
-    fn temp_store(name: &str) -> std::path::PathBuf {
-        let root = std::env::temp_dir().join(format!(
-            "{name}-{}-{:x}",
+    fn store(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "manis-config-backup-{name}-{}-{:x}",
             std::process::id(),
-            super::current_unix_nanos()
-        ));
-        let _ = fs::remove_dir_all(&root);
-        root.join("subscriptions")
+            current_unix_nanos()
+        ))
     }
 
     #[test]
-    fn backup_round_trips_portable_configuration() -> Result<(), Box<dyn std::error::Error>> {
-        let source = temp_store("manis-backup-source");
-        let target = temp_store("manis-backup-target");
+    fn editor_round_trip_preserves_toml_comments() -> Result<(), Box<dyn std::error::Error>> {
+        let source = store("source");
+        let target = store("target");
+        let text = r#"schema_version = 1
 
-        crate::mihomo::save_subscription_source_with_options_in(
-            &source,
-            "https://example.invalid/sub?token=private",
-            "Private subscription",
-            crate::mihomo::RemoteSourceRefreshInterval::Daily,
-            true,
-        )?;
-        crate::mihomo::save_single_node_source_with_options_in(
-            &source,
-            "vless://00000000-0000-0000-0000-000000000000@example.invalid:443?encryption=none#HK",
-            "HK",
-            true,
-        )?;
-        crate::mihomo::save_named_qx_rule_source_in(
-            &source,
-            "https://example.invalid/rules.list?token=private",
-            "Work",
-            "DIRECT",
-            "DOMAIN-SUFFIX,example.com,DIRECT\n",
-        )?;
-        let mut group = ManagedPolicyGroup::new("policy-1", "Auto")?;
-        group.strategy = ManagedPolicyStrategy::LowestLatency;
-        group.switch_tolerance_ms = 200;
-        crate::mihomo::save_managed_policy_in(&source, &group)?;
-        crate::mihomo::save_routing_mode_in(&source, RoutingMode::Global)?;
-        crate::manual_rule::save_manual_rules_in(
-            &source,
-            &[crate::manual_rule::ManualRule::parse(
-                crate::manual_rule::ManualRuleKind::HostSuffix,
-                "example.com",
-                "DIRECT",
-            )?],
-        )?;
-        crate::kernel::save_kernel_kind_in(&source, manis_core::KernelKind::Mihomo)?;
-        crate::localization::save_language_preference_in(
-            &source,
-            crate::localization::LanguagePreference::SimplifiedChinese,
-        )?;
-        let node = crate::mihomo::load_single_node_sources_in(&source)?.remove(0);
-        let mut selections = crate::mihomo::NodeSelectionPreferences::default();
-        selections.set_global(manis_core::NodeIdentity::new(&node.id, &node.name)?);
-        crate::mihomo::save_node_selection_preferences_in(&source, &selections)?;
-        crate::mihomo::save_collapsed_groups_in(&source, [node.id.as_str()])?;
-
-        let text = super::export_backup(&source)?;
-        assert!(text.contains("manis.configuration-backup"));
-        assert!(!text.contains("benchmarks.state"));
-        let prepared = super::prepare_import(&text)?;
-        assert_eq!(prepared.summary().subscriptions, 1);
-        assert_eq!(prepared.summary().single_nodes, 1);
-        assert_eq!(prepared.summary().rule_sources, 1);
-        assert_eq!(prepared.summary().policy_groups, 1);
-        assert_eq!(prepared.summary().manual_rules, 1);
-
-        crate::mihomo::save_routing_mode_in(&target, RoutingMode::Direct)?;
-        let result = super::restore(&target, &prepared)?;
-        assert!(result.backup_dir.is_dir());
-        assert_eq!(
-            crate::mihomo::load_subscription_sources_in(&target)?.len(),
-            1
-        );
-        assert_eq!(
-            crate::mihomo::load_single_node_sources_in(&target)?.len(),
-            1
-        );
-        assert_eq!(crate::mihomo::load_qx_rule_sources_in(&target)?.len(), 1);
-        assert_eq!(
-            crate::mihomo::load_managed_policy_groups_in(&target)?.len(),
-            1
-        );
-        assert_eq!(
-            crate::mihomo::load_routing_mode_in(&target)?,
-            RoutingMode::Global
-        );
-        let exported_again = super::prepare_import(&super::export_backup(&target)?)?;
-        assert_eq!(
-            prepared.files, exported_again.files,
-            "all portable configuration values survive migration to a different directory"
-        );
-
-        fs::remove_dir_all(source.parent().expect("source root"))?;
-        fs::remove_dir_all(target.parent().expect("target root"))?;
+# 用户注释
+[configuration]
+"routing.mode" = "global" # 模式注释
+"#;
+        crate::config_toml::replace_source(&source, text)?;
+        let prepared = prepare_import(&read_configuration_for_editing(&source)?)?;
+        restore(&target, &prepared)?;
+        assert_eq!(crate::config_toml::read_source(&target)?, text);
+        fs::remove_dir_all(source)?;
+        fs::remove_dir_all(target)?;
         Ok(())
     }
 
     #[test]
-    fn configuration_editor_keeps_migrated_policy_files_referenced_by_new_policies()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let store = temp_store("manis-backup-migrated-policy");
-        let legacy = ManagedPolicyGroup::new("group-deadbeef-0", "Legacy group")?;
-        crate::mihomo::save_managed_policy_in(&store, &legacy)?;
-        let mut parent = ManagedPolicyGroup::new("policy-cafebabe-0", "Parent")?;
-        parent.matcher = PolicyCandidateMatcher::Explicit(
-            [NodeIdentity::new(
-                "policy:group-deadbeef-0",
-                "Legacy group",
-            )?]
-            .into_iter()
-            .collect(),
-        );
-        crate::mihomo::save_managed_policy_in(&store, &parent)?;
-
-        let text = super::read_configuration_for_editing(&store)?;
-        assert!(text.contains("group-deadbeef-0.policy"));
-        assert_eq!(super::prepare_import(&text)?.summary().policy_groups, 2);
-
-        fs::remove_dir_all(store.parent().expect("store root"))?;
-        Ok(())
+    fn invalid_toml_and_invalid_values_are_rejected() {
+        assert!(matches!(
+            prepare_import("{"),
+            Err(BackupError::InvalidFormat)
+        ));
+        let invalid = r#"schema_version = 1
+[configuration]
+"routing.mode" = "impossible"
+"#;
+        assert!(matches!(
+            prepare_import(invalid),
+            Err(BackupError::InvalidConfiguration)
+        ));
     }
 
     #[test]
-    fn symlinked_store_roots_are_rejected_before_changes() -> Result<(), Box<dyn std::error::Error>>
-    {
-        let store = temp_store("manis-backup-boundaries");
-        crate::mihomo::save_routing_mode_in(&store, RoutingMode::Direct)?;
-        let root = store.parent().expect("root");
-        let alias = root.join("alias");
-        std::os::unix::fs::symlink(&store, &alias)?;
-        assert!(matches!(
-            super::export_backup(&alias),
-            Err(super::BackupError::UnsafePath)
-        ));
-        let prepared = super::prepare_import(
-            r#"{"schema":"manis.configuration-backup","version":1,"created_unix_secs":0,"files":[]}"#,
-        )?;
-        assert!(super::restore(&alias, &prepared).is_err());
+    fn restore_saves_the_previous_toml() -> Result<(), Box<dyn std::error::Error>> {
+        let target = store("previous");
+        let before = r#"schema_version = 1
+# before
+[configuration]
+"routing.mode" = "direct"
+"#;
+        let after = r#"schema_version = 1
+# after
+[configuration]
+"routing.mode" = "global"
+"#;
+        crate::config_toml::replace_source(&target, before)?;
+        let result = restore(&target, &prepare_import(after)?)?;
         assert_eq!(
-            crate::mihomo::load_routing_mode_in(&store)?,
-            RoutingMode::Direct
+            fs::read_to_string(result.backup_dir.join("previous.toml"))?,
+            before
         );
-        fs::remove_dir_all(root)?;
-        Ok(())
-    }
-
-    #[test]
-    fn invalid_and_unsafe_backup_input_is_rejected() {
-        assert!(matches!(
-            super::prepare_import(
-                r#"{"schema":"wrong","version":1,"created_unix_secs":0,"files":[]}"#
-            ),
-            Err(super::BackupError::InvalidFormat)
-        ));
-        assert!(matches!(
-            super::prepare_import(
-                r#"{"schema":"manis.configuration-backup","version":1,"created_unix_secs":0,"files":[{"name":"../evil","contents":""}]}"#
-            ),
-            Err(super::BackupError::InvalidFormat)
-        ));
-        assert!(matches!(
-            super::prepare_import(
-                r#"{"schema":"manis.configuration-backup","version":1,"created_unix_secs":0,"files":[{"name":"routing.mode","contents":"bad"}]}"#
-            ),
-            Err(super::BackupError::InvalidConfiguration)
-        ));
-        assert!(matches!(
-            super::prepare_import(
-                r#"{"schema":"manis.configuration-backup","version":1,"created_unix_secs":0,"files":[],"surprise":true}"#
-            ),
-            Err(super::BackupError::InvalidFormat)
-        ));
-    }
-
-    #[test]
-    fn failed_restore_rolls_back_the_previous_store() -> Result<(), Box<dyn std::error::Error>> {
-        let target = temp_store("manis-backup-rollback");
-        crate::mihomo::save_routing_mode_in(&target, RoutingMode::Direct)?;
-        let before = fs::read_to_string(target.join("routing.mode"))?;
-        let text = r#"{
-  "schema": "manis.configuration-backup",
-  "version": 1,
-  "created_unix_secs": 0,
-  "files": [
-    { "name": "routing.mode", "contents": "global" },
-    { "name": "node-selection.state", "contents": "bad-version" }
-  ]
-}"#;
-        let prepared = super::PreparedBackup {
-            files: serde_json::from_str::<super::BackupDocument>(text)?
-                .files
-                .into_iter()
-                .map(|file| (file.name, file.contents))
-                .collect(),
-            summary: super::BackupSummary::default(),
-        };
-
-        let error = super::restore(&target, &prepared).expect_err("restore must fail");
-        assert!(error.backup_dir.is_some());
-        assert!(!error.rollback_failed);
-        assert_eq!(fs::read_to_string(target.join("routing.mode"))?, before);
-
-        fs::remove_dir_all(target.parent().expect("target root"))?;
-        Ok(())
-    }
-
-    #[test]
-    fn export_rejects_symlinked_store_files() -> Result<(), Box<dyn std::error::Error>> {
-        let store = temp_store("manis-backup-symlink");
-        fs::create_dir_all(&store)?;
-        #[cfg(unix)]
-        {
-            std::os::unix::fs::symlink("/tmp/not-moved", store.join("routing.mode"))?;
-            assert!(matches!(
-                super::export_backup(&store),
-                Err(super::BackupError::UnsafePath)
-            ));
-        }
-        fs::remove_dir_all(store.parent().expect("store root"))?;
-        Ok(())
-    }
-
-    #[test]
-    fn restore_keeps_unknown_files_and_saves_importable_previous_backup()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let target = temp_store("manis-backup-previous");
-        crate::mihomo::save_routing_mode_in(&target, RoutingMode::Direct)?;
-        manis_profile::write_private_atomic(&target, "benchmarks.state", b"device cache")?;
-        manis_profile::write_private_atomic(&target, "future-local.state", b"keep me")?;
-
-        let prepared = super::prepare_import(
-            r#"{
-  "schema": "manis.configuration-backup",
-  "version": 1,
-  "created_unix_secs": 0,
-  "files": [
-    { "name": "routing.mode", "contents": "global" }
-  ]
-}"#,
-        )?;
-        let result = super::restore(&target, &prepared)?;
-
-        assert_eq!(
-            crate::mihomo::load_routing_mode_in(&target)?,
-            RoutingMode::Global
-        );
-        assert!(!target.join("benchmarks.state").exists());
-        assert_eq!(
-            fs::read_to_string(target.join("future-local.state"))?,
-            "keep me"
-        );
-        let previous = fs::read_to_string(result.backup_dir.join("previous.json"))?;
-        let previous = super::prepare_import(&previous)?;
-        assert_eq!(previous.summary(), &super::BackupSummary::default());
-
-        fs::remove_dir_all(target.parent().expect("target root"))?;
+        assert_eq!(crate::config_toml::read_source(&target)?, after);
+        fs::remove_dir_all(target)?;
         Ok(())
     }
 }

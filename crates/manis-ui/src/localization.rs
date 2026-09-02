@@ -1,9 +1,6 @@
-use std::fs;
 use std::path::{Path, PathBuf};
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use std::process::Command;
-
-use manis_profile::write_private_atomic;
 
 use crate::diagnostics::{LogLevel, record_event};
 
@@ -382,27 +379,22 @@ fn platform_locale() -> Option<String> {
 pub(crate) fn load_language_preference_in(
     directory: &Path,
 ) -> Result<LanguagePreference, LanguagePreferenceError> {
-    let path = directory.join(LANGUAGE_PREFERENCE_FILE);
-    let metadata = match fs::symlink_metadata(&path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(LanguagePreference::FollowSystem);
+    let Some(value) = crate::config_toml::read_entry(
+        directory,
+        LANGUAGE_PREFERENCE_FILE,
+        MAX_LANGUAGE_PREFERENCE_BYTES,
+    )
+    .map_err(|error| match error {
+        crate::config_toml::ConfigTomlError::UnsafePath
+        | crate::config_toml::ConfigTomlError::Oversized => LanguagePreferenceError::UnsafeFile,
+        crate::config_toml::ConfigTomlError::Unavailable
+        | crate::config_toml::ConfigTomlError::InvalidFormat => {
+            LanguagePreferenceError::unavailable("read language preference", error)
         }
-        Err(error) => {
-            return Err(LanguagePreferenceError::unavailable(
-                "inspect language preference",
-                error,
-            ));
-        }
+    })?
+    else {
+        return Ok(LanguagePreference::FollowSystem);
     };
-    if metadata.file_type().is_symlink()
-        || !metadata.is_file()
-        || metadata.len() > MAX_LANGUAGE_PREFERENCE_BYTES
-    {
-        return Err(LanguagePreferenceError::UnsafeFile);
-    }
-    let value = fs::read_to_string(path)
-        .map_err(|error| LanguagePreferenceError::unavailable("read language preference", error))?;
     LanguagePreference::parse(value.trim_end_matches(['\r', '\n']))
         .ok_or(LanguagePreferenceError::InvalidValue)
 }
@@ -412,7 +404,7 @@ pub(crate) fn save_language_preference_in(
     preference: LanguagePreference,
 ) -> Result<PathBuf, LanguagePreferenceError> {
     let contents = format!("{}\n", preference.persistence_key());
-    write_private_atomic(directory, LANGUAGE_PREFERENCE_FILE, contents.as_bytes())
+    crate::config_toml::write_entry(directory, LANGUAGE_PREFERENCE_FILE, &contents)
         .map_err(|error| LanguagePreferenceError::unavailable("save language preference", error))
 }
 

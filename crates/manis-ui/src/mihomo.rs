@@ -72,7 +72,7 @@ pub(crate) use routing_order::{
     MoveDirection, load_routing_rule_group_order_in, move_routing_rule_group,
     normalized_routing_rule_group_order, save_routing_rule_group_order_in,
 };
-pub(crate) use store_snapshot::{SourceStoreTransaction, SubscriptionStoreSnapshot};
+pub(crate) use store_snapshot::SourceStoreTransaction;
 pub(crate) use workspace::*;
 use workspace::{
     apply_qx_rule_sources, decode_hex, next_stored_source_id, profile_mode, valid_stored_id,
@@ -81,8 +81,8 @@ use workspace::{
 use workspace::{current_unix_nanos, storage_version_supported};
 #[cfg(not(windows))]
 use workspace::{
-    private_store_entries, read_private_source_allow_empty, read_private_source_allow_empty_max,
-    remove_private_source, require_clean_absolute_store,
+    private_store_entries, read_private_source_allow_empty, remove_private_source,
+    require_clean_absolute_store,
 };
 
 const CONTROLLER_ENV: &str = "MANIS_MIHOMO_CONTROLLER";

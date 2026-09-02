@@ -253,7 +253,12 @@ proxies: []
     assert_eq!(upgraded.proxy_server_nameservers, nameservers);
     assert_eq!(upgraded.last_successful_update_unix_secs, 42);
 
-    let contents = fs::read_to_string(&path)?;
+    let contents = crate::config_toml::read_entry(
+        &store,
+        "source-feed.url",
+        super::MAX_STORED_SUBSCRIPTION_FILE_BYTES,
+    )?
+    .expect("upgraded subscription");
     assert!(contents.starts_with(super::STORED_SUBSCRIPTION_VERSION));
     let reloaded = super::load_subscription_sources_in(&store)?;
     assert_eq!(reloaded, vec![upgraded]);

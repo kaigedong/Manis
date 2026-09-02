@@ -162,7 +162,9 @@ fn editor_opens_dangling_policy_references_but_requires_repair_before_preview(
             .collect(),
     );
     crate::mihomo::save_managed_policy_in(&store, &group).unwrap();
-    let original = std::fs::read(store.join("policy-1.policy")).unwrap();
+    let original = crate::config_toml::read_entry(&store, "policy-1.policy", 1024 * 1024)
+        .unwrap()
+        .unwrap();
     assert!(crate::config_backup::export_backup(&store).is_err());
     let mut app = None;
     let (_, cx) = cx.add_window_view(|window, cx| {
@@ -185,10 +187,11 @@ fn editor_opens_dangling_policy_references_but_requires_repair_before_preview(
             .expect("invalid references must remain editable")
     });
     let draft = editor.read_with(cx, |editor, _| editor.value());
-    let document: serde_json::Value = serde_json::from_str(&draft).unwrap();
     assert_eq!(
-        document["files"][0]["contents"],
-        String::from_utf8(original.clone()).unwrap()
+        crate::config_toml::entries_from_source(&draft)
+            .unwrap()
+            .get("policy-1.policy"),
+        Some(&original)
     );
     cx.update(|window, cx| {
         assert!(window.has_active_dialog(cx));
@@ -202,8 +205,10 @@ fn editor_opens_dangling_policy_references_but_requires_repair_before_preview(
     });
     assert_eq!(editor.read_with(cx, |editor, _| editor.value()), draft);
     assert_eq!(
-        std::fs::read(store.join("policy-1.policy")).unwrap(),
-        original
+        crate::config_toml::read_entry(&store, "policy-1.policy", 1024 * 1024)
+            .unwrap()
+            .unwrap(),
+        original,
     );
     cx.update(|window, cx| {
         app.update(cx, |app, cx| app.cancel_configuration_transfer(window, cx));
@@ -219,7 +224,9 @@ fn editor_prefills_current_configuration_and_preserves_invalid_edits(
     let store = unique_temp_store("manis-config-editor");
     crate::mihomo::save_routing_mode_in(&store, manis_core::RoutingMode::Direct)
         .expect("fixture routing");
-    let original = std::fs::read(store.join("routing.mode")).unwrap();
+    let original = crate::config_toml::read_entry(&store, "routing.mode", 32)
+        .unwrap()
+        .unwrap();
     let mut app = None;
     let (_, cx) = cx.add_window_view(|window, cx| {
         let entity = cx.new(|_| {
@@ -242,14 +249,11 @@ fn editor_prefills_current_configuration_and_preserves_invalid_edits(
             .expect("prefilled editor")
     });
     let current = editor.read_with(cx, |editor, _| editor.value());
-    let document: serde_json::Value = serde_json::from_str(&current).unwrap();
-    assert!(
-        document["files"]
-            .as_array()
+    assert_eq!(
+        crate::config_toml::entries_from_source(&current)
             .unwrap()
-            .iter()
-            .any(|file| file["name"] == "routing.mode"
-                && file["contents"] == String::from_utf8(original.clone()).unwrap())
+            .get("routing.mode"),
+        Some(&original)
     );
     cx.update(|window, cx| {
         app.update(cx, ManisApp::copy_configuration_to_clipboard);
@@ -273,13 +277,7 @@ fn editor_prefills_current_configuration_and_preserves_invalid_edits(
         editor.read_with(cx, |editor, _| editor.value()),
         "invalid edits"
     );
-    let mut replacement = document;
-    for file in replacement["files"].as_array_mut().unwrap() {
-        if file["name"] == "routing.mode" {
-            file["contents"] = "global".into();
-        }
-    }
-    let replacement = serde_json::to_string_pretty(&replacement).unwrap();
+    let replacement = current.replace("direct", "global");
     cx.update(|window, cx| {
         editor.update(cx, |editor, cx| {
             editor.set_value(replacement.clone(), window, cx);
@@ -312,7 +310,12 @@ fn editor_prefills_current_configuration_and_preserves_invalid_edits(
         assert!(!app.configuration_transfer.active);
         assert!(app.configuration_transfer.editor.is_none());
     });
-    assert_eq!(std::fs::read(store.join("routing.mode")).unwrap(), original);
+    assert_eq!(
+        crate::config_toml::read_entry(&store, "routing.mode", 32)
+            .unwrap()
+            .unwrap(),
+        original,
+    );
     std::fs::remove_dir_all(store.parent().unwrap()).unwrap();
 }
 

@@ -30,7 +30,7 @@ fn source_store_round_trips_editable_managed_policy_groups()
     group.set_test_interval_secs(1_800)?;
     group.switch_tolerance_ms = 150;
     group.set_matcher(PolicyCandidateMatcher::name_contains("Hong Kong")?)?;
-    super::save_managed_policy_in(&store, &group)?;
+    super::save_managed_policy_in(&store, &group).expect("save first policy");
 
     let mut explicit = ManagedPolicyGroup::new("policy-b-2", "手动出口")?;
     explicit.icon = ManagedPolicyIcon::Shield;
@@ -38,19 +38,19 @@ fn source_store_round_trips_editable_managed_policy_groups()
     explicit.toggle_member(NodeIdentity::new("subscription:source-1", "Tokyo Edge")?);
     explicit.toggle_member(NodeIdentity::new("saved", "Private Edge")?);
     explicit.toggle_member(NodeIdentity::new("builtin", "PROXY")?);
-    super::save_managed_policy_in(&store, &explicit)?;
+    super::save_managed_policy_in(&store, &explicit).expect("save second policy");
 
-    let groups = super::load_managed_policy_groups_in(&store)?;
+    let groups = super::load_managed_policy_groups_in(&store).expect("load policies");
     assert_eq!(groups, vec![group.clone(), explicit.clone()]);
 
     group.rename("香港 · 自动")?;
     group.icon = ManagedPolicyIcon::Compass;
-    super::save_managed_policy_in(&store, &group)?;
-    let updated = super::load_managed_policy_groups_in(&store)?;
+    super::save_managed_policy_in(&store, &group).expect("update policy");
+    let updated = super::load_managed_policy_groups_in(&store).expect("load updated policies");
     assert_eq!(updated.len(), 2);
     assert_eq!(updated[0], group);
 
-    super::remove_managed_policy_in(&store, &explicit.id)?;
+    super::remove_managed_policy_in(&store, &explicit.id).expect("remove policy");
     assert_eq!(super::load_managed_policy_groups_in(&store)?.len(), 1);
     fs::remove_dir_all(root)?;
     Ok(())
@@ -86,9 +86,9 @@ fn legacy_node_group_file_migrates_to_managed_policy_file() -> Result<(), Box<dy
     assert_eq!(policies.len(), 1);
     assert_eq!(policies[0].name, "Legacy Policy");
     assert!(!legacy.exists());
-    let migrated = store.join("group-deadbeef-1.policy");
-    assert!(migrated.exists());
-    assert!(fs::read_to_string(&migrated)?.starts_with("manis-policy-group-v1\n"));
+    let migrated = crate::config_toml::read_entry(&store, "group-deadbeef-1.policy", 1024 * 1024)?
+        .expect("migrated policy");
+    assert!(migrated.starts_with("manis-policy-group-v1\n"));
 
     fs::remove_dir_all(root)?;
     Ok(())

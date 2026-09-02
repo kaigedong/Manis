@@ -38,7 +38,7 @@ fn imported_subscription_round_trips_privately_and_replaces_atomically()
         use std::os::unix::fs::PermissionsExt;
         assert_eq!(fs::metadata(&store)?.permissions().mode() & 0o077, 0);
         assert_eq!(
-            fs::metadata(store.join("subscription.url"))?
+            fs::metadata(store.join("config.toml"))?
                 .permissions()
                 .mode()
                 & 0o077,
