@@ -11,7 +11,6 @@ use crate::{
         ActionRole, dialog_footer_surface, dialog_header_surface, section_heading,
         style_action_button, surface_dialog,
     },
-    diagnostics::{LogLevel, record_event},
     localization::{Language, Message, copy},
     mihomo::{self},
     theme::{ControlSize, Space, TextRole, Theme},
@@ -49,7 +48,7 @@ pub(in crate::app) struct ConfigurationTransfer {
     pub(super) editor: Option<Entity<gpui_component::input::EditorState>>,
     pub(super) message: String,
     pub(super) failed: bool,
-    pub(super) output_path: Option<std::path::PathBuf>,
+    pub(super) backup_path: Option<std::path::PathBuf>,
 }
 
 impl ConfigurationTransfer {
@@ -84,161 +83,6 @@ impl ManisApp {
         }
     }
 
-    fn choose_configuration_export(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let language = self.language();
-        if !self.begin_configuration_transfer(
-            language.localized(copy::backup::EXPORTING),
-            TransferPresentation::StatusBar,
-            window,
-            cx,
-        ) {
-            return;
-        }
-        let store = self
-            .subscription_store_dir
-            .clone()
-            .expect("store checked above");
-        let initial = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
-            .map_or_else(|| store.clone(), std::path::PathBuf::from);
-        let prompt = cx.prompt_for_new_path(&initial, Some("Manis.json"));
-        let executor = cx.background_executor().clone();
-        cx.spawn_in(window, async move |this, cx| {
-            let path = match prompt.await {
-                Ok(Ok(Some(path))) => path,
-                Ok(Ok(None)) => {
-                    this.update(cx, |this, cx| {
-                        this.configuration_transfer = ConfigurationTransfer::default();
-                        language
-                            .localized(copy::backup::EXPORT_CANCELLED)
-                            .clone_into(&mut this.status);
-                        cx.notify();
-                    })
-                    .ok();
-                    return;
-                }
-                _ => {
-                    this.update(cx, |this, cx| {
-                        this.finish_configuration_transfer(
-                            language.localized(copy::backup::FILE_ERROR),
-                            true,
-                            cx,
-                        );
-                    })
-                    .ok();
-                    return;
-                }
-            };
-            let output = path.clone();
-            let result = executor
-                .spawn(async move { crate::config_backup::export_to_file(&store, &path) })
-                .await;
-            this.update(cx, |this, cx| {
-                let message = match result {
-                    Ok(()) => {
-                        record_event(
-                            LogLevel::Info,
-                            "configuration.export.succeeded",
-                            format!("path={}", output.display()),
-                        );
-                        this.configuration_transfer.output_path = Some(output);
-                        copy::backup::EXPORTED
-                    }
-                    Err(error) => {
-                        record_event(
-                            LogLevel::Error,
-                            "configuration.export.failed",
-                            format!("path={} error={error}", output.display()),
-                        );
-                        if error == crate::config_backup::BackupError::PermissionDenied {
-                            copy::backup::EXPORT_PERMISSION_DENIED
-                        } else {
-                            copy::backup::EXPORT_FAILED
-                        }
-                    }
-                };
-                this.finish_configuration_transfer(
-                    language.localized(message),
-                    message != copy::backup::EXPORTED,
-                    cx,
-                );
-            })
-            .ok();
-        })
-        .detach();
-    }
-
-    fn choose_configuration_import(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let language = self.language();
-        if !self.begin_configuration_transfer(
-            language.localized(copy::backup::READING),
-            TransferPresentation::StatusBar,
-            window,
-            cx,
-        ) {
-            return;
-        }
-        let prompt = cx.prompt_for_paths(gpui::PathPromptOptions {
-            files: true,
-            directories: false,
-            multiple: false,
-            prompt: Some(language.localized(copy::backup::IMPORT).into()),
-        });
-        let executor = cx.background_executor().clone();
-        cx.spawn_in(window, async move |this, cx| {
-            let path = match prompt.await {
-                Ok(Ok(Some(paths))) if paths.len() == 1 => {
-                    paths.into_iter().next().expect("one path")
-                }
-                Ok(Ok(None)) => {
-                    this.update(cx, |this, cx| {
-                        this.configuration_transfer = ConfigurationTransfer::default();
-                        language
-                            .localized(copy::backup::IMPORT_CANCELLED)
-                            .clone_into(&mut this.status);
-                        cx.notify();
-                    })
-                    .ok();
-                    return;
-                }
-                _ => {
-                    this.update(cx, |this, cx| {
-                        this.finish_configuration_transfer(
-                            language.localized(copy::backup::FILE_ERROR),
-                            true,
-                            cx,
-                        );
-                    })
-                    .ok();
-                    return;
-                }
-            };
-            let input = path.clone();
-            let result = executor
-                .spawn(async move { crate::config_backup::read_backup(&path) })
-                .await;
-            this.update_in(cx, |this, window, cx| {
-                match &result {
-                    Ok(_) => record_event(
-                        LogLevel::Info,
-                        "configuration.import.read_succeeded",
-                        format!("path={}", input.display()),
-                    ),
-                    Err(error) => record_event(
-                        LogLevel::Error,
-                        "configuration.import.read_failed",
-                        format!("path={} error={error}", input.display()),
-                    ),
-                }
-                this.finish_configuration_preview(result, cx);
-                if this.configuration_transfer.preview.is_some() {
-                    this.open_configuration_transfer_dialog(window, cx);
-                }
-            })
-            .ok();
-        })
-        .detach();
-    }
-
     pub(super) fn finish_configuration_preview(
         &mut self,
         result: Result<crate::config_backup::PreparedBackup, crate::config_backup::BackupError>,
@@ -255,14 +99,8 @@ impl ManisApp {
                     .clone_into(&mut self.status);
                 cx.notify();
             }
-            Err(error) => self.finish_configuration_transfer(
-                self.language().localized(
-                    if error == crate::config_backup::BackupError::PermissionDenied {
-                        copy::backup::IMPORT_PERMISSION_DENIED
-                    } else {
-                        copy::backup::INVALID
-                    },
-                ),
+            Err(_error) => self.finish_configuration_transfer(
+                self.language().localized(copy::backup::INVALID),
                 true,
                 cx,
             ),
@@ -292,7 +130,7 @@ impl ManisApp {
         self.configuration_transfer.progress = TransferProgress::Replacing;
         self.configuration_transfer.failed = false;
         language
-            .localized(copy::backup::IMPORTING)
+            .localized(copy::backup::APPLYING)
             .clone_into(&mut self.configuration_transfer.message);
         let runtime = self.runtime.clone();
         let system = self.system_proxy.clone();
@@ -355,14 +193,14 @@ impl ManisApp {
         }
         match result {
             ConfigurationReplacementOutcome::RestoreFinished(Ok(imported)) => {
-                self.configuration_transfer.output_path = Some(imported.backup_dir);
+                self.configuration_transfer.backup_path = Some(imported.backup_dir);
                 language
-                    .localized(copy::backup::IMPORTED)
+                    .localized(copy::backup::APPLIED)
                     .clone_into(&mut self.status);
                 cx.restart();
             }
             ConfigurationReplacementOutcome::RestoreFinished(Err(error)) => {
-                self.configuration_transfer.output_path = error.backup_dir;
+                self.configuration_transfer.backup_path = error.backup_dir;
                 self.finish_configuration_transfer(
                     language.localized(if error.rollback_failed {
                         copy::backup::ROLLBACK_FAILED
@@ -407,42 +245,17 @@ impl ManisApp {
                     .gap(Space::Sm.px())
                     .child(
                         style_action_button(
-                            Button::new("configuration-export")
-                                .label(language.localized(copy::backup::EXPORT))
-                                .disabled(disabled),
-                            ActionRole::Secondary,
-                            ControlSize::Standard,
-                        )
-                        .when(disabled, gpui::Styled::cursor_default)
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.choose_configuration_export(window, cx);
-                        })),
-                    )
-                    .child(
-                        style_action_button(
-                            Button::new("configuration-import")
-                                .label(language.localized(copy::backup::IMPORT))
-                                .disabled(disabled),
-                            ActionRole::Secondary,
-                            ControlSize::Standard,
-                        )
-                        .when(disabled, gpui::Styled::cursor_default)
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.choose_configuration_import(window, cx);
-                        })),
-                    )
-                    .child(
-                        style_action_button(
                             Button::new("configuration-edit")
                                 .label(language.localized(copy::backup::EDIT))
                                 .disabled(disabled),
-                            ActionRole::Secondary,
+                            ActionRole::Primary,
                             ControlSize::Standard,
                         )
                         .when(disabled, gpui::Styled::cursor_default)
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.edit_configuration(window, cx);
-                        })),
+                        }))
+                        .debug_selector(|| "configuration-edit".into()),
                     ),
             )
             .child(
@@ -576,6 +389,7 @@ impl ManisApp {
         theme: Theme,
         language: Language,
         window: &Window,
+        cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let state = &self.configuration_transfer;
         let mut body = div()
@@ -588,7 +402,7 @@ impl ManisApp {
             .flex_col()
             .gap(Space::Md.px());
         if state.preview.is_none() && state.editor.is_some() {
-            body = body.child(self.configuration_editor_body(theme, language, window));
+            body = body.child(self.configuration_editor_body(theme, language, window, cx));
         }
         if let Some(preview) = &state.preview {
             let summary = preview.summary();
@@ -668,11 +482,11 @@ impl ManisApp {
         let busy = state.is_busy();
         dialog_footer_surface(theme)
             .flex_wrap()
-            .when_some(state.output_path.clone(), |footer, path| {
+            .when_some(state.backup_path.clone(), |footer, path| {
                 footer.child(
                     style_action_button(
                         Button::new("configuration-transfer-show")
-                            .label(language.localized(copy::backup::SHOW_FILE)),
+                            .label(language.localized(copy::backup::SHOW_BACKUP)),
                         ActionRole::Secondary,
                         ControlSize::Standard,
                     )
@@ -717,7 +531,7 @@ impl ManisApp {
         if !self.configuration_transfer.is_busy() {
             self.configuration_transfer = ConfigurationTransfer::default();
             self.language()
-                .localized(copy::backup::IMPORT_CANCELLED)
+                .localized(copy::backup::EDIT_CANCELLED)
                 .clone_into(&mut self.status);
             window.close_dialog(cx);
             cx.notify();
@@ -734,7 +548,7 @@ impl ManisApp {
         let language = self.language();
         let state = &self.configuration_transfer;
         let busy = state.is_busy();
-        let body = self.configuration_transfer_body(theme, language, window);
+        let body = self.configuration_transfer_body(theme, language, window, cx);
         let editing = state.editor.is_some();
         let footer = self.configuration_transfer_footer(theme, language, cx);
         let app = cx.entity();
@@ -758,7 +572,7 @@ impl ManisApp {
                     .text_size(TextRole::SectionTitle.size())
                     .font_weight(FontWeight::SEMIBOLD)
                     .child(language.localized(if editing {
-                        copy::backup::EDIT
+                        copy::backup::EDITOR_TITLE
                     } else {
                         copy::backup::TITLE
                     })),
