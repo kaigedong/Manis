@@ -2,6 +2,17 @@ import Darwin
 import Foundation
 import Security
 
+func isManagedSingleNodeRuntimeFileName(_ name: String) -> Bool {
+    guard name.hasPrefix("saved-"), name.hasSuffix(".txt") else { return false }
+    let start = name.index(name.startIndex, offsetBy: "saved-".count)
+    let end = name.index(name.endIndex, offsetBy: -".txt".count)
+    let identifier = name[start..<end]
+    return !identifier.isEmpty && identifier.utf8.allSatisfy { byte in
+        (48...57).contains(byte) || (65...70).contains(byte) || (97...102).contains(byte)
+            || byte == 45
+    }
+}
+
 // Shared by the installer and controller. Approval pins code, not a freely chosen bundle ID.
 enum ManisHelperSecurity {
     static let administratorPlist = "/Library/LaunchDaemons/dev.manis.app.helper.local.plist"

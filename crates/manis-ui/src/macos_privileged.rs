@@ -13,7 +13,7 @@ use crate::diagnostics::{LogLevel, record_event};
 mod reclaim;
 
 const HELPER_CONTROL_NAME: &str = "manis-helperctl";
-const HELPER_PROTOCOL_VERSION: &str = "v8";
+const HELPER_PROTOCOL_VERSION: &str = "v9";
 const HELPER_REGISTRATION_ATTEMPTS: usize = 2;
 const LOCAL_INSTALLER_FAILURE_EXIT: i32 = 2;
 const HELPER_READY_ATTEMPTS: usize = 6;
@@ -21,6 +21,12 @@ const HELPER_READY_DELAY: Duration = Duration::from_millis(450);
 const ROUTE_COMMAND: &str = "/sbin/route";
 const TUN_ROUTE_RELEASE_ATTEMPTS: usize = 10;
 const TUN_ROUTE_RELEASE_DELAY: Duration = Duration::from_millis(50);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ManagedCoreStage {
+    Activation,
+    ExplicitUpdate,
+}
 
 /// Process adapter backed by Manis's signed, root launch daemon.
 ///
@@ -65,7 +71,7 @@ impl MacosPrivilegedProcessSpawner {
         let control = helper_control_path()?;
         let status = run_control(&control, [OsStr::new("status")])?;
         if status.status.success() && is_current_status(&status.stdout) {
-            stage_managed_core(&control)?;
+            stage_managed_core(&control, ManagedCoreStage::Activation)?;
             record_event(
                 LogLevel::Info,
                 "helper.prepare.succeeded",
@@ -106,7 +112,7 @@ impl MacosPrivilegedProcessSpawner {
 
             match wait_for_current_helper(&control) {
                 Ok(status) => {
-                    stage_managed_core(&control)?;
+                    stage_managed_core(&control, ManagedCoreStage::Activation)?;
                     record_event(
                         LogLevel::Info,
                         "helper.prepare.reinstall_succeeded",
@@ -137,7 +143,7 @@ impl MacosPrivilegedProcessSpawner {
         if !status.status.success() || !is_current_status(&status.stdout) {
             return Ok(false);
         }
-        stage_managed_core(&control)?;
+        stage_managed_core(&control, ManagedCoreStage::ExplicitUpdate)?;
         Ok(true)
     }
 
@@ -408,8 +414,16 @@ fn run_control<'a>(
         .output()
 }
 
-fn stage_managed_core(control: &Path) -> io::Result<()> {
-    let output = run_control(control, [OsStr::new("stage-core")])?;
+fn stage_core_arguments(stage: ManagedCoreStage) -> [OsString; 1] {
+    [OsString::from(match stage {
+        ManagedCoreStage::Activation => "stage-core",
+        ManagedCoreStage::ExplicitUpdate => "stage-core-update",
+    })]
+}
+
+fn stage_managed_core(control: &Path, stage: ManagedCoreStage) -> io::Result<()> {
+    let args = stage_core_arguments(stage);
+    let output = run_control(control, args.iter().map(OsString::as_os_str))?;
     if !output.status.success() {
         return Err(control_error(
             "stage the Manis-managed Mihomo core",
@@ -522,9 +536,9 @@ mod tests {
     use manis_engine::{ControllerEndpoint, ManagedEngineConfig};
 
     use super::{
-        HelperStatus, MacosPrivilegedProcessSpawner, is_current_status,
+        HelperStatus, MacosPrivilegedProcessSpawner, ManagedCoreStage, is_current_status,
         is_terminal_registration_failure, parse_existing_tun_route, parse_helper_status, parse_pid,
-        stop_arguments,
+        stage_core_arguments, stop_arguments,
     };
 
     #[test]
@@ -570,14 +584,16 @@ mod tests {
         assert!(!is_current_status(b"stopped v6 not-started\n"));
         assert!(!is_current_status(b"stopped v7 not-started\n"));
         assert!(!is_current_status(b"running 42 v7\n"));
-        assert!(is_current_status(b"stopped v8 not-started\n"));
-        assert!(is_current_status(b"running 42 v8\n"));
+        assert!(!is_current_status(b"stopped v8 not-started\n"));
+        assert!(!is_current_status(b"running 42 v8\n"));
+        assert!(is_current_status(b"stopped v9 not-started\n"));
+        assert!(is_current_status(b"running 42 v9\n"));
         assert_eq!(
-            parse_helper_status(b"running 42 v8\n").unwrap(),
+            parse_helper_status(b"running 42 v9\n").unwrap(),
             HelperStatus::Running { pid: 42 }
         );
         assert_eq!(
-            parse_helper_status(b"stopped v8 unexpected-signal-9\n").unwrap(),
+            parse_helper_status(b"stopped v9 unexpected-signal-9\n").unwrap(),
             HelperStatus::Stopped {
                 reason: "unexpected-signal-9".to_owned()
             }
@@ -594,6 +610,18 @@ mod tests {
                 std::ffi::OsString::from("--pid"),
                 std::ffi::OsString::from("42"),
             ]
+        );
+    }
+
+    #[test]
+    fn tun_activation_stages_offline_while_explicit_updates_allow_verification() {
+        assert_eq!(
+            stage_core_arguments(ManagedCoreStage::Activation),
+            [std::ffi::OsString::from("stage-core")]
+        );
+        assert_eq!(
+            stage_core_arguments(ManagedCoreStage::ExplicitUpdate),
+            [std::ffi::OsString::from("stage-core-update")]
         );
     }
 

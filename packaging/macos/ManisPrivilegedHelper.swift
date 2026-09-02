@@ -16,6 +16,8 @@ private let maximumConfigBytes = 16 * 1024 * 1024
 private let maximumGeodataBytes: off_t = 128 * 1024 * 1024
 private let maximumCoreLogBytes: off_t = 4 * 1024 * 1024
 private let maximumCoreBytes = 128 * 1024 * 1024
+private let maximumSingleNodeSourceBytes: off_t = 64 * 1024
+private let maximumSingleNodeSources = 512
 private let coreLogName = "manis-privileged-core.log"
 private let optionalGeodataNames = ["geoip.metadb", "geoip.dat", "geosite.dat", "GeoLite2-ASN.mmdb"]
 
@@ -90,6 +92,7 @@ final class HelperCore {
     private var child: Process?
     private var childOwner: uid_t?
     private var stagedConfig: String?
+    private var stagedSingleNodesDirectory: String?
     private var lastExitReason = "not-started"
 
     func status(owner: uid_t, withReply reply: @escaping (String, Int32) -> Void) {
@@ -165,6 +168,7 @@ final class HelperCore {
                 child = process
                 childOwner = owner
                 stagedConfig = staged.config
+                stagedSingleNodesDirectory = staged.singleNodesDirectory
                 lastExitReason = "running"
                 candidate = nil
                 appendLog("started mihomo pid \(process.processIdentifier)")
@@ -173,6 +177,9 @@ final class HelperCore {
                 try? coreLog?.close()
                 if let candidate {
                     try? FileManager.default.removeItem(atPath: candidate.config)
+                    if let directory = candidate.singleNodesDirectory {
+                        try? FileManager.default.removeItem(atPath: directory)
+                    }
                 }
                 lastExitReason = "start-failed"
                 appendLog("start failed: \(error)")
@@ -275,7 +282,11 @@ final class HelperCore {
         if let stagedConfig {
             try? FileManager.default.removeItem(atPath: stagedConfig)
         }
+        if let stagedSingleNodesDirectory {
+            try? FileManager.default.removeItem(atPath: stagedSingleNodesDirectory)
+        }
         stagedConfig = nil
+        stagedSingleNodesDirectory = nil
     }
 }
 
@@ -336,6 +347,7 @@ private struct LaunchRequest {
 private struct StagedRuntime {
     let dataDir: String
     let config: String
+    let singleNodesDirectory: String?
 }
 
 private enum HelperError: Error, CustomStringConvertible {
@@ -501,7 +513,114 @@ private func stageRuntime(_ request: LaunchRequest, owner: uid_t) throws -> Stag
             owner: owner
         )
     }
-    return StagedRuntime(dataDir: root, config: config.path)
+    let singleNodesDirectory = try stageOptionalSingleNodeSources(
+        sourceDirectory: request.dataDir,
+        destinationDirectory: root,
+        owner: owner
+    )
+    return StagedRuntime(
+        dataDir: root,
+        config: config.path,
+        singleNodesDirectory: singleNodesDirectory
+    )
+}
+
+private func stageOptionalSingleNodeSources(
+    sourceDirectory: String,
+    destinationDirectory: String,
+    owner: uid_t
+) throws -> String? {
+    let source = URL(fileURLWithPath: sourceDirectory).appendingPathComponent("single_nodes")
+    let destination = URL(fileURLWithPath: destinationDirectory).appendingPathComponent("single_nodes")
+    var sourceMetadata = stat()
+    if lstat(source.path, &sourceMetadata) != 0 {
+        guard errno == ENOENT else {
+            throw HelperError.invalidRuntime("could not inspect single-node runtime sources")
+        }
+        try removeStagedSingleNodeSources(destination)
+        return nil
+    }
+    try requireDirectory(source.path, owner: owner)
+
+    let names = try FileManager.default.contentsOfDirectory(atPath: source.path)
+        .filter(isManagedSingleNodeRuntimeFileName)
+        .sorted()
+    guard names.count <= maximumSingleNodeSources else {
+        throw HelperError.invalidRuntime("too many single-node runtime sources")
+    }
+
+    let temporary = URL(fileURLWithPath: destinationDirectory)
+        .appendingPathComponent(".single_nodes.\(UUID().uuidString).tmp")
+    try FileManager.default.createDirectory(
+        at: temporary,
+        withIntermediateDirectories: false,
+        attributes: [
+            .ownerAccountID: 0,
+            .groupOwnerAccountID: 0,
+            .posixPermissions: 0o700,
+        ]
+    )
+    var published = false
+    defer {
+        if !published {
+            try? FileManager.default.removeItem(at: temporary)
+        }
+    }
+    for name in names {
+        try stageSingleNodeSource(
+            source: source.appendingPathComponent(name),
+            destination: temporary.appendingPathComponent(name),
+            owner: owner
+        )
+    }
+    try removeStagedSingleNodeSources(destination)
+    try FileManager.default.moveItem(at: temporary, to: destination)
+    published = true
+    return destination.path
+}
+
+private func stageSingleNodeSource(source: URL, destination: URL, owner: uid_t) throws {
+    let descriptor = open(source.path, O_RDONLY | O_NOFOLLOW)
+    guard descriptor >= 0 else {
+        throw HelperError.invalidRuntime("could not open single-node runtime source safely")
+    }
+    defer { close(descriptor) }
+
+    var metadata = stat()
+    guard fstat(descriptor, &metadata) == 0,
+        metadata.st_uid == owner,
+        metadata.st_mode & S_IFMT == S_IFREG,
+        metadata.st_mode & 0o077 == 0,
+        metadata.st_size > 0,
+        metadata.st_size <= maximumSingleNodeSourceBytes
+    else {
+        throw HelperError.invalidRuntime("single-node runtime source is unsafe")
+    }
+    let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: false)
+    let contents = try handle.readToEnd() ?? Data()
+    guard contents.count == metadata.st_size else {
+        throw HelperError.invalidRuntime("single-node runtime source changed while staging")
+    }
+    try contents.write(to: destination, options: .atomic)
+    try FileManager.default.setAttributes(
+        [.ownerAccountID: 0, .groupOwnerAccountID: 0, .posixPermissions: 0o600],
+        ofItemAtPath: destination.path
+    )
+}
+
+private func removeStagedSingleNodeSources(_ destination: URL) throws {
+    var metadata = stat()
+    if lstat(destination.path, &metadata) != 0 {
+        guard errno == ENOENT else {
+            throw HelperError.invalidRuntime("could not inspect staged single-node runtime sources")
+        }
+        return
+    }
+    guard metadata.st_mode & S_IFMT == S_IFDIR, metadata.st_uid == 0 else {
+        throw HelperError.invalidRuntime("staged single-node runtime path is unsafe")
+    }
+    try rejectSymlink(destination.path)
+    try FileManager.default.removeItem(at: destination)
 }
 
 private func stageOptionalGeodata(

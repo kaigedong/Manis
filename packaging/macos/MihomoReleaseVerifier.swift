@@ -2,6 +2,11 @@ import CryptoKit
 import Darwin
 import Foundation
 
+enum MihomoCoreStagingMode {
+    case activation
+    case explicitUpdate
+}
+
 enum MihomoReleaseVerifier {
     private static let maximumCoreBytes = 128 * 1024 * 1024
     private static let maximumReleaseMetadataBytes = 1024 * 1024
@@ -59,6 +64,41 @@ enum MihomoReleaseVerifier {
             return try unpackedGzipSha256(archive)
         }
         throw ManisHelperSecurity.Failure("official Mihomo release has no trusted digest for this Mac")
+    }
+
+    static func selectCoreForStaging(
+        managed: Data?,
+        bundled: Data,
+        installed: Data?,
+        mode: MihomoCoreStagingMode,
+        latestDigest: () throws -> String
+    ) throws -> Data {
+        if let managed {
+            let managedDigest = sha256(managed)
+            if managedDigest == sha256(bundled)
+                || (installed.map { sha256($0) == managedDigest } ?? false)
+            {
+                return managed
+            }
+            if mode == .explicitUpdate {
+                guard try latestDigest() == managedDigest else {
+                    throw ManisHelperSecurity.Failure(
+                        "Manis-managed Mihomo is not the official latest release"
+                    )
+                }
+                return managed
+            }
+        }
+        switch mode {
+        case .activation:
+            return installed ?? bundled
+        case .explicitUpdate:
+            throw ManisHelperSecurity.Failure("Manis-managed Mihomo is unavailable or unsafe")
+        }
+    }
+
+    private static func sha256(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
     static func downloadHTTPS(_ url: URL, maximumBytes: Int) throws -> Data {

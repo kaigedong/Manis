@@ -7,11 +7,15 @@ The Rust app invokes `Contents/MacOS/manis-helperctl` with this stable contract:
 
 ```text
 manis-helperctl status
-  stdout: running <pid> v8 | stopped v8 <last-exit-reason>
+  stdout: running <pid> v9 | stopped v9 <last-exit-reason>
 
 manis-helperctl stage-core
   stdout: staged <sha256>
-  copies the fixed Manis-managed user core through authenticated XPC into root-owned storage
+  stages a locally trusted core without network access before TUN activation
+
+manis-helperctl stage-core-update
+  stdout: staged <sha256>
+  verifies and stages an explicitly downloaded official Mihomo update
 
 manis-helperctl start --data-dir PATH --config PATH --controller PATH
   stdout: started <pid>
@@ -28,8 +32,11 @@ manis-helperctl reinstall
 ```
 
 The helper never accepts a Mihomo binary path or arbitrary arguments from the UI. The signed control
-tool derives the core from Manis's fixed private data path, sends its bytes and digest through
-authenticated XPC, and the helper publishes a root-owned copy at a fixed path before TUN starts.
+tool selects the core from fixed Manis paths, sends its bytes and digest through authenticated XPC,
+and the helper publishes a root-owned copy at a fixed path before TUN starts. TUN activation never
+depends on release network access: when the user-managed core is not locally trusted, the controller
+uses the existing root-owned core or the sealed bundled seed. Online latest-release verification is
+reserved for an explicit Mihomo update.
 For administrator-installed builds, the root helper independently checks the bytes against the
 seed SHA-256 recorded during approval, the existing root-owned core, or the verified official latest
 GitHub release. It never trusts the digest supplied by the client as proof of provenance. Developer

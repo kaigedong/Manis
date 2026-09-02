@@ -58,7 +58,7 @@ for unsafe in ["identifier \"dev.manis.app.helperctl\"", pin("dev.manis.app.help
     malformed["MANIS_REQUIRED_CLIENT_REQUIREMENT"] = unsafe
     rejects("broad or foreign policy accepted") { _ = try ManisHelperSecurity.Approval(environment: malformed) }
 }
-check(manisHelperProtocolVersion == "v8", "helper protocol version not updated")
+check(manisHelperProtocolVersion == "v9", "helper protocol version not updated")
 check(
     validateMihomoStop(childOwner: 501, actualPid: 42, owner: 501, expectedPid: 42) == nil,
     "matching stop identity was rejected"
@@ -97,6 +97,70 @@ rejects("oversized expanded release accepted") {
 }
 rejects("non-HTTPS release source accepted") {
     _ = try MihomoReleaseVerifier.downloadHTTPS(URL(string: "http://invalid.example")!, maximumBytes: 1024)
+}
+
+var activationRequestedNetwork = false
+let staleManagedCore = Data("stale managed core".utf8)
+let bundledCore = Data("bundled core".utf8)
+let installedCore = Data("installed core".utf8)
+let activationCore = try MihomoReleaseVerifier.selectCoreForStaging(
+    managed: staleManagedCore,
+    bundled: bundledCore,
+    installed: installedCore,
+    mode: .activation,
+    latestDigest: {
+        activationRequestedNetwork = true
+        throw ManisHelperSecurity.Failure("activation must not use the network")
+    }
+)
+check(activationCore == installedCore, "TUN activation did not prefer the installed trusted core")
+check(!activationRequestedNetwork, "TUN activation attempted online release verification")
+
+let missingManagedFallback = try MihomoReleaseVerifier.selectCoreForStaging(
+    managed: nil,
+    bundled: bundledCore,
+    installed: installedCore,
+    mode: .activation,
+    latestDigest: {
+        throw ManisHelperSecurity.Failure("missing managed core must not use the network")
+    }
+)
+check(missingManagedFallback == installedCore, "missing managed core blocked TUN activation")
+
+let locallyTrustedCore = try MihomoReleaseVerifier.selectCoreForStaging(
+    managed: installedCore,
+    bundled: bundledCore,
+    installed: installedCore,
+    mode: .activation,
+    latestDigest: {
+        throw ManisHelperSecurity.Failure("locally trusted core must not use the network")
+    }
+)
+check(locallyTrustedCore == installedCore, "locally trusted managed core was replaced")
+
+let updatedCore = Data("updated managed core".utf8)
+let updatedDigest = SHA256.hash(data: updatedCore).map { String(format: "%02x", $0) }.joined()
+let updateCore = try MihomoReleaseVerifier.selectCoreForStaging(
+    managed: updatedCore,
+    bundled: bundledCore,
+    installed: installedCore,
+    mode: .explicitUpdate,
+    latestDigest: { updatedDigest }
+)
+check(updateCore == updatedCore, "explicit update rejected the official updated core")
+rejects("explicit update accepted an unverified managed core") {
+    _ = try MihomoReleaseVerifier.selectCoreForStaging(
+        managed: updatedCore,
+        bundled: bundledCore,
+        installed: installedCore,
+        mode: .explicitUpdate,
+        latestDigest: { String(repeating: "0", count: 64) }
+    )
+}
+
+check(isManagedSingleNodeRuntimeFileName("saved-a1-2f.txt"), "valid single-node runtime file rejected")
+for unsafeName in ["saved-.txt", "saved-node.json", "../saved-a.txt", "saved-AZ.txt"] {
+    check(!isManagedSingleNodeRuntimeFileName(unsafeName), "unsafe single-node runtime file accepted")
 }
 
 let policy = work.appendingPathComponent("untrusted.plist")
