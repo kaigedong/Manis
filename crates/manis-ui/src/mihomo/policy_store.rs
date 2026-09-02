@@ -23,6 +23,17 @@ use super::{
 #[cfg(not(windows))]
 use super::{
     private_store_entries, read_private_source_allow_empty, remove_private_source,
-    require_clean_absolute_store, write_private_atomic,
+    require_clean_absolute_store,
 };
 use manis_core::{ManagedPolicyGroup, ManagedPolicyIcon, ManagedPolicyStrategy};
+
+#[cfg(not(windows))]
+fn write_private_atomic(
+    directory: &Path,
+    file_name: &str,
+    bytes: &[u8],
+) -> Result<std::path::PathBuf, crate::config_toml::ConfigTomlError> {
+    let contents = std::str::from_utf8(bytes)
+        .map_err(|_error| crate::config_toml::ConfigTomlError::InvalidFormat)?;
+    crate::config_toml::write_entry(directory, file_name, contents)
+}

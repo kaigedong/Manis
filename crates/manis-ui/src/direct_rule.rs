@@ -4,17 +4,12 @@
 //! has no runtime compiler or writer so the old and new rule systems cannot diverge.
 
 use std::fmt;
-#[cfg(not(windows))]
-use std::fs;
-#[cfg(not(windows))]
-use std::io::Read as _;
 use std::path::Path;
 
 const DIRECT_RULES_FILE: &str = "direct-rules.state";
 const DIRECT_RULES_VERSION: &str = "manis.direct-rules.v1";
 /// A domain label stays well under this; the cap only stops a pathological file.
 const MAX_DOMAIN_BYTES: usize = 253;
-#[cfg(not(windows))]
 const MAX_DIRECT_RULES_FILE_BYTES: u64 = 64 * 1024;
 
 /// One entry decoded from the legacy store.
@@ -135,59 +130,21 @@ fn decode_direct_rules(contents: &str) -> Result<Vec<DirectRule>, DirectRuleStor
 ///
 /// # Errors
 /// Returns [`DirectRuleStoreError::Corrupt`] when the file cannot be trusted.
-#[cfg(not(windows))]
 pub(crate) fn load_direct_rules_in(
     directory: &Path,
 ) -> Result<Vec<DirectRule>, DirectRuleStoreError> {
-    let path = directory.join(DIRECT_RULES_FILE);
-    let metadata = match fs::symlink_metadata(&path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(default_direct_rules());
-        }
-        Err(_error) => return Err(DirectRuleStoreError::Unavailable),
+    let Some(contents) =
+        crate::config_toml::read_entry(directory, DIRECT_RULES_FILE, MAX_DIRECT_RULES_FILE_BYTES)
+            .map_err(|error| match error {
+            crate::config_toml::ConfigTomlError::Unavailable => DirectRuleStoreError::Unavailable,
+            crate::config_toml::ConfigTomlError::UnsafePath
+            | crate::config_toml::ConfigTomlError::InvalidFormat
+            | crate::config_toml::ConfigTomlError::Oversized => DirectRuleStoreError::Corrupt,
+        })?
+    else {
+        return Ok(default_direct_rules());
     };
-    // A symlink here would let another writer redirect the read outside the private store.
-    if !metadata.is_file() || metadata.len() > MAX_DIRECT_RULES_FILE_BYTES {
-        return Err(DirectRuleStoreError::Corrupt);
-    }
-    let file = fs::File::open(&path).map_err(|_error| DirectRuleStoreError::Corrupt)?;
-    let opened = file
-        .metadata()
-        .map_err(|_error| DirectRuleStoreError::Corrupt)?;
-    if !opened.is_file()
-        || opened.len() > MAX_DIRECT_RULES_FILE_BYTES
-        || !same_file(&metadata, &opened)
-    {
-        return Err(DirectRuleStoreError::Corrupt);
-    }
-    let mut contents = String::new();
-    file.take(MAX_DIRECT_RULES_FILE_BYTES + 1)
-        .read_to_string(&mut contents)
-        .map_err(|_error| DirectRuleStoreError::Corrupt)?;
-    if contents.len() as u64 > MAX_DIRECT_RULES_FILE_BYTES {
-        return Err(DirectRuleStoreError::Corrupt);
-    }
     decode_direct_rules(&contents)
-}
-
-#[cfg(unix)]
-fn same_file(expected: &fs::Metadata, opened: &fs::Metadata) -> bool {
-    use std::os::unix::fs::MetadataExt as _;
-
-    expected.dev() == opened.dev() && expected.ino() == opened.ino()
-}
-
-#[cfg(all(not(unix), not(windows)))]
-fn same_file(_expected: &fs::Metadata, _opened: &fs::Metadata) -> bool {
-    true
-}
-
-#[cfg(windows)]
-pub(crate) fn load_direct_rules_in(
-    _directory: &Path,
-) -> Result<Vec<DirectRule>, DirectRuleStoreError> {
-    Ok(default_direct_rules())
 }
 
 #[cfg(test)]

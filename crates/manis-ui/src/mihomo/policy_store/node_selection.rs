@@ -5,9 +5,7 @@ use super::super::{
     decode_hex, encode_hex, storage_version_supported,
 };
 #[cfg(not(windows))]
-use super::super::{
-    fs, read_private_source_allow_empty_max, require_clean_absolute_store, write_private_atomic,
-};
+use super::super::{require_clean_absolute_store, write_private_atomic};
 
 fn encode_node_selection_preferences(
     preferences: &NodeSelectionPreferences,
@@ -185,13 +183,14 @@ pub(crate) fn load_node_selection_preferences_in(
     directory: &Path,
 ) -> Result<NodeSelectionPreferences, SubscriptionStoreError> {
     require_clean_absolute_store(directory)?;
-    let path = directory.join(NODE_SELECTION_PREFERENCES_FILE);
-    let contents = match fs::symlink_metadata(&path) {
-        Ok(_) => read_private_source_allow_empty_max(&path, MAX_NODE_SELECTION_FILE_BYTES)?,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(NodeSelectionPreferences::default());
-        }
-        Err(_error) => return Err(SubscriptionStoreError::StoredSourceUnavailable),
+    let Some(contents) = crate::config_toml::read_entry(
+        directory,
+        NODE_SELECTION_PREFERENCES_FILE,
+        MAX_NODE_SELECTION_FILE_BYTES,
+    )
+    .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?
+    else {
+        return Ok(NodeSelectionPreferences::default());
     };
     decode_node_selection_preferences(&contents)
 }

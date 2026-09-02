@@ -84,7 +84,6 @@ impl ManualRuleKind {
         }
     }
 
-    #[cfg(not(windows))]
     pub(super) fn from_storage_key(value: &str) -> Option<Self> {
         Some(match value {
             "host" => Self::Host,

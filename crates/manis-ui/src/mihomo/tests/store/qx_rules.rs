@@ -91,8 +91,12 @@ fn qx_rule_source_custom_name_round_trips_and_can_reset() -> Result<(), Box<dyn 
     assert_eq!(stored.name.as_deref(), Some("机场规则"));
     let loaded = super::load_qx_rule_sources_in(&store)?;
     assert_eq!(loaded, vec![stored.clone()]);
-    let entry = fs::read_dir(&store)?.next().ok_or("stored QX file")??;
-    let stored_text = fs::read_to_string(entry.path())?;
+    let stored_text = crate::config_toml::read_entry(
+        &store,
+        &format!("{}{}", stored.id, super::QX_RULE_SOURCE_SUFFIX),
+        4 * 1024 * 1024,
+    )?
+    .expect("stored QX source");
     assert!(stored_text.starts_with(super::QX_RULE_SOURCE_VERSION));
     assert!(stored_text.contains(&format!("name\t{}", super::encode_hex("机场规则"))));
 
@@ -185,11 +189,15 @@ fn qx_rule_source_invalid_name_does_not_damage_existing_file()
         "DOMAIN-SUFFIX,example.com,PROXY\n",
     )?
     .into_source();
-    let path = store.join(format!("{}{}", stored.id, super::QX_RULE_SOURCE_SUFFIX));
-    let before = fs::read_to_string(&path)?;
+    let name = format!("{}{}", stored.id, super::QX_RULE_SOURCE_SUFFIX);
+    let before =
+        crate::config_toml::read_entry(&store, &name, 4 * 1024 * 1024)?.expect("stored QX source");
 
     assert!(super::update_qx_rule_source_name_in(&store, &stored.id, "bad\nname").is_err());
-    assert_eq!(fs::read_to_string(&path)?, before);
+    assert_eq!(
+        crate::config_toml::read_entry(&store, &name, 4 * 1024 * 1024)?.expect("stored QX source"),
+        before
+    );
     assert_eq!(
         super::load_qx_rule_sources_in(&store)?
             .into_iter()

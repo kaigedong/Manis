@@ -21,17 +21,11 @@ pub(crate) use compiler::append_manual_rules;
 pub(super) use store::decode_manual_rules;
 pub(crate) use store::{load_manual_rules_in, save_manual_rules_in};
 
-#[cfg(not(windows))]
 const MANUAL_RULES_FILE: &str = "manual-routing-rules.state";
-#[cfg(not(windows))]
 const MANUAL_RULES_VERSION_V1: &str = "manis.manual-routing-rules.v1";
-#[cfg(not(windows))]
 const MANUAL_RULES_VERSION_V2: &str = "manis.manual-routing-rules.v2";
-#[cfg(not(windows))]
 const MANUAL_RULES_VERSION_V3: &str = "manis.manual-routing-rules.v3";
-#[cfg(not(windows))]
 const MANUAL_RULES_VERSION_V4: &str = "manis.manual-routing-rules.v4";
-#[cfg(not(windows))]
 const MAX_MANUAL_RULES_FILE_BYTES: u64 = 256 * 1024;
 #[cfg(test)]
 mod tests {
@@ -304,7 +298,12 @@ mod tests {
         assert_eq!(loaded.len(), 3);
         assert!(loaded.last().is_some_and(ManualRule::is_final));
         assert!(!loaded[1].is_enabled());
-        let stored = fs::read_to_string(root.join(super::MANUAL_RULES_FILE))?;
+        let stored = crate::config_toml::read_entry(
+            &root,
+            super::MANUAL_RULES_FILE,
+            super::MAX_MANUAL_RULES_FILE_BYTES,
+        )?
+        .expect("stored rules");
         assert!(stored.starts_with(super::MANUAL_RULES_VERSION_V4));
         assert!(
             stored
