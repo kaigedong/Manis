@@ -673,6 +673,27 @@ mod tests {
     }
 
     #[test]
+    fn saved_source_group_copy_does_not_assume_a_node_protocol() {
+        let mut app = crate::app::ManisApp::with_fixture_controller("http://127.0.0.1:1");
+        app.saved_single_nodes
+            .push(crate::mihomo::StoredSingleNode {
+                id: "saved-trojan".to_owned(),
+                name: "Saved Trojan".to_owned(),
+                source: crate::subscription::SingleNodeSource::parse(
+                    "trojan://secret@example.com:443#Saved%20Trojan",
+                )
+                .expect("saved Trojan node"),
+                enabled: true,
+            });
+
+        let groups = app.node_source_groups(true, crate::localization::Language::SimplifiedChinese);
+
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].detail, "单独添加的节点 · 私有本机存储");
+        assert_eq!(groups[0].saved_nodes[0].protocol, "Trojan");
+    }
+
+    #[test]
     fn imported_subscription_falls_back_to_the_matching_runtime_provider() {
         let cached = LoadedProvider {
             name: "Subscription 1".to_owned(),

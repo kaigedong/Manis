@@ -41,7 +41,7 @@ format.
 ## Implemented so far
 
 - Native adaptive GPUI interface with English, Simplified Chinese, light, and dark modes.
-- HTTP/HTTPS subscription and VLESS import with private local persistence.
+- HTTP/HTTPS subscriptions and single-node share links with private local persistence.
 - Manual, latency-based, fallback, and load-balancing policy group models, gated by core capability.
 - Ordered routing rules, QX rule-list import, compound domain/port matching, and explicit fallback.
 - Per-source and per-policy latency tests with incremental results.

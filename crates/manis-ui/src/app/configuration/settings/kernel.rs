@@ -8,6 +8,30 @@ use super::{
     status_badge, style_action_button,
 };
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SingBoxSavedNodeCompatibility {
+    Missing,
+    Unsupported,
+    Supported,
+}
+
+fn sing_box_saved_node_compatibility(
+    nodes: &[mihomo::StoredSingleNode],
+) -> SingBoxSavedNodeCompatibility {
+    let mut has_enabled_node = false;
+    for node in nodes.iter().filter(|node| node.enabled) {
+        has_enabled_node = true;
+        if !node.source.is_vless() {
+            return SingBoxSavedNodeCompatibility::Unsupported;
+        }
+    }
+    if has_enabled_node {
+        SingBoxSavedNodeCompatibility::Supported
+    } else {
+        SingBoxSavedNodeCompatibility::Missing
+    }
+}
+
 impl ManisApp {
     pub(in crate::app) fn kernel_panel(
         &self,
@@ -83,11 +107,24 @@ impl ManisApp {
                 false,
             );
         }
-        if self.saved_single_nodes.is_empty() {
-            return (
-                language.localized(copy::configuration::AT_LEAST_ONE_SAVED_VLESS_NODE_IS_REQUIRED),
-                false,
-            );
+        match sing_box_saved_node_compatibility(&self.saved_single_nodes) {
+            SingBoxSavedNodeCompatibility::Missing => {
+                return (
+                    language.localized(
+                        copy::configuration::AT_LEAST_ONE_ENABLED_SAVED_VLESS_NODE_IS_REQUIRED,
+                    ),
+                    false,
+                );
+            }
+            SingBoxSavedNodeCompatibility::Unsupported => {
+                return (
+                    language.localized(
+                        copy::configuration::DISABLE_NON_VLESS_SAVED_NODES_BEFORE_SWITCHING_TO_SING_BOX,
+                    ),
+                    false,
+                );
+            }
+            SingBoxSavedNodeCompatibility::Supported => {}
         }
         (
             language.localized(
@@ -222,5 +259,55 @@ impl ManisApp {
                     }
                 })),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SingBoxSavedNodeCompatibility, sing_box_saved_node_compatibility};
+
+    fn saved_node(input: &str, enabled: bool) -> crate::mihomo::StoredSingleNode {
+        crate::mihomo::StoredSingleNode {
+            id: format!("saved-{enabled}"),
+            name: "Saved".to_owned(),
+            source: crate::subscription::SingleNodeSource::parse(input).expect("saved node"),
+            enabled,
+        }
+    }
+
+    #[test]
+    fn sing_box_requires_enabled_vless_nodes_and_rejects_other_enabled_protocols() {
+        let vless = "vless://11111111-1111-1111-1111-111111111111@example.com:443#VLESS";
+        let trojan = "trojan://secret@example.com:443#Trojan";
+
+        assert_eq!(
+            sing_box_saved_node_compatibility(&[]),
+            SingBoxSavedNodeCompatibility::Missing
+        );
+        assert_eq!(
+            sing_box_saved_node_compatibility(&[saved_node(vless, false)]),
+            SingBoxSavedNodeCompatibility::Missing
+        );
+        assert_eq!(
+            sing_box_saved_node_compatibility(&[saved_node(vless, true)]),
+            SingBoxSavedNodeCompatibility::Supported
+        );
+        assert_eq!(
+            sing_box_saved_node_compatibility(&[saved_node(trojan, true)]),
+            SingBoxSavedNodeCompatibility::Unsupported
+        );
+        assert_eq!(
+            sing_box_saved_node_compatibility(&[
+                saved_node(vless, true),
+                saved_node(trojan, false),
+            ]),
+            SingBoxSavedNodeCompatibility::Supported
+        );
+        assert_eq!(
+            sing_box_saved_node_compatibility(
+                &[saved_node(vless, true), saved_node(trojan, true),]
+            ),
+            SingBoxSavedNodeCompatibility::Unsupported
+        );
     }
 }

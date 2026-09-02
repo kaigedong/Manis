@@ -52,10 +52,16 @@ pub(crate) const APPLYING_RULE_SOURCE_STATE: LocalizedText =
     LocalizedText::new("Applying rule source state", "正在应用规则来源状态");
 pub(crate) const APPLYING_SUBSCRIPTION_STATE: LocalizedText =
     LocalizedText::new("Applying subscription state", "正在应用订阅状态");
-pub(crate) const AT_LEAST_ONE_SAVED_VLESS_NODE_IS_REQUIRED: LocalizedText = LocalizedText::new(
-    "At least one saved VLESS node is required",
-    "至少需要一个已保存的 VLESS 节点",
-);
+pub(crate) const AT_LEAST_ONE_ENABLED_SAVED_VLESS_NODE_IS_REQUIRED: LocalizedText =
+    LocalizedText::new(
+        "At least one enabled saved VLESS node is required",
+        "至少需要启用一个已保存的 VLESS 节点",
+    );
+pub(crate) const DISABLE_NON_VLESS_SAVED_NODES_BEFORE_SWITCHING_TO_SING_BOX: LocalizedText =
+    LocalizedText::new(
+        "Disable non-VLESS saved nodes before switching to sing-box",
+        "切换到 sing-box 前，请停用已保存的非 VLESS 节点",
+    );
 pub(crate) const AUTOMATIC: LocalizedText = LocalizedText::new("Automatic", "自动管理");
 pub(crate) const AUTONOMOUS_SYSTEM: LocalizedText =
     LocalizedText::new("Autonomous system", "自治系统");
