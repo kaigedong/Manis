@@ -4,11 +4,13 @@ use crate::localization::{Language, copy};
 
 use super::{
     ProxyPorts, RECOVERY_VERSION, SystemProxyError, TUN_DNS_RECOVERY_VERSION, decode_string,
-    delete_recovery_snapshot, encode_string, read_recovery_snapshot, write_recovery_snapshot,
+    delete_recovery_snapshot, encode_string, write_recovery_snapshot,
     write_tun_dns_recovery_snapshot,
 };
 #[cfg(not(test))]
-use super::{delete_tun_dns_recovery_snapshot, read_tun_dns_recovery_snapshot};
+use super::{
+    delete_tun_dns_recovery_snapshot, read_recovery_snapshot, read_tun_dns_recovery_snapshot,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct DnsSnapshot {
@@ -189,6 +191,7 @@ fn gnome_proxy_settings_for_ports(ports: ProxyPorts) -> Vec<(&'static str, &'sta
     ]
 }
 
+#[cfg(not(test))]
 pub(super) fn recover_stale(language: Language) -> Result<(), SystemProxyError> {
     let Some(contents) = read_recovery_snapshot(language)? else {
         return Ok(());
@@ -217,6 +220,7 @@ fn encode_snapshot(snapshot: &GnomeSnapshot) -> String {
     )
 }
 
+#[cfg(not(test))]
 fn decode_snapshot(contents: &str) -> Option<GnomeSnapshot> {
     let mut lines = contents.lines();
     super::recovery_version_supported(lines.next()?).then_some(())?;

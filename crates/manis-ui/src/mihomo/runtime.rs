@@ -1,14 +1,21 @@
-use std::{path::Path, sync::atomic::Ordering};
+use std::path::Path;
+#[cfg(target_os = "macos")]
+use std::sync::atomic::Ordering;
 
+#[cfg(target_os = "macos")]
 use manis_core::KernelKind;
+#[cfg(target_os = "macos")]
 use manis_engine::{EngineManager, ReadinessPolicy, validate_managed_config};
 
 use super::{
-    ControllerRuntime, GENERATED_PROFILE_FILE, GeneratedProfileApply, LoadError,
-    ManagedRuntimeHealth, RuntimeProfileSource, RuntimeSnapshot, load, load_sing_box,
-    managed_apply, managed_engine_config, readiness_probe, validate_managed_runtime,
+    ControllerRuntime, GeneratedProfileApply, LoadError, ManagedRuntimeHealth,
+    RuntimeProfileSource, RuntimeSnapshot, load, load_sing_box, managed_apply,
+    validate_managed_runtime,
 };
+#[cfg(target_os = "macos")]
+use super::{GENERATED_PROFILE_FILE, managed_engine_config, readiness_probe};
 
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 mod platform;
 mod proxy_policy;
 
@@ -98,6 +105,8 @@ impl ControllerRuntime {
                 privileged,
                 ..
             } => {
+                #[cfg(not(target_os = "macos"))]
+                let _ = privileged;
                 let secret = generated_profile
                     .as_ref()
                     .and_then(|spec| spec.controller_secret.clone());

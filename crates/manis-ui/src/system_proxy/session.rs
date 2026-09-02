@@ -1,13 +1,12 @@
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+use super::delete_tun_dns_recovery_snapshot;
 #[cfg(target_os = "linux")]
 use super::linux;
 #[cfg(target_os = "macos")]
 use super::macos;
 #[cfg(target_os = "windows")]
 use super::windows;
-use super::{
-    Language, ProxyPorts, SystemProxyError, copy, delete_recovery_snapshot,
-    delete_tun_dns_recovery_snapshot,
-};
+use super::{Language, ProxyPorts, SystemProxyError, copy, delete_recovery_snapshot};
 
 #[derive(Debug, Default)]
 pub(crate) struct SystemProxySession {
@@ -130,6 +129,8 @@ impl TunDnsSession {
         &mut self,
         language: Language,
     ) -> Result<(), SystemProxyError> {
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        let _ = language;
         #[cfg(target_os = "macos")]
         macos::recover_stale_tun_dns(language)?;
         #[cfg(target_os = "linux")]
@@ -188,6 +189,8 @@ impl TunDnsSession {
         &mut self,
         language: Language,
     ) -> Result<(), SystemProxyError> {
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        let _ = language;
         if !self.prepared && !self.applied {
             return Ok(());
         }

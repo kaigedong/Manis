@@ -3,9 +3,11 @@ use std::process::Command;
 use crate::localization::{Language, copy};
 
 use super::{
-    ProxyPorts, RECOVERY_VERSION, SystemProxyError, decode_string, delete_recovery_snapshot,
-    encode_string, read_recovery_snapshot, write_recovery_snapshot,
+    ProxyPorts, RECOVERY_VERSION, SystemProxyError, delete_recovery_snapshot, encode_string,
+    write_recovery_snapshot,
 };
+#[cfg(not(test))]
+use super::{decode_string, read_recovery_snapshot};
 
 const INTERNET_SETTINGS: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings";
 
@@ -61,6 +63,7 @@ pub(super) fn restore(
     notify(language)
 }
 
+#[cfg(not(test))]
 pub(super) fn recover_stale(language: Language) -> Result<(), SystemProxyError> {
     let Some(contents) = read_recovery_snapshot(language)? else {
         return Ok(());
@@ -84,6 +87,7 @@ fn encode_snapshot(snapshot: &WinInetSnapshot) -> String {
     )
 }
 
+#[cfg(not(test))]
 fn decode_snapshot(contents: &str) -> Option<WinInetSnapshot> {
     let mut lines = contents.lines();
     super::recovery_version_supported(lines.next()?).then_some(())?;
@@ -102,6 +106,7 @@ fn encode_optional(value: Option<&str>) -> String {
     value.map_or_else(|| "-".to_owned(), encode_string)
 }
 
+#[cfg(not(test))]
 fn decode_optional(value: &str) -> Option<Option<String>> {
     if value == "-" {
         Some(None)

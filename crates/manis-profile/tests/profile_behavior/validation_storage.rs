@@ -149,11 +149,11 @@ fn atomic_writer_creates_private_directory_and_replaces_file() {
 fn atomic_writer_rejects_symlink_runtime_and_final_file() {
     let temp = test_temp_dir("manis-profile-symlink");
     let target = temp.join("target");
-    let runtime_link = temp.join("runtime-link");
     fs::create_dir(&target).expect("create target");
 
     #[cfg(unix)]
     {
+        let runtime_link = temp.join("runtime-link");
         std::os::unix::fs::symlink(&target, &runtime_link).expect("create symlink");
         assert!(write_private_atomic(&runtime_link, "manis-generated.yaml", b"data").is_err());
 

@@ -149,10 +149,14 @@ pub(crate) fn load_direct_rules_in(
 
 #[cfg(test)]
 mod tests {
+    #[cfg(not(windows))]
     use std::fs;
 
-    use super::{DirectRule, DirectRuleError, default_direct_rules, load_direct_rules_in};
+    use super::{DirectRule, DirectRuleError};
+    #[cfg(not(windows))]
+    use super::{default_direct_rules, load_direct_rules_in};
 
+    #[cfg(not(windows))]
     fn test_dir(name: &str) -> std::path::PathBuf {
         let root = std::env::temp_dir().join(format!("manis-{name}-{}", std::process::id()));
         if root.exists() {

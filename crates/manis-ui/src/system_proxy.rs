@@ -8,9 +8,9 @@ mod session;
 pub(crate) use session::{SystemProxySession, TunDnsSession};
 
 #[cfg(any(
-    target_os = "linux",
-    target_os = "windows",
-    all(target_os = "macos", not(test))
+    all(target_os = "linux", not(test)),
+    all(target_os = "windows", not(test)),
+    all(target_os = "macos", not(test)),
 ))]
 use recovery::read_recovery_snapshot;
 #[cfg(all(any(target_os = "macos", target_os = "linux"), not(test)))]
@@ -18,11 +18,15 @@ use recovery::read_tun_dns_recovery_snapshot;
 #[cfg(test)]
 use recovery::{LEGACY_RELAY_RECOVERY_VERSION, read_recovery_snapshot_at};
 use recovery::{
-    RECOVERY_VERSION, TUN_DNS_RECOVERY_VERSION, decode_string, delete_recovery_snapshot,
-    delete_recovery_snapshot_at, delete_tun_dns_recovery_snapshot, encode_string,
+    RECOVERY_VERSION, decode_string, delete_recovery_snapshot, encode_string,
     recovery_version_supported, rollback_failed_message, write_recovery_snapshot,
-    write_recovery_snapshot_at, write_tun_dns_recovery_snapshot,
 };
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+use recovery::{
+    TUN_DNS_RECOVERY_VERSION, delete_tun_dns_recovery_snapshot, write_tun_dns_recovery_snapshot,
+};
+#[cfg(target_os = "macos")]
+use recovery::{delete_recovery_snapshot_at, write_recovery_snapshot_at};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ProxyPorts {

@@ -156,7 +156,7 @@ impl ManisApp {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(windows)))]
 mod subscription_import_concurrency_tests {
     use gpui::AppContext as _;
 

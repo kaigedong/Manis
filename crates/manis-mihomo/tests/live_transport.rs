@@ -142,8 +142,10 @@ fn response_header_deadline_does_not_wait_for_idle_server_to_close() {
         let _ = release_rx.recv_timeout(Duration::from_secs(4));
     });
     let started = Instant::now();
-    let LiveController::LoopbackHttp(config) = controller else {
-        unreachable!()
+    let config = match controller {
+        LiveController::LoopbackHttp(config) => config,
+        #[cfg(unix)]
+        LiveController::UnixSocket { .. } => unreachable!(),
     };
     assert!(
         manis_mihomo::MihomoClient::new(config, manis_mihomo::StdHttpTransport::default())

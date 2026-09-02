@@ -1,6 +1,8 @@
 use crate::localization::LocalizedText;
 
+#[cfg(target_os = "macos")]
 mod format;
+#[cfg(target_os = "macos")]
 pub(crate) use format::*;
 
 pub(crate) const COULD_NOT_APPLY_THE_SYSTEM_PROXY_OR_RESTORE_EVERY_PREVIOUS: LocalizedText =
@@ -43,6 +45,7 @@ pub(crate) const COULD_NOT_INSPECT_MANIS_SYSTEM_PROXY_RECOVERY_DIRECTORY: Locali
         "Could not inspect Manis system proxy recovery directory",
         "无法检查 Manis 系统代理恢复目录",
     );
+#[cfg(target_os = "macos")]
 pub(crate) const COULD_NOT_INSPECT_THE_MACOS_DEFAULT_ROUTE: LocalizedText = LocalizedText::new(
     "Could not inspect the macOS default route",
     "无法检查 macOS 默认路由",
@@ -68,6 +71,7 @@ pub(crate) const COULD_NOT_READ_GNOME_SYSTEM_PROXY_STATUS: LocalizedText = Local
     "Could not read GNOME system proxy status",
     "无法读取 GNOME 系统代理状态",
 );
+#[cfg(target_os = "macos")]
 pub(crate) const COULD_NOT_READ_MACOS_SYSTEM_PROXY_STATUS: LocalizedText = LocalizedText::new(
     "Could not read macOS system proxy status",
     "无法读取 macOS 系统代理状态",
@@ -93,6 +97,7 @@ pub(crate) const COULD_NOT_SAFELY_READ_MANIS_SYSTEM_PROXY_RECOVERY_SNAPSHOT: Loc
         "Could not safely read Manis system proxy recovery snapshot",
         "无法安全读取 Manis 系统代理恢复快照",
     );
+#[cfg(target_os = "macos")]
 pub(crate) const COULD_NOT_START_MACOS_NETWORKSETUP: LocalizedText = LocalizedText::new(
     "Could not start macOS networksetup",
     "无法启动 macOS networksetup",
@@ -115,10 +120,12 @@ pub(crate) const COULD_NOT_WRITE_WINDOWS_SYSTEM_PROXY_SETTINGS: LocalizedText = 
     "Could not write Windows system proxy settings",
     "无法写入 Windows 系统代理设置",
 );
+#[cfg(target_os = "macos")]
 pub(crate) const MACOS_HAS_NO_CONFIGURABLE_NETWORK_SERVICES: LocalizedText = LocalizedText::new(
     "macOS has no configurable network services",
     "macOS 没有可配置的网络服务",
 );
+#[cfg(target_os = "macos")]
 pub(crate) const MACOS_RETURNED_AN_INVALID_DNS_SERVER_ADDRESS: LocalizedText = LocalizedText::new(
     "macOS returned an invalid DNS server address",
     "macOS 返回了无效的 DNS 服务器地址",
@@ -134,7 +141,7 @@ pub(crate) const MANIS_SYSTEM_PROXY_RECOVERY_DIRECTORY_IS_UNSAFE: LocalizedText 
         "Manis system proxy recovery directory is unsafe",
         "Manis 系统代理恢复目录不安全",
     );
-#[cfg(any(not(test), target_os = "linux", target_os = "windows"))]
+#[cfg(not(test))]
 pub(crate) const MANIS_SYSTEM_PROXY_RECOVERY_SNAPSHOT_IS_INVALID: LocalizedText =
     LocalizedText::new(
         "Manis system proxy recovery snapshot is invalid",
@@ -150,6 +157,7 @@ pub(crate) const MIHOMO_HAS_NO_OPEN_HTTP_MIXED_OR_SOCKS_LISTENER: LocalizedText 
         "Mihomo has no open HTTP, mixed, or SOCKS listener",
         "Mihomo 没有开放 HTTP、mixed 或 SOCKS 端口",
     );
+#[cfg(target_os = "macos")]
 pub(crate) const THE_MACOS_DEFAULT_ROUTE_DID_NOT_IDENTIFY_AN_INTERFACE: LocalizedText =
     LocalizedText::new(
         "The macOS default route did not identify an interface",
