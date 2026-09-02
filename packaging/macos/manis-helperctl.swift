@@ -27,6 +27,7 @@ private enum CliError: Error, CustomStringConvertible {
                   manis-helperctl reinstall
                   manis-helperctl status
                   manis-helperctl stage-core
+                  manis-helperctl stage-core-update
                   manis-helperctl start --data-dir PATH --config PATH --controller PATH
                   manis-helperctl stop --pid PID
                 """
@@ -53,7 +54,7 @@ private enum Command {
     case register
     case reinstall
     case status
-    case stageCore
+    case stageCore(MihomoCoreStagingMode)
     case start(dataDir: String, config: String, controller: String)
     case stop(expectedPid: pid_t)
 }
@@ -74,7 +75,10 @@ private func parseCommand(_ arguments: [String]) throws -> Command {
         return .status
     case "stage-core":
         guard arguments.count == 1 else { throw CliError.usage }
-        return .stageCore
+        return .stageCore(.activation)
+    case "stage-core-update":
+        guard arguments.count == 1 else { throw CliError.usage }
+        return .stageCore(.explicitUpdate)
     case "stop":
         guard arguments.count == 3,
             arguments[1] == "--pid",
@@ -168,18 +172,11 @@ private func sha256(_ url: URL) throws -> String {
     return hasher.finalize().map { String(format: "%02x", $0) }.joined()
 }
 
-private func managedCore() throws -> (Data, String) {
-    let core = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Library")
-        .appendingPathComponent("Application Support")
-        .appendingPathComponent("Manis")
-        .appendingPathComponent("core")
-        .appendingPathComponent("mihomo")
-        .standardizedFileURL
+private func readCore(_ core: URL, owner: uid_t?) throws -> Data {
     var metadata = stat()
     guard lstat(core.path, &metadata) == 0,
         metadata.st_mode & S_IFMT == S_IFREG,
-        metadata.st_uid == getuid(),
+        (owner.map { $0 == metadata.st_uid } ?? true),
         metadata.st_mode & 0o022 == 0,
         metadata.st_size > 0,
         UInt64(metadata.st_size) <= maximumCoreBytes,
@@ -191,36 +188,57 @@ private func managedCore() throws -> (Data, String) {
     guard contents.count == metadata.st_size else {
         throw CliError.helper("Manis-managed Mihomo changed while it was read")
     }
-    let digest = SHA256.hash(data: contents)
-        .map { String(format: "%02x", $0) }
-        .joined()
-    // The administrator-installed daemon independently verifies provenance. Signed builds keep
-    // the controller's existing provenance check as well as the helper's sealed-bundle check.
-    guard try administratorInstalledBuild || signedBuildCoreDigestIsTrusted(digest) else {
-        throw CliError.helper(
-            "Manis-managed Mihomo does not match the sealed seed, installed TUN core, or official latest release"
-        )
-    }
-    return (contents, digest)
+    return contents
 }
 
-private func signedBuildCoreDigestIsTrusted(_ digest: String) throws -> Bool {
+private func installedCoreContents() throws -> Data? {
+    var metadata = stat()
+    guard lstat(installedMihomo.path, &metadata) == 0,
+        metadata.st_mode & S_IFMT == S_IFREG,
+        metadata.st_uid == 0,
+        metadata.st_mode & 0o022 == 0
+    else {
+        return nil
+    }
+    try ManisHelperSecurity.requireRootOwnedPath(installedMihomo.path, directory: false)
+    return try readCore(installedMihomo, owner: 0)
+}
+
+private func managedCore(mode: MihomoCoreStagingMode) throws -> (Data, String) {
+    let core = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library")
+        .appendingPathComponent("Application Support")
+        .appendingPathComponent("Manis")
+        .appendingPathComponent("core")
+        .appendingPathComponent("mihomo")
+        .standardizedFileURL
+    let managed: Data?
+    switch mode {
+    case .activation:
+        managed = try? readCore(core, owner: getuid())
+    case .explicitUpdate:
+        managed = try readCore(core, owner: getuid())
+    }
+    if administratorInstalledBuild && mode == .explicitUpdate, let managed {
+        let digest = SHA256.hash(data: managed)
+            .map { String(format: "%02x", $0) }
+            .joined()
+        return (managed, digest)
+    }
     let bundled = Bundle.main.bundleURL
         .appendingPathComponent("Contents/Resources/mihomo/mihomo")
         .standardizedFileURL
-    if FileManager.default.isExecutableFile(atPath: bundled.path), try sha256(bundled) == digest {
-        return true
-    }
-    var installedMetadata = stat()
-    if lstat(installedMihomo.path, &installedMetadata) == 0,
-        installedMetadata.st_mode & S_IFMT == S_IFREG,
-        installedMetadata.st_uid == 0,
-        installedMetadata.st_mode & 0o022 == 0
-    {
-        try ManisHelperSecurity.requireRootOwnedPath(installedMihomo.path, directory: false)
-        if try sha256(installedMihomo) == digest { return true }
-    }
-    return try MihomoReleaseVerifier.latestDigest() == digest
+    let selected = try MihomoReleaseVerifier.selectCoreForStaging(
+        managed: managed,
+        bundled: readCore(bundled, owner: nil),
+        installed: installedCoreContents(),
+        mode: mode,
+        latestDigest: MihomoReleaseVerifier.latestDigest
+    )
+    let digest = SHA256.hash(data: selected)
+        .map { String(format: "%02x", $0) }
+        .joined()
+    return (selected, digest)
 }
 
 private func installLocalService() throws {
@@ -322,7 +340,7 @@ private func validateParentProcess(for command: Command) throws {
             // A new version may request approval, but cannot call the daemon until the user
             // approves its exact app and controller fingerprints in the root-owned policy.
             requirement = try ManisHelperSecurity.pinnedRequirement(at: app, identifier: "dev.manis.app")
-        case .status, .stageCore, .start, .stop:
+        case .status, .stageCore(_), .start, .stop:
             let approval = try ManisHelperSecurity.installedApproval()
             let controller = app.appendingPathComponent("Contents/MacOS/manis-helperctl")
             guard approval.user == getuid(),
@@ -392,8 +410,8 @@ do {
         try reinstallService()
     case .status:
         try callHelper(timeout: .seconds(2)) { helper, reply in helper.status(withReply: reply) }
-    case .stageCore:
-        let (contents, digest) = try managedCore()
+    case .stageCore(let mode):
+        let (contents, digest) = try managedCore(mode: mode)
         try callHelper(timeout: .seconds(300)) { helper, reply in
             helper.stageCore(contents: contents, sha256: digest, withReply: reply)
         }

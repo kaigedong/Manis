@@ -1,7 +1,7 @@
 import Darwin
 import Foundation
 
-let manisHelperProtocolVersion = "v8"
+let manisHelperProtocolVersion = "v9"
 
 func validateMihomoStop(
     childOwner: uid_t?,
