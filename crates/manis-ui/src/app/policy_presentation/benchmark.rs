@@ -27,9 +27,11 @@ impl ManisApp {
         let Some(store_dir) = self.subscription_store_dir.as_ref() else {
             return;
         };
-        if let Err(error) =
-            stored_workspace::save_group_benchmarks_in(store_dir, &self.managed_policies.benchmarks)
-        {
+        let benchmark_dir = stored_workspace::benchmark_store_dir(store_dir);
+        if let Err(error) = stored_workspace::save_group_benchmarks_in(
+            &benchmark_dir,
+            &self.managed_policies.benchmarks,
+        ) {
             record_event(
                 LogLevel::Warn,
                 "group_benchmark.persistence_failed",

@@ -1,18 +1,10 @@
-#[cfg(not(windows))]
 use super::{
     MANUAL_RULES_FILE, MANUAL_RULES_VERSION_V1, MANUAL_RULES_VERSION_V2, MANUAL_RULES_VERSION_V3,
     MANUAL_RULES_VERSION_V4, MAX_MANUAL_RULES_FILE_BYTES,
 };
 use super::{ManualRule, ManualRuleKind, ManualRuleStoreError};
-#[cfg(windows)]
 use std::path::Path;
-#[cfg(not(windows))]
-use std::{fs, path::Path};
 
-#[cfg(not(windows))]
-use manis_profile::write_private_atomic;
-
-#[cfg(not(windows))]
 fn encode_manual_rules(rules: &[ManualRule]) -> Result<String, ManualRuleStoreError> {
     if rules.iter().filter(|rule| rule.is_final()).count() > 1 {
         return Err(ManualRuleStoreError::Corrupt);
@@ -40,7 +32,6 @@ fn encode_manual_rules(rules: &[ManualRule]) -> Result<String, ManualRuleStoreEr
     Ok(contents)
 }
 
-#[cfg(not(windows))]
 fn normalize_loaded_rule_order(
     mut rules: Vec<ManualRule>,
 ) -> Result<Vec<ManualRule>, ManualRuleStoreError> {
@@ -54,7 +45,6 @@ fn normalize_loaded_rule_order(
     Ok(rules)
 }
 
-#[cfg(not(windows))]
 fn decode_v4_manual_rules<'a>(
     mut lines: impl Iterator<Item = &'a str>,
 ) -> Result<Vec<ManualRule>, ManualRuleStoreError> {
@@ -102,7 +92,6 @@ fn decode_v4_manual_rules<'a>(
     normalize_loaded_rule_order(rules)
 }
 
-#[cfg(not(windows))]
 fn decode_v3_manual_rules<'a>(
     mut lines: impl Iterator<Item = &'a str>,
 ) -> Result<Vec<ManualRule>, ManualRuleStoreError> {
@@ -141,7 +130,6 @@ fn decode_v3_manual_rules<'a>(
         .collect()
 }
 
-#[cfg(not(windows))]
 fn decode_v1_manual_rules<'a>(
     lines: impl Iterator<Item = &'a str>,
 ) -> Result<Vec<ManualRule>, ManualRuleStoreError> {
@@ -165,7 +153,6 @@ fn decode_v1_manual_rules<'a>(
         .collect()
 }
 
-#[cfg(not(windows))]
 fn decode_v2_manual_rules<'a>(
     mut lines: impl Iterator<Item = &'a str>,
 ) -> Result<Vec<ManualRule>, ManualRuleStoreError> {
@@ -200,7 +187,6 @@ fn decode_v2_manual_rules<'a>(
         .collect()
 }
 
-#[cfg(not(windows))]
 pub(crate) fn decode_manual_rules(
     contents: &str,
 ) -> Result<(Vec<ManualRule>, bool), ManualRuleStoreError> {
@@ -242,26 +228,23 @@ fn merge_legacy_direct_rules(
     Ok(merged)
 }
 
-#[cfg(not(windows))]
 fn read_manual_rules_document(
     directory: &Path,
 ) -> Result<(Vec<ManualRule>, bool), ManualRuleStoreError> {
-    let path = directory.join(MANUAL_RULES_FILE);
-    let metadata = match fs::symlink_metadata(&path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok((Vec::new(), false));
-        }
-        Err(_error) => return Err(ManualRuleStoreError::Unavailable),
+    let Some(contents) =
+        crate::config_toml::read_entry(directory, MANUAL_RULES_FILE, MAX_MANUAL_RULES_FILE_BYTES)
+            .map_err(|error| match error {
+            crate::config_toml::ConfigTomlError::Unavailable => ManualRuleStoreError::Unavailable,
+            crate::config_toml::ConfigTomlError::UnsafePath
+            | crate::config_toml::ConfigTomlError::InvalidFormat
+            | crate::config_toml::ConfigTomlError::Oversized => ManualRuleStoreError::Corrupt,
+        })?
+    else {
+        return Ok((Vec::new(), false));
     };
-    if !metadata.is_file() || metadata.len() > MAX_MANUAL_RULES_FILE_BYTES {
-        return Err(ManualRuleStoreError::Corrupt);
-    }
-    let contents = fs::read_to_string(path).map_err(|_error| ManualRuleStoreError::Corrupt)?;
     decode_manual_rules(&contents)
 }
 
-#[cfg(not(windows))]
 fn map_legacy_store_error(error: crate::direct_rule::DirectRuleStoreError) -> ManualRuleStoreError {
     match error {
         crate::direct_rule::DirectRuleStoreError::Unavailable => ManualRuleStoreError::Unavailable,
@@ -269,7 +252,6 @@ fn map_legacy_store_error(error: crate::direct_rule::DirectRuleStoreError) -> Ma
     }
 }
 
-#[cfg(not(windows))]
 fn migrate_legacy_direct_rules_in(
     directory: &Path,
     rules: Vec<ManualRule>,
@@ -281,26 +263,16 @@ fn migrate_legacy_direct_rules_in(
     Ok(merged)
 }
 
-#[cfg(not(windows))]
 pub(crate) fn save_manual_rules_in(
     directory: &Path,
     rules: &[ManualRule],
 ) -> Result<(), ManualRuleStoreError> {
     let contents = encode_manual_rules(rules)?;
-    write_private_atomic(directory, MANUAL_RULES_FILE, contents.as_bytes())
+    crate::config_toml::write_entry(directory, MANUAL_RULES_FILE, &contents)
         .map(|_path| ())
         .map_err(|_error| ManualRuleStoreError::Unavailable)
 }
 
-#[cfg(windows)]
-pub(crate) fn save_manual_rules_in(
-    _directory: &Path,
-    _rules: &[ManualRule],
-) -> Result<(), ManualRuleStoreError> {
-    Err(ManualRuleStoreError::Unavailable)
-}
-
-#[cfg(not(windows))]
 pub(crate) fn load_manual_rules_in(
     directory: &Path,
 ) -> Result<Vec<ManualRule>, ManualRuleStoreError> {
@@ -309,18 +281,4 @@ pub(crate) fn load_manual_rules_in(
         return Ok(rules);
     }
     migrate_legacy_direct_rules_in(directory, rules)
-}
-
-#[cfg(windows)]
-pub(crate) fn load_manual_rules_in(
-    directory: &Path,
-) -> Result<Vec<ManualRule>, ManualRuleStoreError> {
-    let legacy =
-        crate::direct_rule::load_direct_rules_in(directory).map_err(|error| match error {
-            crate::direct_rule::DirectRuleStoreError::Unavailable => {
-                ManualRuleStoreError::Unavailable
-            }
-            crate::direct_rule::DirectRuleStoreError::Corrupt => ManualRuleStoreError::Corrupt,
-        })?;
-    merge_legacy_direct_rules(Vec::new(), legacy)
 }

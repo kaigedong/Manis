@@ -15,9 +15,12 @@ use super::{
     StoredSubscription, SubscriptionStoreError, brand,
 };
 pub(crate) fn imported_subscription_store_dir() -> Result<PathBuf, SubscriptionStoreError> {
-    brand::data_dir()
-        .map(|directory| directory.join("subscriptions"))
-        .ok_or(SubscriptionStoreError::DataDirectoryUnavailable)
+    let directory = brand::config_dir().ok_or(SubscriptionStoreError::DataDirectoryUnavailable)?;
+    if let Some(data_dir) = brand::data_dir() {
+        crate::config_toml::migrate_legacy_directory(&directory, &data_dir.join("subscriptions"))
+            .map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
+    }
+    Ok(directory)
 }
 
 #[cfg(all(not(windows), test))]

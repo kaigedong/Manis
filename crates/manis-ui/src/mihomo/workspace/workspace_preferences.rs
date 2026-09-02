@@ -3,9 +3,7 @@ use super::{
     WORKSPACE_STATE_FILE, valid_workspace_group_id,
 };
 #[cfg(not(windows))]
-use super::{
-    fs, read_private_source_allow_empty, require_clean_absolute_store, write_private_atomic,
-};
+use super::{require_clean_absolute_store, write_private_atomic};
 
 #[cfg(not(windows))]
 pub(crate) fn save_collapsed_groups_in<'a>(
@@ -37,12 +35,13 @@ pub(crate) fn load_collapsed_groups_in(
     directory: &Path,
 ) -> Result<Vec<String>, SubscriptionStoreError> {
     require_clean_absolute_store(directory)?;
-    let path = directory.join(WORKSPACE_STATE_FILE);
-    let contents = match fs::symlink_metadata(&path) {
-        Ok(_) => read_private_source_allow_empty(&path)?,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(_error) => return Err(SubscriptionStoreError::StoredSourceUnavailable),
-    };
+    let contents = crate::config_toml::read_entry(
+        directory,
+        WORKSPACE_STATE_FILE,
+        super::MAX_SUBSCRIPTION_FILE_BYTES,
+    )
+    .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?
+    .unwrap_or_default();
     contents
         .lines()
         .map(str::to_owned)
@@ -84,13 +83,14 @@ pub(crate) fn load_routing_mode_in(
     directory: &Path,
 ) -> Result<RoutingMode, SubscriptionStoreError> {
     require_clean_absolute_store(directory)?;
-    let path = directory.join(ROUTING_MODE_FILE);
-    let contents = match fs::symlink_metadata(&path) {
-        Ok(_) => read_private_source_allow_empty(&path)?,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(RoutingMode::Rule);
-        }
-        Err(_error) => return Err(SubscriptionStoreError::StoredSourceUnavailable),
+    let Some(contents) = crate::config_toml::read_entry(
+        directory,
+        ROUTING_MODE_FILE,
+        super::MAX_SUBSCRIPTION_FILE_BYTES,
+    )
+    .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?
+    else {
+        return Ok(RoutingMode::Rule);
     };
     RoutingMode::parse_wire_value(contents.trim())
         .ok_or(SubscriptionStoreError::StoredSourceUnavailable)

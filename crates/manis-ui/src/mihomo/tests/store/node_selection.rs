@@ -53,9 +53,14 @@ fn node_selection_preferences_round_trip_privately() -> Result<(), Box<dyn std::
     #[cfg(unix)]
     {
         assert_eq!(fs::metadata(&store)?.permissions().mode() & 0o077, 0);
-        let path = store.join(super::NODE_SELECTION_PREFERENCES_FILE);
+        let path = store.join("config.toml");
         assert_eq!(fs::metadata(&path)?.permissions().mode() & 0o077, 0);
-        let stored_text = fs::read_to_string(path)?;
+        let stored_text = crate::config_toml::read_entry(
+            &store,
+            super::NODE_SELECTION_PREFERENCES_FILE,
+            1024 * 1024,
+        )?
+        .expect("stored preferences");
         assert!(!stored_text.contains("Hong Kong Edge"));
         assert!(!stored_text.contains("Tokyo Manual"));
     }

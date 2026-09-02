@@ -1,4 +1,3 @@
-#[cfg(not(windows))]
 use super::fs;
 use super::{
     Error, IMPORTED_SUBSCRIPTION_FILE, LEGACY_GENERATED_PROXY_GROUP_NAME,
@@ -14,11 +13,8 @@ use super::{
     ROUTING_MODE_FILE, RoutingMode, Rule, SAVED_SINGLE_NODE_PREFIX, SAVED_SINGLE_NODE_SUFFIX,
     SAVED_SINGLE_NODE_VERSION, STORED_SUBSCRIPTION_PREFIX, STORED_SUBSCRIPTION_SUFFIX,
     STORED_SUBSCRIPTION_VERSION, SecretUrl, SingleNodeSource, SystemTime, UNIX_EPOCH,
-    WORKSPACE_STATE_FILE, brand, fmt, has_only_clean_components, write_private_atomic,
+    WORKSPACE_STATE_FILE, brand, fmt, has_only_clean_components,
 };
-#[cfg(not(windows))]
-use std::io::Read;
-
 #[cfg(any(windows, test))]
 mod imported_subscription;
 
@@ -377,86 +373,49 @@ fn valid_workspace_group_id(id: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b':' | b'-' | b'_'))
 }
 
-#[cfg(not(windows))]
 pub(super) fn private_store_entries(
     directory: &Path,
 ) -> Result<Option<Vec<PathBuf>>, SubscriptionStoreError> {
     require_clean_absolute_store(directory)?;
-    let iterator = match fs::read_dir(directory) {
-        Ok(iterator) => iterator,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(_error) => return Err(SubscriptionStoreError::StoredSourceUnavailable),
-    };
-    let mut paths = Vec::new();
-    for entry in iterator {
-        paths.push(
-            entry
-                .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?
-                .path(),
-        );
-    }
-    Ok(Some(paths))
+    let entries = crate::config_toml::entries(directory)
+        .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
+    Ok((!entries.is_empty()).then(|| entries.keys().map(|name| directory.join(name)).collect()))
 }
 
-#[cfg(not(windows))]
 pub(super) fn read_private_source_allow_empty(
     path: &Path,
 ) -> Result<String, SubscriptionStoreError> {
     read_private_source_allow_empty_max(path, MAX_SUBSCRIPTION_FILE_BYTES)
 }
 
-#[cfg(not(windows))]
 pub(super) fn read_private_source_allow_empty_max(
     path: &Path,
     max_bytes: u64,
 ) -> Result<String, SubscriptionStoreError> {
-    let metadata = fs::symlink_metadata(path)
-        .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return Err(SubscriptionStoreError::StoredSourceUnavailable);
-    }
-    let file =
-        fs::File::open(path).map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
-    let opened_metadata = file
-        .metadata()
-        .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
-    if opened_metadata.len() > max_bytes {
-        return Err(SubscriptionStoreError::StoredSourceUnavailable);
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::{MetadataExt, PermissionsExt};
-
-        if metadata.dev() != opened_metadata.dev()
-            || metadata.ino() != opened_metadata.ino()
-            || opened_metadata.permissions().mode() & 0o077 != 0
-        {
-            return Err(SubscriptionStoreError::StoredSourceUnavailable);
-        }
-    }
-    let mut contents = String::new();
-    file.take(max_bytes + 1)
-        .read_to_string(&mut contents)
-        .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
-    if contents.len() as u64 > max_bytes {
-        return Err(SubscriptionStoreError::StoredSourceUnavailable);
-    }
-    Ok(contents)
+    let directory = path
+        .parent()
+        .ok_or(SubscriptionStoreError::StoredSourceUnavailable)?;
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or(SubscriptionStoreError::StoredSourceUnavailable)?;
+    crate::config_toml::read_entry(directory, name, max_bytes)
+        .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?
+        .ok_or(SubscriptionStoreError::StoredSourceUnavailable)
 }
 
-#[cfg(not(windows))]
 pub(super) fn remove_private_source(path: &Path) -> Result<(), SubscriptionStoreError> {
-    match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
-            Err(SubscriptionStoreError::StoredSourceUnavailable)
-        }
-        Ok(_) => fs::remove_file(path).map_err(|_error| SubscriptionStoreError::StoreUnavailable),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(_error) => Err(SubscriptionStoreError::StoreUnavailable),
-    }
+    let directory = path
+        .parent()
+        .ok_or(SubscriptionStoreError::StoreUnavailable)?;
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or(SubscriptionStoreError::StoreUnavailable)?;
+    crate::config_toml::remove_entry(directory, name)
+        .map_err(|_error| SubscriptionStoreError::StoreUnavailable)
 }
 
-#[cfg(not(windows))]
 pub(super) fn require_clean_absolute_store(directory: &Path) -> Result<(), SubscriptionStoreError> {
     if !directory.is_absolute() || !has_only_clean_components(directory) {
         return Err(SubscriptionStoreError::StoreUnavailable);
@@ -478,4 +437,14 @@ pub(super) fn require_clean_absolute_store(directory: &Path) -> Result<(), Subsc
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(_error) => Err(SubscriptionStoreError::StoreUnavailable),
     }
+}
+
+pub(super) fn write_private_atomic(
+    directory: &Path,
+    file_name: &str,
+    bytes: &[u8],
+) -> Result<PathBuf, crate::config_toml::ConfigTomlError> {
+    let contents = std::str::from_utf8(bytes)
+        .map_err(|_error| crate::config_toml::ConfigTomlError::InvalidFormat)?;
+    crate::config_toml::write_entry(directory, file_name, contents)
 }
