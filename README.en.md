@@ -131,8 +131,8 @@ the user.
 Source and routing-rule edits are staged privately before committing only the changed files.
 A failed save or runtime apply does not restore unrelated settings from an old directory snapshot.
 If a file changes again before rollback, Manis preserves its newer contents and reports the restore
-failure. Kernel switching first turns off the active proxy and restores the related system settings;
-if cleanup fails, the previous kernel remains running.
+failure. Applying a configuration first turns off the active proxy and restores the related system
+settings; if cleanup fails, Manis preserves the current configuration and reports the failure.
 
 ## Configuration backup and editing
 
