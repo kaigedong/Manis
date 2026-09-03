@@ -1,6 +1,6 @@
 use super::{
     Context, CountNoun, Div, FluentBuilder, ImportedSubscriptionState, InteractiveElement,
-    Language, ManagedPolicyIcon, ManisApp, Message, NodeSourceGroup, NodeWorkspaceView,
+    KernelKind, Language, ManagedPolicyIcon, ManisApp, Message, NodeSourceGroup, NodeWorkspaceView,
     ParentElement, Space, Stateful, StatefulInteractiveElement, Styled, TextRole, Theme,
     WindowSizeClass, copy, div, px, subscription_provider_refs,
 };
@@ -206,6 +206,7 @@ impl ManisApp {
                         providers,
                         runtime_provider_names: vec![runtime_provider_name; provider_count],
                         saved_nodes: Vec::new(),
+                        saved_nodes_use_runtime_providers: false,
                     }
                 })
                 .collect();
@@ -224,6 +225,7 @@ impl ManisApp {
                         .filter(|saved| saved.enabled)
                         .map(|saved| saved.source.preview())
                         .collect(),
+                    saved_nodes_use_runtime_providers: self.runtime.kind() == KernelKind::Mihomo,
                 });
             }
             return groups;
@@ -247,6 +249,7 @@ impl ManisApp {
                 providers: vec![provider],
                 runtime_provider_names: vec![provider.name.clone()],
                 saved_nodes: Vec::new(),
+                saved_nodes_use_runtime_providers: false,
             })
             .collect()
     }

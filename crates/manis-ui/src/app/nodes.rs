@@ -15,7 +15,7 @@ use gpui_component::{
     radio::Radio,
 };
 use manis_core::{
-    ManagedPolicyGroup, ManagedPolicyIcon, ManagedPolicyStrategy, NodeIdentity,
+    KernelKind, ManagedPolicyGroup, ManagedPolicyIcon, ManagedPolicyStrategy, NodeIdentity,
     PolicyCandidateKind, PolicyCandidateMatcher, PolicyNode, PrimaryWorkspace, ProxyId,
     WindowSizeClass,
 };
@@ -40,6 +40,7 @@ struct NodeSourceGroup<'a> {
     providers: Vec<&'a LoadedProvider>,
     runtime_provider_names: Vec<String>,
     saved_nodes: Vec<&'a SourceNodePreview>,
+    saved_nodes_use_runtime_providers: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -176,11 +177,16 @@ impl NodeSourceGroup<'_> {
                     ProxyDelayTarget::provider(runtime_name.clone(), node.name.clone())
                 })
             })
-            .chain(
-                self.saved_nodes
-                    .iter()
-                    .map(|node| ProxyDelayTarget::direct(node.name.clone())),
-            )
+            .chain(self.saved_nodes.iter().enumerate().map(|(index, node)| {
+                if self.saved_nodes_use_runtime_providers {
+                    ProxyDelayTarget::provider(
+                        format!("Single node {}", index + 1),
+                        node.name.clone(),
+                    )
+                } else {
+                    ProxyDelayTarget::direct(node.name.clone())
+                }
+            }))
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect()
@@ -664,6 +670,7 @@ mod tests {
             providers: vec![&provider],
             runtime_provider_names: vec!["Subscription 1".to_owned()],
             saved_nodes: Vec::new(),
+            saved_nodes_use_runtime_providers: false,
         };
 
         assert_eq!(
@@ -691,6 +698,10 @@ mod tests {
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].detail, "单独添加的节点 · 私有本机存储");
         assert_eq!(groups[0].saved_nodes[0].protocol, "Trojan");
+        assert_eq!(
+            groups[0].delay_targets(),
+            vec![ProxyDelayTarget::provider("Single node 1", "Saved Trojan")]
+        );
     }
 
     #[test]
