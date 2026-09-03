@@ -1,17 +1,14 @@
 use super::{
     Arc, AtomicBool, Component, ControllerEndpoint, ControllerRuntime, DATA_DIR_ENV,
     DEFAULT_MANAGED_MIXED_PORT, EngineManager, GENERATED_PROFILE_FILE, KernelKind,
-    LEGACY_RELAY_DATA_DIR_ENV, LEGACY_RELAY_MIXED_PORT_ENV, LEGACY_RELAY_SING_BOX_BINARY_ENV,
-    MIXED_PORT_ENV, ManagedGeneratedProfile, Mutex, Path, PathBuf, ReadinessPolicy,
-    RuntimeProfileSource, SING_BOX_BINARY_ENV, SING_BOX_PROFILE_FILE, TcpListener,
+    LEGACY_RELAY_DATA_DIR_ENV, LEGACY_RELAY_MIXED_PORT_ENV, MIXED_PORT_ENV,
+    ManagedGeneratedProfile, Mutex, Path, PathBuf, ReadinessPolicy, RuntimeProfileSource,
     UNSUPPORTED_MIHOMO_RUNTIME_ENV, brand, canonical_binary, compile_saved_profile, core_update,
     env, managed_engine_config, readiness_probe, render_generated_profile,
     sync_single_node_provider_files, validate_managed_config, write_private_atomic,
 };
 #[cfg(debug_assertions)]
 use super::{BINARY_ENV, LEGACY_RELAY_BINARY_ENV};
-#[cfg(unix)]
-use super::{Read, fs};
 
 pub(crate) fn configured_runtime(store_dir: Option<&Path>) -> ControllerRuntime {
     if let Some(variable) = first_unsupported_runtime_override(|name| env::var_os(name).is_some()) {
@@ -49,10 +46,6 @@ pub(super) fn first_unsupported_runtime_override(
         .find(|name| is_set(name))
 }
 
-pub(crate) fn configured_sing_box_runtime(store_dir: &Path) -> Result<ControllerRuntime, String> {
-    build_sing_box_runtime(store_dir)
-}
-
 fn build_saved_sources_mihomo_runtime_with_binary(
     store_dir: &Path,
     binary: &Path,
@@ -72,8 +65,7 @@ pub(super) fn build_saved_sources_mihomo_runtime_in(
     controller: &ControllerEndpoint,
 ) -> Result<ControllerRuntime, String> {
     sync_single_node_provider_files(store_dir, data_dir).map_err(|error| error.to_string())?;
-    let profile = compile_saved_profile(store_dir, None, KernelKind::Mihomo)
-        .map_err(|error| error.to_string())?;
+    let profile = compile_saved_profile(store_dir, None).map_err(|error| error.to_string())?;
     let spec = ManagedGeneratedProfile {
         kernel: KernelKind::Mihomo,
         binary: binary.to_path_buf(),
@@ -99,86 +91,6 @@ pub(super) fn build_saved_sources_mihomo_runtime_in(
     })
 }
 
-fn build_sing_box_runtime(store_dir: &Path) -> Result<ControllerRuntime, String> {
-    let binary = discover_sing_box_binary()?;
-    let data_dir = brand::data_dir()
-        .map(|directory| directory.join("sing-box"))
-        .ok_or_else(|| "sing-box data directory could not be determined".to_owned())?;
-    let port = TcpListener::bind("127.0.0.1:0")
-        .and_then(|listener| listener.local_addr())
-        .map(|address| address.port())
-        .map_err(|_error| {
-            "a loopback controller port could not be reserved for sing-box".to_owned()
-        })?;
-    let controller = ControllerEndpoint::Tcp(
-        format!("127.0.0.1:{port}")
-            .parse()
-            .map_err(|_error| "sing-box controller address could not be created".to_owned())?,
-    );
-    let controller_secret = generate_controller_secret()?;
-    let profile = compile_saved_profile(store_dir, None, KernelKind::SingBox)
-        .map_err(|error| error.to_string())?;
-    let spec = ManagedGeneratedProfile {
-        kernel: KernelKind::SingBox,
-        binary: binary.clone(),
-        data_dir: data_dir.clone(),
-        controller: controller.clone(),
-        expected_mixed_port: None,
-        profile_store_dir: Some(store_dir.to_path_buf()),
-        controller_secret: Some(controller_secret.clone()),
-    };
-    let rendered = render_generated_profile(&spec, &profile).map_err(|error| error.to_string())?;
-    let config_file =
-        write_private_atomic(&data_dir, SING_BOX_PROFILE_FILE, rendered.as_bytes())
-            .map_err(|_error| "private sing-box configuration could not be written".to_owned())?;
-    let config = managed_engine_config(&spec, config_file);
-    validate_managed_config(&config).map_err(|error| error.to_string())?;
-    let manager = EngineManager::new(config, ReadinessPolicy::default(), readiness_probe(&spec));
-    Ok(ControllerRuntime::Managed {
-        manager: Arc::new(Mutex::new(manager)),
-        apply_lock: Arc::new(Mutex::new(())),
-        profile_source: RuntimeProfileSource::SavedSources,
-        generated_profile: Some(spec),
-        privileged: Arc::new(AtomicBool::new(false)),
-    })
-}
-
-pub(super) fn discover_sing_box_binary() -> Result<PathBuf, String> {
-    if let Some(explicit) = brand::env_var_os(SING_BOX_BINARY_ENV, LEGACY_RELAY_SING_BOX_BINARY_ENV)
-    {
-        return canonical_binary(Path::new(&explicit)).map_err(|_error| {
-            format!("{SING_BOX_BINARY_ENV} does not point to an executable file")
-        });
-    }
-    let executable_name = if cfg!(windows) {
-        "sing-box.exe"
-    } else {
-        "sing-box"
-    };
-    let mut candidates = Vec::new();
-    if let Ok(current_exe) = env::current_exe()
-        && let Some(directory) = current_exe.parent()
-    {
-        candidates.push(directory.join(executable_name));
-    }
-    if let Some(path) = env::var_os("PATH") {
-        candidates.extend(env::split_paths(&path).map(|directory| directory.join(executable_name)));
-    }
-    #[cfg(target_os = "macos")]
-    candidates.extend([
-        PathBuf::from("/opt/homebrew/bin/sing-box"),
-        PathBuf::from("/usr/local/bin/sing-box"),
-    ]);
-    candidates
-        .into_iter()
-        .find_map(|candidate| canonical_binary(&candidate).ok())
-        .ok_or_else(|| format!("sing-box was not found; install it or set {SING_BOX_BINARY_ENV}"))
-}
-
-pub(crate) fn sing_box_binary_available() -> bool {
-    discover_sing_box_binary().is_ok()
-}
-
 fn discover_mihomo_binary() -> Result<PathBuf, String> {
     core_update::managed_core_binary_path()
         .map_err(|error| error.to_string())
@@ -188,44 +100,6 @@ fn discover_mihomo_binary() -> Result<PathBuf, String> {
                     .to_owned()
             })
         })
-}
-
-#[cfg(unix)]
-fn generate_controller_secret() -> Result<String, String> {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut random = [0_u8; 32];
-    fs::File::open("/dev/urandom")
-        .and_then(|mut file| file.read_exact(&mut random))
-        .map_err(|_error| "sing-box controller secret could not be generated".to_owned())?;
-    let mut secret = String::with_capacity(random.len() * 2);
-    for byte in random {
-        secret.push(char::from(HEX[usize::from(byte >> 4)]));
-        secret.push(char::from(HEX[usize::from(byte & 0x0f)]));
-    }
-    Ok(secret)
-}
-
-#[cfg(windows)]
-fn generate_controller_secret() -> Result<String, String> {
-    let output = std::process::Command::new("powershell.exe")
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            "[guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N')",
-        ])
-        .output()
-        .map_err(|_error| "sing-box controller secret could not be generated".to_owned())?;
-    let secret = String::from_utf8(output.stdout)
-        .map_err(|_error| "sing-box controller secret could not be generated".to_owned())?;
-    let secret = secret.trim();
-    if !output.status.success()
-        || secret.len() != 64
-        || !secret.bytes().all(|byte| byte.is_ascii_hexdigit())
-    {
-        return Err("sing-box controller secret could not be generated".to_owned());
-    }
-    Ok(secret.to_owned())
 }
 
 pub(super) fn has_only_clean_components(path: &Path) -> bool {

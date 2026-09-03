@@ -32,17 +32,6 @@ managed copy. Anyone distributing such a bundle is responsible for including Mih
 corresponding source offer or source location, copyright notices, and any other material required by
 the exact Mihomo build.
 
-## sing-box
-
-Manis can supervise a separately installed sing-box executable. The repository does not contain a
-sing-box binary.
-
-- Upstream: <https://github.com/SagerNet/sing-box>
-- License: GPL-3.0-or-later, including the additional term in its upstream license notice
-
-Manis currently discovers sing-box from the user's system; release packaging must not begin
-bundling it without a separate compliance review.
-
 ## Release policy
 
 Before publishing any binary release:

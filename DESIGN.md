@@ -211,7 +211,7 @@ Light 和 Dark 使用同一套层级关系，只改变表面、文本和强调�
 
 ### `已观察`
 
-- 来自当前内核支持的 `/connections` 控制器接口（Mihomo，或 sing-box 的兼容 API）。
+- 来自 Mihomo 支持的 `/connections` 控制器接口。
 - 只能用于真实活跃连接。
 - 可显示 `chains`、`providerChains`、`rule`、`rulePayload` 等已观测链路。
 - 这是最终事实来源，不是推演。

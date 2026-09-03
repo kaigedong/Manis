@@ -4,9 +4,9 @@ use std::path::Path;
 use manis_profile::{
     HealthCheck, LogLevel, MANIS_GLOBAL_GROUP_NAME, Name, OutboundProxy, PolicyGroup,
     PolicyGroupKind, PolicyRef, Profile, ProfileError, ProfileMode, ProxyDnsServer, ProxyProvider,
-    QxRuleDiagnosticKind, QxRuleKind, QxRuleList, Rule, SecretUrl, SingBoxOptions, UserPolicyGroup,
+    QxRuleDiagnosticKind, QxRuleKind, QxRuleList, Rule, SecretUrl, UserPolicyGroup,
     UserPolicyGroupKind, VlessProxy, render_mihomo_yaml, render_mihomo_yaml_with_tun,
-    render_sing_box_json, write_private_atomic,
+    write_private_atomic,
 };
 
 fn fixture_secret() -> SecretUrl {

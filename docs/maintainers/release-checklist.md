@@ -22,7 +22,7 @@ private core binaries.
 - [ ] The exact Rust dependency license report is archived with the release.
 - [ ] The GPUI/Zed `zlog`/`ztracing`/`ztracing_macro` GPL dependency path has received an explicit
   compatibility decision for the final linked artifact.
-- [ ] Every bundled Mihomo or sing-box binary has an exact version, upstream source location,
+- [ ] The bundled Mihomo binary has an exact version, upstream source location,
   license text, required notices, and corresponding-source fulfillment plan.
 - [ ] `THIRD_PARTY_NOTICES.md` matches the binaries actually shipped.
 
@@ -56,7 +56,7 @@ the remaining checklist.
 - [ ] `pacman -Qip` and `pacman -Qlp` show the intended metadata and file layout.
 - [ ] The application opens in a native Wayland session and its tray appears in a compatible shell.
 - [ ] The managed Mihomo seed and first-run install path are tested; external Mihomo locations are
-      ignored. The external sing-box discovery path is tested separately.
+      ignored.
 - [ ] System proxy and TUN limitations are stated in the release notes.
 
 ## Runtime verification

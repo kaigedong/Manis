@@ -16,7 +16,6 @@ use crate::{
     localization::{
         CountNoun, Language, LanguagePreference, Message, copy, save_language_preference_in,
     },
-    mihomo::{self},
     theme::{ControlSize, Radius, Space, TextRole, Theme},
 };
 

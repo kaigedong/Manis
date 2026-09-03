@@ -42,11 +42,6 @@ impl ControllerEndpoint {
     ) -> Result<(), EngineError> {
         match self {
             Self::UnixSocket(path) => {
-                if kernel != KernelKind::Mihomo {
-                    return Err(EngineError::InvalidConfig(
-                        "selected kernel does not support a Unix Clash API socket".to_owned(),
-                    ));
-                }
                 if !cfg!(unix) {
                     return Err(EngineError::InvalidConfig(
                         "Unix controller sockets are not supported on this platform".to_owned(),
@@ -66,19 +61,13 @@ impl ControllerEndpoint {
                         "managed TCP controller must use a loopback address".to_owned(),
                     ));
                 }
-                if kernel != KernelKind::SingBox || !controller_secret_configured {
+                if kernel == KernelKind::Mihomo || controller_secret_configured {
                     return Err(EngineError::InvalidConfig(
-                        "managed TCP requires sing-box with an authenticated loopback Clash API"
-                            .to_owned(),
+                        "managed TCP is not supported for the Mihomo controller".to_owned(),
                     ));
                 }
             }
             Self::NamedPipe(name) => {
-                if kernel != KernelKind::Mihomo {
-                    return Err(EngineError::InvalidConfig(
-                        "selected kernel does not support a Windows Clash API pipe".to_owned(),
-                    ));
-                }
                 if !cfg!(windows) {
                     return Err(EngineError::InvalidConfig(
                         "Windows controller pipes are not supported on this platform".to_owned(),
@@ -122,25 +111,6 @@ impl ManagedEngineConfig {
             data_dir,
             controller,
             controller_secret_configured: false,
-        }
-    }
-
-    /// Creates a sing-box configuration using an authenticated loopback Clash API.
-    #[must_use]
-    pub fn new_sing_box(
-        binary: PathBuf,
-        config_file: PathBuf,
-        data_dir: PathBuf,
-        controller: ControllerEndpoint,
-        controller_secret_configured: bool,
-    ) -> Self {
-        Self {
-            kernel: KernelKind::SingBox,
-            binary,
-            config_file,
-            data_dir,
-            controller,
-            controller_secret_configured,
         }
     }
 
@@ -189,41 +159,19 @@ impl ManagedEngineConfig {
     /// Builds the kernel-specific configuration validation command.
     #[must_use]
     pub fn validation_command(&self) -> CommandSpec {
-        let args = match self.kernel {
-            KernelKind::Mihomo => vec![
-                OsString::from("-t"),
-                OsString::from("-d"),
-                self.data_dir.clone().into_os_string(),
-                OsString::from("-f"),
-                self.config_file.clone().into_os_string(),
-            ],
-            KernelKind::SingBox => vec![
-                OsString::from("check"),
-                OsString::from("-c"),
-                self.config_file.clone().into_os_string(),
-                OsString::from("-D"),
-                self.data_dir.clone().into_os_string(),
-            ],
-        };
+        let args = vec![
+            OsString::from("-t"),
+            OsString::from("-d"),
+            self.data_dir.clone().into_os_string(),
+            OsString::from("-f"),
+            self.config_file.clone().into_os_string(),
+        ];
         CommandSpec::new(self.binary.clone(), args, self.data_dir.clone())
     }
 
     /// Builds the kernel-specific isolated launch command.
     #[must_use]
     pub fn launch_command(&self) -> CommandSpec {
-        if self.kernel == KernelKind::SingBox {
-            return CommandSpec::new(
-                self.binary.clone(),
-                vec![
-                    OsString::from("run"),
-                    OsString::from("-c"),
-                    self.config_file.clone().into_os_string(),
-                    OsString::from("-D"),
-                    self.data_dir.clone().into_os_string(),
-                ],
-                self.data_dir.clone(),
-            );
-        }
         let mut args = vec![
             OsString::from("-d"),
             self.data_dir.clone().into_os_string(),

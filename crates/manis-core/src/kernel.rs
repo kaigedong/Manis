@@ -4,8 +4,6 @@ pub enum KernelKind {
     /// `MetaCubeX` Mihomo, kept as the compatibility-first default.
     #[default]
     Mihomo,
-    /// `SagerNet` sing-box.
-    SingBox,
 }
 
 impl KernelKind {
@@ -14,7 +12,6 @@ impl KernelKind {
     pub const fn persistence_key(self) -> &'static str {
         match self {
             Self::Mihomo => "mihomo",
-            Self::SingBox => "sing-box",
         }
     }
 
@@ -23,7 +20,6 @@ impl KernelKind {
     pub fn parse(input: &str) -> Option<Self> {
         match input {
             "mihomo" => Some(Self::Mihomo),
-            "sing-box" => Some(Self::SingBox),
             _ => None,
         }
     }
@@ -33,7 +29,6 @@ impl KernelKind {
     pub const fn display_name(self) -> &'static str {
         match self {
             Self::Mihomo => "Mihomo",
-            Self::SingBox => "sing-box",
         }
     }
 
@@ -42,7 +37,6 @@ impl KernelKind {
     pub const fn capabilities(self) -> KernelCapabilities {
         match self {
             Self::Mihomo => KernelCapabilities::MIHOMO,
-            Self::SingBox => KernelCapabilities::SING_BOX,
         }
     }
 }
@@ -82,13 +76,6 @@ impl KernelCapability {
 
 impl KernelCapabilities {
     const MIHOMO: Self = Self { bits: u8::MAX };
-    const SING_BOX: Self = Self {
-        bits: KernelCapability::ManualVless.bit()
-            | KernelCapability::Selector.bit()
-            | KernelCapability::UrlTest.bit()
-            | KernelCapability::ClashApi.bit(),
-    };
-
     #[must_use]
     pub const fn supports(self, capability: KernelCapability) -> bool {
         self.bits & capability.bit() != 0

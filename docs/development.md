@@ -41,16 +41,6 @@ Debug builds may override the managed executable for local development:
 MANIS_MIHOMO_BINARY=/absolute/path/to/mihomo cargo run -p manis-ui
 ```
 
-The sing-box adapter discovers `sing-box` from `MANIS_SING_BOX_BINARY`, `PATH`, and common Homebrew
-locations. The UI only permits switching when the saved configuration can be translated without
-silently changing behavior.
-
-```bash
-MANIS_SING_BOX_BINARY=/absolute/path/to/sing-box cargo run -p manis-ui
-```
-
-sing-box remains externally discovered; Manis does not download it.
-
 ## Managed Mihomo runtime
 
 Mihomo has one production runtime path: Manis builds a private configuration from its saved sources,

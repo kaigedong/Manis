@@ -303,7 +303,6 @@ impl ManisApp {
             || self.managed_policies.mutation_state.is_busy()
             || self.managed_policies.active_benchmark_generation.is_some()
             || self.routing_apply_state.is_busy()
-            || self.kernel_switch_state.is_busy()
             || self.mihomo_core_update_state.is_busy()
             || self.proxy_mode_busy.is_some()
             || self.routing_mode_busy.is_some()

@@ -9,8 +9,7 @@ use manis_engine::{EngineManager, ReadinessPolicy, validate_managed_config};
 
 use super::{
     ControllerRuntime, GeneratedProfileApply, LoadError, ManagedRuntimeHealth,
-    RuntimeProfileSource, RuntimeSnapshot, load, load_sing_box, managed_apply,
-    validate_managed_runtime,
+    RuntimeProfileSource, RuntimeSnapshot, load, managed_apply, validate_managed_runtime,
 };
 #[cfg(target_os = "macos")]
 use super::{GENERATED_PROFILE_FILE, managed_engine_config, readiness_probe};
@@ -171,44 +170,6 @@ impl ControllerRuntime {
                     controller_endpoint: endpoint.clone(),
                     controller_secret: secret.clone(),
                     snapshot,
-                })
-            }
-            Self::Invalid { message } => Err(LoadError::Runtime(message.clone())),
-        }
-    }
-
-    pub(crate) fn connect_sing_box(&self) -> Result<RuntimeSnapshot, LoadError> {
-        match self {
-            #[cfg(any(test, feature = "snapshot-fixtures"))]
-            Self::Fixture { endpoint } => Ok(RuntimeSnapshot {
-                endpoint: endpoint.clone(),
-                controller_endpoint: endpoint.clone(),
-                controller_secret: None,
-                snapshot: load_sing_box(endpoint, None)?,
-            }),
-            Self::Managed {
-                manager,
-                generated_profile,
-                ..
-            } => {
-                let secret = generated_profile
-                    .as_ref()
-                    .and_then(|spec| spec.controller_secret.clone());
-                let endpoint = {
-                    let mut manager = manager.lock().map_err(|_poisoned| {
-                        LoadError::Runtime(MANAGED_KERNEL_LOCK_POISONED.to_owned())
-                    })?;
-                    match manager.running_endpoint()? {
-                        Some(endpoint) => endpoint,
-                        None => manager.start()?,
-                    }
-                };
-                let endpoint = endpoint.uri();
-                Ok(RuntimeSnapshot {
-                    endpoint: "Manis managed".to_owned(),
-                    controller_endpoint: endpoint.clone(),
-                    controller_secret: secret.clone(),
-                    snapshot: load_sing_box(&endpoint, secret.as_deref())?,
                 })
             }
             Self::Invalid { message } => Err(LoadError::Runtime(message.clone())),

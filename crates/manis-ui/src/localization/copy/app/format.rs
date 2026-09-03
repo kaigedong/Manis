@@ -215,22 +215,6 @@ pub(crate) fn benchmark_complete(
     }
 }
 
-pub(crate) fn switched_kernel(language: Language, kernel: &str) -> String {
-    match language {
-        Language::English => {
-            format!("Switched to {kernel} · configuration valid; connect to start")
-        }
-        Language::SimplifiedChinese => format!("已切换到 {kernel} · 配置校验通过，点击连接启动"),
-    }
-}
-
-pub(crate) fn kernel_switch_failed(language: Language, kernel: &str, error: &str) -> String {
-    match language {
-        Language::English => format!("Could not switch to {kernel}: {error}"),
-        Language::SimplifiedChinese => format!("无法切换到 {kernel}：{error}"),
-    }
-}
-
 pub(crate) fn mihomo_installed(language: Language, version: &str) -> String {
     match language {
         Language::English => format!("Mihomo {version} installed and verified"),

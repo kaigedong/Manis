@@ -19,16 +19,6 @@ pub(crate) fn load(
     )?))
 }
 
-pub(crate) fn load_sing_box(
-    endpoint: &str,
-    controller_secret: Option<&str>,
-) -> Result<LoadedSnapshot, LoadError> {
-    Ok(loaded_snapshot(fetch_sing_box_snapshot(
-        endpoint,
-        controller_secret,
-    )?))
-}
-
 fn loaded_snapshot(snapshot: MihomoSnapshot) -> LoadedSnapshot {
     let catalog = to_policy_catalog(&snapshot).ok();
     let providers = load_providers(&snapshot.providers);
@@ -116,19 +106,6 @@ pub(super) fn fetch_snapshot(
 
     let config = with_controller_secret(ControllerConfig::new(endpoint)?, controller_secret);
     MihomoClient::new(config, StdHttpTransport::default()).fetch_snapshot()
-}
-
-pub(super) fn fetch_sing_box_snapshot(
-    endpoint: &str,
-    controller_secret: Option<&str>,
-) -> Result<MihomoSnapshot, MihomoError> {
-    if endpoint.starts_with("unix://") || endpoint.starts_with("pipe://") {
-        return Err(MihomoError::InvalidConfig(
-            "sing-box Clash API requires loopback HTTP".to_owned(),
-        ));
-    }
-    let config = with_controller_secret(ControllerConfig::new(endpoint)?, controller_secret);
-    MihomoClient::new(config, StdHttpTransport::default()).fetch_sing_box_snapshot()
 }
 
 pub(super) fn fetch_group_delay(

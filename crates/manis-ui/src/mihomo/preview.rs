@@ -1,4 +1,6 @@
 use super::*;
+use std::fs;
+use std::net::TcpListener;
 
 pub(super) struct PreviewWorkspace {
     path: PathBuf,
@@ -392,4 +394,3 @@ fn wait_for_preview_providers(
         Err(_) => Err(SubscriptionPreviewError::ProviderUnavailable),
     }
 }
-use std::fs;
