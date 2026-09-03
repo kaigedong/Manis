@@ -12,8 +12,8 @@ use super::PreferencePersistence;
 use super::{
     ControllerReadiness, DueRemoteSource, GroupBenchmarkState, GroupBenchmarkSummary,
     ImportedSubscription, ImportedSubscriptionState, ManisApp, ProxyModeBlock, SourceRuntimeApply,
-    TunSupport, controller_status_label, next_due_remote_source, policy_target_is_selectable,
-    proxy_mode_block, stored_workspace, tun_dns_log_details,
+    TunSupport, next_due_remote_source, policy_target_is_selectable, proxy_mode_block,
+    stored_workspace, tun_dns_log_details,
 };
 use crate::subscription::SourceKind;
 use crate::{

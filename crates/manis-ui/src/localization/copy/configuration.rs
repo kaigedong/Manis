@@ -52,21 +52,9 @@ pub(crate) const APPLYING_RULE_SOURCE_STATE: LocalizedText =
     LocalizedText::new("Applying rule source state", "正在应用规则来源状态");
 pub(crate) const APPLYING_SUBSCRIPTION_STATE: LocalizedText =
     LocalizedText::new("Applying subscription state", "正在应用订阅状态");
-pub(crate) const AT_LEAST_ONE_ENABLED_SAVED_VLESS_NODE_IS_REQUIRED: LocalizedText =
-    LocalizedText::new(
-        "At least one enabled saved VLESS node is required",
-        "至少需要启用一个已保存的 VLESS 节点",
-    );
-pub(crate) const DISABLE_NON_VLESS_SAVED_NODES_BEFORE_SWITCHING_TO_SING_BOX: LocalizedText =
-    LocalizedText::new(
-        "Disable non-VLESS saved nodes before switching to sing-box",
-        "切换到 sing-box 前，请停用已保存的非 VLESS 节点",
-    );
 pub(crate) const AUTOMATIC: LocalizedText = LocalizedText::new("Automatic", "自动管理");
 pub(crate) const AUTONOMOUS_SYSTEM: LocalizedText =
     LocalizedText::new("Autonomous system", "自治系统");
-pub(crate) const AVAILABLE_WITH_MIHOMO: LocalizedText =
-    LocalizedText::new("Available with Mihomo", "仅 Mihomo 可用");
 pub(crate) const A_RULE_CAN_CONTAIN_AT_MOST_FOUR_CONDITIONS: LocalizedText = LocalizedText::new(
     "A rule can contain at most four conditions",
     "一条规则最多包含四个条件",
@@ -103,11 +91,6 @@ pub(crate) const CHOOSE_SUBSCRIPTION_UPDATE_INTERVAL: LocalizedText =
     LocalizedText::new("Choose subscription update interval", "选择订阅更新间隔");
 pub(crate) const CHOOSE_TARGET_POLICY: LocalizedText =
     LocalizedText::new("Choose target policy", "选择目标策略");
-pub(crate) const CLASH_SUBSCRIPTIONS_ARE_PRESENT_MANIS_NEEDS_ITS_NATIVE_PARSER_FIRST:
-    LocalizedText = LocalizedText::new(
-    "Clash subscriptions are present; Manis needs its native parser first",
-    "当前包含 Clash 订阅，需等待 Manis 原生订阅解析器",
-);
 pub(crate) const CONDITION_1: LocalizedText = LocalizedText::new("Condition 1", "条件 1");
 pub(crate) const CORE_AND_UPDATES: LocalizedText =
     LocalizedText::new("Core and updates", "内核与更新");
@@ -131,7 +114,6 @@ pub(crate) const COULD_NOT_UPDATE_SOURCE: LocalizedText =
 pub(crate) const COUNTRY_OR_REGION: LocalizedText =
     LocalizedText::new("Country or region", "国家或地区");
 pub(crate) const CURRENT: LocalizedText = LocalizedText::new("Current", "当前");
-pub(crate) const CURRENT_KERNEL: LocalizedText = LocalizedText::new("Current", "当前使用");
 pub(crate) const CURRENT_MANAGED_NETWORK_BEHAVIOR: LocalizedText =
     LocalizedText::new("Current managed network behavior", "当前托管网络行为");
 pub(crate) const DAILY: LocalizedText = LocalizedText::new("Daily", "每天");
@@ -388,10 +370,6 @@ pub(crate) const SINGLE_NODE_SOURCE_SAVE_FAILED: LocalizedText =
     LocalizedText::new("Single-node source save failed", "单节点来源保存失败");
 pub(crate) const SINGLE_NODE_SOURCE_UPDATED: LocalizedText =
     LocalizedText::new("Single-node source updated", "单节点来源已更新");
-pub(crate) const SING_BOX_WAS_NOT_FOUND_ON_THIS_DEVICE: LocalizedText = LocalizedText::new(
-    "sing-box was not found on this device",
-    "本机未检测到 sing-box",
-);
 pub(crate) const SOME_LOCAL_SOURCES_COULD_NOT_BE_RESTORED: LocalizedText = LocalizedText::new(
     "Some local sources could not be restored",
     "部分本地来源未能恢复",
@@ -406,22 +384,10 @@ pub(crate) const SOURCE_URL: LocalizedText = LocalizedText::new("Source URL", "�
 pub(crate) const SUBSCRIPTION: LocalizedText = LocalizedText::new("Subscription", "订阅来源");
 pub(crate) const SUBSCRIPTIONS_AND_NODES: LocalizedText =
     LocalizedText::new("Subscriptions and nodes", "订阅与单节点");
-pub(crate) const SUBSCRIPTIONS_POLICY_GROUPS_AND_LATENCY_TESTS: LocalizedText = LocalizedText::new(
-    "Subscriptions, policy groups, and latency tests",
-    "支持订阅、策略组与测速",
-);
 pub(crate) const SUBSCRIPTION_DISABLED: LocalizedText =
     LocalizedText::new("Subscription disabled", "订阅已停用");
 pub(crate) const SUBSCRIPTION_ENABLED: LocalizedText =
     LocalizedText::new("Subscription enabled", "订阅已启用");
-pub(crate) const SUPPORTS_MANUAL_VLESS_SELECTORS_URL_TESTS_AND_ROUTING_RULES: LocalizedText =
-    LocalizedText::new(
-        "Supports manual VLESS, selectors, URL tests, and routing rules",
-        "支持手动 VLESS、选择器、自动测速与分流规则",
-    );
-pub(crate) const SWITCH_AND_VALIDATE: LocalizedText =
-    LocalizedText::new("Switch and validate", "切换并校验");
-pub(crate) const SWITCH_TO: LocalizedText = LocalizedText::new("Switch to", "切换到");
 pub(crate) const TARGET: LocalizedText = LocalizedText::new("Target", "目标");
 pub(crate) const TARGET_POLICY: LocalizedText = LocalizedText::new("Target policy", "目标策略");
 pub(crate) const THE_PARAMETER_CANNOT_CONTAIN_COMMAS_TABS_OR_LINE_BREAKS: LocalizedText =
@@ -468,7 +434,6 @@ pub(crate) const USED_TO_IMPROVE_NETWORK_ACTIVITY: LocalizedText = LocalizedText
 );
 pub(crate) const USE_THIS_SOURCE: LocalizedText =
     LocalizedText::new("Use this source", "使用此来源");
-pub(crate) const VALIDATING: LocalizedText = LocalizedText::new("Validating", "正在校验");
 pub(crate) const VALIDATING_AND_SAVING_SINGLE_NODE_SOURCE: LocalizedText = LocalizedText::new(
     "Validating and saving single-node source",
     "正在验证并保存单节点来源",

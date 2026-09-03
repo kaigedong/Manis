@@ -20,8 +20,7 @@ GitHub, where users can download the package and install it through their packag
 
 The Linux GPUI backend is compiled with Wayland and X11 support. A native Wayland session is the
 primary target; X11 remains available as a compatibility fallback. The build fetches the official
-stable Mihomo release for x86_64 and verifies its GitHub release digest before packaging. sing-box
-is not bundled.
+stable Mihomo release for x86_64 and verifies its GitHub release digest before packaging.
 
 The tray uses StatusNotifierItem over the user's session D-Bus and does not require GTK 3 or
 libappindicator. Plasma provides a compatible host; GNOME needs an AppIndicator extension. If no

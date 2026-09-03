@@ -31,7 +31,6 @@ Rule::All {
 
 ```text
 Mihomo: AND,((DOMAIN-SUFFIX,github.com),(DST-PORT,22)),DIRECT
-sing-box: logical rule, mode=and, domain_suffix + port, outbound=direct
 ```
 
 IP 单地址使用 `IP-CIDR`：IPv4 为 `/32`，IPv6 为 `/128`。
@@ -63,7 +62,7 @@ IP 单地址使用 `IP-CIDR`：IPv4 为 `/32`，IPv6 为 `/128`。
 
 ## 测试
 
-- Mihomo 与 sing-box 精确渲染域名/IP + 端口组合。
+- Mihomo 精确渲染域名/IP + 端口组合。
 - 单条件和多条件的参数校验、重复条件与端口边界。
 - v1 手动规则和旧直连规则迁移到 v2。
 - 删除迁移后的端口规则不会在下次启动时恢复。

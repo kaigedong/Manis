@@ -1,26 +1,24 @@
 use super::{
-    HashMap, KernelKind, LoadError, MANUAL_ROUTING_RULE_GROUP_ID,
-    MAX_SUBSCRIPTION_PROXY_DNS_SERVERS, Path, Profile, ProxyDnsServer, Rule, SecretUrl,
-    StoredSingleNode, VlessProxy, apply_qx_rule_sources, compile_managed_policy_groups,
-    configured_mixed_port, load_managed_policy_groups_in, load_qx_rule_sources_in,
-    load_routing_mode_in, load_routing_rule_group_order_in, load_single_node_sources_in,
-    load_subscription_sources_in, normalized_routing_rule_group_order, profile_mode,
+    HashMap, LoadError, MANUAL_ROUTING_RULE_GROUP_ID, MAX_SUBSCRIPTION_PROXY_DNS_SERVERS, Path,
+    Profile, ProxyDnsServer, Rule, SecretUrl, StoredSingleNode, VlessProxy, apply_qx_rule_sources,
+    compile_managed_policy_groups, configured_mixed_port, load_managed_policy_groups_in,
+    load_qx_rule_sources_in, load_routing_mode_in, load_routing_rule_group_order_in,
+    load_single_node_sources_in, load_subscription_sources_in, normalized_routing_rule_group_order,
+    profile_mode,
 };
 
 pub(super) fn compile_saved_profile(
     store_dir: &Path,
     base_subscription: Option<SecretUrl>,
-    kernel: KernelKind,
 ) -> Result<Profile, LoadError> {
     let (subscriptions, mut provider_indexes, nameservers) =
-        load_subscription_inputs(store_dir, base_subscription, kernel)?;
+        load_subscription_inputs(store_dir, base_subscription)?;
     let stored_single_nodes = load_enabled_single_nodes(store_dir)?;
     let (local_provider_paths, vless_nodes) = compile_single_node_inputs(
-        kernel,
         &stored_single_nodes,
         subscriptions.len(),
         &mut provider_indexes,
-    )?;
+    );
     let (mut profile, bootstrap_fallback) = build_base_profile(
         store_dir,
         subscriptions,
@@ -32,7 +30,7 @@ pub(super) fn compile_saved_profile(
     if !nameservers.is_empty() {
         profile.set_proxy_server_nameservers(nameservers);
     }
-    apply_saved_routing(store_dir, kernel, &mut profile, bootstrap_fallback)?;
+    apply_saved_routing(store_dir, &mut profile, bootstrap_fallback)?;
     Ok(profile)
 }
 
@@ -41,7 +39,6 @@ type SubscriptionInputs = (Vec<SecretUrl>, HashMap<String, usize>, Vec<ProxyDnsS
 fn load_subscription_inputs(
     store_dir: &Path,
     base_subscription: Option<SecretUrl>,
-    kernel: KernelKind,
 ) -> Result<SubscriptionInputs, LoadError> {
     let mut subscriptions = base_subscription.into_iter().collect::<Vec<_>>();
     let stored = load_subscription_sources_in(store_dir)
@@ -53,15 +50,6 @@ fn load_subscription_inputs(
         .into_iter()
         .filter(|stored| stored.enabled)
         .collect::<Vec<_>>();
-    match kernel {
-        KernelKind::SingBox if !stored.is_empty() => {
-            return Err(LoadError::Runtime(
-                "sing-box cannot read Clash subscriptions yet; use manual VLESS nodes instead"
-                    .to_owned(),
-            ));
-        }
-        KernelKind::Mihomo | KernelKind::SingBox => {}
-    }
     let mut indexes = HashMap::new();
     let mut nameservers = Vec::new();
     for source in stored {
@@ -95,40 +83,19 @@ fn load_enabled_single_nodes(store_dir: &Path) -> Result<Vec<StoredSingleNode>, 
 }
 
 fn compile_single_node_inputs(
-    kernel: KernelKind,
     nodes: &[StoredSingleNode],
     subscription_count: usize,
     provider_indexes: &mut HashMap<String, usize>,
-) -> Result<(Vec<String>, Vec<VlessProxy>), LoadError> {
-    match kernel {
-        KernelKind::Mihomo => {
-            let paths = nodes
-                .iter()
-                .enumerate()
-                .map(|(offset, stored)| {
-                    provider_indexes.insert(stored.id.clone(), subscription_count + offset);
-                    format!("./single_nodes/{}.txt", stored.id)
-                })
-                .collect();
-            Ok((paths, Vec::new()))
-        }
-        KernelKind::SingBox => {
-            let nodes = nodes
-                .iter()
-                .map(|stored| {
-                    stored
-                        .source
-                        .expose_to(VlessProxy::parse_share_link)
-                        .map_err(|error| {
-                            LoadError::Runtime(format!(
-                                "sing-box currently supports only manual VLESS single-node sources: {error}"
-                            ))
-                        })
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok((Vec::new(), nodes))
-        }
-    }
+) -> (Vec<String>, Vec<VlessProxy>) {
+    let paths = nodes
+        .iter()
+        .enumerate()
+        .map(|(offset, stored)| {
+            provider_indexes.insert(stored.id.clone(), subscription_count + offset);
+            format!("./single_nodes/{}.txt", stored.id)
+        })
+        .collect();
+    (paths, Vec::new())
 }
 
 fn build_base_profile(
@@ -174,7 +141,6 @@ fn build_base_profile(
 
 fn apply_saved_routing(
     store_dir: &Path,
-    kernel: KernelKind,
     profile: &mut Profile,
     bootstrap_fallback: Option<Rule>,
 ) -> Result<(), LoadError> {
@@ -196,8 +162,12 @@ fn apply_saved_routing(
         normalized_routing_rule_group_order(&stored_order, !manual_rules.is_empty(), &sources);
     for group_id in order {
         if group_id == MANUAL_ROUTING_RULE_GROUP_ID {
-            crate::manual_rule::append_manual_rules(profile, &manual_rules, kernel)
-                .map_err(|error| LoadError::Runtime(error.to_string()))?;
+            crate::manual_rule::append_manual_rules(
+                profile,
+                &manual_rules,
+                manis_core::KernelKind::Mihomo,
+            )
+            .map_err(|error| LoadError::Runtime(error.to_string()))?;
         } else if let Some(source) = sources.iter().find(|source| source.id == group_id) {
             apply_qx_rule_sources(profile, std::slice::from_ref(source))?;
         }

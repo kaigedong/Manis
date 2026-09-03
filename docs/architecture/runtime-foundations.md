@@ -33,7 +33,7 @@ Tokio-native; adopting another runtime solely for these local calls is not curre
 ## Configuration: Serde wire trees
 
 The typed `Profile` remains the source of truth and validation boundary. Private render modules map
-it into ordered, typed JSON values, then encode with serde_json (sing-box) or serde-saphyr (Mihomo).
+it into ordered, typed YAML values, then encode with serde-saphyr for Mihomo.
 The `preserve_order` feature preserves field insertion order; rule/group/provider sequence order is
 unchanged. No hand-written JSON/YAML escaping, commas, or indentation remain in these renderers.
 

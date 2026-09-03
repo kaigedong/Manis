@@ -9,7 +9,7 @@ once the public API and configuration formats stabilize.
 ### Added
 
 - Rust and GPUI desktop application for policy-based proxy routing.
-- Mihomo management and a capability-gated sing-box adapter.
+- Mihomo management with a private, managed runtime.
 - Subscription and VLESS import, policy groups, ordered routing rules, latency testing, network
   activity, logs, system proxy control, and macOS TUN integration.
 - English and Simplified Chinese interface with system-language detection.

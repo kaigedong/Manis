@@ -19,14 +19,8 @@ impl ManisApp {
             },
             if self.runtime.is_fixture() {
                 TunSupport::FixtureReadOnly
-            } else if self
-                .runtime
-                .capabilities()
-                .supports(manis_core::KernelCapability::Tun)
-            {
-                TunSupport::Supported
             } else {
-                TunSupport::KernelUnsupported
+                TunSupport::Supported
             },
         )
     }
@@ -144,18 +138,6 @@ impl ManisApp {
                     language.localized(copy::app::CONNECT_BEFORE_CHANGING_PROXY_MODE),
                     self.runtime.kind().display_name(),
                 ),
-            )
-        } else if requested == ProxyMode::Tun
-            && !self
-                .runtime
-                .capabilities()
-                .supports(manis_core::KernelCapability::Tun)
-        {
-            (
-                "kernel_has_no_tun_capability",
-                language
-                    .localized(copy::app::TUN_IS_NOT_YET_AVAILABLE_FOR_THE_SING_BOX_ADAPTER)
-                    .to_owned(),
             )
         } else if requested == ProxyMode::Tun && self.runtime.is_fixture() {
             (

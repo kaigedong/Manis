@@ -14,61 +14,6 @@ use std::time::Duration;
 use manis_engine::ControllerEndpoint;
 
 #[test]
-#[ignore = "requires a locally installed sing-box executable"]
-fn managed_sing_box_clash_api_loads_a_manis_snapshot() -> Result<(), Box<dyn std::error::Error>> {
-    let binary = super::discover_sing_box_binary()?;
-    let root = test_temp_dir("manis-sing-box-runtime");
-    let data_dir = root.join("runtime");
-    let vless = manis_profile::VlessProxy::parse_share_link(
-        "vless://00000000-0000-4000-8000-000000000000@198.51.100.7:443?security=reality&encryption=none&pbk=Qs24XU-ibEZ3LWDjGBITKdQvualLy0pi_PI0qoF79A8&fp=chrome&type=tcp&flow=xtls-rprx-vision&sni=cdn.example.invalid#Reality%20TCP",
-    )?;
-    let mut profile = manis_profile::Profile::qx_sources(Vec::new(), vec![vless], 17_890)?;
-    profile.rules = vec![manis_profile::Rule::Match {
-        policy: manis_profile::PolicyRef::Group(manis_profile::Name::parse("Proxy")?),
-    }];
-    let address = TcpListener::bind("127.0.0.1:0")?.local_addr()?;
-    let controller = ControllerEndpoint::Tcp(address);
-    let secret = "fixture-controller-secret".to_owned();
-    let spec = super::ManagedGeneratedProfile {
-        kernel: manis_core::KernelKind::SingBox,
-        binary,
-        data_dir: data_dir.clone(),
-        controller: controller.clone(),
-        expected_mixed_port: None,
-        profile_store_dir: None,
-        controller_secret: Some(secret.clone()),
-    };
-    let rendered = super::render_generated_profile(&spec, &profile)?;
-    let config_file = manis_profile::write_private_atomic(
-        &data_dir,
-        super::SING_BOX_PROFILE_FILE,
-        rendered.as_bytes(),
-    )?;
-    let config = super::managed_engine_config(&spec, config_file);
-    let mut manager = manis_engine::EngineManager::new(
-        config,
-        manis_engine::ReadinessPolicy::default(),
-        super::readiness_probe(&spec),
-    );
-    let endpoint = manager.start()?.uri();
-
-    super::set_routing_mode(&endpoint, manis_core::RoutingMode::Direct, Some(&secret))?;
-    let runtime = super::fetch_sing_box_snapshot(&endpoint, Some(&secret))?;
-    assert_eq!(runtime.runtime.mode, manis_core::RoutingMode::Direct);
-    super::put_policy_group_selection(&endpoint, "GLOBAL", "Reality TCP", Some(&secret))?;
-    let global = super::fetch_policy_group(&endpoint, "GLOBAL", Some(&secret))?;
-    assert_eq!(global.current.as_deref(), Some("Reality TCP"));
-    super::put_policy_group_selection(&endpoint, "Proxy", "Auto", Some(&secret))?;
-    let selected = super::fetch_policy_group(&endpoint, "Proxy", Some(&secret))?;
-    assert_eq!(selected.current.as_deref(), Some("Auto"));
-    let snapshot = super::load_sing_box(&endpoint, Some(&secret));
-    manager.stop()?;
-    fs::remove_dir_all(root)?;
-    snapshot?;
-    Ok(())
-}
-
-#[test]
 fn parses_absolute_unix_controller_endpoint() -> Result<(), Box<dyn std::error::Error>> {
     let path = super::unix_socket_path("unix:///tmp/verge/mihomo.sock")?
         .ok_or("expected a Unix socket path")?;

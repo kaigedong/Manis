@@ -15,7 +15,6 @@ use super::{
     ManagedEngineConfig, ProbeStatus, ProcessExit, ProcessSpawner, ReadinessPolicy, ReadinessProbe,
     resolved_command,
 };
-use manis_core::KernelKind;
 
 static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -183,63 +182,6 @@ fn builds_validation_and_launch_commands_from_isolated_paths() {
             layout.data_dir.join("controller.sock").into_os_string(),
         ]
     );
-}
-
-#[test]
-fn builds_sing_box_check_and_run_commands_with_a_secured_loopback_api() {
-    let layout = TempLayout::new();
-    let config = ManagedEngineConfig::new_sing_box(
-        layout.binary.clone(),
-        layout.config.clone(),
-        layout.data_dir.clone(),
-        ControllerEndpoint::Tcp("127.0.0.1:19090".parse().expect("loopback address")),
-        true,
-    );
-
-    assert_eq!(config.kernel(), KernelKind::SingBox);
-    assert!(config.validate().is_ok());
-    assert_eq!(
-        config.validation_command().args(),
-        &[
-            OsString::from("check"),
-            OsString::from("-c"),
-            layout.config.clone().into_os_string(),
-            OsString::from("-D"),
-            layout.data_dir.clone().into_os_string(),
-        ]
-    );
-    assert_eq!(
-        config.launch_command().args(),
-        &[
-            OsString::from("run"),
-            OsString::from("-c"),
-            layout.config.clone().into_os_string(),
-            OsString::from("-D"),
-            layout.data_dir.clone().into_os_string(),
-        ]
-    );
-}
-
-#[test]
-fn sing_box_rejects_an_unauthenticated_or_non_loopback_controller() {
-    let layout = TempLayout::new();
-    let unauthenticated = ManagedEngineConfig::new_sing_box(
-        layout.binary.clone(),
-        layout.config.clone(),
-        layout.data_dir.clone(),
-        ControllerEndpoint::Tcp("127.0.0.1:19090".parse().expect("loopback address")),
-        false,
-    );
-    let remote = ManagedEngineConfig::new_sing_box(
-        layout.binary.clone(),
-        layout.config.clone(),
-        layout.data_dir.clone(),
-        ControllerEndpoint::Tcp("192.0.2.10:19090".parse().expect("remote address")),
-        true,
-    );
-
-    assert!(unauthenticated.validate().is_err());
-    assert!(remote.validate().is_err());
 }
 
 #[test]

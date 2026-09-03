@@ -2,7 +2,6 @@ use std::fs;
 use std::path::Path;
 use std::sync::atomic::Ordering;
 
-use manis_core::KernelKind;
 use manis_engine::{EngineManager, validate_managed_config};
 use manis_profile::write_private_atomic;
 
@@ -69,16 +68,11 @@ fn prepare_profile(
     spec: &ManagedGeneratedProfile,
     store_dir: &Path,
 ) -> Result<PreparedProfile, LoadError> {
-    if spec.kernel == KernelKind::Mihomo {
-        sync_single_node_provider_files(store_dir, &spec.data_dir)?;
-    }
-    let profile = compile_saved_profile(store_dir, None, spec.kernel)?;
+    sync_single_node_provider_files(store_dir, &spec.data_dir)?;
+    let profile = compile_saved_profile(store_dir, None)?;
     let rendered = render_generated_profile(spec, &profile)?;
-    let rendered_with_tun = match spec.kernel {
-        KernelKind::Mihomo => render_generated_profile_with_tun(spec, &profile, true)?,
-        KernelKind::SingBox => rendered.clone(),
-    };
-    let (candidate_name, final_name) = generated_profile_names(spec.kernel);
+    let rendered_with_tun = render_generated_profile_with_tun(spec, &profile, true)?;
+    let (candidate_name, final_name) = generated_profile_names();
     let candidate_path = write_private_atomic(&spec.data_dir, candidate_name, rendered.as_bytes())
         .map_err(|_error| {
             LoadError::Runtime("candidate managed configuration could not be written".to_owned())
@@ -117,9 +111,7 @@ fn install_profile(
     let running_endpoint = manager.running_endpoint()?;
     let was_running = running_endpoint.is_some();
     let restore_tun = tun_was_enabled(spec, running_endpoint.as_ref())?;
-    if spec.kernel == KernelKind::Mihomo
-        && let Some(endpoint) = running_endpoint.as_ref()
-    {
+    if let Some(endpoint) = running_endpoint.as_ref() {
         let payload = if restore_tun {
             &prepared.rendered_with_tun
         } else {
@@ -205,9 +197,6 @@ fn tun_was_enabled(
     spec: &ManagedGeneratedProfile,
     endpoint: Option<&manis_engine::ControllerEndpoint>,
 ) -> Result<bool, LoadError> {
-    if spec.kernel != KernelKind::Mihomo {
-        return Ok(false);
-    }
     endpoint
         .map(|endpoint| {
             fetch_runtime_config(&endpoint.uri(), spec.controller_secret.as_deref())

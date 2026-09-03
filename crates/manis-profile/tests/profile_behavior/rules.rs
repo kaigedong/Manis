@@ -35,36 +35,7 @@ fn destination_port_rules_render_to_mihomo_yaml_without_a_generated_fallback() {
 }
 
 #[test]
-fn destination_port_rules_render_to_sing_box_json() {
-    let vless = VlessProxy::parse_share_link(
-        "vless://00000000-0000-4000-8000-000000000000@198.51.100.7:443?security=reality&encryption=none&pbk=fixture_reality-public-key&headerType=&fp=chrome&type=tcp&flow=xtls-rprx-vision&sni=cdn.example.invalid#Reality%20TCP",
-    )
-    .expect("Reality TCP fixture should parse");
-    let mut profile = Profile::qx_sources(Vec::new(), vec![vless], 17_890)
-        .expect("manual VLESS fixture should build a profile");
-    profile.rules.insert(
-        0,
-        Rule::DstPort {
-            port: 22,
-            policy: PolicyRef::Direct,
-        },
-    );
-
-    let json = render_sing_box_json(
-        &profile,
-        &SingBoxOptions::new("127.0.0.1:19090", "fixture-controller-secret"),
-    )
-    .expect("supported profile should render");
-
-    let document: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert_eq!(
-        document["route"]["rules"][2],
-        serde_json::json!({"port": [22], "action": "route", "outbound": "direct"})
-    );
-}
-
-#[test]
-fn domain_and_port_rules_render_exactly_for_both_kernels() {
+fn domain_and_port_rules_render_exactly_for_mihomo() {
     let mut mihomo_profile =
         Profile::qx_default(fixture_secret()).expect("default profile is valid");
     mihomo_profile.rules.insert(
@@ -79,40 +50,6 @@ fn domain_and_port_rules_render_exactly_for_both_kernels() {
     );
     let yaml = render_mihomo_yaml(&mihomo_profile).expect("compound rule should render");
     assert!(yaml.contains("AND,((DOMAIN-SUFFIX,github.com),(DST-PORT,22)),DIRECT"));
-
-    let vless = VlessProxy::parse_share_link(
-        "vless://00000000-0000-4000-8000-000000000000@198.51.100.7:443?security=reality&encryption=none&pbk=fixture_reality-public-key&headerType=&fp=chrome&type=tcp&flow=xtls-rprx-vision&sni=cdn.example.invalid#Reality%20TCP",
-    )
-    .expect("Reality TCP fixture should parse");
-    let mut sing_box_profile = Profile::qx_sources(Vec::new(), vec![vless], 17_890)
-        .expect("manual VLESS fixture should build a profile");
-    sing_box_profile.rules.insert(
-        0,
-        Rule::All {
-            conditions: vec![
-                manis_profile::RuleCondition::IpCidr {
-                    value: "192.0.2.10/32".to_owned(),
-                    no_resolve: true,
-                },
-                manis_profile::RuleCondition::DstPort(22),
-            ],
-            policy: PolicyRef::Direct,
-        },
-    );
-    let json = render_sing_box_json(
-        &sing_box_profile,
-        &SingBoxOptions::new("127.0.0.1:19090", "fixture-controller-secret"),
-    )
-    .expect("compound rule should render");
-    let document: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert_eq!(
-        document["route"]["rules"][2],
-        serde_json::json!({
-            "type": "logical", "mode": "and",
-            "rules": [{"ip_cidr": ["192.0.2.10/32"]}, {"port": [22]}],
-            "action": "route", "outbound": "direct"
-        })
-    );
 }
 
 #[test]

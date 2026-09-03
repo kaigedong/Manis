@@ -6,7 +6,7 @@ adaptive
 
 ## Stack
 
-Manis is a Rust + GPUI desktop application targeting Windows, macOS, and Linux. Mihomo is the default routing core; sing-box is available through a capability-gated adapter for the subset Manis can translate exactly. The GPUI application owns the kernel-neutral product model, orchestration, and presentation.
+Manis is a Rust + GPUI desktop application targeting Windows, macOS, and Linux. Mihomo is the managed routing core. The GPUI application owns the product model, orchestration, and presentation.
 
 ## Users
 

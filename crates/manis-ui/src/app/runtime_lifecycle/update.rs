@@ -1,7 +1,8 @@
 use super::{
-    AppUpdateError, AvailableUpdate, Context, Duration, KernelKind, KernelRuntime, Language,
-    LogLevel, ManisApp, app_update, copy, core_update, mihomo, record_event,
+    AppUpdateError, AvailableUpdate, Context, Duration, Language, LogLevel, ManisApp, app_update,
+    copy, core_update, mihomo, record_event,
 };
+use crate::kernel::KernelRuntime;
 
 pub(in crate::app) enum MihomoCoreUpdateOutcome {
     Installed {
@@ -39,9 +40,7 @@ pub(super) fn perform_mihomo_core_update(
 
     let mut prepared = None;
     let install = core_update::install_latest_core_update(|| {
-        let runtime =
-            KernelRuntime::prepare_with_language(KernelKind::Mihomo, Some(store_dir), language)
-                .map_err(|_message| core_update::CoreUpdateError::PublishFailed)?;
+        let runtime = KernelRuntime::prepare_with_language(Some(store_dir));
         let snapshot = reconnect
             .then(|| runtime.connect())
             .transpose()
@@ -75,13 +74,6 @@ pub(super) fn perform_mihomo_core_update(
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(in crate::app) enum KernelSwitchState {
-    #[default]
-    Idle,
-    Preparing,
-}
-
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(in crate::app) enum MihomoCoreUpdateState {
     #[default]
@@ -93,12 +85,6 @@ pub(in crate::app) enum MihomoCoreUpdateState {
 impl MihomoCoreUpdateState {
     pub(in crate::app) const fn is_busy(&self) -> bool {
         matches!(self, Self::Updating)
-    }
-}
-
-impl KernelSwitchState {
-    pub(in crate::app) const fn is_busy(self) -> bool {
-        matches!(self, Self::Preparing)
     }
 }
 

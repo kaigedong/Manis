@@ -26,7 +26,6 @@ pub(crate) const CHANGE_PROXY_MODE: LocalizedText =
     LocalizedText::new("Change proxy mode", "切换代理模式");
 pub(crate) const CHANGE_ROUTING_MODE: LocalizedText =
     LocalizedText::new("Change routing mode", "切换路由模式");
-pub(crate) const CONFIGURATION: LocalizedText = LocalizedText::new("configuration", "配置");
 pub(crate) const CONFIGURATION_OPENED: LocalizedText =
     LocalizedText::new("Configuration opened", "已打开配置");
 pub(crate) const CONNECTING: LocalizedText = LocalizedText::new("connecting", "连接中");
@@ -91,8 +90,6 @@ pub(crate) const IMPORTED_SUBSCRIPTION_REMOVAL_FAILED: LocalizedText =
     LocalizedText::new("Imported subscription removal failed", "导入订阅移除失败");
 pub(crate) const IMPORTED_SUBSCRIPTION_REMOVED: LocalizedText =
     LocalizedText::new("Imported subscription removed", "已移除导入订阅");
-pub(crate) const KERNEL_HAS_NO_TUN: LocalizedText =
-    LocalizedText::new("kernel has no TUN", "当前内核无 TUN");
 pub(crate) const BENCHMARK_ACCESS_DENIED: LocalizedText = LocalizedText::new(
     "The controller denied the latency request (HTTP 401/403); check controller access permissions",
     "内核拒绝了测速请求（HTTP 401/403），请检查控制器访问权限",
@@ -280,11 +277,6 @@ pub(crate) const TEST_FIXTURES_CANNOT_ENABLE_TUN: LocalizedText = LocalizedText:
 );
 pub(crate) const TEST_FIXTURE_IS_READ_ONLY: LocalizedText =
     LocalizedText::new("test fixture is read-only", "测试快照只读");
-pub(crate) const THE_LOCAL_CONFIGURATION_DIRECTORY_IS_UNAVAILABLE_THE_KERNEL_CANNOT_BE:
-    LocalizedText = LocalizedText::new(
-    "The local configuration directory is unavailable; the kernel cannot be changed",
-    "无法确定本机配置目录，不能切换内核",
-);
 pub(crate) const THE_MANIS_DATA_DIRECTORY_IS_UNAVAILABLE_MIHOMO_CANNOT_BE_UPDATED: LocalizedText =
     LocalizedText::new(
         "The Manis data directory is unavailable; Mihomo cannot be updated",
@@ -333,11 +325,6 @@ pub(crate) const TUN_IS_DISABLED_BUT_RESTORING_THE_ORIGINAL_DNS_FAILED_RECOVERY:
         "TUN is disabled, but restoring the original DNS failed; recovery will be retried",
         "TUN 已关闭，但恢复原 DNS 失败；Manis 将继续重试恢复",
     );
-pub(crate) const TUN_IS_NOT_YET_AVAILABLE_FOR_THE_SING_BOX_ADAPTER: LocalizedText =
-    LocalizedText::new(
-        "TUN is not yet available for the sing-box adapter; use the system HTTP/SOCKS proxy",
-        "当前 sing-box 适配器尚未开放 TUN；可使用系统 HTTP/SOCKS 代理",
-    );
 pub(crate) const TURNING_OFF: LocalizedText = LocalizedText::new("Turning off…", "关闭中…");
 pub(crate) const TURN_OFF_THE_ACTIVE_PROXY_MODE_BEFORE_UPDATING_MIHOMO: LocalizedText =
     LocalizedText::new(
@@ -347,13 +334,7 @@ pub(crate) const TURN_OFF_THE_ACTIVE_PROXY_MODE_BEFORE_UPDATING_MIHOMO: Localize
 pub(crate) const UNKNOWN_TYPE: LocalizedText = LocalizedText::new("Unknown type", "类型未知");
 pub(crate) const UPDATING_SUBSCRIPTION_NODES: LocalizedText =
     LocalizedText::new("Updating subscription nodes", "正在更新订阅节点");
-pub(crate) const VALIDATING: LocalizedText = LocalizedText::new("Validating", "正在校验并准备");
 pub(crate) const VALIDATING_NODES_AND_IMPORTING_SUBSCRIPTION: LocalizedText = LocalizedText::new(
     "Validating nodes and importing subscription",
     "正在验证节点并导入订阅",
 );
-pub(crate) const WAIT_FOR_THE_PROXY_MODE_CHANGE_TO_FINISH_BEFORE_CHANGING_KERNELS: LocalizedText =
-    LocalizedText::new(
-        "Wait for the proxy mode change to finish before changing kernels",
-        "请等待代理模式切换完成后再更换内核",
-    );

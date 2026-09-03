@@ -326,7 +326,7 @@ fn saved_rule_group_order_controls_compiled_rule_priority() -> Result<(), Box<dy
         ],
     )?;
 
-    let profile = super::compile_saved_profile(&store, None, manis_core::KernelKind::Mihomo)?;
+    let profile = super::compile_saved_profile(&store, None)?;
     let yaml = manis_profile::render_mihomo_yaml(&profile)?;
     let second_index = yaml.find("DOMAIN-SUFFIX,second.example,DIRECT");
     let manual_index = yaml.find("DOMAIN,manual.example,DIRECT");

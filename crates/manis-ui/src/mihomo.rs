@@ -1,9 +1,4 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-#[cfg(not(windows))]
-use std::fs;
-#[cfg(unix)]
-use std::io::Read;
-use std::net::TcpListener;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -24,8 +19,8 @@ use manis_mihomo::{
 };
 use manis_profile::{
     MANIS_GLOBAL_GROUP_NAME, Name, PolicyRef, Profile, ProfileMode, ProxyDnsServer, QxRuleList,
-    Rule, SecretUrl, SingBoxOptions, UserPolicyGroup, UserPolicyGroupKind, VlessProxy,
-    render_mihomo_yaml, render_mihomo_yaml_with_tun, render_sing_box_json, write_private_atomic,
+    Rule, SecretUrl, UserPolicyGroup, UserPolicyGroupKind, VlessProxy, render_mihomo_yaml,
+    render_mihomo_yaml_with_tun, write_private_atomic,
 };
 use ureq::{Agent, ResponseExt as _};
 
@@ -101,8 +96,6 @@ const SUBSCRIPTION_FILE_ENV: &str = "MANIS_MIHOMO_SUBSCRIPTION_FILE";
 const LEGACY_RELAY_SUBSCRIPTION_FILE_ENV: &str = "RELAY_MIHOMO_SUBSCRIPTION_FILE";
 const MIXED_PORT_ENV: &str = "MANIS_MIHOMO_MIXED_PORT";
 const LEGACY_RELAY_MIXED_PORT_ENV: &str = "RELAY_MIHOMO_MIXED_PORT";
-const SING_BOX_BINARY_ENV: &str = "MANIS_SING_BOX_BINARY";
-const LEGACY_RELAY_SING_BOX_BINARY_ENV: &str = "RELAY_SING_BOX_BINARY";
 const DEFAULT_MANAGED_MIXED_PORT: u16 = 17_890;
 const MAX_SUBSCRIPTION_FILE_BYTES: u64 = 16 * 1024;
 const MAX_STORED_SUBSCRIPTION_FILE_BYTES: u64 = 2 * 16 * 1024 + 1024;
@@ -153,8 +146,6 @@ const LEGACY_RELAY_MANAGED_POLICY_VERSION: &str = "relay-node-group-v1";
 const MAX_MANAGED_POLICIES: usize = 32;
 const GENERATED_PROFILE_FILE: &str = "manis-generated.yaml";
 const CANDIDATE_PROFILE_FILE: &str = "manis-generated.candidate.yaml";
-const SING_BOX_PROFILE_FILE: &str = "manis-generated.json";
-const SING_BOX_CANDIDATE_FILE: &str = "manis-generated.candidate.json";
 const PREVIEW_PROVIDER_ATTEMPTS: usize = 80;
 const PREVIEW_PROVIDER_DELAY: Duration = Duration::from_millis(250);
 const PREVIEW_ENGINE_START_ATTEMPTS: usize = 4;
@@ -307,19 +298,15 @@ fn generated_engine_manager(
     ))
 }
 
-fn generated_profile_names(kernel: KernelKind) -> (&'static str, &'static str) {
-    match kernel {
-        KernelKind::Mihomo => (CANDIDATE_PROFILE_FILE, GENERATED_PROFILE_FILE),
-        KernelKind::SingBox => (SING_BOX_CANDIDATE_FILE, SING_BOX_PROFILE_FILE),
-    }
+fn generated_profile_names() -> (&'static str, &'static str) {
+    (CANDIDATE_PROFILE_FILE, GENERATED_PROFILE_FILE)
 }
 
 fn compile_saved_profile(
     store_dir: &Path,
     base_subscription: Option<SecretUrl>,
-    kernel: KernelKind,
 ) -> Result<Profile, LoadError> {
-    profile_compiler::compile_saved_profile(store_dir, base_subscription, kernel)
+    profile_compiler::compile_saved_profile(store_dir, base_subscription)
 }
 
 fn sync_single_node_provider_files(store_dir: &Path, data_dir: &Path) -> Result<(), LoadError> {
@@ -349,66 +336,39 @@ fn render_generated_profile(
 }
 
 fn render_generated_profile_with_tun(
-    spec: &ManagedGeneratedProfile,
+    _spec: &ManagedGeneratedProfile,
     profile: &Profile,
     tun_enabled: bool,
 ) -> Result<String, LoadError> {
-    match spec.kernel {
-        KernelKind::Mihomo => render_mihomo_yaml_with_tun(profile, tun_enabled)
-            .map_err(|error| LoadError::Runtime(error.to_string())),
-        KernelKind::SingBox => {
-            let ControllerEndpoint::Tcp(address) = spec.controller else {
-                return Err(LoadError::Runtime(
-                    "sing-box requires a private loopback Clash API".to_owned(),
-                ));
-            };
-            let secret = spec.controller_secret.as_deref().ok_or_else(|| {
-                LoadError::Runtime("sing-box controller has no authentication secret".to_owned())
-            })?;
-            render_sing_box_json(profile, &SingBoxOptions::new(address.to_string(), secret))
-                .map_err(|error| LoadError::Runtime(error.to_string()))
-        }
-    }
+    render_mihomo_yaml_with_tun(profile, tun_enabled)
+        .map_err(|error| LoadError::Runtime(error.to_string()))
 }
 
 fn compile_managed_generated_profile(spec: &ManagedGeneratedProfile) -> Result<Profile, LoadError> {
     let store_dir = spec.profile_store_dir.as_deref().ok_or_else(|| {
         LoadError::Runtime("managed kernel has no Manis source directory".to_owned())
     })?;
-    compile_saved_profile(store_dir, None, spec.kernel)
+    compile_saved_profile(store_dir, None)
 }
 
 fn managed_engine_config(
     spec: &ManagedGeneratedProfile,
     config_file: PathBuf,
 ) -> ManagedEngineConfig {
-    match spec.kernel {
-        KernelKind::Mihomo => ManagedEngineConfig::new(
-            spec.binary.clone(),
-            config_file,
-            spec.data_dir.clone(),
-            spec.controller.clone(),
-        ),
-        KernelKind::SingBox => ManagedEngineConfig::new_sing_box(
-            spec.binary.clone(),
-            config_file,
-            spec.data_dir.clone(),
-            spec.controller.clone(),
-            spec.controller_secret.is_some(),
-        ),
-    }
+    ManagedEngineConfig::new(
+        spec.binary.clone(),
+        config_file,
+        spec.data_dir.clone(),
+        spec.controller.clone(),
+    )
 }
 
+#[allow(clippy::unnecessary_wraps)]
 fn managed_engine_config_for_privilege(
     spec: &ManagedGeneratedProfile,
     config_file: PathBuf,
     privileged: bool,
 ) -> Result<ManagedEngineConfig, LoadError> {
-    if privileged && spec.kernel != KernelKind::Mihomo {
-        return Err(LoadError::Runtime(
-            "privileged managed runtime supports only Mihomo".to_owned(),
-        ));
-    }
     #[cfg(target_os = "linux")]
     if privileged {
         let mut privileged_spec = spec.clone();
@@ -422,12 +382,8 @@ fn managed_engine_config_for_privilege(
 }
 
 fn readiness_probe(spec: &ManagedGeneratedProfile) -> Box<dyn ReadinessProbe> {
-    match spec.kernel {
-        KernelKind::Mihomo => Box::new(MihomoReadinessProbe),
-        KernelKind::SingBox => Box::new(SingBoxReadinessProbe {
-            secret: spec.controller_secret.clone().unwrap_or_default(),
-        }),
-    }
+    let _ = spec;
+    Box::new(MihomoReadinessProbe)
 }
 
 pub(crate) struct RuntimeSnapshot {
@@ -529,41 +485,25 @@ impl ReadinessProbe for MihomoReadinessProbe {
     }
 }
 
-struct SingBoxReadinessProbe {
-    secret: String,
-}
-
-impl ReadinessProbe for SingBoxReadinessProbe {
-    fn check(&mut self, endpoint: &ControllerEndpoint) -> ProbeStatus {
-        fetch_version_with_secret(&endpoint.uri(), Some(&self.secret))
-            .map_or(ProbeStatus::Pending, |_version| ProbeStatus::Ready)
-    }
-}
-
+pub(crate) use runtime_build::configured_runtime;
 #[cfg(test)]
-use runtime_build::{
-    build_saved_sources_mihomo_runtime_in, discover_sing_box_binary,
-    first_unsupported_runtime_override,
-};
+use runtime_build::{build_saved_sources_mihomo_runtime_in, first_unsupported_runtime_override};
 use runtime_build::{configured_mixed_port, has_only_clean_components};
-pub(crate) use runtime_build::{
-    configured_runtime, configured_sing_box_runtime, sing_box_binary_available,
-};
 
+pub(crate) use controller_io::load;
 #[cfg(unix)]
 use controller_io::unix_socket_path;
 #[cfg(test)]
 use controller_io::{
-    GlobalSelectionRoute, fetch_sing_box_snapshot, global_selection_route, is_selector_proxy_type,
-    policy_group_runtime_snapshot, put_policy_group_selection,
+    GlobalSelectionRoute, global_selection_route, is_selector_proxy_type,
+    policy_group_runtime_snapshot,
 };
 use controller_io::{
-    fetch_group_delay, fetch_policy_group, fetch_runtime_config, fetch_version,
-    fetch_version_with_secret, load_provider, reload_mihomo_config, running_managed_endpoint,
-    select_global_node_at_endpoint, select_policy_group_candidate, set_routing_mode,
-    validate_managed_runtime, with_controller_secret,
+    fetch_group_delay, fetch_policy_group, fetch_runtime_config, fetch_version, load_provider,
+    reload_mihomo_config, running_managed_endpoint, select_global_node_at_endpoint,
+    select_policy_group_candidate, set_routing_mode, validate_managed_runtime,
+    with_controller_secret,
 };
-pub(crate) use controller_io::{load, load_sing_box};
 
 #[cfg(all(test, unix))]
 #[path = "mihomo/tests.rs"]

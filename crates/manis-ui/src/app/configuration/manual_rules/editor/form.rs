@@ -14,7 +14,6 @@ impl ManisApp {
         language: Language,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let kernel = self.runtime.kind();
         let editing_index = self.manual_rule_editor_state.editing_index();
         let final_available = !self
             .manual_rules
@@ -26,17 +25,15 @@ impl ManisApp {
             if kind == crate::manual_rule::ManualRuleKind::Final && condition_index > 0 {
                 continue;
             }
-            let supported = kind.supported_by(kernel)
+            let supported = kind.supported_by(manis_core::KernelKind::Mihomo)
                 && (kind != crate::manual_rule::ManualRuleKind::Final || final_available);
             let selected = selected_kind == kind;
             let detail = if supported {
                 manual_rule_kind_detail(kind, language)
             } else if kind == crate::manual_rule::ManualRuleKind::Final {
                 language.localized(copy::configuration::ALREADY_CONFIGURED)
-            } else if kind == crate::manual_rule::ManualRuleKind::UserAgent {
-                language.localized(copy::configuration::NO_EXACT_KERNEL_EQUIVALENT)
             } else {
-                language.localized(copy::configuration::AVAILABLE_WITH_MIHOMO)
+                language.localized(copy::configuration::NO_EXACT_KERNEL_EQUIVALENT)
             };
             choices = choices.child(
                 div()

@@ -22,8 +22,8 @@ development packages used by GPUI.
 cargo run -p manis-ui
 ```
 
-Mihomo and sing-box are external programs and are not included in this repository. Most tests use
-local fixtures and do not require either core.
+Mihomo is an external program and is not included in this repository. Most tests use local fixtures
+and do not require a running core.
 
 ## Required checks
 

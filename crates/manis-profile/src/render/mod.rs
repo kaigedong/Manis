@@ -2,10 +2,8 @@
 //! Never log these trees or serializer errors: both may contain subscription/node credentials.
 
 mod mihomo;
-mod sing_box;
 
 pub(super) use mihomo::render as mihomo;
-pub(super) use sing_box::render as sing_box;
 
 use serde::ser::{Serialize, SerializeMap, SerializeSeq, Serializer};
 use serde_json::Value;
@@ -45,10 +43,7 @@ fn optional(document: &mut Value, key: &str, value: Option<&str>) {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        Profile, SecretUrl, SingBoxOptions, VlessProxy, VlessTransport, render_mihomo_yaml,
-        render_sing_box_json,
-    };
+    use crate::{Profile, SecretUrl, VlessProxy, VlessTransport, render_mihomo_yaml};
     use serde_json::{Value, json};
 
     fn proxy() -> VlessProxy {
@@ -155,30 +150,5 @@ mod tests {
             document["dns"]["default-nameserver"],
             json!(["223.5.5.5", "1.12.12.12"])
         );
-    }
-
-    #[test]
-    fn sing_box_preserves_tls_flags_and_controller_secret_escaping() {
-        let mut proxy = proxy();
-        proxy.alpn = vec!["h2".into(), "http/1.1".into()];
-        proxy.client_fingerprint = Some("chrome".into());
-        proxy.skip_cert_verify = true;
-        proxy.packet_encoding = Some("xudp".into());
-        let profile = Profile::qx_sources(vec![], vec![proxy], 17890).unwrap();
-        let secret = "fixture-\"quoted\"-\\-港😀";
-        let options = SingBoxOptions::new("127.0.0.1:19090", secret);
-        let json = render_sing_box_json(&profile, &options).unwrap();
-        assert_eq!(json, render_sing_box_json(&profile, &options).unwrap());
-        let document: Value = serde_json::from_str(&json).unwrap();
-        let outbound = &document["outbounds"][2];
-        assert_eq!(outbound["packet_encoding"], "xudp");
-        assert_eq!(outbound["tls"]["insecure"], true);
-        assert_eq!(outbound["tls"]["alpn"], json!(["h2", "http/1.1"]));
-        assert_eq!(
-            outbound["tls"]["utls"],
-            json!({"enabled": true, "fingerprint": "chrome"})
-        );
-        assert_eq!(document["experimental"]["clash_api"]["secret"], secret);
-        assert!(!format!("{options:?}").contains(secret));
     }
 }

@@ -9,7 +9,7 @@
 
 Manis is a small, experimental desktop client built with Rust and GPUI. Its current focus is narrow:
 showing how an ordered rule leads to a policy group and then to a proxy node, while providing a UI
-for a limited set of common Mihomo and sing-box tasks.
+for a limited set of common Mihomo tasks.
 
 It is a personal open-source experiment, not an attempt to redefine proxy clients or replace mature
 tools. Existing clients already serve many users well; Manis mainly explores a workflow that its
@@ -49,7 +49,7 @@ format.
 - Direct, global, and rule routing modes.
 - System HTTP/SOCKS proxy control and macOS TUN integration.
 - Live connections, route evidence, core logs, and redacted application diagnostics.
-- Mihomo as the primary managed core and a capability-gated sing-box adapter.
+- Mihomo as the sole managed core, with its configuration, process, and controller owned by Manis.
 
 QX rule-list import accepts `HOST` / `DOMAIN`, `HOST-SUFFIX` / `DOMAIN-SUFFIX`, and
 `HOST-KEYWORD` / `DOMAIN-KEYWORD`, regardless of case. Other rule types are skipped and
@@ -193,7 +193,7 @@ vulnerabilities through GitHub private vulnerability reporting.
 | --- | --- |
 | `crates/manis-core` | Kernel-neutral policies, routing evidence, and application state |
 | `crates/manis-engine` | Core discovery, validation, process ownership, and lifecycle |
-| `crates/manis-profile` | Typed profiles and Mihomo/sing-box configuration compilation |
+| `crates/manis-profile` | Typed profiles and Mihomo configuration compilation |
 | `crates/manis-mihomo` | Restricted Mihomo controller transport and domain mapping |
 | `crates/manis-ui` | GPUI application, persistence boundaries, and platform integration |
 | `packaging/macos` | macOS bundle and fixed-purpose privileged-helper tooling |

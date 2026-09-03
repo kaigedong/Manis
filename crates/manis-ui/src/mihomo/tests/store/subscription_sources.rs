@@ -88,13 +88,11 @@ fn subscription_name_and_enabled_state_round_trip_and_control_compilation()
         loaded[0].refresh_interval,
         super::RemoteSourceRefreshInterval::SixHours
     );
-    let disabled_profile =
-        super::compile_saved_profile(&store, None, manis_core::KernelKind::Mihomo)?;
+    let disabled_profile = super::compile_saved_profile(&store, None)?;
     assert!(disabled_profile.providers.is_empty());
 
     super::update_subscription_source_enabled_in(&store, &stored.id, true)?;
-    let enabled_profile =
-        super::compile_saved_profile(&store, None, manis_core::KernelKind::Mihomo)?;
+    let enabled_profile = super::compile_saved_profile(&store, None)?;
     assert_eq!(enabled_profile.providers.len(), 1);
 
     fs::remove_dir_all(root)?;
@@ -119,7 +117,7 @@ fn single_node_sources_are_protocol_agnostic_editable_and_disableable()
     assert_eq!(loaded[0].name, "家庭节点");
     assert!(!loaded[0].enabled);
     assert!(
-        super::compile_saved_profile(&store, None, manis_core::KernelKind::Mihomo,)?
+        super::compile_saved_profile(&store, None)?
             .providers
             .is_empty()
     );
@@ -133,7 +131,7 @@ fn single_node_sources_are_protocol_agnostic_editable_and_disableable()
     )?;
     assert_eq!(updated.name, "办公节点");
     assert!(updated.enabled);
-    let profile = super::compile_saved_profile(&store, None, manis_core::KernelKind::Mihomo)?;
+    let profile = super::compile_saved_profile(&store, None)?;
     assert_eq!(profile.providers.len(), 1);
     assert!(matches!(
         profile.providers[0].source,
@@ -263,7 +261,7 @@ proxies: []
     let reloaded = super::load_subscription_sources_in(&store)?;
     assert_eq!(reloaded, vec![upgraded]);
     assert!(!format!("{:?}", reloaded[0]).contains("192.0.2.10"));
-    let profile = super::compile_saved_profile(&store, None, manis_core::KernelKind::Mihomo)?;
+    let profile = super::compile_saved_profile(&store, None)?;
     let yaml = manis_profile::render_mihomo_yaml(&profile)?;
     assert!(yaml.contains("https://192.0.2.10:8443/dns-query/clash?site=fixture"));
 

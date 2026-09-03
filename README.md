@@ -8,7 +8,7 @@
 **简体中文** · [English](README.en.md)
 
 Manis 是一个使用 Rust 和 GPUI 编写的小型实验项目。它目前只聚焦一件事：把“有序规则
-→ 策略组 → 节点”的路径展示清楚，并为一部分常用的 Mihomo 和 sing-box 操作提供界面。
+→ 策略组 → 节点”的路径展示清楚，并为一部分常用的 Mihomo 操作提供界面。
 
 这是一个个人开源尝试，不是对代理工具的重新定义，也无意取代成熟客户端。现有工具已经能
 很好地服务大多数用户；Manis 主要是尝试一种维护者自己觉得更容易理解的工作方式。
@@ -46,7 +46,7 @@ Manis 只尝试把一条路由链路直接呈现出来：
 - 直连、全局和规则三种路由模式。
 - 系统 HTTP/SOCKS 代理控制与 macOS TUN 集成。
 - 活跃连接、真实路由证据、内核日志和脱敏的应用诊断。
-- 以 Mihomo 为主要托管内核，并提供按能力启用的 sing-box 适配器。
+- 以 Mihomo 为唯一托管内核，配置、进程和控制器均由 Manis 管理。
 
 QX 规则列表导入支持 `HOST` / `DOMAIN`、`HOST-SUFFIX` / `DOMAIN-SUFFIX` 和
 `HOST-KEYWORD` / `DOMAIN-KEYWORD`，不区分大小写。其他规则类型会跳过并计入导入诊断，
@@ -185,7 +185,7 @@ macOS TUN 使用固定用途的特权 helper。GitHub ad-hoc 包通过管理员�
 | --- | --- |
 | `crates/manis-core` | 与内核无关的策略、路由证据和应用状态 |
 | `crates/manis-engine` | 内核发现、校验、进程所有权和生命周期 |
-| `crates/manis-profile` | 类型化配置，以及 Mihomo/sing-box 配置编译 |
+| `crates/manis-profile` | 类型化配置，以及 Mihomo 配置编译 |
 | `crates/manis-mihomo` | 受限的 Mihomo controller 传输和领域映射 |
 | `crates/manis-ui` | GPUI 应用、持久化边界和平台集成 |
 | `packaging/macos` | macOS 打包与固定用途的特权 helper |

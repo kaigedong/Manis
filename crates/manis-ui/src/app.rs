@@ -69,7 +69,7 @@ use routing_apply::{
     mutate_saved_sources,
 };
 use runtime_lifecycle::LifecycleSubscriptions;
-use runtime_lifecycle::{AppUpdateState, KernelSwitchState, MihomoCoreUpdateState};
+use runtime_lifecycle::{AppUpdateState, MihomoCoreUpdateState};
 use stored_workspace::StoredWorkspace;
 use subscription_workflow::{
     DueRemoteSource, ImportedSubscription, ImportedSubscriptionState, SourceLoadOutcome,
@@ -144,7 +144,6 @@ pub struct ManisApp {
     expanded_policy_group: Option<PolicyGroupId>,
     catalog: Option<PolicyCatalog>,
     runtime: KernelRuntime,
-    kernel_switch_state: KernelSwitchState,
     mihomo_core_update_state: MihomoCoreUpdateState,
     app_update_state: AppUpdateState,
     controller: ControllerState,
@@ -318,7 +317,6 @@ impl ManisApp {
             expanded_policy_group: None,
             catalog: None,
             runtime,
-            kernel_switch_state: KernelSwitchState::Idle,
             mihomo_core_update_state: Self::initial_mihomo_core_update_state(),
             app_update_state: AppUpdateState::Idle,
             controller: ControllerState::Disconnected,
@@ -642,7 +640,6 @@ pub(crate) enum ControllerReadiness {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum TunSupport {
     Supported,
-    KernelUnsupported,
     FixtureReadOnly,
 }
 
@@ -651,7 +648,6 @@ pub(crate) enum TunSupport {
 pub(crate) enum ProxyModeBlock {
     Busy,
     ControllerNotConnected,
-    KernelHasNoTun,
     FixtureReadOnly,
 }
 
@@ -661,7 +657,6 @@ impl ProxyModeBlock {
         match self {
             Self::Busy => language.localized(copy::app::SWITCHING_STATUS),
             Self::ControllerNotConnected => language.localized(copy::app::CONNECT_FIRST),
-            Self::KernelHasNoTun => language.localized(copy::app::KERNEL_HAS_NO_TUN),
             Self::FixtureReadOnly => language.localized(copy::app::TEST_FIXTURE_IS_READ_ONLY),
         }
     }
@@ -687,7 +682,6 @@ const fn proxy_mode_block(
         ProxyMode::Off | ProxyMode::System => None,
         ProxyMode::Tun => match tun {
             TunSupport::Supported => None,
-            TunSupport::KernelUnsupported => Some(ProxyModeBlock::KernelHasNoTun),
             TunSupport::FixtureReadOnly => Some(ProxyModeBlock::FixtureReadOnly),
         },
     }
