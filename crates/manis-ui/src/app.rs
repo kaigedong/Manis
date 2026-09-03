@@ -62,7 +62,7 @@ use presentation::{
     status_bar_values,
 };
 use proxy_transition::apply_proxy_mode_transition;
-#[cfg(test)]
+#[cfg(all(test, not(windows)))]
 use proxy_transition::tun_dns_log_details;
 use routing_apply::{
     RoutingApplyRollback, RoutingApplyState, SourceMutation, SourceRuntimeApply,
@@ -76,7 +76,7 @@ use subscription_workflow::{
     SourceRefreshSchedulerState, SubscriptionFeedback, SubscriptionImportRequest,
     managed_subscription_provider_index, source_kind,
 };
-#[cfg(test)]
+#[cfg(all(test, not(windows)))]
 use subscription_workflow::{ImportSubscriptionError, next_due_remote_source};
 use workspace_inputs::WorkspaceInputs;
 

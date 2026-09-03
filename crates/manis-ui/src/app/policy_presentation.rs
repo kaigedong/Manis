@@ -447,7 +447,7 @@ impl ManisApp {
         selected.or_else(|| policy.nodes.first())
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, not(windows)))]
     pub(super) fn node_for_policy(&self, policy: &PolicyGroup) -> PolicyNode {
         self.selected_node_for_policy(policy)
             .cloned()

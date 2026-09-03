@@ -69,8 +69,8 @@ pub(super) fn delete_tun_dns_recovery_snapshot(language: Language) -> Result<(),
 }
 
 #[cfg(any(
-    target_os = "linux",
-    target_os = "windows",
+    all(target_os = "linux", not(test)),
+    all(target_os = "windows", not(test)),
     all(target_os = "macos", not(test))
 ))]
 pub(super) fn read_recovery_snapshot(

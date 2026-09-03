@@ -5,9 +5,10 @@ use manis_engine::{EngineManager, ReadinessPolicy, validate_managed_config};
 
 use crate::diagnostics::{LogLevel, record_event};
 
+#[cfg(target_os = "macos")]
+use super::super::ManagedGeneratedProfile;
 use super::super::{
-    ControllerRuntime, GENERATED_PROFILE_FILE, LoadError, ManagedGeneratedProfile,
-    managed_engine_config, readiness_probe,
+    ControllerRuntime, GENERATED_PROFILE_FILE, LoadError, managed_engine_config, readiness_probe,
 };
 use super::MANAGED_KERNEL_LOCK_POISONED;
 

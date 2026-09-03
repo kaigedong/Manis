@@ -37,9 +37,11 @@ pub(crate) use install::bundled_seed_path;
 pub(crate) use install::install_bundled_seed_if_missing;
 #[cfg(test)]
 use install::{
-    core_binary_name, install_asset_package, install_seed_if_missing_from, managed_core_path_in,
-    publish_staged_core, rename_replace, require_managed_core_file, write_staged_core,
+    core_binary_name, install_seed_if_missing_from, managed_core_path_in, publish_staged_core,
+    rename_replace, write_staged_core,
 };
+#[cfg(all(test, unix))]
+use install::{install_asset_package, require_managed_core_file};
 pub(crate) use install::{install_latest_core_update, managed_core_binary_path};
 use install::{remove_file_if_exists, unique_sibling_path, zip_entry_is_mihomo_binary};
 #[cfg(test)]
@@ -215,7 +217,9 @@ impl Platform {
 #[cfg(test)]
 mod tests {
     use super::download::enforce_body_limit;
-    use super::version_probe::{parse_reported_version, reported_binary_version_with_timeout};
+    use super::version_probe::parse_reported_version;
+    #[cfg(unix)]
+    use super::version_probe::reported_binary_version_with_timeout;
     use super::*;
 
     #[test]
@@ -260,6 +264,7 @@ mod tests {
         assert!(error.to_string().contains("disk unavailable"));
     }
     use flate2::{Compression, write::GzEncoder};
+    #[cfg(unix)]
     use sha2::Digest as _;
     use std::fs;
     use std::io::{Cursor, Write};
@@ -648,12 +653,14 @@ mod tests {
         buffer.into_inner()
     }
 
+    #[cfg(unix)]
     fn gzip_package(content: &[u8]) -> Vec<u8> {
         let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
         encoder.write_all(content).expect("write gzip fixture");
         encoder.finish().expect("finish gzip fixture")
     }
 
+    #[cfg(unix)]
     fn sha256_hex(content: &[u8]) -> String {
         format!("{:x}", sha2::Sha256::digest(content))
     }

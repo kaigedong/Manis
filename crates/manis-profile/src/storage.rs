@@ -185,6 +185,8 @@ fn harden_file(path: &Path) -> Result<(), WriteError> {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(WriteError::Io)?;
     }
+    #[cfg(not(unix))]
+    let _ = path;
     Ok(())
 }
 
