@@ -6,15 +6,17 @@ use manis_core::KernelKind;
 use manis_engine::{EngineManager, validate_managed_config};
 use manis_profile::write_private_atomic;
 
+use super::controller_io::reload_mihomo_config;
 use super::{
     ControllerRuntime, GeneratedProfileApply, LoadError, LogLevel, ManagedGeneratedProfile,
     compile_saved_profile, fetch_runtime_config, generated_engine_manager, generated_profile_names,
     managed_engine_config, managed_engine_config_for_privilege, record_event,
-    render_generated_profile, sync_single_node_provider_files,
+    render_generated_profile, render_generated_profile_with_tun, sync_single_node_provider_files,
 };
 
 struct PreparedProfile {
     rendered: String,
+    rendered_with_tun: String,
     final_name: &'static str,
 }
 
@@ -72,6 +74,10 @@ fn prepare_profile(
     }
     let profile = compile_saved_profile(store_dir, None, spec.kernel)?;
     let rendered = render_generated_profile(spec, &profile)?;
+    let rendered_with_tun = match spec.kernel {
+        KernelKind::Mihomo => render_generated_profile_with_tun(spec, &profile, true)?,
+        KernelKind::SingBox => rendered.clone(),
+    };
     let (candidate_name, final_name) = generated_profile_names(spec.kernel);
     let candidate_path = write_private_atomic(&spec.data_dir, candidate_name, rendered.as_bytes())
         .map_err(|_error| {
@@ -82,6 +88,7 @@ fn prepare_profile(
     validation?;
     Ok(PreparedProfile {
         rendered,
+        rendered_with_tun,
         final_name,
     })
 }
@@ -110,6 +117,45 @@ fn install_profile(
     let running_endpoint = manager.running_endpoint()?;
     let was_running = running_endpoint.is_some();
     let restore_tun = tun_was_enabled(spec, running_endpoint.as_ref())?;
+    if spec.kernel == KernelKind::Mihomo
+        && let Some(endpoint) = running_endpoint.as_ref()
+    {
+        let payload = if restore_tun {
+            &prepared.rendered_with_tun
+        } else {
+            &prepared.rendered
+        };
+        let endpoint = endpoint.uri();
+        record_event(
+            LogLevel::Info,
+            "controller.config_reload.requested",
+            format!(
+                "reason=source_update method=PUT endpoint=/configs?force=true bytes={}",
+                payload.len()
+            ),
+        );
+        match reload_mihomo_config(
+            &endpoint,
+            payload,
+            restore_tun,
+            spec.controller_secret.as_deref(),
+        ) {
+            Ok(()) => {
+                record_event(
+                    LogLevel::Info,
+                    "controller.config_reload.succeeded",
+                    format!("reason=source_update endpoint={endpoint}"),
+                );
+                drop(manager);
+                return Ok(GeneratedProfileApply::Updated);
+            }
+            Err(error) => record_event(
+                LogLevel::Warn,
+                "controller.config_reload.fallback_restart",
+                format!("reason=source_update error={error}"),
+            ),
+        }
+    }
     stop_previous_runtime(&mut manager, was_running, restore_tun)?;
     *manager = generated_engine_manager(spec, final_config, was_privileged).map_err(|error| {
         if restore_tun {
