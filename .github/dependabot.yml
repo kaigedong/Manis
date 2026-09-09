@@ -5,6 +5,12 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # Zed commit 28e52a2 enables wayland-backend's log shim, which fails to
+    # link in the Arch package build. Keep the last package-verified revision
+    # until that upstream regression is resolved.
+    ignore:
+      - dependency-name: gpui
+      - dependency-name: gpui_platform
   - package-ecosystem: github-actions
     directory: /
     schedule:
