@@ -3778,6 +3778,7 @@ dependencies = [
  "gpui-component",
  "gpui-component-assets",
  "gpui_platform",
+ "hex",
  "ksni",
  "manis-core",
  "manis-engine",

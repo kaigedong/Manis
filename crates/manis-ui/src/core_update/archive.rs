@@ -102,7 +102,7 @@ pub(crate) fn verify_asset_digest(
 
     let mut hasher = Sha256::new();
     hasher.update(package);
-    let actual = format!("{:x}", hasher.finalize());
+    let actual = hex::encode(hasher.finalize());
     if actual.eq_ignore_ascii_case(&asset.sha256) {
         Ok(())
     } else {

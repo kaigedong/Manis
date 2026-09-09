@@ -662,7 +662,7 @@ mod tests {
 
     #[cfg(unix)]
     fn sha256_hex(content: &[u8]) -> String {
-        format!("{:x}", sha2::Sha256::digest(content))
+        hex::encode(sha2::Sha256::digest(content))
     }
 
     fn test_temp_dir(name: &str) -> PathBuf {

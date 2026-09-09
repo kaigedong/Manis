@@ -247,7 +247,7 @@ fn verify_digest(bytes: &[u8], expected: &str) -> Result<(), AppUpdateError> {
     if !is_sha256(expected) {
         return Err(AppUpdateError::InvalidDigest);
     }
-    let actual = format!("{:x}", Sha256::digest(bytes));
+    let actual = hex::encode(Sha256::digest(bytes));
     if actual.eq_ignore_ascii_case(expected) {
         Ok(())
     } else {
@@ -386,7 +386,7 @@ mod tests {
     #[test]
     fn verifies_manifest_digest() {
         let bytes = manifest("0.1.101");
-        let digest = format!("{:x}", Sha256::digest(&bytes));
+        let digest = hex::encode(Sha256::digest(&bytes));
         assert_eq!(verify_digest(&bytes, &digest), Ok(()));
         assert_eq!(
             verify_digest(&bytes, &"0".repeat(64)),
