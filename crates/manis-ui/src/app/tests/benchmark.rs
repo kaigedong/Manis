@@ -9,13 +9,15 @@ fn benchmark_failure_keeps_the_reason_and_ignores_stale_results() {
     assert!(!state.fail(1, Some("stale failure".to_owned())));
     assert!(state.is_running());
     assert!(state.fail(2, Some("HTTP 404".to_owned())));
-    assert_eq!(
-        state,
+    assert!(matches!(
+        &state,
         GroupBenchmarkState::Failed {
             generation: 2,
-            message: Some("HTTP 404".to_owned()),
+            message: Some(message),
+            finished_at_epoch_secs,
         }
-    );
+        if message == "HTTP 404" && *finished_at_epoch_secs > 0
+    ));
     assert!(!state.fail(1, Some("stale failure".to_owned())));
     let old: GroupBenchmarkState = serde_json::from_str(r#"{"Failed":{"generation":1}}"#)
         .expect("old benchmark state still loads");
@@ -51,6 +53,22 @@ fn benchmark_failures_distinguish_probes_from_controller_connections() {
     ));
     assert!(unavailable.contains("无法访问本地内核"));
     assert_ne!(timeout, unavailable);
+}
+
+#[test]
+fn benchmark_age_copy_is_localized_in_minutes() {
+    assert_eq!(
+        crate::localization::copy::app::benchmark_age(Language::SimplifiedChinese, 59),
+        "不到 1 分钟前测速"
+    );
+    assert_eq!(
+        crate::localization::copy::app::benchmark_age(Language::SimplifiedChinese, 125),
+        "2 分钟前测速"
+    );
+    assert_eq!(
+        crate::localization::copy::app::benchmark_age(Language::English, 125),
+        "Tested 2 min ago"
+    );
 }
 
 #[test]

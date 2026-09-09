@@ -1,9 +1,55 @@
 use super::{
-    Context, ControllerState, GroupBenchmarkState, LogLevel, ManisApp, PolicyBenchmarkRun, UiEvent,
-    copy, mihomo, record_event, trace_ui,
+    Context, ControllerState, Duration, GroupBenchmarkState, LogLevel, ManisApp,
+    PolicyBenchmarkRun, UiEvent, benchmark_timestamp, copy, mihomo, record_event, trace_ui,
 };
 
 impl ManisApp {
+    pub(in crate::app) fn schedule_automatic_policy_benchmarks(
+        live_generation: u64,
+        cx: &mut Context<Self>,
+    ) {
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(Duration::from_secs(4)).await;
+            if let Some(this) = this.upgrade() {
+                this.update(cx, |this, cx| {
+                    if this.live_generation != live_generation {
+                        return;
+                    }
+                    this.start_due_automatic_policy_benchmark(cx);
+                    Self::schedule_automatic_policy_benchmarks(live_generation, cx);
+                });
+            }
+        })
+        .detach();
+    }
+
+    pub(in crate::app) fn start_due_automatic_policy_benchmark(&mut self, cx: &mut Context<Self>) {
+        if !matches!(self.controller, ControllerState::Connected { .. })
+            || self.configuration_transfer.active
+            || self.managed_policies.active_benchmark_generation.is_some()
+        {
+            return;
+        }
+        let now = benchmark_timestamp();
+        let due_policy = self.managed_policies.groups.iter().find_map(|managed| {
+            if managed.strategy != manis_core::ManagedPolicyStrategy::LowestLatency {
+                return None;
+            }
+            let group = self
+                .policy_groups()
+                .find(|group| group.name == managed.name)?;
+            let key = Self::policy_group_benchmark_key(&group.id);
+            self.managed_policies
+                .benchmarks
+                .get(&key)
+                .is_none_or(|state| state.is_due(now, managed.test_interval_secs))
+                .then(|| group.id.clone())
+        });
+        if let Some(id) = due_policy {
+            self.start_policy_group_benchmark(&id, cx);
+        }
+    }
+
     pub(in crate::app) fn start_policy_group_benchmark(
         &mut self,
         id: &manis_core::PolicyGroupId,
@@ -124,6 +170,24 @@ impl ManisApp {
         {
             let _ = catalog.apply_group_benchmark(&group_id, current.as_deref(), delays);
         }
+        let confirmed_current = current.as_deref().filter(|name| {
+            delays.as_ref().is_some_and(|delays| {
+                delays
+                    .get(*name)
+                    .is_some_and(|measured_delay| *measured_delay > 0)
+            })
+        });
+        if current.is_some() && confirmed_current.is_none() {
+            record_event(
+                LogLevel::Warn,
+                "group.delay.unhealthy_current_ignored",
+                format!(
+                    "group={} current={}",
+                    group_id.as_str(),
+                    current.as_deref().unwrap_or("none")
+                ),
+            );
+        }
         let Some(state) = self.managed_policies.benchmarks.get_mut(&key) else {
             cx.notify();
             return;
@@ -141,7 +205,7 @@ impl ManisApp {
                 self.status = Self::policy_benchmark_status(
                     language,
                     group_kind,
-                    current.as_deref(),
+                    confirmed_current,
                     *summary,
                 );
             }

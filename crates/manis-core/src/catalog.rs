@@ -217,8 +217,10 @@ impl PolicyCatalog {
 
     /// Applies fresh delay measurements and the runtime-selected winner to one group.
     ///
-    /// Returns `false` when the group no longer exists. An unknown winner is ignored so a stale
-    /// or malformed controller response cannot point the UI outside the group's candidates.
+    /// Returns `false` when the group no longer exists. A reported winner is only accepted when
+    /// it is both a group candidate and has a successful result in this benchmark. An invalid
+    /// reported winner clears the current target so the UI cannot present a failed node as the
+    /// automatic selection.
     pub fn apply_group_benchmark(
         &mut self,
         id: &PolicyGroupId,
@@ -231,10 +233,18 @@ impl PolicyCatalog {
         else {
             return false;
         };
-        if let Some(current) =
-            current.filter(|current| group.nodes.iter().any(|node| node.name == *current))
-        {
-            group.target = Some(current.to_owned());
+        if let Some(current) = current {
+            group.target = delays
+                .get(current)
+                .copied()
+                .filter(|delay| *delay > 0)
+                .and_then(|_| {
+                    group
+                        .nodes
+                        .iter()
+                        .any(|node| node.name == current)
+                        .then(|| current.to_owned())
+                });
         }
         for node in &mut group.nodes {
             let Some(delay) = delays.get(&node.name).copied() else {

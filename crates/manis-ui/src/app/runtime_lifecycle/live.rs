@@ -27,6 +27,7 @@ impl ManisApp {
         if self.live_runtime.is_some() {
             self.poll_live_runtime(generation, cx);
         }
+        Self::schedule_automatic_policy_benchmarks(generation, cx);
     }
 
     pub(in crate::app) fn poll_live_runtime(&mut self, generation: u64, cx: &mut Context<Self>) {

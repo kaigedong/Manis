@@ -1,6 +1,7 @@
 use super::{
     GroupBenchmarkNodeState, GroupBenchmarkProgressQueue, GroupBenchmarkState,
-    GroupBenchmarkSummary, ManisApp, managed_subscription_provider_index, stored_workspace,
+    GroupBenchmarkSummary, ManisApp, benchmark_timestamp, managed_subscription_provider_index,
+    stored_workspace,
 };
 use crate::{
     components::{ActionRole, style_action_button},
@@ -393,22 +394,33 @@ impl ManisApp {
                 theme.action_primary,
             ),
             GroupBenchmarkState::Complete { summary, .. } => (
-                copy::app::benchmark_complete(
-                    language,
-                    summary.succeeded,
-                    summary.total,
-                    summary.minimum_ms,
-                    summary.average_ms,
+                format!(
+                    "{}{}",
+                    copy::app::benchmark_complete(
+                        language,
+                        summary.succeeded,
+                        summary.total,
+                        summary.minimum_ms,
+                        summary.average_ms,
+                    ),
+                    state.finished_age_secs(benchmark_timestamp()).map_or_else(
+                        String::new,
+                        |age| format!(" · {}", copy::app::benchmark_age(language, age))
+                    )
                 ),
                 theme.status_success,
             ),
             GroupBenchmarkState::Failed { message, .. } => (
                 format!(
-                    "{}：{}",
+                    "{}：{}{}",
                     language.localized(copy::app::POLICY_GROUP_BENCHMARK_FAILED),
                     message.as_deref().unwrap_or_else(|| {
                         language.localized(copy::common::MIHOMO_DID_NOT_RETURN_A_RESULT)
                     }),
+                    state.finished_age_secs(benchmark_timestamp()).map_or_else(
+                        String::new,
+                        |age| format!(" · {}", copy::app::benchmark_age(language, age))
+                    )
                 ),
                 theme.route_trace,
             ),
