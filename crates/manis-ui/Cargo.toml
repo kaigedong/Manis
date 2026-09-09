@@ -36,7 +36,7 @@ toml_edit = "0.25.13"
 tracing = { version = "0.1.44", default-features = false, features = ["std"] }
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["registry"] }
 ureq = { version = "=3.4.0", default-features = false, features = ["rustls"] }
-zip = { version = "3.0.0", default-features = false, features = ["deflate"] }
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 gpui_platform = { git = "https://github.com/zed-industries/zed", package = "gpui_platform", features = ["font-kit"] }
