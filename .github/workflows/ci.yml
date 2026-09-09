@@ -86,7 +86,7 @@ jobs:
           sudo apt-get update && sudo apt-get install --yes
           dbus libasound2-dev libfontconfig1-dev libwayland-dev
           libx11-xcb-dev libxcb-render0-dev libxcb-shape0-dev
-          libxcb-xfixes0-dev libxkbcommon-dev
+          libxcb-xfixes0-dev libxkbcommon-dev libxkbcommon-x11-dev
       - name: Install Rust toolchain
         run: rustup show active-toolchain
       - name: Restore Cargo cache
@@ -102,6 +102,8 @@ jobs:
             cargo-ci-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', '.github/workflows/ci.yml') }}-
       - name: Check workspace
         run: cargo check --workspace --all-targets --locked
+      - name: Link desktop executable
+        run: cargo build -p manis-ui --bin manis-ui --locked
       - name: Test restricted controller transports
         run: cargo test -p manis-mihomo --all-targets --locked --quiet
       - name: Test Linux profile rendering
