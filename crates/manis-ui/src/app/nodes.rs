@@ -202,7 +202,7 @@ mod source_groups;
 mod view;
 pub(in crate::app) use benchmark_state::{
     GroupBenchmarkNodeState, GroupBenchmarkProgressQueue, GroupBenchmarkState,
-    GroupBenchmarkSummary, PolicyBenchmarkRun,
+    GroupBenchmarkSummary, PolicyBenchmarkRun, benchmark_timestamp,
 };
 pub(in crate::app) use policy_editor::{
     ManagedPolicyRuntimeState, ManagedPolicyState, PolicyEditorPopover,
@@ -753,6 +753,7 @@ mod tests {
                 generation: 2,
                 summary: GroupBenchmarkSummary::default(),
                 delays: BTreeMap::new(),
+                finished_at_epoch_secs: 1,
             }
             .node_state("Saved Edge"),
             GroupBenchmarkNodeState::Failed,
@@ -762,6 +763,7 @@ mod tests {
                 generation: 2,
                 summary: GroupBenchmarkSummary::default(),
                 delays: BTreeMap::from([("Saved Edge".to_owned(), 47)]),
+                finished_at_epoch_secs: 1,
             }
             .node_state("Saved Edge"),
             GroupBenchmarkNodeState::Measured(47),
@@ -822,10 +824,27 @@ mod tests {
         assert!(
             !GroupBenchmarkState::Failed {
                 generation: 1,
-                message: None
+                message: None,
+                finished_at_epoch_secs: 1,
             }
             .is_running()
         );
+    }
+
+    #[test]
+    fn completed_benchmark_becomes_due_at_its_configured_interval() {
+        let state = GroupBenchmarkState::Complete {
+            generation: 2,
+            summary: GroupBenchmarkSummary::default(),
+            delays: BTreeMap::new(),
+            finished_at_epoch_secs: 1_000,
+        };
+
+        assert!(!state.is_due(1_299, 300));
+        assert!(state.is_due(1_300, 300));
+        assert_eq!(state.finished_age_secs(1_125), Some(125));
+        assert!(GroupBenchmarkState::Idle.is_due(1_000, 300));
+        assert!(!GroupBenchmarkState::running(1).is_due(1_000, 300));
     }
 
     #[test]

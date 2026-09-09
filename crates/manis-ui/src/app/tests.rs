@@ -12,8 +12,8 @@ use super::PreferencePersistence;
 use super::{
     ControllerReadiness, DueRemoteSource, GroupBenchmarkState, GroupBenchmarkSummary,
     ImportedSubscription, ImportedSubscriptionState, ManisApp, ProxyModeBlock, SourceRuntimeApply,
-    TunSupport, next_due_remote_source, policy_target_is_selectable, proxy_mode_block,
-    stored_workspace, tun_dns_log_details,
+    TunSupport, benchmark_timestamp, next_due_remote_source, policy_target_is_selectable,
+    proxy_mode_block, stored_workspace, tun_dns_log_details,
 };
 use crate::subscription::SourceKind;
 use crate::{
@@ -33,6 +33,7 @@ fn complete_benchmark(delay_name: &str, delay_ms: u16) -> GroupBenchmarkState {
             average_ms: Some(delay_ms),
         },
         delays: BTreeMap::from([(delay_name.to_owned(), delay_ms)]),
+        finished_at_epoch_secs: benchmark_timestamp(),
     }
 }
 

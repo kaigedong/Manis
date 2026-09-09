@@ -163,6 +163,14 @@ fn policy_catalog_applies_fresh_group_delays_and_automatic_winner() -> Result<()
     assert_eq!(selected.nodes[0].alive, Some(false));
     assert_eq!(selected.nodes[1].latency_ms, Some(31));
     assert_eq!(selected.nodes[1].alive, Some(true));
+
+    // A stale controller `current` value must never make a node that failed this run appear to be
+    // the automatic winner.
+    assert!(catalog.apply_group_benchmark(&PolicyGroupId::new("auto-hk"), Some("HK-01"), &delays,));
+    assert_eq!(
+        catalog.select(Some(&PolicyGroupId::new("auto-hk"))).target,
+        None
+    );
     assert!(!catalog.apply_group_benchmark(&PolicyGroupId::new("missing"), None, &delays,));
     Ok(())
 }

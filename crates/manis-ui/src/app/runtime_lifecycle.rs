@@ -1,4 +1,7 @@
-use super::{GroupBenchmarkState, ManagedPolicyRuntimeState, ManisApp, PolicyBenchmarkRun};
+use super::{
+    GroupBenchmarkState, ManagedPolicyRuntimeState, ManisApp, PolicyBenchmarkRun,
+    benchmark_timestamp,
+};
 use crate::{
     app_update::{self, AppUpdateError, AvailableUpdate},
     core_update,

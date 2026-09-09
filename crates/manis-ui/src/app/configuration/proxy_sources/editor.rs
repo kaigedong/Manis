@@ -174,9 +174,8 @@ impl ManisApp {
         );
         let footer = Self::proxy_source_editor_footer(input, view, language, theme, cx);
         let app = cx.entity();
-        surface_dialog(dialog, theme)
+        surface_dialog(dialog, theme, window)
             .width(px(view.dialog_width))
-            .max_h(px((viewport.height.as_f32() - 32.0).max(320.0)))
             .margin_top(px(((viewport.height.as_f32() - 480.0) / 2.0).max(16.0)))
             .overlay(true)
             .overlay_closable(true)

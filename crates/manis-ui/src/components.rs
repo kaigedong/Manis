@@ -1,6 +1,6 @@
 use gpui::{
-    AnyElement, Div, ElementId, IntoElement, ParentElement, SharedString, Styled, div, prelude::*,
-    px,
+    AnyElement, Div, ElementId, IntoElement, ParentElement, SharedString, Styled, Window, div,
+    prelude::*, px,
 };
 use gpui_component::{
     Icon, IconName, Sizable as _,
@@ -90,9 +90,10 @@ pub(crate) fn disclosure_icon(expanded: bool, theme: Theme) -> Icon {
     .text_color(theme.action_primary)
 }
 
-pub(crate) fn surface_dialog(dialog: Dialog, theme: Theme) -> Dialog {
+pub(crate) fn surface_dialog(dialog: Dialog, theme: Theme, window: &Window) -> Dialog {
     dialog
         .p_0()
+        .max_h(px((window.viewport_size().height.as_f32() - 32.0).max(1.0)))
         .rounded(Radius::Pane.px())
         .border_1()
         .border_color(theme.outline_subtle)

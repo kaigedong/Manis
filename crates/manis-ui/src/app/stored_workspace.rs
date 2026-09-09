@@ -223,6 +223,7 @@ mod tests {
                 average_ms: Some(42),
             },
             delays: BTreeMap::from([("HK".to_owned(), 42)]),
+            finished_at_epoch_secs: 1_234,
         };
         let benchmarks = BTreeMap::from([
             ("source:alpha".to_owned(), complete.clone()),
@@ -232,6 +233,7 @@ mod tests {
                 GroupBenchmarkState::Failed {
                     generation: 9,
                     message: None,
+                    finished_at_epoch_secs: 1_235,
                 },
             ),
         ]);

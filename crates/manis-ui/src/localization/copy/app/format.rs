@@ -215,6 +215,20 @@ pub(crate) fn benchmark_complete(
     }
 }
 
+pub(crate) fn benchmark_age(language: Language, elapsed_secs: u64) -> String {
+    if elapsed_secs < 60 {
+        return match language {
+            Language::English => "Tested less than 1 min ago".to_owned(),
+            Language::SimplifiedChinese => "不到 1 分钟前测速".to_owned(),
+        };
+    }
+    let minutes = elapsed_secs / 60;
+    match language {
+        Language::English => format!("Tested {minutes} min ago"),
+        Language::SimplifiedChinese => format!("{minutes} 分钟前测速"),
+    }
+}
+
 pub(crate) fn mihomo_installed(language: Language, version: &str) -> String {
     match language {
         Language::English => format!("Mihomo {version} installed and verified"),

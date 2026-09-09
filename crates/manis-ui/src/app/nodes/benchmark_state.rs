@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use manis_core::PolicyGroupId;
 
@@ -56,11 +57,15 @@ pub(in crate::app) enum GroupBenchmarkState {
         generation: u64,
         summary: GroupBenchmarkSummary,
         delays: BTreeMap<String, u16>,
+        #[serde(default)]
+        finished_at_epoch_secs: u64,
     },
     Failed {
         generation: u64,
         #[serde(default)]
         message: Option<String>,
+        #[serde(default)]
+        finished_at_epoch_secs: u64,
     },
 }
 
@@ -90,6 +95,40 @@ impl GroupBenchmarkState {
         match self {
             Self::Complete { delays, .. } => Some(delays),
             _ => None,
+        }
+    }
+
+    pub(in crate::app) fn finished_age_secs(&self, now_epoch_secs: u64) -> Option<u64> {
+        let finished_at = match self {
+            Self::Complete {
+                finished_at_epoch_secs,
+                ..
+            }
+            | Self::Failed {
+                finished_at_epoch_secs,
+                ..
+            } => *finished_at_epoch_secs,
+            Self::Idle | Self::Running { .. } => return None,
+        };
+        (finished_at > 0).then(|| now_epoch_secs.saturating_sub(finished_at))
+    }
+
+    pub(in crate::app) fn is_due(&self, now_epoch_secs: u64, interval_secs: u32) -> bool {
+        match self {
+            Self::Idle => true,
+            Self::Running { .. } => false,
+            Self::Complete {
+                finished_at_epoch_secs,
+                ..
+            }
+            | Self::Failed {
+                finished_at_epoch_secs,
+                ..
+            } => {
+                *finished_at_epoch_secs == 0
+                    || now_epoch_secs.saturating_sub(*finished_at_epoch_secs)
+                        >= u64::from(interval_secs)
+            }
         }
     }
 
@@ -145,6 +184,7 @@ impl GroupBenchmarkState {
             generation,
             summary,
             delays,
+            finished_at_epoch_secs: benchmark_timestamp(),
         };
         true
     }
@@ -156,7 +196,14 @@ impl GroupBenchmarkState {
         *self = Self::Failed {
             generation,
             message,
+            finished_at_epoch_secs: benchmark_timestamp(),
         };
         true
     }
+}
+
+pub(in crate::app) fn benchmark_timestamp() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs())
 }

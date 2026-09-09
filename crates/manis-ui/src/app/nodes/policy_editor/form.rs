@@ -23,7 +23,9 @@ impl ManisApp {
 
         div()
         .id("policy-editor-scroll")
-        .when(!embedded, |form| form.flex_1().overflow_y_scroll())
+        .when(!embedded, |form| {
+            form.flex_1().min_h_0().overflow_y_scroll()
+        })
         .px(if embedded {
             px(0.0)
         } else if compact {
