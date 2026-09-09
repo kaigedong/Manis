@@ -87,7 +87,8 @@ pub(crate) fn capture_proxy_candidate(
 pub(crate) fn capture_managed_policy_settings(
     cx: &mut gpui::VisualTestAppContext,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use gpui::{AnyWindowHandle, Modifiers, point, px, size};
+    use gpui::{AnyWindowHandle, AppContext as _, Modifiers, point, px, size};
+    use gpui_component::WindowExt as _;
     use manis_ui::ManisApp;
     use std::os::unix::fs::PermissionsExt;
 
@@ -114,14 +115,18 @@ pub(crate) fn capture_managed_policy_settings(
         cx.update(manis_ui::init);
         let window_store = store.clone();
         let fixture_endpoint = endpoint.clone();
+        let mut app = None;
         let window = cx.open_offscreen_window(size(px(width), px(height)), |window, cx| {
-            manis_root(window, cx, |_| {
+            let entity = cx.new(|_| {
                 ManisApp::with_fixture_controller_and_subscription_store(
                     fixture_endpoint,
                     window_store,
                 )
-            })
+            });
+            app = Some(entity.clone());
+            cx.new(|cx| manis_ui::root(entity, window, cx))
         })?;
+        let app = app.ok_or("missing policy settings app")?;
         let window: AnyWindowHandle = window.into();
         refresh(cx, window)?;
         save_screenshot(cx, window, &format!("policy-home-{label}.png"))?;
@@ -132,12 +137,15 @@ pub(crate) fn capture_managed_policy_settings(
         cx.simulate_click(window, point(px(320.0), px(172.0)), Modifiers::none());
         refresh(cx, window)?;
         save_screenshot(cx, window, &format!("policy-flat-{label}-expanded.png"))?;
-        cx.simulate_click(
-            window,
-            point(px(width - 132.0), px(172.0)),
-            Modifiers::none(),
-        );
-        refresh(cx, window)?;
+        cx.update_window(window, |_, window, cx| {
+            app.update(cx, |app, cx| {
+                app.show_managed_policy_dialog_fixture(window, cx);
+            });
+        })?;
+        settle_ui_animation(cx, window)?;
+        if !cx.update_window(window, |_, window, cx| window.has_active_dialog(cx))? {
+            return Err("policy settings fixture did not open the editor dialog".into());
+        }
         save_screenshot(cx, window, &format!("policy-settings-{label}-dialog.png"))?;
         if label == "compact" {
             scroll_window(cx, window, width - 90.0, height - 180.0, -480.0)?;

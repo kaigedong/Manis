@@ -1,5 +1,5 @@
 use gpui::{Context, Div, ParentElement, Styled, Window, div, prelude::*, px};
-use gpui_component::{IconName, WindowExt as _, button::Button};
+use gpui_component::{IconName, WindowExt as _, button::Button, scroll::ScrollableElement as _};
 
 use super::ManisApp;
 use crate::{
@@ -40,7 +40,7 @@ impl ManisApp {
         let language = self.language();
         let theme = self.theme();
         window.open_dialog(cx, move |dialog, window, _| {
-            surface_dialog(dialog, theme)
+            surface_dialog(dialog, theme, window)
                 .width(px(
                     (window.viewport_size().width.as_f32() - 32.0).clamp(300.0, 420.0)
                 ))
@@ -61,6 +61,9 @@ impl ManisApp {
                 .child(
                     div()
                         .debug_selector(|| "manis-about-content".to_owned())
+                        .flex_1()
+                        .min_h_0()
+                        .overflow_y_scrollbar()
                         .p(Space::Lg.px())
                         .child(Self::version_information(language, theme)),
                 )

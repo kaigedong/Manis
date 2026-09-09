@@ -59,6 +59,24 @@ impl ManisApp {
         cx.notify();
     }
 
+    #[cfg(feature = "snapshot-fixtures")]
+    #[doc(hidden)]
+    pub fn show_managed_policy_dialog_fixture(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(id) = self
+            .managed_policies
+            .groups
+            .first()
+            .map(|group| group.id.clone())
+        else {
+            return;
+        };
+        self.open_managed_policy_settings(&id, window, cx);
+    }
+
     pub(in crate::app) fn set_policy_group_editor_enabled(
         &mut self,
         enabled: bool,
@@ -95,7 +113,6 @@ impl ManisApp {
     ) -> Dialog {
         let viewport = window.viewport_size();
         let width = (viewport.width.as_f32() - 32.0).clamp(320.0, 780.0);
-        let max_height = (viewport.height.as_f32() - 32.0).max(360.0);
         let margin_top = ((viewport.height.as_f32() - 640.0) / 2.0).max(16.0);
         let app = cx.entity();
         let busy = self.managed_policies.mutation_state.is_busy();
@@ -120,9 +137,8 @@ impl ManisApp {
             )
         };
 
-        surface_dialog(dialog, theme)
+        surface_dialog(dialog, theme, window)
             .width(px(width))
-            .max_h(px(max_height))
             .margin_top(px(margin_top))
             .overlay(true)
             .overlay_closable(!busy)

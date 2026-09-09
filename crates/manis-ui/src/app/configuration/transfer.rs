@@ -551,12 +551,9 @@ impl ManisApp {
         let editing = state.editor.is_some();
         let footer = self.configuration_transfer_footer(theme, language, cx);
         let app = cx.entity();
-        surface_dialog(dialog, theme)
+        surface_dialog(dialog, theme, window)
             .width(px((window.viewport_size().width.as_f32() - 32.0)
                 .clamp(300.0, if editing { 920.0 } else { 560.0 })))
-            .max_h(px(
-                (window.viewport_size().height.as_f32() - 32.0).max(280.0)
-            ))
             .margin_top(px(if editing {
                 16.0
             } else {
