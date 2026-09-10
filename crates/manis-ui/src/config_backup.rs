@@ -10,6 +10,7 @@ const MAX_BACKUP_TEXT_BYTES: u64 = 64 * 1024 * 1024;
 const BACKUP_DIRECTORY_NAME: &str = "configuration-backups";
 
 mod filesystem;
+mod readable;
 mod restore;
 
 use filesystem::{
@@ -136,7 +137,12 @@ impl From<SubscriptionStoreError> for BackupError {
 }
 
 pub(crate) fn read_configuration_for_editing(directory: &Path) -> Result<String, BackupError> {
-    crate::config_toml::read_source(directory).map_err(Into::into)
+    let source = crate::config_toml::read_source(directory).map_err(BackupError::from)?;
+    readable::to_readable_source(&source)
+}
+
+fn storage_source_for_import(text: &str) -> Result<String, BackupError> {
+    readable::to_storage_source(text)
 }
 
 #[cfg(test)]
@@ -150,12 +156,13 @@ pub(crate) fn prepare_import(text: &str) -> Result<PreparedBackup, BackupError> 
     if text.len() as u64 > MAX_BACKUP_TEXT_BYTES {
         return Err(BackupError::Oversized);
     }
-    let files = crate::config_toml::entries_from_source(text)?;
+    let storage_source = storage_source_for_import(text)?;
+    let files = crate::config_toml::entries_from_source(&storage_source)?;
     let temp = TempStore::new()?;
-    crate::config_toml::replace_source(temp.store_dir(), text)?;
+    crate::config_toml::replace_source(temp.store_dir(), &storage_source)?;
     let summary = validate_store(temp.store_dir(), &files)?;
     Ok(PreparedBackup {
-        source: text.to_owned(),
+        source: storage_source,
         files,
         summary,
     })
