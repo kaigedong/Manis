@@ -421,10 +421,13 @@ pub(crate) struct LoadedProviderNode {
 }
 
 #[cfg(unix)]
-fn load_subscription_provider(providers: &[manis_mihomo::ProxyProvider]) -> Vec<LoadedProvider> {
+fn load_preview_provider(
+    providers: &[manis_mihomo::ProxyProvider],
+    expected_name: &str,
+) -> Vec<LoadedProvider> {
     providers
         .iter()
-        .filter(|provider| provider.name == "subscription")
+        .filter(|provider| provider.name == expected_name)
         .map(|provider| {
             let mut loaded = load_provider(provider);
             "Subscription preview".clone_into(&mut loaded.name);

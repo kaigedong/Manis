@@ -254,7 +254,7 @@ pub(crate) fn preview_single_node(
                 Err(_) if attempt + 1 < PREVIEW_ENGINE_START_ATTEMPTS => continue,
                 Err(_) => return Err(SubscriptionStoreError::InvalidSource),
             };
-            let providers = wait_for_preview_providers(&endpoint)
+            let providers = wait_for_preview_providers(&endpoint, "Single node 1")
                 .map_err(|_error| SubscriptionStoreError::InvalidSource);
             manager
                 .stop()
@@ -323,7 +323,7 @@ pub(super) fn preview_secret_subscription_with_binary(
                 Err(_) if attempt + 1 < PREVIEW_ENGINE_START_ATTEMPTS => continue,
                 Err(_) => return Err(SubscriptionPreviewError::EngineUnavailable),
             };
-            let providers = wait_for_preview_providers(&endpoint);
+            let providers = wait_for_preview_providers(&endpoint, "subscription");
             manager
                 .stop()
                 .map_err(|_error| SubscriptionPreviewError::EngineUnavailable)?;
@@ -363,6 +363,7 @@ fn reserve_preview_port() -> Result<u16, SubscriptionPreviewError> {
 #[cfg(unix)]
 fn wait_for_preview_providers(
     endpoint: &ControllerEndpoint,
+    expected_name: &str,
 ) -> Result<Vec<LoadedProvider>, SubscriptionPreviewError> {
     let ControllerEndpoint::UnixSocket(socket_path) = endpoint else {
         return Err(SubscriptionPreviewError::UnsupportedPlatform);
@@ -373,7 +374,7 @@ fn wait_for_preview_providers(
     );
     for attempt in 0..PREVIEW_PROVIDER_ATTEMPTS {
         if let Ok(providers) = client.fetch_proxy_providers() {
-            let providers = load_subscription_provider(&providers);
+            let providers = load_preview_provider(&providers, expected_name);
             if providers.iter().any(|provider| !provider.nodes.is_empty()) {
                 return Ok(providers);
             }
@@ -384,11 +385,11 @@ fn wait_for_preview_providers(
     }
     match client.fetch_proxy_providers() {
         Ok(providers)
-            if providers.iter().any(|provider| {
-                provider.name == "subscription" && !provider.proxies.is_empty()
-            }) =>
+            if providers
+                .iter()
+                .any(|provider| provider.name == expected_name && !provider.proxies.is_empty()) =>
         {
-            Ok(load_subscription_provider(&providers))
+            Ok(load_preview_provider(&providers, expected_name))
         }
         Ok(_) => Err(SubscriptionPreviewError::EmptyProvider),
         Err(_) => Err(SubscriptionPreviewError::ProviderUnavailable),

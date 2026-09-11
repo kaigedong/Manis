@@ -14,6 +14,28 @@ use std::time::Duration;
 use manis_engine::ControllerEndpoint;
 
 #[test]
+fn single_node_preview_selects_the_single_node_provider() {
+    let providers = vec![manis_mihomo::ProxyProvider {
+        name: "Single node 1".to_owned(),
+        vehicle_type: Some("File".to_owned()),
+        proxies: vec![manis_mihomo::Proxy {
+            name: "fixture-node".to_owned(),
+            proxy_type: "Vless".to_owned(),
+            current: None,
+            all: Vec::new(),
+            alive: Some(true),
+            history: Vec::new(),
+            provider_name: Some("Single node 1".to_owned()),
+            hidden: None,
+        }],
+    }];
+
+    let loaded = super::super::load_preview_provider(&providers, "Single node 1");
+    assert_eq!(loaded.len(), 1);
+    assert_eq!(loaded[0].nodes[0].name, "fixture-node");
+}
+
+#[test]
 fn preview_workspace_is_private_and_removed_on_drop() -> Result<(), Box<dyn std::error::Error>> {
     let workspace = super::PreviewWorkspace::create()?;
     let path = workspace.path().to_owned();
