@@ -318,20 +318,21 @@ strategy	manual
 interval	60
 tolerance-ms	150
 matcher	explicit
-filter
+filter__empty
 member	737562736372697074696f6e3a6c6567616379	484b203033
 """
 "routing.mode" = "rule"
-"#;
+"#
+        .replace("filter__empty\nmember", "filter\t\nmember");
 
-        let readable = to_readable_source(source).expect("readable source");
+        let readable = to_readable_source(&source).expect("readable source");
         assert!(readable.contains("name: 香港"));
         assert!(readable.contains("url: https://example.invalid"));
         assert!(readable.contains("member: subscription:legacy -> HK 03"));
         assert!(!readable.contains("e9a699e6b8af"));
 
         let restored = to_storage_source(&readable).expect("storage source");
-        let original = DocumentMut::from_str(source).expect("original TOML");
+        let original = DocumentMut::from_str(&source).expect("original TOML");
         let restored = DocumentMut::from_str(&restored).expect("restored TOML");
         for name in ["subscription.url", "policy-abc123.policy", "routing.mode"] {
             let before = original
