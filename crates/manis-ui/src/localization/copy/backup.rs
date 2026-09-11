@@ -2,14 +2,14 @@ use crate::localization::LocalizedText;
 
 pub(crate) const TITLE: LocalizedText = LocalizedText::new("Configuration editor", "配置编辑器");
 pub(crate) const DETAIL: LocalizedText = LocalizedText::new(
-    "Open config.toml to copy, replace or edit the complete configuration directly in Manis.",
-    "在 Manis 中打开完整的 config.toml，可直接复制、粘贴替换或修改。",
+    "Review a readable configuration snapshot. Manis converts it back to its private storage format when you apply it.",
+    "查看易读的配置快照。应用时，Manis 会自动转换回内部存储格式。",
 );
 pub(crate) const EDIT: LocalizedText = LocalizedText::new("Open configuration", "打开配置");
 pub(crate) const EDITOR_TITLE: LocalizedText = LocalizedText::new("Edit configuration", "编辑配置");
 pub(crate) const EDIT_DETAIL: LocalizedText = LocalizedText::new(
-    "This is the current complete config.toml. Comments are preserved when Manis changes individual values. Copy it for migration, paste another complete configuration to replace it, or edit it here. Manis validates and previews changes before applying them.",
-    "下方是当前完整的 config.toml。Manis 修改单项配置时会保留其中的注释。可复制内容用于迁移、粘贴另一份完整配置进行替换，也可直接修改；应用前会先校验并预览更改。",
+    "This editor shows subscriptions, nodes, policy groups and rules in readable text. URLs and node credentials remain visible because this is a private configuration. Copy it for migration, paste a readable or legacy configuration, or edit it here. Manis validates and previews changes before applying them.",
+    "下方以易读文本显示订阅、节点、策略组和规则。由于这是私有配置，订阅链接和节点凭据仍会显示。可复制用于迁移，也可粘贴易读格式或旧版配置；应用前会先校验并预览更改。",
 );
 pub(crate) const LOADING_CURRENT: LocalizedText =
     LocalizedText::new("Loading current configuration…", "正在读取当前配置…");

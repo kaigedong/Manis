@@ -187,12 +187,9 @@ fn editor_opens_dangling_policy_references_but_requires_repair_before_preview(
             .expect("invalid references must remain editable")
     });
     let draft = editor.read_with(cx, |editor, _| editor.value());
-    assert_eq!(
-        crate::config_toml::entries_from_source(&draft)
-            .unwrap()
-            .get("policy-1.policy"),
-        Some(&original)
-    );
+    assert!(draft.contains("# 策略组"));
+    assert!(draft.contains("name: Test group"));
+    assert!(draft.contains("member: policy:policy-2 -> Removed group"));
     cx.update(|window, cx| {
         assert!(window.has_active_dialog(cx));
         app.update(cx, ManisApp::preview_configuration_edits);
@@ -249,12 +246,8 @@ fn editor_prefills_current_configuration_and_preserves_invalid_edits(
             .expect("prefilled editor")
     });
     let current = editor.read_with(cx, |editor, _| editor.value());
-    assert_eq!(
-        crate::config_toml::entries_from_source(&current)
-            .unwrap()
-            .get("routing.mode"),
-        Some(&original)
-    );
+    assert!(current.contains("# 路由模式"));
+    assert!(current.contains("value: direct"));
     cx.update(|window, cx| {
         app.update(cx, ManisApp::copy_configuration_to_clipboard);
         assert_eq!(
