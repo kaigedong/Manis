@@ -30,6 +30,7 @@ sha256_file() {
 }
 
 case "$OS_NAME:$ARCH_NAME" in
+  Android:aarch64|Android:arm64) asset_stem="mihomo-android-arm64-v8"; archive_kind="gz" ;;
   Darwin:arm64) asset_stem="mihomo-darwin-arm64"; archive_kind="gz" ;;
   Darwin:x86_64) asset_stem="mihomo-darwin-amd64-v2"; archive_kind="gz" ;;
   Linux:x86_64) asset_stem="mihomo-linux-amd64-v2"; archive_kind="gz" ;;

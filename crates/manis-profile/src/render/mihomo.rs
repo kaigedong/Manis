@@ -8,6 +8,14 @@ use crate::{
 };
 
 pub(crate) fn render(profile: &Profile, tun_enabled: bool) -> Result<String, ProfileError> {
+    render_with_tun_fd(profile, tun_enabled, None)
+}
+
+pub(crate) fn render_with_tun_fd(
+    profile: &Profile,
+    tun_enabled: bool,
+    tun_file_descriptor: Option<i32>,
+) -> Result<String, ProfileError> {
     let mut providers = Map::new();
     for provider in &profile.providers {
         let mut value = match &provider.source {
@@ -36,6 +44,14 @@ pub(crate) fn render(profile: &Profile, tun_enabled: bool) -> Result<String, Pro
     tun["strict-route"] = json!(cfg!(target_os = "linux"));
     tun["auto-detect-interface"] = json!(true);
     tun["dns-hijack"] = json!(["any:53", "tcp://any:53"]);
+    if let Some(file_descriptor) = tun_file_descriptor {
+        tun["file-descriptor"] = json!(file_descriptor);
+        tun["auto-route"] = json!(false);
+        tun["auto-detect-interface"] = json!(false);
+        tun["mtu"] = json!(1500);
+        tun["inet4-address"] = json!(["172.19.0.1/30"]);
+        tun["inet6-address"] = json!(["fd00:1::1/126"]);
+    }
     let document = json!({
         "mode": profile.mode.as_mihomo_mode(),
         "unified-delay": true, "find-process-mode": "always", "allow-lan": false,
@@ -59,6 +75,13 @@ pub(crate) fn render(profile: &Profile, tun_enabled: bool) -> Result<String, Pro
         serde_saphyr::ser_options! { compact_list_indent: false, prefer_block_scalars: false };
     serde_saphyr::to_string_with_options(&QuotedYaml(&document), options)
         .map_err(|_| ProfileError::Serialization("Mihomo YAML"))
+}
+
+pub(crate) fn mihomo_with_tun_fd(
+    profile: &Profile,
+    file_descriptor: i32,
+) -> Result<String, ProfileError> {
+    render_with_tun_fd(profile, true, Some(file_descriptor))
 }
 
 fn group(group: &PolicyGroup) -> Value {

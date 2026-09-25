@@ -64,6 +64,7 @@ pub(super) fn asset_priority(name: &str, platform: Platform) -> Option<usize> {
 impl Platform {
     fn preferred_asset_markers(self) -> &'static [&'static str] {
         match self {
+            Self::AndroidArm64 => &["mihomo-android-arm64-v8"],
             Self::MacosArm64 => &["mihomo-darwin-arm64"],
             Self::MacosX64 => &["mihomo-darwin-amd64-v2"],
             Self::LinuxX64 => &["mihomo-linux-amd64-v2", "mihomo-linux-amd64"],

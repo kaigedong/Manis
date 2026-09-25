@@ -9,91 +9,199 @@ use manis_engine::EngineManager;
 use crate::diagnostics::{LogLevel, record_event};
 
 use super::super::{
-    ControllerRuntime, LoadError, ManagedGeneratedProfile, ManagedPolicyRuntimeSnapshot,
-    PolicyGroupBenchmarkSnapshot, ProxyDelayTarget, compile_managed_generated_profile,
-    fetch_group_delay, fetch_policy_group, fetch_proxy_delay_targets_bounded_with_progress,
-    reload_mihomo_config, render_generated_profile_with_tun, running_managed_endpoint,
-    select_global_node_at_endpoint, select_policy_group_candidate, set_routing_mode,
+    ControllerRuntime, GENERATED_PROFILE_FILE, LoadError, ManagedEngineConfig,
+    ManagedGeneratedProfile, ManagedPolicyRuntimeSnapshot, PolicyGroupBenchmarkSnapshot,
+    ProxyDelayTarget, compile_managed_generated_profile, fetch_group_delay, fetch_policy_group,
+    fetch_proxy_delay_targets_bounded_with_progress, generated_engine_manager,
+    reload_mihomo_config, render_generated_profile, render_generated_profile_with_tun,
+    running_managed_endpoint, select_global_node_at_endpoint, select_policy_group_candidate,
+    set_routing_mode, validate_managed_config, write_private_atomic,
 };
 use super::MANAGED_KERNEL_LOCK_POISONED;
 
+#[cfg(target_os = "android")]
+struct AndroidVpnRollback(bool);
+
+#[cfg(target_os = "android")]
+impl Drop for AndroidVpnRollback {
+    fn drop(&mut self) {
+        if self.0 {
+            let _ = manis_android_bridge::stop_vpn_service();
+        }
+    }
+}
+
 impl ControllerRuntime {
     pub(crate) fn set_tun_enabled(&self, enabled: bool) -> Result<(), LoadError> {
-        record_event(
-            LogLevel::Info,
-            "controller.tun.requested",
-            format!(
-                "enabled={enabled} ownership={}",
-                if matches!(self, Self::Managed { .. }) {
-                    "managed"
-                } else if self.is_fixture() {
-                    "fixture"
-                } else {
-                    "invalid"
-                }
-            ),
-        );
-        let (manager, spec) = self.managed_mihomo_tun_parts()?;
-        let profile = compile_managed_generated_profile(spec)?;
-        let payload = render_generated_profile_with_tun(spec, &profile, enabled)?;
-        if enabled {
-            self.prepare_tun_activation()?;
+        #[cfg(target_os = "android")]
+        {
+            return self.set_android_tun_enabled(enabled);
         }
-        let controller_secret = self.controller_secret();
-        let endpoint = running_managed_endpoint(manager)?;
-        record_event(
-            LogLevel::Info,
-            "controller.tun.config_reload.requested",
-            format!(
-                "enabled={enabled} method=PUT endpoint=/configs?force=true bytes={}",
-                payload.len()
-            ),
-        );
-        let result = reload_mihomo_config(&endpoint, &payload, enabled, controller_secret)
-            .map_err(LoadError::from);
-        if result.is_ok() {
+        #[cfg(not(target_os = "android"))]
+        {
             record_event(
                 LogLevel::Info,
-                "controller.tun.config_reload.succeeded",
-                format!("enabled={enabled} rebuild=general,dns,listeners,tun,providers"),
+                "controller.tun.requested",
+                format!(
+                    "enabled={enabled} ownership={}",
+                    if matches!(self, Self::Managed { .. }) {
+                        "managed"
+                    } else if self.is_fixture() {
+                        "fixture"
+                    } else {
+                        "invalid"
+                    }
+                ),
             );
-        }
-        #[cfg(target_os = "macos")]
-        let result = match result {
-            Ok(()) if !enabled => self.release_macos_tun_route(),
-            result => result,
-        };
-        #[cfg(target_os = "macos")]
-        if enabled && result.is_ok() {
-            match crate::macos_privileged::existing_tun_route() {
-                Ok(Some(route)) => {
-                    record_event(LogLevel::Info, "controller.tun.route_confirmed", route);
+            let (manager, spec) = self.managed_mihomo_tun_parts()?;
+            let profile = compile_managed_generated_profile(spec)?;
+            let payload = render_generated_profile_with_tun(spec, &profile, enabled)?;
+            if enabled {
+                self.prepare_tun_activation()?;
+            }
+            let controller_secret = self.controller_secret();
+            let endpoint = running_managed_endpoint(manager)?;
+            record_event(
+                LogLevel::Info,
+                "controller.tun.config_reload.requested",
+                format!(
+                    "enabled={enabled} method=PUT endpoint=/configs?force=true bytes={}",
+                    payload.len()
+                ),
+            );
+            let result = reload_mihomo_config(&endpoint, &payload, enabled, controller_secret)
+                .map_err(LoadError::from);
+            if result.is_ok() {
+                record_event(
+                    LogLevel::Info,
+                    "controller.tun.config_reload.succeeded",
+                    format!("enabled={enabled} rebuild=general,dns,listeners,tun,providers"),
+                );
+            }
+            #[cfg(target_os = "macos")]
+            let result = match result {
+                Ok(()) if !enabled => self.release_macos_tun_route(),
+                result => result,
+            };
+            #[cfg(target_os = "macos")]
+            if enabled && result.is_ok() {
+                match crate::macos_privileged::existing_tun_route() {
+                    Ok(Some(route)) => {
+                        record_event(LogLevel::Info, "controller.tun.route_confirmed", route);
+                    }
+                    Ok(None) => record_event(
+                        LogLevel::Warn,
+                        "controller.tun.route_missing",
+                        "Mihomo accepted TUN enable but the expected split-default route was not found",
+                    ),
+                    Err(error) => record_event(
+                        LogLevel::Warn,
+                        "controller.tun.route_probe_failed",
+                        error.to_string(),
+                    ),
                 }
-                Ok(None) => record_event(
-                    LogLevel::Warn,
-                    "controller.tun.route_missing",
-                    "Mihomo accepted TUN enable but the expected split-default route was not found",
+            }
+            match &result {
+                Ok(()) => record_event(
+                    LogLevel::Info,
+                    "controller.tun.succeeded",
+                    format!("enabled={enabled} endpoint={endpoint}"),
                 ),
                 Err(error) => record_event(
-                    LogLevel::Warn,
-                    "controller.tun.route_probe_failed",
-                    error.to_string(),
+                    LogLevel::Error,
+                    "controller.tun.failed",
+                    format!("enabled={enabled} error={error}"),
                 ),
             }
+            result
         }
-        match &result {
-            Ok(()) => record_event(
-                LogLevel::Info,
-                "controller.tun.succeeded",
-                format!("enabled={enabled} endpoint={endpoint}"),
-            ),
-            Err(error) => record_event(
-                LogLevel::Error,
-                "controller.tun.failed",
-                format!("enabled={enabled} error={error}"),
-            ),
+    }
+
+    #[cfg(target_os = "android")]
+    fn set_android_tun_enabled(&self, enabled: bool) -> Result<(), LoadError> {
+        use std::os::fd::OwnedFd;
+
+        let Self::Managed {
+            manager,
+            apply_lock,
+            generated_profile: Some(spec),
+            ..
+        } = self
+        else {
+            return Err(LoadError::Runtime(
+                "Android VPN mode requires a Manis-managed Mihomo profile".to_owned(),
+            ));
+        };
+        let _apply = apply_lock
+            .lock()
+            .map_err(|_| LoadError::Runtime("managed profile lock was damaged".to_owned()))?;
+        let profile = compile_managed_generated_profile(spec)?;
+        let tun_fd: Option<OwnedFd> = if enabled {
+            Some(manis_android_bridge::request_vpn_fd().map_err(LoadError::Runtime)?)
+        } else {
+            None
+        };
+        let mut rollback_vpn_service = AndroidVpnRollback(enabled);
+        let payload = match tun_fd.as_ref() {
+            Some(_fd) => super::super::render_mihomo_yaml_with_tun_fd(&profile, 3)
+                .map_err(|error| LoadError::Runtime(error.to_string()))?,
+            None => render_generated_profile(spec, &profile)?,
+        };
+        let config_file =
+            write_private_atomic(&spec.data_dir, GENERATED_PROFILE_FILE, payload.as_bytes())
+                .map_err(|_error| {
+                    LoadError::Runtime(
+                        "private Mihomo configuration could not be written".to_owned(),
+                    )
+                })?;
+        let config = ManagedEngineConfig::new(
+            spec.binary.clone(),
+            config_file,
+            spec.data_dir.clone(),
+            spec.controller.clone(),
+        );
+        let config = if let Some(fd) = tun_fd {
+            config.with_inherited_fd(fd)
+        } else {
+            config
+        };
+        validate_managed_config(&config).map_err(|error| LoadError::Runtime(error.to_string()))?;
+        let replacement = generated_engine_manager(spec, config, false)?;
+        {
+            let mut current = manager
+                .lock()
+                .map_err(|_| LoadError::Runtime(MANAGED_KERNEL_LOCK_POISONED.to_owned()))?;
+            current
+                .stop()
+                .map_err(|error| LoadError::Runtime(error.to_string()))?;
+            *current = replacement;
+            if !enabled {
+                // Dropping the old manager above releases its duplicate of the detached VPN fd.
+                manis_android_bridge::stop_vpn_service().map_err(LoadError::Runtime)?;
+            } else {
+                let revoked_runtime = self.clone();
+                manis_android_bridge::set_vpn_revocation_handler(move || {
+                    if let Err(error) = revoked_runtime.set_tun_enabled(false) {
+                        record_event(
+                            LogLevel::Error,
+                            "controller.tun.revocation_recovery_failed",
+                            error.to_string(),
+                        );
+                    } else {
+                        record_event(
+                            LogLevel::Warn,
+                            "controller.tun.revoked",
+                            "Android revoked the VPN interface; Mihomo returned to local proxy mode",
+                        );
+                    }
+                });
+            }
+            if let Err(error) = current.start() {
+                return Err(LoadError::Runtime(error.to_string()));
+            }
         }
-        result
+        rollback_vpn_service.0 = false;
+        Ok(())
     }
 
     fn prepare_tun_activation(&self) -> Result<(), LoadError> {

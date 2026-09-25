@@ -1,6 +1,8 @@
 [workspace]
 members = [
     "crates/manis-core",
+    "crates/manis-android",
+    "crates/manis-android-bridge",
     "crates/manis-engine",
     "crates/manis-linux-helper",
     "crates/manis-mihomo",

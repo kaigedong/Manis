@@ -185,6 +185,17 @@ fn resolved_launch_command(spec: &CommandSpec) -> io::Result<Command> {
     let stdout = log.try_clone()?;
     let mut command = resolved_command(spec);
     command.stdout(Stdio::from(stdout)).stderr(Stdio::from(log));
+    #[cfg(target_os = "android")]
+    if let Some(fd) = spec.inherited_fd() {
+        use command_fds::{CommandFdExt, FdMapping};
+        use std::os::fd::AsFd;
+        command
+            .fd_mappings(vec![FdMapping {
+                parent_fd: fd.as_fd().try_clone_to_owned()?,
+                child_fd: 3,
+            }])
+            .map_err(|_| io::Error::other("could not map Android VPN descriptor"))?;
+    }
     Ok(command)
 }
 

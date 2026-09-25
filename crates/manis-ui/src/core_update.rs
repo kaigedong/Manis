@@ -56,6 +56,7 @@ pub(crate) enum Platform {
     MacosX64,
     LinuxX64,
     WindowsX64,
+    AndroidArm64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -205,6 +206,7 @@ impl Error for CoreUpdateError {
 impl Platform {
     pub(crate) fn current() -> Result<Self, CoreUpdateError> {
         match (std::env::consts::OS, std::env::consts::ARCH) {
+            ("android", "aarch64") => Ok(Self::AndroidArm64),
             ("macos", "aarch64") => Ok(Self::MacosArm64),
             ("macos", "x86_64") => Ok(Self::MacosX64),
             ("linux", "x86_64") => Ok(Self::LinuxX64),

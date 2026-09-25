@@ -1,0 +1,18 @@
+[package]
+name = "manis-android-bridge"
+description = "Android VPN service bridge for Manis"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+publish.workspace = true
+readme.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[target.'cfg(target_os = "android")'.dependencies]
+gpui-mobile = { git = "https://github.com/bobo-dong/manis-gpui-mobile", rev = "76126c25223fe05a0c0d13794ac1eb753de1c2c2", default-features = false }
+jni = "0.22"
+
+[lints.rust]
+unsafe_code = "allow"

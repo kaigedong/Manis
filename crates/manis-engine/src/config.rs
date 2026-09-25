@@ -5,6 +5,11 @@ use std::{
     path::{Component, Path, PathBuf},
     time::Duration,
 };
+#[cfg(target_os = "android")]
+use std::{
+    os::fd::{AsFd, AsRawFd, OwnedFd},
+    sync::Arc,
+};
 
 use manis_core::KernelKind;
 
@@ -85,7 +90,7 @@ impl ControllerEndpoint {
 }
 
 /// Paths and controller settings for one isolated proxy-core child process.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct ManagedEngineConfig {
     kernel: KernelKind,
     binary: PathBuf,
@@ -93,7 +98,33 @@ pub struct ManagedEngineConfig {
     data_dir: PathBuf,
     controller: ControllerEndpoint,
     controller_secret_configured: bool,
+    #[cfg(target_os = "android")]
+    inherited_fd: Option<Arc<OwnedFd>>,
 }
+
+impl PartialEq for ManagedEngineConfig {
+    fn eq(&self, other: &Self) -> bool {
+        self.kernel == other.kernel
+            && self.binary == other.binary
+            && self.config_file == other.config_file
+            && self.data_dir == other.data_dir
+            && self.controller == other.controller
+            && self.controller_secret_configured == other.controller_secret_configured
+            && {
+                #[cfg(target_os = "android")]
+                {
+                    self.inherited_fd.as_ref().map(|fd| fd.as_fd().as_raw_fd())
+                        == other.inherited_fd.as_ref().map(|fd| fd.as_fd().as_raw_fd())
+                }
+                #[cfg(not(target_os = "android"))]
+                {
+                    true
+                }
+            }
+    }
+}
+
+impl Eq for ManagedEngineConfig {}
 
 impl ManagedEngineConfig {
     /// Creates a managed configuration.
@@ -111,7 +142,17 @@ impl ManagedEngineConfig {
             data_dir,
             controller,
             controller_secret_configured: false,
+            #[cfg(target_os = "android")]
+            inherited_fd: None,
         }
+    }
+
+    /// Keeps an Android VPN descriptor alive and maps it to fd 3 in the Mihomo child.
+    #[cfg(target_os = "android")]
+    #[must_use]
+    pub fn with_inherited_fd(mut self, fd: OwnedFd) -> Self {
+        self.inherited_fd = Some(Arc::new(fd));
+        self
     }
 
     /// Returns the kernel whose command line this configuration builds.
@@ -192,7 +233,14 @@ impl ManagedEngineConfig {
                 args.push(OsString::from(name));
             }
         }
-        CommandSpec::new(self.binary.clone(), args, self.data_dir.clone())
+        let command = CommandSpec::new(self.binary.clone(), args, self.data_dir.clone());
+        #[cfg(target_os = "android")]
+        let command = if let Some(fd) = &self.inherited_fd {
+            command.with_inherited_fd(fd.clone())
+        } else {
+            command
+        };
+        command
     }
 }
 

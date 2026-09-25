@@ -200,6 +200,21 @@ fn generated_profiles_default_to_rule_mode_for_compatibility() {
 }
 
 #[test]
+fn android_vpn_profile_uses_the_inherited_descriptor_without_owning_routes() {
+    let profile = Profile::qx_default(fixture_secret()).expect("fixture profile is valid");
+    let yaml = render_mihomo_yaml_with_tun_fd(&profile, 3).expect("Android TUN profile renders");
+    let document: serde_json::Value = serde_saphyr::from_str(&yaml).expect("YAML parses");
+
+    assert_eq!(document["tun"]["enable"], true);
+    assert_eq!(document["tun"]["file-descriptor"], 3);
+    assert_eq!(document["tun"]["auto-route"], false);
+    assert_eq!(document["tun"]["auto-detect-interface"], false);
+    assert_eq!(document["tun"]["mtu"], 1500);
+    assert_eq!(document["tun"]["inet4-address"][0], "172.19.0.1/30");
+    assert_eq!(document["tun"]["inet6-address"][0], "fd00:1::1/126");
+}
+
+#[test]
 fn profile_mode_can_be_persisted_and_rendered_for_all_mihomo_modes() {
     let cases = [
         (ProfileMode::Direct, "direct"),

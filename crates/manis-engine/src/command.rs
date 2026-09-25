@@ -3,14 +3,42 @@ use std::{
     fmt,
     path::{Path, PathBuf},
 };
+#[cfg(target_os = "android")]
+use std::{
+    os::fd::{AsFd, AsRawFd, OwnedFd},
+    sync::Arc,
+};
 
 /// A fully resolved process command without shell interpolation.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct CommandSpec {
     program: PathBuf,
     args: Vec<OsString>,
     current_dir: PathBuf,
+    #[cfg(target_os = "android")]
+    inherited_fd: Option<Arc<OwnedFd>>,
 }
+
+impl PartialEq for CommandSpec {
+    fn eq(&self, other: &Self) -> bool {
+        self.program == other.program
+            && self.args == other.args
+            && self.current_dir == other.current_dir
+            && {
+                #[cfg(target_os = "android")]
+                {
+                    self.inherited_fd.as_ref().map(|fd| fd.as_fd().as_raw_fd())
+                        == other.inherited_fd.as_ref().map(|fd| fd.as_fd().as_raw_fd())
+                }
+                #[cfg(not(target_os = "android"))]
+                {
+                    true
+                }
+            }
+    }
+}
+
+impl Eq for CommandSpec {}
 
 impl fmt::Debug for CommandSpec {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -33,6 +61,16 @@ impl fmt::Debug for CommandSpec {
             .field("program", &self.program)
             .field("args", &args)
             .field("current_dir", &self.current_dir)
+            .field("has_inherited_fd", &{
+                #[cfg(target_os = "android")]
+                {
+                    self.inherited_fd.is_some()
+                }
+                #[cfg(not(target_os = "android"))]
+                {
+                    false
+                }
+            })
             .finish()
     }
 }
@@ -43,7 +81,20 @@ impl CommandSpec {
             program,
             args,
             current_dir,
+            #[cfg(target_os = "android")]
+            inherited_fd: None,
         }
+    }
+
+    #[cfg(target_os = "android")]
+    pub(crate) fn with_inherited_fd(mut self, fd: Arc<OwnedFd>) -> Self {
+        self.inherited_fd = Some(fd);
+        self
+    }
+
+    #[cfg(target_os = "android")]
+    pub(crate) fn inherited_fd(&self) -> Option<&Arc<OwnedFd>> {
+        self.inherited_fd.as_ref()
     }
 
     /// Returns the executable path.

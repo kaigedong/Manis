@@ -3,7 +3,7 @@
 
 mod mihomo;
 
-pub(super) use mihomo::render as mihomo;
+pub(super) use mihomo::{mihomo_with_tun_fd, render as mihomo};
 
 use serde::ser::{Serialize, SerializeMap, SerializeSeq, Serializer};
 use serde_json::Value;

@@ -1,0 +1,25 @@
+[package]
+name = "manis-android"
+description = "Android NativeActivity host for Manis"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+publish.workspace = true
+readme.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+gpui = { git = "https://github.com/zed-industries/zed", package = "gpui", default-features = false }
+manis-ui = { path = "../manis-ui" }
+
+[target.'cfg(target_os = "android")'.dependencies]
+gpui-mobile = { git = "https://github.com/bobo-dong/manis-gpui-mobile", rev = "76126c25223fe05a0c0d13794ac1eb753de1c2c2", default-features = false }
+manis-android-bridge = { path = "../manis-android-bridge" }
+android-activity = { version = "0.6", features = ["native-activity"] }
+android_logger = "0.15"
+log = "0.4"

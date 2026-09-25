@@ -5,7 +5,7 @@ use gpui::{
     WindowBackgroundAppearance, WindowBounds, WindowOptions, px, size,
 };
 use manis_core::ProxyMode;
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
 use tray_icon::{
     Icon, TrayIcon, TrayIconBuilder,
     menu::{CheckMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem},
@@ -25,19 +25,19 @@ mod linux;
 #[cfg(target_os = "linux")]
 use linux::ManisTray;
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
 const SHOW_MENU_ID: &str = "manis.tray.show";
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
 const ABOUT_MENU_ID: &str = "manis.tray.about";
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
 const QUIT_MENU_ID: &str = "manis.tray.quit";
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
 const SYSTEM_PROXY_MENU_ID: &str = "manis.tray.proxy.system";
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
 const TUN_PROXY_MENU_ID: &str = "manis.tray.proxy.tun";
 const TRAY_EVENT_INTERVAL: Duration = Duration::from_millis(100);
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
 struct ManisTray {
     _icon: TrayIcon,
     show_id: MenuId,
@@ -58,6 +58,7 @@ struct TrayProxySnapshot {
     tun_block: Option<ProxyModeBlock>,
 }
 
+#[cfg(not(target_os = "android"))]
 impl Global for ManisTray {}
 
 /// Keeps the product state alive while the native window is closed to the status item.
@@ -131,6 +132,20 @@ pub fn open_window(cx: &mut App) -> gpui::Result<()> {
 }
 
 fn main_window_options(bounds: Bounds<gpui::Pixels>) -> WindowOptions {
+    #[cfg(target_os = "android")]
+    {
+        let _ = bounds;
+        WindowOptions {
+            window_bounds: None,
+            titlebar: None,
+            window_background: WindowBackgroundAppearance::Opaque,
+            window_min_size: None,
+            is_resizable: false,
+            focus: true,
+            ..Default::default()
+        }
+    }
+    #[cfg(not(target_os = "android"))]
     WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         titlebar: Some(TitlebarOptions {
@@ -168,31 +183,39 @@ pub fn install(cx: &mut App) -> Result<(), &'static str> {
 /// # Errors
 /// Returns a redacted message when the platform tray cannot be initialized.
 pub(crate) fn install_with_language(cx: &mut App, language: Language) -> Result<(), &'static str> {
-    #[cfg(target_os = "linux")]
-    let tray = ManisTray::new(language)?;
-    #[cfg(not(target_os = "linux"))]
-    let tray = create_native_tray(language)?;
+    #[cfg(target_os = "android")]
+    {
+        let _ = (cx, language);
+        return Err("Android does not provide a system tray");
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        #[cfg(target_os = "linux")]
+        let tray = ManisTray::new(language)?;
+        #[cfg(not(target_os = "linux"))]
+        let tray = create_native_tray(language)?;
 
-    cx.set_global(tray);
-    // Only hide on close after a tray was successfully registered. Without a compatible desktop
-    // host, install fails and the application's normal window-close behavior remains in effect.
-    cx.set_quit_mode(QuitMode::Explicit);
+        cx.set_global(tray);
+        // Only hide on close after a tray was successfully registered. Without a compatible desktop
+        // host, install fails and the application's normal window-close behavior remains in effect.
+        cx.set_quit_mode(QuitMode::Explicit);
 
-    let timer = cx.background_executor().clone();
-    cx.spawn(async move |cx| {
-        loop {
-            timer.timer(TRAY_EVENT_INTERVAL).await;
-            let should_quit = cx.update(drain_menu_events);
-            if should_quit {
-                break;
+        let timer = cx.background_executor().clone();
+        cx.spawn(async move |cx| {
+            loop {
+                timer.timer(TRAY_EVENT_INTERVAL).await;
+                let should_quit = cx.update(drain_menu_events);
+                if should_quit {
+                    break;
+                }
             }
-        }
-    })
-    .detach();
-    Ok(())
+        })
+        .detach();
+        Ok(())
+    }
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
 fn create_native_tray(language: Language) -> Result<ManisTray, &'static str> {
     let show = MenuItem::with_id(
         SHOW_MENU_ID,
@@ -268,7 +291,7 @@ fn create_native_tray(language: Language) -> Result<ManisTray, &'static str> {
     })
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
 fn drain_menu_events(cx: &mut App) -> bool {
     let (show_id, about_id, quit_id, system_id, tun_id) = {
         let tray = cx.global::<ManisTray>();
@@ -299,6 +322,11 @@ fn drain_menu_events(cx: &mut App) -> bool {
         return true;
     }
     sync_proxy_menu(cx);
+    false
+}
+
+#[cfg(target_os = "android")]
+fn drain_menu_events(_cx: &mut App) -> bool {
     false
 }
 
@@ -370,6 +398,7 @@ fn open_about_dialog_in_window(
 }
 
 /// Mirrors the live proxy mode onto the tray check items.
+#[cfg(not(target_os = "android"))]
 fn sync_proxy_menu(cx: &mut App) {
     let Some(app) = cx.try_global::<GlobalManisApp>().map(|app| app.0.clone()) else {
         return;

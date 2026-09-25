@@ -13,5 +13,8 @@ rust-version.workspace = true
 [dependencies]
 manis-core = { path = "../manis-core" }
 
+[target.'cfg(target_os = "android")'.dependencies]
+command-fds = "0.3.3"
+
 [lints]
 workspace = true

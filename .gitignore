@@ -1,4 +1,8 @@
 /target/
+packaging/android/app/src/main/jniLibs/
+packaging/android/.gradle/
+packaging/android/app/build/
+/packaging/android/build/
 **/target/
 .DS_Store
 *.log

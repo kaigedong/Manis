@@ -62,6 +62,7 @@ Manis 源码仓库不提交预编译代理内核。发行构建会从 Mihomo 官
 | macOS 13+ | 持续维护 | 主要开发平台；系统代理已验证，TUN 通过管理员授权路径支持测试 |
 | Windows | 持续维护 | 实验性；托管 controller transport 尚未完成，暂不能启动 Mihomo |
 | Linux | 持续维护 | 实验性；仍需覆盖更多发行版与桌面环境 |
+| Android 9+（arm64） | 开发中 | GPUI 原生宿主、Android VPN Service 与 Mihomo TUN 桥接已实现；窄屏适配和真机验收待完成 |
 
 CI 会检查三个平台，但“能够编译”不代表该平台上的所有网络集成都已经完成真实验证。
 
@@ -108,6 +109,22 @@ git clone https://github.com/kaigedong/Manis.git
 cd Manis
 cargo run -p manis-ui
 ```
+
+Android 版本使用独立的 NativeActivity APK 宿主和 GPUI Mobile Vulkan 后端。开发构建需要
+Android SDK、NDK、JDK 17、Gradle 8.9、`cargo-ndk` 和 `aarch64-linux-android` Rust target：
+
+```bash
+cargo install cargo-ndk
+packaging/android/build-apk.sh
+```
+
+APK 位于 `packaging/android/app/build/outputs/apk/debug/app-debug.apk`。Android 构建包含原生
+GPUI 宿主、官方 ARM64 Mihomo 内核下载/校验，以及实验性的 `VpnService` TUN 接入：用户启用
+TUN 时由 Android 建立 VPN 接口，再将文件描述符交给 Mihomo 子进程。该路径已通过 Android
+交叉编译和 APK 打包，但当前开发环境没有连接 Android 手机或模拟器，授权弹窗、触屏交互和
+真实流量路由还没有设备验收。自用侧载构建 targetSdk 28，以便启动经过摘要校验并安装在应用
+私有目录的 Mihomo 核心；这不是 Google Play 发布配置。商店构建需要使用当前 targetSdk，并将
+Mihomo 核心打入签名 APK，随 Manis 一起更新。真机验收完成前，请将当前 APK 视为开发预览。
 
 Manis 只启动自己管理的 Mihomo 进程，并且只使用自己从界面数据生成的配置。它不会连接
 其他程序启动的 controller，也不会运行用户提供的 Mihomo YAML。发行包携带一个经过

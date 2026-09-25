@@ -17,6 +17,8 @@ use manis_mihomo::{
     Connection, ControllerConfig, ControllerTransport, MihomoClient, MihomoError, MihomoSnapshot,
     ObservedRouteEvidence, RuntimeConfig, StdHttpTransport, VersionInfo, to_policy_catalog,
 };
+#[cfg(target_os = "android")]
+use manis_profile::render_mihomo_yaml_with_tun_fd;
 use manis_profile::{
     MANIS_GLOBAL_GROUP_NAME, Name, PolicyRef, Profile, ProfileMode, ProxyDnsServer, QxRuleList,
     Rule, SecretUrl, UserPolicyGroup, UserPolicyGroupKind, VlessProxy, render_mihomo_yaml,

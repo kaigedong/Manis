@@ -25,3 +25,18 @@ pub fn render_mihomo_yaml_with_tun(
     profile.validate()?;
     render::mihomo(profile, tun_enabled)
 }
+
+/// Renders a profile that consumes a VPN TUN descriptor inherited by Mihomo.
+///
+/// # Errors
+/// Returns a redacted validation or serialization error.
+pub fn render_mihomo_yaml_with_tun_fd(
+    profile: &Profile,
+    file_descriptor: i32,
+) -> Result<String, ProfileError> {
+    if file_descriptor < 0 {
+        return Err(ProfileError::InvalidValue("TUN file descriptor"));
+    }
+    profile.validate()?;
+    render::mihomo_with_tun_fd(profile, file_descriptor)
+}

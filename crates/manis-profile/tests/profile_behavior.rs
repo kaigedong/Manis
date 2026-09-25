@@ -6,7 +6,7 @@ use manis_profile::{
     PolicyGroupKind, PolicyRef, Profile, ProfileError, ProfileMode, ProxyDnsServer, ProxyProvider,
     QxRuleDiagnosticKind, QxRuleKind, QxRuleList, Rule, SecretUrl, UserPolicyGroup,
     UserPolicyGroupKind, VlessProxy, render_mihomo_yaml, render_mihomo_yaml_with_tun,
-    write_private_atomic,
+    render_mihomo_yaml_with_tun_fd, write_private_atomic,
 };
 
 fn fixture_secret() -> SecretUrl {
