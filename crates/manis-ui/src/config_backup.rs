@@ -103,6 +103,7 @@ pub(crate) enum BackupError {
     Oversized,
     InvalidFormat,
     InvalidConfiguration,
+    RemoteSourceUnavailable,
 }
 
 impl fmt::Display for BackupError {
@@ -113,6 +114,7 @@ impl fmt::Display for BackupError {
             Self::Oversized => "configuration is too large",
             Self::InvalidFormat => "configuration TOML is invalid or unsupported",
             Self::InvalidConfiguration => "configuration contains invalid values or references",
+            Self::RemoteSourceUnavailable => "remote rule source could not be downloaded",
         })
     }
 }
