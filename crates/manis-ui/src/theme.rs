@@ -354,7 +354,6 @@ fn project_component_chrome(component: &mut ComponentTheme, theme: Theme) {
     component.skeleton = theme.action_soft.into();
     component.description_list_label = theme.surface_low.into();
     component.description_list_label_foreground = theme.text_secondary.into();
-    component.tiles = theme.surface_base.into();
 }
 
 /// gpui-component keeps legacy colors and renderable tokens separately. Root and newer

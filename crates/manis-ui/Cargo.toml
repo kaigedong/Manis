@@ -18,9 +18,9 @@ name = "snapshot"
 required-features = ["snapshot-fixtures"]
 
 [dependencies]
-gpui = { git = "https://github.com/zed-industries/zed", package = "gpui", default-features = false }
-gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "aa7def675aa17b31ca7b79542c8e7a779ed3e56b" }
-gpui-component-assets = { git = "https://github.com/longbridge/gpui-component", rev = "aa7def675aa17b31ca7b79542c8e7a779ed3e56b" }
+gpui = { package = "gpui-pre", version = "=0.3.7", default-features = false }
+gpui-component = "0.7.0"
+gpui-component-assets = { package = "gpui-kit-assets", version = "0.7.0" }
 manis-core = { path = "../manis-core" }
 manis-engine = { path = "../manis-engine" }
 manis-mihomo = { path = "../manis-mihomo" }
@@ -39,10 +39,10 @@ ureq = { version = "=3.4.2", default-features = false, features = ["rustls"] }
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-gpui_platform = { git = "https://github.com/zed-industries/zed", package = "gpui_platform", features = ["font-kit"] }
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.7", features = ["font-kit"] }
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
-gpui_platform = { git = "https://github.com/zed-industries/zed", package = "gpui_platform", features = ["wayland", "x11"] }
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.7", features = ["wayland", "x11"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 ksni = { version = "=0.3.6", default-features = false, features = ["async-io", "blocking"] }
@@ -52,16 +52,16 @@ ksni = { version = "=0.3.6", default-features = false, features = ["async-io", "
 tray-icon = { version = "=0.25.1", default-features = false }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-gpui_platform = { git = "https://github.com/zed-industries/zed", package = "gpui_platform" }
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.7" }
 
 [dev-dependencies]
-gpui = { git = "https://github.com/zed-industries/zed", package = "gpui", default-features = false, features = ["test-support"] }
+gpui = { package = "gpui-pre", version = "=0.3.7", default-features = false, features = ["test-support"] }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 zbus = { version = "5.19.0", default-features = false, features = ["async-io", "blocking-api"] }
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
-gpui_platform = { git = "https://github.com/zed-industries/zed", package = "gpui_platform", features = ["font-kit", "test-support"] }
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.7", features = ["font-kit", "test-support"] }
 
 [lints]
 workspace = true
