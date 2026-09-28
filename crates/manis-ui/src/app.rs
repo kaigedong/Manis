@@ -31,6 +31,7 @@ use crate::{
 mod about;
 mod activity;
 mod configuration;
+mod exit_ip;
 mod logs;
 mod nodes;
 mod policy_presentation;
@@ -174,6 +175,8 @@ pub struct ManisApp {
     managed_health_tick: u8,
     live_status: LiveStreamStatus,
     kernel_logs: VecDeque<KernelLogEntry>,
+    exit_ips: BTreeMap<String, (Option<String>, u64)>,
+    exit_ip_probe_active: bool,
     dark: bool,
     status: String,
     proxy_source_editor: ProxySourceEditorState,
@@ -355,6 +358,8 @@ impl ManisApp {
             managed_health_tick: 0,
             live_status: LiveStreamStatus::default(),
             kernel_logs: VecDeque::with_capacity(500),
+            exit_ips: BTreeMap::new(),
+            exit_ip_probe_active: false,
             dark: false,
             status,
             proxy_source_editor: ProxySourceEditorState::default(),

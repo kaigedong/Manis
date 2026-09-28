@@ -1,5 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
+    net::Ipv4Addr,
     sync::{Arc, Mutex},
 };
 
@@ -18,6 +19,40 @@ use super::super::{
 use super::MANAGED_KERNEL_LOCK_POISONED;
 
 impl ControllerRuntime {
+    /// Queries the public IPv4 seen by a remote service through each node. This only touches the
+    /// dedicated hidden selector and never changes a user-facing policy or the global exit.
+    pub(crate) fn probe_exit_ip_targets(
+        &self,
+        targets: &[ProxyDelayTarget],
+        on_result: impl FnMut(&str, Option<Ipv4Addr>),
+    ) {
+        let Self::Managed {
+            manager,
+            generated_profile: Some(spec),
+            ..
+        } = self
+        else {
+            return;
+        };
+        let Some(port) = spec.exit_ip_probe_port else {
+            return;
+        };
+        let endpoint = match manager.lock() {
+            Ok(mut manager) => match manager.running_endpoint() {
+                Ok(Some(endpoint)) => endpoint.uri(),
+                _ => return,
+            },
+            Err(_) => return,
+        };
+        super::super::exit_ip::probe_targets(
+            &endpoint,
+            port,
+            spec.controller_secret.as_deref(),
+            targets,
+            on_result,
+        );
+    }
+
     pub(crate) fn set_tun_enabled(&self, enabled: bool) -> Result<(), LoadError> {
         record_event(
             LogLevel::Info,

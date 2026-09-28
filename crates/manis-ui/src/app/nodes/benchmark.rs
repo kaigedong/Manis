@@ -72,6 +72,7 @@ impl ManisApp {
             std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new()));
         self.poll_group_benchmark_progress(generation, key.clone(), progress.clone(), cx);
         let total = targets.len();
+        let exit_ip_targets = targets.clone();
         let executor = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
             let result = executor
@@ -87,7 +88,14 @@ impl ManisApp {
                 })
                 .await;
             this.update(cx, |this, cx| {
-                this.finish_source_group_benchmark(&key, generation, total, result, cx);
+                this.finish_source_group_benchmark(
+                    &key,
+                    generation,
+                    total,
+                    result,
+                    exit_ip_targets,
+                    cx,
+                );
             })
             .ok();
         })
@@ -101,6 +109,7 @@ impl ManisApp {
         generation: u64,
         total: usize,
         result: Result<BTreeMap<String, u16>, mihomo::LoadError>,
+        exit_ip_targets: Vec<ProxyDelayTarget>,
         cx: &mut Context<Self>,
     ) {
         let language = self.language();
@@ -116,6 +125,15 @@ impl ManisApp {
             .as_ref()
             .err()
             .map(|error| Self::benchmark_failure_description(language, error));
+        let successful_exit_ip_targets = result
+            .as_ref()
+            .map(|delays| {
+                exit_ip_targets
+                    .into_iter()
+                    .filter(|target| delays.get(target.name()).is_some_and(|delay| *delay > 0))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
         let accepted = match result {
             Ok(delays) => state.complete(generation, total, delays),
             Err(_error) => state.fail(generation, failure.clone()),
@@ -145,6 +163,7 @@ impl ManisApp {
             _ => return,
         }
         self.persist_group_benchmarks();
+        self.start_exit_ip_probe(successful_exit_ip_targets, cx);
         cx.notify();
     }
 }

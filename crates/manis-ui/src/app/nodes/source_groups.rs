@@ -338,9 +338,9 @@ impl ManisApp {
             )
             .child(
                 div()
-                    .w(px(72.0))
+                    .w(px(136.0))
                     .text_align(gpui::TextAlign::Right)
-                    .child(language.localized(copy::common::LATENCY)),
+                    .child(language.localized(copy::nodes::LATENCY_AND_EXIT_IP)),
             )
     }
 
@@ -360,6 +360,7 @@ impl ManisApp {
         } = context;
         let latency = benchmark.node_state(&node.name);
         let idle_latency = node.latency_label.clone().unwrap_or_else(|| "—".to_owned());
+        let exit_ip = self.exit_ip_label(&node.name).map(str::to_owned);
         let spinner_id = format!("{row_id}-latency");
         let global_identity = NodeIdentity::new(&source_id, &node.name).ok();
         let global_runtime_selected = self.runtime_global_target() == Some(node.name.as_str());
@@ -374,12 +375,21 @@ impl ManisApp {
                 node,
                 latency,
                 idle_latency,
+                exit_ip,
                 &spinner_id,
                 language,
                 theme,
             )
         } else {
-            Self::wide_node_row_content(node, latency, idle_latency, &spinner_id, language, theme)
+            Self::wide_node_row_content(
+                node,
+                latency,
+                idle_latency,
+                exit_ip,
+                &spinner_id,
+                language,
+                theme,
+            )
         };
         let selector = row_id.clone();
         div()
@@ -427,6 +437,7 @@ impl ManisApp {
         node: &LoadedProviderNode,
         latency: GroupBenchmarkNodeState,
         idle_latency: String,
+        exit_ip: Option<String>,
         spinner_id: &str,
         language: Language,
         theme: Theme,
@@ -459,21 +470,28 @@ impl ManisApp {
             .child(
                 div()
                     .flex_shrink_0()
-                    .min_w(px(48.0))
+                    .min_w(px(136.0))
                     .text_align(gpui::TextAlign::Right)
                     .child(
                         div()
-                            .min_h(px(18.0))
                             .flex()
-                            .items_center()
-                            .justify_end()
-                            .child(Self::benchmark_latency_content(
-                                latency,
-                                idle_latency,
-                                spinner_id,
-                                language,
-                                theme,
-                            )),
+                            .flex_col()
+                            .items_end()
+                            .child(
+                                div()
+                                    .min_h(px(18.0))
+                                    .flex()
+                                    .items_center()
+                                    .justify_end()
+                                    .child(Self::benchmark_latency_content(
+                                        latency,
+                                        idle_latency,
+                                        spinner_id,
+                                        language,
+                                        theme,
+                                    )),
+                            )
+                            .child(Self::exit_ip_content(exit_ip, theme)),
                     ),
             )
     }
@@ -482,6 +500,7 @@ impl ManisApp {
         node: &LoadedProviderNode,
         latency: GroupBenchmarkNodeState,
         idle_latency: String,
+        exit_ip: Option<String>,
         spinner_id: &str,
         language: Language,
         theme: Theme,
@@ -509,10 +528,11 @@ impl ManisApp {
             )
             .child(
                 div()
-                    .w(px(72.0))
+                    .w(px(136.0))
                     .min_h(px(18.0))
                     .flex()
-                    .items_center()
+                    .flex_col()
+                    .items_end()
                     .justify_end()
                     .child(Self::benchmark_latency_content(
                         latency,
@@ -520,7 +540,8 @@ impl ManisApp {
                         spinner_id,
                         language,
                         theme,
-                    )),
+                    ))
+                    .child(Self::exit_ip_content(exit_ip, theme)),
             )
     }
 

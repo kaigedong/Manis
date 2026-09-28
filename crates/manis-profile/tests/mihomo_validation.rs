@@ -176,3 +176,41 @@ fn generated_compound_rule_passes_mihomo_validation() -> Result<(), Box<dyn std:
     assert!(status.success(), "Mihomo rejected generated compound rule");
     Ok(())
 }
+
+#[test]
+#[ignore = "requires MANIS_MIHOMO_TEST_BINARY pointing to a local Mihomo executable"]
+fn generated_exit_ip_probe_passes_mihomo_validation() -> Result<(), Box<dyn std::error::Error>> {
+    let binary = std::env::var_os("MANIS_MIHOMO_TEST_BINARY")
+        .ok_or("MANIS_MIHOMO_TEST_BINARY is required")?;
+    let root = std::env::temp_dir().join(format!(
+        "manis-exit-ip-probe-validation-{}",
+        std::process::id()
+    ));
+    if root.exists() {
+        fs::remove_dir_all(&root)?;
+    }
+    let mut profile = Profile::qx_sources(
+        Vec::new(),
+        vec![VlessProxy::parse_share_link(
+            "vless://00000000-0000-4000-8000-000000000000@edge.example.invalid:443?security=tls&type=tcp&sni=cdn.example.invalid#Fixture",
+        )?],
+        17_890,
+    )?;
+    profile.set_exit_ip_probe_port(Some(18_791));
+    let yaml = render_mihomo_yaml(&profile)?;
+    let config = write_private_atomic(&root, "manis-generated.yaml", yaml.as_bytes())?;
+
+    let status = Command::new(binary)
+        .args(["-t", "-d"])
+        .arg(&root)
+        .arg("-f")
+        .arg(&config)
+        .status()?;
+
+    fs::remove_dir_all(root)?;
+    assert!(
+        status.success(),
+        "Mihomo rejected exit-IP probe fixture YAML"
+    );
+    Ok(())
+}

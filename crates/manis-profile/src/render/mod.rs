@@ -151,4 +151,27 @@ mod tests {
             json!(["223.5.5.5", "1.12.12.12"])
         );
     }
+
+    #[test]
+    fn exit_ip_probe_has_its_own_loopback_listener_and_selector() {
+        let mut profile = Profile::qx_default(
+            SecretUrl::parse_https("https://example.invalid/sub?token=fixture").unwrap(),
+        )
+        .unwrap();
+        profile.set_exit_ip_probe_port(Some(18_791));
+        let document: Value =
+            serde_saphyr::from_str(&render_mihomo_yaml(&profile).unwrap()).unwrap();
+        let listener = &document["listeners"][0];
+        assert_eq!(listener["listen"], "127.0.0.1");
+        assert_eq!(listener["port"], 18_791);
+        assert_eq!(listener["proxy"], crate::MANIS_EXIT_IP_PROBE_GROUP_NAME);
+        let probe = document["proxy-groups"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|group| group["name"] == crate::MANIS_EXIT_IP_PROBE_GROUP_NAME)
+            .unwrap();
+        assert_eq!(probe["hidden"], true);
+        assert_eq!(probe["use"], serde_json::json!(["Subscription 1"]));
+    }
 }

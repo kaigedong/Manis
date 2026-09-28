@@ -23,6 +23,7 @@ fn managed_mihomo_rejects_a_controller_with_a_failed_mixed_listener() {
             "/tmp/manis-runtime/controller.sock",
         )),
         expected_mixed_port: Some(17_890),
+        exit_ip_probe_port: None,
         profile_store_dir: None,
         controller_secret: None,
     };

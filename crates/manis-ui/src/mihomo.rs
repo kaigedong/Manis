@@ -30,6 +30,7 @@ use crate::{brand, core_update};
 
 mod benchmark;
 mod controller_io;
+mod exit_ip;
 mod live_runtime;
 mod managed_apply;
 mod policy_store;
@@ -227,6 +228,7 @@ pub(crate) struct ManagedGeneratedProfile {
     data_dir: PathBuf,
     controller: ControllerEndpoint,
     expected_mixed_port: Option<u16>,
+    exit_ip_probe_port: Option<u16>,
     profile_store_dir: Option<PathBuf>,
     controller_secret: Option<String>,
 }
@@ -336,11 +338,13 @@ fn render_generated_profile(
 }
 
 fn render_generated_profile_with_tun(
-    _spec: &ManagedGeneratedProfile,
+    spec: &ManagedGeneratedProfile,
     profile: &Profile,
     tun_enabled: bool,
 ) -> Result<String, LoadError> {
-    render_mihomo_yaml_with_tun(profile, tun_enabled)
+    let mut profile = profile.clone();
+    profile.set_exit_ip_probe_port(spec.exit_ip_probe_port);
+    render_mihomo_yaml_with_tun(&profile, tun_enabled)
         .map_err(|error| LoadError::Runtime(error.to_string()))
 }
 
@@ -503,9 +507,9 @@ use controller_io::{
 };
 use controller_io::{
     fetch_group_delay, fetch_policy_group, fetch_runtime_config, fetch_version, load_provider,
-    reload_mihomo_config, running_managed_endpoint, select_global_node_at_endpoint,
-    select_policy_group_candidate, set_routing_mode, validate_managed_runtime,
-    with_controller_secret,
+    put_policy_group_selection, reload_mihomo_config, running_managed_endpoint,
+    select_global_node_at_endpoint, select_policy_group_candidate, set_routing_mode,
+    validate_managed_runtime, with_controller_secret,
 };
 
 #[cfg(all(test, unix))]

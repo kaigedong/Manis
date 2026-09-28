@@ -91,6 +91,7 @@ impl ManisApp {
                 manually_selectable: view.item.kind.allows_manual_selection(),
                 selection_busy: self.policy_selection_busy.is_some(),
                 benchmark_state,
+                exit_ip: self.exit_ip_label(&node.name).map(str::to_owned),
                 language,
                 theme,
             };
@@ -324,18 +325,11 @@ impl ManisApp {
             manually_selectable,
             selection_busy,
             benchmark_state,
+            exit_ip,
             language,
             theme,
         } = context;
-        let detail = if item.name == manis_profile::MANIS_GLOBAL_GROUP_NAME {
-            language
-                .localized(copy::nodes::FOLLOW_HOME_SELECTION)
-                .to_owned()
-        } else if item.detail.trim().is_empty() {
-            language.localized(copy::app::UNKNOWN_TYPE).to_owned()
-        } else {
-            item.detail.clone()
-        };
+        let detail = Self::policy_node_detail(item, language);
         let idle_latency = item
             .latency_ms
             .map_or_else(|| "—".to_owned(), |latency| format!("{latency} ms"));
@@ -353,6 +347,25 @@ impl ManisApp {
             theme,
         );
         let source = Self::policy_node_source(source, current, manually_selectable, theme);
+        let metrics = div()
+            .w(px(136.0))
+            .flex_shrink_0()
+            .min_h(px(18.0))
+            .flex()
+            .flex_col()
+            .items_end()
+            .justify_end()
+            .child(Self::benchmark_latency_content(
+                benchmark_state,
+                idle_latency,
+                &spinner_id,
+                language,
+                theme,
+            ))
+            .when(
+                item.kind == manis_core::PolicyCandidateKind::Node,
+                |column| column.child(Self::exit_ip_content(exit_ip, theme)),
+            );
         div()
             .id(format!(
                 "policy-node-{}-{}",
@@ -375,22 +388,7 @@ impl ManisApp {
             })
             .child(description)
             .child(source)
-            .child(
-                div()
-                    .w(px(64.0))
-                    .flex_shrink_0()
-                    .min_h(px(18.0))
-                    .flex()
-                    .items_center()
-                    .justify_end()
-                    .child(Self::benchmark_latency_content(
-                        benchmark_state,
-                        idle_latency,
-                        &spinner_id,
-                        language,
-                        theme,
-                    )),
-            )
+            .child(metrics)
             .when(manually_selectable, |row| {
                 row.hover(move |row| {
                     row.bg(if current {
@@ -415,6 +413,18 @@ impl ManisApp {
                     }
                 }))
             })
+    }
+
+    fn policy_node_detail(item: &PolicyNode, language: Language) -> String {
+        if item.name == manis_profile::MANIS_GLOBAL_GROUP_NAME {
+            language
+                .localized(copy::nodes::FOLLOW_HOME_SELECTION)
+                .to_owned()
+        } else if item.detail.trim().is_empty() {
+            language.localized(copy::app::UNKNOWN_TYPE).to_owned()
+        } else {
+            item.detail.clone()
+        }
     }
 
     fn policy_node_source(
@@ -525,10 +535,10 @@ impl ManisApp {
             )
             .child(
                 div()
-                    .w(px(64.0))
+                    .w(px(136.0))
                     .flex_shrink_0()
                     .text_right()
-                    .child(language.localized(copy::common::LATENCY)),
+                    .child(language.localized(copy::nodes::LATENCY_AND_EXIT_IP)),
             )
     }
 }

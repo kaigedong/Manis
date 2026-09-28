@@ -22,8 +22,8 @@ pub use parsing::{
     QxRule, QxRuleDiagnostic, QxRuleDiagnosticKind, QxRuleImportError, QxRuleKind, QxRuleList,
 };
 pub use policy::{
-    MANIS_GLOBAL_GROUP_NAME, PolicyGroup, PolicyGroupKind, PolicyRef, UserPolicyGroup,
-    UserPolicyGroupKind,
+    MANIS_EXIT_IP_PROBE_GROUP_NAME, MANIS_GLOBAL_GROUP_NAME, PolicyGroup, PolicyGroupKind,
+    PolicyRef, UserPolicyGroup, UserPolicyGroupKind,
 };
 pub use profile::{LogLevel, Profile, ProfileMode};
 pub use render_api::{render_mihomo_yaml, render_mihomo_yaml_with_tun};

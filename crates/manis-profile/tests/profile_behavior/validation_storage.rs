@@ -42,6 +42,7 @@ fn validation_rejects_invalid_names_duplicates_dangling_refs_and_misplaced_match
     let duplicate_groups = Profile {
         mode: ProfileMode::Rule,
         mixed_port: 7890,
+        exit_ip_probe_port: None,
         log_level: LogLevel::Warning,
         store_selected: true,
         proxy_server_nameservers: vec![

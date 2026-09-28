@@ -78,6 +78,12 @@ impl ManisApp {
             .iter()
             .map(mihomo::ProxyDelayTarget::from_policy_node)
             .collect::<Vec<_>>();
+        let exit_ip_targets = group
+            .nodes
+            .iter()
+            .filter(|node| node.kind == manis_core::PolicyCandidateKind::Node)
+            .map(mihomo::ProxyDelayTarget::from_policy_node)
+            .collect::<Vec<_>>();
         if targets.is_empty() {
             language
                 .localized(copy::app::THIS_POLICY_GROUP_HAS_NO_TESTABLE_CANDIDATES)
@@ -124,7 +130,7 @@ impl ManisApp {
                 })
                 .await;
             this.update(cx, |this, cx| {
-                this.finish_policy_group_benchmark(run, result, cx);
+                this.finish_policy_group_benchmark(run, result, exit_ip_targets, cx);
             })
             .ok();
         })
@@ -136,6 +142,7 @@ impl ManisApp {
         &mut self,
         run: PolicyBenchmarkRun,
         result: Result<mihomo::PolicyGroupBenchmarkSnapshot, mihomo::LoadError>,
+        exit_ip_targets: Vec<mihomo::ProxyDelayTarget>,
         cx: &mut Context<Self>,
     ) {
         let PolicyBenchmarkRun {
@@ -150,6 +157,7 @@ impl ManisApp {
             return;
         }
         self.managed_policies.active_benchmark_generation = None;
+        let successful_exit_ip_targets = successful_exit_ip_targets(&result, exit_ip_targets);
         let (delays, current, failure) = match result {
             Ok(snapshot) => (Some(snapshot.delays), snapshot.current, None),
             Err(error) => {
@@ -229,6 +237,25 @@ impl ManisApp {
             }
         }
         self.persist_group_benchmarks();
+        self.start_exit_ip_probe(successful_exit_ip_targets, cx);
         cx.notify();
     }
+}
+
+fn successful_exit_ip_targets(
+    result: &Result<mihomo::PolicyGroupBenchmarkSnapshot, mihomo::LoadError>,
+    targets: Vec<mihomo::ProxyDelayTarget>,
+) -> Vec<mihomo::ProxyDelayTarget> {
+    let Ok(snapshot) = result else {
+        return Vec::new();
+    };
+    targets
+        .into_iter()
+        .filter(|target| {
+            snapshot
+                .delays
+                .get(target.name())
+                .is_some_and(|delay| *delay > 0)
+        })
+        .collect()
 }

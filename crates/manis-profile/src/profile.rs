@@ -1,10 +1,11 @@
 use std::collections::HashSet;
 
 use crate::{
-    GROUP_TEST_URL, HealthCheck, MANIS_GLOBAL_GROUP_NAME, Name, OutboundProxy, PolicyGroup,
-    PolicyGroupKind, PolicyRef, ProfileError, ProxyDnsServer, ProxyProvider, ProxyProviderSource,
-    Rule, SecretUrl, UserPolicyGroup, VlessProxy, compile_user_groups, default_proxy_dns_servers,
-    is_https_url, is_safe_relative_path, validate_groups, validate_rule,
+    GROUP_TEST_URL, HealthCheck, MANIS_EXIT_IP_PROBE_GROUP_NAME, MANIS_GLOBAL_GROUP_NAME, Name,
+    OutboundProxy, PolicyGroup, PolicyGroupKind, PolicyRef, ProfileError, ProxyDnsServer,
+    ProxyProvider, ProxyProviderSource, Rule, SecretUrl, UserPolicyGroup, VlessProxy,
+    compile_user_groups, default_proxy_dns_servers, is_https_url, is_safe_relative_path,
+    validate_groups, validate_rule,
 };
 
 const MAX_PROXY_DNS_SERVERS: usize = 8;
@@ -13,6 +14,8 @@ const MAX_PROXY_DNS_SERVERS: usize = 8;
 pub struct Profile {
     pub mode: ProfileMode,
     pub mixed_port: u16,
+    /// A separate loopback listener for per-node exit-IP checks, when managed by Manis.
+    pub exit_ip_probe_port: Option<u16>,
     pub log_level: LogLevel,
     pub store_selected: bool,
     pub proxy_server_nameservers: Vec<ProxyDnsServer>,
@@ -31,6 +34,7 @@ impl Profile {
         let profile = Self {
             mode: ProfileMode::Rule,
             mixed_port,
+            exit_ip_probe_port: None,
             log_level: LogLevel::Info,
             store_selected: true,
             proxy_server_nameservers: default_proxy_dns_servers(),
@@ -55,6 +59,10 @@ impl Profile {
 
     pub fn set_mode(&mut self, mode: ProfileMode) {
         self.mode = mode;
+    }
+
+    pub fn set_exit_ip_probe_port(&mut self, port: Option<u16>) {
+        self.exit_ip_probe_port = port;
     }
 
     pub fn set_proxy_server_nameservers(&mut self, nameservers: Vec<ProxyDnsServer>) {
@@ -122,7 +130,10 @@ impl Profile {
         }
         if vless_nodes.iter().any(|proxy| {
             proxy.name().as_str().eq_ignore_ascii_case("GLOBAL")
-                || proxy.name().as_str() == MANIS_GLOBAL_GROUP_NAME
+                || matches!(
+                    proxy.name().as_str(),
+                    MANIS_GLOBAL_GROUP_NAME | MANIS_EXIT_IP_PROBE_GROUP_NAME
+                )
         }) {
             return Err(ProfileError::InvalidValue("reserved proxy name"));
         }
@@ -188,6 +199,7 @@ impl Profile {
         let profile = Self {
             mode: ProfileMode::Rule,
             mixed_port,
+            exit_ip_probe_port: None,
             log_level: LogLevel::Info,
             store_selected: true,
             proxy_server_nameservers: default_proxy_dns_servers(),
@@ -213,6 +225,7 @@ impl Profile {
         let profile = Self {
             mode: ProfileMode::Rule,
             mixed_port,
+            exit_ip_probe_port: None,
             log_level: LogLevel::Silent,
             store_selected: false,
             proxy_server_nameservers: default_proxy_dns_servers(),
@@ -253,6 +266,16 @@ impl Profile {
         if self.mixed_port == 0 {
             return Err(ProfileError::InvalidValue("mixed port"));
         }
+        if let Some(port) = self.exit_ip_probe_port
+            && (port == 0
+                || port == self.mixed_port
+                || !self
+                    .groups
+                    .iter()
+                    .any(|group| group.name.as_str() == MANIS_GLOBAL_GROUP_NAME))
+        {
+            return Err(ProfileError::InvalidValue("exit IP probe port"));
+        }
         if self.proxy_server_nameservers.is_empty()
             || self.proxy_server_nameservers.len() > MAX_PROXY_DNS_SERVERS
         {
@@ -288,8 +311,10 @@ impl Profile {
 
         let mut group_names = HashSet::new();
         for group in &self.groups {
-            if matches!(group.name.as_str(), "DIRECT" | "REJECT")
-                || !all_names.insert(&group.name)
+            if matches!(
+                group.name.as_str(),
+                "DIRECT" | "REJECT" | MANIS_EXIT_IP_PROBE_GROUP_NAME
+            ) || !all_names.insert(&group.name)
                 || !group_names.insert(&group.name)
             {
                 return Err(ProfileError::DuplicateName);

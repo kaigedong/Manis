@@ -66,12 +66,19 @@ pub(super) fn build_saved_sources_mihomo_runtime_in(
 ) -> Result<ControllerRuntime, String> {
     sync_single_node_provider_files(store_dir, data_dir).map_err(|error| error.to_string())?;
     let profile = compile_saved_profile(store_dir, None).map_err(|error| error.to_string())?;
+    let exit_ip_probe_port = profile
+        .groups
+        .iter()
+        .any(|group| group.name.as_str() == manis_profile::MANIS_GLOBAL_GROUP_NAME)
+        .then(|| available_exit_ip_probe_port(profile.mixed_port))
+        .flatten();
     let spec = ManagedGeneratedProfile {
         kernel: KernelKind::Mihomo,
         binary: binary.to_path_buf(),
         data_dir: data_dir.to_path_buf(),
         controller: controller.clone(),
         expected_mixed_port: Some(profile.mixed_port),
+        exit_ip_probe_port,
         profile_store_dir: Some(store_dir.to_path_buf()),
         controller_secret: None,
     };
@@ -88,6 +95,14 @@ pub(super) fn build_saved_sources_mihomo_runtime_in(
         profile_source: RuntimeProfileSource::SavedSources,
         generated_profile: Some(spec),
         privileged: Arc::new(AtomicBool::new(false)),
+    })
+}
+
+fn available_exit_ip_probe_port(mixed_port: u16) -> Option<u16> {
+    (0..3).find_map(|_| {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).ok()?;
+        let port = listener.local_addr().ok()?.port();
+        (port != mixed_port).then_some(port)
     })
 }
 

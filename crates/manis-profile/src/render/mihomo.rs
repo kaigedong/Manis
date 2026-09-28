@@ -2,9 +2,9 @@ use serde_json::{Map, Value, json};
 
 use super::{QuotedYaml, optional};
 use crate::{
-    LogLevel, Name, OutboundProxy, PolicyGroup, PolicyGroupKind, Profile, ProfileError,
-    ProxyDnsServer, ProxyProviderSource, VlessProxy, VlessSecurity, VlessTransport, policy_name,
-    render_rule,
+    LogLevel, MANIS_EXIT_IP_PROBE_GROUP_NAME, MANIS_GLOBAL_GROUP_NAME, Name, OutboundProxy,
+    PolicyGroup, PolicyGroupKind, Profile, ProfileError, ProxyDnsServer, ProxyProviderSource,
+    VlessProxy, VlessSecurity, VlessTransport, policy_name, render_rule,
 };
 
 pub(crate) fn render(profile: &Profile, tun_enabled: bool) -> Result<String, ProfileError> {
@@ -36,6 +36,24 @@ pub(crate) fn render(profile: &Profile, tun_enabled: bool) -> Result<String, Pro
     tun["strict-route"] = json!(cfg!(target_os = "linux"));
     tun["auto-detect-interface"] = json!(true);
     tun["dns-hijack"] = json!(["any:53", "tcp://any:53"]);
+    let mut groups = profile.groups.iter().map(group).collect::<Vec<_>>();
+    let mut listeners = Vec::new();
+    if let Some(port) = profile.exit_ip_probe_port
+        && let Some(global) = profile
+            .groups
+            .iter()
+            .find(|group| group.name.as_str() == MANIS_GLOBAL_GROUP_NAME)
+    {
+        let mut probe = group(global);
+        probe["name"] = json!(MANIS_EXIT_IP_PROBE_GROUP_NAME);
+        probe["hidden"] = json!(true);
+        groups.push(probe);
+        listeners.push(json!({
+            "name": "manis-exit-ip-probe", "type": "http", "port": port,
+            "listen": "127.0.0.1", "proxy": MANIS_EXIT_IP_PROBE_GROUP_NAME,
+            "users": [],
+        }));
+    }
     let document = json!({
         "mode": profile.mode.as_mihomo_mode(),
         "unified-delay": true, "find-process-mode": "always", "allow-lan": false,
@@ -52,7 +70,8 @@ pub(crate) fn render(profile: &Profile, tun_enabled: bool) -> Result<String, Pro
         },
         "proxies": profile.proxies.iter().map(|proxy| match proxy { OutboundProxy::Vless(proxy) => vless(proxy) }).collect::<Vec<_>>(),
         "proxy-providers": providers,
-        "proxy-groups": profile.groups.iter().map(group).collect::<Vec<_>>(),
+        "proxy-groups": groups,
+        "listeners": listeners,
         "rules": profile.rules.iter().map(render_rule).collect::<Vec<_>>(),
     });
     let options =

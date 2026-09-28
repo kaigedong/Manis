@@ -252,6 +252,7 @@ impl ManisApp {
                         benchmark_state: benchmark.map_or(GroupBenchmarkNodeState::Idle, |state| {
                             state.node_state(&candidate.name)
                         }),
+                        exit_ip: self.exit_ip_label(&candidate.name).map(str::to_owned),
                         language,
                         theme,
                     },

@@ -19,6 +19,7 @@ pub(in crate::app) struct PolicyNodeRowContext {
     pub(in crate::app) manually_selectable: bool,
     pub(in crate::app) selection_busy: bool,
     pub(in crate::app) benchmark_state: GroupBenchmarkNodeState,
+    pub(in crate::app) exit_ip: Option<String>,
     pub(in crate::app) language: Language,
     pub(in crate::app) theme: Theme,
 }

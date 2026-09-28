@@ -15,7 +15,6 @@ pub(crate) const HTTPS_SUBSCRIPTION: LocalizedText =
     LocalizedText::new("HTTPS subscription", "HTTPS 订阅");
 pub(crate) const HTTP_SUBSCRIPTION: LocalizedText =
     LocalizedText::new("HTTP subscription", "HTTP 订阅");
-pub(crate) const LATENCY: LocalizedText = LocalizedText::new("Latency", "延迟");
 pub(crate) const MANUAL_RULES: LocalizedText = LocalizedText::new("Manual rules", "手动规则");
 pub(crate) const MIHOMO_DID_NOT_RETURN_A_RESULT: LocalizedText =
     LocalizedText::new("Mihomo did not return a result", "Mihomo 未返回结果");

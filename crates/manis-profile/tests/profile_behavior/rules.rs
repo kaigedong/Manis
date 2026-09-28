@@ -160,6 +160,7 @@ fn renderer_escapes_double_quoted_yaml_scalars() {
     let profile = Profile {
         mode: ProfileMode::Rule,
         mixed_port: 7891,
+        exit_ip_probe_port: None,
         log_level: LogLevel::Silent,
         store_selected: true,
         proxy_server_nameservers: vec![

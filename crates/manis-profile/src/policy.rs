@@ -1,5 +1,7 @@
 /// Internal selector that keeps the node-page global exit independent from rule policy groups.
 pub const MANIS_GLOBAL_GROUP_NAME: &str = "__MANIS_GLOBAL__";
+/// Internal selector used only by the loopback exit-IP lookup listener.
+pub const MANIS_EXIT_IP_PROBE_GROUP_NAME: &str = "__MANIS_EXIT_IP_PROBE__";
 
 use crate::Name;
 

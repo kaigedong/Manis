@@ -1,5 +1,8 @@
 use crate::localization::LocalizedText;
 
+pub(crate) const LATENCY_AND_EXIT_IP: LocalizedText =
+    LocalizedText::new("Latency / Exit IP", "延迟 / 出口 IP");
+
 mod format;
 pub(crate) use format::*;
 

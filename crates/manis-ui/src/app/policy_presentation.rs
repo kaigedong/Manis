@@ -320,6 +320,14 @@ impl ManisApp {
         }
     }
 
+    pub(super) fn exit_ip_content(ip: Option<String>, theme: Theme) -> Div {
+        div()
+            .text_size(TextRole::Metadata.size())
+            .line_height(TextRole::Metadata.line_height())
+            .text_color(theme.text_tertiary)
+            .child(ip.map_or_else(|| "IP —".to_owned(), |ip| format!("IP {ip}")))
+    }
+
     pub(super) fn benchmark_latency_spinner(id: String, theme: Theme) -> impl IntoElement {
         div().id(id).size(px(14.0)).child(
             Spinner::new()
