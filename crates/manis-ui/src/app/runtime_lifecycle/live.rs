@@ -1,8 +1,11 @@
 use super::{
     Context, ControllerState, Duration, LiveRuntimeSession, LiveStreamPhase, LiveStreamStatus,
-    LogLevel, ManagedRuntimeHealth, ManisApp, ProxyMode, Task, begin_operation, copy,
-    record_operation,
+    LogLevel, ManagedRuntimeHealth, ManisApp, ProxyMode, Task, begin_operation, copy, mihomo,
+    record_event, record_operation,
 };
+
+const POLICY_CATALOG_RETRY_ATTEMPTS: u8 = 15;
+const POLICY_CATALOG_RETRY_INTERVAL: Duration = Duration::from_secs(2);
 
 impl ManisApp {
     pub(in crate::app) fn start_live_runtime(
@@ -27,7 +30,78 @@ impl ManisApp {
         if self.live_runtime.is_some() {
             self.poll_live_runtime(generation, cx);
         }
+        self.retry_incomplete_policy_catalog(
+            generation,
+            endpoint.to_owned(),
+            controller_secret.map(str::to_owned),
+            POLICY_CATALOG_RETRY_ATTEMPTS,
+            cx,
+        );
         Self::schedule_automatic_policy_benchmarks(generation, cx);
+    }
+
+    fn retry_incomplete_policy_catalog(
+        &mut self,
+        generation: u64,
+        endpoint: String,
+        secret: Option<String>,
+        remaining: u8,
+        cx: &mut Context<Self>,
+    ) {
+        if generation != self.live_generation
+            || !matches!(self.controller, ControllerState::Connected { .. })
+            || !self.policy_catalog_is_incomplete()
+            || remaining == 0
+        {
+            return;
+        }
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(POLICY_CATALOG_RETRY_INTERVAL)
+                .await;
+            let fetch_endpoint = endpoint.clone();
+            let fetch_secret = secret.clone();
+            let snapshot = cx
+                .background_executor()
+                .spawn(async move { mihomo::load(&fetch_endpoint, fetch_secret.as_deref()) })
+                .await;
+            this.update(cx, |this, cx| {
+                if generation != this.live_generation
+                    || !matches!(this.controller, ControllerState::Connected { .. })
+                    || !this.policy_catalog_is_incomplete()
+                {
+                    return;
+                }
+                if let Ok(snapshot) = snapshot {
+                    this.apply_refreshed_policy_snapshot(snapshot);
+                    if !this.policy_catalog_is_incomplete() {
+                        record_event(
+                            LogLevel::Info,
+                            "policy.catalog.ready",
+                            "provider candidates became available after initial connection",
+                        );
+                        this.sync_saved_node_selections(cx);
+                    }
+                    cx.notify();
+                }
+                if remaining == 1 && this.policy_catalog_is_incomplete() {
+                    record_event(
+                        LogLevel::Warn,
+                        "policy.catalog.still_loading",
+                        "provider candidates did not become available after retries",
+                    );
+                }
+                this.retry_incomplete_policy_catalog(
+                    generation,
+                    endpoint,
+                    secret,
+                    remaining - 1,
+                    cx,
+                );
+            })
+            .ok();
+        })
+        .detach();
     }
 
     pub(in crate::app) fn poll_live_runtime(&mut self, generation: u64, cx: &mut Context<Self>) {
