@@ -99,11 +99,23 @@ impl ManisApp {
                     .clone_into(&mut self.status);
                 cx.notify();
             }
-            Err(_error) => self.finish_configuration_transfer(
-                self.language().localized(copy::backup::INVALID),
-                true,
-                cx,
-            ),
+            Err(error) => {
+                let feedback = match error {
+                    crate::config_backup::BackupError::InvalidFormat => copy::backup::INVALID,
+                    crate::config_backup::BackupError::InvalidConfiguration => {
+                        copy::backup::INVALID_VALUES
+                    }
+                    crate::config_backup::BackupError::Oversized => copy::backup::TOO_LARGE,
+                    crate::config_backup::BackupError::RemoteSourceUnavailable => {
+                        copy::backup::REMOTE_RULE_UNAVAILABLE
+                    }
+                    crate::config_backup::BackupError::Unavailable
+                    | crate::config_backup::BackupError::UnsafePath => {
+                        copy::backup::VALIDATION_UNAVAILABLE
+                    }
+                };
+                self.finish_configuration_transfer(self.language().localized(feedback), true, cx);
+            }
         }
     }
 

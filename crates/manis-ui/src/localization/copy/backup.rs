@@ -8,8 +8,8 @@ pub(crate) const DETAIL: LocalizedText = LocalizedText::new(
 pub(crate) const EDIT: LocalizedText = LocalizedText::new("Open configuration", "打开配置");
 pub(crate) const EDITOR_TITLE: LocalizedText = LocalizedText::new("Edit configuration", "编辑配置");
 pub(crate) const EDIT_DETAIL: LocalizedText = LocalizedText::new(
-    "This editor shows subscriptions, nodes, policy groups and rules in readable text. URLs and node credentials remain visible because this is a private configuration. Copy it for migration, paste a readable or legacy configuration, or edit it here. Manis validates and previews changes before applying them.",
-    "下方以易读文本显示订阅、节点、策略组和规则。由于这是私有配置，订阅链接和节点凭据仍会显示。可复制用于迁移，也可粘贴易读格式或旧版配置；应用前会先校验并预览更改。",
+    "This editor shows subscriptions, nodes, policy groups and rules in readable text. Remote rule bodies are omitted and downloaded again during import. URLs and node credentials remain visible because this is a private configuration. Copy it for migration, paste a readable or legacy configuration, or edit it here. Manis validates and previews changes before applying them.",
+    "下方以易读文本显示订阅、节点、策略组和规则。远程规则正文不会导出，导入时会重新下载。订阅链接和节点凭据仍会显示，请妥善保管。可复制用于迁移，也可粘贴易读格式或旧版配置；应用前会先校验并预览更改。",
 );
 pub(crate) const LOADING_CURRENT: LocalizedText =
     LocalizedText::new("Loading current configuration…", "正在读取当前配置…");
@@ -35,8 +35,8 @@ pub(crate) const SENSITIVE: LocalizedText = LocalizedText::new(
     "配置包含明文订阅链接和节点密码。请妥善保管复制的内容，并且只粘贴可信配置。",
 );
 pub(crate) const EXCLUDED: LocalizedText = LocalizedText::new(
-    "Core binaries, TUN permissions, logs and latency results are not included. Applying changes does not enable a proxy.",
-    "内核程序、TUN 权限、日志和测速结果不在这份配置中。应用更改后不会自动开启代理。",
+    "Remote rule bodies, core binaries, TUN permissions, logs and latency results are not included. Importing needs network access to remote rule URLs. Applying changes does not enable a proxy.",
+    "远程规则正文、内核程序、TUN 权限、日志和测速结果不在这份配置中。导入时需要访问远程规则 URL。应用更改后不会自动开启代理。",
 );
 pub(crate) const PREVIEW: LocalizedText = LocalizedText::new("Configuration preview", "配置预览");
 pub(crate) const REPLACE_NOTICE: LocalizedText = LocalizedText::new(
@@ -75,8 +75,24 @@ pub(crate) const NO_STORE: LocalizedText = LocalizedText::new(
     "本地配置目录不可用。",
 );
 pub(crate) const INVALID: LocalizedText = LocalizedText::new(
-    "The TOML configuration is invalid, unsupported or too large. No configuration was changed; return to the editor to fix it.",
-    "TOML 配置无效、版本不支持或内容过大。当前配置未改动，请返回编辑器修正。",
+    "The TOML configuration is invalid or its format is unsupported. No configuration was changed.",
+    "TOML 配置无效或格式版本不支持。当前配置未改动。",
+);
+pub(crate) const INVALID_VALUES: LocalizedText = LocalizedText::new(
+    "The configuration contains invalid values or references. No configuration was changed.",
+    "配置包含无效字段或引用。当前配置未改动。",
+);
+pub(crate) const TOO_LARGE: LocalizedText = LocalizedText::new(
+    "The configuration exceeds the size limit. No configuration was changed.",
+    "配置超过大小限制。当前配置未改动。",
+);
+pub(crate) const REMOTE_RULE_UNAVAILABLE: LocalizedText = LocalizedText::new(
+    "Could not download a remote rule source. Check its URL and network access, then retry. No configuration was changed.",
+    "无法下载远程规则来源。请检查 URL 和网络后重试。当前配置未改动。",
+);
+pub(crate) const VALIDATION_UNAVAILABLE: LocalizedText = LocalizedText::new(
+    "Could not validate the configuration because local storage is unavailable. No configuration was changed.",
+    "本地存储不可用，无法校验配置。当前配置未改动。",
 );
 pub(crate) const STOP_FAILED: LocalizedText = LocalizedText::new(
     "Could not safely stop the proxy or core. Applying was cancelled; your configuration is unchanged.",
