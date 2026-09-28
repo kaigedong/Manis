@@ -150,6 +150,70 @@ fn runtime_snapshot_populates_real_policy_groups() {
 }
 
 #[test]
+fn late_provider_nodes_replace_compatible_and_empty_policy_groups() {
+    use manis_core::ProxyMode;
+
+    let mut app = ManisApp::with_fixture_controller("http://127.0.0.1:9090");
+    let group = |name: &str, target: Option<&str>, nodes: &[&str]| PolicyGroup {
+        id: PolicyGroupId::new(name),
+        name: name.to_owned(),
+        kind: PolicyGroupKind::Selector,
+        target: target.map(str::to_owned),
+        nodes: nodes
+            .iter()
+            .map(|name| PolicyNode {
+                id: ProxyId::new(*name),
+                name: (*name).to_owned(),
+                kind: PolicyCandidateKind::Node,
+                provider: None,
+                detail: String::new(),
+                latency_ms: None,
+                alive: None,
+            })
+            .collect(),
+        rules_total: 0,
+        rules: Vec::new(),
+    };
+    let snapshot = |catalog| mihomo::LoadedSnapshot {
+        catalog: Some(catalog),
+        providers: Vec::new(),
+        version: "fixture".to_owned(),
+        active_connections: 0,
+        download_total: 0,
+        upload_total: 0,
+        observed_routes: Vec::new(),
+        connections: Vec::new(),
+        runtime: manis_mihomo::RuntimeConfig::default(),
+    };
+    let stale = PolicyCatalog::try_new(vec![
+        group("香港", Some("COMPATIBLE"), &[]),
+        group("US", None, &[]),
+    ])
+    .expect("stale catalog");
+    app.apply_mihomo_snapshot("fixture".to_owned(), snapshot(stale));
+    assert!(app.policy_catalog_is_incomplete());
+
+    app.status = "preserve connection status".to_owned();
+    app.proxy_mode = ProxyMode::Tun;
+    let current = PolicyCatalog::try_new(vec![
+        group("香港", Some("HK 03"), &["HK 03", "HK 04"]),
+        group("US", Some("US 03"), &["US 03"]),
+    ])
+    .expect("current catalog");
+    app.apply_refreshed_policy_snapshot(snapshot(current));
+
+    assert!(!app.policy_catalog_is_incomplete());
+    let groups = app.policy_groups().collect::<Vec<_>>();
+    assert_eq!(groups[0].target.as_deref(), Some("HK 03"));
+    assert_eq!(groups[0].nodes.len(), 2);
+    assert_eq!(groups[1].target.as_deref(), Some("US 03"));
+    assert_eq!(groups[1].nodes.len(), 1);
+    assert!(matches!(app.controller, ControllerState::Connected { .. }));
+    assert_eq!(app.proxy_mode, ProxyMode::Tun);
+    assert_eq!(app.status, "preserve connection status");
+}
+
+#[test]
 fn runtime_snapshot_keeps_completed_manual_policy_benchmark_latency() {
     let mut app = ManisApp::with_fixture_controller("http://127.0.0.1:9090");
     let policy_id = PolicyGroupId::new("runtime-policy");

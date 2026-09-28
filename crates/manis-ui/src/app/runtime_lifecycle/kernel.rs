@@ -281,7 +281,42 @@ impl ManisApp {
         };
     }
 
-    fn sync_saved_node_selections(&mut self, cx: &mut Context<Self>) {
+    pub(in crate::app) fn policy_catalog_is_incomplete(&self) -> bool {
+        self.catalog.as_ref().map_or_else(
+            || {
+                self.imported_subscriptions
+                    .iter()
+                    .any(|source| source.enabled)
+            },
+            |catalog| {
+                catalog.iter().any(|group| {
+                    group.nodes.is_empty() || group.target.as_deref() == Some("COMPATIBLE")
+                })
+            },
+        )
+    }
+
+    pub(in crate::app) fn apply_refreshed_policy_snapshot(&mut self, snapshot: LoadedSnapshot) {
+        let Some(mut catalog) = snapshot.catalog else {
+            self.source_providers = snapshot.providers;
+            return;
+        };
+        self.apply_completed_policy_benchmarks(&mut catalog);
+        let selected_group = catalog.select(self.workspace.selected_group.as_ref());
+        let selected_node = selected_group
+            .target
+            .as_deref()
+            .and_then(|target| selected_group.nodes.iter().find(|node| node.name == target))
+            .or_else(|| selected_group.nodes.first())
+            .map(|node| node.id.clone());
+        let selected_group_id = selected_group.id.clone();
+        self.catalog = Some(catalog);
+        self.source_providers = snapshot.providers;
+        self.workspace
+            .replace_source_selection(selected_group_id, selected_node);
+    }
+
+    pub(in crate::app) fn sync_saved_node_selections(&mut self, cx: &mut Context<Self>) {
         if self.configuration_transfer.active {
             return;
         }
