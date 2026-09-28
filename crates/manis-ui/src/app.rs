@@ -749,7 +749,6 @@ impl Render for ManisApp {
             .text_size(px(13.0))
             .child(self.chrome(theme, size_class, cx))
             .child(self.workspace_content(size_class, theme, window, cx))
-            .children(gpui_component::Root::render_sheet_layer(window, cx))
             .child(self.status_bar(theme, size_class))
     }
 }
