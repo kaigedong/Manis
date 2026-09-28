@@ -77,7 +77,7 @@ impl ManisApp {
         self.proxy_mode_busy = Some(requested);
         self.status = match requested {
             ProxyMode::Tun => language
-                .localized(copy::app::PREPARING_THE_MACOS_TUN_HELPER_AND_TRAFFIC_ROUTE)
+                .localized(copy::app::PREPARING_TUN_AND_TRAFFIC_ROUTE)
                 .to_owned(),
             _ => format!(
                 "{}{}…",

@@ -14,7 +14,9 @@ impl ManisApp {
         size_class: WindowSizeClass,
         cx: &mut Context<Self>,
     ) -> Div {
-        let compact = size_class == WindowSizeClass::Compact;
+        let compact_brand = size_class != WindowSizeClass::Wide;
+        let compact_proxy = size_class == WindowSizeClass::Compact;
+        let compact_routing = size_class != WindowSizeClass::Wide;
         div()
             .h(ControlSize::Standard.height() + Space::Md.px())
             .flex_shrink_0()
@@ -26,11 +28,11 @@ impl ManisApp {
             .bg(theme.surface_chrome)
             .border_b_1()
             .border_color(theme.outline_subtle)
-            .child(Self::chrome_brand(theme, compact))
+            .child(Self::chrome_brand(theme, compact_brand))
             .child(div().flex_1())
             .child(self.theme_toggle(theme, cx))
-            .child(self.proxy_control(theme, size_class != WindowSizeClass::Wide, cx))
-            .child(self.routing_control(theme, size_class != WindowSizeClass::Wide, cx))
+            .child(self.proxy_control(theme, compact_proxy, cx))
+            .child(self.routing_control(theme, compact_routing, cx))
     }
 
     fn chrome_brand(theme: Theme, compact: bool) -> Div {
@@ -163,6 +165,7 @@ impl ManisApp {
         div()
             .id("proxy-modes")
             .h(ControlSize::Compact.height())
+            .flex_shrink_0()
             .p(px(2.0))
             .rounded(Radius::Control.px())
             .border_1()
@@ -255,6 +258,7 @@ impl ManisApp {
         div()
             .id("routing-modes")
             .h(ControlSize::Compact.height())
+            .flex_shrink_0()
             .p(px(2.0))
             .rounded(Radius::Control.px())
             .border_1()

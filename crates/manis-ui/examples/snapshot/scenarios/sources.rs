@@ -1,7 +1,7 @@
 use super::super::{
     driver::{
         SnapshotWorkspace, close_window, open_workspace, refresh, save_screenshot, scroll_window,
-        settle_ui_for,
+        settle_ui_for, theme_toggle_x,
     },
     fixtures::{
         SubscriptionFixtureServer, write_managed_policy_fixture, write_source_cards_fixture,
@@ -37,7 +37,7 @@ pub(crate) fn capture_source_cards(
         open_workspace(cx, window, width, SnapshotWorkspace::Configuration)?;
         for (dark, mode) in [(false, "light"), (true, "dark")] {
             if dark {
-                let toggle_x = width - if width >= 1280.0 { 550.0 } else { 205.0 };
+                let toggle_x = theme_toggle_x(width);
                 cx.simulate_click(window, point(px(toggle_x), px(24.0)), Modifiers::none());
                 refresh(cx, window)?;
             }

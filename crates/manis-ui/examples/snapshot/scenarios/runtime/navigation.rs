@@ -1,5 +1,5 @@
 use super::super::super::driver::{
-    SnapshotWorkspace, close_window, open_workspace, refresh, save_screenshot,
+    SnapshotWorkspace, close_window, open_workspace, refresh, save_screenshot, theme_toggle_x,
 };
 use super::super::common::manis_root;
 use super::appearance::assert_appearance_mode;
@@ -41,7 +41,7 @@ pub(crate) fn capture_navigation_icons(
         ] {
             open_workspace(cx, window, width, workspace)?;
         }
-        let toggle_x = width - if width >= 1280.0 { 550.0 } else { 205.0 };
+        let toggle_x = theme_toggle_x(width);
         cx.simulate_click(window, point(px(toggle_x), px(24.0)), Modifiers::none());
         refresh(cx, window)?;
         assert_appearance_mode(cx, window, true)?;

@@ -1,7 +1,7 @@
 use super::super::super::{
     driver::{
         SnapshotWorkspace, close_window, open_workspace, refresh, save_screenshot,
-        settle_ui_animation, settle_ui_for,
+        settle_ui_animation, settle_ui_for, theme_toggle_x,
     },
     fixtures::spawn_mihomo_fixture,
 };
@@ -35,7 +35,7 @@ pub(crate) fn capture_log_colors(
         settle_ui_for(cx, window, std::time::Duration::from_millis(600))?;
         for (dark, mode) in [(false, "light"), (true, "dark")] {
             if dark {
-                let toggle_x = width - if width >= 1280.0 { 550.0 } else { 205.0 };
+                let toggle_x = theme_toggle_x(width);
                 cx.simulate_click(window, point(px(toggle_x), px(24.0)), Modifiers::none());
                 refresh(cx, window)?;
             }

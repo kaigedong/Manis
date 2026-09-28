@@ -1,7 +1,7 @@
 use super::super::{
     driver::{
         SnapshotWorkspace, close_window, open_policy_section, open_workspace, refresh,
-        save_screenshot, scroll_window, settle_ui_animation, settle_ui_for,
+        save_screenshot, scroll_window, settle_ui_animation, settle_ui_for, theme_toggle_x,
     },
     fixtures::spawn_mihomo_fixture,
 };
@@ -40,7 +40,7 @@ pub(crate) fn capture_proxy_candidate(
         save_screenshot(cx, window, &format!("proxy-candidate-{label}-row.png"))?;
         for (dark, mode) in [(false, "light"), (true, "dark")] {
             if dark {
-                let toggle_x = width - if width >= 1280.0 { 550.0 } else { 205.0 };
+                let toggle_x = theme_toggle_x(width);
                 cx.simulate_click(window, point(px(toggle_x), px(24.0)), Modifiers::none());
                 refresh(cx, window)?;
             }
@@ -159,7 +159,7 @@ pub(crate) fn capture_managed_policy_settings(
         }
         cx.simulate_keystrokes(window, "escape");
         refresh(cx, window)?;
-        let toggle_x = width - if width >= 1280.0 { 550.0 } else { 205.0 };
+        let toggle_x = theme_toggle_x(width);
         cx.simulate_click(window, point(px(toggle_x), px(24.0)), Modifiers::none());
         refresh(cx, window)?;
         save_screenshot(cx, window, &format!("policy-flat-{label}-dark.png"))?;
@@ -288,7 +288,7 @@ pub(crate) fn capture_routing_rules(
             point(px(width - 80.0), px(190.0)),
             &file_name.replace(".png", "-secondary-click.png"),
         )?;
-        let toggle_x = width - if width >= 1280.0 { 550.0 } else { 205.0 };
+        let toggle_x = theme_toggle_x(width);
         cx.simulate_click(window, point(px(toggle_x), px(24.0)), Modifiers::none());
         refresh(cx, window)?;
         save_screenshot(cx, window, &file_name.replace(".png", "-dark.png"))?;
