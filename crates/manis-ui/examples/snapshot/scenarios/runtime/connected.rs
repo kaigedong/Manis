@@ -1,7 +1,7 @@
 use super::super::super::{
     driver::{
         SnapshotWorkspace, close_window, open_policy_section, open_workspace, refresh,
-        save_screenshot, settle_ui_animation, settle_ui_for,
+        save_screenshot, settle_ui_animation, settle_ui_for, theme_toggle_x,
     },
     fixtures::{
         spawn_empty_mihomo_fixture, spawn_mihomo_fixture, spawn_mihomo_fixture_with_stream_failure,
@@ -33,7 +33,7 @@ pub(crate) fn capture_stream_status(
         save_screenshot(cx, window, &format!("stream-status-{label}-activity.png"))?;
         open_workspace(cx, window, width, SnapshotWorkspace::Nodes)?;
         save_screenshot(cx, window, &format!("stream-status-{label}-nodes.png"))?;
-        let toggle_x = width - if width >= 1280.0 { 550.0 } else { 205.0 };
+        let toggle_x = theme_toggle_x(width);
         cx.simulate_click(window, point(px(toggle_x), px(24.0)), Modifiers::none());
         open_workspace(cx, window, width, SnapshotWorkspace::Logs)?;
         save_screenshot(cx, window, &format!("stream-status-{label}-logs-dark.png"))?;

@@ -175,11 +175,10 @@ pub(crate) const POLICY_GROUPS_UNAVAILABLE: LocalizedText =
     LocalizedText::new("Policy groups unavailable", "暂时无法读取策略组");
 pub(crate) const POLICY_GROUP_BENCHMARK_FAILED: LocalizedText =
     LocalizedText::new("Policy group benchmark failed", "策略组测速失败");
-pub(crate) const PREPARING_THE_MACOS_TUN_HELPER_AND_TRAFFIC_ROUTE: LocalizedText =
-    LocalizedText::new(
-        "Preparing the macOS TUN helper and traffic route…",
-        "正在准备 macOS TUN 辅助服务与流量接管…",
-    );
+pub(crate) const PREPARING_TUN_AND_TRAFFIC_ROUTE: LocalizedText = LocalizedText::new(
+    "Preparing TUN and traffic route…",
+    "正在准备 TUN 与流量接管…",
+);
 pub(crate) const PREPARING_TUN: LocalizedText = LocalizedText::new("Preparing TUN…", "准备 TUN…");
 pub(crate) const PROXY: LocalizedText = LocalizedText::new("Proxy", "代理");
 pub(crate) const READ_ONLY: LocalizedText = LocalizedText::new("Read-only", "只读");

@@ -17,6 +17,14 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
         std::sync::Arc::new(manis_ui::Assets),
     );
     cx.update(manis_ui::init);
+    if std::env::args().any(|argument| argument == "--chrome") {
+        capture(&mut cx, 900.0, 800.0, "chrome-900.png")?;
+        capture(&mut cx, 1060.0, 800.0, "chrome-1060.png")?;
+        capture(&mut cx, 1280.0, 800.0, "chrome-1280.png")?;
+        capture(&mut cx, 1420.0, 900.0, "chrome-1420.png")?;
+        capture(&mut cx, 1600.0, 900.0, "chrome-1600.png")?;
+        return Ok(());
+    }
     if std::env::args().any(|argument| argument == "--app-updates") {
         return capture_app_updates(&mut cx);
     }
@@ -108,6 +116,18 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
     capture_data_page_coverage(&mut cx)?;
     capture_live_when_configured(&mut cx)?;
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+pub(super) fn theme_toggle_x(width: f32) -> f32 {
+    let trailing_controls = if width >= 1280.0 {
+        550.0
+    } else if width >= 900.0 {
+        430.0
+    } else {
+        205.0
+    };
+    width - trailing_controls
 }
 
 #[cfg(target_os = "macos")]

@@ -1,7 +1,7 @@
 use super::super::{
     driver::{
         SnapshotWorkspace, close_window, open_workspace, refresh, save_screenshot, scroll_window,
-        settle_ui_animation,
+        settle_ui_animation, theme_toggle_x,
     },
     fixtures::write_managed_policy_fixture,
 };
@@ -40,7 +40,7 @@ pub(crate) fn capture_app_updates(
             refresh(cx, window)?;
             save_screenshot(cx, window, &format!("app-updates-{label}-{suffix}.png"))?;
         }
-        let toggle_x = width - if width >= 1280.0 { 550.0 } else { 205.0 };
+        let toggle_x = theme_toggle_x(width);
         cx.simulate_click(window, point(px(toggle_x), px(24.0)), Modifiers::none());
         refresh(cx, window)?;
         save_screenshot(cx, window, &format!("app-updates-{label}-dark.png"))?;
@@ -112,7 +112,7 @@ pub(crate) fn capture_configuration_transfer(
         )?;
         cx.simulate_keystrokes(window, "escape");
         settle_ui_animation(cx, window)?;
-        let toggle_x = width - if width >= 1280.0 { 550.0 } else { 205.0 };
+        let toggle_x = theme_toggle_x(width);
         cx.simulate_click(window, point(px(toggle_x), px(24.0)), Modifiers::none());
         refresh(cx, window)?;
         cx.update_window(window, |_, window, cx| {
@@ -156,7 +156,7 @@ fn capture_configuration_editor(
     cx.simulate_keystrokes(window, "escape");
     settle_ui_animation(cx, window)?;
     let width = if label == "wide" { 1420.0 } else { 640.0 };
-    let toggle_x = width - if width >= 1280.0 { 550.0 } else { 205.0 };
+    let toggle_x = theme_toggle_x(width);
     cx.simulate_click(
         window,
         gpui::point(gpui::px(toggle_x), gpui::px(24.0)),

@@ -1,6 +1,7 @@
 use super::super::super::{
     driver::{
         close_window, refresh, save_screenshot, scroll_window, settle_ui_animation, settle_ui_for,
+        theme_toggle_x,
     },
     fixtures::spawn_mihomo_fixture,
 };
@@ -34,7 +35,7 @@ pub(crate) fn capture_nodes_toolbar(
         settle_ui_for(cx, window, std::time::Duration::from_millis(600))?;
         for (dark, mode) in [(false, "light"), (true, "dark")] {
             if dark {
-                let toggle_x = width - if width >= 1280.0 { 550.0 } else { 205.0 };
+                let toggle_x = theme_toggle_x(width);
                 cx.simulate_click(window, point(px(toggle_x), px(24.0)), Modifiers::none());
                 refresh(cx, window)?;
             }
@@ -74,7 +75,7 @@ pub(crate) fn capture_merged_nodes(
         save_screenshot(cx, window, &format!("merged-nodes-{label}-empty.png"))?;
         for (dark, mode) in [(false, "light"), (true, "dark")] {
             if dark {
-                let toggle_x = width - if width >= 1280.0 { 550.0 } else { 205.0 };
+                let toggle_x = theme_toggle_x(width);
                 cx.simulate_click(window, point(px(toggle_x), px(24.0)), Modifiers::none());
             }
             cx.update_window(window, |_, _, cx| {
