@@ -51,12 +51,23 @@ build() {
   local ring_library="${ring_archive##*/lib}"
   ring_library="${ring_library%.a}"
 
-  # Rust 1.98 does not propagate ring's bundled native archive to this Linux
-  # binary, so pass the already-built archive to the final target explicitly.
+  local wayland_log_archive
+  wayland_log_archive="$(find "$target_dir/release/build" \
+    -path '*/wayland-backend-*/out/liblog_shim_client.a' -print -quit)"
+  if [[ -z "$wayland_log_archive" ]]; then
+    error "Wayland client log shim archive was not produced"
+    return 1
+  fi
+
+  local wayland_log_directory="${wayland_log_archive%/*}"
+
+  # Rust 1.98 does not propagate these bundled native archives to this Linux
+  # binary, so pass the already-built archives to the final target explicitly.
   RUSTFLAGS="$rust_flags" \
     CARGO_TARGET_DIR="$target_dir" \
     cargo rustc -p manis-ui --bin manis-ui --release --locked -- \
-      -L "native=$ring_directory" -l "static:+whole-archive=$ring_library"
+      -L "native=$ring_directory" -l "static:+whole-archive=$ring_library" \
+      -L "native=$wayland_log_directory" -l 'static:+whole-archive=log_shim_client'
 
   if [[ -n "${MANIS_MIHOMO_BINARY:-}" ]]; then
     if [[ ! -x "$MANIS_MIHOMO_BINARY" ]]; then
