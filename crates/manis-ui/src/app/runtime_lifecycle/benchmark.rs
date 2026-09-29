@@ -46,13 +46,22 @@ impl ManisApp {
                 .then(|| group.id.clone())
         });
         if let Some(id) = due_policy {
-            self.start_policy_group_benchmark(&id, cx);
+            self.start_policy_group_benchmark_with_ip_refresh(&id, false, cx);
         }
     }
 
     pub(in crate::app) fn start_policy_group_benchmark(
         &mut self,
         id: &manis_core::PolicyGroupId,
+        cx: &mut Context<Self>,
+    ) {
+        self.start_policy_group_benchmark_with_ip_refresh(id, true, cx);
+    }
+
+    fn start_policy_group_benchmark_with_ip_refresh(
+        &mut self,
+        id: &manis_core::PolicyGroupId,
+        refresh_exit_ip: bool,
         cx: &mut Context<Self>,
     ) {
         let language = self.language();
@@ -112,6 +121,7 @@ impl ManisApp {
             group_id,
             group_kind,
             total,
+            refresh_exit_ip,
         };
         let executor = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
@@ -151,6 +161,7 @@ impl ManisApp {
             group_id,
             group_kind,
             total,
+            refresh_exit_ip,
         } = run;
         let language = self.language();
         if self.managed_policies.active_benchmark_generation != Some(generation) {
@@ -237,7 +248,7 @@ impl ManisApp {
             }
         }
         self.persist_group_benchmarks();
-        self.start_exit_ip_probe(successful_exit_ip_targets, cx);
+        self.start_exit_ip_probe(successful_exit_ip_targets, refresh_exit_ip, cx);
         cx.notify();
     }
 }

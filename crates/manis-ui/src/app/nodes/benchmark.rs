@@ -163,7 +163,7 @@ impl ManisApp {
             _ => return,
         }
         self.persist_group_benchmarks();
-        self.start_exit_ip_probe(successful_exit_ip_targets, cx);
+        self.start_exit_ip_probe(successful_exit_ip_targets, true, cx);
         cx.notify();
     }
 }
