@@ -35,8 +35,10 @@ pub(super) fn probe_targets(
         .max_redirects(0)
         .timeout_global(Some(EXIT_IP_TIMEOUT))
         .build();
-    let agent: Agent = config.into();
     for target in targets.iter().take(MAX_PROBES_PER_RUN) {
+        // A CONNECT tunnel keeps using the node selected when it was opened. Give each target a
+        // fresh connection pool so switching this hidden selector cannot reuse the prior route.
+        let agent = Agent::new_with_config(config.clone());
         let ip = put_policy_group_selection(
             endpoint,
             MANIS_EXIT_IP_PROBE_GROUP_NAME,

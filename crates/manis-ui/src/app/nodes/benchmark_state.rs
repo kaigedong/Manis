@@ -10,6 +10,7 @@ pub(in crate::app) struct PolicyBenchmarkRun {
     pub(in crate::app) group_id: PolicyGroupId,
     pub(in crate::app) group_kind: manis_core::PolicyGroupKind,
     pub(in crate::app) total: usize,
+    pub(in crate::app) refresh_exit_ip: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, serde::Deserialize, serde::Serialize)]

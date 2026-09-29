@@ -37,15 +37,13 @@ impl ManisApp {
     pub(in crate::app) fn start_exit_ip_probe(
         &mut self,
         targets: Vec<mihomo::ProxyDelayTarget>,
+        force_refresh: bool,
         cx: &mut Context<Self>,
     ) {
         if self.exit_ip_probe_active {
             return;
         }
-        let targets = targets
-            .into_iter()
-            .filter(|target| !self.exit_ip_recently_checked(target.name()))
-            .collect::<Vec<_>>();
+        let targets = self.exit_ip_targets_to_probe(targets, force_refresh);
         if targets.is_empty() {
             return;
         }
@@ -69,6 +67,17 @@ impl ManisApp {
             this.update(cx, |_this, cx| cx.notify()).ok();
         })
         .detach();
+    }
+
+    fn exit_ip_targets_to_probe(
+        &self,
+        targets: Vec<mihomo::ProxyDelayTarget>,
+        force_refresh: bool,
+    ) -> Vec<mihomo::ProxyDelayTarget> {
+        targets
+            .into_iter()
+            .filter(|target| force_refresh || !self.exit_ip_recently_checked(target.name()))
+            .collect()
     }
 
     fn poll_exit_ip_progress(
@@ -104,5 +113,23 @@ impl ManisApp {
             }
         })
         .detach();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn manual_benchmark_rechecks_a_cached_exit_ip() {
+        let mut app = ManisApp::with_fixture_controller("http://127.0.0.1:9090");
+        app.exit_ips.insert(
+            "HK 04".to_owned(),
+            (Some("81.168.109.195".to_owned()), benchmark_timestamp()),
+        );
+        let target = || vec![mihomo::ProxyDelayTarget::direct("HK 04")];
+
+        assert!(app.exit_ip_targets_to_probe(target(), false).is_empty());
+        assert_eq!(app.exit_ip_targets_to_probe(target(), true), target());
     }
 }
