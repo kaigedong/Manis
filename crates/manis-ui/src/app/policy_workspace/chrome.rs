@@ -380,6 +380,14 @@ impl ManisApp {
     }
 
     fn open_primary_workspace(&mut self, workspace: PrimaryWorkspace, cx: &mut Context<Self>) {
+        if workspace == PrimaryWorkspace::Configuration && !self.runtime.is_fixture() {
+            crate::app::windows::open(
+                cx.entity(),
+                crate::app::windows::AuxiliaryKind::Settings,
+                cx,
+            );
+            return;
+        }
         self.primary_workspace = workspace;
         let language = self.language();
         let (event, status) = match workspace {

@@ -3,7 +3,7 @@ use gpui::{
     Window, div, prelude::*, px,
 };
 use gpui_component::{
-    Disableable, IconName,
+    Disableable,
     button::{Button, ButtonVariant, ButtonVariants},
     collapsible::Collapsible,
     dialog::Dialog,

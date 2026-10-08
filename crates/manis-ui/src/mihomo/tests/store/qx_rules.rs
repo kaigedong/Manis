@@ -317,14 +317,18 @@ fn saved_rule_group_order_controls_compiled_rule_priority() -> Result<(), Box<dy
     )?;
     let final_rule = crate::manual_rule::ManualRule::final_rule("DIRECT")?;
     crate::manual_rule::save_manual_rules_in(&store, &[final_rule, manual])?;
-    super::save_routing_rule_group_order_in(
-        &store,
-        &[
-            second.id,
-            super::MANUAL_ROUTING_RULE_GROUP_ID.to_owned(),
-            first.id,
-        ],
-    )?;
+    let mut order = vec![
+        super::MANUAL_ROUTING_RULE_GROUP_ID.to_owned(),
+        first.id,
+        second.id.clone(),
+    ];
+    assert!(super::place_routing_rule_group(
+        &mut order,
+        &second.id,
+        super::MANUAL_ROUTING_RULE_GROUP_ID,
+        false
+    ));
+    super::save_routing_rule_group_order_in(&store, &order)?;
 
     let profile = super::compile_saved_profile(&store, None)?;
     let yaml = manis_profile::render_mihomo_yaml(&profile)?;

@@ -114,6 +114,47 @@ impl ManisApp {
         );
     }
 
+    pub(in crate::app) fn reorder_routing_rule_group(
+        &mut self,
+        group_id: &str,
+        anchor_id: &str,
+        after: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if self.configuration_transfer.active || self.routing_apply_state.is_busy() {
+            return;
+        }
+        self.sync_routing_rule_group_order();
+        let previous = self.rule_sources.group_order.clone();
+        if !mihomo::place_routing_rule_group(
+            &mut self.rule_sources.group_order,
+            group_id,
+            anchor_id,
+            after,
+        ) {
+            return;
+        }
+        let Some(store_dir) = self.subscription_store_dir.clone() else {
+            self.rule_sources.group_order = previous;
+            self.language()
+                .message(Message::ManualRulesLocationUnavailable)
+                .clone_into(&mut self.status);
+            cx.notify();
+            return;
+        };
+        self.start_routing_runtime_apply(
+            store_dir,
+            self.language()
+                .localized(copy::configuration::RULE_GROUP_ORDER_UPDATED)
+                .to_owned(),
+            crate::app::RoutingApplyRollback {
+                manual_rules: self.manual_rules.clone(),
+                group_order: previous,
+            },
+            cx,
+        );
+    }
+
     pub(in crate::app) fn move_routing_rule_group(
         &mut self,
         group_id: &str,

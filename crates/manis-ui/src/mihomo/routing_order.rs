@@ -77,6 +77,32 @@ pub(crate) fn move_routing_rule_group(
     true
 }
 
+/// Place a group before or after an existing anchor without disturbing other groups.
+pub(crate) fn place_routing_rule_group(
+    order: &mut [String],
+    group_id: &str,
+    anchor_id: &str,
+    after: bool,
+) -> bool {
+    let Some(source) = order.iter().position(|id| id == group_id) else {
+        return false;
+    };
+    let Some(anchor) = order.iter().position(|id| id == anchor_id) else {
+        return false;
+    };
+    if source == anchor {
+        return false;
+    }
+    let slot = anchor + usize::from(after);
+    let target = slot - usize::from(source < slot);
+    match source.cmp(&target) {
+        std::cmp::Ordering::Less => order[source..=target].rotate_left(1),
+        std::cmp::Ordering::Greater => order[target..=source].rotate_right(1),
+        std::cmp::Ordering::Equal => return false,
+    }
+    true
+}
+
 fn valid_routing_rule_group_id(id: &str) -> bool {
     id == MANUAL_ROUTING_RULE_GROUP_ID || valid_stored_id(id, QX_RULE_SOURCE_PREFIX)
 }
@@ -153,4 +179,38 @@ pub(crate) fn load_routing_rule_group_order_in(
     _directory: &Path,
 ) -> Result<Vec<String>, SubscriptionStoreError> {
     Ok(Vec::new())
+}
+
+#[cfg(test)]
+mod reorder_tests {
+    use super::place_routing_rule_group;
+
+    #[test]
+    fn dragging_across_multiple_groups_preserves_the_other_priorities() {
+        for (source, anchor, after, expected) in [
+            ("a", "d", true, ["b", "c", "d", "a"]),
+            ("a", "d", false, ["b", "c", "a", "d"]),
+            ("d", "a", false, ["d", "a", "b", "c"]),
+            ("d", "a", true, ["a", "d", "b", "c"]),
+        ] {
+            let mut order = ["a", "b", "c", "d"].map(str::to_owned);
+            assert!(place_routing_rule_group(&mut order, source, anchor, after));
+            assert_eq!(order, expected);
+        }
+    }
+
+    #[test]
+    fn stale_self_and_unchanged_drops_do_not_reorder() {
+        for (source, anchor, after) in [
+            ("missing", "a", false),
+            ("a", "missing", false),
+            ("a", "a", true),
+            ("a", "b", false),
+            ("b", "a", true),
+        ] {
+            let mut order = ["a", "b", "c"].map(str::to_owned);
+            assert!(!place_routing_rule_group(&mut order, source, anchor, after));
+            assert_eq!(order, ["a", "b", "c"]);
+        }
+    }
 }

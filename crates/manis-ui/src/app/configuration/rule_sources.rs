@@ -100,6 +100,13 @@ impl ManisApp {
     }
 
     pub(super) fn open_new_qx_rule_editor(&mut self, cx: &mut Context<Self>) {
+        if crate::app::windows::activate(
+            cx.entity().entity_id(),
+            crate::app::windows::AuxiliaryKind::RuleSource,
+            cx,
+        ) {
+            return;
+        }
         self.rule_sources.editor_source_id = None;
         self.rule_sources.editor_refresh_interval = RemoteSourceRefreshInterval::Manual;
         self.rule_sources.editor_popover = crate::app::QxRuleEditorPopover::None;
@@ -121,6 +128,13 @@ impl ManisApp {
     }
 
     pub(super) fn open_qx_rule_editor(&mut self, id: String, cx: &mut Context<Self>) {
+        if crate::app::windows::activate(
+            cx.entity().entity_id(),
+            crate::app::windows::AuxiliaryKind::RuleSource,
+            cx,
+        ) {
+            return;
+        }
         let Some((index, source)) = self
             .rule_sources
             .sources
@@ -148,6 +162,14 @@ impl ManisApp {
     }
 
     fn open_qx_rule_source_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.runtime.is_fixture() {
+            crate::app::windows::open(
+                cx.entity(),
+                crate::app::windows::AuxiliaryKind::RuleSource,
+                cx,
+            );
+            return;
+        }
         let app = cx.entity();
         window.open_dialog(cx, move |dialog, window, cx| {
             app.update(cx, |this, cx| {
@@ -160,7 +182,10 @@ impl ManisApp {
         cx.notify();
     }
 
-    pub(super) fn close_qx_rule_editor(&mut self, cx: &mut Context<Self>) {
+    pub(in crate::app) fn close_qx_rule_editor(&mut self, cx: &mut Context<Self>) {
+        if self.rule_sources.feedback == QxRuleImportFeedback::Importing {
+            return;
+        }
         self.rule_sources.editor_source_id = None;
         self.rule_sources.editor_popover = crate::app::QxRuleEditorPopover::None;
         self.rule_sources.feedback = QxRuleImportFeedback::Idle;
@@ -181,6 +206,31 @@ impl ManisApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Dialog {
+        let sections = self.qx_rule_source_editor_sections(theme, language, window, cx);
+        let viewport = window.viewport_size();
+        let app = cx.entity();
+        surface_dialog(dialog, theme, window)
+            .width(px((viewport.width.as_f32() - 32.0).clamp(300.0, 620.0)))
+            .margin_top(px(((viewport.height.as_f32() - 520.0) / 2.0).max(16.0)))
+            .overlay(true)
+            .overlay_closable(true)
+            .keyboard(true)
+            .close_button(false)
+            .title(sections.header)
+            .child(sections.body)
+            .footer(sections.footer)
+            .on_close(move |_, _, cx| {
+                app.update(cx, ManisApp::close_qx_rule_editor);
+            })
+    }
+
+    pub(in crate::app) fn qx_rule_source_editor_sections(
+        &self,
+        theme: Theme,
+        language: Language,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> crate::app::windows::EditorSections {
         let input = self
             .inputs
             .qx_rule
@@ -230,22 +280,11 @@ impl ManisApp {
             )
             .child(self.qx_rule_interval_select(view, language, theme, cx))
             .child(self.qx_rule_import_feedback(theme, language));
-        let app = cx.entity();
-        surface_dialog(dialog, theme, window)
-            .width(px(view.dialog_width))
-            .margin_top(px(((viewport.height.as_f32() - 520.0) / 2.0).max(16.0)))
-            .overlay(true)
-            .overlay_closable(true)
-            .keyboard(true)
-            .close_button(false)
-            .title(Self::qx_rule_editor_title(view.editing, language, theme))
-            .child(body)
-            .footer(Self::qx_rule_editor_footer(
-                input, view, language, theme, cx,
-            ))
-            .on_close(move |_, _, cx| {
-                app.update(cx, ManisApp::close_qx_rule_editor);
-            })
+        crate::app::windows::EditorSections::new(
+            Self::qx_rule_editor_title(view.editing, language, theme),
+            body,
+            Self::qx_rule_editor_footer(input, view, language, theme, cx),
+        )
     }
 
     fn qx_rule_target_select(
@@ -425,18 +464,24 @@ impl ManisApp {
         dialog_footer_surface(theme)
             .child(
                 style_action_button(
-                    Button::new("cancel-qx-rule-source").label(language.message(Message::Cancel)),
+                    Button::new("cancel-qx-rule-source")
+                        .debug_selector(|| "cancel-qx-rule-source".into())
+                        .label(language.message(Message::Cancel))
+                        .disabled(view.busy),
                     ActionRole::Secondary,
                     ControlSize::Standard,
                 )
                 .on_click(cx.listener(|this, _, window, cx| {
-                    this.close_qx_rule_editor(cx);
-                    window.close_dialog(cx);
+                    if this.rule_sources.feedback != QxRuleImportFeedback::Importing {
+                        this.close_qx_rule_editor(cx);
+                        crate::app::windows::close_host(window, cx);
+                    }
                 })),
             )
             .child(
                 style_action_button(
                     Button::new("save-qx-rule-source")
+                        .debug_selector(|| "save-qx-rule-source".into())
                         .label(if view.busy {
                             language.localized(copy::configuration::PROCESSING)
                         } else if view.editing {
@@ -451,7 +496,7 @@ impl ManisApp {
                 .when(view.busy, gpui::Styled::cursor_default)
                 .on_click(cx.listener(move |this, _, window, cx| {
                     if !view.busy && this.submit_qx_rule_import(&input, cx) {
-                        window.close_dialog(cx);
+                        crate::app::windows::close_host(window, cx);
                     }
                 })),
             )

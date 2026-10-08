@@ -206,6 +206,7 @@ pub(crate) fn capture_routing_rules(
     use gpui::{AnyWindowHandle, Modifiers, point, px, size};
     use std::os::unix::fs::PermissionsExt;
 
+    let review_only = std::env::args().any(|argument| argument == "--routing-rules-review");
     let root = std::env::temp_dir().join(format!(
         "manis-routing-rules-snapshot-{}",
         std::process::id()
@@ -217,6 +218,117 @@ pub(crate) fn capture_routing_rules(
     std::fs::create_dir_all(&store)?;
     std::fs::set_permissions(&store, std::fs::Permissions::from_mode(0o700))?;
     manis_profile::write_private_atomic(&store, "language.preference", b"zh-CN")?;
+    write_routing_fixture(&store)?;
+
+    for (width, height, file_name) in [
+        (1420.0, 900.0, "routing-rules-wide.png"),
+        (720.0, 720.0, "routing-rules-compact.png"),
+    ] {
+        manis_profile::write_private_atomic(
+            &store,
+            "workspace.state",
+            b"routing-manual-rules\nrouting-rule-source:qx-rule-deadbeef",
+        )?;
+        let window_store = store.clone();
+        let window = cx.open_offscreen_window(size(px(width), px(height)), |window, cx| {
+            manis_root(window, cx, |_| {
+                manis_ui::ManisApp::with_fixture_controller_and_subscription_store(
+                    "http://127.0.0.1:9090",
+                    window_store,
+                )
+            })
+        })?;
+        let window: AnyWindowHandle = window.into();
+        refresh(cx, window)?;
+        if width >= 1_280.0 && !review_only {
+            open_workspace(cx, window, width, SnapshotWorkspace::Configuration)?;
+            scroll_window(cx, window, width - 100.0, height - 120.0, -680.0)?;
+            save_screenshot(cx, window, "configuration-wide-rule-source.png")?;
+        }
+        open_workspace(cx, window, width, SnapshotWorkspace::RoutingRules)?;
+        save_screenshot(cx, window, file_name)?;
+        if !review_only {
+            verify_secondary_click(
+                cx,
+                window,
+                point(px(width - 80.0), px(190.0)),
+                &file_name.replace(".png", "-secondary-click.png"),
+            )?;
+        }
+        let toggle_x = theme_toggle_x(width);
+        cx.simulate_click(window, point(px(toggle_x), px(24.0)), Modifiers::none());
+        refresh(cx, window)?;
+        save_screenshot(cx, window, &file_name.replace(".png", "-dark.png"))?;
+        if review_only && width >= 1_280.0 {
+            capture_rule_handle_focus(cx, window, width, "dark")?;
+        }
+        cx.simulate_click(window, point(px(toggle_x), px(24.0)), Modifiers::none());
+        refresh(cx, window)?;
+        if review_only {
+            if width >= 1_280.0 {
+                use gpui::MouseButton;
+                capture_rule_handle_focus(cx, window, width, "light")?;
+                let from = point(px(width - 73.0), px(184.0));
+                cx.simulate_mouse_down(window, from, MouseButton::Left, Modifiers::none());
+                cx.simulate_mouse_move(
+                    window,
+                    from + point(px(-10.0), px(10.0)),
+                    MouseButton::Left,
+                    Modifiers::none(),
+                );
+                refresh(cx, window)?;
+                if !cx.update(|cx| cx.has_active_drag()) {
+                    return Err("routing drag fixture did not start a drag".into());
+                }
+                cx.simulate_mouse_move(
+                    window,
+                    point(px(700.0), px(260.0)),
+                    MouseButton::Left,
+                    Modifiers::none(),
+                );
+                refresh(cx, window)?;
+                save_screenshot(cx, window, "routing-rules-drag.png")?;
+                cx.simulate_keystrokes(window, "escape");
+                refresh(cx, window)?;
+            }
+            close_window(cx, window)?;
+            continue;
+        }
+        if width >= 1_280.0 {
+            capture_routing_rule_interactions(cx, window)?;
+        } else {
+            cx.simulate_click(window, point(px(654.0), px(80.0)), Modifiers::none());
+            settle_ui_animation(cx, window)?;
+            save_screenshot(cx, window, "routing-rules-compact-add-modal.png")?;
+        }
+        close_window(cx, window)?;
+    }
+
+    std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn capture_rule_handle_focus(
+    cx: &mut gpui::VisualTestAppContext,
+    window: gpui::AnyWindowHandle,
+    width: f32,
+    mode: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    cx.simulate_click(
+        window,
+        gpui::point(gpui::px(width - 73.0), gpui::px(184.0)),
+        gpui::Modifiers::none(),
+    );
+    // The first group's upward shortcut is a no-op, but establishes keyboard modality.
+    cx.simulate_keystrokes(window, "alt-up");
+    refresh(cx, window)?;
+    save_screenshot(cx, window, &format!("routing-rules-focus-{mode}.png"))
+}
+
+#[cfg(target_os = "macos")]
+fn write_routing_fixture(store: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    use std::os::unix::fs::PermissionsExt;
     let content = concat!(
         "DOMAIN-SUFFIX,openai.com,PROXY\n",
         "DOMAIN-SUFFIX,google.com,PROXY\n",
@@ -244,7 +356,7 @@ pub(crate) fn capture_routing_rules(
     )?;
     std::fs::set_permissions(source_file, std::fs::Permissions::from_mode(0o600))?;
     manis_profile::write_private_atomic(
-        &store,
+        store,
         "manual-routing-rules.state",
         concat!(
             "manis.manual-routing-rules.v3\n",
@@ -255,56 +367,6 @@ pub(crate) fn capture_routing_rules(
         .as_bytes(),
     )?;
 
-    for (width, height, file_name) in [
-        (1420.0, 900.0, "routing-rules-wide.png"),
-        (720.0, 720.0, "routing-rules-compact.png"),
-    ] {
-        manis_profile::write_private_atomic(
-            &store,
-            "workspace.state",
-            b"routing-manual-rules\nrouting-rule-source:qx-rule-deadbeef",
-        )?;
-        let window_store = store.clone();
-        let window = cx.open_offscreen_window(size(px(width), px(height)), |window, cx| {
-            manis_root(window, cx, |_| {
-                manis_ui::ManisApp::with_fixture_controller_and_subscription_store(
-                    "http://127.0.0.1:9090",
-                    window_store,
-                )
-            })
-        })?;
-        let window: AnyWindowHandle = window.into();
-        refresh(cx, window)?;
-        if width >= 1_280.0 {
-            open_workspace(cx, window, width, SnapshotWorkspace::Configuration)?;
-            scroll_window(cx, window, width - 100.0, height - 120.0, -680.0)?;
-            save_screenshot(cx, window, "configuration-wide-rule-source.png")?;
-        }
-        open_workspace(cx, window, width, SnapshotWorkspace::RoutingRules)?;
-        save_screenshot(cx, window, file_name)?;
-        verify_secondary_click(
-            cx,
-            window,
-            point(px(width - 80.0), px(190.0)),
-            &file_name.replace(".png", "-secondary-click.png"),
-        )?;
-        let toggle_x = theme_toggle_x(width);
-        cx.simulate_click(window, point(px(toggle_x), px(24.0)), Modifiers::none());
-        refresh(cx, window)?;
-        save_screenshot(cx, window, &file_name.replace(".png", "-dark.png"))?;
-        cx.simulate_click(window, point(px(toggle_x), px(24.0)), Modifiers::none());
-        refresh(cx, window)?;
-        if width >= 1_280.0 {
-            capture_routing_rule_interactions(cx, window)?;
-        } else {
-            cx.simulate_click(window, point(px(654.0), px(80.0)), Modifiers::none());
-            settle_ui_animation(cx, window)?;
-            save_screenshot(cx, window, "routing-rules-compact-add-modal.png")?;
-        }
-        close_window(cx, window)?;
-    }
-
-    std::fs::remove_dir_all(root)?;
     Ok(())
 }
 

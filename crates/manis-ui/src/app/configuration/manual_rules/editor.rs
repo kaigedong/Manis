@@ -18,6 +18,13 @@ impl ManisApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if crate::app::windows::activate(
+            cx.entity().entity_id(),
+            crate::app::windows::AuxiliaryKind::ManualRule,
+            cx,
+        ) {
+            return;
+        }
         if self.manual_rule_editor_state.is_open() {
             if let Some(condition) = self.manual_rule_conditions.first() {
                 condition.input.focus_handle(cx).focus(window, cx);
@@ -52,6 +59,13 @@ impl ManisApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if crate::app::windows::activate(
+            cx.entity().entity_id(),
+            crate::app::windows::AuxiliaryKind::ManualRule,
+            cx,
+        ) {
+            return;
+        }
         if self.manual_rule_editor_state.is_open() {
             return;
         }
@@ -105,6 +119,14 @@ impl ManisApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !self.runtime.is_fixture() {
+            crate::app::windows::open(
+                cx.entity(),
+                crate::app::windows::AuxiliaryKind::ManualRule,
+                cx,
+            );
+            return;
+        }
         let app = cx.entity();
         window.open_dialog(cx, move |dialog, window, cx| {
             app.update(cx, |this, cx| {
@@ -423,6 +445,20 @@ impl ManisApp {
     }
 
     pub(in crate::app) fn remove_manual_rule(&mut self, index: usize, cx: &mut Context<Self>) {
+        // A native editor leaves the list usable. Keep its index stable until
+        // the draft is saved or cancelled; bring the draft back to the front.
+        if self.manual_rule_editor_state.is_open() {
+            crate::app::windows::activate(
+                cx.entity().entity_id(),
+                crate::app::windows::AuxiliaryKind::ManualRule,
+                cx,
+            );
+            self.language()
+                .localized(copy::configuration::FINISH_RULE_EDIT_FIRST)
+                .clone_into(&mut self.status);
+            cx.notify();
+            return;
+        }
         if self.configuration_transfer.active {
             return;
         }

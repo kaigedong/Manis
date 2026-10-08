@@ -6,7 +6,7 @@ use super::scenarios::{
     capture_managed_policy_settings, capture_medium_sheet, capture_merged_nodes,
     capture_navigation_icons, capture_nodes_toolbar, capture_proxy_candidate,
     capture_remote_subscription_preview, capture_routing_rules, capture_source_cards,
-    capture_stream_status,
+    capture_stream_status, capture_utility_windows,
 };
 
 #[cfg(target_os = "macos")]
@@ -17,6 +17,13 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
         std::sync::Arc::new(manis_ui::Assets),
     );
     cx.update(manis_ui::init);
+    if std::env::args().any(|argument| argument == "--utility-windows") {
+        capture_utility_windows(&mut cx)?;
+        if std::env::args().any(|argument| argument == "--routing-rules-review") {
+            return capture_routing_rules(&mut cx);
+        }
+        return Ok(());
+    }
     if std::env::args().any(|argument| argument == "--chrome") {
         capture(&mut cx, 900.0, 800.0, "chrome-900.png")?;
         capture(&mut cx, 1060.0, 800.0, "chrome-1060.png")?;
@@ -67,7 +74,9 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
     if std::env::args().any(|argument| argument == "--automatic-policy") {
         return capture_automatic_policy(&mut cx);
     }
-    if std::env::args().any(|argument| argument == "--routing-rules") {
+    if std::env::args()
+        .any(|argument| argument == "--routing-rules" || argument == "--routing-rules-review")
+    {
         return capture_routing_rules(&mut cx);
     }
     if std::env::args().any(|argument| argument == "--medium-sheet") {
@@ -85,36 +94,35 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
     if std::env::args().any(|argument| argument == "--compact-flow") {
         return capture_compact_flow(&mut cx);
     }
-    capture(&mut cx, 1420.0, 900.0, "native-wide.png")?;
-    capture_automatic_policy(&mut cx)?;
-    capture_managed_policy_settings(&mut cx)?;
-    capture(&mut cx, 1060.0, 800.0, "native-medium.png")?;
-    capture(&mut cx, 720.0, 720.0, "native-compact.png")?;
-    capture_configuration(&mut cx, 1420.0, 900.0, "configuration-wide.png")?;
-    capture_configuration(&mut cx, 1060.0, 800.0, "configuration-medium.png")?;
-    capture_configuration(&mut cx, 720.0, 720.0, "configuration-compact.png")?;
+    capture_default(&mut cx)
+}
+
+#[cfg(target_os = "macos")]
+fn capture_default(cx: &mut gpui::VisualTestAppContext) -> Result<(), Box<dyn std::error::Error>> {
+    capture(cx, 1420.0, 900.0, "native-wide.png")?;
+    capture_automatic_policy(cx)?;
+    capture_managed_policy_settings(cx)?;
+    capture(cx, 1060.0, 800.0, "native-medium.png")?;
+    capture(cx, 720.0, 720.0, "native-compact.png")?;
+    capture_configuration(cx, 1420.0, 900.0, "configuration-wide.png")?;
+    capture_configuration(cx, 1060.0, 800.0, "configuration-medium.png")?;
+    capture_configuration(cx, 720.0, 720.0, "configuration-compact.png")?;
+    capture_localization(cx, 1420.0, 900.0, "en", "localization-english-wide.png")?;
     capture_localization(
-        &mut cx,
-        1420.0,
-        900.0,
-        "en",
-        "localization-english-wide.png",
-    )?;
-    capture_localization(
-        &mut cx,
+        cx,
         720.0,
         720.0,
         "zh-CN",
         "localization-chinese-compact.png",
     )?;
-    capture_routing_rules(&mut cx)?;
-    capture_remote_subscription_preview(&mut cx)?;
-    capture_compact_flow(&mut cx)?;
+    capture_routing_rules(cx)?;
+    capture_remote_subscription_preview(cx)?;
+    capture_compact_flow(cx)?;
     cx.update(manis_ui::init);
-    capture_medium_sheet(&mut cx)?;
-    capture_connected(&mut cx)?;
-    capture_data_page_coverage(&mut cx)?;
-    capture_live_when_configured(&mut cx)?;
+    capture_medium_sheet(cx)?;
+    capture_connected(cx)?;
+    capture_data_page_coverage(cx)?;
+    capture_live_when_configured(cx)?;
     Ok(())
 }
 

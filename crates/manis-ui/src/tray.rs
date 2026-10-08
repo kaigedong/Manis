@@ -89,13 +89,12 @@ pub fn show_or_open_window(cx: &mut App) {
 }
 
 fn try_show_or_open_window(cx: &mut App) -> gpui::Result<()> {
-    if let Some(window) = cx
-        .windows()
-        .into_iter()
-        .find(|window| window.downcast::<gpui_component::Root>().is_some())
-        && window
-            .update(cx, |_, window, _| window.activate_window())
-            .is_ok()
+    if let Some(window) = cx.windows().into_iter().find(|window| {
+        window.downcast::<gpui_component::Root>().is_some()
+            && !crate::app::windows::is_auxiliary(*window, cx)
+    }) && window
+        .update(cx, |_, window, _| window.activate_window())
+        .is_ok()
     {
         cx.activate(true);
         return Ok(());
@@ -107,9 +106,10 @@ fn try_show_or_open_window(cx: &mut App) -> gpui::Result<()> {
 }
 
 fn main_window(cx: &mut App) -> Option<AnyWindowHandle> {
-    cx.windows()
-        .into_iter()
-        .find(|window| window.downcast::<gpui_component::Root>().is_some())
+    cx.windows().into_iter().find(|window| {
+        window.downcast::<gpui_component::Root>().is_some()
+            && !crate::app::windows::is_auxiliary(*window, cx)
+    })
 }
 
 fn log_tray_error(event: &'static str, error: impl std::fmt::Display) {
@@ -524,6 +524,30 @@ mod tests {
         assert_eq!(windows.len(), 1);
         assert_global_app(cx, &app);
         assert_single_about_dialog(windows[0], cx);
+    }
+
+    #[gpui::test]
+    fn tray_keeps_settings_separate_when_reopening_the_main_window(cx: &mut gpui::TestAppContext) {
+        let (app, main) = fixture_window(cx);
+        cx.update(|cx| {
+            crate::app::windows::open(
+                app.clone(),
+                crate::app::windows::AuxiliaryKind::Settings,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        assert_eq!(cx.update(super::main_window), Some(main));
+        cx.update_window(main, |_, window, _| window.remove_window())
+            .unwrap();
+        assert_eq!(cx.windows().len(), 1);
+        assert!(cx.update(super::main_window).is_none());
+        cx.update(super::show_or_open_window);
+        cx.run_until_parked();
+        assert_eq!(cx.windows().len(), 2);
+        let reopened = cx.update(super::main_window).expect("reopened main window");
+        assert_ne!(reopened.window_id(), main.window_id());
+        assert_global_app(cx, &app);
     }
 
     #[test]

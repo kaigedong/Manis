@@ -9,16 +9,23 @@ const BRAND_MARK: &[u8] = include_bytes!("../../../assets/brand/manis-mark.svg")
 /// Serves Manis-owned assets alongside the icons bundled by gpui-component.
 pub struct Assets;
 
+// The default component bundle omits the full catalog. Embed this one extra icon.
+gpui_component_assets::icon_assets!(DragAssets, [GripVertical]);
+
 impl AssetSource for Assets {
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
         if path == BRAND_MARK_PATH {
             return Ok(Some(Cow::Borrowed(BRAND_MARK)));
+        }
+        if let Some(bytes) = DragAssets.load(path)? {
+            return Ok(Some(bytes));
         }
         gpui_component_assets::Assets.load(path)
     }
 
     fn list(&self, path: &str) -> Result<Vec<SharedString>> {
         let mut assets = gpui_component_assets::Assets.list(path)?;
+        assets.extend(DragAssets.list(path)?);
         if BRAND_MARK_PATH.starts_with(path) {
             assets.push(BRAND_MARK_PATH.into());
         }
@@ -31,6 +38,13 @@ mod tests {
     use gpui::AssetSource as _;
 
     use super::{Assets, BRAND_MARK_PATH};
+
+    #[test]
+    fn rule_drag_handle_is_embedded_alongside_the_component_icons() {
+        let path = gpui_component_assets::IconName::GripVertical.path();
+        assert!(Assets.load(&path).unwrap().is_some());
+        assert!(Assets.list("icons/").unwrap().contains(&path));
+    }
 
     #[test]
     fn brand_mark_is_embedded_without_remote_or_executable_content() {

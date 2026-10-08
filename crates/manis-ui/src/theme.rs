@@ -39,27 +39,27 @@ pub(crate) struct Theme {
 impl Theme {
     pub(crate) fn light() -> Self {
         Self {
-            // Surface hierarchy comes from neutral luminance, never desktop bleed-through.
+            // Tinted surfaces separate chrome, content and controls without desktop bleed-through.
             // See docs/interface-design.md for the public design references and contrast policy.
-            window_backdrop: rgb(0xffffff),
-            surface_base: rgb(0xffffff),
-            surface_low: rgb(0xf9f9f9),
-            surface_high: rgb(0xf3f3f3),
+            window_backdrop: rgb(0xfafbfc),
+            surface_base: rgb(0xfafbfc),
+            surface_low: rgb(0xf0f3f5),
+            surface_high: rgb(0xe9eef2),
             surface_overlay: rgb(0xffffff),
-            surface_chrome: rgb(0xf9f9f9),
+            surface_chrome: rgb(0xe9eef2),
             text_primary: rgb(0x0d0d0d),
             text_secondary: rgb(0x5d5d5d),
             text_tertiary: rgb(0x666666),
-            outline_subtle: rgb(0xe5e5e5),
-            outline_strong: rgb(0x858585),
-            action_primary: rgb(0x181818),
-            action_primary_hover: rgb(0x303030),
-            action_primary_active: rgb(0x414141),
+            outline_subtle: rgb(0xdde3e8),
+            outline_strong: rgb(0x78828c),
+            action_primary: rgb(0x176c62),
+            action_primary_hover: rgb(0x125d54),
+            action_primary_active: rgb(0x0e4e46),
             action_on_primary: rgb(0xffffff),
-            action_soft: rgb(0xededed),
-            button_bg: rgb(0xf3f3f3),
-            button_hover: rgb(0xe8e8e8),
-            button_active: rgb(0xdcdcdc),
+            action_soft: rgb(0xe3f0ed),
+            button_bg: rgb(0xedf1f4),
+            button_hover: rgb(0xe2e8ed),
+            button_active: rgb(0xd5dfe6),
             focus_ring: rgb(0x2563eb),
             modal_scrim: rgba(0x00000040),
             route_trace: rgb(0x923b0f),
@@ -75,25 +75,25 @@ impl Theme {
 
     pub(crate) fn dark() -> Self {
         Self {
-            window_backdrop: rgb(0x212121),
-            surface_base: rgb(0x212121),
-            surface_low: rgb(0x282828),
-            surface_high: rgb(0x303030),
-            surface_overlay: rgb(0x303030),
-            surface_chrome: rgb(0x181818),
+            window_backdrop: rgb(0x15191e),
+            surface_base: rgb(0x15191e),
+            surface_low: rgb(0x1c2229),
+            surface_high: rgb(0x242c35),
+            surface_overlay: rgb(0x242c35),
+            surface_chrome: rgb(0x1c2229),
             text_primary: rgb(0xf3f3f3),
             text_secondary: rgb(0xb9b9b9),
             text_tertiary: rgb(0xababab),
-            outline_subtle: rgb(0x3d3d3d),
-            outline_strong: rgb(0x858585),
-            action_primary: rgb(0xf3f3f3),
-            action_primary_hover: rgb(0xededed),
-            action_primary_active: rgb(0xdcdcdc),
+            outline_subtle: rgb(0x35404c),
+            outline_strong: rgb(0x858f9b),
+            action_primary: rgb(0x79d7c6),
+            action_primary_hover: rgb(0x95e3d4),
+            action_primary_active: rgb(0xafece0),
             action_on_primary: rgb(0x0d0d0d),
-            action_soft: rgb(0x393939),
-            button_bg: rgb(0x303030),
-            button_hover: rgb(0x3c3c3c),
-            button_active: rgb(0x484848),
+            action_soft: rgb(0x203b35),
+            button_bg: rgb(0x29333e),
+            button_hover: rgb(0x354251),
+            button_active: rgb(0x415165),
             focus_ring: rgb(0x8cb4ff),
             modal_scrim: rgba(0x00000066),
             route_trace: rgb(0xffb790),
@@ -121,7 +121,7 @@ pub(crate) enum TextRole {
 impl TextRole {
     pub(crate) fn size(self) -> Pixels {
         match self {
-            Self::PageTitle => px(20.0),
+            Self::PageTitle => px(24.0),
             Self::SectionTitle => px(16.0),
             Self::Body => px(13.0),
             Self::Label | Self::Data => px(12.0),
@@ -131,7 +131,7 @@ impl TextRole {
 
     pub(crate) fn line_height(self) -> Pixels {
         match self {
-            Self::PageTitle => px(26.0),
+            Self::PageTitle => px(32.0),
             Self::SectionTitle => px(22.0),
             Self::Body => px(20.0),
             Self::Label | Self::Metadata => px(16.0),
@@ -278,10 +278,10 @@ fn project_component_palette(component: &mut ComponentTheme, theme: Theme) {
     component.button_foreground = theme.text_primary.into();
     component.button_hover = theme.button_hover.into();
     component.button_active = theme.button_active.into();
-    component.button_primary = theme.button_bg.into();
-    component.button_primary_hover = theme.button_hover.into();
-    component.button_primary_active = theme.button_active.into();
-    component.button_primary_foreground = theme.text_primary.into();
+    component.button_primary = theme.action_primary.into();
+    component.button_primary_hover = theme.action_primary_hover.into();
+    component.button_primary_active = theme.action_primary_active.into();
+    component.button_primary_foreground = theme.action_on_primary.into();
     component.button_secondary = theme.button_bg.into();
     component.button_secondary_hover = theme.button_hover.into();
     component.button_secondary_active = theme.button_active.into();
@@ -438,12 +438,10 @@ mod tests {
     }
 
     #[test]
-    fn content_surfaces_are_opaque_and_neutral_in_both_themes() {
+    fn content_surfaces_are_opaque_and_distinct_in_both_themes() {
         for theme in [Theme::light(), Theme::dark()] {
             for surface in surfaces(theme) {
                 assert_opaque(surface);
-                assert!((surface.r - surface.g).abs() < f32::EPSILON);
-                assert!((surface.g - surface.b).abs() < f32::EPSILON);
             }
             assert_ne!(theme.surface_base, theme.surface_chrome);
             assert_ne!(theme.surface_base, theme.surface_low);
@@ -512,13 +510,11 @@ mod tests {
     }
 
     #[test]
-    fn button_states_are_neutral_distinct_and_readable() {
+    fn button_states_are_distinct_and_readable() {
         for theme in [Theme::light(), Theme::dark()] {
             let fills = [theme.button_bg, theme.button_hover, theme.button_active];
             for fill in fills {
                 assert_opaque(fill);
-                assert!((fill.r - fill.g).abs() < f32::EPSILON);
-                assert!((fill.g - fill.b).abs() < f32::EPSILON);
                 assert_contrast(theme.text_primary, fill, 4.5);
             }
             assert_ne!(fills[0], fills[1]);
@@ -526,7 +522,8 @@ mod tests {
             let mut component = ComponentTheme::default();
             project_component_palette(&mut component, theme);
             assert_eq!(component.button, component.button_secondary);
-            assert_eq!(component.button_primary, component.button_secondary);
+            assert_ne!(component.button_primary, component.button_secondary);
+            assert_eq!(component.button_primary, theme.action_primary.into());
             assert_eq!(component.button_hover, component.button_secondary_hover);
             assert_eq!(component.button_active, component.button_secondary_active);
         }

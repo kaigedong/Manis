@@ -123,7 +123,9 @@ impl ManisApp {
         if self.configuration_transfer.is_busy() || self.configuration_transfer.preview.is_none() {
             return;
         }
-        if self.configuration_mutation_busy() {
+        if self.configuration_mutation_busy()
+            || crate::app::windows::has_editors(cx.entity().entity_id(), cx)
+        {
             self.finish_configuration_transfer(
                 self.language().localized(copy::backup::BUSY),
                 true,
@@ -335,7 +337,9 @@ impl ManisApp {
         }
         let error = if self.subscription_store_dir.is_none() {
             Some(copy::backup::NO_STORE)
-        } else if self.configuration_mutation_busy() {
+        } else if self.configuration_mutation_busy()
+            || crate::app::windows::has_editors(cx.entity().entity_id(), cx)
+        {
             Some(copy::backup::BUSY)
         } else {
             None

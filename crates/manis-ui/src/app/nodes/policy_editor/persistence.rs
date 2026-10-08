@@ -2,7 +2,7 @@ use super::{
     AnyWindowHandle, AppContext, BTreeSet, Context, ManagedPolicyDraft, ManagedPolicyDraftError,
     ManagedPolicyGroup, ManagedPolicyIcon, ManagedPolicyMutationState, ManagedPolicyStrategy,
     ManisApp, PolicyCandidateMatcher, PolicyCandidateMatcherKind, SubscriptionStoreError, Window,
-    WindowExt, copy, mihomo,
+    copy, mihomo,
 };
 
 impl ManisApp {
@@ -221,7 +221,7 @@ impl ManisApp {
                 .unwrap_or(false);
             if close && let Some(dialog_window) = dialog_window {
                 let _ = cx.update_window(dialog_window, |_, window, cx| {
-                    window.close_dialog(cx);
+                    crate::app::windows::close_host(window, cx);
                 });
             }
         })
@@ -390,7 +390,7 @@ impl ManisApp {
                 .unwrap_or(false);
             if close && let Some(dialog_window) = dialog_window {
                 let _ = cx.update_window(dialog_window, |_, window, cx| {
-                    window.close_dialog(cx);
+                    crate::app::windows::close_host(window, cx);
                 });
             }
         })

@@ -66,7 +66,8 @@ use preview::{
 };
 pub(crate) use routing_order::{
     MoveDirection, load_routing_rule_group_order_in, move_routing_rule_group,
-    normalized_routing_rule_group_order, save_routing_rule_group_order_in,
+    normalized_routing_rule_group_order, place_routing_rule_group,
+    save_routing_rule_group_order_in,
 };
 pub(crate) use store_snapshot::SourceStoreTransaction;
 pub(crate) use workspace::*;

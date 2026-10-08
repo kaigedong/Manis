@@ -1,3 +1,5 @@
+use gpui::InteractiveElement as _;
+
 use super::{
     ActionRole, Button, Context, ControlSize, Dialog, Disableable, Div, FluentBuilder, Focusable,
     IntoElement, Language, ManagedPolicyDraft, ManisApp, Message, ParentElement, Styled, TextRole,
@@ -11,8 +13,15 @@ impl ManisApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if crate::app::windows::activate(
+            cx.entity().entity_id(),
+            crate::app::windows::AuxiliaryKind::Policy,
+            cx,
+        ) {
+            return;
+        }
         self.start_managed_policy_create(cx);
-        Self::open_managed_policy_dialog(window, cx);
+        self.open_managed_policy_dialog(window, cx);
         if let Some(input) = self.inputs.policy_group_name.as_ref() {
             input.focus_handle(cx).focus(window, cx);
         }
@@ -24,17 +33,32 @@ impl ManisApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if crate::app::windows::activate(
+            cx.entity().entity_id(),
+            crate::app::windows::AuxiliaryKind::Policy,
+            cx,
+        ) {
+            return;
+        }
         self.start_managed_policy_edit(id, cx);
         if self.managed_policies.draft.is_none() {
             return;
         }
-        Self::open_managed_policy_dialog(window, cx);
+        self.open_managed_policy_dialog(window, cx);
         if let Some(input) = self.inputs.policy_group_name.as_ref() {
             input.focus_handle(cx).focus(window, cx);
         }
     }
 
-    pub(in crate::app) fn open_managed_policy_dialog(window: &mut Window, cx: &mut Context<Self>) {
+    pub(in crate::app) fn open_managed_policy_dialog(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.runtime.is_fixture() {
+            crate::app::windows::open(cx.entity(), crate::app::windows::AuxiliaryKind::Policy, cx);
+            return;
+        }
         let app = cx.entity();
         window.open_dialog(cx, move |dialog, window, cx| {
             app.update(cx, |this, cx| {
@@ -112,10 +136,35 @@ impl ManisApp {
         cx: &mut Context<Self>,
     ) -> Dialog {
         let viewport = window.viewport_size();
-        let width = (viewport.width.as_f32() - 32.0).clamp(320.0, 780.0);
-        let margin_top = ((viewport.height.as_f32() - 640.0) / 2.0).max(16.0);
         let app = cx.entity();
         let busy = self.managed_policies.mutation_state.is_busy();
+        let sections = self.managed_policy_editor_sections(compact, language, theme, cx);
+        surface_dialog(dialog, theme, window)
+            .width(px((viewport.width.as_f32() - 32.0).clamp(320.0, 780.0)))
+            .margin_top(px(((viewport.height.as_f32() - 640.0) / 2.0).max(16.0)))
+            .overlay(true)
+            .overlay_closable(!busy)
+            .keyboard(!busy)
+            .close_button(false)
+            .title(sections.header)
+            .child(sections.body)
+            .footer(sections.footer)
+            .on_close(move |_, _, cx| {
+                app.update(cx, |this, cx| {
+                    if !this.managed_policies.mutation_state.is_busy() {
+                        this.close_managed_policy_editor(cx);
+                    }
+                });
+            })
+    }
+
+    pub(in crate::app) fn managed_policy_editor_sections(
+        &self,
+        compact: bool,
+        language: Language,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> crate::app::windows::EditorSections {
         let (title, body, footer) = if let Some(draft) = self.managed_policies.draft.as_ref() {
             (
                 Self::managed_policy_editor_title(draft, language, theme),
@@ -137,25 +186,7 @@ impl ManisApp {
             )
         };
 
-        surface_dialog(dialog, theme, window)
-            .width(px(width))
-            .margin_top(px(margin_top))
-            .overlay(true)
-            .overlay_closable(!busy)
-            .keyboard(!busy)
-            .close_button(false)
-            .title(title)
-            .child(body)
-            .footer(footer)
-            .on_close(move |_, _, cx| {
-                app.update(cx, |this, cx| {
-                    if !this.managed_policies.mutation_state.is_busy() {
-                        this.managed_policies.draft = None;
-                        this.managed_policies.editor_popover = None;
-                        cx.notify();
-                    }
-                });
-            })
+        crate::app::windows::EditorSections::new(title, body, footer)
     }
 
     pub(in crate::app) fn managed_policy_editor_title(
@@ -250,6 +281,7 @@ impl ManisApp {
                     .child(
                         style_action_button(
                             Button::new("cancel-managed-policy-dialog")
+                                .debug_selector(|| "cancel-managed-policy-dialog".into())
                                 .label(language.message(Message::Cancel))
                                 .disabled(busy),
                             ActionRole::Secondary,
@@ -259,13 +291,14 @@ impl ManisApp {
                         .on_click(cx.listener(|this, _, window, cx| {
                             if !this.managed_policies.mutation_state.is_busy() {
                                 this.close_managed_policy_editor(cx);
-                                window.close_dialog(cx);
+                                crate::app::windows::close_host(window, cx);
                             }
                         })),
                     )
                     .child(
                         style_action_button(
                             Button::new("save-managed-policy-dialog")
+                                .debug_selector(|| "save-managed-policy-dialog".into())
                                 .label(if busy {
                                     language.localized(copy::nodes::APPLYING_CHANGES)
                                 } else if editing_id.is_some() {
@@ -301,7 +334,7 @@ impl ManisApp {
                 ControlSize::Standard,
             )
             .on_click(cx.listener(|_, _, window, cx| {
-                window.close_dialog(cx);
+                crate::app::windows::close_host(window, cx);
             })),
         )
     }

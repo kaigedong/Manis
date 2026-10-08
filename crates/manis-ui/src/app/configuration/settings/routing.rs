@@ -33,7 +33,7 @@ impl ManisApp {
                     format!(
                         "{} · {}",
                         self.active_rules_summary(language),
-                        language.localized(copy::configuration::GROUPS_MATCH_FROM_TOP_TO_BOTTOM_USE_THE_ARROWS_TO),
+                        language.localized(copy::configuration::GROUPS_MATCH_FROM_TOP_TO_BOTTOM_DRAG_TO_REORDER),
                     ),
                     Some(
                         action_button(
@@ -51,13 +51,13 @@ impl ManisApp {
                 )),
         )
         .child(
-            div()
+            self.rule_group_scroll_target(div()
                 .id("routing-rules-scroll")
                 .flex_1()
                 .min_h_0()
                 .overflow_y_scroll()
                 .p(if compact { Space::Md.px() } else { Space::Lg.px() })
-                .child(self.active_rules_panel(theme, language, compact, cx)),
+                .child(self.active_rules_panel(theme, language, compact, cx))),
         )
     }
 }

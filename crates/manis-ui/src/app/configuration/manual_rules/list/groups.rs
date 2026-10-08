@@ -147,7 +147,11 @@ impl ManisApp {
             *rule_order += 1;
         }
         self.rule_group_card(
-            (MANUAL_RULES_EXPANSION_KEY, group_name),
+            (
+                MANUAL_RULES_EXPANSION_KEY,
+                group_name,
+                mihomo::MANUAL_ROUTING_RULE_GROUP_ID,
+            ),
             title,
             rules,
             view,
@@ -192,13 +196,13 @@ impl ManisApp {
             *rule_order += 1;
         }
         let expansion_key = rule_source_expansion_key(&source.id);
-        self.rule_group_card((&expansion_key, &name), title, rules, view, cx)
+        self.rule_group_card((&expansion_key, &name, &source.id), title, rules, view, cx)
     }
 
     fn rule_group_card(
         &self,
-        (key, name): (&str, &str),
-        title: Div,
+        (key, name, group_id): (&str, &str, &str),
+        title: AnyElement,
         rules: Div,
         view: RuleGroupRenderContext,
         cx: &mut Context<Self>,
@@ -251,15 +255,15 @@ impl ManisApp {
             .on_click(cx.listener(move |this, _, _, cx| {
                 Self::sync_rule_group_open(this, &toggle_key, !open, cx);
             }));
-        div()
+        let card = div()
             .id(format!("routing-rule-group-{key}"))
             .flex_shrink_0()
             .rounded(Radius::Pane.px())
             .overflow_hidden()
             .border_1()
             .border_color(theme.outline_subtle)
-            .child(Collapsible::new().open(open).child(header).content(rules))
-            .into_any_element()
+            .child(Collapsible::new().open(open).child(header).content(rules));
+        self.rule_group_drop_target(div().w_full().child(card), group_id, theme, cx)
     }
 
     fn rule_group_title(
@@ -270,7 +274,7 @@ impl ManisApp {
         middle: Option<AnyElement>,
         view: RuleGroupRenderContext,
         cx: &mut Context<Self>,
-    ) -> Div {
+    ) -> AnyElement {
         let RuleGroupRenderContext {
             position,
             group_count,
@@ -278,7 +282,7 @@ impl ManisApp {
             theme,
             ..
         } = view;
-        div()
+        let title = div()
             .w_full()
             .flex()
             .items_center()
@@ -306,14 +310,15 @@ impl ManisApp {
                     ),
             )
             .when_some(middle, ParentElement::child)
-            .child(self.rule_group_order_controls(
+            .child(self.rule_group_drag_handle(
                 group_id,
                 name,
                 (position, group_count),
                 theme,
                 language,
                 cx,
-            ))
+            ));
+        title.into_any_element()
     }
 
     pub(in crate::app) fn remote_rule_group_detail(

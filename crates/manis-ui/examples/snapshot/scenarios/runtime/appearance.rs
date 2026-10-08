@@ -108,8 +108,12 @@ pub(super) fn assert_appearance_mode(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let screenshot = cx.capture_screenshot(window)?;
     // This unobstructed chrome pixel also catches stale coordinate-based theme clicks.
-    let expected = if dark { 0x18 } else { 0xf9 };
-    if screenshot.get_pixel(4, 4).0 != [expected, expected, expected, 255] {
+    let expected = if dark {
+        [0x1c, 0x22, 0x29, 255]
+    } else {
+        [0xe9, 0xee, 0xf2, 255]
+    };
+    if screenshot.get_pixel(4, 4).0 != expected {
         return Err(format!("appearance fixture is not in the expected dark={dark} mode").into());
     }
     Ok(())

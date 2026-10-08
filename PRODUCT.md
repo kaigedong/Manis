@@ -26,7 +26,8 @@ The app is a long-running desktop utility used from a normal window and system t
 
 ## Capabilities and Constraints
 
-- Ordered rule editor with explicit fallback behavior.
+- Ordered rule editor with explicit fallback behavior; rule-group priority supports mouse drag and keyboard reordering.
+- Independent native Settings and source, manual-rule and policy editors preserve drafts when reopened while the main workspace remains usable.
 - Policy groups supporting manual selection and latency testing, with fallback and load balancing when the active kernel advertises those capabilities.
 - Live connection list and authoritative route explanation from the active kernel's supported controller API.
 - Subscription/node import, profile management, system proxy control, and capability-gated TUN controls.

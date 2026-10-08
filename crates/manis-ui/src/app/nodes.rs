@@ -265,6 +265,7 @@ mod tests {
                 app.node_workspace.clone(),
             )
         });
+        let initial_focus = cx.update(|window, cx| window.focused(cx));
         for selector in [
             "source-group-header-mihomo:0",
             "saved-policy-header-policy-1",
@@ -285,7 +286,7 @@ mod tests {
                 });
                 cx.update(|window, cx| {
                     assert!(
-                        window.focused(cx).is_none(),
+                        window.focused(cx) == initial_focus,
                         "{selector} must not take focus"
                     );
                     window.draw(cx).clear(cx);

@@ -43,6 +43,7 @@ mod routing_controls;
 mod runtime_lifecycle;
 mod stored_workspace;
 mod subscription_workflow;
+pub(crate) mod windows;
 mod workspace_inputs;
 
 #[cfg(not(test))]
@@ -138,6 +139,7 @@ pub struct ManisApp {
     primary_workspace: PrimaryWorkspace,
     configuration_section: ConfigurationSection,
     configuration_scroll: gpui::ScrollHandle,
+    routing_rules_scroll: gpui::ScrollHandle,
     configuration_navigation_scroll: gpui::ScrollHandle,
     configuration_add_section: Option<ConfigurationSection>,
     configuration_transfer: configuration::ConfigurationTransfer,
@@ -313,6 +315,7 @@ impl ManisApp {
             primary_workspace: PrimaryWorkspace::default(),
             configuration_section: ConfigurationSection::default(),
             configuration_scroll: gpui::ScrollHandle::new(),
+            routing_rules_scroll: gpui::ScrollHandle::new(),
             configuration_navigation_scroll: gpui::ScrollHandle::new(),
             configuration_add_section: None,
             configuration_transfer: configuration::ConfigurationTransfer::default(),

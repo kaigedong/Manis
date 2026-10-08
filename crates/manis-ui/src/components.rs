@@ -21,7 +21,8 @@ pub(crate) enum ActionRole {
 impl ActionRole {
     pub(crate) fn variant(self) -> ButtonVariant {
         match self {
-            Self::Primary | Self::Secondary => ButtonVariant::Secondary,
+            Self::Primary => ButtonVariant::Primary,
+            Self::Secondary => ButtonVariant::Secondary,
             Self::Danger => ButtonVariant::Danger,
         }
     }
@@ -445,7 +446,7 @@ mod tests {
 
     #[test]
     fn action_roles_map_to_component_button_variants() {
-        assert_eq!(ActionRole::Primary.variant(), ButtonVariant::Secondary);
+        assert_eq!(ActionRole::Primary.variant(), ButtonVariant::Primary);
         assert_eq!(ActionRole::Secondary.variant(), ButtonVariant::Secondary);
         assert_eq!(ActionRole::Danger.variant(), ButtonVariant::Danger);
     }

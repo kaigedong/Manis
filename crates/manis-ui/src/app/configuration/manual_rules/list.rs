@@ -1,14 +1,14 @@
 mod feedback;
 mod groups;
+mod reorder;
 use super::{
-    ActionRole, AnyElement, Button, ButtonVariant, ButtonVariants, Collapsible, Context,
-    ContextMenuExt, ControlSize, Disableable, Div, Entity, FluentBuilder, FontWeight, IconName,
-    InteractiveElement, IntoElement, Language, MANUAL_RULES_EXPANSION_KEY, ManisApp,
-    ManualRuleKeyboardAction, Message, ParentElement, PopupMenuItem, QxRuleImportFeedback,
-    QxRuleKind, QxRuleList, Radius, Role, RuleGroupRenderContext, Space, Stateful,
-    StatefulInteractiveElement, Styled, TextRole, Theme, copy, div, empty_state,
-    manual_rule_keyboard_action, mihomo, px, rule_group_is_open, rule_source_expansion_key,
-    source_update_label, style_action_button,
+    AnyElement, Button, ButtonVariant, ButtonVariants, Collapsible, Context, ContextMenuExt, Div,
+    Entity, FluentBuilder, FontWeight, InteractiveElement, IntoElement, Language,
+    MANUAL_RULES_EXPANSION_KEY, ManisApp, ManualRuleKeyboardAction, Message, ParentElement,
+    PopupMenuItem, QxRuleImportFeedback, QxRuleKind, QxRuleList, Radius, Role,
+    RuleGroupRenderContext, Space, Stateful, StatefulInteractiveElement, Styled, TextRole, Theme,
+    copy, div, empty_state, manual_rule_keyboard_action, mihomo, px, rule_group_is_open,
+    rule_source_expansion_key, source_update_label,
 };
 impl ManisApp {
     pub(in crate::app) fn manual_routing_rule_row(
@@ -229,66 +229,5 @@ impl ManisApp {
             );
         }
         matchers
-    }
-
-    pub(in crate::app) fn rule_group_order_controls(
-        &self,
-        group_id: &str,
-        group_name: &str,
-        position: (usize, usize),
-        _theme: Theme,
-        language: Language,
-        cx: &mut Context<Self>,
-    ) -> Div {
-        let (position, group_count) = position;
-        let up_id = group_id.to_owned();
-        let down_id = group_id.to_owned();
-        div()
-            .flex_shrink_0()
-            .flex()
-            .items_center()
-            .gap(Space::Xs.px())
-            .child(
-                style_action_button(
-                    Button::new(format!("move-rule-group-up-{group_id}"))
-                        .accessibility_label(copy::configuration::move_rule_group(
-                            language, group_name, true,
-                        ))
-                        .icon(IconName::ArrowUp)
-                        .disabled(position == 0 || self.routing_apply_state.is_busy()),
-                    ActionRole::Secondary,
-                    ControlSize::Icon,
-                )
-                .when(
-                    position == 0 || self.routing_apply_state.is_busy(),
-                    gpui::Styled::cursor_default,
-                )
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    cx.stop_propagation();
-                    this.move_routing_rule_group(&up_id, mihomo::MoveDirection::Up, cx);
-                })),
-            )
-            .child(
-                style_action_button(
-                    Button::new(format!("move-rule-group-down-{group_id}"))
-                        .accessibility_label(copy::configuration::move_rule_group(
-                            language, group_name, false,
-                        ))
-                        .icon(IconName::ArrowDown)
-                        .disabled(
-                            position + 1 >= group_count || self.routing_apply_state.is_busy(),
-                        ),
-                    ActionRole::Secondary,
-                    ControlSize::Icon,
-                )
-                .when(
-                    position + 1 >= group_count || self.routing_apply_state.is_busy(),
-                    gpui::Styled::cursor_default,
-                )
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    cx.stop_propagation();
-                    this.move_routing_rule_group(&down_id, mihomo::MoveDirection::Down, cx);
-                })),
-            )
     }
 }

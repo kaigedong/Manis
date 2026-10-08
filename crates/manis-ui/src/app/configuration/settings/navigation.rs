@@ -124,11 +124,7 @@ impl ManisApp {
                 } else {
                     Space::Sm.px()
                 })
-                .when(compact, |items| {
-                    items
-                        .overflow_x_scroll()
-                        .track_scroll(&self.configuration_navigation_scroll)
-                })
+                .when(compact, |items| items.grid().grid_cols(3))
                 .when(!compact, gpui::Styled::flex_col)
                 .children(ConfigurationSection::ALL.into_iter().map(|section| {
                     self.configuration_navigation_item(section, theme, compact, cx)
@@ -184,7 +180,7 @@ impl ManisApp {
             .focusable()
             .map(crate::components::primary_button_interaction)
             .cursor_pointer()
-            .min_w(if compact { px(104.0) } else { px(0.0) })
+            .min_w(px(0.0))
             .px(Space::Md.px())
             .py(Space::Sm.px())
             .rounded(Radius::Control.px())

@@ -337,15 +337,6 @@ pub(crate) fn manual_rule_accessibility(language: Language, order: usize) -> Str
     }
 }
 
-pub(crate) fn move_rule_group(language: Language, group: &str, up: bool) -> String {
-    match (language, up) {
-        (Language::English, true) => format!("Move {group} up"),
-        (Language::English, false) => format!("Move {group} down"),
-        (Language::SimplifiedChinese, true) => format!("上移{group}"),
-        (Language::SimplifiedChinese, false) => format!("下移{group}"),
-    }
-}
-
 pub(crate) fn active_rule_summary(language: Language, active: usize, disabled: usize) -> String {
     if disabled == 0 {
         return language.count(CountNoun::Rule, active);

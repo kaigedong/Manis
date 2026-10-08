@@ -713,6 +713,7 @@ mod tests {
         let bounds = cx
             .debug_bounds("rule-group-toggle-routing-manual-rules")
             .unwrap();
+        let initial_focus = cx.update(|window, cx| window.focused(cx));
         for button in [MouseButton::Right, MouseButton::Middle] {
             cx.simulate_event(MouseDownEvent {
                 button,
@@ -725,7 +726,7 @@ mod tests {
                 ..Default::default()
             });
         }
-        cx.update(|window, cx| assert!(window.focused(cx).is_none()));
+        cx.update(|window, cx| assert_eq!(window.focused(cx), initial_focus));
         app.read_with(cx, |app, _| {
             assert!(
                 app.node_workspace

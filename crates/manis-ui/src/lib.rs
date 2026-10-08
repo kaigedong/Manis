@@ -24,6 +24,10 @@ mod theme;
 mod tray;
 
 pub use app::ManisApp;
+#[cfg(feature = "snapshot-fixtures")]
+pub use app::windows::{
+    AuxiliaryKind as UtilityWindowFixture, fixture_root as utility_window_fixture_root,
+};
 pub use assets::Assets;
 #[cfg(feature = "snapshot-fixtures")]
 pub use components::button_gallery_fixture;
@@ -37,17 +41,32 @@ pub fn version() -> &'static str {
 
 struct ManisRootView {
     app: gpui::Entity<ManisApp>,
+    focus: gpui::FocusHandle,
 }
 
 impl gpui::Render for ManisRootView {
     fn render(
         &mut self,
         _window: &mut gpui::Window,
-        _cx: &mut gpui::Context<Self>,
+        cx: &mut gpui::Context<Self>,
     ) -> impl gpui::IntoElement {
-        use gpui::{ParentElement as _, Styled as _, div};
+        use gpui::{InteractiveElement as _, ParentElement as _, Styled as _, div};
 
-        div().relative().size_full().child(self.app.clone())
+        div()
+            .id("manis-main-window")
+            .key_context("ManisWindow")
+            .track_focus(&self.focus)
+            .on_key_down(cx.listener(|_, event: &gpui::KeyDownEvent, window, cx| {
+                if event.keystroke.key == "escape" && cx.stop_active_drag(window) {
+                    cx.stop_propagation();
+                }
+            }))
+            .on_action(cx.listener(|this, _: &app::windows::ShowSettings, _, cx| {
+                app::windows::open(this.app.clone(), app::windows::AuxiliaryKind::Settings, cx);
+            }))
+            .relative()
+            .size_full()
+            .child(self.app.clone())
     }
 }
 
@@ -60,11 +79,17 @@ pub fn root(
     use gpui::AppContext as _;
 
     app.update(cx, |app, cx| app.attach_window(window, cx));
-    let view = cx.new(|_| ManisRootView { app });
+    let view = cx.new(|cx| ManisRootView {
+        app,
+        focus: cx.focus_handle(),
+    });
+    let focus = view.read(cx).focus.clone();
+    window.focus(&focus, cx);
     gpui_component::Root::new(view, window, cx)
 }
 
 pub fn init(cx: &mut gpui::App) {
     gpui_component::init(cx);
+    app::windows::init(cx);
     theme::sync_component_theme(theme::Theme::light(), false, None, cx);
 }

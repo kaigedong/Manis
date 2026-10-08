@@ -224,10 +224,10 @@ pub(crate) const FINAL_IS_ALWAYS_EVALUATED_LAST_AND_HANDLES_UNMATCHED_TRAFFIC: L
 pub(crate) const FOLLOW_SYSTEM: LocalizedText = LocalizedText::new("Follow system", "跟随系统");
 pub(crate) const GENERAL: LocalizedText = LocalizedText::new("General", "通用");
 pub(crate) const GLOBAL_EXIT: LocalizedText = LocalizedText::new("Global exit", "全局出口");
-pub(crate) const GROUPS_MATCH_FROM_TOP_TO_BOTTOM_USE_THE_ARROWS_TO: LocalizedText =
+pub(crate) const GROUPS_MATCH_FROM_TOP_TO_BOTTOM_DRAG_TO_REORDER: LocalizedText =
     LocalizedText::new(
-        "Groups match from top to bottom; use the arrows to change priority.",
-        "分组从上到下匹配；使用箭头调整优先级。",
+        "Groups match from top to bottom; drag the handle to change priority.",
+        "分组从上到下匹配；拖动把手调整优先级。",
     );
 pub(crate) const HTTPS_ONLY_UP_TO_1_MIB_INVALID_LINES_ARE_COUNTED: LocalizedText =
     LocalizedText::new(
@@ -334,6 +334,12 @@ pub(crate) const RULE_GROUP_MOVED_DOWN: LocalizedText =
     LocalizedText::new("Rule group moved down", "规则分组已下移");
 pub(crate) const RULE_GROUP_MOVED_UP: LocalizedText =
     LocalizedText::new("Rule group moved up", "规则分组已上移");
+pub(crate) const FINISH_RULE_EDIT_FIRST: LocalizedText = LocalizedText::new(
+    "Save or cancel the current rule edit before deleting a rule",
+    "请先保存或取消正在编辑的规则，再删除规则",
+);
+pub(crate) const RULE_GROUP_ORDER_UPDATED: LocalizedText =
+    LocalizedText::new("Rule group order updated", "规则分组顺序已更新");
 pub(crate) const RULE_SOURCES: LocalizedText = LocalizedText::new("Rule sources", "规则来源");
 pub(crate) const RULE_SOURCE_ALREADY_EXISTS_NO_DUPLICATE_WAS_ADDED: LocalizedText =
     LocalizedText::new(

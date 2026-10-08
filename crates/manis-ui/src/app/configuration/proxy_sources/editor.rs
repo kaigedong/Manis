@@ -13,6 +13,13 @@ use super::{
 
 impl ManisApp {
     pub(in crate::app) fn open_new_subscription_editor(&mut self, cx: &mut Context<Self>) {
+        if crate::app::windows::activate(
+            cx.entity().entity_id(),
+            crate::app::windows::AuxiliaryKind::ProxySource,
+            cx,
+        ) {
+            return;
+        }
         if self.proxy_source_editor.is_importing() {
             return;
         }
@@ -33,6 +40,13 @@ impl ManisApp {
         cx.notify();
     }
     pub(in crate::app) fn open_subscription_editor(&mut self, id: String, cx: &mut Context<Self>) {
+        if crate::app::windows::activate(
+            cx.entity().entity_id(),
+            crate::app::windows::AuxiliaryKind::ProxySource,
+            cx,
+        ) {
+            return;
+        }
         if self.proxy_source_editor.is_importing() {
             return;
         }
@@ -61,6 +75,13 @@ impl ManisApp {
     }
 
     pub(in crate::app) fn open_single_node_editor(&mut self, id: String, cx: &mut Context<Self>) {
+        if crate::app::windows::activate(
+            cx.entity().entity_id(),
+            crate::app::windows::AuxiliaryKind::ProxySource,
+            cx,
+        ) {
+            return;
+        }
         if self.proxy_source_editor.is_importing() {
             return;
         }
@@ -90,6 +111,14 @@ impl ManisApp {
         cx: &mut Context<Self>,
     ) {
         if self.proxy_source_editor.is_importing() {
+            return;
+        }
+        if !self.runtime.is_fixture() {
+            crate::app::windows::open(
+                cx.entity(),
+                crate::app::windows::AuxiliaryKind::ProxySource,
+                cx,
+            );
             return;
         }
         let app = cx.entity();
@@ -132,6 +161,31 @@ impl ManisApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Dialog {
+        let sections = self.proxy_source_editor_sections(theme, language, window, cx);
+        let viewport = window.viewport_size();
+        let app = cx.entity();
+        surface_dialog(dialog, theme, window)
+            .width(px((viewport.width.as_f32() - 32.0).clamp(300.0, 620.0)))
+            .margin_top(px(((viewport.height.as_f32() - 480.0) / 2.0).max(16.0)))
+            .overlay(true)
+            .overlay_closable(true)
+            .keyboard(true)
+            .close_button(false)
+            .title(sections.header)
+            .child(sections.body)
+            .footer(sections.footer)
+            .on_close(move |_, _, cx| {
+                app.update(cx, ManisApp::close_subscription_editor);
+            })
+    }
+
+    pub(in crate::app) fn proxy_source_editor_sections(
+        &self,
+        theme: Theme,
+        language: Language,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> crate::app::windows::EditorSections {
         let input = self
             .proxy_source_editor
             .input
@@ -173,20 +227,11 @@ impl ManisApp {
             cx,
         );
         let footer = Self::proxy_source_editor_footer(input, view, language, theme, cx);
-        let app = cx.entity();
-        surface_dialog(dialog, theme, window)
-            .width(px(view.dialog_width))
-            .margin_top(px(((viewport.height.as_f32() - 480.0) / 2.0).max(16.0)))
-            .overlay(true)
-            .overlay_closable(true)
-            .keyboard(true)
-            .close_button(false)
-            .title(Self::proxy_source_editor_title(view, language, theme))
-            .child(body)
-            .footer(footer)
-            .on_close(move |_, _, cx| {
-                app.update(cx, ManisApp::close_subscription_editor);
-            })
+        crate::app::windows::EditorSections::new(
+            Self::proxy_source_editor_title(view, language, theme),
+            body,
+            footer,
+        )
     }
 
     fn proxy_source_interval_select(
@@ -420,18 +465,24 @@ impl ManisApp {
         dialog_footer_surface(theme)
             .child(
                 style_action_button(
-                    Button::new("cancel-proxy-source").label(language.message(Message::Cancel)),
+                    Button::new("cancel-proxy-source")
+                        .debug_selector(|| "cancel-proxy-source".into())
+                        .label(language.message(Message::Cancel))
+                        .disabled(view.busy()),
                     ActionRole::Secondary,
                     ControlSize::Standard,
                 )
                 .on_click(cx.listener(|this, _, window, cx| {
-                    this.close_subscription_editor(cx);
-                    window.close_dialog(cx);
+                    if !this.proxy_source_editor.is_importing() {
+                        this.close_subscription_editor(cx);
+                        crate::app::windows::close_host(window, cx);
+                    }
                 })),
             )
             .child(
                 style_action_button(
                     Button::new("save-proxy-source")
+                        .debug_selector(|| "save-proxy-source".into())
                         .label(if view.busy() {
                             language.localized(copy::configuration::PROCESSING)
                         } else if view.editing {
@@ -446,7 +497,7 @@ impl ManisApp {
                 .when(view.busy(), gpui::Styled::cursor_default)
                 .on_click(cx.listener(move |this, _, window, cx| {
                     if !view.busy() && this.submit_source_import(&input, cx) {
-                        window.close_dialog(cx);
+                        crate::app::windows::close_host(window, cx);
                     }
                 })),
             )

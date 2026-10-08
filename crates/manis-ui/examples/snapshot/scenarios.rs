@@ -1,5 +1,8 @@
 #[path = "scenarios/buttons.rs"]
 mod buttons;
+#[path = "scenarios/utility.rs"]
+mod utility;
+pub(crate) use utility::capture_utility_windows;
 #[path = "scenarios/common.rs"]
 mod common;
 #[path = "scenarios/configuration.rs"]

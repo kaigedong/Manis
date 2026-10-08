@@ -1,5 +1,3 @@
-use gpui_component::WindowExt as _;
-
 use super::{
     ActionRole, AnyElement, Button, Context, ControlSize, Dialog, Disableable, Div, FluentBuilder,
     InteractiveElement, Language, ManisApp, ManualRulePopover, Message, ParentElement, Space,
@@ -18,6 +16,31 @@ impl ManisApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Dialog {
+        let sections = self.manual_rule_editor_sections(theme, language, compact, cx);
+        let viewport = window.viewport_size();
+        let app = cx.entity();
+        surface_dialog(dialog, theme, window)
+            .width(px((viewport.width.as_f32() - 32.0).clamp(280.0, 720.0)))
+            .margin_top(px(((viewport.height.as_f32() - 520.0) / 2.0).max(16.0)))
+            .overlay(true)
+            .overlay_closable(true)
+            .keyboard(true)
+            .close_button(false)
+            .title(sections.header)
+            .child(sections.body)
+            .footer(sections.footer)
+            .on_close(move |_, _, cx| {
+                app.update(cx, ManisApp::close_manual_rule_editor);
+            })
+    }
+
+    pub(in crate::app) fn manual_rule_editor_sections(
+        &self,
+        theme: Theme,
+        language: Language,
+        compact: bool,
+        cx: &mut Context<Self>,
+    ) -> crate::app::windows::EditorSections {
         let target_width = if compact { 260.0 } else { 240.0 };
         let target_open = self.manual_rule_popover == Some(ManualRulePopover::Target);
         let target_menu = self.manual_rule_target_menu(theme, cx);
@@ -47,39 +70,11 @@ impl ManisApp {
         let body = self.manual_rule_editor_body(conditions, target, theme, language);
         let footer = self.manual_rule_editor_footer(editing, theme, language, cx);
 
-        let viewport = window.viewport_size();
-        let dialog_width = (viewport.width.as_f32() - 32.0).clamp(280.0, 720.0);
-        let estimated_height = if compact {
-            520.0
-        } else {
-            match self.manual_rule_condition_count {
-                0 | 1 => 368.0,
-                2 => 458.0,
-                3 => 548.0,
-                _ => 638.0,
-            }
-        };
-        let margin_top = ((viewport.height.as_f32() - estimated_height) / 2.0).max(16.0);
-        let app = cx.entity();
-
-        surface_dialog(dialog, theme, window)
-            .width(px(dialog_width))
-            .margin_top(px(margin_top))
-            .overlay(true)
-            .overlay_closable(true)
-            .keyboard(true)
-            .close_button(false)
-            .title(Self::manual_rule_editor_title(
-                editing,
-                final_selected,
-                theme,
-                language,
-            ))
-            .child(body)
-            .footer(footer)
-            .on_close(move |_, _, cx| {
-                app.update(cx, ManisApp::close_manual_rule_editor);
-            })
+        crate::app::windows::EditorSections::new(
+            Self::manual_rule_editor_title(editing, final_selected, theme, language),
+            body,
+            footer,
+        )
     }
 
     pub(in crate::app) fn manual_rule_editor_conditions(
@@ -113,7 +108,7 @@ impl ManisApp {
                     )
                     .label(language.localized(copy::configuration::ADD_AND_CONDITION))
                     .mt(Space::Md.px()),
-                ActionRole::Primary,
+                ActionRole::Secondary,
                 ControlSize::Standard,
             )
             .on_click(cx.listener(|this, _, _, cx| this.add_manual_rule_condition(cx))),
@@ -169,18 +164,21 @@ impl ManisApp {
         dialog_footer_surface(theme)
             .child(
                 style_action_button(
-                    Button::new("cancel-manual-rule").label(language.message(Message::Cancel)),
+                    Button::new("cancel-manual-rule")
+                        .debug_selector(|| "cancel-manual-rule".into())
+                        .label(language.message(Message::Cancel)),
                     ActionRole::Secondary,
                     ControlSize::Standard,
                 )
                 .on_click(cx.listener(|this, _, window, cx| {
                     this.close_manual_rule_editor(cx);
-                    window.close_dialog(cx);
+                    crate::app::windows::close_host(window, cx);
                 })),
             )
             .child(
                 style_action_button(
                     Button::new("save-manual-rule")
+                        .debug_selector(|| "save-manual-rule".into())
                         .label(if editing {
                             language.message(Message::SaveChanges)
                         } else {
@@ -196,7 +194,7 @@ impl ManisApp {
                 )
                 .on_click(cx.listener(|this, _, window, cx| {
                     if this.submit_manual_rule(cx) {
-                        window.close_dialog(cx);
+                        crate::app::windows::close_host(window, cx);
                     }
                 })),
             )
