@@ -251,9 +251,12 @@ fn create_native_tray(language: Language) -> Result<ManisTray, &'static str> {
     let tray = TrayIconBuilder::new()
         .with_id("manis.status")
         .with_tooltip(language.localized(copy::tray::MANIS_RULE_ROUTING))
-        .with_icon(icon)
-        .with_icon_as_template(cfg!(target_os = "macos"))
-        .with_menu(Box::new(menu))
+        .with_menu(Box::new(menu));
+    #[cfg(target_os = "macos")]
+    let tray = tray.with_icon_templated(icon);
+    #[cfg(not(target_os = "macos"))]
+    let tray = tray.with_icon(icon);
+    let tray = tray
         .build()
         .map_err(|_error| language.localized(copy::tray::SYSTEM_TRAY_IS_UNAVAILABLE))?;
 
