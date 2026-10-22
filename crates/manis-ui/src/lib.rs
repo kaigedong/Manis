@@ -1,6 +1,7 @@
 mod app;
 mod app_update;
 mod assets;
+mod autostart;
 mod brand;
 mod components;
 mod config_backup;

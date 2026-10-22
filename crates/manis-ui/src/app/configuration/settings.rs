@@ -29,4 +29,5 @@ mod kernel;
 mod language;
 pub(in crate::app) mod navigation;
 mod routing;
+mod startup;
 mod updates;

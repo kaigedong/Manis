@@ -12,6 +12,7 @@ use manis_mihomo::{Connection, ObservedRouteEvidence, RuntimeConfig};
 use manis_profile::{QxRuleList, SecretUrl};
 
 use crate::{
+    autostart,
     components::StatusTone,
     diagnostics::{self, LogLevel, UiEvent, record_event, trace_ui},
     kernel::KernelRuntime,
@@ -181,6 +182,7 @@ pub struct ManisApp {
     exit_ip_probe_active: bool,
     dark: bool,
     status: String,
+    launch_at_login: bool,
     proxy_source_editor: ProxySourceEditorState,
     inputs: WorkspaceInputs,
     manual_rules: Vec<crate::manual_rule::ManualRule>,
@@ -246,6 +248,8 @@ impl ManisApp {
         app.lifecycle_subscriptions.app_lifecycle = Some(cx.on_app_quit(Self::shutdown_for_quit));
         app.restore_imported_subscriptions(cx);
         Self::start_app_update_polling(cx);
+        #[cfg(not(test))]
+        app.sync_launch_at_login();
         if matches!(app.mihomo_core_update_state, MihomoCoreUpdateState::Missing) {
             app.update_mihomo_core(cx);
         }
@@ -286,6 +290,7 @@ impl ManisApp {
     ) -> Self {
         let localizer = Localizer::load(subscription_store_dir.as_deref());
         let language = localizer.language();
+        let launch_at_login = autostart::load_preference(subscription_store_dir.as_deref());
         let stored_workspace = StoredWorkspace::load(subscription_store_dir.as_deref());
         let status = Self::restored_workspace_status(
             &runtime,
@@ -365,6 +370,7 @@ impl ManisApp {
             exit_ip_probe_active: false,
             dark: false,
             status,
+            launch_at_login,
             proxy_source_editor: ProxySourceEditorState::default(),
             inputs: WorkspaceInputs::default(),
             manual_rules: Vec::new(),

@@ -535,7 +535,7 @@ fn configuration_section_label(section: ConfigurationSection, language: Language
 fn configuration_section_detail(section: ConfigurationSection, language: Language) -> &'static str {
     match section {
         ConfigurationSection::General => {
-            language.localized(copy::configuration::INTERFACE_LANGUAGE)
+            language.localized(copy::configuration::INTERFACE_LANGUAGE_AND_STARTUP)
         }
         ConfigurationSection::Runtime => language.localized(copy::configuration::CORE_AND_UPDATES),
         ConfigurationSection::ProxySources => {
@@ -567,6 +567,7 @@ impl ManisApp {
                 .flex_col()
                 .gap(Space::Lg.px())
                 .child(self.language_panel(theme, compact, cx))
+                .child(self.startup_panel(theme, compact, cx))
                 .child(self.configuration_transfer_panel(theme, compact, cx))
                 .into_any_element(),
             self.kernel_panel(theme, compact, cx).into_any_element(),

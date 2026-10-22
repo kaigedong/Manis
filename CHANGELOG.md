@@ -13,6 +13,9 @@ once the public API and configuration formats stabilize.
 - Subscription and VLESS import, policy groups, ordered routing rules, latency testing, network
   activity, logs, system proxy control, and macOS TUN integration.
 - English and Simplified Chinese interface with system-language detection.
+- Optional login auto-start, enabled by default and configurable under Configuration → General.
+- Single-instance behavior: launching Manis again brings the existing window forward instead of
+  starting a second copy.
 
 ### Security
 

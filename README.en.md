@@ -48,6 +48,7 @@ format.
 - Nodes and policy groups share the Nodes page in one scrolling document; sources are managed in Configuration.
 - Direct, global, and rule routing modes.
 - System HTTP/SOCKS proxy control and macOS TUN integration.
+- Login auto-start with a single running instance; opening Manis again brings the existing window forward.
 - Live connections, route evidence, core logs, and redacted application diagnostics.
 - Mihomo as the sole managed core, with its configuration, process, and controller owned by Manis.
 
