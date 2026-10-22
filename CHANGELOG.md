@@ -16,9 +16,10 @@ once the public API and configuration formats stabilize.
 - Optional login auto-start, enabled by default and configurable under Configuration → General.
 - Single-instance behavior: launching Manis again brings the existing window forward instead of
   starting a second copy.
-- Linux TUN coexistence with Tailscale: MagicDNS stays reachable through a scoped main-table
-  policy rule, and an active Tailscale exit node is reported as an explicit TUN conflict instead of
-  being silently ignored. See `docs/linux-tailscale.md` for the supported combinations.
+- Linux TUN coexistence with Tailscale: tailnet addresses and MagicDNS keep working alongside the
+  TUN, a main-table compatibility rule covers older Tailscale routing layouts, and an active
+  Tailscale exit node is reported as an explicit TUN conflict instead of silently disabling one
+  side. See `docs/linux-tailscale.md` for the verified combinations.
 
 ### Changed
 

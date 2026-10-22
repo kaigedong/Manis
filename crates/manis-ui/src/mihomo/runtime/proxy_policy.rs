@@ -168,14 +168,14 @@ impl ControllerRuntime {
                         format!("source=tailscale-exit-node interface={interface}"),
                     );
                     return Err(LoadError::Runtime(format!(
-                        "Tailscale is sending the default route through {interface}; Manis TUN and a Tailscale exit node cannot both take effect. Turn off the Tailscale exit node and enable TUN again."
+                        "Tailscale has an exit node active on {interface}; Manis TUN and a Tailscale exit node both need the IPv4 default route, so only one can take effect. Turn off the Tailscale exit node and enable TUN again."
                     )));
                 }
                 Ok(None) => {}
                 Err(error) => record_event(
                     LogLevel::Warn,
                     "controller.tun.route_probe_failed",
-                    format!("source=/proc/net/route error={error}"),
+                    format!("source=ip-route-table-all error={error}"),
                 ),
             }
             if let Err(error) = self.ensure_linux_tun_capabilities() {

@@ -11,11 +11,13 @@ mod linux {
     const IP_CANDIDATES: [&str; 4] = ["/usr/sbin/ip", "/sbin/ip", "/usr/bin/ip", "/bin/ip"];
     const TUN_DEVICE: &str = "Meta";
     const TUN_DNS_SERVER: &str = "198.18.0.2";
-    /// Tailscale's `MagicDNS` resolver. Mihomo resolves DNS through its own routing table so that
-    /// `dns-hijack` cannot be bypassed, which leaves this address without a route to `tailscale0`
-    /// and turns `MagicDNS` into fake-IP answers. The main-table lookup below keeps the query on the
-    /// Tailscale interface when that route exists, and falls through to the TUN default when it
-    /// does not, so it stays correct regardless of which program starts first.
+    /// Tailscale's `MagicDNS` resolver. Current Tailscale keeps its routes in table 52 behind a
+    /// higher-priority `lookup 52` rule, so this exception is a no-op there. It exists for layouts
+    /// that keep the `100.100.100.100` route only in the main table: Mihomo resolves DNS through
+    /// its own table, which would capture the query and answer it with fake-IP addresses. The
+    /// main-table lookup below keeps the query on the Tailscale interface when that route exists,
+    /// and falls through to the TUN default when it does not, so it stays correct regardless of
+    /// which program starts first.
     const TAILSCALE_DNS_ADDRESS: &str = "100.100.100.100/32";
     const POLICY_RULE_PREF: &str = "8000";
 

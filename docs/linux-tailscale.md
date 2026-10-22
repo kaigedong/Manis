@@ -1,40 +1,54 @@
 # Tailscale coexistence on Linux
 
 Manis TUN and Tailscale can run at the same time. This document records what works, what is
-refused on purpose, and how to verify a machine.
+refused on purpose, and how to verify a machine. It was verified against Tailscale 1.104.2 and
+Mihomo 1.19.32 on Arch Linux; routing layout has changed across Tailscale releases, so the
+verification section matters more than any single claim below.
 
 ## Why it works at all
 
 A TUN device is not exclusive: Manis, ZeroTier and Tailscale each create their own interface.
-Coexistence is decided by three namespaces, not by the device:
+Coexistence is decided by routing tables and DNS, not by the device:
 
 | Resource | Manis TUN | Tailscale |
 | --- | --- | --- |
-| IPv4 default route | Takes it in its own policy table (`table 2022`) | Takes it in `main` only for an exit node |
-| Specific prefixes | Leaves `main` routes with a non-zero prefix length alone | Owns `100.64.0.0/10` plus peer and accepted subnet routes |
+| IPv4 default route | Owns it in `table 2022` | Takes it in `table 52` for an exit node (older releases: `main`) |
+| Specific prefixes | Leaves non-default routes alone | Owns peer `/32`s, `100.64.0.0/10` and accepted subnet routes |
 | DNS | Claims `:53` through `resolvectl domain Meta ~.` and `dns-hijack` | Owns `100.100.100.100` for MagicDNS |
 
-Mihomo installs the rule `not dport 53 lookup main suppress_prefixlength 0`. Non-DNS traffic first
-looks up the main table while ignoring its default route, so every specific prefix wins; only
-traffic without a specific route falls through to the TUN default. That is why ZeroTier works
-without any configuration: it only adds a more specific subnet route and does not touch DNS or the
-default route. Tailscale's peer and subnet routes follow the same path.
+Mihomo installs `not dport 53 lookup main suppress_prefixlength 0` and a TUN default in
+`table 2022`. Non-DNS traffic first looks up the main table while ignoring its default route, so
+every specific prefix wins; only traffic without a specific route falls through to the TUN default.
+That is why ZeroTier works without configuration: it only adds a more specific subnet route and does
+not touch DNS or the default route.
+
+Current Tailscale additionally installs its own routes in `table 52` behind a higher-priority rule:
+
+```text
+5270: from all lookup 52
+100.100.100.100 dev tailscale0 table 52
+100.x.y.z       dev tailscale0 table 52
+```
+
+Because `5270` runs before Mihomo's `9000`-`9010` rules, tailnet traffic and MagicDNS queries never
+reach the TUN. Peer addresses, accepted subnet routes and MagicDNS therefore work with no Manis
+change at all.
 
 ## What Manis adds for Tailscale
 
-DNS is the one exception. Mihomo deliberately resolves port 53 through its own table so that
-`dns-hijack` cannot be bypassed, which also captured `100.100.100.100:53` and answered MagicDNS
-names with fake-IP addresses. The Linux helper therefore installs one policy rule while TUN is
-active:
+DNS is the historical exception. Mihomo deliberately resolves port 53 through its own table so that
+`dns-hijack` cannot be bypassed. On releases that keep the `100.100.100.100` route only in the main
+table, that captured MagicDNS and answered it with fake-IP addresses. The Linux helper therefore
+installs one compatibility rule while TUN is active:
 
 ```text
 pref 8000: to 100.100.100.100/32 lookup main
 ```
 
-The rule is installed before the resolver is repointed, removed on restore (best effort), and does
-nothing when Tailscale is absent: `main` has no route for the address, the lookup falls through, and
-routing continues to the TUN default. Because the rule is independent of when `tailscaled` starts,
-no start order is required.
+On current Tailscale the rule is never reached (`5270` wins first) and costs nothing; on older
+layouts it restores MagicDNS. It is installed before the resolver is repointed, removed on restore
+(best effort), and does nothing when Tailscale is absent: the main-table lookup finds nothing and
+routing continues to the TUN default. It is independent of which program starts first.
 
 ## Supported combinations
 
@@ -45,10 +59,11 @@ no start order is required.
 
 ## Refused combinations
 
-- **Tailscale exit node.** An exit node installs `0.0.0.0/0` in the main table, which the TUN
-  policy rule ignores by design. The exit node would look enabled while every packet still entered
-  the TUN. Manis detects the default route on a `tailscale*` interface and refuses to enable TUN
-  with an explicit message instead of failing silently. Turn the exit node off first.
+- **Tailscale exit node.** An exit node needs the IPv4 default route, and so does Manis TUN. Only one
+  can win: on current Tailscale `table 52` would take everything before the TUN, on older releases
+  the TUN rule would ignore the exit node. Either way one side silently stops working. Manis looks
+  for a default route on a `tailscale*` interface in every routing table and refuses to enable TUN
+  with an explicit message. Turn the exit node off first.
 - **Tailscale "override local DNS".** It replaces the system resolver instead of using per-link
   split DNS, so Manis no longer sees the queries it needs for fake-IP and domain rules. Keep
   Tailscale's default split-DNS mode.
@@ -69,14 +84,17 @@ DERP over 443 cannot be distinguished from other TLS traffic and remains proxied
 ## Verifying a machine
 
 ```bash
-ip rule show                     # pref 8000 rule, mihomo 9000-9010 rules
+ip rule show                     # 5270 tailscale, 9000-9010 mihomo, 8000 compatibility
+ip route show table 52           # tailscale0 peer routes and 100.100.100.100
 ip route show table 2022         # TUN default
 ip route get 8.8.8.8             # -> Meta
-ip route get 100.100.100.100     # -> tailscale0 when Tailscale is up
+ip route get 100.100.100.100     # -> tailscale0
 ip route get 10.147.20.1         # -> zt* for a ZeroTier peer
 resolvectl status                # Meta has ~.; tailscale0 keeps ~ts.net
+getent hosts <peer>.<tailnet>.ts.net
 tailscale status                 # no exit node
 ```
 
-`/proc/net/route` is the check Manis uses for the exit-node refusal; it reports the main table and
-IPv4 only, which matches the TUN itself.
+The exit-node check runs `ip -4 route show table all` and matches `default`/`0.0.0.0/0` on a
+`tailscale*` device, which covers both the current `table 52` layout and the older main-table one.
+IPv6 defaults are not checked; the TUN is IPv4-only.
