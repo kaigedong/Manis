@@ -12,6 +12,8 @@ mod direct_rule;
 mod kernel;
 #[cfg(target_os = "linux")]
 mod linux_privileged;
+#[cfg(target_os = "linux")]
+mod linux_tailscale;
 mod localization;
 #[cfg(target_os = "macos")]
 mod macos_privileged;

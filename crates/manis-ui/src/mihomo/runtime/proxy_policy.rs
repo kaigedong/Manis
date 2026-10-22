@@ -159,13 +159,33 @@ impl ControllerRuntime {
             );
         }
         #[cfg(target_os = "linux")]
-        if let Err(error) = self.ensure_linux_tun_capabilities() {
-            record_event(
-                LogLevel::Error,
-                "controller.tun.failed",
-                format!("enabled=true phase=capability_promotion error={error}"),
-            );
-            return Err(error);
+        {
+            match crate::linux_tailscale::exit_node_interface() {
+                Ok(Some(interface)) => {
+                    record_event(
+                        LogLevel::Error,
+                        "controller.tun.conflict",
+                        format!("source=tailscale-exit-node interface={interface}"),
+                    );
+                    return Err(LoadError::Runtime(format!(
+                        "Tailscale is sending the default route through {interface}; Manis TUN and a Tailscale exit node cannot both take effect. Turn off the Tailscale exit node and enable TUN again."
+                    )));
+                }
+                Ok(None) => {}
+                Err(error) => record_event(
+                    LogLevel::Warn,
+                    "controller.tun.route_probe_failed",
+                    format!("source=/proc/net/route error={error}"),
+                ),
+            }
+            if let Err(error) = self.ensure_linux_tun_capabilities() {
+                record_event(
+                    LogLevel::Error,
+                    "controller.tun.failed",
+                    format!("enabled=true phase=capability_promotion error={error}"),
+                );
+                return Err(error);
+            }
         }
         Ok(())
     }

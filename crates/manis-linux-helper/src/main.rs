@@ -8,8 +8,16 @@ mod linux {
 
     const MANAGED_CORE: &str = "/usr/lib/manis/mihomo";
     const RESOLVECTL: &str = "/usr/bin/resolvectl";
+    const IP_CANDIDATES: [&str; 4] = ["/usr/sbin/ip", "/sbin/ip", "/usr/bin/ip", "/bin/ip"];
     const TUN_DEVICE: &str = "Meta";
     const TUN_DNS_SERVER: &str = "198.18.0.2";
+    /// Tailscale's `MagicDNS` resolver. Mihomo resolves DNS through its own routing table so that
+    /// `dns-hijack` cannot be bypassed, which leaves this address without a route to `tailscale0`
+    /// and turns `MagicDNS` into fake-IP answers. The main-table lookup below keeps the query on the
+    /// Tailscale interface when that route exists, and falls through to the TUN default when it
+    /// does not, so it stays correct regardless of which program starts first.
+    const TAILSCALE_DNS_ADDRESS: &str = "100.100.100.100/32";
+    const POLICY_RULE_PREF: &str = "8000";
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     enum Action {
@@ -28,6 +36,41 @@ mod linux {
                 return Err(HelperError::InvalidRequest);
             }
             Ok(action)
+        }
+    }
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    enum RuleAction {
+        Add,
+        Delete,
+    }
+
+    impl RuleAction {
+        const fn argument(self) -> &'static str {
+            match self {
+                Self::Add => "add",
+                Self::Delete => "del",
+            }
+        }
+
+        const fn description(self) -> &'static str {
+            match self {
+                Self::Add => "install the Tailscale DNS policy rule",
+                Self::Delete => "remove the Tailscale DNS policy rule",
+            }
+        }
+
+        fn args(self) -> [&'static str; 8] {
+            [
+                "rule",
+                self.argument(),
+                "pref",
+                POLICY_RULE_PREF,
+                "to",
+                TAILSCALE_DNS_ADDRESS,
+                "lookup",
+                "main",
+            ]
         }
     }
 
@@ -69,7 +112,7 @@ mod linux {
                 }
                 Self::CommandFailed(action, code) => write!(
                     formatter,
-                    "systemd-resolved could not {action}{}",
+                    "the Linux helper could not {action}{}",
                     code.map_or_else(String::new, |code| format!(" (exit code {code})"))
                 ),
                 Self::Io { operation, source } => {
@@ -180,43 +223,69 @@ mod linux {
     }
 
     fn run(action: Action) -> Result<(), HelperError> {
-        run_with(action, tun_interface_path().is_dir(), run_resolvectl)
+        run_with(
+            action,
+            tun_interface_path().is_dir(),
+            run_resolvectl,
+            run_policy_rule,
+        )
     }
 
     fn run_with(
         action: Action,
         tun_available: bool,
-        mut command: impl FnMut(&[&str], &'static str) -> Result<(), HelperError>,
+        mut resolvectl: impl FnMut(&[&str], &'static str) -> Result<(), HelperError>,
+        mut policy_rule: impl FnMut(RuleAction) -> Result<(), HelperError>,
     ) -> Result<(), HelperError> {
         match action {
             Action::Install => {
-                command(
+                // Installed before DNS so a failing `ip` never leaves the resolver pointed at a
+                // TUN without the Tailscale exception. Without a Tailscale route the main-table
+                // lookup finds nothing and routing falls through to the TUN default, so this is a
+                // no-op for users who never run Tailscale.
+                policy_rule(RuleAction::Add)?;
+                resolvectl(
                     &["dns", TUN_DEVICE, TUN_DNS_SERVER],
                     "set the TUN DNS server",
                 )?;
-                if let Err(error) = command(
+                if let Err(error) = resolvectl(
                     &["domain", TUN_DEVICE, "~."],
                     "route DNS through the TUN interface",
                 ) {
                     return Err(with_rollback(
                         error,
-                        command(&["revert", TUN_DEVICE], "restore the original DNS route"),
+                        rollback_install(&mut resolvectl, &mut policy_rule),
                     ));
                 }
-                if let Err(error) = command(&["flush-caches"], "flush the DNS cache") {
+                if let Err(error) = resolvectl(&["flush-caches"], "flush the DNS cache") {
                     return Err(with_rollback(
                         error,
-                        command(&["revert", TUN_DEVICE], "restore the original DNS route"),
+                        rollback_install(&mut resolvectl, &mut policy_rule),
                     ));
                 }
                 Ok(())
             }
             Action::Restore => {
+                // Best effort: a leftover rule only routes Tailscale's own resolver to the real
+                // interface, so it must never block restoring the system resolver.
+                let _ = policy_rule(RuleAction::Delete);
                 if tun_available {
-                    command(&["revert", TUN_DEVICE], "restore the original DNS route")?;
+                    resolvectl(&["revert", TUN_DEVICE], "restore the original DNS route")?;
                 }
-                command(&["flush-caches"], "flush the DNS cache")
+                resolvectl(&["flush-caches"], "flush the DNS cache")
             }
+        }
+    }
+
+    fn rollback_install(
+        resolvectl: &mut impl FnMut(&[&str], &'static str) -> Result<(), HelperError>,
+        policy_rule: &mut impl FnMut(RuleAction) -> Result<(), HelperError>,
+    ) -> Result<(), HelperError> {
+        let dns = resolvectl(&["revert", TUN_DEVICE], "restore the original DNS route");
+        let rule = policy_rule(RuleAction::Delete);
+        match (dns, rule) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Err(error), _) | (_, Err(error)) => Err(error),
         }
     }
 
@@ -247,39 +316,115 @@ mod linux {
             .ok_or_else(|| HelperError::CommandFailed(action, status.code()))
     }
 
+    /// Installs or removes the Tailscale resolver exception with the system `ip` binary.
+    ///
+    /// `iproute2` is optional for users who never run Tailscale; when it is absent the rule is
+    /// simply skipped so that TUN DNS keeps working. Duplicate adds and missing deletes are
+    /// treated as success so repeated activation and stale recovery stay idempotent.
+    fn run_policy_rule(action: RuleAction) -> Result<(), HelperError> {
+        let Some(binary) = ip_binary() else {
+            return Ok(());
+        };
+        let output = Command::new(binary)
+            .args(action.args())
+            .env_clear()
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|source| HelperError::Io {
+                operation: "start ip",
+                source,
+            })?;
+        if output.status.success() {
+            return Ok(());
+        }
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if is_benign_rule_failure(action, &stderr) {
+            return Ok(());
+        }
+        Err(HelperError::CommandFailed(
+            action.description(),
+            output.status.code(),
+        ))
+    }
+
+    fn ip_binary() -> Option<&'static str> {
+        IP_CANDIDATES
+            .into_iter()
+            .find(|path| Path::new(path).is_file())
+    }
+
+    fn is_benign_rule_failure(action: RuleAction, stderr: &str) -> bool {
+        match action {
+            RuleAction::Add => stderr.contains("File exists"),
+            RuleAction::Delete => {
+                stderr.contains("No such file or directory") || stderr.contains("No such process")
+            }
+        }
+    }
+
     fn tun_interface_path() -> PathBuf {
         Path::new("/sys/class/net").join(TUN_DEVICE)
     }
 
     #[cfg(test)]
     mod tests {
-        use super::{Action, HelperError, run_with};
+        use super::{Action, HelperError, RuleAction, is_benign_rule_failure, run_with};
 
         fn run_script(
             action: Action,
             tun_available: bool,
             failed_calls: &[usize],
+            failed_rule_calls: &[usize],
         ) -> (Result<(), HelperError>, Vec<String>) {
-            let mut calls = Vec::new();
+            let calls = std::cell::RefCell::new(Vec::new());
             let mut index = 0;
-            let result = run_with(action, tun_available, |args, description| {
-                let current = index;
-                index += 1;
-                calls.push(args.join(" "));
-                if failed_calls.contains(&current) {
-                    Err(HelperError::CommandFailed(
-                        description,
-                        Some(
-                            i32::try_from(current)
-                                .unwrap_or(i32::MAX)
-                                .saturating_add(10),
-                        ),
-                    ))
-                } else {
-                    Ok(())
-                }
-            });
-            (result, calls)
+            let mut rule_index = 0;
+            let result = run_with(
+                action,
+                tun_available,
+                |args, description| {
+                    let current = index;
+                    index += 1;
+                    calls.borrow_mut().push(args.join(" "));
+                    if failed_calls.contains(&current) {
+                        Err(HelperError::CommandFailed(
+                            description,
+                            Some(
+                                i32::try_from(current)
+                                    .unwrap_or(i32::MAX)
+                                    .saturating_add(10),
+                            ),
+                        ))
+                    } else {
+                        Ok(())
+                    }
+                },
+                |rule| {
+                    let current = rule_index;
+                    rule_index += 1;
+                    calls.borrow_mut().push(
+                        if rule == RuleAction::Add {
+                            "rule add"
+                        } else {
+                            "rule del"
+                        }
+                        .to_owned(),
+                    );
+                    if failed_rule_calls.contains(&current) {
+                        Err(HelperError::CommandFailed(
+                            rule.description(),
+                            Some(
+                                i32::try_from(current)
+                                    .unwrap_or(i32::MAX)
+                                    .saturating_add(20),
+                            ),
+                        ))
+                    } else {
+                        Ok(())
+                    }
+                },
+            );
+            (result, calls.into_inner())
         }
 
         #[test]
@@ -303,19 +448,38 @@ mod linux {
         }
 
         #[test]
-        fn install_runs_each_resolved_step_in_order() {
-            let (result, calls) = run_script(Action::Install, true, &[]);
+        fn install_installs_the_tailscale_rule_before_touching_dns() {
+            let (result, calls) = run_script(Action::Install, true, &[], &[]);
 
             assert!(result.is_ok());
             assert_eq!(
                 calls,
-                ["dns Meta 198.18.0.2", "domain Meta ~.", "flush-caches"]
+                [
+                    "rule add",
+                    "dns Meta 198.18.0.2",
+                    "domain Meta ~.",
+                    "flush-caches"
+                ]
             );
         }
 
         #[test]
+        fn install_fails_before_dns_when_the_tailscale_rule_fails() {
+            let (result, calls) = run_script(Action::Install, true, &[], &[0]);
+
+            assert!(matches!(
+                result,
+                Err(HelperError::CommandFailed(
+                    "install the Tailscale DNS policy rule",
+                    Some(20)
+                ))
+            ));
+            assert_eq!(calls, ["rule add"]);
+        }
+
+        #[test]
         fn install_rolls_back_a_domain_failure() {
-            let (result, calls) = run_script(Action::Install, true, &[1]);
+            let (result, calls) = run_script(Action::Install, true, &[1], &[]);
 
             assert!(matches!(
                 result,
@@ -326,13 +490,19 @@ mod linux {
             ));
             assert_eq!(
                 calls,
-                ["dns Meta 198.18.0.2", "domain Meta ~.", "revert Meta"]
+                [
+                    "rule add",
+                    "dns Meta 198.18.0.2",
+                    "domain Meta ~.",
+                    "revert Meta",
+                    "rule del"
+                ]
             );
         }
 
         #[test]
         fn install_rolls_back_a_cache_flush_failure() {
-            let (result, calls) = run_script(Action::Install, true, &[2]);
+            let (result, calls) = run_script(Action::Install, true, &[2], &[]);
 
             assert!(matches!(
                 result,
@@ -341,17 +511,19 @@ mod linux {
             assert_eq!(
                 calls,
                 [
+                    "rule add",
                     "dns Meta 198.18.0.2",
                     "domain Meta ~.",
                     "flush-caches",
-                    "revert Meta"
+                    "revert Meta",
+                    "rule del"
                 ]
             );
         }
 
         #[test]
         fn install_reports_both_operation_and_rollback_failures() {
-            let (result, calls) = run_script(Action::Install, true, &[1, 2]);
+            let (result, calls) = run_script(Action::Install, true, &[1, 2], &[]);
             let Err(HelperError::RollbackFailed { original, rollback }) = result else {
                 panic!("operation and rollback failures must both be retained");
             };
@@ -366,19 +538,83 @@ mod linux {
             ));
             assert_eq!(
                 calls,
-                ["dns Meta 198.18.0.2", "domain Meta ~.", "revert Meta"]
+                [
+                    "rule add",
+                    "dns Meta 198.18.0.2",
+                    "domain Meta ~.",
+                    "revert Meta",
+                    "rule del"
+                ]
             );
         }
 
         #[test]
-        fn restore_reverts_only_when_the_tun_interface_exists() {
-            let (without_tun, without_tun_calls) = run_script(Action::Restore, false, &[]);
-            let (with_tun, with_tun_calls) = run_script(Action::Restore, true, &[]);
+        fn restore_removes_the_rule_and_reverts_only_when_the_tun_interface_exists() {
+            let (without_tun, without_tun_calls) = run_script(Action::Restore, false, &[], &[]);
+            let (with_tun, with_tun_calls) = run_script(Action::Restore, true, &[], &[]);
 
             assert!(without_tun.is_ok());
-            assert_eq!(without_tun_calls, ["flush-caches"]);
+            assert_eq!(without_tun_calls, ["rule del", "flush-caches"]);
             assert!(with_tun.is_ok());
-            assert_eq!(with_tun_calls, ["revert Meta", "flush-caches"]);
+            assert_eq!(with_tun_calls, ["rule del", "revert Meta", "flush-caches"]);
+        }
+
+        #[test]
+        fn restore_ignores_a_rule_removal_failure() {
+            let (result, calls) = run_script(Action::Restore, true, &[], &[0]);
+
+            assert!(result.is_ok());
+            assert_eq!(calls, ["rule del", "revert Meta", "flush-caches"]);
+        }
+
+        #[test]
+        fn rule_failures_that_only_mean_already_applied_are_benign() {
+            assert!(is_benign_rule_failure(
+                RuleAction::Add,
+                "RTNETLINK answers: File exists\n"
+            ));
+            assert!(is_benign_rule_failure(
+                RuleAction::Delete,
+                "RTNETLINK answers: No such file or directory\n"
+            ));
+            assert!(!is_benign_rule_failure(
+                RuleAction::Add,
+                "RTNETLINK answers: Operation not permitted\n"
+            ));
+            assert!(!is_benign_rule_failure(
+                RuleAction::Delete,
+                "RTNETLINK answers: Operation not permitted\n"
+            ));
+        }
+
+        #[test]
+        fn tailscale_rule_has_a_stable_selector() {
+            assert_eq!(
+                RuleAction::Add.args(),
+                [
+                    "rule",
+                    "add",
+                    "pref",
+                    "8000",
+                    "to",
+                    "100.100.100.100/32",
+                    "lookup",
+                    "main"
+                ]
+            );
+            assert_eq!(
+                RuleAction::Delete.args(),
+                [
+                    "rule",
+                    "del",
+                    "pref",
+                    "8000",
+                    "to",
+                    "100.100.100.100/32",
+                    "lookup",
+                    "main"
+                ]
+            );
         }
     }
 }
