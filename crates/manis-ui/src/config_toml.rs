@@ -384,7 +384,7 @@ fn read_private_text(
     #[cfg(target_os = "linux")]
     {
         use std::os::unix::fs::OpenOptionsExt as _;
-        options.custom_flags(0o00400000);
+        options.custom_flags(0o400_000);
     }
     #[cfg(target_os = "macos")]
     {

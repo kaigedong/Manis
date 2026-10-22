@@ -247,10 +247,12 @@ fn macos_launch_agent_path() -> Option<PathBuf> {
 
 #[cfg(target_os = "macos")]
 fn macos_launch_agent(executable: &Path) -> String {
-    let arguments = macos_launch_arguments(executable)
-        .into_iter()
-        .map(|argument| format!("        <string>{}</string>\n", xml_escape(&argument)))
-        .collect::<String>();
+    let mut arguments = String::new();
+    for argument in macos_launch_arguments(executable) {
+        arguments.push_str("        <string>");
+        arguments.push_str(&xml_escape(&argument));
+        arguments.push_str("</string>\n");
+    }
     format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
          <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \

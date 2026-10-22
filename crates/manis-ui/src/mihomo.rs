@@ -273,6 +273,8 @@ impl RuntimeProfileSource {
     }
 }
 
+// Only the macOS privileged spawner can fail; every other platform returns `Ok`.
+#[cfg_attr(not(target_os = "macos"), allow(clippy::unnecessary_wraps))]
 fn generated_engine_manager(
     spec: &ManagedGeneratedProfile,
     config: ManagedEngineConfig,
