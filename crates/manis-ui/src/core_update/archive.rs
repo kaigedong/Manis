@@ -57,7 +57,10 @@ pub(super) fn unpack_zip_core_binary(package: &[u8]) -> Result<Vec<u8>, CoreUpda
                 error,
             )
         })?;
-        if !zip_entry_is_mihomo_binary(file.name()) {
+        let Ok(name) = file.name() else {
+            continue;
+        };
+        if !zip_entry_is_mihomo_binary(&name) {
             continue;
         }
         if file.size() > MAX_CORE_BINARY_BYTES {

@@ -1,26 +1,28 @@
 //! Run only on a private bus: `dbus-run-session -- cargo test -p manis-ui --lib
 //! linux_tray_dbus --locked -- --ignored`.
 
-use std::{collections::HashMap, sync::mpsc, time::Duration};
+use std::{collections::HashMap, sync::Mutex, sync::mpsc, time::Duration};
 
-use zbus::{
-    blocking::{Connection, Proxy, connection::Builder},
-    zvariant::{OwnedValue, Value},
-};
+use zbus::{Connection, OwnedVariant, Proxy, Variant, block_on, connection::Builder};
 
 use super::{Language, ManisTray, ProxyMode, TrayAction, TrayProxySnapshot};
 
 const TIMEOUT: Duration = Duration::from_secs(5);
 
 struct Watcher {
-    registrations: mpsc::Sender<String>,
+    // Served interfaces must be `Sync`; `mpsc::Sender` is only `Send`.
+    registrations: Mutex<mpsc::Sender<String>>,
     host_registered: bool,
 }
 
 #[zbus::interface(name = "org.kde.StatusNotifierWatcher")]
 impl Watcher {
     fn register_status_notifier_item(&self, service: &str) {
-        self.registrations.send(service.into()).unwrap();
+        self.registrations
+            .lock()
+            .unwrap()
+            .send(service.into())
+            .unwrap();
     }
 
     #[zbus(property)]
@@ -31,32 +33,33 @@ impl Watcher {
 
 fn watcher(host_registered: bool) -> (Connection, mpsc::Receiver<String>) {
     let (registrations, received) = mpsc::channel();
-    let connection = Builder::session()
-        .unwrap()
-        .name("org.kde.StatusNotifierWatcher")
-        .unwrap()
-        .serve_at(
-            "/StatusNotifierWatcher",
-            Watcher {
-                registrations,
-                host_registered,
-            },
-        )
-        .unwrap()
-        .build()
-        .unwrap();
+    // The connection lands on zbus's process-wide multi-threaded runtime, so the served object
+    // keeps answering between `block_on` calls and the rest of this test stays synchronous.
+    let connection = block_on(async {
+        Builder::session()
+            .name("org.kde.StatusNotifierWatcher")
+            .serve_at(
+                "/StatusNotifierWatcher",
+                Watcher {
+                    registrations: Mutex::new(registrations),
+                    host_registered,
+                },
+            )
+            .build()
+            .await
+            .unwrap()
+    });
     (connection, received)
 }
 
-type MenuProperties = Vec<(i32, HashMap<String, OwnedValue>)>;
+type MenuProperties = Vec<(i32, HashMap<String, OwnedVariant>)>;
 
-fn menu_item(menu: &Proxy<'_>, label: &str) -> (i32, HashMap<String, OwnedValue>) {
-    let items: MenuProperties = menu
-        .call(
-            "GetGroupProperties",
-            &(Vec::<i32>::new(), Vec::<&str>::new()),
-        )
-        .unwrap();
+fn menu_item(menu: &Proxy<'_>, label: &str) -> (i32, HashMap<String, OwnedVariant>) {
+    let items: MenuProperties = block_on(menu.call(
+        "GetGroupProperties",
+        &(Vec::<i32>::new(), Vec::<&str>::new()),
+    ))
+    .unwrap();
     items
         .into_iter()
         .find(|(_, properties)| {
@@ -69,7 +72,7 @@ fn menu_item(menu: &Proxy<'_>, label: &str) -> (i32, HashMap<String, OwnedValue>
 }
 
 fn click(menu: &Proxy<'_>, id: i32) {
-    menu.call::<_, _, ()>("Event", &(id, "clicked", Value::from(0_i32), 0_u32))
+    block_on(menu.call::<_, _, ()>("Event", &(id, "clicked", Variant::from(0_i32), 0_u32)))
         .unwrap();
 }
 
@@ -80,23 +83,32 @@ fn linux_tray_dbus_registration_menu_updates_actions_and_shutdown() {
     assert!(ManisTray::new(Language::English).is_err());
     let (empty_host, _registrations) = watcher(false);
     assert!(ManisTray::new(Language::English).is_err());
-    empty_host.close().unwrap();
+    block_on(empty_host.close()).unwrap();
 
     let (host, registrations) = watcher(true);
     let tray = ManisTray::new(Language::English).unwrap();
     let name = registrations.recv_timeout(TIMEOUT).unwrap();
-    let sni = Proxy::new(
+    let sni = block_on(Proxy::new(
         &host,
         name.as_str(),
         "/StatusNotifierItem",
         "org.kde.StatusNotifierItem",
-    )
+    ))
     .unwrap();
-    assert_eq!(sni.get_property::<String>("Id").unwrap(), "dev.manis.app");
-    sni.call::<_, _, ()>("Activate", &(0_i32, 0_i32)).unwrap();
+    assert_eq!(
+        block_on(sni.get_property::<String>("Id")).unwrap(),
+        "dev.manis.app"
+    );
+    block_on(sni.call::<_, _, ()>("Activate", &(0_i32, 0_i32))).unwrap();
     assert_eq!(tray.events.recv_timeout(TIMEOUT).unwrap(), TrayAction::Show);
 
-    let menu = Proxy::new(&host, name.as_str(), "/MenuBar", "com.canonical.dbusmenu").unwrap();
+    let menu = block_on(Proxy::new(
+        &host,
+        name.as_str(),
+        "/MenuBar",
+        "com.canonical.dbusmenu",
+    ))
+    .unwrap();
     tray.sync(TrayProxySnapshot {
         language: Language::English,
         active: ProxyMode::Tun,
@@ -104,7 +116,7 @@ fn linux_tray_dbus_registration_menu_updates_actions_and_shutdown() {
         tun_block: None,
     });
     // A sync updates the service state immediately; AboutToShow asks it to publish that state.
-    menu.call::<_, _, bool>("AboutToShow", &(0_i32,)).unwrap();
+    block_on(menu.call::<_, _, bool>("AboutToShow", &(0_i32,))).unwrap();
     let (tun_id, tun) = menu_item(&menu, "TUN proxy");
     assert_eq!(i32::try_from(&tun["toggle-state"]).unwrap(), 1);
     let (system_id, system) = menu_item(&menu, "System proxy");
@@ -136,5 +148,5 @@ fn linux_tray_dbus_registration_menu_updates_actions_and_shutdown() {
     // Wait for the shutdown requested by Drop, then verify the SNI endpoint is gone.
     handle.shutdown().wait();
     assert!(handle.is_closed());
-    assert!(sni.call::<_, _, ()>("Activate", &(0_i32, 0_i32)).is_err());
+    assert!(block_on(sni.call::<_, _, ()>("Activate", &(0_i32, 0_i32))).is_err());
 }

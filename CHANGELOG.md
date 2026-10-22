@@ -17,6 +17,13 @@ once the public API and configuration formats stabilize.
 - Single-instance behavior: launching Manis again brings the existing window forward instead of
   starting a second copy.
 
+### Changed
+
+- Upgrade every direct dependency to its newest release, including GPUI 0.3.9, GPUI Component 0.8,
+  `zip` 9, `zbus` 6, and `ureq` 3.5. The core archive reader accepts `zip` 9's fallible entry
+  names, and the Linux tray integration test drives `zbus` 6 from its process-wide multithreaded
+  runtime now that the blocking API is gone.
+
 ### Security
 
 - Remove vulnerable `glib` (GHSA-wrw7-89jp-8q8g / RUSTSEC-2024-0429) and the unmaintained GTK 3 Rust
