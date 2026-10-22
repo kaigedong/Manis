@@ -89,17 +89,6 @@ pub fn show_or_open_window(cx: &mut App) {
 }
 
 fn try_show_or_open_window(cx: &mut App) -> gpui::Result<()> {
-    if let Some(window) = cx.windows().into_iter().find(|window| {
-        window.downcast::<gpui_component::Root>().is_some()
-            && !crate::app::windows::is_auxiliary(*window, cx)
-    }) && window
-        .update(cx, |_, window, _| window.activate_window())
-        .is_ok()
-    {
-        cx.activate(true);
-        return Ok(());
-    }
-
     open_window(cx)?;
     cx.activate(true);
     Ok(())
@@ -116,11 +105,19 @@ fn log_tray_error(event: &'static str, error: impl std::fmt::Display) {
     record_event(LogLevel::Error, event, error.to_string());
 }
 
-/// Opens a new Manis window.
+/// Opens the Manis main window, focusing it when it already exists.
 ///
 /// # Errors
 /// Returns the GPUI platform error when the native window cannot be created.
 pub fn open_window(cx: &mut App) -> gpui::Result<()> {
+    if let Some(window) = main_window(cx)
+        && window
+            .update(cx, |_, window, _| window.activate_window())
+            .is_ok()
+    {
+        cx.activate(true);
+        return Ok(());
+    }
     let window_size = size(px(1420.0), px(900.0));
     let bounds = Bounds::centered(None, window_size, cx);
     let app = manis_app(cx);

@@ -17,6 +17,7 @@ mod macos_privileged;
 mod manual_rule;
 mod mihomo;
 mod rule_source;
+mod single_instance;
 mod subscription;
 mod subscription_input;
 mod system_proxy;
@@ -31,6 +32,8 @@ pub use app::windows::{
 pub use assets::Assets;
 #[cfg(feature = "snapshot-fixtures")]
 pub use components::button_gallery_fixture;
+pub use single_instance::SingleInstance;
+pub use single_instance::claim as claim_single_instance;
 pub use tray::{install as install_tray, open_window, show_or_open_window};
 
 /// Returns the version embedded by the packaging workflow.
