@@ -20,10 +20,11 @@ use std::os::unix::process::CommandExt as _;
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 
+mod model;
+
 use jni::JNIEnv;
 use jni::objects::{JObject, JString};
 use jni::sys::{jint, jstring};
-use manis_profile::{Profile, SecretUrl, render_mihomo_yaml_for_android};
 
 /// Descriptor number the generated configuration declares as `tun.file-descriptor`.
 const TUN_DESCRIPTOR: i32 = 3;
@@ -43,36 +44,25 @@ fn string_arg(env: &mut JNIEnv<'_>, value: &JString<'_>) -> Result<String, Strin
         .map_err(|_error| "argument was not a valid UTF-8 string".to_owned())
 }
 
-/// Renders the managed configuration for a subscription URL.
+/// Renders the mobile workspace document into a runtime configuration.
 ///
-/// Returns the YAML on success and throws `IllegalStateException` on failure. The URL is never
-/// included in the exception message.
+/// Returns a JSON envelope (`{"yaml": ..., "warnings": [...], "providers": n, ...}`) and throws
+/// `IllegalStateException` on failure. Warnings never contain subscription credentials.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_manis_app_core_Native_renderConfig<'local>(
     mut env: JNIEnv<'local>,
     _this: JObject<'local>,
-    subscription_url: JString<'local>,
-    mixed_port: jint,
+    config_json: JString<'local>,
     file_descriptor: jint,
 ) -> jstring {
     let rendered = (|| {
-        let url = string_arg(&mut env, &subscription_url)?;
-        let secret = SecretUrl::parse_subscription(&url)
-            .map_err(|error| format!("subscription URL is invalid: {error}"))?;
-        let port =
-            u16::try_from(mixed_port).map_err(|_error| "mixed port is invalid".to_owned())?;
-        let mut profile = Profile::qx_sources(vec![secret], Vec::new(), port)
-            .map_err(|error| format!("profile could not be built: {error}"))?;
-        profile
-            .ensure_global_match()
-            .map_err(|error| format!("profile could not be completed: {error}"))?;
-        render_mihomo_yaml_for_android(&profile, file_descriptor)
-            .map_err(|error| format!("profile could not be rendered: {error}"))
+        let config = string_arg(&mut env, &config_json)?;
+        model::compile(&config, file_descriptor)
     })();
 
     match rendered {
-        Ok(yaml) => env
-            .new_string(yaml)
+        Ok(envelope) => env
+            .new_string(envelope)
             .map_or(std::ptr::null_mut(), |value| value.into_raw()),
         Err(message) => {
             throw(&mut env, &message);
@@ -145,13 +135,11 @@ pub extern "system" fn Java_dev_manis_app_core_Native_startCore<'local>(
             });
         }
 
-        let spawned = command.spawn();
-        // SAFETY: the descriptor was detached by the Java host and this call owns it. The child
-        // cloned it during fork, so the parent copy must be released whether or not exec succeeded.
-        unsafe {
-            libc::close(file_descriptor);
-        }
-        let child = spawned.map_err(|error| format!("core could not be started: {error}"))?;
+        // The Java host keeps the VpnService descriptor open so the core can be restarted with the
+        // same interface after a configuration change; the child only gets its own duplicate.
+        let child = command
+            .spawn()
+            .map_err(|error| format!("core could not be started: {error}"))?;
         let pid = child.id();
         CORE.lock()
             .map_err(|_poisoned| "core state is unavailable".to_owned())?
