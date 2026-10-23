@@ -39,6 +39,9 @@ The script builds the JNI library into `app/src/main/jniLibs/<abi>/`, compiles t
 `android/build-core.sh` (Go 1.24+, pinned tag + patch, NDK clang for `amd64`), then runs
 `assembleDebug`. Output: `android/app/build/outputs/apk/debug/app-debug.apk`.
 
+`android/debug.keystore` is a committed debug-only signing key so local and CI builds share one
+signature and install over each other. It must never sign a release.
+
 `jniLibs/` and `android/.build/` are generated and ignored by git; rebuild them for every clean
 checkout.
 
@@ -53,8 +56,9 @@ the bundled binary.
 ## Current scope
 
 - `minSdk 26`, `targetSdk 35`; arm64 for phones, x86_64 for the emulator.
-- One subscription URL, no node/group editor yet: Mihomo's `select` group starts on the first
-  available node, and switching nodes happens later through the controller API.
+- One subscription URL plus a node picker backed by the controller: the VPN card shows the selected
+  node, delays come from the health-check history, and tapping a node updates
+  `__MANIS_GLOBAL__`. Policy-group editing is not implemented.
 - Per-app routing, subscription previews and the desktop's diagnostics view are not implemented.
 - The controller listens on loopback with a secret generated per launch.
 
