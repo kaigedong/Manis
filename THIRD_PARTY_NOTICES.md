@@ -36,6 +36,11 @@ The Android build bundles the core inside the signed APK as `libmihomo.so`; ther
 download. Distributing that APK therefore distributes Mihomo itself, so the APK release notes must
 carry the same license and source offer, and the core version must be recorded with the release.
 
+The Android core is compiled from the pinned upstream tag plus
+`android/patches/mihomo-skip-android-package-manager.patch` (a regular application cannot read
+`/data/system/packages.xml`). Publishing an APK must therefore also publish that patch, the upstream
+tag and the build recipe in `android/build-core.sh`.
+
 ## Release policy
 
 Before publishing any binary release:

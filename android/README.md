@@ -31,22 +31,39 @@ Requirements: JDK 17+, Android SDK Platform 35, Android NDK, Rust `aarch64-linux
 rustup target add aarch64-linux-android
 cargo install cargo-ndk
 export ANDROID_HOME="$HOME/Android/Sdk"
-android/build-apk.sh
+android/build-apk.sh            # arm64 phone
+android/build-apk.sh x86_64     # emulator
 ```
 
-The script builds the JNI library into `app/src/main/jniLibs/arm64-v8a/`, downloads the official
-Mihomo Android arm64 core (digest verified by `packaging/fetch-mihomo.sh`), then runs
+The script builds the JNI library into `app/src/main/jniLibs/<abi>/`, compiles the Mihomo core with
+`android/build-core.sh` (Go 1.24+, pinned tag + patch, NDK clang for `amd64`), then runs
 `assembleDebug`. Output: `android/app/build/outputs/apk/debug/app-debug.apk`.
 
-`jniLibs/` is generated and ignored by git; rebuild it for every clean checkout.
+`jniLibs/` and `android/.build/` are generated and ignored by git; rebuild them for every clean
+checkout.
+
+## Why the core is compiled locally
+
+The official Android release asset cannot start a TUN inside a normal application: it builds
+per-package rules unconditionally and aborts when `/data/system/packages.xml` is unreadable. The
+patch in `android/patches/` makes that list best effort, which is correct here because the app does
+not use package filters. The patch, upstream tag and build command are the GPL-3.0 source offer for
+the bundled binary.
 
 ## Current scope
 
-- arm64 only; `minSdk 26`, `targetSdk 35`.
+- `minSdk 26`, `targetSdk 35`; arm64 for phones, x86_64 for the emulator.
 - One subscription URL, no node/group editor yet: Mihomo's `select` group starts on the first
   available node, and switching nodes happens later through the controller API.
 - Per-app routing, subscription previews and the desktop's diagnostics view are not implemented.
 - The controller listens on loopback with a secret generated per launch.
+
+## Verified on the emulator
+
+Android 35 `sdk_gphone64_x86_64`: consent dialog, foreground `systemExempted` service, `tun0` with
+`172.19.0.1`, `tun0(fd=3)` gVisor listener, fake-IP answers for `example.com`, ICMP into the stack,
+and a clean teardown (service, `tun0` and core process all gone). Proxying itself still needs a real
+subscription; the test URL returns 404 on purpose.
 
 ## Licensing
 

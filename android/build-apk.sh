@@ -9,19 +9,20 @@ if [[ -z "${ANDROID_NDK_HOME:-}" ]]; then
   export ANDROID_NDK_HOME
 fi
 
-JNI_DIR="$ROOT/android/app/src/main/jniLibs/arm64-v8a"
+ABI="${1:-arm64-v8a}"
+JNI_DIR="$ROOT/android/app/src/main/jniLibs/$ABI"
 mkdir -p "$JNI_DIR"
 
-echo "Building manis-android for arm64-v8a" >&2
-cargo ndk -t arm64-v8a -o "$JNI_DIR" build -p manis-android --release
+echo "Building manis-android for $ABI" >&2
+cargo ndk -t "$ABI" -o "$ROOT/android/app/src/main/jniLibs" build -p manis-android --release
 
-if [[ "${MANIS_SKIP_CORE_FETCH:-0}" != "1" ]]; then
-  "$ROOT/android/fetch-core.sh" "$JNI_DIR/libmihomo.so"
+if [[ "${MANIS_SKIP_CORE_BUILD:-0}" != "1" ]]; then
+  "$ROOT/android/build-core.sh" "$ABI" "$JNI_DIR/libmihomo.so"
 fi
 
 cd "$ROOT/android"
 if [[ -n "${MANIS_GRADLE:-}" ]]; then
-  "$MANIS_GRADLE" --no-daemon assembleDebug
+  "$MANIS_GRADLE" --no-daemon -PmanisAbi="$ABI" assembleDebug
 else
-  ./gradlew --no-daemon assembleDebug
+  ./gradlew --no-daemon -PmanisAbi="$ABI" assembleDebug
 fi

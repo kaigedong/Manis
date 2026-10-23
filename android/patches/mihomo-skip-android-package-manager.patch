@@ -1,0 +1,16 @@
+diff --git a/listener/sing_tun/server_android.go b/listener/sing_tun/server_android.go
+index 1111111..2222222 100644
+--- a/listener/sing_tun/server_android.go
++++ b/listener/sing_tun/server_android.go
+@@ -43,7 +43,10 @@ func (l *Listener) buildAndroidRules(tunOptions *tun.Options) error {
+ 	packageManager, err := getPackageManager()
+ 	if err != nil {
+-		return err
++		// A regular Android application cannot read /data/system/packages.xml. Manis does not use
++		// per-package filters, so treat the package list as best effort instead of failing the TUN.
++		log.Warnln("Android package manager is unavailable, continuing without package rules: %v", err)
++		return nil
+ 	}
+ 	tunOptions.BuildAndroidRules(packageManager, l.handler)
+ 	return nil
+ }

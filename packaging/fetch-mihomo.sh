@@ -33,7 +33,6 @@ case "$OS_NAME:$ARCH_NAME" in
   Darwin:arm64) asset_stem="mihomo-darwin-arm64"; archive_kind="gz" ;;
   Darwin:x86_64) asset_stem="mihomo-darwin-amd64-v2"; archive_kind="gz" ;;
   Linux:x86_64) asset_stem="mihomo-linux-amd64-v2"; archive_kind="gz" ;;
-  Android:arm64|Android:aarch64) asset_stem="mihomo-android-arm64-v8"; archive_kind="gz" ;;
   MINGW*:x86_64|MSYS*:x86_64) asset_stem="mihomo-windows-amd64-v2"; archive_kind="zip" ;;
   *)
     echo "unsupported Mihomo packaging target: $OS_NAME $ARCH_NAME" >&2

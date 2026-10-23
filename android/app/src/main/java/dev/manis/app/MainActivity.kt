@@ -137,8 +137,9 @@ class MainActivity : ComponentActivity() {
                     singleLine = true,
                 )
 
+                val abi = android.os.Build.SUPPORTED_ABIS.firstOrNull() ?: "unknown"
                 Text(
-                    "当前只支持 arm64 设备。Mihomo 内核随 APK 打包并以 GPL-3.0 分发；" +
+                    "设备 ABI：$abi。Mihomo 内核随 APK 打包并以 GPL-3.0 分发；" +
                         "修改订阅后重新开关一次 VPN 生效。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,

@@ -4,6 +4,8 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+val manisAbi = (findProperty("manisAbi") as String?) ?: "arm64-v8a"
+
 android {
     namespace = "dev.manis.app"
     compileSdk = 35
@@ -14,7 +16,7 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0-android"
-        ndk { abiFilters += "arm64-v8a" }
+        ndk { abiFilters += manisAbi }
     }
 
     buildTypes {
