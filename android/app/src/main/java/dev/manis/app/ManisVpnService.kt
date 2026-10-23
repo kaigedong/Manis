@@ -4,16 +4,18 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
-import android.content.Context
 import android.content.Intent
 import android.net.VpnService
 import android.os.Build
+import android.os.ParcelFileDescriptor
 import dev.manis.app.core.CoreController
+import dev.manis.app.data.Workspace
 
 class ManisVpnService : VpnService() {
     companion object {
         const val ACTION_START = "dev.manis.app.action.START_VPN"
         const val ACTION_STOP = "dev.manis.app.action.STOP_VPN"
+        const val ACTION_RELOAD = "dev.manis.app.action.RELOAD_VPN"
         private const val CHANNEL_ID = "manis-vpn"
         private const val NOTIFICATION_ID = 1
 
@@ -26,22 +28,35 @@ class ManisVpnService : VpnService() {
             private set
     }
 
+    private var tunnel: ParcelFileDescriptor? = null
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP) {
-            shutdown()
-            return START_NOT_STICKY
+        android.util.Log.d("Manis", "action=${intent?.action} tunnel=${tunnel != null} active=$active")
+        when (intent?.action) {
+            ACTION_STOP -> {
+                shutdown()
+                return START_NOT_STICKY
+            }
+
+            ACTION_RELOAD -> {
+                reload()
+                return START_NOT_STICKY
+            }
         }
 
         startForegroundNow()
-        val subscription = SubscriptionStore.url(this)
-        if (subscription == null) {
-            fail("请先在 Manis 里填写订阅地址")
+        val workspace = Workspace.config.value
+        if (workspace.subscriptions.none { it.enabled } && workspace.nodes.none { it.enabled }) {
+            fail("先添加一个订阅或节点")
             return START_NOT_STICKY
         }
 
         return try {
-            val descriptor = establish()
-            if (CoreController.start(this, subscription, descriptor)) {
+            if (tunnel == null) {
+                tunnel = establish()
+            }
+            val descriptor = tunnel?.fd ?: error("VPN 接口不可用")
+            if (CoreController.start(this, descriptor)) {
                 active = true
                 lastError = null
             } else {
@@ -51,6 +66,17 @@ class ManisVpnService : VpnService() {
         } catch (error: Throwable) {
             fail(error.message ?: "VPN 启动失败")
             START_NOT_STICKY
+        }
+    }
+
+    private fun reload() {
+        val descriptor = tunnel?.fd ?: return
+        if (!active) return
+        startForegroundNow()
+        if (CoreController.reload(this, descriptor)) {
+            lastError = null
+        } else {
+            fail(CoreController.lastError ?: "配置应用失败")
         }
     }
 
@@ -69,8 +95,8 @@ class ManisVpnService : VpnService() {
      * address, route and the DNS server are declared here; 172.19.0.2 sits inside the same /30 and
      * is answered by Mihomo's DNS hijack.
      */
-    private fun establish(): Int {
-        val descriptor = Builder()
+    private fun establish(): ParcelFileDescriptor {
+        return Builder()
             .setSession("Manis")
             .setMtu(1500)
             .addAddress("172.19.0.1", 30)
@@ -81,18 +107,18 @@ class ManisVpnService : VpnService() {
             .addDisallowedApplication(packageName)
             .establish()
             ?: error("Android 未建立 VPN 接口")
-        return descriptor.detachFd()
     }
 
     private fun fail(message: String) {
+        android.util.Log.w("Manis", "service fail: $message")
         lastError = message
         shutdown()
     }
 
     private fun shutdown() {
-        if (active || CoreController.running) {
-            CoreController.stop()
-        }
+        CoreController.stop()
+        runCatching { tunnel?.close() }
+        tunnel = null
         active = false
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()

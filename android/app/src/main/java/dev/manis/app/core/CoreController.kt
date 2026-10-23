@@ -1,14 +1,16 @@
 package dev.manis.app.core
 
 import android.content.Context
+import dev.manis.app.data.Workspace
 import java.io.File
 import java.security.SecureRandom
+import org.json.JSONObject
 
 /**
  * Owns the bundled Mihomo process for the lifetime of the VPN service.
  *
- * The TUN descriptor is produced by [dev.manis.app.ManisVpnService] and handed to Rust, which
- * duplicates it onto fd 3 in the child and releases the parent copy.
+ * The VpnService descriptor stays open in the service, so a workspace change only restarts the
+ * core: the tunnel never goes down and Android keeps routing through the same interface.
  */
 internal object CoreController {
     const val MIXED_PORT = 7890
@@ -21,6 +23,10 @@ internal object CoreController {
         private set
 
     @Volatile
+    var warnings: List<String> = emptyList()
+        private set
+
+    @Volatile
     var running: Boolean = false
         private set
 
@@ -28,34 +34,15 @@ internal object CoreController {
     var secret: String = ""
         private set
 
-    fun start(context: Context, subscriptionUrl: String, tunDescriptor: Int): Boolean {
-        lastError = null
-        return try {
-            val dataDirectory = File(context.filesDir, "mihomo").apply { mkdirs() }
-            val config = File(dataDirectory, "config.yaml")
-            config.writeText(
-                Native.renderConfig(subscriptionUrl, MIXED_PORT, TUN_DESCRIPTOR),
-            )
-            val binary = File(context.applicationInfo.nativeLibraryDir, CORE_BINARY)
-            check(binary.isFile) { "打包的 Mihomo 内核缺失（$CORE_BINARY）" }
+    @Volatile
+    var summary: String = ""
+        private set
 
-            secret = randomSecret()
-            val pid = Native.startCore(
-                binary.absolutePath,
-                dataDirectory.absolutePath,
-                config.absolutePath,
-                secret,
-                tunDescriptor,
-            )
-            running = pid > 0
-            if (!running) lastError = "Mihomo 未能启动"
-            running
-        } catch (error: Throwable) {
-            lastError = error.message ?: error.javaClass.simpleName
-            running = false
-            false
-        }
-    }
+    fun start(context: Context, descriptor: Int): Boolean =
+        renderAndRun(context, descriptor, restart = false)
+
+    fun reload(context: Context, descriptor: Int): Boolean =
+        renderAndRun(context, descriptor, restart = true)
 
     fun stop() {
         Native.stopCore()
@@ -63,6 +50,54 @@ internal object CoreController {
     }
 
     fun controllerEndpoint(): String = "127.0.0.1:$CONTROLLER_PORT"
+
+    private fun renderAndRun(context: Context, descriptor: Int, restart: Boolean): Boolean {
+        lastError = null
+        android.util.Log.d("Manis", "renderAndRun restart=$restart")
+        return try {
+            val dataDirectory = File(context.filesDir, "mihomo").apply { mkdirs() }
+            val config = File(dataDirectory, "config.yaml")
+            val envelope = Native.renderConfig(Workspace.config.value.toJson(), TUN_DESCRIPTOR)
+            val rendered = JSONObject(envelope)
+            config.writeText(rendered.getString("yaml"))
+            warnings = rendered.optJSONArray("warnings")?.let { array ->
+                (0 until array.length()).map(array::getString)
+            } ?: emptyList()
+            summary = buildString {
+                append(rendered.optInt("providers"))
+                append(" 个订阅 · ")
+                append(rendered.optInt("nodes"))
+                append(" 个节点 · ")
+                append(rendered.optInt("rules"))
+                append(" 条规则")
+            }
+
+            val binary = File(context.applicationInfo.nativeLibraryDir, CORE_BINARY)
+            check(binary.isFile) { "打包的 Mihomo 内核缺失（$CORE_BINARY）" }
+
+            if (restart && running) {
+                Native.stopCore()
+            }
+            android.util.Log.d("Manis", "render ok rules=${rendered.optInt("rules")}")
+            secret = randomSecret()
+            val pid = Native.startCore(
+                binary.absolutePath,
+                dataDirectory.absolutePath,
+                config.absolutePath,
+                secret,
+                descriptor,
+            )
+            android.util.Log.d("Manis", "core pid=$pid")
+            running = pid > 0
+            if (!running) lastError = "Mihomo 未能启动"
+            running
+        } catch (error: Throwable) {
+            android.util.Log.w("Manis", "renderAndRun failed", error)
+            lastError = error.message ?: error.javaClass.simpleName
+            running = false
+            false
+        }
+    }
 
     private fun randomSecret(): String {
         val bytes = ByteArray(24)

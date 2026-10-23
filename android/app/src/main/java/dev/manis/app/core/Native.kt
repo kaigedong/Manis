@@ -12,8 +12,7 @@ internal object Native {
     }
 
     external fun renderConfig(
-        subscriptionUrl: String,
-        mixedPort: Int,
+        configJson: String,
         fileDescriptor: Int,
     ): String
 

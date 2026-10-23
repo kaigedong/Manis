@@ -1,83 +1,73 @@
-# Manis for Android
+# Manis for Android (experimental)
 
-A native Android client. The UI is Kotlin + Jetpack Compose; the profile model, Mihomo configuration
-renderer and core launcher stay in Rust, so Android and desktop compile the same rules and policy
-groups.
+Kotlin/Compose 客户端，内置受管的 Mihomo 内核，通过 `VpnService` 接管整机流量。工作区模型和配置渲染
+完全复用桌面版的 Rust 实现，手机和桌面生成的 `config.yaml` 语义一致。
 
-## How it fits together
+## 现在能做什么
+
+| 页面 | 能力 |
+| --- | --- |
+| 连接 | 一键建立/断开 VPN；显示当前出口节点；规则 / 全局 / 直连模式即时切换；配置摘要和解析提示 |
+| 节点 | 读取内核里的策略组（全局组 + 用户组）；展开后按延迟显示节点；点选立即切换；单组测速 |
+| 订阅 | 多订阅增删与启停；VLESS 分享链接导入；策略组（手动选择 / 自动测速）的新建与删除；「应用」后热重载内核 |
+| 规则 | Quantumult X 风格的 `HOST` / `HOST-SUFFIX` / `HOST-KEYWORD` 规则编辑，策略可指向 `DIRECT`、`REJECT` 或任意策略组 |
+| 设置 | 内核版本、配置摘要、ABI、数据目录；重新载入；查看内核日志；许可证说明 |
+
+与桌面版的差异（有意保留）：
+
+- 订阅预览、多个 QX 规则来源、出口 IP 探测、流量曲线尚未移植。
+- 系统代理开关不适用；Android 的「始终开启 VPN」由系统设置接管，因此没有登录自启动。
+- 策略组的成员选择按订阅/节点勾选，暂不支持按名称正则过滤之外的桌面高级策略配置。
+
+## 工作方式
 
 ```text
-MainActivity (Compose)
-  └─ ManisVpnService ── VpnService.Builder → TUN descriptor
-        └─ CoreController (Kotlin)
-              ├─ Native.renderConfig(url, port, 3)   → YAML from manis-profile
-              └─ Native.startCore(..., descriptor)   → Rust dup2(fd, 3), exec libmihomo.so
-                                                    → controller 127.0.0.1:9090 (random secret)
+Compose UI ──workspace.json──▶ Rust (crates/manis-android)
+                                  │  MobileConfig → Profile（与桌面同一套类型）
+                                  ▼
+                            config.yaml (tun.file-descriptor: 3)
+                                  │
+VpnService ──TUN fd──▶ 打包的 libmihomo.so ──▶ 127.0.0.1:9090（每次启动随机 secret）
 ```
 
-- Android owns the interface: `172.19.0.1/30`, `fd00:1::1/126`, default routes, DNS `172.19.0.2`.
-- Mihomo inherits only the descriptor (`tun.file-descriptor: 3`, `auto-route: false`) and answers
-  DNS through `dns-hijack`, so fake-IP and domain rules behave as on desktop.
-- The core is bundled in the APK as `libmihomo.so` and executed from `nativeLibraryDir`. It is not
-  downloaded at runtime: Android 10+ forbids `exec()` of app-private files for `targetSdk >= 29`.
-- The app excludes its own UID from the tunnel so the core's upstream sockets cannot loop back.
+- UI 把工作区写成一份 JSON（订阅、VLESS 节点、策略组、QX 规则、模式），Rust 侧编译成 `Profile`
+  并渲染 YAML，因此规则补全、策略映射、全局兜底规则只有一处实现。
+- `VpnService` 持有 TUN 的 `ParcelFileDescriptor`，内核每次启动把同一个 fd 复制到子进程的 fd 3。
+  改配置只重启内核，VPN 接口不断开。
+- 控制器只监听 `127.0.0.1`，`secret` 每次启动随机生成，仅保存在进程内存中。
+- `addDisallowedApplication(packageName)` 让 Manis 自己的请求（订阅拉取、控制器）绕开 TUN，
+  避免自环。
 
-## Build
+## 构建
 
-Requirements: JDK 17+, Android SDK Platform 35, Android NDK, Rust `aarch64-linux-android`, and
-`cargo-ndk`.
+依赖：JDK 21、Android SDK 35、NDK 27、Rust 目标 `aarch64-linux-android`、`cargo-ndk`、Go 1.27、
+Gradle 8.9。
 
-```sh
-rustup target add aarch64-linux-android
-cargo install cargo-ndk
-export ANDROID_HOME="$HOME/Android/Sdk"
-android/build-apk.sh            # arm64 phone
-android/build-apk.sh x86_64     # emulator
+```bash
+android/build-apk.sh arm64-v8a     # 产物 android/app/build/outputs/apk/debug/app-debug.apk
+android/build-core.sh arm64-v8a    # 只重建内核
 ```
 
-The script builds the JNI library into `app/src/main/jniLibs/<abi>/`, compiles the Mihomo core with
-`android/build-core.sh` (Go 1.24+, pinned tag + patch, NDK clang for `amd64`), then runs
-`assembleDebug`. Output: `android/app/build/outputs/apk/debug/app-debug.apk`.
+`android/build-core.sh` 会按 `patches/mihomo-skip-android-package-manager.patch` 编译上游
+`v1.19.33`：官方 Android 内核在启动 TUN 时无条件读取 `/data/system/packages.xml`，普通应用无权
+访问会直接失败；补丁让包管理器查询失败时回退为空的包名集合。`arm64-v8a`/`armeabi-v7a` 使用
+`CGO_ENABLED=0` 内部链接，`x86_64`/`x86` 需要 NDK clang 外部链接。
 
-`android/debug.keystore` is a committed debug-only signing key so local and CI builds share one
-signature and install over each other. It must never sign a release.
+CI（`.github/workflows/android.yml`）构建 `arm64-v8a` debug APK 并上传 artifact
+`manis-android-arm64-debug`。仓库提交了 `android/debug.keystore`（仅调试用），本地和 CI 产物的
+签名一致，可以直接覆盖安装。
 
-`jniLibs/` and `android/.build/` are generated and ignored by git; rebuild them for every clean
-checkout.
+## 验证状态
 
-## Why the core is compiled locally
+模拟器（API 35，x86_64）已通过：
 
-The official Android release asset cannot start a TUN inside a normal application: it builds
-per-package rules unconditionally and aborts when `/data/system/packages.xml` is unreadable. The
-patch in `android/patches/` makes that list best effort, which is correct here because the app does
-not use package filters. The patch, upstream tag and build command are the GPL-3.0 source offer for
-the bundled binary.
+- 首次授权、前台服务、`tun0(fd=3)`、gVisor 栈、fake-IP DNS；
+- 订阅拉取失败时明确显示「订阅没有节点」，不再假装已连接；
+- 规则渲染为 `DOMAIN-SUFFIX` 并追加 `MATCH,__MANIS_GLOBAL__`，内核日志出现
+  `match Match using __MANIS_GLOBAL__`；
+- 新增订阅 → 应用 → 配置里出现两个 provider，内核重启但 TUN 不断；
+- 模式切换通过 `PATCH /configs` 即时生效；
+- 两个 VLESS 节点之间切换，`__MANIS_GLOBAL__` 的 `now` 随之改变。
 
-## Current scope
-
-- `minSdk 26`, `targetSdk 35`; arm64 for phones, x86_64 for the emulator.
-- One subscription URL plus a node picker backed by the controller: the VPN card shows the selected
-  node, delays come from the health-check history, and tapping a node updates
-  `__MANIS_GLOBAL__`. Policy-group editing is not implemented.
-- Per-app routing, subscription previews and the desktop's diagnostics view are not implemented.
-- The controller listens on loopback with a secret generated per launch.
-
-## CI artifact
-
-`.github/workflows/android.yml` builds the arm64 debug APK on every Android-related change and
-uploads it as the `manis-android-arm64-debug` artifact for 30 days. A `workflow_dispatch` run builds
-it on demand. Download the artifact, unzip it, and install `app-debug.apk`; it is debug-signed, so
-uninstall a previous build signed with a different key first.
-
-## Verified on the emulator
-
-Android 35 `sdk_gphone64_x86_64`: consent dialog, foreground `systemExempted` service, `tun0` with
-`172.19.0.1`, `tun0(fd=3)` gVisor listener, fake-IP answers for `example.com`, ICMP into the stack,
-and a clean teardown (service, `tun0` and core process all gone). Proxying itself still needs a real
-subscription; the test URL returns 404 on purpose.
-
-## Licensing
-
-Mihomo is GPL-3.0. The APK distributes it, so a release must include the license, copyright notices
-and the corresponding source location. `THIRD_PARTY_NOTICES.md` documents the obligation; the panic
-free build itself remains Apache-2.0.
+真机（HarmonyOS / Android 17，arm64）已验证安装、VPN、内核启动；真实订阅链路的节点展示和选路
+仍待用户手机复测。

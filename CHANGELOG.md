@@ -9,6 +9,10 @@ once the public API and configuration formats stabilize.
 ### Added
 
 - Rust and GPUI desktop application for policy-based proxy routing.
+- Android client (`android/`) with a `VpnService` TUN, a bundled patched Mihomo core, and a
+  workspace model compiled by the same Rust profile code as the desktop: multiple subscriptions,
+  VLESS imports, user policy groups, QX rules, rule/global/direct modes, node switching with
+  latency tests, and kernel logs.
 - Mihomo management with a private, managed runtime.
 - Subscription and VLESS import, policy groups, ordered routing rules, latency testing, network
   activity, logs, system proxy control, and macOS TUN integration.

@@ -47,6 +47,8 @@ Manis 只尝试把一条路由链路直接呈现出来：
 - 系统 HTTP/SOCKS 代理控制与 macOS TUN 集成。
 - 登录时自动启动；同一时间只运行一个实例，再次打开会显示已有窗口。
 - 活跃连接、真实路由证据、内核日志和脱敏的应用诊断。
+- Android 客户端：`VpnService` + 内置 Mihomo 内核，订阅、VLESS、策略组、QX 规则、三种路由模式、
+  节点测速与日志，工作区模型和桌面共用同一套 Rust 编译器。
 - 以 Mihomo 为唯一托管内核，配置、进程和控制器均由 Manis 管理。
 
 QX 规则列表导入支持 `HOST` / `DOMAIN`、`HOST-SUFFIX` / `DOMAIN-SUFFIX` 和
@@ -63,6 +65,7 @@ Manis 源码仓库不提交预编译代理内核。发行构建会从 Mihomo 官
 | macOS 13+ | 持续维护 | 主要开发平台；系统代理已验证，TUN 通过管理员授权路径支持测试 |
 | Windows | 持续维护 | 实验性；托管 controller transport 尚未完成，暂不能启动 Mihomo |
 | Linux | 持续维护 | 实验性；仍需覆盖更多发行版与桌面环境 |
+| Android | 实验性 | `arm64-v8a` 真机与模拟器均可运行；功能对齐见 [android/README.md](android/README.md) |
 
 CI 会检查三个平台，但“能够编译”不代表该平台上的所有网络集成都已经完成真实验证。
 
