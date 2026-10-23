@@ -266,7 +266,11 @@ impl Profile {
     /// # Errors
     /// Returns a redacted validation error when the global group name is not usable.
     pub fn ensure_global_match(&mut self) -> Result<(), ProfileError> {
-        if self.rules.iter().any(|rule| matches!(rule, Rule::Match { .. })) {
+        if self
+            .rules
+            .iter()
+            .any(|rule| matches!(rule, Rule::Match { .. }))
+        {
             return Ok(());
         }
         self.rules.push(Rule::Match {

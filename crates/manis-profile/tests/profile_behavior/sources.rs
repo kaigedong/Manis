@@ -203,10 +203,15 @@ fn android_render_inherits_the_vpn_descriptor_without_managing_routes() {
 fn source_profiles_route_unmatched_traffic_to_the_global_group() {
     let mut profile =
         Profile::qx_sources(vec![fixture_secret()], Vec::new(), 17_890).expect("sources build");
-    assert!(profile.rules.is_empty(), "a source-only profile has no rules");
+    assert!(
+        profile.rules.is_empty(),
+        "a source-only profile has no rules"
+    );
 
     profile.ensure_global_match().expect("match rule is added");
-    profile.ensure_global_match().expect("the rule is idempotent");
+    profile
+        .ensure_global_match()
+        .expect("the rule is idempotent");
 
     let yaml = render_mihomo_yaml(&profile).expect("profile renders");
     assert_eq!(profile.rules.len(), 1);
