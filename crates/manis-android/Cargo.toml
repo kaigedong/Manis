@@ -1,0 +1,19 @@
+[package]
+name = "manis-android"
+description = "Android JNI bridge: profile rendering, Mihomo launch and TUN descriptor handoff"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+publish.workspace = true
+readme.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+jni = "0.21.1"
+libc = "0.2.174"
+manis-profile = { path = "../manis-profile" }

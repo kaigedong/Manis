@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/manis-android",
     "crates/manis-core",
     "crates/manis-engine",
     "crates/manis-linux-helper",

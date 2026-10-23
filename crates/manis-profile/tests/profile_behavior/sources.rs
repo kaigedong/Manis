@@ -182,6 +182,24 @@ fn tun_runtime_render_only_changes_the_managed_enable_flag() {
 }
 
 #[test]
+fn android_render_inherits_the_vpn_descriptor_without_managing_routes() {
+    let profile = Profile::qx_default(fixture_secret()).expect("default profile is valid");
+
+    let yaml = render_mihomo_yaml_for_android(&profile, 3).expect("android profile renders");
+    let document: serde_json::Value =
+        serde_saphyr::from_str(&yaml).expect("rendered android profile is valid YAML");
+
+    assert_eq!(document["tun"]["enable"], true);
+    assert_eq!(document["tun"]["file-descriptor"], 3);
+    assert_eq!(document["tun"]["auto-route"], false);
+    assert_eq!(document["tun"]["auto-detect-interface"], false);
+    assert_eq!(document["tun"]["mtu"], 1500);
+    assert_eq!(document["tun"]["inet4-address"][0], "172.19.0.1/30");
+    assert_eq!(document["tun"]["dns-hijack"][0], "any:53");
+    assert!(render_mihomo_yaml_for_android(&profile, -1).is_err());
+}
+
+#[test]
 fn generated_profiles_default_to_rule_mode_for_compatibility() {
     let preview = Profile::subscription_preview(fixture_secret(), 17_891)
         .expect("preview profile should build");

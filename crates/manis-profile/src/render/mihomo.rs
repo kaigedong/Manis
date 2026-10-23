@@ -7,7 +7,31 @@ use crate::{
     VlessProxy, VlessSecurity, VlessTransport, policy_name, render_rule,
 };
 
+const ANDROID_TUN_MTU: u16 = 1500;
+/// Addresses assigned to the Android `VpnService` interface. The DNS server handed to Android lives
+/// inside the same /30 so `dns-hijack` sees every query that leaves an application.
+const ANDROID_TUN_INET4_ADDRESS: &str = "172.19.0.1/30";
+const ANDROID_TUN_INET6_ADDRESS: &str = "fd00:1::1/126";
+
 pub(crate) fn render(profile: &Profile, tun_enabled: bool) -> Result<String, ProfileError> {
+    render_with_android_tun(profile, tun_enabled, None)
+}
+
+pub(crate) fn render_android(
+    profile: &Profile,
+    file_descriptor: i32,
+) -> Result<String, ProfileError> {
+    if file_descriptor < 0 {
+        return Err(ProfileError::InvalidValue("TUN file descriptor"));
+    }
+    render_with_android_tun(profile, true, Some(file_descriptor))
+}
+
+fn render_with_android_tun(
+    profile: &Profile,
+    tun_enabled: bool,
+    android_tun_file_descriptor: Option<i32>,
+) -> Result<String, ProfileError> {
     let mut providers = Map::new();
     for provider in &profile.providers {
         let mut value = match &provider.source {
@@ -36,6 +60,16 @@ pub(crate) fn render(profile: &Profile, tun_enabled: bool) -> Result<String, Pro
     tun["strict-route"] = json!(cfg!(target_os = "linux"));
     tun["auto-detect-interface"] = json!(true);
     tun["dns-hijack"] = json!(["any:53", "tcp://any:53"]);
+    if let Some(file_descriptor) = android_tun_file_descriptor {
+        // Android VpnService owns the interface, its addresses and its routes; Mihomo only reads
+        // packets from the inherited descriptor, so it must not try to configure routing itself.
+        tun["file-descriptor"] = json!(file_descriptor);
+        tun["auto-route"] = json!(false);
+        tun["auto-detect-interface"] = json!(false);
+        tun["mtu"] = json!(ANDROID_TUN_MTU);
+        tun["inet4-address"] = json!([ANDROID_TUN_INET4_ADDRESS]);
+        tun["inet6-address"] = json!([ANDROID_TUN_INET6_ADDRESS]);
+    }
     let mut groups = profile.groups.iter().map(group).collect::<Vec<_>>();
     let mut listeners = Vec::new();
     if let Some(port) = profile.exit_ip_probe_port

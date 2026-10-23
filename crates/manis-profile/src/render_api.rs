@@ -25,3 +25,19 @@ pub fn render_mihomo_yaml_with_tun(
     profile.validate()?;
     render::mihomo(profile, tun_enabled)
 }
+
+/// Renders a profile for the Android `VpnService` interface Mihomo inherits.
+///
+/// The Android host owns the interface, addresses, routes and DNS server; Mihomo only reads the
+/// inherited descriptor. See [`crate::render_mihomo_yaml_with_tun`] for the desktop variant.
+///
+/// # Errors
+/// Returns a redacted validation error, or `InvalidValue` when the descriptor is negative. A
+/// successful result contains the subscription URL and must be treated as secret material.
+pub fn render_mihomo_yaml_for_android(
+    profile: &Profile,
+    file_descriptor: i32,
+) -> Result<String, ProfileError> {
+    profile.validate()?;
+    render::mihomo_android(profile, file_descriptor)
+}

@@ -32,6 +32,10 @@ managed copy. Anyone distributing such a bundle is responsible for including Mih
 corresponding source offer or source location, copyright notices, and any other material required by
 the exact Mihomo build.
 
+The Android build bundles the core inside the signed APK as `libmihomo.so`; there is no runtime
+download. Distributing that APK therefore distributes Mihomo itself, so the APK release notes must
+carry the same license and source offer, and the core version must be recorded with the release.
+
 ## Release policy
 
 Before publishing any binary release:
