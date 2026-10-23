@@ -1,4 +1,5 @@
 use std::fmt;
+use std::net::IpAddr;
 
 use crate::{ProfileError, is_https_url};
 
@@ -30,6 +31,36 @@ impl ProxyDnsServer {
         Ok(Self(input.to_owned()))
     }
 
+    /// Parses a plain resolver endpoint: an IPv4 or IPv6 literal with an optional port.
+    ///
+    /// Android exposes the active network's resolver as a bare address instead of `DoH`, so the
+    /// mobile client resolves proxy server hostnames exactly the way the phone does.
+    ///
+    /// # Errors
+    /// Returns a redacted validation error when the input is not an IP literal.
+    pub fn parse_plain(input: &str) -> Result<Self, ProfileError> {
+        let value = input.trim();
+        if value.is_empty() || value.len() > MAX_PROXY_DNS_SERVER_BYTES {
+            return Err(ProfileError::InvalidValue("proxy DNS server"));
+        }
+        let ip = value
+            .parse::<IpAddr>()
+            .or_else(|_error| {
+                value
+                    .parse::<std::net::SocketAddr>()
+                    .map(|address| address.ip())
+            })
+            .or_else(|_error| {
+                value
+                    .strip_prefix('[')
+                    .and_then(|inner| inner.strip_suffix(']'))
+                    .ok_or(())
+                    .and_then(|inner| inner.parse::<IpAddr>().map_err(|_error| ()))
+            })
+            .map_err(|_error| ProfileError::InvalidValue("proxy DNS server"))?;
+        Ok(Self(ip.to_string()))
+    }
+
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
@@ -39,5 +70,44 @@ impl ProxyDnsServer {
 impl fmt::Debug for ProxyDnsServer {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("ProxyDnsServer(<redacted>)")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ProxyDnsServer;
+
+    #[test]
+    fn accepts_plain_resolvers() {
+        for value in [
+            "192.168.3.1",
+            "1.1.1.1:53",
+            "::1",
+            "[2606:4700:4700::1111]:53",
+        ] {
+            assert!(ProxyDnsServer::parse_plain(value).is_ok(), "{value}");
+        }
+    }
+
+    #[test]
+    fn normalizes_to_a_bare_address() {
+        assert_eq!(
+            ProxyDnsServer::parse_plain("1.1.1.1:53")
+                .expect("parses")
+                .as_str(),
+            "1.1.1.1"
+        );
+    }
+
+    #[test]
+    fn rejects_hostnames_and_schemes() {
+        for value in [
+            "",
+            "router.local",
+            "https://223.5.5.5/dns-query",
+            "not an ip",
+        ] {
+            assert!(ProxyDnsServer::parse_plain(value).is_err(), "{value}");
+        }
     }
 }
