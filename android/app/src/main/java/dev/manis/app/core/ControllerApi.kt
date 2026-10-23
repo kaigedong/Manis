@@ -5,11 +5,26 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLEncoder
 
-internal data class GroupState(
+data class NodeInfo(
+    val name: String,
+    val type: String,
+    val delay: Int?,
+)
+
+data class GroupInfo(
+    val name: String,
+    val type: String,
     val now: String?,
     val all: List<String>,
-    val delays: Map<String, Int>,
+)
+
+data class Snapshot(
+    val groups: List<GroupInfo>,
+    val nodes: Map<String, NodeInfo>,
+    val mode: String,
+    val version: String,
 )
 
 /**
@@ -19,10 +34,10 @@ internal data class GroupState(
  * [CoreController.secret] before any request.
  */
 internal object ControllerApi {
-    const val GROUP = "__MANIS_GLOBAL__"
     private const val BASE = "http://127.0.0.1:9090"
-
-    private val builtIn = setOf("COMPATIBLE", "DIRECT", "REJECT", "PASS", "GLOBAL")
+    private const val TEST_URL = "https://www.gstatic.com/generate_204"
+    private val groupTypes = setOf("Selector", "URLTest", "Fallback", "LoadBalance")
+    private val builtInNodes = setOf("COMPATIBLE", "PASS", "REJECT")
 
     private var secret: String = ""
 
@@ -30,43 +45,88 @@ internal object ControllerApi {
         this.secret = secret
     }
 
-    suspend fun group(): GroupState = withContext(Dispatchers.IO) {
-        val group = request("/proxies/$GROUP")
-        val all = group.optJSONArray("all")?.let { array ->
-            (0 until array.length())
-                .map(array::getString)
-                .filterNot { it in builtIn }
-        } ?: emptyList()
-        val now = group.optString("now")
-            .takeIf { it.isNotBlank() && it != "null" && it in all }
-
-        val proxies = request("/proxies")
-        val delays = buildMap {
-            for (name in all) {
-                val proxy = proxies.optJSONObject(name) ?: continue
-                val history = proxy.optJSONArray("history") ?: continue
-                if (history.length() == 0) continue
-                val delay = history.getJSONObject(history.length() - 1).optInt("delay", 0)
-                if (delay > 0) put(name, delay)
+    suspend fun snapshot(): Snapshot = withContext(Dispatchers.IO) {
+        val proxies = request("/proxies").optJSONObject("proxies") ?: JSONObject()
+        val nodes = mutableMapOf<String, NodeInfo>()
+        val groups = mutableListOf<GroupInfo>()
+        for (name in proxies.keys()) {
+            val proxy = proxies.optJSONObject(name) ?: continue
+            val type = proxy.optString("type")
+            val delay = proxy.optJSONArray("history")?.let { history ->
+                if (history.length() == 0) {
+                    null
+                } else {
+                    history.getJSONObject(history.length() - 1).optInt("delay", 0)
+                        .takeIf { it > 0 }
+                }
+            }
+            nodes[name] = NodeInfo(name, type, delay)
+            val all = proxy.optJSONArray("all")?.let { array ->
+                (0 until array.length())
+                    .map(array::getString)
+                    .filterNot { it in builtInNodes }
+            }
+            if (name == "GLOBAL") {
+                continue
+            }
+            if (type in groupTypes && !all.isNullOrEmpty()) {
+                groups += GroupInfo(
+                    name = name,
+                    type = type,
+                    now = proxy.optString("now").takeIf { it.isNotBlank() && it != "null" },
+                    all = all,
+                )
             }
         }
-        GroupState(now, all, delays)
+        val mode = request("/configs").optString("mode", "rule")
+        val version = request("/version").optString("version", "")
+        Snapshot(
+            groups.sortedWith(compareBy({ it.name != "__MANIS_GLOBAL__" }, { it.name })),
+            nodes,
+            mode,
+            version,
+        )
     }
 
-    suspend fun select(name: String) = withContext(Dispatchers.IO) {
+    suspend fun select(group: String, name: String) = withContext(Dispatchers.IO) {
         request(
-            "/proxies/$GROUP",
+            "/proxies/${encode(group)}",
             method = "PUT",
             body = JSONObject(mapOf("name" to name)).toString(),
         )
         Unit
     }
 
+    suspend fun setMode(mode: String) = withContext(Dispatchers.IO) {
+        request(
+            "/configs",
+            method = "PATCH",
+            body = JSONObject(mapOf("mode" to mode)).toString(),
+        )
+        Unit
+    }
+
+    /** Runs the built-in health check for one group and returns per-node delays. */
+    suspend fun testGroup(group: String): Map<String, Int> = withContext(Dispatchers.IO) {
+        val result = request(
+            "/group/${encode(group)}/delay?url=${encode(TEST_URL)}&timeout=5000",
+        )
+        buildMap {
+            for (name in result.keys()) {
+                val delay = result.optInt(name, 0)
+                if (delay > 0) put(name, delay)
+            }
+        }
+    }
+
+    private fun encode(value: String): String =
+        URLEncoder.encode(value, "UTF-8").replace("+", "%20")
+
     private fun request(path: String, method: String = "GET", body: String? = null): JSONObject {
         val connection = URL("$BASE$path").openConnection() as HttpURLConnection
         connection.requestMethod = method
         connection.connectTimeout = 3_000
-        connection.readTimeout = 5_000
+        connection.readTimeout = if (path.contains("/delay")) 15_000 else 5_000
         connection.setRequestProperty("Authorization", "Bearer $secret")
         if (body != null) {
             connection.doOutput = true
@@ -77,7 +137,7 @@ internal object ControllerApi {
             val code = connection.responseCode
             val stream = if (code in 200..299) connection.inputStream else connection.errorStream
             val text = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
-            if (code !in 200..299) error("controller returned $code")
+            if (code !in 200..299) error("控制器返回 $code")
             return if (text.isBlank()) JSONObject() else JSONObject(text)
         } finally {
             connection.disconnect()
