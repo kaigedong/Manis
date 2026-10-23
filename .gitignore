@@ -22,3 +22,12 @@ relay-generated.*
 /manis-direction-board*
 /manis-signal-patch-bay.html
 /reference-*.png
+
+# Android
+/android/.gradle/
+/android/.kotlin/
+/android/local.properties
+/android/app/build/
+/android/app/src/main/jniLibs/
+
+/android/.build/

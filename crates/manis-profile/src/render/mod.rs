@@ -3,7 +3,7 @@
 
 mod mihomo;
 
-pub(super) use mihomo::render as mihomo;
+pub(super) use mihomo::{render as mihomo, render_android as mihomo_android};
 
 use serde::ser::{Serialize, SerializeMap, SerializeSeq, Serializer};
 use serde_json::Value;
