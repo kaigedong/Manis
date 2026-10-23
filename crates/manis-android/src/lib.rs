@@ -10,6 +10,10 @@
 //! between `fork` and `exec`. This is the only unsafe surface in the crate and it contains no
 //! user-controlled file paths beyond the app-private directory passed in by the Kotlin host.
 
+// The bridge only exists for Android, which is unix. Keeping the crate empty elsewhere lets the
+// workspace-wide Windows and macOS checks compile without pretending a desktop build has a JNI.
+#![cfg(unix)]
+
 use std::fs::{self, File};
 use std::io;
 use std::os::unix::process::CommandExt as _;

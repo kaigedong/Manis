@@ -59,6 +59,12 @@ jobs:
         with:
           packages: "platforms;android-35 build-tools;35.0.0 ndk;27.2.12479018"
 
+      - name: Cache debug signing key
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.android/debug.keystore
+          key: android-debug-keystore-v1
+
       - name: Install Rust target
         run: rustup target add aarch64-linux-android
 
