@@ -59,6 +59,31 @@ fun ProxiesScreen(onMessage: (String) -> Unit) {
         }
     }
 
+    fun pickFastest(group: GroupInfo) {
+        scope.launch {
+            testing = group.name
+            ControllerApi.configure(CoreController.secret)
+            runCatching { ControllerApi.testGroup(group.name) }
+                .onSuccess { delays ->
+                    measured = measured + delays
+                    val best = delays.minByOrNull { it.value }
+                    if (best == null) {
+                        onMessage("所有节点都不可用")
+                    } else {
+                        runCatching { ControllerApi.select(group.name, best.key) }
+                            .onSuccess {
+                                onMessage("已选择 ${best.key}（${best.value}ms）")
+                                runCatching { ControllerApi.snapshot() }
+                                    .onSuccess { RuntimeState.snapshot = it }
+                            }
+                            .onFailure { onMessage(it.message ?: "切换失败") }
+                    }
+                }
+                .onFailure { onMessage(it.message ?: "测速失败") }
+            testing = null
+        }
+    }
+
     fun test(group: GroupInfo) {
         scope.launch {
             testing = group.name
@@ -121,6 +146,14 @@ fun ProxiesScreen(onMessage: (String) -> Unit) {
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
+                        }
+                        if (group.type == "Selector") {
+                            TextButton(
+                                onClick = { pickFastest(group) },
+                                enabled = testing == null && group.all.isNotEmpty(),
+                            ) {
+                                Text("选最快")
+                            }
                         }
                         TextButton(
                             onClick = { test(group) },

@@ -1,9 +1,11 @@
 package dev.manis.app.core
 
 import android.content.Context
+import android.net.ConnectivityManager
 import dev.manis.app.data.Workspace
 import java.io.File
 import java.security.SecureRandom
+import org.json.JSONArray
 import org.json.JSONObject
 
 /**
@@ -57,7 +59,12 @@ internal object CoreController {
         return try {
             val dataDirectory = File(context.filesDir, "mihomo").apply { mkdirs() }
             val config = File(dataDirectory, "config.yaml")
-            val envelope = Native.renderConfig(Workspace.config.value.toJson(), TUN_DESCRIPTOR)
+            val document = JSONObject(Workspace.config.value.toJson())
+            val resolvers = systemDns(context)
+            if (resolvers.isNotEmpty()) {
+                document.put("system_dns", JSONArray(resolvers))
+            }
+            val envelope = Native.renderConfig(document.toString(), TUN_DESCRIPTOR)
             val rendered = JSONObject(envelope)
             config.writeText(rendered.getString("yaml"))
             warnings = rendered.optJSONArray("warnings")?.let { array ->
@@ -97,6 +104,23 @@ internal object CoreController {
             running = false
             false
         }
+    }
+
+    /**
+     * Resolvers of the active network. Proxy server hostnames must resolve exactly the way the
+     * phone does; a hard-coded public resolver can return a different, unreachable address.
+     */
+    private fun systemDns(context: Context): List<String> {
+        val manager = context.getSystemService(ConnectivityManager::class.java) ?: return emptyList()
+        val network = manager.activeNetwork ?: return emptyList()
+        val properties = manager.getLinkProperties(network) ?: return emptyList()
+        return properties.dnsServers
+            .mapNotNull { address -> address.hostAddress }
+            .filterNot { address ->
+                address.startsWith("fe80") || address == "127.0.0.1" || address == "::1"
+            }
+            .distinct()
+            .take(4)
     }
 
     private fun randomSecret(): String {

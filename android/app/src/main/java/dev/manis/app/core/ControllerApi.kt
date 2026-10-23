@@ -106,6 +106,14 @@ internal object ControllerApi {
         Unit
     }
 
+    /** Health-checks one proxy; returns null when it cannot reach the test URL. */
+    suspend fun testNode(name: String): Int? = withContext(Dispatchers.IO) {
+        val result = request(
+            "/proxies/${encode(name)}/delay?url=${encode(TEST_URL)}&timeout=5000",
+        )
+        result.optInt("delay", 0).takeIf { it > 0 }
+    }
+
     /** Runs the built-in health check for one group and returns per-node delays. */
     suspend fun testGroup(group: String): Map<String, Int> = withContext(Dispatchers.IO) {
         val result = request(

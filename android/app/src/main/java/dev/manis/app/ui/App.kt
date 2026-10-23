@@ -62,6 +62,7 @@ fun ManisApp() {
     }
 
     LaunchedEffect(Unit) {
+        var autoFixDone = false
         while (true) {
             RuntimeState.active = ManisVpnService.active
             RuntimeState.error = ManisVpnService.lastError ?: CoreController.lastError
@@ -80,6 +81,35 @@ fun ManisApp() {
                     }
             } else {
                 RuntimeState.snapshot = null
+                autoFixDone = false
+            }
+            if (RuntimeState.active && !autoFixDone) {
+                autoFixDone = true
+                scope.launch {
+                    ControllerApi.configure(CoreController.secret)
+                    for (attempt in 0 until 6) {
+                        delay(3_000)
+                        val snapshot = runCatching { ControllerApi.snapshot() }.getOrNull()
+                            ?: continue
+                        val group = snapshot.groups
+                            .firstOrNull { it.name == "__MANIS_GLOBAL__" }
+                            ?: continue
+                        val node = group.now ?: continue
+                        if (group.all.size < 2) continue
+                        if (runCatching { ControllerApi.testNode(node) }.getOrNull() != null) {
+                            return@launch
+                        }
+                        val delays = runCatching { ControllerApi.testGroup(group.name) }
+                            .getOrNull() ?: continue
+                        val best = delays.minByOrNull { it.value } ?: continue
+                        runCatching { ControllerApi.select(group.name, best.key) }.onSuccess {
+                            say("当前节点不可用，已切换到 ${best.key}")
+                            runCatching { ControllerApi.snapshot() }
+                                .onSuccess { RuntimeState.snapshot = it }
+                        }
+                        return@launch
+                    }
+                }
             }
             delay(1_500)
         }

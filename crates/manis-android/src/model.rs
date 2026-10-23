@@ -5,8 +5,9 @@
 //! so rules, group semantics and the rendered Mihomo configuration cannot drift between platforms.
 
 use manis_profile::{
-    MANIS_GLOBAL_GROUP_NAME, Name, PolicyRef, Profile, ProfileMode, QxRuleList, Rule, SecretUrl,
-    UserPolicyGroup, UserPolicyGroupKind, VlessProxy, render_mihomo_yaml_for_android,
+    MANIS_GLOBAL_GROUP_NAME, Name, PolicyRef, Profile, ProfileMode, ProxyDnsServer, QxRuleList,
+    Rule, SecretUrl, UserPolicyGroup, UserPolicyGroupKind, VlessProxy,
+    render_mihomo_yaml_for_android,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -20,6 +21,9 @@ pub struct MobileConfig {
     pub nodes: Vec<MobileNode>,
     pub groups: Vec<MobileGroup>,
     pub rules: String,
+    /// Resolvers of the active Android network; proxy server hostnames are resolved with these.
+    #[serde(default)]
+    pub system_dns: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -113,6 +117,23 @@ pub fn compile(config_json: &str, file_descriptor: i32) -> Result<String, String
     .map_err(|error| format!("生成配置失败：{error}"))?;
 
     profile.mode = parse_mode(&config.mode);
+    if !config.system_dns.is_empty() {
+        let resolvers = config
+            .system_dns
+            .iter()
+            .filter_map(|value| match ProxyDnsServer::parse_plain(value) {
+                Ok(server) => Some(server),
+                Err(_error) => {
+                    warnings.push(format!("系统 DNS {value} 无效，已忽略"));
+                    None
+                }
+            })
+            .take(4)
+            .collect::<Vec<_>>();
+        if !resolvers.is_empty() {
+            profile.set_proxy_server_nameservers(resolvers);
+        }
+    }
     let group_names = profile
         .groups
         .iter()

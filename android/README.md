@@ -35,6 +35,10 @@ VpnService ──TUN fd──▶ 打包的 libmihomo.so ──▶ 127.0.0.1:9090
 - `VpnService` 持有 TUN 的 `ParcelFileDescriptor`，内核每次启动把同一个 fd 复制到子进程的 fd 3。
   改配置只重启内核，VPN 接口不断开。
 - 控制器只监听 `127.0.0.1`，`secret` 每次启动随机生成，仅保存在进程内存中。
+- 代理服务器域名用**当前网络的系统 DNS** 解析（由 `ConnectivityManager` 传给内核），避免公共 DNS
+  返回与手机不同的、不可达的地址。
+- 连接后若当前节点探测失败，应用会自动测速并把全局组切到最快可用节点；也可以在节点页手动
+  「选最快」。
 - `addDisallowedApplication(packageName)` 让 Manis 自己的请求（订阅拉取、控制器）绕开 TUN，
   避免自环。
 
