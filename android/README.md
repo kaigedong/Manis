@@ -58,6 +58,13 @@ the bundled binary.
 - Per-app routing, subscription previews and the desktop's diagnostics view are not implemented.
 - The controller listens on loopback with a secret generated per launch.
 
+## CI artifact
+
+`.github/workflows/android.yml` builds the arm64 debug APK on every Android-related change and
+uploads it as the `manis-android-arm64-debug` artifact for 30 days. A `workflow_dispatch` run builds
+it on demand. Download the artifact, unzip it, and install `app-debug.apk`; it is debug-signed, so
+uninstall a previous build signed with a different key first.
+
 ## Verified on the emulator
 
 Android 35 `sdk_gphone64_x86_64`: consent dialog, foreground `systemExempted` service, `tun0` with

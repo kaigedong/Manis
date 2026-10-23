@@ -27,7 +27,9 @@ export GOOS=android
 # android/amd64 requires external linking, so build through the NDK toolchain when it is present.
 NDK="${ANDROID_NDK_HOME:-${ANDROID_HOME:-$HOME/Android/Sdk}/ndk/27.2.12479018}"
 TOOLCHAIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
-if [[ -x "$TOOLCHAIN/${TRIPLE}26-clang" ]]; then
+# arm and arm64 link internally like the official release; only the x86 targets need external
+# linking, so keep the NDK out of the arm build path.
+if [[ ( "$GOARCH" == "amd64" || "$GOARCH" == "386" ) && -x "$TOOLCHAIN/${TRIPLE}26-clang" ]]; then
   export CGO_ENABLED=1
   export CC="$TOOLCHAIN/${TRIPLE}26-clang"
   export CXX="$TOOLCHAIN/${TRIPLE}26-clang++"
