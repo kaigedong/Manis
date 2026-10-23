@@ -258,6 +258,27 @@ impl Profile {
         Ok(profile)
     }
 
+    /// Appends the terminal `MATCH` rule that routes unmatched traffic to the hidden global group.
+    ///
+    /// A source-only profile (built by [`Self::qx_sources`]) has no rules of its own; without this
+    /// rule every connection falls through to `DIRECT` instead of the selected node.
+    ///
+    /// # Errors
+    /// Returns a redacted validation error when the global group name is not usable.
+    pub fn ensure_global_match(&mut self) -> Result<(), ProfileError> {
+        if self
+            .rules
+            .iter()
+            .any(|rule| matches!(rule, Rule::Match { .. }))
+        {
+            return Ok(());
+        }
+        self.rules.push(Rule::Match {
+            policy: PolicyRef::Group(Name::parse(MANIS_GLOBAL_GROUP_NAME)?),
+        });
+        Ok(())
+    }
+
     /// Validates names, references, paths, intervals, and rule termination.
     ///
     /// # Errors
