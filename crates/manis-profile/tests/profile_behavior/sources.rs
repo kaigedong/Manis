@@ -200,6 +200,20 @@ fn android_render_inherits_the_vpn_descriptor_without_managing_routes() {
 }
 
 #[test]
+fn source_profiles_route_unmatched_traffic_to_the_global_group() {
+    let mut profile =
+        Profile::qx_sources(vec![fixture_secret()], Vec::new(), 17_890).expect("sources build");
+    assert!(profile.rules.is_empty(), "a source-only profile has no rules");
+
+    profile.ensure_global_match().expect("match rule is added");
+    profile.ensure_global_match().expect("the rule is idempotent");
+
+    let yaml = render_mihomo_yaml(&profile).expect("profile renders");
+    assert_eq!(profile.rules.len(), 1);
+    assert!(yaml.contains("MATCH,__MANIS_GLOBAL__"));
+}
+
+#[test]
 fn generated_profiles_default_to_rule_mode_for_compatibility() {
     let preview = Profile::subscription_preview(fixture_secret(), 17_891)
         .expect("preview profile should build");

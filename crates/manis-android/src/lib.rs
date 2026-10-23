@@ -61,8 +61,11 @@ pub extern "system" fn Java_dev_manis_app_core_Native_renderConfig<'local>(
             .map_err(|error| format!("subscription URL is invalid: {error}"))?;
         let port =
             u16::try_from(mixed_port).map_err(|_error| "mixed port is invalid".to_owned())?;
-        let profile = Profile::qx_sources(vec![secret], Vec::new(), port)
+        let mut profile = Profile::qx_sources(vec![secret], Vec::new(), port)
             .map_err(|error| format!("profile could not be built: {error}"))?;
+        profile
+            .ensure_global_match()
+            .map_err(|error| format!("profile could not be completed: {error}"))?;
         render_mihomo_yaml_for_android(&profile, file_descriptor)
             .map_err(|error| format!("profile could not be rendered: {error}"))
     })();
