@@ -12,6 +12,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -32,6 +33,7 @@ fun SettingsScreen(onMessage: (String) -> Unit) {
     val context = LocalContext.current
     var showLogs by remember { mutableStateOf(false) }
     var showAbout by remember { mutableStateOf(false) }
+    var showHosts by remember { mutableStateOf(false) }
     val config = Workspace.config.value
     val abi = android.os.Build.SUPPORTED_ABIS.firstOrNull() ?: "unknown"
 
@@ -52,6 +54,7 @@ fun SettingsScreen(onMessage: (String) -> Unit) {
             InfoRow("配置", RuntimeState.summary.ifBlank { "—" })
             InfoRow("工作区", "${config.subscriptions.size} 订阅 · ${config.nodes.size} 节点 · ${config.groups.size} 策略组")
             InfoRow("设备 ABI", abi)
+            InfoRow("地址覆盖", "${config.hosts.size} 条")
             InfoRow("数据目录", "files/mihomo")
         }
 
@@ -61,6 +64,7 @@ fun SettingsScreen(onMessage: (String) -> Unit) {
                 onMessage("已重新载入配置")
             }) { Text("重新载入配置") }
             TextButton(onClick = { showLogs = true }) { Text("查看内核日志") }
+            TextButton(onClick = { showHosts = true }) { Text("节点地址覆盖") }
         }
 
         SectionCard("关于") {
@@ -77,6 +81,19 @@ fun SettingsScreen(onMessage: (String) -> Unit) {
 
     if (showLogs) {
         LogsDialog(onDismiss = { showLogs = false })
+    }
+
+    if (showHosts) {
+        HostsDialog(
+            initial = config.hosts,
+            onDismiss = { showHosts = false },
+            onSave = { hosts ->
+                Workspace.update { it.copy(hosts = hosts) }
+                applyWorkspace(context)
+                showHosts = false
+                onMessage("已保存 ${hosts.size} 条地址覆盖并重新载入")
+            },
+        )
     }
 
     if (showAbout) {
@@ -137,4 +154,51 @@ private fun readLog(context: android.content.Context): List<String> {
     return runCatching {
         file.readLines().takeLast(300)
     }.getOrDefault(listOf("日志读取失败"))
+}
+
+@Composable
+private fun HostsDialog(
+    initial: Map<String, String>,
+    onDismiss: () -> Unit,
+    onSave: (Map<String, String>) -> Unit,
+) {
+    var text by remember {
+        mutableStateOf(initial.entries.joinToString("\n") { (host, address) -> "$host=$address" })
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("节点地址覆盖") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "每行一条「域名=IP」。当机场 DNS 返回的地址在你当前网络不可达时，用它把节点域名" +
+                        "固定到能连通的 IP；订阅更新后依然生效。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 140.dp),
+                    textStyle = MaterialTheme.typography.bodySmall,
+                    placeholder = { Text("naiu-hk.example.com=203.0.113.7") },
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                val hosts = buildMap {
+                    for (line in text.lines()) {
+                        val trimmed = line.trim()
+                        if (trimmed.isEmpty() || !trimmed.contains('=')) continue
+                        val host = trimmed.substringBefore('=').trim()
+                        val address = trimmed.substringAfter('=').trim()
+                        if (host.isNotEmpty() && address.isNotEmpty()) put(host, address)
+                    }
+                }
+                onSave(hosts)
+            }) { Text("保存") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
 }

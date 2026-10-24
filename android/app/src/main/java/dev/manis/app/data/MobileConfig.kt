@@ -43,6 +43,8 @@ data class MobileConfig(
     val nodes: List<NodeEntry> = emptyList(),
     val groups: List<GroupEntry> = emptyList(),
     val rules: String = "",
+    /** Pinned proxy-server addresses, used when a resolver hands out unreachable IPs. */
+    val hosts: Map<String, String> = emptyMap(),
 ) {
     fun toJson(): String {
         val subscriptionsJson = JSONArray()
@@ -69,7 +71,12 @@ data class MobileConfig(
                     .put("filter", group.filter ?: JSONObject.NULL),
             )
         }
+        val hostsJson = JSONObject()
+        for ((host, address) in hosts) {
+            hostsJson.put(host, address)
+        }
         return JSONObject()
+            .put("hosts", hostsJson)
             .put("mode", mode)
             .put("mixed_port", mixedPort)
             .put("subscriptions", subscriptionsJson)
@@ -119,6 +126,13 @@ data class MobileConfig(
                     )
                 }
             }
+            val hosts = mutableMapOf<String, String>()
+            json.optJSONObject("hosts")?.let { objectValue ->
+                for (host in objectValue.keys()) {
+                    val address = objectValue.optString(host)
+                    if (address.isNotBlank()) hosts[host] = address
+                }
+            }
             return MobileConfig(
                 mode = json.optString("mode", "rule"),
                 mixedPort = json.optInt("mixed_port", 7890),
@@ -126,6 +140,7 @@ data class MobileConfig(
                 nodes = nodes,
                 groups = groups,
                 rules = json.optString("rules"),
+                hosts = hosts,
             )
         }
 
