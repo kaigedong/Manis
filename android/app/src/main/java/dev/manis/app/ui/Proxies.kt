@@ -72,6 +72,7 @@ fun ProxiesScreen(onMessage: (String) -> Unit) {
                     } else {
                         runCatching { ControllerApi.select(group.name, best.key) }
                             .onSuccess {
+                                RuntimeState.unreachable = false
                                 onMessage("已选择 ${best.key}（${best.value}ms）")
                                 runCatching { ControllerApi.snapshot() }
                                     .onSuccess { RuntimeState.snapshot = it }

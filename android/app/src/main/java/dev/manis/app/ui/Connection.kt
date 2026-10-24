@@ -168,6 +168,24 @@ fun ConnectionScreen(
             )
         }
 
+        if (RuntimeState.unreachable) {
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        "所有节点都连不上",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    Text(
+                        "手机网络到订阅节点的链路超时，流量现在无法出去。换一个 Wi-Fi 或移动数据，" +
+                            "或到节点页点「选最快」重试；如果仍然失败，说明机场节点在当前网络被封。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+
         if (RuntimeState.warnings.isNotEmpty()) {
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {

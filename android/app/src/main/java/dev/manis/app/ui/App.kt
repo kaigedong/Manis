@@ -19,9 +19,13 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import android.net.ConnectivityManager
+import android.net.Network
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -49,6 +53,8 @@ object RuntimeState {
     var summary by mutableStateOf("")
     var controllerError by mutableStateOf<String?>(null)
     var warnings by mutableStateOf(listOf<String>())
+    var unreachable by mutableStateOf(false)
+    var networkEpoch by mutableStateOf(0)
 }
 
 @Composable
@@ -61,8 +67,27 @@ fun ManisApp() {
         scope.launch { snackbar.showSnackbar(message) }
     }
 
+    // Re-run the recovery probe when the phone changes networks: a node that timed out on Wi-Fi
+    // may be reachable over cellular.
+    val context = LocalContext.current
+    DisposableEffect(Unit) {
+        val manager = context.getSystemService(ConnectivityManager::class.java)
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                RuntimeState.networkEpoch += 1
+            }
+
+            override fun onLost(network: Network) {
+                RuntimeState.networkEpoch += 1
+            }
+        }
+        manager?.registerDefaultNetworkCallback(callback)
+        onDispose { manager?.unregisterNetworkCallback(callback) }
+    }
+
     LaunchedEffect(Unit) {
         var autoFixDone = false
+        var epoch = RuntimeState.networkEpoch
         while (true) {
             RuntimeState.active = ManisVpnService.active
             RuntimeState.error = ManisVpnService.lastError ?: CoreController.lastError
@@ -81,6 +106,11 @@ fun ManisApp() {
                     }
             } else {
                 RuntimeState.snapshot = null
+                RuntimeState.unreachable = false
+                autoFixDone = false
+            }
+            if (epoch != RuntimeState.networkEpoch) {
+                epoch = RuntimeState.networkEpoch
                 autoFixDone = false
             }
             if (RuntimeState.active && !autoFixDone) {
@@ -100,8 +130,16 @@ fun ManisApp() {
                             return@launch
                         }
                         val delays = runCatching { ControllerApi.testGroup(group.name) }
-                            .getOrNull() ?: continue
-                        val best = delays.minByOrNull { it.value } ?: continue
+                            .onFailure { error ->
+                                android.util.Log.w("Manis", "group health check failed", error)
+                            }
+                            .getOrElse { emptyMap() }
+                        val best = delays.minByOrNull { it.value }
+                        if (best == null) {
+                            RuntimeState.unreachable = true
+                            say("所有节点都连不上：手机网络到订阅节点的链路超时")
+                            return@launch
+                        }
                         runCatching { ControllerApi.select(group.name, best.key) }.onSuccess {
                             say("当前节点不可用，已切换到 ${best.key}")
                             runCatching { ControllerApi.snapshot() }
