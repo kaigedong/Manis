@@ -82,7 +82,9 @@ internal object CoreController {
             val binary = File(context.applicationInfo.nativeLibraryDir, CORE_BINARY)
             check(binary.isFile) { "打包的 Mihomo 内核缺失（$CORE_BINARY）" }
 
-            if (restart && running) {
+            // Android can restart the foreground service (for example after an install); never
+            // leave the previous core running when a new one is started.
+            if (running) {
                 Native.stopCore()
             }
             android.util.Log.d("Manis", "render ok rules=${rendered.optInt("rules")}")
