@@ -50,9 +50,9 @@ mod workspace_inputs;
 #[cfg(not(test))]
 use crate::core_update;
 use configuration::{
-    ImportQxRuleError, ManualRuleConditionEditor, ManualRuleEditorState, ManualRulePopover,
-    ProxySourceEditorState, QxRuleEditorPopover, QxRuleImportFeedback, QxRuleImportResult,
-    QxRuleSourceRefreshState, RuleSourceState,
+    ImportQxRuleError, ManualRuleConditionEditor, ManualRuleEditorState, ManualRuleInsert,
+    ManualRulePopover, ProxySourceEditorState, QxRuleEditorPopover, QxRuleImportFeedback,
+    QxRuleImportResult, QxRuleSourceRefreshState, RuleSourceState,
 };
 use nodes::{
     GroupBenchmarkNodeState, GroupBenchmarkProgressQueue, GroupBenchmarkState,
@@ -188,6 +188,8 @@ pub struct ManisApp {
     manual_rules: Vec<crate::manual_rule::ManualRule>,
     manual_rule_conditions: Vec<ManualRuleConditionEditor>,
     manual_rule_condition_count: usize,
+    /// Where a new rule is inserted; rules created from the activity list must win.
+    manual_rule_insert: ManualRuleInsert,
     manual_rule_target: String,
     manual_rule_editor_state: ManualRuleEditorState,
     manual_rule_popover: Option<ManualRulePopover>,
@@ -376,6 +378,7 @@ impl ManisApp {
             manual_rules: Vec::new(),
             manual_rule_conditions: Vec::new(),
             manual_rule_condition_count: 1,
+            manual_rule_insert: ManualRuleInsert::Append,
             manual_rule_target: default_rule_target,
             manual_rule_editor_state: ManualRuleEditorState::Closed,
             manual_rule_popover: None,

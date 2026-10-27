@@ -33,7 +33,7 @@ mod rule_sources;
 mod settings;
 mod source_mutations;
 pub(in crate::app) use manual_rules::{
-    ManualRuleConditionEditor, ManualRuleEditorState, ManualRulePopover,
+    ManualRuleConditionEditor, ManualRuleEditorState, ManualRuleInsert, ManualRulePopover,
 };
 pub(in crate::app) use proxy_sources::ProxySourceEditorState;
 pub(in crate::app) use source_mutations::{

@@ -20,6 +20,8 @@ once the public API and configuration formats stabilize.
 - Optional login auto-start, enabled by default and configurable under Configuration → General.
 - Single-instance behavior: launching Manis again brings the existing window forward instead of
   starting a second copy.
+- Clicking a connection in Network activity opens the routing-rule editor with its domain (or
+  destination address) and current policy filled in, so one row can be routed elsewhere quickly.
 
 ### Changed
 

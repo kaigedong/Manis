@@ -12,6 +12,15 @@ pub(in crate::app) struct ManualRuleConditionEditor {
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(in crate::app) enum ManualRuleInsert {
+    /// Appended last, so older rules keep precedence.
+    #[default]
+    Append,
+    /// Inserted first, used when a connection row asks for a rule that must win.
+    Prepend,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(in crate::app) enum ManualRuleEditorState {
     #[default]
     Closed,

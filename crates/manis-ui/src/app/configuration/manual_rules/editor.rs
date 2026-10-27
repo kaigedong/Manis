@@ -31,9 +31,17 @@ impl ManisApp {
             }
             return;
         }
+        self.begin_manual_rule_creation(cx);
+        self.open_manual_rule_dialog(window, cx);
+    }
+
+    /// Resets the editor to a fresh rule. Callers open the dialog themselves so they can prefill
+    /// the conditions and target first.
+    fn begin_manual_rule_creation(&mut self, cx: &mut Context<Self>) {
         self.manual_rule_editor_state = crate::app::ManualRuleEditorState::Creating;
         self.manual_rule_popover = None;
         self.manual_rule_error = None;
+        self.manual_rule_insert = crate::app::ManualRuleInsert::Append;
         self.manual_rule_condition_count = 1;
         for condition in &self.manual_rule_conditions {
             condition
@@ -50,6 +58,40 @@ impl ManisApp {
         if let Some(target) = self.manual_rule_targets().first() {
             self.manual_rule_target.clone_from(target);
         }
+    }
+
+    /// Opens the rule editor with a connection's host and current policy already filled in, so a
+    /// row in the activity list can be routed somewhere else without retyping the domain.
+    pub(in crate::app) fn open_manual_rule_editor_for_connection(
+        &mut self,
+        kind: crate::manual_rule::ManualRuleKind,
+        value: String,
+        target: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if crate::app::windows::activate(
+            cx.entity().entity_id(),
+            crate::app::windows::AuxiliaryKind::ManualRule,
+            cx,
+        ) {
+            return;
+        }
+        if self.manual_rule_editor_state.is_open() {
+            return;
+        }
+        self.begin_manual_rule_creation(cx);
+        if let Some(condition) = self.manual_rule_conditions.first_mut() {
+            condition.kind = kind;
+            condition.input.update(cx, |input, cx| {
+                input.set_value_without_event(value, cx);
+            });
+        }
+        let targets = self.manual_rule_targets();
+        if let Some(target) = target.filter(|target| targets.iter().any(|item| item == target)) {
+            self.manual_rule_target = target;
+        }
+        self.manual_rule_insert = crate::app::ManualRuleInsert::Prepend;
         self.open_manual_rule_dialog(window, cx);
     }
 
@@ -151,6 +193,7 @@ impl ManisApp {
     }
 
     pub(in crate::app) fn reset_manual_rule_editor_state(&mut self) {
+        self.manual_rule_insert = crate::app::ManualRuleInsert::Append;
         self.manual_rule_editor_state = crate::app::ManualRuleEditorState::Closed;
         self.manual_rule_popover = None;
         self.manual_rule_error = None;
@@ -352,7 +395,10 @@ impl ManisApp {
             {
                 return Err(crate::manual_rule::ManualRuleEditError::Duplicate);
             }
-            self.manual_rules.push(rule);
+            match self.manual_rule_insert {
+                crate::app::ManualRuleInsert::Prepend => self.manual_rules.insert(0, rule),
+                crate::app::ManualRuleInsert::Append => self.manual_rules.push(rule),
+            }
         }
         Ok(())
     }
