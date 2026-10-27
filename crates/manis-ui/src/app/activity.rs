@@ -530,6 +530,60 @@ mod tests {
         assert_eq!(draft.value, "2001:db8::1/128");
     }
 
+    #[gpui::test]
+    fn activity_click_opens_the_rule_editor_prefilled(cx: &mut gpui::TestAppContext) {
+        use gpui::AppContext as _;
+        use gpui_component::WindowExt as _;
+
+        cx.update(crate::init);
+        cx.update(|cx| cx.set_reduce_motion(true));
+        let mut app = None;
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            let entity =
+                cx.new(|_| super::ManisApp::with_fixture_controller("http://127.0.0.1:9090"));
+            app = Some(entity.clone());
+            crate::root(entity, window, cx)
+        });
+        let app = app.expect("fixture app");
+        cx.update(|window, cx| {
+            app.update(cx, |app, cx| {
+                app.open_manual_rule_editor_for_connection(
+                    crate::manual_rule::ManualRuleKind::HostSuffix,
+                    "cache11-lax2.steamcontent.com".to_owned(),
+                    Some("DIRECT".to_owned()),
+                    window,
+                    cx,
+                );
+            });
+            window.draw(cx).clear(cx);
+        });
+
+        app.update(cx, |app, cx| {
+            assert_eq!(
+                app.manual_rule_editor_state,
+                crate::app::ManualRuleEditorState::Creating
+            );
+            assert_eq!(
+                app.manual_rule_insert,
+                crate::app::ManualRuleInsert::Prepend
+            );
+            assert_eq!(app.manual_rule_target, "DIRECT");
+            let condition = app.manual_rule_conditions.first().expect("condition");
+            assert_eq!(
+                condition.kind,
+                crate::manual_rule::ManualRuleKind::HostSuffix
+            );
+            assert_eq!(
+                condition.input.read(cx).value(),
+                "cache11-lax2.steamcontent.com"
+            );
+        });
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            assert!(window.has_active_dialog(cx), "the rule dialog stays open");
+        });
+    }
+
     #[test]
     fn rule_draft_skips_connections_without_a_target() {
         let empty = connection(serde_json::json!({"metadata": {}}));
