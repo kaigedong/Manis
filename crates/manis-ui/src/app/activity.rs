@@ -1,6 +1,10 @@
+use std::net::IpAddr;
+
 use gpui::{AnyElement, Div, FontWeight, ParentElement, Styled, div, prelude::*, px};
 use manis_core::WindowSizeClass;
 use manis_mihomo::Connection;
+
+use crate::manual_rule::ManualRuleKind;
 
 mod matching;
 mod search;
@@ -14,6 +18,12 @@ use crate::{
     localization::{CountNoun, Language, Message, copy},
     theme::{ControlSize, Space, TextRole, Theme},
 };
+
+/// What the rule editor should be prefilled with when a connection row is clicked.
+struct RuleDraft {
+    kind: ManualRuleKind,
+    value: String,
+}
 
 struct ActivityConnectionView<'connection, 'matcher> {
     connection: &'connection Connection,
@@ -202,13 +212,15 @@ impl ManisApp {
                 )
             }));
         } else {
-            for view in visible_connections {
+            for (index, view) in visible_connections.iter().enumerate() {
                 rows = rows.child(activity_row(
                     view.connection,
                     view.rule_group,
                     theme,
                     compact,
                     language,
+                    index,
+                    cx,
                 ));
             }
         }
@@ -248,7 +260,9 @@ fn activity_row(
     theme: Theme,
     compact: bool,
     language: Language,
-) -> Div {
+    index: usize,
+    cx: &mut gpui::Context<ManisApp>,
+) -> gpui::Stateful<Div> {
     let target = connection_target(connection, language);
     let metadata = connection_metadata(connection, language);
     let chain =
@@ -258,7 +272,12 @@ fn activity_row(
                 .to_owned()
         });
 
-    div()
+    let draft = rule_draft_from_connection(connection);
+    let policy_hint = connection.chains.first().cloned();
+    let mut row = div()
+        .id(gpui::ElementId::Name(
+            format!("activity-connection-{index}").into(),
+        ))
         .min_h(px(if compact { 78.0 } else { 60.0 }))
         .px(Space::Xl.px())
         .py(Space::Md.px())
@@ -316,21 +335,76 @@ fn activity_row(
                     .child(chain),
             )
         })
-        .child(
-            div()
-                .w(px(126.0))
-                .flex_shrink_0()
-                .flex()
-                .justify_end()
-                .text_size(TextRole::Data.size())
-                .line_height(TextRole::Data.line_height())
-                .text_color(theme.text_secondary)
-                .child(format!(
-                    "↓ {}  ↑ {}",
-                    format_bytes(connection.download),
-                    format_bytes(connection.upload)
-                )),
-        )
+        .child(traffic_cell(connection, theme));
+    if let Some(draft) = draft {
+        row = row
+            .cursor_pointer()
+            .hover(move |style| style.bg(theme.button_hover));
+        row = row.on_click(cx.listener(move |this, _, window, cx| {
+            this.open_manual_rule_editor_for_connection(
+                draft.kind,
+                draft.value.clone(),
+                policy_hint.clone(),
+                window,
+                cx,
+            );
+        }));
+    }
+    row
+}
+
+fn traffic_cell(connection: &Connection, theme: Theme) -> Div {
+    div()
+        .w(px(126.0))
+        .flex_shrink_0()
+        .flex()
+        .justify_end()
+        .text_size(TextRole::Data.size())
+        .line_height(TextRole::Data.line_height())
+        .text_color(theme.text_secondary)
+        .child(format!(
+            "↓ {}  ↑ {}",
+            format_bytes(connection.download),
+            format_bytes(connection.upload)
+        ))
+}
+
+/// Picks the rule a click on this connection should create: its domain as a suffix rule, or the
+/// destination address as a CIDR rule when no hostname was sniffed.
+fn rule_draft_from_connection(connection: &Connection) -> Option<RuleDraft> {
+    let host = [
+        connection.metadata.sniff_host.as_deref(),
+        connection.metadata.host.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .map(str::trim)
+    .find(|value| !value.is_empty());
+    if let Some(host) = host {
+        return Some(ip_or_suffix_draft(host));
+    }
+    let destination = connection.metadata.destination_ip.as_deref()?.trim();
+    if destination.parse::<IpAddr>().is_err() {
+        return None;
+    }
+    Some(ip_or_suffix_draft(destination))
+}
+
+fn ip_or_suffix_draft(value: &str) -> RuleDraft {
+    match value.parse::<IpAddr>() {
+        Ok(IpAddr::V4(address)) => RuleDraft {
+            kind: ManualRuleKind::IpCidr,
+            value: format!("{address}/32"),
+        },
+        Ok(IpAddr::V6(address)) => RuleDraft {
+            kind: ManualRuleKind::Ip6Cidr,
+            value: format!("{address}/128"),
+        },
+        Err(_) => RuleDraft {
+            kind: ManualRuleKind::HostSuffix,
+            value: value.to_owned(),
+        },
+    }
 }
 
 fn route_stage_label(stage: &str, language: Language) -> &str {
@@ -423,6 +497,44 @@ fn connection_target(connection: &Connection, language: Language) -> String {
 #[cfg(test)]
 mod tests {
     use manis_mihomo::{Connection, ConnectionMetadata};
+
+    fn connection(value: serde_json::Value) -> Connection {
+        serde_json::from_value(value).expect("connection fixture")
+    }
+
+    #[test]
+    fn rule_draft_uses_the_sniffed_host_as_a_suffix_rule() {
+        let connection = connection(serde_json::json!({
+            "metadata": {
+                "sniffHost": "cache11-lax2.steamcontent.com",
+                "host": "155.133.231.9",
+                "destinationIP": "155.133.231.9",
+                "destinationPort": "443"
+            }
+        }));
+        let draft = super::rule_draft_from_connection(&connection).expect("draft");
+        assert_eq!(draft.kind, crate::manual_rule::ManualRuleKind::HostSuffix);
+        assert_eq!(draft.value, "cache11-lax2.steamcontent.com");
+    }
+
+    #[test]
+    fn rule_draft_falls_back_to_the_destination_address() {
+        let v4 = connection(serde_json::json!({"metadata": {"destinationIP": "203.0.113.7"}}));
+        let draft = super::rule_draft_from_connection(&v4).expect("draft");
+        assert_eq!(draft.kind, crate::manual_rule::ManualRuleKind::IpCidr);
+        assert_eq!(draft.value, "203.0.113.7/32");
+
+        let v6 = connection(serde_json::json!({"metadata": {"destinationIP": "2001:db8::1"}}));
+        let draft = super::rule_draft_from_connection(&v6).expect("draft");
+        assert_eq!(draft.kind, crate::manual_rule::ManualRuleKind::Ip6Cidr);
+        assert_eq!(draft.value, "2001:db8::1/128");
+    }
+
+    #[test]
+    fn rule_draft_skips_connections_without_a_target() {
+        let empty = connection(serde_json::json!({"metadata": {}}));
+        assert!(super::rule_draft_from_connection(&empty).is_none());
+    }
 
     #[test]
     fn route_summary_hides_runtime_groups_and_reads_from_policy_to_node() {

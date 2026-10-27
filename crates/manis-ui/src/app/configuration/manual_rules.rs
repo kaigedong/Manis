@@ -37,5 +37,5 @@ mod list;
 mod model;
 mod persistence;
 pub(in crate::app) use model::{
-    ManualRuleConditionEditor, ManualRuleEditorState, ManualRulePopover,
+    ManualRuleConditionEditor, ManualRuleEditorState, ManualRuleInsert, ManualRulePopover,
 };
