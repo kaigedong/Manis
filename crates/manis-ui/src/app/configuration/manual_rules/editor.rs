@@ -81,6 +81,8 @@ impl ManisApp {
             return;
         }
         self.begin_manual_rule_creation(cx);
+        let theme = self.theme();
+        self.ensure_manual_rule_input(theme, window, cx);
         if let Some(condition) = self.manual_rule_conditions.first_mut() {
             condition.kind = kind;
             condition.input.update(cx, |input, cx| {
@@ -117,6 +119,8 @@ impl ManisApp {
         self.manual_rule_editor_state = crate::app::ManualRuleEditorState::Editing(index);
         self.manual_rule_popover = None;
         self.manual_rule_error = None;
+        let theme = self.theme();
+        self.ensure_manual_rule_input(theme, window, cx);
         self.manual_rule_condition_count = if rule.is_final() {
             1
         } else {
