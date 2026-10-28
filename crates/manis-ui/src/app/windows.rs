@@ -20,7 +20,6 @@ actions!(manis_windows, [ShowSettings, CloseAuxiliary]);
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum AuxiliaryKind {
-    Settings,
     ProxySource,
     RuleSource,
     ManualRule,
@@ -52,7 +51,7 @@ pub(super) fn has_editors(id: EntityId, cx: &App) -> bool {
             .handles
             .keys()
             .chain(registry.pending.iter())
-            .any(|(owner, kind)| *owner == id && *kind != AuxiliaryKind::Settings)
+            .any(|(owner, _kind)| *owner == id)
     })
 }
 
@@ -95,7 +94,7 @@ pub(crate) fn open(app: Entity<ManisApp>, kind: AuxiliaryKind, cx: &mut App) {
     // Opening is deferred because the launching event already borrows ManisApp.
     cx.defer(move |cx| {
         let title = app.read(cx).auxiliary_title(kind);
-        let options = options(kind, title, cx);
+        let options = options(title, cx);
         let retained = app.clone();
         let result = cx.open_window(options, move |window, cx| {
             let closing = retained.downgrade();
@@ -195,12 +194,8 @@ pub fn fixture_root(
     build_root(app, kind, window, cx)
 }
 
-fn options(kind: AuxiliaryKind, title: String, cx: &App) -> WindowOptions {
-    let (width, height) = if kind == AuxiliaryKind::Settings {
-        (980., 760.)
-    } else {
-        (720., 660.)
-    };
+fn options(title: String, cx: &App) -> WindowOptions {
+    let (width, height) = (720., 660.);
     WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
             None,
@@ -270,18 +265,11 @@ impl Render for AuxiliaryView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let kind = self.kind;
         let app = self.app.clone();
-        let (theme, content, title, status) = app.update(cx, |app, cx| {
+        let (theme, content, title) = app.update(cx, |app, cx| {
             let theme = app.theme();
             let compact = WindowSizeClass::for_width(window.viewport_size().width.as_f32())
                 == WindowSizeClass::Compact;
             let content = match kind {
-                AuxiliaryKind::Settings => app
-                    .configuration_workspace(
-                        theme,
-                        WindowSizeClass::for_width(window.viewport_size().width.as_f32()),
-                        cx,
-                    )
-                    .into_any_element(),
                 AuxiliaryKind::ProxySource => app
                     .proxy_source_editor_sections(theme, app.language(), window, cx)
                     .panel(),
@@ -300,22 +288,13 @@ impl Render for AuxiliaryView {
                         .panel()
                 }
             };
-            (
-                theme,
-                content,
-                app.auxiliary_title(kind),
-                app.status.clone(),
-            )
+            (theme, content, app.auxiliary_title(kind))
         });
         window.set_window_title(&title);
         div()
             .id("manis-auxiliary-window")
             .debug_selector(|| "manis-auxiliary-window".into())
-            .key_context(if kind == AuxiliaryKind::Settings {
-                "ManisWindow ManisAuxiliary"
-            } else {
-                "ManisWindow ManisAuxiliary ManisEditor"
-            })
+            .key_context("ManisWindow ManisAuxiliary ManisEditor")
             .track_focus(&self.focus)
             .size_full()
             .flex()
@@ -324,9 +303,6 @@ impl Render for AuxiliaryView {
             .text_color(theme.text_primary)
             .text_size(TextRole::Body.size())
             .line_height(TextRole::Body.line_height())
-            .on_action(cx.listener(|this, _: &ShowSettings, _, cx| {
-                open(this.app.clone(), AuxiliaryKind::Settings, cx);
-            }))
             .on_action(cx.listener(move |this, _: &CloseAuxiliary, window, cx| {
                 if window.has_active_dialog(cx) {
                     if this.app.read(cx).configuration_transfer.active {
@@ -343,28 +319,12 @@ impl Render for AuxiliaryView {
                 }
             }))
             .child(div().flex_1().min_h(px(0.0)).child(content))
-            .when(kind == AuxiliaryKind::Settings, |view| {
-                view.child(
-                    div()
-                        .id("utility-window-status")
-                        .flex_shrink_0()
-                        .px_5()
-                        .py_2()
-                        .border_t_1()
-                        .border_color(theme.outline_subtle)
-                        .bg(theme.surface_chrome)
-                        .text_size(TextRole::Metadata.size())
-                        .text_color(theme.text_secondary)
-                        .child(status),
-                )
-            })
     }
 }
 
 impl ManisApp {
     fn auxiliary_title(&self, kind: AuxiliaryKind) -> String {
         let label = match kind {
-            AuxiliaryKind::Settings => self.language().localized(copy::configuration::SETTINGS),
             AuxiliaryKind::ProxySource => self
                 .language()
                 .localized(copy::configuration::PROXY_SOURCES),
@@ -400,7 +360,6 @@ impl ManisApp {
                 .first()
                 .map(|condition| &condition.input),
             AuxiliaryKind::Policy => self.inputs.policy_group_name.as_ref(),
-            AuxiliaryKind::Settings => None,
         };
         if let Some(input) = input {
             input.focus_handle(cx).focus(window, cx);
@@ -408,8 +367,6 @@ impl ManisApp {
     }
     fn cancel_auxiliary(&mut self, kind: AuxiliaryKind, cx: &mut Context<Self>) -> bool {
         match kind {
-            AuxiliaryKind::Settings if self.configuration_transfer.active => return false,
-            AuxiliaryKind::Settings => {}
             AuxiliaryKind::ProxySource if self.proxy_source_editor.is_importing() => return false,
             AuxiliaryKind::RuleSource
                 if self.rule_sources.feedback == QxRuleImportFeedback::Importing =>
