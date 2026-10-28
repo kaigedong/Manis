@@ -7,21 +7,6 @@ pub(crate) fn capture_utility_windows(
     use manis_ui::UtilityWindowFixture as Kind;
     for (kind, dark, width, height, name) in [
         (
-            Kind::Settings,
-            false,
-            980.,
-            760.,
-            "settings-window-light.png",
-        ),
-        (Kind::Settings, true, 980., 760., "settings-window-dark.png"),
-        (
-            Kind::Settings,
-            false,
-            480.,
-            560.,
-            "settings-window-minimum.png",
-        ),
-        (
             Kind::ProxySource,
             false,
             720.,
