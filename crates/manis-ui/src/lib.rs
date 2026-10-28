@@ -67,7 +67,7 @@ impl gpui::Render for ManisRootView {
                 }
             }))
             .on_action(cx.listener(|this, _: &app::windows::ShowSettings, _, cx| {
-                app::windows::open(this.app.clone(), app::windows::AuxiliaryKind::Settings, cx);
+                this.app.update(cx, app::ManisApp::open_settings);
             }))
             .relative()
             .size_full()

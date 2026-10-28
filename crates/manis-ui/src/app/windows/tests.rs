@@ -11,44 +11,23 @@ fn fixture(cx: &mut gpui::TestAppContext) -> (Entity<ManisApp>, AnyWindowHandle)
 }
 
 #[gpui::test]
-fn settings_is_singleton_and_closes_without_changing_the_main_workspace(
-    cx: &mut gpui::TestAppContext,
-) {
+fn settings_opens_in_the_main_window_instead_of_a_second_window(cx: &mut gpui::TestAppContext) {
     let (app, main) = fixture(cx);
     let mut main_context = VisualTestContext::from_window(main, cx);
     main_context.update(|window, cx| window.draw(cx).clear(cx));
+
     main_context.simulate_keystrokes("cmd-,");
-    cx.update(|cx| {
-        open(app.clone(), AuxiliaryKind::Settings, cx);
-        open(app.clone(), AuxiliaryKind::Settings, cx);
-    });
     cx.run_until_parked();
-    let handle = cx.read(|cx| {
-        cx.global::<AuxiliaryWindows>().handles[&(app.entity_id(), AuxiliaryKind::Settings)]
-    });
-    assert_eq!(cx.windows().len(), 2);
-    assert!(cx.read(|cx| is_auxiliary(handle, cx)));
-    assert!(!cx.read(|cx| is_auxiliary(main, cx)));
+    assert_eq!(cx.windows().len(), 1, "settings must not open a window");
     assert_eq!(
         app.read_with(cx, |app, _| app.primary_workspace),
-        PrimaryWorkspace::Nodes
+        PrimaryWorkspace::Configuration
     );
-    let mut window = VisualTestContext::from_window(handle, cx);
-    window.update(|window, cx| window.draw(cx).clear(cx));
-    assert!(window.debug_bounds("manis-auxiliary-window").is_some());
-    // The native close button must preserve the configuration dialog's host.
-    app.update(cx, |app, _| app.configuration_transfer.active = true);
-    assert!(!window.simulate_close());
-    window.simulate_keystrokes("cmd-w");
-    assert_eq!(cx.windows().len(), 2);
-    app.update(cx, |app, _| app.configuration_transfer.active = false);
-    window.simulate_keystrokes("cmd-w");
+
+    // Repeated shortcuts stay on the same window and page.
+    main_context.simulate_keystrokes("cmd-,");
     cx.run_until_parked();
     assert_eq!(cx.windows().len(), 1);
-    assert_eq!(cx.windows()[0].window_id(), main.window_id());
-    cx.update(|cx| open(app.clone(), AuxiliaryKind::Settings, cx));
-    cx.run_until_parked();
-    assert_eq!(cx.windows().len(), 2);
 }
 
 #[gpui::test]
@@ -111,7 +90,7 @@ fn native_long_editors_render_and_close_with_keyboard(cx: &mut gpui::TestAppCont
             AuxiliaryKind::RuleSource => "save-qx-rule-source",
             AuxiliaryKind::ManualRule => "save-manual-rule",
             AuxiliaryKind::Policy => "save-managed-policy-dialog",
-            _ => unreachable!(),
+            AuxiliaryKind::ProxySource => unreachable!(),
         };
         let bounds = window.debug_bounds(footer).expect(footer);
         window.update(|window, _| assert!(bounds.bottom() <= window.viewport_size().height));

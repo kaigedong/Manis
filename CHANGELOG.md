@@ -28,6 +28,9 @@ once the public API and configuration formats stabilize.
 
 ### Changed
 
+- Settings opens inside the main window again: the sidebar item and the settings shortcut no
+  longer create a separate window.
+
 - Upgrade every direct dependency to its newest release, including GPUI 0.3.9, GPUI Component 0.8,
   `zip` 9, `zbus` 6, and `ureq` 3.5. The core archive reader accepts `zip` 9's fallible entry
   names, and the Linux tray integration test drives `zbus` 6 from its process-wide multithreaded

@@ -524,24 +524,16 @@ mod tests {
     }
 
     #[gpui::test]
-    fn tray_keeps_settings_separate_when_reopening_the_main_window(cx: &mut gpui::TestAppContext) {
+    fn reopening_the_main_window_creates_a_fresh_window(cx: &mut gpui::TestAppContext) {
         let (app, main) = fixture_window(cx);
-        cx.update(|cx| {
-            crate::app::windows::open(
-                app.clone(),
-                crate::app::windows::AuxiliaryKind::Settings,
-                cx,
-            );
-        });
-        cx.run_until_parked();
         assert_eq!(cx.update(super::main_window), Some(main));
         cx.update_window(main, |_, window, _| window.remove_window())
             .unwrap();
-        assert_eq!(cx.windows().len(), 1);
+        assert!(cx.windows().is_empty());
         assert!(cx.update(super::main_window).is_none());
         cx.update(super::show_or_open_window);
         cx.run_until_parked();
-        assert_eq!(cx.windows().len(), 2);
+        assert_eq!(cx.windows().len(), 1);
         let reopened = cx.update(super::main_window).expect("reopened main window");
         assert_ne!(reopened.window_id(), main.window_id());
         assert_global_app(cx, &app);
