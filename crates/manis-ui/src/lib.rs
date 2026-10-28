@@ -1,6 +1,7 @@
 mod app;
 mod app_update;
 mod assets;
+mod auto_connect;
 mod autostart;
 mod brand;
 mod components;
