@@ -217,6 +217,7 @@ pub(crate) fn is_config_entry_name(name: &str) -> bool {
             | "kernel.kind"
             | "language.preference"
             | "startup.launch_at_login"
+            | "startup.auto_connect"
     ) || prefixed_name(name, "source-", ".url")
         || prefixed_name(name, "saved-", ".vless")
         || prefixed_name(name, "qx-rule-", ".qxrules")

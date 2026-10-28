@@ -12,7 +12,7 @@ use manis_mihomo::{Connection, ObservedRouteEvidence, RuntimeConfig};
 use manis_profile::{QxRuleList, SecretUrl};
 
 use crate::{
-    autostart,
+    auto_connect, autostart,
     components::StatusTone,
     diagnostics::{self, LogLevel, UiEvent, record_event, trace_ui},
     kernel::KernelRuntime,
@@ -135,6 +135,22 @@ enum PreferencePersistence {
 
 type RoutingModeApplyResult = Result<PreferencePersistence, mihomo::LoadError>;
 
+/// Whether opening Manis starts the managed kernel, and which step of that attempt is running.
+#[derive(Debug, Default)]
+pub(in crate::app) struct AutoConnectState {
+    pub(super) enabled: bool,
+    pub(super) stage: AutoConnectStage,
+    pub(super) attempts: u8,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(in crate::app) enum AutoConnectStage {
+    #[default]
+    Idle,
+    WaitingForCore,
+    Connecting,
+}
+
 pub struct ManisApp {
     localizer: Localizer,
     primary_workspace: PrimaryWorkspace,
@@ -183,6 +199,7 @@ pub struct ManisApp {
     dark: bool,
     status: String,
     launch_at_login: bool,
+    auto_connect: AutoConnectState,
     proxy_source_editor: ProxySourceEditorState,
     inputs: WorkspaceInputs,
     manual_rules: Vec<crate::manual_rule::ManualRule>,
@@ -255,6 +272,7 @@ impl ManisApp {
         if matches!(app.mihomo_core_update_state, MihomoCoreUpdateState::Missing) {
             app.update_mihomo_core(cx);
         }
+        app.maybe_auto_connect(cx);
         app
     }
 
@@ -317,6 +335,7 @@ impl ManisApp {
             .map_or_else(|| "DIRECT".to_owned(), |group| group.name.clone());
         let mut node_workspace = NodeWorkspaceState::default();
         node_workspace.replace_collapsed_groups(collapsed_groups.iter().map(String::as_str));
+        let auto_connect_enabled = auto_connect::load_preference(subscription_store_dir.as_deref());
         Self {
             localizer,
             primary_workspace: PrimaryWorkspace::default(),
@@ -373,6 +392,10 @@ impl ManisApp {
             dark: false,
             status,
             launch_at_login,
+            auto_connect: AutoConnectState {
+                enabled: auto_connect_enabled,
+                ..AutoConnectState::default()
+            },
             proxy_source_editor: ProxySourceEditorState::default(),
             inputs: WorkspaceInputs::default(),
             manual_rules: Vec::new(),

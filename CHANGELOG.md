@@ -22,6 +22,9 @@ once the public API and configuration formats stabilize.
   starting a second copy.
 - Clicking a connection in Network activity opens the routing-rule editor with its domain (or
   destination address) and current policy filled in, so one row can be routed elsewhere quickly.
+- Opening Manis starts the managed kernel automatically (Configuration → Startup → "Start
+  connected", on by default). A missing core is installed first; one failed start is retried once
+  before the error stays on screen with the manual retry button.
 
 ### Changed
 

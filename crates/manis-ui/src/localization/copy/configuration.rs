@@ -148,7 +148,6 @@ pub(crate) const EDIT_THIS_SINGLE_NODE_SOURCE: LocalizedText =
     LocalizedText::new("Edit this single-node source", "编辑这个单节点来源");
 pub(crate) const EDIT_THIS_SUBSCRIPTION: LocalizedText =
     LocalizedText::new("Edit this subscription", "编辑这个订阅");
-pub(crate) const ENABLED: LocalizedText = LocalizedText::new("Enabled", "已启用");
 pub(crate) const ENTER_AN_ASN_NUMBER_SUCH_AS_6185: LocalizedText = LocalizedText::new(
     "Enter an ASN number such as 6185",
     "请输入 ASN 数字，例如 6185",
@@ -266,6 +265,12 @@ pub(crate) const OPENING_MANIS_AGAIN_BRINGS_THIS_WINDOW_FORWARD: LocalizedText =
     "再次打开 Manis 时会显示当前窗口，不会启动第二个实例。",
 );
 pub(crate) const STARTUP: LocalizedText = LocalizedText::new("Startup", "启动");
+pub(crate) const AUTO_CONNECT_ON_STARTUP: LocalizedText =
+    LocalizedText::new("Start connected", "启动时自动连接");
+pub(crate) const START_THE_KERNEL_AS_SOON_AS_MANIS_OPENS: LocalizedText = LocalizedText::new(
+    "Starts the managed kernel when Manis opens, so the proxy is ready without a second click.",
+    "打开 Manis 时自动启动内核，不必再点一次「启动 Mihomo」。",
+);
 pub(crate) const STARTUP_SETTING_COULD_NOT_BE_SAVED: LocalizedText =
     LocalizedText::new("The startup setting could not be saved", "启动设置保存失败");
 pub(crate) const STARTUP_SETTING_DATA_DIRECTORY_UNAVAILABLE: LocalizedText = LocalizedText::new(
@@ -446,7 +451,6 @@ pub(crate) const THIS_SOURCE_MUST_REMAIN_A_SINGLE_NODE_SHARE_LINK: LocalizedText
         "This source must remain a single-node share link",
         "此来源必须保持为单节点分享链接",
     );
-pub(crate) const UNAVAILABLE: LocalizedText = LocalizedText::new("Unavailable", "不可用");
 pub(crate) const UPDATED_JUST_NOW: LocalizedText =
     LocalizedText::new("Updated just now", "刚刚更新");
 pub(crate) const UPDATE_FAILED: LocalizedText = LocalizedText::new("Update failed", "更新失败");
