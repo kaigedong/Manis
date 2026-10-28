@@ -50,6 +50,10 @@ impl ManisApp {
     /// start that fails once (for example while the network is still coming up at login) is
     /// retried once before the failure is left on screen with the manual retry button.
     pub(in crate::app) fn maybe_auto_connect(&mut self, cx: &mut Context<Self>) {
+        // A direct-only bootstrap profile compiles even on a fresh install, so require an actual
+        // subscription or single node before starting the kernel.
+        let has_sources =
+            !self.imported_subscriptions.is_empty() || !self.saved_single_nodes.is_empty();
         let gate = if !self.auto_connect.enabled {
             AutoConnectGate::Disabled
         } else if self.runtime.is_fixture() {
@@ -61,10 +65,12 @@ impl ManisApp {
             )
         {
             AutoConnectGate::Busy
-        } else if !matches!(
-            self.runtime.profile_source(),
-            RuntimeProfileSource::SavedSources
-        ) {
+        } else if !has_sources
+            || !matches!(
+                self.runtime.profile_source(),
+                RuntimeProfileSource::SavedSources
+            )
+        {
             AutoConnectGate::NoProfile
         } else {
             AutoConnectGate::Ready
