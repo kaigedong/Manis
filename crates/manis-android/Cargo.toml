@@ -14,7 +14,7 @@ rust-version.workspace = true
 crate-type = ["cdylib"]
 
 [dependencies]
-jni = "0.21.1"
+jni = "0.22.4"
 libc = "0.2.174"
 manis-profile = { path = "../manis-profile" }
 serde = { version = "1.0.229", features = ["derive"] }
