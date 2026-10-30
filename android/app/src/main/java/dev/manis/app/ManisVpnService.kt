@@ -9,6 +9,7 @@ import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import dev.manis.app.core.CoreController
+import dev.manis.app.data.SubscriptionDns
 import dev.manis.app.data.Workspace
 
 class ManisVpnService : VpnService() {
@@ -59,6 +60,7 @@ class ManisVpnService : VpnService() {
             if (CoreController.start(this, descriptor)) {
                 active = true
                 lastError = null
+                learnSubscriptionDns()
             } else {
                 fail(CoreController.lastError ?: "内核启动失败")
             }
@@ -67,6 +69,20 @@ class ManisVpnService : VpnService() {
             fail(error.message ?: "VPN 启动失败")
             START_NOT_STICKY
         }
+    }
+
+    /**
+     * Reads the airport's own resolvers out of the subscription document and reloads once when they
+     * change. Runs off the main thread so the first start never waits on the network.
+     */
+    private fun learnSubscriptionDns() {
+        Thread({
+            val changed = runCatching { SubscriptionDns.refresh(this) }.getOrDefault(false)
+            val descriptor = tunnel?.fd
+            if (changed && active && descriptor != null) {
+                CoreController.reload(this, descriptor)
+            }
+        }, "manis-subscription-dns").start()
     }
 
     private fun reload() {

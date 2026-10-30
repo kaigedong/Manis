@@ -1,5 +1,7 @@
 package dev.manis.app.ui
 
+import android.content.ClipData
+
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -12,8 +14,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -25,6 +27,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import dev.manis.app.core.CoreController
+import dev.manis.app.data.PROXY_DNS_DOH
+import dev.manis.app.data.PROXY_DNS_SYSTEM
 import dev.manis.app.data.Workspace
 import java.io.File
 
@@ -33,7 +37,7 @@ fun SettingsScreen(onMessage: (String) -> Unit) {
     val context = LocalContext.current
     var showLogs by remember { mutableStateOf(false) }
     var showAbout by remember { mutableStateOf(false) }
-    var showHosts by remember { mutableStateOf(false) }
+    var showProxyDns by remember { mutableStateOf(false) }
     val config = Workspace.config.value
     val abi = android.os.Build.SUPPORTED_ABIS.firstOrNull() ?: "unknown"
 
@@ -54,7 +58,10 @@ fun SettingsScreen(onMessage: (String) -> Unit) {
             InfoRow("配置", RuntimeState.summary.ifBlank { "—" })
             InfoRow("工作区", "${config.subscriptions.size} 订阅 · ${config.nodes.size} 节点 · ${config.groups.size} 策略组")
             InfoRow("设备 ABI", abi)
-            InfoRow("地址覆盖", "${config.hosts.size} 条")
+            InfoRow(
+                "节点域名解析",
+                proxyDnsLabel(config.proxyDns, config.proxyDnsServers, config.discoveredDns),
+            )
             InfoRow("数据目录", "files/mihomo")
         }
 
@@ -64,7 +71,7 @@ fun SettingsScreen(onMessage: (String) -> Unit) {
                 onMessage("已重新载入配置")
             }) { Text("重新载入配置") }
             TextButton(onClick = { showLogs = true }) { Text("查看内核日志") }
-            TextButton(onClick = { showHosts = true }) { Text("节点地址覆盖") }
+            TextButton(onClick = { showProxyDns = true }) { Text("节点域名解析") }
         }
 
         SectionCard("关于") {
@@ -83,15 +90,26 @@ fun SettingsScreen(onMessage: (String) -> Unit) {
         LogsDialog(onDismiss = { showLogs = false })
     }
 
-    if (showHosts) {
-        HostsDialog(
-            initial = config.hosts,
-            onDismiss = { showHosts = false },
-            onSave = { hosts ->
-                Workspace.update { it.copy(hosts = hosts) }
+    if (showProxyDns) {
+        ProxyDnsDialog(
+            current = config.proxyDns,
+            custom = config.proxyDnsServers,
+            discovered = config.discoveredDns,
+            onDismiss = { showProxyDns = false },
+            onSelect = { choice ->
+                Workspace.update { it.copy(proxyDns = choice, proxyDnsServers = emptyList()) }
                 applyWorkspace(context)
-                showHosts = false
-                onMessage("已保存 ${hosts.size} 条地址覆盖并重新载入")
+                showProxyDns = false
+                onMessage("节点域名改用 ${proxyDnsLabel(choice, emptyList(), emptyList())} 解析并重新载入")
+            },
+            onSaveCustom = { servers ->
+                Workspace.update { it.copy(proxyDnsServers = servers) }
+                applyWorkspace(context)
+                showProxyDns = false
+                onMessage(
+                    if (servers.isEmpty()) "已清除自定义 DoH，重新载入"
+                    else "已保存 ${servers.size} 条自定义 DoH 并重新载入",
+                )
             },
         )
     }
@@ -127,6 +145,15 @@ private fun InfoRow(label: String, value: String) {
 private fun LogsDialog(onDismiss: () -> Unit) {
     val context = LocalContext.current
     var lines by remember { mutableStateOf(readLog(context)) }
+    var copied by remember { mutableStateOf(false) }
+
+    fun copyLog() {
+        val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)
+        clipboard?.setPrimaryClip(
+            ClipData.newPlainText("Manis 内核日志", lines.joinToString("\n")),
+        )
+        copied = true
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -143,7 +170,15 @@ private fun LogsDialog(onDismiss: () -> Unit) {
                 }
             }
         },
-        confirmButton = { TextButton(onClick = { lines = readLog(context) }) { Text("刷新") } },
+        confirmButton = {
+            Row {
+                TextButton(onClick = { copyLog() }) { Text(if (copied) "已复制" else "复制") }
+                TextButton(onClick = {
+                    lines = readLog(context)
+                    copied = false
+                }) { Text("刷新") }
+            }
+        },
         dismissButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
     )
 }
@@ -156,49 +191,69 @@ private fun readLog(context: android.content.Context): List<String> {
     }.getOrDefault(listOf("日志读取失败"))
 }
 
+private fun proxyDnsLabel(mode: String, custom: List<String>, discovered: List<String>): String = when {
+    custom.isNotEmpty() -> "自定义 DoH（${custom.size} 条）"
+    discovered.isNotEmpty() -> "机场 DNS（自动 ${discovered.size} 条）"
+    mode == PROXY_DNS_SYSTEM -> "本机 DNS"
+    else -> "加密 DNS（DoH）"
+}
+
+/**
+ * Chooses how the core turns proxy server hostnames into addresses. This is the one part of the
+ * generated config that differs from the desktop build, so it is also the first thing to check
+ * when every node times out on the phone but works on a computer.
+ */
 @Composable
-private fun HostsDialog(
-    initial: Map<String, String>,
+private fun ProxyDnsDialog(
+    current: String,
+    custom: List<String>,
+    discovered: List<String>,
     onDismiss: () -> Unit,
-    onSave: (Map<String, String>) -> Unit,
+    onSelect: (String) -> Unit,
+    onSaveCustom: (List<String>) -> Unit,
 ) {
-    var text by remember {
-        mutableStateOf(initial.entries.joinToString("\n") { (host, address) -> "$host=$address" })
-    }
+    var text by remember { mutableStateOf(custom.joinToString("\n")) }
+
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("节点地址覆盖") },
+        title = { Text("节点域名解析") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    "每行一条「域名=IP」。当机场 DNS 返回的地址在你当前网络不可达时，用它把节点域名" +
-                        "固定到能连通的 IP；订阅更新后依然生效。",
+                    "只影响「节点服务器域名 → IP」这一步，不影响网页和应用的 DNS。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                TextButton(onClick = { onSelect(PROXY_DNS_DOH) }) {
+                    Text(if (custom.isEmpty() && current == PROXY_DNS_DOH) "✓ 加密 DNS（DoH）" else "加密 DNS（DoH）")
+                }
+                TextButton(onClick = { onSelect(PROXY_DNS_SYSTEM) }) {
+                    Text(if (custom.isEmpty() && current == PROXY_DNS_SYSTEM) "✓ 本机 DNS" else "本机 DNS")
+                }
+                Text(
+                    "自定义 DoH：填机场自己提供的加密 DNS（一行一个地址）。节点入口是轮换 IP 的机场，" +
+                        "只有机场自己的 DNS 才会返回能用的入口；电脑能用而手机不行时优先试这个。",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                if (discovered.isNotEmpty()) {
+                    Text(
+                        "已从订阅自动读到 ${discovered.size} 条机场 DNS，自动生效；在上面填内容会覆盖它。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
                 OutlinedTextField(
                     value = text,
                     onValueChange = { text = it },
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 140.dp),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 110.dp),
                     textStyle = MaterialTheme.typography.bodySmall,
-                    placeholder = { Text("naiu-hk.example.com=203.0.113.7") },
+                    placeholder = { Text("https://dns.example.com/dns-query") },
                 )
+                TextButton(onClick = {
+                    onSaveCustom(text.lines().map { it.trim() }.filter { it.isNotEmpty() })
+                }) { Text("保存自定义 DoH") }
             }
         },
-        confirmButton = {
-            TextButton(onClick = {
-                val hosts = buildMap {
-                    for (line in text.lines()) {
-                        val trimmed = line.trim()
-                        if (trimmed.isEmpty() || !trimmed.contains('=')) continue
-                        val host = trimmed.substringBefore('=').trim()
-                        val address = trimmed.substringAfter('=').trim()
-                        if (host.isNotEmpty() && address.isNotEmpty()) put(host, address)
-                    }
-                }
-                onSave(hosts)
-            }) { Text("保存") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
     )
 }

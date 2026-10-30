@@ -21,23 +21,29 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import dev.manis.app.core.ControllerApi
+import dev.manis.app.core.CoreController
 import dev.manis.app.data.GroupEntry
 import dev.manis.app.data.NodeEntry
 import dev.manis.app.data.SubscriptionEntry
 import dev.manis.app.data.Workspace
+import kotlinx.coroutines.launch
 
 @Composable
 fun SubscriptionsScreen(onMessage: (String) -> Unit) {
     val context = LocalContext.current
     val config = Workspace.config.value
+    val scope = rememberCoroutineScope()
     var addSubscription by remember { mutableStateOf(false) }
     var addNode by remember { mutableStateOf(false) }
     var addGroup by remember { mutableStateOf(false) }
+    var refreshing by remember { mutableStateOf(false) }
 
     Column(
         Modifier
@@ -49,7 +55,34 @@ fun SubscriptionsScreen(onMessage: (String) -> Unit) {
         ScreenTitle("订阅", "订阅、手动节点和策略组都会进入同一份内核配置")
         ApplyBar()
 
-        SectionCard("订阅", trailing = { TextButton(onClick = { addSubscription = true }) { Text("添加") } }) {
+        SectionCard(
+            "订阅",
+            trailing = {
+                Row {
+                    TextButton(
+                        enabled = !refreshing && config.subscriptions.isNotEmpty(),
+                        onClick = {
+                            if (!RuntimeState.active) {
+                                onMessage("先连接 VPN，刷新订阅要经过内核")
+                            } else {
+                                refreshing = true
+                                scope.launch {
+                                    ControllerApi.configure(CoreController.secret)
+                                    val result = runCatching { ControllerApi.refreshSubscriptions() }
+                                    refreshing = false
+                                    result.onSuccess { summary ->
+                                        onMessage(summary)
+                                        runCatching { ControllerApi.snapshot() }
+                                            .onSuccess { RuntimeState.snapshot = it }
+                                    }.onFailure { onMessage(it.message ?: "刷新订阅失败") }
+                                }
+                            }
+                        },
+                    ) { Text(if (refreshing) "刷新中…" else "刷新") }
+                    TextButton(onClick = { addSubscription = true }) { Text("添加") }
+                }
+            },
+        ) {
             if (config.subscriptions.isEmpty()) {
                 Text(
                     "粘贴 Clash 格式订阅地址；添加后点「应用」才会生效。",
@@ -167,7 +200,8 @@ fun SubscriptionsScreen(onMessage: (String) -> Unit) {
         }
 
         Text(
-            "修改会先保存；点顶部的「应用」后内核重启并重新拉取订阅，VPN 接口不会断开。",
+            "修改会先保存；点顶部的「应用」后内核重启并重新拉取订阅，VPN 接口不会断开。" +
+                "只想要最新节点列表时点上方「刷新」，不用重启内核。",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

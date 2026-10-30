@@ -13,6 +13,12 @@ once the public API and configuration formats stabilize.
   workspace model compiled by the same Rust profile code as the desktop: multiple subscriptions,
   VLESS imports, user policy groups, QX rules, rule/global/direct modes, node switching with
   latency tests, and kernel logs.
+- Android: subscription sources can name their own resolvers. `proxy-server-nameserver` entries
+  found in a subscription document are read automatically, and Settings → 节点域名解析 → 自定义 DoH
+  accepts a manual list. Airports that rotate node entry addresses only answer correctly through
+  their own DoH, so public resolvers make every node look unreachable.
+- Android: the subscription screen can refresh a provider on demand (`PUT /providers/proxies`)
+  without restarting the core, and the kernel log dialog can copy its contents.
 - Mihomo management with a private, managed runtime.
 - Subscription and VLESS import, policy groups, ordered routing rules, latency testing, network
   activity, logs, system proxy control, and macOS TUN integration.
@@ -36,6 +42,13 @@ once the public API and configuration formats stabilize.
   names, and the Linux tray integration test drives `zbus` 6 from its process-wide multithreaded
   runtime now that the blocking API is gone.
 
+### Removed
+
+- Android: remove the proxy-server "address override" (hosts pinning) from the workspace and the
+  settings dialog. A pinned address silently outlives an airport's address rotation and then breaks
+  every subscription node while manual nodes keep working; the encrypted DNS default resolves the
+  current address instead. Stale overrides in an existing workspace are ignored on load.
+
 ### Security
 
 - Remove vulnerable `glib` (GHSA-wrw7-89jp-8q8g / RUSTSEC-2024-0429) and the unmaintained GTK 3 Rust
@@ -53,5 +66,9 @@ once the public API and configuration formats stabilize.
   even when DHCP supplies a private gateway DNS server.
 - Reapply Linux link-scoped DNS routing whenever a managed configuration restart recreates the TUN
   interface, instead of silently falling back to the physical interface DNS.
+- Android: resolve proxy server hostnames with the same encrypted DNS as the desktop by default.
+  The active network's plaintext resolvers, previously always passed to the core, can answer an
+  airport's node domain with a blocked address and leave every node timing out; they are now an
+  explicit "本机 DNS" option under Settings → 节点域名解析.
 
 [Unreleased]: https://github.com/kaigedong/Manis/commits/main

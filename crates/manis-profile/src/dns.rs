@@ -61,6 +61,21 @@ impl ProxyDnsServer {
         Ok(Self(ip.to_string()))
     }
 
+    /// Parses either an encrypted HTTPS resolver or a plain resolver endpoint.
+    ///
+    /// Airports often run their own DoH endpoint that knows where their rotating node entry really
+    /// is, while public resolvers answer with addresses that the mobile network cannot reach.
+    ///
+    /// # Errors
+    /// Returns a redacted validation error when the input is neither form.
+    pub fn parse_any(input: &str) -> Result<Self, ProfileError> {
+        if input.trim().starts_with("https://") {
+            Self::parse_https(input.trim())
+        } else {
+            Self::parse_plain(input)
+        }
+    }
+
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
@@ -96,6 +111,23 @@ mod tests {
                 .expect("parses")
                 .as_str(),
             "1.1.1.1"
+        );
+    }
+
+    #[test]
+    fn accepts_custom_doh_endpoints() {
+        let endpoint = "https://20.247.42.211:36290/dns-query/clash?site=naiu";
+        assert_eq!(
+            ProxyDnsServer::parse_any(endpoint)
+                .expect("custom DoH parses")
+                .as_str(),
+            endpoint
+        );
+        assert_eq!(
+            ProxyDnsServer::parse_any("192.168.3.1")
+                .expect("plain resolver parses")
+                .as_str(),
+            "192.168.3.1"
         );
     }
 

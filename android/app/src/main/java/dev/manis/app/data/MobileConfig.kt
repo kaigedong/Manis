@@ -36,6 +36,11 @@ data class GroupEntry(
     val filter: String? = null,
 )
 
+/** Encrypted DoH resolvers, matching the desktop build; the default. */
+const val PROXY_DNS_DOH = "doh"
+/** The active network's own resolvers, as reported by `ConnectivityManager`. */
+const val PROXY_DNS_SYSTEM = "system"
+
 data class MobileConfig(
     val mode: String = "rule",
     val mixedPort: Int = 7890,
@@ -43,8 +48,22 @@ data class MobileConfig(
     val nodes: List<NodeEntry> = emptyList(),
     val groups: List<GroupEntry> = emptyList(),
     val rules: String = "",
-    /** Pinned proxy-server addresses, used when a resolver hands out unreachable IPs. */
-    val hosts: Map<String, String> = emptyMap(),
+    /**
+     * How proxy server hostnames are resolved: [PROXY_DNS_DOH] (encrypted, same as desktop) or
+     * [PROXY_DNS_SYSTEM] (the active network's resolvers, which a carrier can answer with a
+     * blocked address).
+     */
+    val proxyDns: String = PROXY_DNS_DOH,
+    /**
+     * Custom resolvers for proxy server hostnames, e.g. an airport's own DoH endpoint.
+     * Takes precedence over [proxyDns] when not empty.
+     */
+    val proxyDnsServers: List<String> = emptyList(),
+    /**
+     * Resolvers read from the subscription document; refreshed by the app, never edited by hand.
+     * Only used when [proxyDnsServers] is empty.
+     */
+    val discoveredDns: List<String> = emptyList(),
 ) {
     fun toJson(): String {
         val subscriptionsJson = JSONArray()
@@ -71,12 +90,10 @@ data class MobileConfig(
                     .put("filter", group.filter ?: JSONObject.NULL),
             )
         }
-        val hostsJson = JSONObject()
-        for ((host, address) in hosts) {
-            hostsJson.put(host, address)
-        }
         return JSONObject()
-            .put("hosts", hostsJson)
+            .put("proxy_dns", proxyDns)
+            .put("proxy_dns_servers", JSONArray(proxyDnsServers))
+            .put("discovered_dns", JSONArray(discoveredDns))
             .put("mode", mode)
             .put("mixed_port", mixedPort)
             .put("subscriptions", subscriptionsJson)
@@ -126,11 +143,18 @@ data class MobileConfig(
                     )
                 }
             }
-            val hosts = mutableMapOf<String, String>()
-            json.optJSONObject("hosts")?.let { objectValue ->
-                for (host in objectValue.keys()) {
-                    val address = objectValue.optString(host)
-                    if (address.isNotBlank()) hosts[host] = address
+            val servers = mutableListOf<String>()
+            json.optJSONArray("proxy_dns_servers")?.let { array ->
+                for (index in 0 until array.length()) {
+                    val value = array.optString(index).trim()
+                    if (value.isNotEmpty()) servers += value
+                }
+            }
+            val discovered = mutableListOf<String>()
+            json.optJSONArray("discovered_dns")?.let { array ->
+                for (index in 0 until array.length()) {
+                    val value = array.optString(index).trim()
+                    if (value.isNotEmpty()) discovered += value
                 }
             }
             return MobileConfig(
@@ -140,7 +164,12 @@ data class MobileConfig(
                 nodes = nodes,
                 groups = groups,
                 rules = json.optString("rules"),
-                hosts = hosts,
+                proxyDns = when (json.optString("proxy_dns")) {
+                    PROXY_DNS_SYSTEM -> PROXY_DNS_SYSTEM
+                    else -> PROXY_DNS_DOH
+                },
+                proxyDnsServers = servers,
+                discoveredDns = discovered,
             )
         }
 
@@ -201,6 +230,13 @@ object Workspace {
     /** Live changes that do not need a core restart (routing mode). */
     fun setMode(mode: String) {
         val next = config.value.copy(mode = mode)
+        config.value = next
+        MobileConfig.save(AppContext.get(), next)
+    }
+
+    /** Records resolvers discovered from the subscription; not a user edit, so no pending change. */
+    fun setDiscoveredDns(servers: List<String>) {
+        val next = config.value.copy(discoveredDns = servers)
         config.value = next
         MobileConfig.save(AppContext.get(), next)
     }

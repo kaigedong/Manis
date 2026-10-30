@@ -2,6 +2,7 @@ package dev.manis.app.core
 
 import android.content.Context
 import android.net.ConnectivityManager
+import dev.manis.app.data.PROXY_DNS_SYSTEM
 import dev.manis.app.data.Workspace
 import java.io.File
 import java.security.SecureRandom
@@ -19,6 +20,9 @@ internal object CoreController {
     private const val TUN_DESCRIPTOR = 3
     private const val CORE_BINARY = "libmihomo.so"
     private const val CONTROLLER_PORT = 9090
+    /** DNS stub the [dev.manis.app.ManisVpnService] tunnel hands to Android. */
+    private const val TUNNEL_DNS = "172.19.0.2"
+    private const val TUNNEL_DNS_INET6 = "fd00:1::1"
 
     @Volatile
     var lastError: String? = null
@@ -60,9 +64,15 @@ internal object CoreController {
             val dataDirectory = File(context.filesDir, "mihomo").apply { mkdirs() }
             val config = File(dataDirectory, "config.yaml")
             val document = JSONObject(Workspace.config.value.toJson())
-            val resolvers = systemDns(context)
-            if (resolvers.isNotEmpty()) {
-                document.put("system_dns", JSONArray(resolvers))
+            val customResolvers = Workspace.config.value.proxyDnsServers
+                .ifEmpty { Workspace.config.value.discoveredDns }
+            if (customResolvers.isNotEmpty()) {
+                document.put("system_dns", JSONArray(customResolvers))
+            } else if (Workspace.config.value.proxyDns == PROXY_DNS_SYSTEM) {
+                val resolvers = systemDns(context)
+                if (resolvers.isNotEmpty()) {
+                    document.put("system_dns", JSONArray(resolvers))
+                }
             }
             val envelope = Native.renderConfig(document.toString(), TUN_DESCRIPTOR)
             val rendered = JSONObject(envelope)
@@ -109,8 +119,12 @@ internal object CoreController {
     }
 
     /**
-     * Resolvers of the active network. Proxy server hostnames must resolve exactly the way the
-     * phone does; a hard-coded public resolver can return a different, unreachable address.
+     * Resolvers of the active network, used only when the user asks the core to resolve proxy
+     * hostnames the way the phone does. A carrier or hotel resolver often answers an airport's
+     * node domain with a blocked address, which is why encrypted DNS stays the default.
+     *
+     * The tunnel's own stub is dropped: the core bypasses the tunnel, so it has no route to an
+     * address that only exists on the tunnel interface.
      */
     private fun systemDns(context: Context): List<String> {
         val manager = context.getSystemService(ConnectivityManager::class.java) ?: return emptyList()
@@ -119,7 +133,8 @@ internal object CoreController {
         return properties.dnsServers
             .mapNotNull { address -> address.hostAddress }
             .filterNot { address ->
-                address.startsWith("fe80") || address == "127.0.0.1" || address == "::1"
+                address.startsWith("fe80") || address == "127.0.0.1" || address == "::1" ||
+                    address == TUNNEL_DNS || address == TUNNEL_DNS_INET6
             }
             .distinct()
             .take(4)

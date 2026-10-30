@@ -127,6 +127,33 @@ internal object ControllerApi {
         }
     }
 
+    /**
+     * Re-downloads every HTTP subscription provider and returns a summary for the UI.
+     *
+     * The core keeps provider data across restarts, so a reload alone would keep serving the cached
+     * node list; this asks it to fetch the subscription again right now.
+     */
+    suspend fun refreshSubscriptions(): String = withContext(Dispatchers.IO) {
+        val providers = request("/providers/proxies").optJSONObject("providers") ?: JSONObject()
+        val names = providers.keys().asSequence()
+            .filter { name ->
+                providers.optJSONObject(name)?.optString("vehicleType").equals("HTTP", ignoreCase = true)
+            }
+            .toList()
+        if (names.isEmpty()) error("内核里没有可刷新的订阅")
+
+        val failures = mutableListOf<String>()
+        for (name in names) {
+            runCatching { request("/providers/proxies/${encode(name)}", method = "PUT") }
+                .onFailure { error -> failures += "$name：${error.message}" }
+        }
+        when {
+            failures.isEmpty() -> "已重新拉取 ${names.size} 个订阅"
+            failures.size < names.size -> "部分订阅刷新失败：${failures.first()}"
+            else -> error(failures.first())
+        }
+    }
+
     private fun encode(value: String): String =
         URLEncoder.encode(value, "UTF-8").replace("+", "%20")
 
@@ -145,7 +172,13 @@ internal object ControllerApi {
             val code = connection.responseCode
             val stream = if (code in 200..299) connection.inputStream else connection.errorStream
             val text = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
-            if (code !in 200..299) error("控制器返回 $code")
+            if (code !in 200..299) {
+                // The core reports why a dial failed; keep it instead of only the status code.
+                val detail = runCatching { JSONObject(text).optString("message") }
+                    .getOrNull()
+                    ?.takeIf { it.isNotBlank() && it != "null" }
+                error(detail?.let { "控制器返回 $code：$it" } ?: "控制器返回 $code")
+            }
             return if (text.isBlank()) JSONObject() else JSONObject(text)
         } finally {
             connection.disconnect()

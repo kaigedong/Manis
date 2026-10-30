@@ -24,9 +24,6 @@ pub struct MobileConfig {
     /// Resolvers of the active Android network; proxy server hostnames are resolved with these.
     #[serde(default)]
     pub system_dns: Vec<String>,
-    /// Pinned addresses for proxy server hostnames, e.g. when a resolver hands out blocked IPs.
-    #[serde(default)]
-    pub hosts: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -124,7 +121,7 @@ pub fn compile(config_json: &str, file_descriptor: i32) -> Result<String, String
         let resolvers = config
             .system_dns
             .iter()
-            .filter_map(|value| match ProxyDnsServer::parse_plain(value) {
+            .filter_map(|value| match ProxyDnsServer::parse_any(value) {
                 Ok(server) => Some(server),
                 Err(_error) => {
                     warnings.push(format!("系统 DNS {value} 无效，已忽略"));
@@ -147,11 +144,8 @@ pub fn compile(config_json: &str, file_descriptor: i32) -> Result<String, String
         .ensure_global_match()
         .map_err(|error| format!("生成默认规则失败：{error}"))?;
 
-    let mut yaml = render_mihomo_yaml_for_android(&profile, file_descriptor)
+    let yaml = render_mihomo_yaml_for_android(&profile, file_descriptor)
         .map_err(|error| format!("渲染配置失败：{error}"))?;
-    if !config.hosts.is_empty() {
-        yaml.push_str(&render_hosts(&config.hosts, &mut warnings));
-    }
 
     Ok(json!({
         "yaml": yaml,
@@ -162,35 +156,6 @@ pub fn compile(config_json: &str, file_descriptor: i32) -> Result<String, String
         "rules": profile.rules.len(),
     })
     .to_string())
-}
-
-/// Appends a top-level `hosts` mapping so a pinned address is used for proxy server lookups.
-///
-/// Airport DNS answers depend on the resolver's network: the same hostname can resolve to a
-/// blocked address on a phone while a desktop gets a working one. Pinning the working address is
-/// the only client-side escape hatch that survives subscription updates.
-fn render_hosts(
-    hosts: &std::collections::BTreeMap<String, String>,
-    warnings: &mut Vec<String>,
-) -> String {
-    let mut block = String::from("hosts:\n");
-    for (host, address) in hosts {
-        let valid_host = !host.is_empty()
-            && host.len() <= 253
-            && host
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-');
-        if !valid_host {
-            warnings.push(format!("地址覆盖的域名 {host} 无效，已忽略"));
-            continue;
-        }
-        if address.parse::<std::net::IpAddr>().is_err() {
-            warnings.push(format!("地址覆盖 {host} 的地址 {address} 不是 IP，已忽略"));
-            continue;
-        }
-        block.push_str(&format!("  \"{host}\": \"{address}\"\n"));
-    }
-    block
 }
 
 fn compile_subscriptions(
@@ -404,25 +369,6 @@ mod tests {
         assert_eq!(value["providers"], 1);
         assert_eq!(value["nodes"], 1);
         assert_eq!(value["groups"], 2); // the user group plus the hidden global selector
-    }
-
-    #[test]
-    fn pins_proxy_server_addresses_and_rejects_invalid_ones() {
-        let mut value: serde_json::Value = serde_json::from_str(&config()).expect("json");
-        value["hosts"] = serde_json::json!({
-            "edge.example.invalid": "203.0.113.7",
-            "bad host": "203.0.113.8",
-            "other.example.invalid": "not-an-ip"
-        });
-
-        let envelope = compile(&value.to_string(), 3).expect("config compiles");
-        let compiled: serde_json::Value = serde_json::from_str(&envelope).expect("envelope");
-        let yaml = compiled["yaml"].as_str().expect("yaml");
-
-        assert!(yaml.contains("hosts:"));
-        assert!(yaml.contains("\"edge.example.invalid\": \"203.0.113.7\""));
-        let warnings = compiled["warnings"].as_array().expect("warnings");
-        assert_eq!(warnings.len(), 2);
     }
 
     #[test]

@@ -177,8 +177,9 @@ fun ConnectionScreen(
                         color = MaterialTheme.colorScheme.error,
                     )
                     Text(
-                        "手机网络到订阅节点的链路超时，流量现在无法出去。换一个 Wi-Fi 或移动数据，" +
-                            "或到节点页点「选最快」重试；如果仍然失败，说明机场节点在当前网络被封。",
+                        "手机网络到订阅节点的链路超时，流量现在无法出去。先换一个 Wi-Fi 或移动数据，" +
+                            "或到节点页点「选最快」重试；仍然失败时，去设置里切换「节点域名解析」：" +
+                            "如果电脑上同一条订阅能用，通常是手机侧的 DNS 把节点域名解析到了不可达的地址。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
