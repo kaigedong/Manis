@@ -19,6 +19,9 @@ once the public API and configuration formats stabilize.
   their own DoH, so public resolvers make every node look unreachable.
 - Android: the subscription screen can refresh a provider on demand (`PUT /providers/proxies`)
   without restarting the core, and the kernel log dialog can copy its contents.
+- The configuration editor shows a flat JSONC document instead of the per-entry readable text,
+  and the importer accepts both. Hand-written comments in `config.toml` are no longer preserved
+  through an edit, because JSONC is a projection of the stored entries.
 - Mihomo management with a private, managed runtime.
 - Subscription and VLESS import, policy groups, ordered routing rules, latency testing, network
   activity, logs, system proxy control, and macOS TUN integration.

@@ -31,3 +31,7 @@ relay-generated.*
 /android/app/src/main/jniLibs/
 
 /android/.build/
+
+# Local secrets and stale packaging output
+/manis.toml
+/packaging/android/

@@ -27,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import dev.manis.app.core.CoreController
+import dev.manis.app.data.MobileConfig
 import dev.manis.app.data.PROXY_DNS_DOH
 import dev.manis.app.data.PROXY_DNS_SYSTEM
 import dev.manis.app.data.Workspace
@@ -51,27 +52,57 @@ fun SettingsScreen(onMessage: (String) -> Unit) {
         ScreenTitle("设置")
         ApplyBar()
 
-        SectionCard("运行状态") {
+        SectionCard("连接") {
             InfoRow("状态", if (RuntimeState.active) "已连接" else "未连接")
             InfoRow("路由模式", RuntimeState.snapshot?.mode ?: config.mode)
+            InfoRow("节点域名解析", proxyDnsLabel(config.proxyDns, config.proxyDnsServers, config.discoveredDns))
+            TextButton(onClick = { showProxyDns = true }) { Text("节点域名解析") }
+        }
+
+        SectionCard("配置摘要") {
             InfoRow("内核版本", RuntimeState.snapshot?.version?.ifBlank { "—" } ?: "—")
             InfoRow("配置", RuntimeState.summary.ifBlank { "—" })
             InfoRow("工作区", "${config.subscriptions.size} 订阅 · ${config.nodes.size} 节点 · ${config.groups.size} 策略组")
             InfoRow("设备 ABI", abi)
-            InfoRow(
-                "节点域名解析",
-                proxyDnsLabel(config.proxyDns, config.proxyDnsServers, config.discoveredDns),
-            )
             InfoRow("数据目录", "files/mihomo")
-        }
-
-        SectionCard("维护") {
             TextButton(onClick = {
                 applyWorkspace(context)
                 onMessage("已重新载入配置")
             }) { Text("重新载入配置") }
+        }
+
+        SectionCard("备份与恢复") {
+            Text(
+                "导出的是 Manis 备份格式（含订阅链接和节点密钥），不是交给其他客户端的 YAML。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row {
+                TextButton(onClick = {
+                    val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)
+                    clipboard?.setPrimaryClip(
+                        ClipData.newPlainText("Manis 配置", Workspace.config.value.toJson()),
+                    )
+                    onMessage("配置已复制到剪贴板")
+                }) { Text("复制到剪贴板") }
+                TextButton(onClick = {
+                    val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)
+                    val text = clipboard?.primaryClip
+                        ?.takeIf { it.itemCount > 0 }
+                        ?.getItemAt(0)
+                        ?.coerceToText(context)
+                        ?.toString()
+                        .orEmpty()
+                    when (val result = importWorkspace(context, text)) {
+                        null -> onMessage("已从剪贴板导入并生效")
+                        else -> onMessage(result)
+                    }
+                }) { Text("从剪贴板导入") }
+            }
+        }
+
+        SectionCard("诊断") {
             TextButton(onClick = { showLogs = true }) { Text("查看内核日志") }
-            TextButton(onClick = { showProxyDns = true }) { Text("节点域名解析") }
         }
 
         SectionCard("关于") {
@@ -256,4 +287,27 @@ private fun ProxyDnsDialog(
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
     )
+}
+
+/**
+ * Replaces the workspace with a pasted backup.
+ *
+ * The document is compiled by the same Rust renderer the core uses, so a broken or empty workspace
+ * is rejected here instead of after the VPN restarts. Returns null on success, otherwise a message.
+ */
+private fun importWorkspace(context: android.content.Context, text: String): String? {
+    if (text.isBlank()) return "剪贴板里没有配置"
+    val imported = runCatching { MobileConfig.fromJson(text) }
+        .getOrElse { return "剪贴板内容不是 Manis 配置" }
+    if (imported.subscriptions.none { it.enabled } && imported.nodes.none { it.enabled }) {
+        return "导入的配置里没有启用的订阅或节点"
+    }
+    val compiled = runCatching {
+        dev.manis.app.core.Native.renderConfig(imported.toJson(), 3)
+    }.getOrElse { error -> return error.message ?: "配置校验失败" }
+    if (compiled.isBlank()) return "配置校验失败"
+
+    Workspace.update { imported }
+    applyWorkspace(context)
+    return null
 }
