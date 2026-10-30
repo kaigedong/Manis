@@ -6,6 +6,7 @@ mod autostart;
 mod brand;
 mod components;
 mod config_backup;
+mod config_jsonc;
 mod config_toml;
 mod core_update;
 mod diagnostics;

@@ -63,7 +63,7 @@ impl ProxyDnsServer {
 
     /// Parses either an encrypted HTTPS resolver or a plain resolver endpoint.
     ///
-    /// Airports often run their own DoH endpoint that knows where their rotating node entry really
+    /// Airports often run their own `DoH` endpoint that knows where their rotating node entry really
     /// is, while public resolvers answer with addresses that the mobile network cannot reach.
     ///
     /// # Errors

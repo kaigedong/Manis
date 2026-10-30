@@ -143,8 +143,13 @@ pub(crate) fn read_configuration_for_editing(directory: &Path) -> Result<String,
     readable::to_readable_source(&source)
 }
 
+/// Accepts the JSONC editor format and the older readable formats, so pasted text keeps working.
 fn storage_source_for_import(text: &str) -> Result<String, BackupError> {
-    readable::to_storage_source(text)
+    if text.trim_start().starts_with('{') {
+        crate::config_jsonc::from_jsonc(text)
+    } else {
+        readable::to_storage_source(text)
+    }
 }
 
 #[cfg(test)]
