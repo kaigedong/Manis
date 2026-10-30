@@ -140,7 +140,12 @@ impl From<SubscriptionStoreError> for BackupError {
 
 pub(crate) fn read_configuration_for_editing(directory: &Path) -> Result<String, BackupError> {
     let source = crate::config_toml::read_source(directory).map_err(BackupError::from)?;
-    readable::to_readable_source(&source)
+    // JSONC is the editor format. Switching to it drops hand-written TOML comments, which the
+    // readable view used to preserve; a record this build cannot interpret still falls back.
+    match crate::config_jsonc::to_jsonc(&source) {
+        Ok(jsonc) => Ok(jsonc),
+        Err(_) => readable::to_readable_source(&source),
+    }
 }
 
 /// Accepts the JSONC editor format and the older readable formats, so pasted text keeps working.
@@ -232,7 +237,8 @@ mod tests {
     }
 
     #[test]
-    fn editor_round_trip_preserves_toml_comments() -> Result<(), Box<dyn std::error::Error>> {
+    fn editor_round_trip_drops_comments_but_keeps_entries() -> Result<(), Box<dyn std::error::Error>>
+    {
         let source = store("source");
         let target = store("target");
         let text = r#"schema_version = 1
@@ -242,9 +248,14 @@ mod tests {
 "routing.mode" = "global" # 模式注释
 "#;
         crate::config_toml::replace_source(&source, text)?;
-        let prepared = prepare_import(&read_configuration_for_editing(&source)?)?;
+        let edited = read_configuration_for_editing(&source)?;
+        assert!(edited.contains("\"mode\": \"global\""), "{edited}");
+        assert!(!edited.contains("用户注释"), "{edited}");
+        let prepared = prepare_import(&edited)?;
         restore(&target, &prepared)?;
-        assert_eq!(crate::config_toml::read_source(&target)?, text);
+        let restored = crate::config_toml::read_source(&target)?;
+        assert!(restored.contains("\"routing.mode\""), "{restored}");
+        assert!(restored.contains("global"), "{restored}");
         fs::remove_dir_all(source)?;
         fs::remove_dir_all(target)?;
         Ok(())

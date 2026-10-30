@@ -142,10 +142,8 @@ fn parse_entry(name: &str, contents: &str) -> Entry {
 
 /// Rewrites the stored configuration as one JSONC document.
 ///
-/// Not wired into the editor yet: switching the editor to this view drops the hand-written TOML
-/// comments that `config.toml` preserves today, so that trade-off is a separate decision. Import
-/// already accepts the document this produces.
-#[allow(dead_code)]
+/// Import already accepts the document this produces, so the editor and an exported file use the
+/// same text.
 pub(super) fn to_jsonc(source: &str) -> Result<String, BackupError> {
     let entries = parse_entries(source)?;
 
@@ -327,7 +325,7 @@ fn render_group(
             let from = values.first().map(String::as_str).unwrap_or_default();
             let node = values.get(1).map(String::as_str).unwrap_or_default();
             (
-                resolve_source(from, subscription_names, group_names),
+                resolve_source(&decode_field(from), subscription_names, group_names),
                 decode_field(node),
             )
         })
@@ -677,7 +675,7 @@ fn group_entry(
             fields.push((
                 "member".to_owned(),
                 vec![
-                    resolve_back(&from, subscription_ids, group_ids)?,
+                    encode_field(&resolve_back(&from, subscription_ids, group_ids)?),
                     encode_field(&node),
                 ],
             ));
@@ -937,11 +935,11 @@ mod tests {
                 ("filter", &[String::new()]),
                 (
                     "member",
-                    &["subscription:subscription:legacy".to_owned(), hex("HK 03")],
+                    &[hex("subscription:subscription:legacy"), hex("HK 03")],
                 ),
                 (
                     "member",
-                    &["subscription:subscription:legacy".to_owned(), hex("HK 04")],
+                    &[hex("subscription:subscription:legacy"), hex("HK 04")],
                 ),
             ],
         ));
@@ -957,9 +955,9 @@ mod tests {
                 ("tolerance-ms", &["150".to_owned()]),
                 ("matcher", &["explicit".to_owned()]),
                 ("filter", &[String::new()]),
-                ("member", &["builtin".to_owned(), hex("DIRECT")]),
-                ("member", &["policy:group-1".to_owned(), hex("香港")]),
-                ("member", &["saved".to_owned(), hex("node-a")]),
+                ("member", &[hex("builtin"), hex("DIRECT")]),
+                ("member", &[hex("policy:group-1"), hex("香港")]),
+                ("member", &[hex("saved"), hex("node-a")]),
             ],
         ));
         source.push_str(&block(

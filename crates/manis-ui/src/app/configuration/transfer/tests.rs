@@ -187,9 +187,11 @@ fn editor_opens_dangling_policy_references_but_requires_repair_before_preview(
             .expect("invalid references must remain editable")
     });
     let draft = editor.read_with(cx, |editor, _| editor.value());
-    assert!(draft.contains("# 策略组"));
-    assert!(draft.contains("name: Test group"));
-    assert!(draft.contains("member: policy:policy-2 -> Removed group"));
+    assert!(draft.contains("\"name\": \"Test group\""), "{draft}");
+    assert!(
+        draft.contains("\"from\": \"policy:policy-2\", \"node\": \"Removed group\""),
+        "{draft}"
+    );
     cx.update(|window, cx| {
         assert!(window.has_active_dialog(cx));
         app.update(cx, ManisApp::preview_configuration_edits);
@@ -246,8 +248,10 @@ fn editor_prefills_current_configuration_and_preserves_invalid_edits(
             .expect("prefilled editor")
     });
     let current = editor.read_with(cx, |editor, _| editor.value());
-    assert!(current.contains("# 路由模式"));
-    assert!(current.contains("value: direct"));
+    assert!(
+        current.contains("\"routing\": { \"mode\": \"direct\" }"),
+        "{current}"
+    );
     cx.update(|window, cx| {
         app.update(cx, ManisApp::copy_configuration_to_clipboard);
         assert_eq!(
