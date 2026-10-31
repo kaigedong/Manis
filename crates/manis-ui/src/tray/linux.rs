@@ -3,9 +3,12 @@
 #[cfg(test)]
 mod dbus_tests;
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 
 use ksni::{
+    OfflineReason,
     blocking::{Handle, TrayMethods},
     menu::{CheckmarkItem, StandardItem},
 };
@@ -28,22 +31,38 @@ pub(super) enum TrayAction {
 pub(super) struct ManisTray {
     handle: Handle<LinuxTray>,
     events: Receiver<TrayAction>,
+    /// Whether a `StatusNotifierWatcher` accepted this item. It starts false and follows the host.
+    host_available: Arc<AtomicBool>,
+    /// The close behavior already applied to GPUI; `None` until the installer decides.
+    pub(super) close_to_tray: Option<bool>,
     pub(super) synced: Option<TrayProxySnapshot>,
 }
 
 impl ManisTray {
     pub(super) fn new(language: Language) -> Result<Self, &'static str> {
         let (sender, events) = mpsc::channel();
-        // Do not assume SNI is available: without a host, hiding the last window would strand the
-        // application. A successful registration enables close-to-tray in the shared installer.
-        let handle = LinuxTray::new(language, sender)
+        let host_available = Arc::new(AtomicBool::new(false));
+        // The login-time instance starts before the desktop's StatusNotifier host usually exists,
+        // so a missing watcher must not fail the whole tray installation. `assume_sni_available`
+        // keeps the item alive and registers it as soon as the host appears; close-to-tray follows
+        // that registration instead of the install result (see `apply_close_to_tray`).
+        let handle = LinuxTray::new(language, sender, Arc::clone(&host_available))
+            .assume_sni_available(true)
             .spawn()
             .map_err(|_| language.localized(copy::tray::SYSTEM_TRAY_IS_UNAVAILABLE))?;
         Ok(Self {
             handle,
             events,
+            host_available,
+            close_to_tray: None,
             synced: None,
         })
+    }
+
+    /// Whether a `StatusNotifier` host currently shows this item.
+    #[must_use]
+    pub(super) fn host_available(&self) -> bool {
+        self.host_available.load(Ordering::Relaxed)
     }
 
     pub(super) fn events(&self) -> Vec<TrayAction> {
@@ -64,13 +83,19 @@ impl Drop for ManisTray {
 
 struct LinuxTray {
     events: Sender<TrayAction>,
+    host_available: Arc<AtomicBool>,
     snapshot: TrayProxySnapshot,
 }
 
 impl LinuxTray {
-    fn new(language: Language, events: Sender<TrayAction>) -> Self {
+    fn new(
+        language: Language,
+        events: Sender<TrayAction>,
+        host_available: Arc<AtomicBool>,
+    ) -> Self {
         Self {
             events,
+            host_available,
             snapshot: TrayProxySnapshot {
                 language,
                 active: ProxyMode::Off,
@@ -116,6 +141,17 @@ impl ksni::Tray for LinuxTray {
 
     fn activate(&mut self, _x: i32, _y: i32) {
         self.send(TrayAction::Show);
+    }
+
+    fn watcher_online(&self) {
+        self.host_available.store(true, Ordering::Relaxed);
+    }
+
+    fn watcher_offline(&self, _reason: OfflineReason) -> bool {
+        self.host_available.store(false, Ordering::Relaxed);
+        // A desktop launched in parallel, or a shell that restarts, can still bring the watcher
+        // back, so keep the item alive and let ksni register it again.
+        true
     }
 
     fn icon_pixmap(&self) -> Vec<ksni::Icon> {
@@ -181,14 +217,19 @@ mod tests {
 
     use super::*;
 
-    fn fixture() -> (LinuxTray, Receiver<TrayAction>) {
+    fn fixture() -> (LinuxTray, Receiver<TrayAction>, Arc<AtomicBool>) {
         let (sender, events) = mpsc::channel();
-        (LinuxTray::new(Language::English, sender), events)
+        let host_available = Arc::new(AtomicBool::new(false));
+        (
+            LinuxTray::new(Language::English, sender, Arc::clone(&host_available)),
+            events,
+            host_available,
+        )
     }
 
     #[test]
     fn linux_tray_starts_with_proxy_actions_disabled() {
-        let (tray, _) = fixture();
+        let (tray, _, _) = fixture();
         assert_eq!(tray.menu().len(), 8);
         for mode in [ProxyMode::System, ProxyMode::Tun] {
             let item = tray.proxy_item(mode);
@@ -198,8 +239,21 @@ mod tests {
     }
 
     #[test]
+    fn linux_tray_tracks_the_status_item_host() {
+        let (tray, _, host_available) = fixture();
+        assert!(!host_available.load(Ordering::Relaxed));
+        tray.watcher_online();
+        assert!(host_available.load(Ordering::Relaxed));
+        // A shell restart removes the host but must not shut the item down.
+        assert!(tray.watcher_offline(OfflineReason::No));
+        assert!(!host_available.load(Ordering::Relaxed));
+        tray.watcher_online();
+        assert!(host_available.load(Ordering::Relaxed));
+    }
+
+    #[test]
     fn linux_tray_tracks_actual_mode_blocks_and_language() {
-        let (mut tray, _) = fixture();
+        let (mut tray, _, _) = fixture();
         for language in [Language::English, Language::SimplifiedChinese] {
             for active in [ProxyMode::Off, ProxyMode::System, ProxyMode::Tun] {
                 tray.snapshot = TrayProxySnapshot {
@@ -242,7 +296,7 @@ mod tests {
 
     #[test]
     fn linux_tray_callbacks_enqueue_actions_without_changing_proxy_state() {
-        let (mut tray, events) = fixture();
+        let (mut tray, events, _) = fixture();
         tray.snapshot.system_block = None;
         tray.snapshot.tun_block = None;
         let before = tray.snapshot;
@@ -270,7 +324,7 @@ mod tests {
 
     #[test]
     fn linux_tray_icon_uses_network_order_argb() {
-        let (tray, _) = fixture();
+        let (tray, _, _) = fixture();
         let icons = tray.icon_pixmap();
         assert_eq!(icons.len(), 1);
         let icon = &icons[0];

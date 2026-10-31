@@ -171,8 +171,13 @@ pub(crate) fn install_with_language(cx: &mut App, language: Language) -> Result<
     let tray = create_native_tray(language)?;
 
     cx.set_global(tray);
-    // Only hide on close after a tray was successfully registered. Without a compatible desktop
-    // host, install fails and the application's normal window-close behavior remains in effect.
+    // Only hide on close while a status item is actually shown. A native tray that was created
+    // successfully always is; the Linux item may be installed before the desktop's
+    // `StatusNotifierWatcher` exists (the login-time launch), so its close behavior follows the
+    // host instead of the install result.
+    #[cfg(target_os = "linux")]
+    apply_close_to_tray(cx);
+    #[cfg(not(target_os = "linux"))]
     cx.set_quit_mode(QuitMode::Explicit);
 
     let timer = cx.background_executor().clone();
@@ -304,6 +309,9 @@ fn drain_menu_events(cx: &mut App) -> bool {
 
 #[cfg(target_os = "linux")]
 fn drain_menu_events(cx: &mut App) -> bool {
+    // The desktop's StatusNotifier host can appear or disappear at any time: it is usually still
+    // starting when a login-time instance installs the item, and a shell restart drops it again.
+    apply_close_to_tray(cx);
     let events = cx.global::<ManisTray>().events();
     for event in events {
         match event {
@@ -318,6 +326,45 @@ fn drain_menu_events(cx: &mut App) -> bool {
     }
     sync_proxy_menu(cx);
     false
+}
+
+/// Keeps GPUI's close behavior in step with whether the item is actually shown.
+///
+/// Hiding into an unreachable tray would strand the application, so a missing host keeps the normal
+/// "closing the last window quits" behavior until the host registers the item.
+#[cfg(target_os = "linux")]
+fn apply_close_to_tray(cx: &mut App) {
+    let available = cx.global::<ManisTray>().host_available();
+    let changed = {
+        let tray = cx.global_mut::<ManisTray>();
+        if tray.close_to_tray == Some(available) {
+            false
+        } else {
+            tray.close_to_tray = Some(available);
+            true
+        }
+    };
+    if !changed {
+        return;
+    }
+    cx.set_quit_mode(if available {
+        QuitMode::Explicit
+    } else {
+        QuitMode::Default
+    });
+    if available {
+        record_event(
+            LogLevel::Info,
+            "tray.host.available",
+            "the status item host is showing Manis; closing the window hides it",
+        );
+    } else {
+        record_event(
+            LogLevel::Warn,
+            "tray.host.unavailable",
+            "no status item host is reachable yet; closing the last window quits Manis",
+        );
+    }
 }
 
 /// Applies the mode a tray check item stands for, clearing it when it is already active.

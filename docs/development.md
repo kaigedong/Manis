@@ -10,8 +10,10 @@ Rust is pinned in `rust-toolchain.toml`. On macOS, install Xcode Command Line To
 the Wayland/X11, fontconfig, and ALSA development packages listed in `.github/workflows/ci.yml`.
 The Linux tray uses `ksni` over the session D-Bus, with no GTK or libappindicator dependency. A
 StatusNotifierItem host is required (for example, Plasma or GNOME with an AppIndicator extension).
-Without a compatible host, the app reports the tray as unavailable and retains normal window-close
-behavior instead of hiding into an inaccessible tray.
+The login-time launch usually starts before the desktop shell exports its host, so the item waits
+and registers as soon as the host appears, and registers again after a shell restart. Until a host
+registers it, the app reports the tray as unavailable and retains normal window-close behavior
+instead of hiding into an inaccessible tray.
 
 Linux tray tests (the second command supplies its own mock host on a private session bus):
 

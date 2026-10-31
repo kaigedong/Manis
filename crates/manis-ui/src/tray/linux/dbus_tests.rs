@@ -1,7 +1,7 @@
 //! Run only on a private bus: `dbus-run-session -- cargo test -p manis-ui --lib
 //! linux_tray_dbus --locked -- --ignored`.
 
-use std::{collections::HashMap, sync::Mutex, sync::mpsc, time::Duration};
+use std::{collections::HashMap, sync::Mutex, sync::mpsc, time::Duration, time::Instant};
 
 use zbus::{Connection, OwnedVariant, Proxy, Variant, block_on, connection::Builder};
 
@@ -31,7 +31,7 @@ impl Watcher {
     }
 }
 
-fn watcher(host_registered: bool) -> (Connection, mpsc::Receiver<String>) {
+fn watcher() -> (Connection, mpsc::Receiver<String>) {
     let (registrations, received) = mpsc::channel();
     // The connection lands on zbus's process-wide multi-threaded runtime, so the served object
     // keeps answering between `block_on` calls and the rest of this test stays synchronous.
@@ -42,7 +42,7 @@ fn watcher(host_registered: bool) -> (Connection, mpsc::Receiver<String>) {
                 "/StatusNotifierWatcher",
                 Watcher {
                     registrations: Mutex::new(registrations),
-                    host_registered,
+                    host_registered: true,
                 },
             )
             .build()
@@ -76,18 +76,30 @@ fn click(menu: &Proxy<'_>, id: i32) {
         .unwrap();
 }
 
+fn wait_until(condition: impl Fn() -> bool) {
+    let deadline = Instant::now() + TIMEOUT;
+    while !condition() {
+        assert!(
+            Instant::now() < deadline,
+            "condition not met before timeout"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
 #[test]
 #[ignore = "requires an isolated session bus; run with dbus-run-session"]
-fn linux_tray_dbus_registration_menu_updates_actions_and_shutdown() {
-    // No watcher, or a watcher without a panel, must not enable close-to-tray.
-    assert!(ManisTray::new(Language::English).is_err());
-    let (empty_host, _registrations) = watcher(false);
-    assert!(ManisTray::new(Language::English).is_err());
-    block_on(empty_host.close()).unwrap();
-
-    let (host, registrations) = watcher(true);
+fn linux_tray_dbus_waits_for_the_host_and_then_registers() {
+    // A login-time instance starts before the desktop shell exports its watcher. The item must
+    // survive that instead of failing the tray installation for the whole session, but it must not
+    // claim close-to-tray while nothing can show it.
     let tray = ManisTray::new(Language::English).unwrap();
+    assert!(!tray.host_available());
+
+    let (host, registrations) = watcher();
     let name = registrations.recv_timeout(TIMEOUT).unwrap();
+    wait_until(|| tray.host_available());
+
     let sni = block_on(Proxy::new(
         &host,
         name.as_str(),
@@ -142,6 +154,20 @@ fn linux_tray_dbus_registration_menu_updates_actions_and_shutdown() {
         click(&menu, menu_item(&menu, label).0);
         assert_eq!(tray.events.recv_timeout(TIMEOUT).unwrap(), action);
     }
+
+    // A shell restart takes the watcher away and brings it back; the item must return with it.
+    block_on(host.close()).unwrap();
+    wait_until(|| !tray.host_available());
+    let (restarted_host, registrations) = watcher();
+    registrations.recv_timeout(TIMEOUT).unwrap();
+    wait_until(|| tray.host_available());
+    let sni = block_on(Proxy::new(
+        &restarted_host,
+        name.as_str(),
+        "/StatusNotifierItem",
+        "org.kde.StatusNotifierItem",
+    ))
+    .unwrap();
 
     let handle = tray.handle.clone();
     drop(tray);
