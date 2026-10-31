@@ -67,6 +67,10 @@ once the public API and configuration formats stabilize.
 
 ### Fixed
 
+- Android: ship the Manis launcher icon, round icon, and explicit launcher label. The APK had no
+  icon resource at all, so phones showed the generic Android marker and some launchers did not list
+  the sideloaded app in search. The launcher activity now repeats the icon and label instead of
+  relying on the application defaults.
 - Linux: keep the status item alive when Manis starts at login before the desktop shell exports
   `org.kde.StatusNotifierWatcher`. The icon now appears as soon as the host is ready, and close
   hides instead of quitting; previously the first launch installed no tray, so closing the window
