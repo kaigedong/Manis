@@ -3,6 +3,7 @@ package dev.manis.app.core
 import android.content.Context
 import android.net.ConnectivityManager
 import dev.manis.app.data.PROXY_DNS_SYSTEM
+import dev.manis.app.data.SubscriptionCache
 import dev.manis.app.data.Workspace
 import java.io.File
 import java.security.SecureRandom
@@ -63,6 +64,9 @@ internal object CoreController {
         return try {
             val dataDirectory = File(context.filesDir, "mihomo").apply { mkdirs() }
             val config = File(dataDirectory, "config.yaml")
+            // Drop provider caches that no longer belong to the enabled subscription at this index;
+            // Mihomo will fetch the correct URL instead of loading another airport's nodes.
+            SubscriptionCache.prune(context, Workspace.config.value)
             val document = JSONObject(Workspace.config.value.toJson())
             val customResolvers = Workspace.config.value.proxyDnsServers
                 .ifEmpty { Workspace.config.value.discoveredDns }

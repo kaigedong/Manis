@@ -1,5 +1,6 @@
 package dev.manis.app.ui
 
+import android.content.Context
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -30,10 +31,14 @@ import androidx.compose.ui.unit.dp
 import dev.manis.app.core.ControllerApi
 import dev.manis.app.core.CoreController
 import dev.manis.app.data.GroupEntry
+import dev.manis.app.data.MobileConfig
 import dev.manis.app.data.NodeEntry
+import dev.manis.app.data.SubscriptionCache
 import dev.manis.app.data.SubscriptionEntry
 import dev.manis.app.data.Workspace
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
 fun SubscriptionsScreen(onMessage: (String) -> Unit) {
@@ -60,22 +65,13 @@ fun SubscriptionsScreen(onMessage: (String) -> Unit) {
             trailing = {
                 Row {
                     TextButton(
-                        enabled = !refreshing && config.subscriptions.isNotEmpty(),
+                        enabled = !refreshing && config.subscriptions.any { it.enabled },
                         onClick = {
-                            if (!RuntimeState.active) {
-                                onMessage("先连接 VPN，刷新订阅要经过内核")
-                            } else {
-                                refreshing = true
-                                scope.launch {
-                                    ControllerApi.configure(CoreController.secret)
-                                    val result = runCatching { ControllerApi.refreshSubscriptions() }
-                                    refreshing = false
-                                    result.onSuccess { summary ->
-                                        onMessage(summary)
-                                        runCatching { ControllerApi.snapshot() }
-                                            .onSuccess { RuntimeState.snapshot = it }
-                                    }.onFailure { onMessage(it.message ?: "刷新订阅失败") }
-                                }
+                            refreshing = true
+                            scope.launch {
+                                val message = refreshSubscriptions(context, Workspace.config.value)
+                                refreshing = false
+                                onMessage(message)
                             }
                         },
                     ) { Text(if (refreshing) "刷新中…" else "刷新") }
@@ -85,7 +81,7 @@ fun SubscriptionsScreen(onMessage: (String) -> Unit) {
         ) {
             if (config.subscriptions.isEmpty()) {
                 Text(
-                    "粘贴 Clash 格式订阅地址；添加后点「应用」才会生效。",
+                    "粘贴 Clash 格式订阅地址；添加后会立即下载，点「应用」生效。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -200,8 +196,8 @@ fun SubscriptionsScreen(onMessage: (String) -> Unit) {
         }
 
         Text(
-            "修改会先保存；点顶部的「应用」后内核重启并重新拉取订阅，VPN 接口不会断开。" +
-                "只想要最新节点列表时点上方「刷新」，不用重启内核。",
+            "修改会先保存；点顶部的「应用」后内核重启并使用已下载的订阅缓存，VPN 接口不会断开。" +
+                "点「刷新」会直接下载订阅，不需要先连接 VPN；下载好的节点在连接后立即生效。",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -217,7 +213,11 @@ fun SubscriptionsScreen(onMessage: (String) -> Unit) {
                     )
                 }
                 addSubscription = false
-                onMessage("订阅已添加，点「应用」生效")
+                onMessage("订阅已添加，正在下载…")
+                scope.launch {
+                    val message = refreshSubscriptions(context, Workspace.config.value)
+                    onMessage(message)
+                }
             },
         )
     }
@@ -404,6 +404,40 @@ private fun AddGroupDialog(
 
 private fun Set<Int>.toggle(value: Int): Set<Int> =
     if (value in this) this - value else this + value
+
+/**
+ * Refreshes subscriptions without requiring the VPN: the download happens in the app and lands in
+ * the core's provider cache. When the VPN is already running, the core is also asked to refresh so
+ * the visible node list updates immediately.
+ */
+private suspend fun refreshSubscriptions(context: Context, config: MobileConfig): String {
+    val cached = withContext(Dispatchers.IO) { SubscriptionCache.refresh(context, config) }
+    val parts = mutableListOf<String>()
+    if (cached.downloaded > 0) {
+        parts += if (RuntimeState.active) {
+            "已更新 ${cached.downloaded} 个订阅（${cached.nodes} 个节点）"
+        } else {
+            "已下载 ${cached.downloaded} 个订阅（${cached.nodes} 个节点），连接后生效"
+        }
+    } else if (cached.nodes > 0) {
+        parts += "沿用本地缓存（${cached.nodes} 个节点）"
+    }
+    if (cached.failures.isNotEmpty()) {
+        parts += "失败：${cached.failures.first()}"
+        if (cached.failures.size > 1) parts += "另有 ${cached.failures.size - 1} 个订阅失败"
+    }
+    if (RuntimeState.active) {
+        ControllerApi.configure(CoreController.secret)
+        runCatching { ControllerApi.refreshSubscriptions() }
+            .onSuccess { parts += it }
+            .onFailure {
+                // The downloaded cache is already on disk; restarting the core makes it use it.
+                applyWorkspace(context)
+                parts += "内核刷新失败，已用本地缓存重新载入"
+            }
+    }
+    return parts.joinToString("；").ifBlank { "没有启用的订阅" }
+}
 
 private fun maskUrl(url: String): String {
     val scheme = url.substringBefore("://", "")

@@ -20,10 +20,26 @@ pub struct MobileConfig {
     pub subscriptions: Vec<MobileSubscription>,
     pub nodes: Vec<MobileNode>,
     pub groups: Vec<MobileGroup>,
+    /// Legacy QX text, still accepted from workspaces written before structured rules existed.
     pub rules: String,
+    /// Structured rules written by the current app; takes precedence over [`Self::rules`].
+    #[serde(default)]
+    pub rule_entries: Vec<MobileRule>,
     /// Resolvers of the active Android network; proxy server hostnames are resolved with these.
     #[serde(default)]
     pub system_dns: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MobileRule {
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub value: String,
+    #[serde(default)]
+    pub policy: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -33,6 +49,9 @@ pub struct MobileSubscription {
     pub url: String,
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// Relative provider cache path written by the app before connecting.
+    #[serde(default)]
+    pub cache_path: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -115,6 +134,7 @@ pub fn compile(config_json: &str, file_descriptor: i32) -> Result<String, String
         },
     )
     .map_err(|error| format!("生成配置失败：{error}"))?;
+    apply_subscription_cache_paths(&mut profile, &config.subscriptions);
 
     profile.mode = parse_mode(&config.mode);
     if !config.system_dns.is_empty() {
@@ -139,7 +159,7 @@ pub fn compile(config_json: &str, file_descriptor: i32) -> Result<String, String
         .iter()
         .map(|group| group.name.as_str().to_owned())
         .collect::<Vec<_>>();
-    profile.rules = compile_rules(&config.rules, &group_names, &mut warnings)?;
+    profile.rules = compile_rules(&config, &group_names, &mut warnings)?;
     profile
         .ensure_global_match()
         .map_err(|error| format!("生成默认规则失败：{error}"))?;
@@ -156,6 +176,32 @@ pub fn compile(config_json: &str, file_descriptor: i32) -> Result<String, String
         "rules": profile.rules.len(),
     })
     .to_string())
+}
+
+/// Uses the app-downloaded provider cache when the workspace supplies a safe relative path.
+///
+/// The app names each cache after a hash of the subscription URL, so a replaced or reordered
+/// subscription can never load another airport's cached nodes.
+fn apply_subscription_cache_paths(profile: &mut Profile, values: &[MobileSubscription]) {
+    let paths = values
+        .iter()
+        .filter(|subscription| subscription.enabled)
+        .filter(|subscription| SecretUrl::parse_subscription(&subscription.url).is_ok())
+        .map(|subscription| subscription.cache_path.as_deref())
+        .collect::<Vec<_>>();
+    for (provider, path) in profile.providers.iter_mut().zip(paths) {
+        if let Some(path) = path.filter(|path| is_safe_cache_path(path)) {
+            provider.path = path.to_owned();
+        }
+    }
+}
+
+fn is_safe_cache_path(path: &str) -> bool {
+    path.starts_with("./proxy_providers/")
+        && path.ends_with(".yaml")
+        && path.len() <= 256
+        && !path.contains("..")
+        && !path.contains('\\')
 }
 
 fn compile_subscriptions(
@@ -280,6 +326,159 @@ fn compile_groups(
 }
 
 fn compile_rules(
+    config: &MobileConfig,
+    group_names: &[String],
+    warnings: &mut Vec<String>,
+) -> Result<Vec<Rule>, String> {
+    if config.rule_entries.is_empty() {
+        return compile_qx_rules(&config.rules, group_names, warnings);
+    }
+    compile_structured_rules(&config.rule_entries, group_names, warnings)
+}
+
+/// Compiles the structured rule rows used by the Android editor, mirroring the desktop rule kinds.
+fn compile_structured_rules(
+    entries: &[MobileRule],
+    group_names: &[String],
+    warnings: &mut Vec<String>,
+) -> Result<Vec<Rule>, String> {
+    let global = MANIS_GLOBAL_GROUP_NAME.to_owned();
+    let mut rules = Vec::new();
+    let mut final_seen = false;
+    for (index, entry) in entries.iter().enumerate() {
+        if !entry.enabled {
+            continue;
+        }
+        let number = index + 1;
+        let policy = match resolve_policy(&entry.policy, group_names, &global) {
+            Some(policy) => policy,
+            None => {
+                warnings.push(format!(
+                    "规则 {number}：策略 {} 不存在，已改走全局组",
+                    entry.policy
+                ));
+                PolicyRef::Group(
+                    Name::parse(&global).map_err(|error| format!("全局组名称无效：{error}"))?,
+                )
+            }
+        };
+        let kind = entry.kind.trim().to_ascii_uppercase();
+        if kind == "FINAL" || kind == "MATCH" {
+            if final_seen {
+                warnings.push(format!("规则 {number}：最终规则重复，已忽略"));
+                continue;
+            }
+            final_seen = true;
+            rules.push(Rule::Match { policy });
+            continue;
+        }
+        if final_seen {
+            warnings.push(format!("规则 {number}：位于最终规则之后，永远不会生效"));
+        }
+        let value = entry.value.trim();
+        if value.is_empty()
+            || value.len() > 1_024
+            || value.contains(',')
+            || value.chars().any(char::is_control)
+        {
+            warnings.push(format!("规则 {number}：匹配内容无效，已忽略"));
+            continue;
+        }
+        let rule = match kind.as_str() {
+            "DOMAIN" | "HOST" => Rule::Domain {
+                value: value.to_owned(),
+                policy,
+            },
+            "DOMAIN-SUFFIX" | "HOST-SUFFIX" => Rule::DomainSuffix {
+                value: value.to_owned(),
+                policy,
+            },
+            "DOMAIN-KEYWORD" | "HOST-KEYWORD" => Rule::DomainKeyword {
+                value: value.to_owned(),
+                policy,
+            },
+            "DOMAIN-WILDCARD" | "HOST-WILDCARD" => Rule::DomainWildcard {
+                value: value.to_owned(),
+                policy,
+            },
+            "IP-CIDR" | "IP6-CIDR" => {
+                if !value.contains('/') {
+                    warnings.push(format!("规则 {number}：CIDR 缺少前缀长度，已忽略"));
+                    continue;
+                }
+                Rule::IpCidr {
+                    value: value.to_owned(),
+                    policy,
+                    no_resolve: true,
+                }
+            }
+            "GEOIP" => {
+                if value.len() != 2
+                    || !value
+                        .chars()
+                        .all(|character| character.is_ascii_alphabetic())
+                {
+                    warnings.push(format!("规则 {number}：国家代码无效，已忽略"));
+                    continue;
+                }
+                Rule::GeoIp {
+                    country: value.to_ascii_uppercase(),
+                    policy,
+                    no_resolve: false,
+                }
+            }
+            "IP-ASN" => {
+                let Ok(asn) = value
+                    .trim_start_matches("AS")
+                    .trim_start_matches("as")
+                    .parse::<u32>()
+                else {
+                    warnings.push(format!("规则 {number}：ASN 无效，已忽略"));
+                    continue;
+                };
+                Rule::IpAsn {
+                    asn,
+                    policy,
+                    no_resolve: true,
+                }
+            }
+            "DST-PORT" => {
+                let Ok(port) = value.parse::<u16>() else {
+                    warnings.push(format!("规则 {number}：端口无效，已忽略"));
+                    continue;
+                };
+                Rule::DstPort { port, policy }
+            }
+            _ => {
+                warnings.push(format!("规则 {number}：不支持的类型 {}", entry.kind));
+                continue;
+            }
+        };
+        rules.push(rule);
+    }
+    Ok(rules)
+}
+
+fn resolve_policy(raw: &str, group_names: &[String], global: &str) -> Option<PolicyRef> {
+    let raw = raw.trim();
+    if raw.eq_ignore_ascii_case("DIRECT") {
+        return Some(PolicyRef::Direct);
+    }
+    if raw.eq_ignore_ascii_case("REJECT") {
+        return Some(PolicyRef::Reject);
+    }
+    if raw.eq_ignore_ascii_case("PROXY") || raw.eq_ignore_ascii_case("GLOBAL") {
+        return Name::parse(global).ok().map(PolicyRef::Group);
+    }
+    group_names
+        .iter()
+        .find(|name| name.eq_ignore_ascii_case(raw))
+        .and_then(|name| Name::parse(name).ok())
+        .map(PolicyRef::Group)
+}
+
+/// Legacy path for workspaces written before the structured editor.
+fn compile_qx_rules(
     source: &str,
     group_names: &[String],
     warnings: &mut Vec<String>,
@@ -298,23 +497,11 @@ fn compile_rules(
     parsed
         .to_profile_rules(|policy| {
             let raw = policy.as_str();
-            if raw.eq_ignore_ascii_case("DIRECT") {
-                return Some(PolicyRef::Direct);
-            }
-            if raw.eq_ignore_ascii_case("REJECT") {
-                return Some(PolicyRef::Reject);
-            }
-            if raw.eq_ignore_ascii_case("PROXY") || raw.eq_ignore_ascii_case("GLOBAL") {
-                return Some(PolicyRef::Group(Name::parse(&global).ok()?));
-            }
-            if let Some(name) = group_names
-                .iter()
-                .find(|name| name.eq_ignore_ascii_case(raw))
-            {
-                return Some(PolicyRef::Group(Name::parse(name).ok()?));
+            if let Some(policy) = resolve_policy(raw, group_names, &global) {
+                return Some(policy);
             }
             warnings.push(format!("规则策略 {raw} 不存在，已改走全局组"));
-            Some(PolicyRef::Group(Name::parse(&global).ok()?))
+            Name::parse(&global).ok().map(PolicyRef::Group)
         })
         .map_err(|error| format!("规则解析失败：{error}"))
 }
@@ -400,5 +587,28 @@ mod tests {
         let yaml = result["yaml"].as_str().expect("yaml");
         assert!(yaml.contains("DOMAIN-SUFFIX,cn,DIRECT"));
         assert!(yaml.contains("DOMAIN-SUFFIX,ads.example,REJECT"));
+    }
+
+    #[test]
+    fn compiles_structured_rules_with_desktop_kinds() {
+        let mut value: serde_json::Value = serde_json::from_str(&config()).expect("fixture parses");
+        value["subscriptions"][0]["cache_path"] =
+            serde_json::json!("./proxy_providers/sub-test.yaml");
+        value["rule_entries"] = serde_json::json!([
+            {"kind": "DOMAIN-SUFFIX", "value": "example.com", "policy": "DIRECT"},
+            {"kind": "IP-CIDR", "value": "10.0.0.0/8", "policy": "REJECT"},
+            {"kind": "GEOIP", "value": "cn", "policy": "DIRECT"},
+            {"kind": "DST-PORT", "value": "443", "policy": "自动选择"},
+            {"kind": "FINAL", "value": "", "policy": "DIRECT"}
+        ]);
+        let envelope = compile(&value.to_string(), 3).expect("config compiles");
+        let result: serde_json::Value = serde_json::from_str(&envelope).expect("json");
+        let yaml = result["yaml"].as_str().expect("yaml");
+        assert!(yaml.contains("path: \"./proxy_providers/sub-test.yaml\""));
+        assert!(yaml.contains("DOMAIN-SUFFIX,example.com,DIRECT"));
+        assert!(yaml.contains("IP-CIDR,10.0.0.0/8,REJECT,no-resolve"));
+        assert!(yaml.contains("GEOIP,CN,DIRECT"));
+        assert!(yaml.contains("DST-PORT,443,"));
+        assert!(yaml.contains("MATCH,DIRECT"));
     }
 }

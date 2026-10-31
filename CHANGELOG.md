@@ -42,6 +42,12 @@ once the public API and configuration formats stabilize.
 
 - Settings opens inside the main window again: the sidebar item and the settings shortcut no
   longer create a separate window.
+- Android: refresh subscriptions without connecting the VPN. The app downloads each enabled
+  subscription into the core's provider cache, so a first-time user can validate a subscription and
+  see its node count before connecting; a running core still refreshes live.
+- Android: replace the raw QX rule text box with structured rule rows matching the desktop editor
+  (type, value, target, enable/disable, edit/delete). The rule/global/direct mode selector now lives
+  only on the connection page.
 
 - Upgrade every direct dependency to its newest release, including GPUI `0.3.10`, GPUI Component
   `0.8.1`, `zip` 9.1.3, `zbus` 6.2, and `ureq` 3.5. The core archive reader accepts `zip` 9's

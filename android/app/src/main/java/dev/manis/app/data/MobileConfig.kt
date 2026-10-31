@@ -6,6 +6,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.net.URLDecoder
+import java.security.MessageDigest
 
 data class SubscriptionEntry(
     val name: String,
@@ -36,6 +37,27 @@ data class GroupEntry(
     val filter: String? = null,
 )
 
+/** Rule kinds shared by the Android editor and the desktop rule model. */
+val RULE_KINDS = listOf(
+    "DOMAIN",
+    "DOMAIN-SUFFIX",
+    "DOMAIN-KEYWORD",
+    "DOMAIN-WILDCARD",
+    "IP-CIDR",
+    "IP6-CIDR",
+    "GEOIP",
+    "IP-ASN",
+    "DST-PORT",
+    "FINAL",
+)
+
+data class RuleEntry(
+    val kind: String = "DOMAIN-SUFFIX",
+    val value: String = "",
+    val policy: String = "DIRECT",
+    val enabled: Boolean = true,
+)
+
 /** Encrypted DoH resolvers, matching the desktop build; the default. */
 const val PROXY_DNS_DOH = "doh"
 /** The active network's own resolvers, as reported by `ConnectivityManager`. */
@@ -47,7 +69,7 @@ data class MobileConfig(
     val subscriptions: List<SubscriptionEntry> = emptyList(),
     val nodes: List<NodeEntry> = emptyList(),
     val groups: List<GroupEntry> = emptyList(),
-    val rules: String = "",
+    val ruleEntries: List<RuleEntry> = emptyList(),
     /**
      * How proxy server hostnames are resolved: [PROXY_DNS_DOH] (encrypted, same as desktop) or
      * [PROXY_DNS_SYSTEM] (the active network's resolvers, which a carrier can answer with a
@@ -72,7 +94,8 @@ data class MobileConfig(
                 JSONObject()
                     .put("name", entry.name)
                     .put("url", entry.url)
-                    .put("enabled", entry.enabled),
+                    .put("enabled", entry.enabled)
+                    .put("cache_path", subscriptionCachePath(entry.url)),
             )
         }
         val nodesJson = JSONArray()
@@ -90,6 +113,16 @@ data class MobileConfig(
                     .put("filter", group.filter ?: JSONObject.NULL),
             )
         }
+        val ruleEntriesJson = JSONArray()
+        for (rule in ruleEntries) {
+            ruleEntriesJson.put(
+                JSONObject()
+                    .put("kind", rule.kind)
+                    .put("value", rule.value)
+                    .put("policy", rule.policy)
+                    .put("enabled", rule.enabled),
+            )
+        }
         return JSONObject()
             .put("proxy_dns", proxyDns)
             .put("proxy_dns_servers", JSONArray(proxyDnsServers))
@@ -99,7 +132,9 @@ data class MobileConfig(
             .put("subscriptions", subscriptionsJson)
             .put("nodes", nodesJson)
             .put("groups", groupsJson)
-            .put("rules", rules)
+            .put("rule_entries", ruleEntriesJson)
+            // Older builds only understand the QX text, so keep a compatible projection.
+            .put("rules", rulesText(ruleEntries))
             .toString()
     }
 
@@ -163,7 +198,7 @@ data class MobileConfig(
                 subscriptions = subscriptions,
                 nodes = nodes,
                 groups = groups,
-                rules = json.optString("rules"),
+                ruleEntries = parseRuleEntries(json),
                 proxyDns = when (json.optString("proxy_dns")) {
                     PROXY_DNS_SYSTEM -> PROXY_DNS_SYSTEM
                     else -> PROXY_DNS_DOH
@@ -189,6 +224,73 @@ data class MobileConfig(
             }
         }
     }
+}
+
+/** Stable provider cache path: replacing a subscription URL never reuses an older airport's file. */
+internal fun subscriptionCachePath(url: String): String {
+    val digest = MessageDigest.getInstance("SHA-256").digest(url.toByteArray(Charsets.UTF_8))
+    val name = digest.take(8).joinToString("") { "%02x".format(it.toInt() and 0xff) }
+    return "./proxy_providers/sub-$name.yaml"
+}
+
+internal fun canonicalRuleKind(raw: String): String? {
+    val value = raw.trim().uppercase()
+    return when (value) {
+        "HOST" -> "DOMAIN"
+        "HOST-SUFFIX" -> "DOMAIN-SUFFIX"
+        "HOST-KEYWORD" -> "DOMAIN-KEYWORD"
+        "HOST-WILDCARD" -> "DOMAIN-WILDCARD"
+        "MATCH" -> "FINAL"
+        in RULE_KINDS -> value
+        else -> null
+    }
+}
+
+/** QX projection kept for older builds that only read the `rules` string. */
+internal fun rulesText(entries: List<RuleEntry>): String =
+    entries.filter { it.enabled }.joinToString("\n") { entry ->
+        if (entry.kind == "FINAL") "FINAL,${entry.policy}" else "${entry.kind},${entry.value},${entry.policy}"
+    }
+
+private fun parseRuleEntries(json: JSONObject): List<RuleEntry> {
+    val entries = mutableListOf<RuleEntry>()
+    json.optJSONArray("rule_entries")?.let { array ->
+        for (index in 0 until array.length()) {
+            val item = array.optJSONObject(index) ?: continue
+            val kind = canonicalRuleKind(item.optString("kind")) ?: continue
+            entries += RuleEntry(
+                kind = kind,
+                value = item.optString("value"),
+                policy = item.optString("policy").ifBlank { "DIRECT" },
+                enabled = item.optBoolean("enabled", true),
+            )
+        }
+    }
+    if (entries.isNotEmpty()) return entries
+    return parseLegacyRules(json.optString("rules"))
+}
+
+private fun parseLegacyRules(raw: String): List<RuleEntry> {
+    if (raw.isBlank()) return emptyList()
+    val entries = mutableListOf<RuleEntry>()
+    for (line in raw.lineSequence()) {
+        val trimmed = line.trim()
+        if (trimmed.isEmpty() ||
+            trimmed.startsWith("#") ||
+            trimmed.startsWith("//") ||
+            trimmed.startsWith(";")
+        ) {
+            continue
+        }
+        val fields = trimmed.split(',').map { it.trim() }
+        if (fields.size == 3) {
+            val kind = canonicalRuleKind(fields[0]) ?: continue
+            entries += RuleEntry(kind = kind, value = fields[1], policy = fields[2])
+        } else if (fields.size == 2 && fields[0].equals("FINAL", ignoreCase = true)) {
+            entries += RuleEntry(kind = "FINAL", policy = fields[1])
+        }
+    }
+    return entries
 }
 
 private fun GroupEntry.withoutSubscription(index: Int): GroupEntry = copy(
