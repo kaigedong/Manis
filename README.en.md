@@ -67,25 +67,29 @@ and include it as a first-launch seed. The application then uses and updates onl
 | macOS 13+ | Maintained | Primary development platform; system proxy verified, TUN supported for testing through administrator approval |
 | Windows | Maintained | Experimental; managed controller transport is not implemented yet |
 | Linux | Maintained | Experimental; native packages and desktop environments need broader testing |
+| Android | Experimental | Runs on `arm64-v8a` devices and emulators; feature parity is tracked in [android/README.md](android/README.md) |
 
-The CI configuration checks all three platforms. A green compile check is not a claim that every
-network integration has been validated on that operating system.
+The CI configuration checks the desktop platforms; Android builds through its own workflow. A green
+compile check is not a claim that every network integration has been validated on that operating
+system.
 
-The Package workflow builds unnotarized macOS bundles for Apple Silicon and Intel, plus an
-experimental Arch Linux `x86_64` package with native Wayland support, and generates checksums for
-each package. Every commit merged into `main` replaces the public rolling `latest` pre-release,
-while manual workflow artifacts are retained for 14 days. Pushing any version tag also creates a
-separate draft GitHub Release until a maintainer completes the release checklist and decides
-whether to publish it. See the [macOS](packaging/macos/README.md) and
-[Arch Linux](packaging/archlinux/README.md) packaging notes before installing them.
+The Package workflow builds unnotarized macOS bundles for Apple Silicon and Intel, an experimental
+Arch Linux `x86_64` package with native Wayland support, and an Android `arm64-v8a` debug APK, and
+generates checksums for each package. Every commit merged into `main` replaces the public rolling
+`latest` pre-release, while manual workflow artifacts are retained for 14 days. Pushing any version
+tag also creates a separate draft GitHub Release until a maintainer completes the release checklist
+and decides whether to publish it. See the [macOS](packaging/macos/README.md),
+[Arch Linux](packaging/archlinux/README.md), and [Android](android/README.md) packaging notes before
+installing them.
 
 ## Download a test build
 
 The most recent successful `main` build is available from the `Latest Manis development build`
 pre-release on the [Releases page](https://github.com/kaigedong/Manis/releases), or download a single run from the
 [Package workflow page](https://github.com/kaigedong/Manis/actions/workflows/package.yml). Choose
-`arm64` for an Apple Silicon Mac, `x86_64` for an Intel Mac, or the `.pkg.tar.zst` package for
-CachyOS and Arch Linux. Version tags continue to produce maintainer-only draft releases.
+`arm64` for an Apple Silicon Mac, `x86_64` for an Intel Mac, the `.pkg.tar.zst` package for
+CachyOS and Arch Linux, or `Manis-<version>-android-arm64-debug.apk` for an Android phone. Version
+tags continue to produce maintainer-only draft releases.
 
 The macOS archives are ad-hoc signed but do not have a Developer ID signature or Apple
 notarization, so they are test builds only. macOS Gatekeeper still warns on first open; use only a
@@ -95,6 +99,11 @@ app version require administrator authorization. That path installs a root-owned
 pins the approved app, `manis-helperctl`, privileged-helper fingerprints, and the current user ID,
 and does not require a paid Apple Developer Program account. The Developer ID/SMAppService signed
 path remains available as an optional maintainer release route.
+
+The Android APK is an experimental `arm64-v8a` sideload build signed with the committed debug key,
+so it installs over earlier debug builds signed with the same key. Its version code follows the
+Package run number, so successive releases remain upgradeable. Verify the accompanying `.sha256`
+file before installing it, and allow your download app to install unknown apps in system settings.
 
 Manis checks for a new version at startup and every hour. It only reads version metadata and never
 downloads or installs application updates. View the result under Configuration → App updates at the

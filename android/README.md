@@ -67,8 +67,12 @@ android/build-core.sh arm64-v8a    # 只重建内核
 `CGO_ENABLED=0` 内部链接，`x86_64`/`x86` 需要 NDK clang 外部链接。
 
 CI（`.github/workflows/android.yml`）构建 `arm64-v8a` debug APK 并上传 artifact
-`manis-android-arm64-debug`。仓库提交了 `android/debug.keystore`（仅调试用），本地和 CI 产物的
-签名一致，可以直接覆盖安装。
+`manis-android-arm64-debug`。Package workflow（`.github/workflows/package.yml`）也会在每次
+发布时构建同一个 APK，命名为 `Manis-<版本>-android-arm64-debug.apk`、附带 `.sha256`，并作为
+`latest` 滚动 Pre-release 和 `build-<版本>` Release 的资产上传。设置
+`MANIS_PACKAGE_VERSION` 和 `MANIS_ANDROID_VERSION_CODE` 可分别覆盖 versionName 与单调递增的
+versionCode；未设置时保持 `0.1.0-android` / `1`。仓库提交了 `android/debug.keystore`（仅调试
+用），本地和 CI 产物的签名一致，可以直接覆盖安装。
 
 ## 验证状态
 

@@ -5,6 +5,10 @@ plugins {
 }
 
 val manisAbi = (findProperty("manisAbi") as String?) ?: "arm64-v8a"
+// Release jobs pass the desktop package version and a monotonic build number so sideloaded
+// updates keep increasing their versionCode. Local builds keep the historical defaults.
+val manisVersionName = (findProperty("manisVersionName") as String?) ?: "0.1.0-android"
+val manisVersionCode = (findProperty("manisVersionCode") as String?)?.toInt() ?: 1
 
 android {
     namespace = "dev.manis.app"
@@ -14,8 +18,8 @@ android {
         applicationId = "dev.manis.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0-android"
+        versionCode = manisVersionCode
+        versionName = manisVersionName
         ndk { abiFilters += manisAbi }
     }
 

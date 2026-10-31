@@ -251,12 +251,68 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  android:
+    name: Android arm64 APK
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      MANIS_ANDROID_VERSION_CODE: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install JDK
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Install Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: stable
+      - name: Install Android SDK packages
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: "platforms;android-35 build-tools;35.0.0 ndk;27.2.12479018"
+      - name: Install Rust target
+        run: rustup target add aarch64-linux-android
+      - name: Install cargo-ndk
+        uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2
+        with:
+          tool: cargo-ndk
+      - name: Build APK
+        run: android/build-apk.sh arm64-v8a
+      - name: Verify and name APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk="android/app/build/outputs/apk/debug/app-debug.apk"
+          aapt="${ANDROID_HOME}/build-tools/35.0.0/aapt"
+          badging="$("$aapt" dump badging "$apk" | grep -E '^package:')"
+          echo "$badging"
+          [[ "$badging" == *"versionCode='${MANIS_ANDROID_VERSION_CODE}'"* ]]
+          [[ "$badging" == *"versionName='${MANIS_PACKAGE_VERSION}-android'"* ]]
+          "$aapt" dump badging "$apk" | grep -E "^sdkVersion:|^targetSdkVersion:|^native-code:"
+          unzip -l "$apk" | grep -E "lib/arm64-v8a/(libmanis_android|libmihomo)\.so"
+          mkdir -p dist
+          asset="Manis-${MANIS_PACKAGE_VERSION}-android-arm64-debug.apk"
+          cp "$apk" "dist/$asset"
+          (cd dist && sha256sum "$asset" > "$asset.sha256" && sha256sum --check "$asset.sha256")
+      - name: Upload Android APK
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: manis-android-arm64
+          path: |
+            dist/Manis-*-android-arm64-debug.apk
+            dist/Manis-*-android-arm64-debug.apk.sha256
+          if-no-files-found: error
+          retention-days: 14
+
   release:
     name: Update release
     if: github.event_name == 'push'
     needs:
       - macos
       - archlinux-wayland
+      - android
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -277,10 +333,12 @@ jobs:
           shopt -s nullglob
           macos_archives=(Manis-*-macos-*-unsigned.zip)
           linux_packages=(manis-*.pkg.tar.zst)
+          android_apks=(Manis-*-android-arm64-debug.apk)
           checksums=(*.sha256)
           [[ ${#macos_archives[@]} -eq 2 ]]
           [[ ${#linux_packages[@]} -eq 1 ]]
-          [[ ${#checksums[@]} -eq 3 ]]
+          [[ ${#android_apks[@]} -eq 1 ]]
+          [[ ${#checksums[@]} -eq 4 ]]
           sha256sum --check "${checksums[@]}"
       - name: Create signed-by-release update manifest
         shell: bash
@@ -304,13 +362,15 @@ jobs:
             create_state=(--draft --prerelease)
             edit_state=(--draft --prerelease)
             cat > "$notes_file" <<'EOF'
-          Automated test packages for macOS and Arch Linux.
+          Automated test packages for macOS, Arch Linux, and Android.
 
           The macOS archives are ad-hoc signed and not notarized, so Gatekeeper still warns on
           first open. Normal proxy mode can be tested. TUN is available after administrator
           authorization without a paid Apple Developer Program account, and every changed Manis app
           version must be approved again because the helper pins the exact app, helper controller,
           privileged helper, and user ID.
+          The Android APK is an experimental arm64 `debug` build signed with the repository debug
+          key; install it by sideloading after allowing installs from the downloading app.
           This release remains a draft until the maintainer release checklist is complete.
           EOF
           else
@@ -334,6 +394,9 @@ jobs:
               echo 'Manis app version must be approved again because the helper pins the exact app,'
               echo 'helper controller, privileged helper, and user ID.'
               echo 'The Arch Linux package is experimental and supports native Wayland.'
+              echo 'The Android package is an arm64 `debug` APK signed with the repository debug key.'
+              echo 'It installs over earlier debug builds made with the same key; enable installation'
+              echo 'from unknown sources for the app you download it with.'
               echo
               echo 'This rolling pre-release is replaced after every successful `main` build. Verify the'
               echo 'download with its accompanying `.sha256` file before installing it.'

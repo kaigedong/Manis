@@ -70,10 +70,12 @@ Manis 源码仓库不提交预编译代理内核。发行构建会从 Mihomo 官
 | Linux | 持续维护 | 实验性；仍需覆盖更多发行版与桌面环境 |
 | Android | 实验性 | `arm64-v8a` 真机与模拟器均可运行；功能对齐见 [android/README.md](android/README.md) |
 
-CI 会检查三个平台，但“能够编译”不代表该平台上的所有网络集成都已经完成真实验证。
+CI 会检查桌面平台，Android 由独立工作流构建；但“能够编译”不代表该平台上的所有网络集成都
+已经完成真实验证。
 
-Package workflow 会分别构建 Apple Silicon、Intel 的未公证 macOS 应用包，以及支持原生
-Wayland 的实验性 Arch Linux `x86_64` 软件包，并附带校验文件。每次提交合并到 `main` 后，
+Package workflow 会分别构建 Apple Silicon、Intel 的未公证 macOS 应用包、支持原生
+Wayland 的实验性 Arch Linux `x86_64` 软件包，以及 Android `arm64-v8a` 的调试 APK，
+并附带校验文件。每次提交合并到 `main` 后，
 工作流会覆盖更新名为 `latest` 的公开滚动 Pre-release；手动运行的 Actions 产物保留 14 天。
 滚动构建使用 `0.1.<Package 运行编号>` 作为单调递增版本，并发布由 GitHub Release 摘要
 保护的更新清单。通过这些测试包装入的 Manis 会每小时在后台检查和校验更新；下载完成后，
@@ -89,7 +91,8 @@ Wayland 的实验性 Arch Linux `x86_64` 软件包，并附带校验文件。每
 `Latest Manis development build` 的 Pre-release 下载最近一次成功合并到 `main` 的测试
 产物，也可以在 [GitHub Actions 的 Package 页面](https://github.com/kaigedong/Manis/actions/workflows/package.yml)
 下载单次运行产物。Apple Silicon Mac 选择 `arm64`，Intel Mac 选择 `x86_64`；CachyOS 和
-Arch Linux 使用 `.pkg.tar.zst` 软件包。版本标签产生的正式候选包仍只保存为 Draft Release。
+Arch Linux 使用 `.pkg.tar.zst` 软件包；Android 手机选择
+`Manis-<版本>-android-arm64-debug.apk`。版本标签产生的正式候选包仍只保存为 Draft Release。
 
 这些 macOS 包经过 ad-hoc 签名，但没有 Developer ID 签名和 Apple 公证，只适合测试。
 macOS 首次打开仍会显示 Gatekeeper 提示；请只使用可信的官方 Release，并同时取得
@@ -97,6 +100,11 @@ macOS 首次打开仍会显示 Gatekeeper 提示；请只使用可信的官方 R
 Manis 应用版本后再次启用 TUN，都需要管理员授权。该路径由 root-owned LaunchDaemon 固定
 批准时的应用、`manis-helperctl`、特权 helper 指纹和当前用户 ID，不需要付费 Apple
 开发者账号。Developer ID/SMAppService 签名路径仍作为维护者可选发布方式保留。
+
+Android APK 是实验性的 `arm64-v8a` 侧载包，使用仓库提交的调试密钥签名，因此可以直接
+覆盖安装此前用同一密钥签名的调试构建；版本号随 Package 运行编号递增，不会出现无法升级
+的同版本安装。下载后请先校验同名 `.sha256` 文件，并在系统设置中允许所用下载应用安装
+未知来源应用。
 
 Manis 会在启动时及每小时自动检查新版本，只读取版本信息，不下载或安装应用更新。
 在「配置 → 应用更新」（配置页最底部）查看结果，点击「前往 GitHub」后自行下载和安装。

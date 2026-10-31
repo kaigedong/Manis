@@ -34,6 +34,9 @@ once the public API and configuration formats stabilize.
 - Opening Manis starts the managed kernel automatically (Configuration → Startup → "Start
   connected", on by default). A missing core is installed first; one failed start is retried once
   before the error stays on screen with the manual retry button.
+- The Package workflow publishes the Android `arm64-v8a` debug APK as
+  `Manis-<version>-android-arm64-debug.apk` with a `.sha256` file on the rolling `latest`
+  pre-release and on `build-<version>` releases; its version name and code follow the release.
 
 ### Changed
 
@@ -64,6 +67,10 @@ once the public API and configuration formats stabilize.
 
 ### Fixed
 
+- Linux: keep the status item alive when Manis starts at login before the desktop shell exports
+  `org.kde.StatusNotifierWatcher`. The icon now appears as soon as the host is ready, and close
+  hides instead of quitting; previously the first launch installed no tray, so closing the window
+  exited Manis until the next manual start. A shell restart also re-registers the item.
 - Route Linux `systemd-resolved` queries through the managed TUN interface, flush stale poisoned
   answers, and restore the original resolver route when TUN stops so fake-IP and domain rules work
   even when DHCP supplies a private gateway DNS server.

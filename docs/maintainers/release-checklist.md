@@ -59,6 +59,14 @@ the remaining checklist.
       ignored.
 - [ ] System proxy and TUN limitations are stated in the release notes.
 
+## Android package
+
+- [ ] The APK is the `arm64-v8a` debug build signed with the committed debug keystore, and its
+      version name and code match the release version.
+- [ ] It installs over the previous release on a physical device without uninstalling.
+- [ ] VPN authorization, subscription import, and node switching work on that device.
+- [ ] The release notes state that it is an experimental sideload `debug` build.
+
 ## Runtime verification
 
 - [ ] Rule, global, and direct modes are tested with synthetic configuration.
@@ -71,7 +79,7 @@ the remaining checklist.
 ## Publication
 
 - [ ] The tag workflow's draft release contains both macOS architectures, the Arch Linux package,
-      and a valid checksum for each asset.
+      the Android APK, and a valid checksum for each asset.
 - [ ] Release notes state platform support and known limitations without claiming unverified
   behavior.
 - [ ] Checksums are published for every artifact.

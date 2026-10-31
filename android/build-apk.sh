@@ -21,8 +21,16 @@ if [[ "${MANIS_SKIP_CORE_BUILD:-0}" != "1" ]]; then
 fi
 
 cd "$ROOT/android"
+gradle_args=(--no-daemon "-PmanisAbi=$ABI")
+if [[ -n "${MANIS_PACKAGE_VERSION:-}" ]]; then
+  gradle_args+=("-PmanisVersionName=${MANIS_PACKAGE_VERSION}-android")
+fi
+if [[ -n "${MANIS_ANDROID_VERSION_CODE:-}" ]]; then
+  gradle_args+=("-PmanisVersionCode=${MANIS_ANDROID_VERSION_CODE}")
+fi
+
 if [[ -n "${MANIS_GRADLE:-}" ]]; then
-  "$MANIS_GRADLE" --no-daemon -PmanisAbi="$ABI" assembleDebug
+  "$MANIS_GRADLE" "${gradle_args[@]}" assembleDebug
 else
-  ./gradlew --no-daemon -PmanisAbi="$ABI" assembleDebug
+  ./gradlew "${gradle_args[@]}" assembleDebug
 fi
