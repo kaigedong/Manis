@@ -739,7 +739,7 @@ mod tests {
         assert_eq!(edits.get(), 1);
         let button = cx.debug_bounds("nested-enabled").unwrap();
         cx.simulate_mouse_move(button.center(), None, Modifiers::none());
-        cx.simulate_event(gpui::ScrollWheelEvent {
+        cx.simulate_event(gpui::ScrollEvent {
             position: button.center(),
             delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.0), px(-60.0))),
             ..Default::default()

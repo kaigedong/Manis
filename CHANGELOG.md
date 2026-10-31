@@ -43,10 +43,15 @@ once the public API and configuration formats stabilize.
 - Settings opens inside the main window again: the sidebar item and the settings shortcut no
   longer create a separate window.
 
-- Upgrade every direct dependency to its newest release, including GPUI 0.3.9, GPUI Component 0.8,
-  `zip` 9, `zbus` 6, and `ureq` 3.5. The core archive reader accepts `zip` 9's fallible entry
-  names, and the Linux tray integration test drives `zbus` 6 from its process-wide multithreaded
-  runtime now that the blocking API is gone.
+- Upgrade every direct dependency to its newest release, including GPUI `0.3.10`, GPUI Component
+  `0.8.1`, `zip` 9.1.3, `zbus` 6.2, and `ureq` 3.5. The core archive reader accepts `zip` 9's
+  fallible entry names, and the Linux tray integration test drives `zbus` 6 from its process-wide
+  multithreaded runtime now that the blocking API is gone. The Android bridge moves to `jni` 0.22's
+  `EnvUnowned` native-method entry point and reports every failure as `IllegalStateException`
+  through one error policy. Every GitHub Actions pin moves to its current release (`checkout` 7,
+  `cache` 6, `setup-java` 6, `setup-go` 7, `setup-android` 4, artifact upload/download 7/8,
+  `install-action`, `cargo-deny-action`, and `audit-check`), so Dependabot no longer has open
+  update pull requests.
 
 ### Removed
 

@@ -313,7 +313,7 @@ mod tests {
     fn nodes_page_keeps_sources_and_expanding_policies_in_one_document(
         cx: &mut gpui::TestAppContext,
     ) {
-        use gpui::{AppContext as _, ScrollDelta, ScrollWheelEvent, point, px};
+        use gpui::{AppContext as _, ScrollDelta, ScrollEvent, point, px};
         use manis_core::PolicyGroupId;
 
         cx.update(crate::init);
@@ -360,7 +360,7 @@ mod tests {
             "following card must not shrink"
         );
         let viewport = cx.debug_bounds("nodes-scroll").unwrap();
-        cx.simulate_event(ScrollWheelEvent {
+        cx.simulate_event(ScrollEvent {
             position: viewport.center(),
             delta: ScrollDelta::Pixels(point(px(0.0), px(-10_000.0))),
             ..Default::default()
@@ -372,7 +372,7 @@ mod tests {
             "last group is reachable by scrolling"
         );
         assert!(last.origin.y >= viewport.origin.y);
-        cx.simulate_event(ScrollWheelEvent {
+        cx.simulate_event(ScrollEvent {
             position: viewport.center(),
             delta: ScrollDelta::Pixels(point(px(0.0), px(10_000.0))),
             ..Default::default()

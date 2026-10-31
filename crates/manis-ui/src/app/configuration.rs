@@ -599,7 +599,7 @@ impl ManisApp {
                         .child(detail)
                 },
             ))
-            .on_scroll_wheel(cx.listener(|_, _, window, cx| {
+            .on_scroll(cx.listener(|_, _, window, cx| {
                 // Read the offset after GPUI applies the wheel event, including momentum.
                 cx.defer_in(window, |this, _, cx| {
                     this.sync_configuration_directory(cx);
@@ -892,7 +892,7 @@ mod tests {
         cx: &mut gpui::TestAppContext,
     ) {
         use super::ManisApp;
-        use gpui::{AppContext as _, ScrollDelta, ScrollWheelEvent, point, px};
+        use gpui::{AppContext as _, ScrollDelta, ScrollEvent, point, px};
         use manis_core::PrimaryWorkspace;
 
         cx.update(crate::init);
@@ -948,7 +948,7 @@ mod tests {
             (-10_000.0, ConfigurationSection::Updates),
             (10_000.0, ConfigurationSection::General),
         ] {
-            window_cx.simulate_event(ScrollWheelEvent {
+            window_cx.simulate_event(ScrollEvent {
                 position,
                 delta: ScrollDelta::Pixels(point(px(0.0), px(delta))),
                 ..Default::default()

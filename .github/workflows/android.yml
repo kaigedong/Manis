@@ -44,18 +44,18 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install JDK
-        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
           java-version: "21"
 
       - name: Install Go
-        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: stable
 
       - name: Install Android SDK packages
-        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
         with:
           packages: "platforms;android-35 build-tools;35.0.0 ndk;27.2.12479018"
 
@@ -63,7 +63,7 @@ jobs:
         run: rustup target add aarch64-linux-android
 
       - name: Install cargo-ndk
-        uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2
+        uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
         with:
           tool: cargo-ndk
 
@@ -80,7 +80,7 @@ jobs:
           sha256sum "$apk"
 
       - name: Upload APK
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: manis-android-arm64-debug
           path: android/app/build/outputs/apk/debug/app-debug.apk
