@@ -49,7 +49,7 @@ jobs:
             packaging/fetch-mihomo.sh dist/mihomo-seeds/mihomo-darwin-x86_64 \
             > dist/mihomo-seeds/mihomo-darwin-x86_64.version
       - name: Upload verified Mihomo seeds
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: mihomo-seeds
           path: dist/mihomo-seeds
@@ -142,7 +142,7 @@ jobs:
           archive_name="$(basename "$archive")"
           (cd dist && shasum -a 256 "$archive_name" > "$archive_name.sha256")
       - name: Upload macOS package
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: manis-macos-${{ matrix.architecture }}
           path: |
@@ -242,7 +242,7 @@ jobs:
           pacman -Qlp "$package_path" | grep -Fx 'manis /usr/share/polkit-1/actions/dev.manis.app.linux-helper.policy'
           bsdtar -xOf "$package_path" .INSTALL | grep -F '/usr/bin/setcap cap_net_admin,cap_net_raw=ep /usr/lib/manis/mihomo'
       - name: Upload Arch Linux package
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: manis-archlinux-wayland-x86_64
           path: |
@@ -297,7 +297,7 @@ jobs:
           cp "$apk" "dist/$asset"
           (cd dist && sha256sum "$asset" > "$asset.sha256" && sha256sum --check "$asset.sha256")
       - name: Upload Android APK
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: manis-android-arm64
           path: |
