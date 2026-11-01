@@ -53,7 +53,9 @@ once the public API and configuration formats stabilize.
   VPN start/stop, exit node, routing modes, errors, warnings and the jump to the Nodes page are NSH
   host commands. The shell is NSH too: one root owns the bottom navigation, ApplyBar and all
   five pages, so switching tabs no longer recreates an NshView. Compose is now only the invisible
-  AndroidView host for polling, VPN/installer permissions and clipboard/platform effects. Subscription/manual source grouping,
+  AndroidView host for polling, VPN/installer permissions and clipboard/platform effects.
+  Remove the now-unused Compose page implementations and per-page NSH hosts, keeping only the
+  shared platform helpers and the single root host. Subscription/manual source grouping,
   the internal `__MANIS_GLOBAL__` label, current selection and delays are built once instead of
   being reconstructed by the Kotlin UI. The NSH Android runtime is pinned to `v0.3.0`, fetched by
   `android/fetch-nsh.sh`, and raises `minSdk` to 28.

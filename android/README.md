@@ -22,7 +22,7 @@
 ## 工作方式
 
 ```text
-Compose 外壳 ──workspace.json──▶ Rust (crates/manis-android)
+NSH 根页面 ──workspace.json──▶ Rust (crates/manis-android)
      │                              │  MobileConfig → Profile（与桌面同一套类型）
      │                              ▼
      │                        config.yaml (tun.file-descriptor: 3)
@@ -111,7 +111,7 @@ versionCode；未设置时保持 `0.1.0-android` / `1`。仓库提交了 `androi
 - NSH 订阅页在 Compose 「订阅」Tab 内加载，订阅/手动节点/策略组列表、启停、删除、添加和应用通过 host channel 验证；
 - NSH 规则页在 Compose 「规则」Tab 内加载，规则列表、启停、添加/编辑/删除和应用通过 host channel 验证；
 - NSH 设置页在 Compose 「设置」Tab 内加载，摘要、DNS 切换、重新载入、备份恢复和日志入口通过 host channel 验证；
-- NSH 连接页在 Compose 「连接」Tab 内加载，VPN 启停、出口节点、路由模式、错误/不可达提示和跳转节点页通过。
+- NSH 连接页在单根页面内加载，VPN 启停、出口节点、路由模式、错误/不可达提示和跳转节点页通过。
 
 真机（HarmonyOS / Android 17，arm64）已验证安装、VPN、内核启动；真实订阅链路的节点展示和选路
 仍待用户手机复测。

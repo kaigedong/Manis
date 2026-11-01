@@ -31,7 +31,7 @@
 - 「刷新」通过 `host.call("nodes.refresh")` 回到 Kotlin 取最新数据
 - 点节点通过 `host.call("nodes.select")` 回到 Kotlin（spike 只记录日志）
 
-嵌入入口：`android/app/src/main/java/dev/manis/app/ui/NshNodePage.kt`（Android 的「节点」Tab）。
+嵌入入口：`android/app/src/main/java/dev/manis/app/ui/NshRootPage.kt`（单根 NSH 页面；spike 阶段曾从 `NshNodePage.kt` 开始）。
 Settings → 诊断里加了实验入口（仅 spike 分支）。
 
 ### Rust root 验证
