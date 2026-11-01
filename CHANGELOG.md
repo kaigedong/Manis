@@ -80,7 +80,9 @@ once the public API and configuration formats stabilize.
   starts it when no controller is running, waits for the Unix controller, and stops the owned
   engine when its window closes. With an existing controller it attaches instead.
 - Packaging: the Arch/AUR `manis` entry now installs the NSH host as `manis` and the GPUI binary
-  as `manis-ui` (the headless engine), with the `gtk4` dependency. Subscription/manual source grouping,
+  as `manis-ui` (the headless engine), with the `gtk4` dependency.
+- Desktop shell: add a StatusNotifierItem tray with open/quit, and hide the window on close while
+  the tray is available. The tray registers as `dev.manis.app`. Subscription/manual source grouping,
   the internal `__MANIS_GLOBAL__` label, current selection and delays are built once instead of
   being reconstructed by the Kotlin UI. The NSH Android runtime is pinned to `v0.3.0`, fetched by
   `android/fetch-nsh.sh`, and raises `minSdk` to 28.

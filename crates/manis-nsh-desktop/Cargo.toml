@@ -15,6 +15,7 @@ name = "manis-nsh-desktop"
 path = "src/main.rs"
 
 [dependencies]
+ksni = { version = "=0.3.7", default-features = false, features = ["async-io", "blocking"] }
 manis-ui = { path = "../manis-ui" }
 nsh-engine = "=0.3.0"
 nsh-platform-linux = "=0.3.0"
