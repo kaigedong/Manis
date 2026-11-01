@@ -39,7 +39,7 @@ internal fun NshNodePage(onMessage: (String) -> Unit, modifier: Modifier = Modif
         factory = { context ->
             NshView(context).apply {
                 setErrorListener { message -> onMessage("NSH: $message") }
-                setParams(mapOf("page" to initialPage, "embedded" to true))
+                setParams(mapOf("page" to "nodes", "data" to initialPage, "embedded" to true))
                 handle("nodes.refresh") { _, reply ->
                     scope.launch {
                         runCatching { ControllerApi.snapshot() }

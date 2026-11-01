@@ -4,6 +4,17 @@
   "version": "0.1.0",
   "build": 1,
   "capabilities": {
-    "host": ["nodes.refresh", "nodes.select", "nodes.selectGroup"]
+    "host": [
+      "nodes.refresh",
+      "nodes.select",
+      "nodes.selectGroup",
+      "subscriptions.toggle",
+      "subscriptions.delete",
+      "subscriptions.add",
+      "subscriptions.addNode",
+      "subscriptions.addGroup",
+      "subscriptions.refresh",
+      "subscriptions.apply"
+    ]
   }
 }

@@ -1,6 +1,6 @@
 # Manis for Android (experimental)
 
-Kotlin/Compose 外壳 + NSH 节点页，内置受管的 Mihomo 内核，通过 `VpnService` 接管整机流量。
+Kotlin/Compose 外壳 + NSH 页面，内置受管的 Mihomo 内核，通过 `VpnService` 接管整机流量。
 工作区模型、配置渲染和节点页表现层复用 Rust 实现，手机和桌面生成的 `config.yaml` 语义一致。
 
 ## 现在能做什么
@@ -9,7 +9,7 @@ Kotlin/Compose 外壳 + NSH 节点页，内置受管的 Mihomo 内核，通过 `
 | ---- | ---------------------------------------------------------------------------------------------------------------- |
 | 连接 | 一键建立/断开 VPN；显示当前出口节点；规则 / 全局 / 直连模式即时切换；配置摘要和解析提示                          |
 | 节点 | **NSH 页面**：未连接时列出已保存的订阅、缓存节点名和手动节点；连接后按订阅/手动来源分组显示内核节点，内部全局选择器显示为「全局」，点选切换，用户策略组单独列出 |
-| 订阅 | 多订阅增删与启停；添加/刷新时直接下载并缓存到内核 provider 目录，不需要先连接 VPN；VLESS 分享链接导入；策略组（手动选择 / 自动测速）的新建与删除；「应用」后热重载内核 |
+| 订阅 | **NSH 页面**：多订阅增删与启停；添加/刷新时直接下载并缓存到内核 provider 目录，不需要先连接 VPN；VLESS 分享链接导入；策略组（手动选择 / 自动测速）的新建与删除；「应用」后热重载内核 |
 | 规则 | 与桌面一致的结构化规则行（`DOMAIN`、`DOMAIN-SUFFIX`、`DOMAIN-KEYWORD`、`DOMAIN-WILDCARD`、`IP-CIDR`、`IP6-CIDR`、`GEOIP`、`IP-ASN`、`DST-PORT`、`FINAL`），可启停、编辑、删除，策略指向 `DIRECT`、`REJECT` 或任意策略组 |
 | 设置 | 内核版本、配置摘要、ABI、数据目录；重新载入；查看内核日志；应用内检查更新、下载并安装新 APK；许可证说明 |
 
@@ -27,7 +27,8 @@ Compose 外壳 ──workspace.json──▶ Rust (crates/manis-android)
      │                              ▼
      │                        config.yaml (tun.file-descriptor: 3)
      │                              │
-     └── NSH 节点页 ◀── manis-presentation
+     ├── NSH 节点页 ◀── manis-presentation
+     └── NSH 订阅页
                                     │
 VpnService ──TUN fd──▶ 打包的 libmihomo.so ──▶ 127.0.0.1:9090（每次启动随机 secret）
 ```
@@ -106,7 +107,8 @@ versionCode；未设置时保持 `0.1.0-android` / `1`。仓库提交了 `androi
 - 新增订阅 → 应用 → 配置里出现两个 provider，内核重启但 TUN 不断；
 - 模式切换通过 `PATCH /configs` 即时生效；
 - 两个 VLESS 节点之间切换，`__MANIS_GLOBAL__` 的 `now` 随之改变；
-- NSH 节点页在 Compose 「节点」Tab 内加载，未连接/已连接、搜索、500 行压力列表和点选均通过。
+- NSH 节点页在 Compose 「节点」Tab 内加载，未连接/已连接、搜索、500 行压力列表和点选均通过；
+- NSH 订阅页在 Compose 「订阅」Tab 内加载，订阅/手动节点/策略组列表、启停、删除、添加和应用通过 host channel 验证。
 
 真机（HarmonyOS / Android 17，arm64）已验证安装、VPN、内核启动；真实订阅链路的节点展示和选路
 仍待用户手机复测。

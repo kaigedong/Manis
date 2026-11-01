@@ -42,6 +42,17 @@ import kotlinx.coroutines.withContext
 
 @Composable
 fun SubscriptionsScreen(onMessage: (String) -> Unit) {
+    androidx.compose.foundation.layout.Column(Modifier.fillMaxSize()) {
+        ApplyBar()
+        NshSubscriptionsPage(
+            onMessage = onMessage,
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+        )
+    }
+}
+
+@Composable
+private fun ComposeSubscriptionsScreen(onMessage: (String) -> Unit) {
     val context = LocalContext.current
     val config = Workspace.config.value
     val scope = rememberCoroutineScope()
@@ -410,7 +421,7 @@ private fun Set<Int>.toggle(value: Int): Set<Int> =
  * the core's provider cache. When the VPN is already running, the core is also asked to refresh so
  * the visible node list updates immediately.
  */
-private suspend fun refreshSubscriptions(context: Context, config: MobileConfig): String {
+internal suspend fun refreshSubscriptions(context: Context, config: MobileConfig): String {
     val cached = withContext(Dispatchers.IO) { SubscriptionCache.refresh(context, config) }
     val parts = mutableListOf<String>()
     if (cached.downloaded > 0) {

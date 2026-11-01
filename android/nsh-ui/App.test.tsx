@@ -1,6 +1,6 @@
 import { expect, open, test } from "nsh/test";
 
-const page = {
+const nodesPage = {
   global: { label: "全局", current: "香港 01", total: 2 },
   sources: [
     {
@@ -19,7 +19,7 @@ const page = {
 };
 
 test("renders source groups and current node", async () => {
-  const app = await open("./App.tsx", { host: { params: { page } } });
+  const app = await open("./App.tsx", { host: { params: { page: "nodes", data: nodesPage } } });
   expect(app.texts()).toContain("我的订阅");
   expect(app.texts()).toContain("香港 01");
   expect(app.texts()).toContain("当前");
