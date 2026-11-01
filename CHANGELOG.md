@@ -68,7 +68,9 @@ once the public API and configuration formats stabilize.
   New subscription URLs and manual share links can also be added and removed (verified add →
   delete). Apply/refresh now syncs single-node provider files, recompiles the saved profile and
   reloads the live controller through `/configs`, restoring the previous YAML on failure.
-  Rule editing, connection stop and the final `manis-ui` replacement are the next step. Subscription/manual source grouping,
+  Manual rules can now be added, edited, toggled and deleted from the Rules page; each write is
+  followed by the same profile apply. Runtime rules remain read-only. Connection stop and the final
+  `manis-ui` replacement are the next step. Subscription/manual source grouping,
   the internal `__MANIS_GLOBAL__` label, current selection and delays are built once instead of
   being reconstructed by the Kotlin UI. The NSH Android runtime is pinned to `v0.3.0`, fetched by
   `android/fetch-nsh.sh`, and raises `minSdk` to 28.

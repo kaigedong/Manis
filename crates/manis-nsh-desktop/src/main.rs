@@ -126,6 +126,47 @@ fn install_handlers(host: &nsh_engine::HostChannel) {
                         _ => Some("暂时只能删除订阅或手动节点".to_owned()),
                     }
                 }
+                "rules.save" => {
+                    let index = data
+                        .get("index")
+                        .and_then(Value::as_u64)
+                        .map(|value| value as usize);
+                    match (
+                        string_field("kind"),
+                        string_field("value"),
+                        string_field("policy"),
+                    ) {
+                        (Some(kind), Some(value), Some(policy)) => Some(
+                            manis_ui::nsh_save_rule(index, &kind, &value, &policy)
+                                .map_or_else(|error| error, |()| "规则已保存".to_owned()),
+                        ),
+                        _ => Some("规则类型、内容和策略不能为空".to_owned()),
+                    }
+                }
+                "rules.toggle" => {
+                    let index = data
+                        .get("index")
+                        .and_then(Value::as_u64)
+                        .map(|value| value as usize);
+                    let enabled = data.get("enabled").and_then(Value::as_bool);
+                    match (index, enabled) {
+                        (Some(index), Some(enabled)) => Some(
+                            manis_ui::nsh_toggle_rule(index, enabled)
+                                .map_or_else(|error| error, |()| "规则状态已保存".to_owned()),
+                        ),
+                        _ => Some("缺少规则索引".to_owned()),
+                    }
+                }
+                "rules.delete" => {
+                    let index = data
+                        .get("index")
+                        .and_then(Value::as_u64)
+                        .map(|value| value as usize);
+                    index.map(|index| {
+                        manis_ui::nsh_delete_rule(index)
+                            .map_or_else(|error| error, |()| "规则已删除".to_owned())
+                    })
+                }
                 "subscriptions.add" => match (string_field("name"), string_field("url")) {
                     (Some(name), Some(url)) => Some(
                         manis_ui::nsh_add_subscription(&name, &url)

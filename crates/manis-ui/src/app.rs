@@ -887,6 +887,10 @@ pub fn nsh_root_data() -> serde_json::Value {
         },
         |snapshot| nsh_node_page(snapshot, &workspace, &live_node),
     );
+    let manual_rules = directory
+        .as_deref()
+        .and_then(|directory| crate::manual_rule::load_manual_rules_in(directory).ok())
+        .unwrap_or_default();
     let rules_page = live.as_ref().map_or_else(
         || {
             json!({
@@ -900,7 +904,7 @@ pub fn nsh_root_data() -> serde_json::Value {
                 "summary": ""
             })
         },
-        nsh_rules_page,
+        |snapshot| nsh_rules_page(snapshot, &manual_rules),
     );
 
     json!({
@@ -1159,10 +1163,34 @@ fn is_subscription_info_node(name: &str) -> bool {
     .any(|marker| name.contains(marker))
 }
 
-fn nsh_rules_page(snapshot: &manis_mihomo::MihomoSnapshot) -> serde_json::Value {
+fn nsh_rules_page(
+    snapshot: &manis_mihomo::MihomoSnapshot,
+    manual_rules: &[crate::manual_rule::ManualRule],
+) -> serde_json::Value {
     use serde_json::json;
 
-    let rules: Vec<_> = snapshot
+    let mut rules: Vec<_> = manual_rules
+        .iter()
+        .enumerate()
+        .map(|(index, rule)| {
+            let value = rule
+                .conditions()
+                .iter()
+                .map(crate::manual_rule::ManualRuleCondition::parameter)
+                .collect::<Vec<_>>()
+                .join(" / ");
+            json!({
+                "index": index,
+                "kind": rule.condition_kind_label(),
+                "value": value,
+                "policy": rule.target(),
+                "policyLabel": if rule.target() == "__MANIS_GLOBAL__" { "全局" } else { rule.target() },
+                "enabled": rule.enabled(),
+                "source": "manual",
+            })
+        })
+        .collect();
+    let runtime_rules: Vec<_> = snapshot
         .rules
         .iter()
         .enumerate()
@@ -1181,21 +1209,29 @@ fn nsh_rules_page(snapshot: &manis_mihomo::MihomoSnapshot) -> serde_json::Value 
                 other => other,
             };
             json!({
-                "index": index,
+                "index": manual_rules.len() + index,
                 "kind": kind,
                 "value": if kind == "FINAL" { "" } else { rule.payload.as_str() },
                 "policy": rule.proxy,
                 "policyLabel": if rule.proxy == "__MANIS_GLOBAL__" { "全局" } else { rule.proxy.as_str() },
                 "enabled": !rule.extra.disabled.unwrap_or(false),
+                "source": "runtime",
             })
         })
         .collect();
-    let policies: Vec<_> = snapshot
-        .policy_groups()
-        .into_iter()
-        .map(|group| group.name)
-        .filter(|name| name != "__MANIS_GLOBAL__")
-        .collect();
+    rules.extend(runtime_rules);
+    let mut policies = vec![
+        "DIRECT".to_owned(),
+        "REJECT".to_owned(),
+        "__MANIS_GLOBAL__".to_owned(),
+    ];
+    policies.extend(
+        snapshot
+            .policy_groups()
+            .into_iter()
+            .map(|group| group.name)
+            .filter(|name| name != "__MANIS_GLOBAL__" && name != "DIRECT" && name != "REJECT"),
+    );
 
     json!({
         "rules": rules,
@@ -1205,7 +1241,88 @@ fn nsh_rules_page(snapshot: &manis_mihomo::MihomoSnapshot) -> serde_json::Value 
         ],
         "policies": policies,
         "warnings": [],
-        "summary": format!("{} 条运行时规则", snapshot.rules.len()),
+        "summary": format!(
+            "{} 条手动规则 · {} 条运行时规则",
+            manual_rules.len(),
+            snapshot.rules.len()
+        ),
+    })
+}
+
+/// Adds or replaces one saved manual desktop rule, then applies the profile.
+///
+/// # Errors
+/// Returns a parse, store or reload error.
+pub fn nsh_save_rule(
+    index: Option<usize>,
+    kind: &str,
+    value: &str,
+    policy: &str,
+) -> Result<(), String> {
+    let directory = crate::brand::config_dir().ok_or_else(|| "找不到配置目录".to_owned())?;
+    let mut rules =
+        crate::manual_rule::load_manual_rules_in(&directory).map_err(|error| error.to_string())?;
+    let kind = manual_rule_kind(kind).ok_or_else(|| "不支持的规则类型".to_owned())?;
+    let rule = crate::manual_rule::ManualRule::parse(kind, value.trim(), policy.trim())
+        .map_err(|_error| "规则内容无效".to_owned())?;
+    if let Some(index) = index {
+        crate::manual_rule::replace_manual_rule(&mut rules, index, rule)
+            .map_err(|_error| "规则不存在、重复或无法组合".to_owned())?;
+    } else {
+        rules.push(rule);
+    }
+    crate::manual_rule::save_manual_rules_in(&directory, &rules)
+        .map_err(|error| error.to_string())?;
+    nsh_apply_profile()
+}
+
+/// Enables or disables one saved manual desktop rule, then applies the profile.
+///
+/// # Errors
+/// Returns a store or reload error.
+pub fn nsh_toggle_rule(index: usize, enabled: bool) -> Result<(), String> {
+    let directory = crate::brand::config_dir().ok_or_else(|| "找不到配置目录".to_owned())?;
+    let mut rules =
+        crate::manual_rule::load_manual_rules_in(&directory).map_err(|error| error.to_string())?;
+    let rule = rules
+        .get_mut(index)
+        .ok_or_else(|| "规则已变化，请刷新".to_owned())?;
+    rule.set_enabled(enabled);
+    crate::manual_rule::save_manual_rules_in(&directory, &rules)
+        .map_err(|error| error.to_string())?;
+    nsh_apply_profile()
+}
+
+/// Deletes one saved manual desktop rule, then applies the profile.
+///
+/// # Errors
+/// Returns a store or reload error.
+pub fn nsh_delete_rule(index: usize) -> Result<(), String> {
+    let directory = crate::brand::config_dir().ok_or_else(|| "找不到配置目录".to_owned())?;
+    let mut rules =
+        crate::manual_rule::load_manual_rules_in(&directory).map_err(|error| error.to_string())?;
+    if index >= rules.len() {
+        return Err("运行时规则不能直接删除".to_owned());
+    }
+    rules.remove(index);
+    crate::manual_rule::save_manual_rules_in(&directory, &rules)
+        .map_err(|error| error.to_string())?;
+    nsh_apply_profile()
+}
+
+fn manual_rule_kind(label: &str) -> Option<crate::manual_rule::ManualRuleKind> {
+    Some(match label {
+        "DOMAIN" => crate::manual_rule::ManualRuleKind::Host,
+        "DOMAIN-SUFFIX" => crate::manual_rule::ManualRuleKind::HostSuffix,
+        "DOMAIN-WILDCARD" => crate::manual_rule::ManualRuleKind::HostWildcard,
+        "DOMAIN-KEYWORD" => crate::manual_rule::ManualRuleKind::HostKeyword,
+        "IP-CIDR" => crate::manual_rule::ManualRuleKind::IpCidr,
+        "IP6-CIDR" => crate::manual_rule::ManualRuleKind::Ip6Cidr,
+        "GEOIP" => crate::manual_rule::ManualRuleKind::GeoIp,
+        "IP-ASN" => crate::manual_rule::ManualRuleKind::IpAsn,
+        "DST-PORT" => crate::manual_rule::ManualRuleKind::DstPort,
+        "FINAL" => crate::manual_rule::ManualRuleKind::Final,
+        _ => return None,
     })
 }
 
