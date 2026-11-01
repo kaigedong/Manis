@@ -1181,6 +1181,38 @@ fn nsh_rules_page(snapshot: &manis_mihomo::MihomoSnapshot) -> serde_json::Value 
     })
 }
 
+/// Adds a subscription URL to the desktop store.
+///
+/// # Errors
+/// Returns a store/validation error for an invalid URL or failed write.
+pub fn nsh_add_subscription(name: &str, url: &str) -> Result<(), String> {
+    let directory = crate::brand::config_dir().ok_or_else(|| "找不到配置目录".to_owned())?;
+    mihomo::save_subscription_source_with_options_in(
+        &directory,
+        url.trim(),
+        name.trim(),
+        mihomo::RemoteSourceRefreshInterval::Manual,
+        true,
+    )
+    .map(|_| ())
+    .map_err(|error| error.to_string())
+}
+
+/// Adds a single VLESS/share-link node to the desktop store.
+///
+/// # Errors
+/// Returns a store/validation error for an invalid link or failed write.
+pub fn nsh_add_node(link: &str) -> Result<(), String> {
+    let directory = crate::brand::config_dir().ok_or_else(|| "找不到配置目录".to_owned())?;
+    let name = link
+        .split_once('#')
+        .map_or("手动节点", |(_, name)| name)
+        .trim();
+    mihomo::save_single_node_source_with_options_in(&directory, link.trim(), name, true)
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
 /// Enables or disables one saved desktop subscription by list index.
 ///
 /// # Errors

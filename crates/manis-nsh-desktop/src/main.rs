@@ -126,6 +126,17 @@ fn install_handlers(host: &nsh_engine::HostChannel) {
                         _ => Some("暂时只能删除订阅或手动节点".to_owned()),
                     }
                 }
+                "subscriptions.add" => match (string_field("name"), string_field("url")) {
+                    (Some(name), Some(url)) => Some(
+                        manis_ui::nsh_add_subscription(&name, &url)
+                            .map_or_else(|error| error, |()| "订阅已保存".to_owned()),
+                    ),
+                    _ => Some("订阅名称和地址不能为空".to_owned()),
+                },
+                "subscriptions.addNode" => string_field("link").map(|link| {
+                    manis_ui::nsh_add_node(&link)
+                        .map_or_else(|error| error, |()| "节点已保存".to_owned())
+                }),
                 "workspace.apply" | "rules.apply" | "subscriptions.apply" => {
                     Some("已应用（桌面原型）".to_owned())
                 }

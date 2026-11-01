@@ -64,8 +64,9 @@ once the public API and configuration formats stabilize.
   live subscription/manual sources and policy groups, and selecting a node or routing mode goes
   through the desktop controller. The Rules page now shows the live runtime rules (with the FINAL
   row), and the Settings page can read the desktop kernel log. Subscription and manual-node
-  enable/disable and deletion now write through the desktop store (verified disable → restore);
-  rule editing, subscription import/refresh and the final `manis-ui` replacement are the next step. Subscription/manual source grouping,
+  enable/disable and deletion now write through the desktop store (verified disable → restore).
+  New subscription URLs and manual share links can also be added and removed (verified add →
+  delete); download/refresh, rule editing and the final `manis-ui` replacement are the next step. Subscription/manual source grouping,
   the internal `__MANIS_GLOBAL__` label, current selection and delays are built once instead of
   being reconstructed by the Kotlin UI. The NSH Android runtime is pinned to `v0.3.0`, fetched by
   `android/fetch-nsh.sh`, and raises `minSdk` to 28.
