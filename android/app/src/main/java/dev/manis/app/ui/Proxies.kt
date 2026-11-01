@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.dp
 import dev.manis.app.core.ControllerApi
 import dev.manis.app.core.CoreController
 import dev.manis.app.core.GroupInfo
+import dev.manis.app.core.NodeInfo
 import dev.manis.app.data.MobileConfig
 import dev.manis.app.data.Workspace
 import dev.manis.app.data.subscriptionCachePath
@@ -43,7 +44,7 @@ fun ProxiesScreen(onMessage: (String) -> Unit, onNavigate: (Tab) -> Unit) {
     val snapshot = RuntimeState.snapshot
     val active = RuntimeState.active
     val config = Workspace.config.value
-    var expanded by remember { mutableStateOf(setOf(GLOBAL_GROUP)) }
+    var expanded by remember { mutableStateOf(emptySet<String>()) }
     var measured by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
     var testing by remember { mutableStateOf<String?>(null) }
 
@@ -99,7 +100,7 @@ fun ProxiesScreen(onMessage: (String) -> Unit, onNavigate: (Tab) -> Unit) {
             runCatching { ControllerApi.testGroup(group.name) }
                 .onSuccess {
                     measured = measured + it
-                    onMessage("${group.name} 测速完成")
+                    onMessage("${displayProxyName(group.name) ?: group.name} 测速完成")
                 }
                 .onFailure { onMessage(it.message ?: "测速失败") }
             testing = null
@@ -116,7 +117,7 @@ fun ProxiesScreen(onMessage: (String) -> Unit, onNavigate: (Tab) -> Unit) {
         ScreenTitle(
             "节点",
             if (active) {
-                "列表来自运行中的内核，点选立即生效"
+                "按订阅来源列出节点，点选立即切换"
             } else {
                 "未连接时显示已保存的节点，连接后可切换和测速"
             },
@@ -131,9 +132,102 @@ fun ProxiesScreen(onMessage: (String) -> Unit, onNavigate: (Tab) -> Unit) {
         val groups = snapshot?.groups.orEmpty()
         if (groups.isEmpty()) {
             Text("正在读取节点…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            TextButton(onClick = { refresh() }) { Text("重试") }
+            return@Column
         }
 
-        for (group in groups) {
+        val global = groups.firstOrNull { it.name == GLOBAL_GROUP }
+        val policyGroups = groups.filter { group ->
+            group.name != GLOBAL_GROUP &&
+                group.name != "GLOBAL" &&
+                !group.name.startsWith("__MANIS_")
+        }
+        val knownNodes = snapshot?.nodes.orEmpty()
+        val globalNodes = global?.all.orEmpty().toSet()
+        val current = global?.now
+
+        // The global selector contains every node. Split it back into the saved sources so a
+        // subscription and a manual node do not look like one merged list.
+        val offlineSources = remember(config) { buildOfflineSources(context, config) }
+        val liveSources = offlineSources.mapNotNull { source ->
+            val nodes = source.nodes.filter { it in globalNodes }
+            if (nodes.isEmpty()) null else source.copy(nodes = nodes, enabled = true)
+        }
+        val assigned = liveSources.flatMap { it.nodes }.toSet()
+        val groupNames = groups.map { it.name }.toSet()
+        val leftovers = globalNodes.filter { name -> name !in assigned && name !in groupNames }
+
+        if (global != null) {
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                "全局",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            Text(
+                                "所有订阅和手动节点 · ${global.all.size} 个",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        TextButton(
+                            onClick = { pickFastest(global) },
+                            enabled = testing == null && global.all.isNotEmpty(),
+                        ) { Text("选最快") }
+                        TextButton(
+                            onClick = { test(global) },
+                            enabled = testing == null && global.all.isNotEmpty(),
+                        ) { Text(if (testing == global.name) "测速中…" else "测速") }
+                    }
+                    Text(
+                        "当前：${displayProxyName(current) ?: "未选择"}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            }
+        }
+
+        if (liveSources.isEmpty() && leftovers.isEmpty()) {
+            Text(
+                "内核没有返回节点，检查订阅是否启用，或到订阅页刷新后再试。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            Text("节点来源", style = MaterialTheme.typography.titleMedium)
+            for (source in liveSources) {
+                LiveSourceCard(
+                    source = source,
+                    nodes = knownNodes,
+                    current = current,
+                    measured = measured,
+                    onSelect = { name -> select(GLOBAL_GROUP, name) },
+                )
+            }
+            if (leftovers.isNotEmpty()) {
+                LiveSourceCard(
+                    source = OfflineSource(
+                        name = "其他节点",
+                        detail = "未归入已保存来源",
+                        nodes = leftovers,
+                        enabled = true,
+                    ),
+                    nodes = knownNodes,
+                    current = current,
+                    measured = measured,
+                    onSelect = { name -> select(GLOBAL_GROUP, name) },
+                )
+            }
+        }
+
+        if (policyGroups.isNotEmpty()) {
+            Text("策略组", style = MaterialTheme.typography.titleMedium)
+        }
+        for (group in policyGroups) {
             val open = group.name in expanded
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -143,7 +237,7 @@ fun ProxiesScreen(onMessage: (String) -> Unit, onNavigate: (Tab) -> Unit) {
                     ) {
                         Column(Modifier.weight(1f)) {
                             Text(
-                                group.name,
+                                displayProxyName(group.name) ?: group.name,
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.SemiBold,
                             )
@@ -174,10 +268,9 @@ fun ProxiesScreen(onMessage: (String) -> Unit, onNavigate: (Tab) -> Unit) {
                         }
                     }
 
-                    val current = group.now
-                    if (current != null) {
+                    if (group.now != null) {
                         Text(
-                            "当前：$current",
+                            "当前：${displayProxyName(group.now)}",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.primary,
                         )
@@ -195,11 +288,11 @@ fun ProxiesScreen(onMessage: (String) -> Unit, onNavigate: (Tab) -> Unit) {
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Text(
-                                    name,
+                                    displayProxyName(name) ?: name,
                                     Modifier.weight(1f),
                                     style = MaterialTheme.typography.bodyMedium,
                                 )
-                                if (name == current) {
+                                if (name == group.now) {
                                     Text(
                                         "当前",
                                         style = MaterialTheme.typography.labelSmall,
@@ -320,6 +413,68 @@ private fun OfflineNodes(
     }
 
     TextButton(onClick = { onNavigate(Tab.Subscriptions) }) { Text("管理订阅和节点") }
+}
+
+@Composable
+private fun LiveSourceCard(
+    source: OfflineSource,
+    nodes: Map<String, NodeInfo>,
+    current: String?,
+    measured: Map<String, Int>,
+    onSelect: (String) -> Unit,
+) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    source.name,
+                    Modifier.weight(1f),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    "${source.nodes.size} 个节点",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Text(
+                source.detail,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            HorizontalDivider()
+            for (name in source.nodes) {
+                val delay = measured[name] ?: nodes[name]?.delay
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clickable { onSelect(name) }
+                        .padding(vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        displayProxyName(name) ?: name,
+                        Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    if (name == current) {
+                        Text(
+                            "当前",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                    Text(
+                        delayText(delay),
+                        Modifier.padding(start = 12.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
 }
 
 private fun buildOfflineSources(context: Context, config: MobileConfig): List<OfflineSource> {
@@ -467,7 +622,7 @@ private fun parseYamlScalar(raw: String, inline: Boolean): String? {
     }
 }
 
-private const val GLOBAL_GROUP = "__MANIS_GLOBAL__"
+internal const val GLOBAL_GROUP = "__MANIS_GLOBAL__"
 
 private fun typeLabel(type: String): String = when (type) {
     "Selector" -> "手动选择"

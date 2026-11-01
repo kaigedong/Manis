@@ -81,6 +81,9 @@ once the public API and configuration formats stabilize.
 
 ### Fixed
 
+- Android: label the internal `__MANIS_GLOBAL__` selector as “全局” and split the connected node
+  list back into subscription and manual source cards. Provider nodes are read from
+  `/providers/proxies` for their last delay, and hidden kernel groups are no longer listed.
 - Android: the Nodes page now lists saved subscriptions, cached proxy names, and manual nodes while
   disconnected, with a clear hint that connecting enables switching and latency tests. It previously
   showed only a short “尚未连接” card, which made a configured account look empty.

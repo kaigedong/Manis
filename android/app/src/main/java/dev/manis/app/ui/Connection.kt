@@ -48,7 +48,7 @@ fun ConnectionScreen(
     val config = Workspace.config.value
     val snapshot = RuntimeState.snapshot
     val active = RuntimeState.active
-    val global = snapshot?.groups?.firstOrNull { it.name == "__MANIS_GLOBAL__" }
+    val global = snapshot?.groups?.firstOrNull { it.name == GLOBAL_GROUP }
     val node = global?.now
     val mode = snapshot?.mode ?: config.mode
     var localError by remember { mutableStateOf<String?>(null) }
@@ -100,7 +100,7 @@ fun ConnectionScreen(
                         )
                         Text(
                             when {
-                                active && node != null -> node
+                                active && node != null -> displayProxyName(node) ?: node
                                 active -> "正在加载节点"
                                 else -> "打开开关建立 VPN"
                             },
@@ -120,7 +120,7 @@ fun ConnectionScreen(
                     ) {
                         Text("出口", color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text(
-                            node ?: "未选择",
+                            displayProxyName(node) ?: "未选择",
                             Modifier.weight(1f).padding(horizontal = 12.dp),
                         )
                         TextButton(onClick = { onNavigate(Tab.Nodes) }) { Text("切换") }

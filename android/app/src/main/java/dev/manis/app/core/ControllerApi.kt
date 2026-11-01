@@ -18,6 +18,7 @@ data class GroupInfo(
     val type: String,
     val now: String?,
     val all: List<String>,
+    val hidden: Boolean = false,
 )
 
 data class Snapshot(
@@ -52,15 +53,7 @@ internal object ControllerApi {
         for (name in proxies.keys()) {
             val proxy = proxies.optJSONObject(name) ?: continue
             val type = proxy.optString("type")
-            val delay = proxy.optJSONArray("history")?.let { history ->
-                if (history.length() == 0) {
-                    null
-                } else {
-                    history.getJSONObject(history.length() - 1).optInt("delay", 0)
-                        .takeIf { it > 0 }
-                }
-            }
-            nodes[name] = NodeInfo(name, type, delay)
+            nodes[name] = NodeInfo(name, type, historyDelay(proxy))
             val all = proxy.optJSONArray("all")?.let { array ->
                 (0 until array.length())
                     .map(array::getString)
@@ -69,15 +62,37 @@ internal object ControllerApi {
             if (name == "GLOBAL") {
                 continue
             }
-            if (type in groupTypes && !all.isNullOrEmpty()) {
+            val hidden = proxy.optBoolean("hidden", false)
+            if (type in groupTypes && !all.isNullOrEmpty() && !hidden) {
                 groups += GroupInfo(
                     name = name,
                     type = type,
                     now = proxy.optString("now").takeIf { it.isNotBlank() && it != "null" },
                     all = all,
+                    hidden = hidden,
                 )
             }
         }
+        // `/proxies` exposes group members but usually omits provider nodes. Read the provider
+        // snapshots too so the source cards can show their last delay instead of a blank column.
+        runCatching { request("/providers/proxies").optJSONObject("providers") }
+            .getOrNull()
+            ?.let { providers ->
+                for (providerName in providers.keys()) {
+                    val provider = providers.optJSONObject(providerName) ?: continue
+                    val providerNodes = provider.optJSONArray("proxies") ?: continue
+                    for (index in 0 until providerNodes.length()) {
+                        val node = providerNodes.optJSONObject(index) ?: continue
+                        val name = node.optString("name").takeIf { it.isNotBlank() } ?: continue
+                        if (name in nodes) continue
+                        nodes[name] = NodeInfo(
+                            name = name,
+                            type = node.optString("type"),
+                            delay = historyDelay(node),
+                        )
+                    }
+                }
+            }
         val mode = request("/configs").optString("mode", "rule")
         val version = request("/version").optString("version", "")
         Snapshot(
@@ -152,6 +167,12 @@ internal object ControllerApi {
             failures.size < names.size -> "部分订阅刷新失败：${failures.first()}"
             else -> error(failures.first())
         }
+    }
+
+    private fun historyDelay(proxy: JSONObject): Int? {
+        val history = proxy.optJSONArray("history") ?: return null
+        if (history.length() == 0) return null
+        return history.getJSONObject(history.length() - 1).optInt("delay", 0).takeIf { it > 0 }
     }
 
     private fun encode(value: String): String =

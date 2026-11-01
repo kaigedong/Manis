@@ -39,6 +39,13 @@ fun applyWorkspace(context: Context) {
     )
 }
 
+/** Internal controller names that must never reach the UI. */
+internal fun displayProxyName(name: String?): String? = when (name) {
+    null -> null
+    "__MANIS_GLOBAL__", "GLOBAL" -> "全局"
+    else -> name
+}
+
 @Composable
 fun ScreenTitle(title: String, subtitle: String? = null) {
     Column {
