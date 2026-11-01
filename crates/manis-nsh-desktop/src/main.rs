@@ -12,7 +12,7 @@ use nsh_platform_linux::gtk4 as gtk;
 use nsh_platform_linux::gtk4::gio::prelude::ApplicationExtManual;
 use nsh_platform_linux::gtk4::prelude::*;
 use nsh_platform_linux::{AppOptions, AppView, Bundle};
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 const BUNDLE: &str = include_str!("../../../android/app/src/main/assets/nsh/bundle.js");
 
@@ -21,7 +21,6 @@ fn root_data() -> Value {
     // the routing mode appear in the NSH shell.
     manis_ui::nsh_root_data()
 }
-
 
 fn reply(message: Option<&str>) -> Value {
     let mut payload = Map::new();
@@ -65,15 +64,33 @@ fn install_handlers(host: &nsh_engine::HostChannel) {
         "connection.reload",
     ] {
         host.handle(command, move |call| {
-            // The static spike answers immediately; later hosts move I/O off
-            // the engine thread and keep the command's own error.
+            let data = call.data();
+            let string_field =
+                |name: &str| data.get(name).and_then(Value::as_str).map(str::to_owned);
             let message = match command {
-                "workspace.apply" | "rules.apply" | "subscriptions.apply" => Some("已应用（桌面原型）"),
-                "workspace.discard" => Some("已放弃更改（桌面原型）"),
-                "settings.logs" => Some("桌面原型还没有连接内核日志"),
+                "nodes.select" => string_field("name").map(|name| {
+                    manis_ui::nsh_select_global_node(&name)
+                        .map_or_else(|error| error, |()| "已切换".to_owned())
+                }),
+                "nodes.selectGroup" => match (string_field("group"), string_field("name")) {
+                    (Some(group), Some(name)) => Some(
+                        manis_ui::nsh_select_group_node(&group, &name)
+                            .map_or_else(|error| error, |()| "已选择".to_owned()),
+                    ),
+                    _ => Some("缺少策略组或节点".to_owned()),
+                },
+                "connection.mode" => string_field("mode").map(|mode| {
+                    manis_ui::nsh_set_routing_mode(&mode)
+                        .map_or_else(|error| error, |()| "模式已切换".to_owned())
+                }),
+                "workspace.apply" | "rules.apply" | "subscriptions.apply" => {
+                    Some("已应用（桌面原型）".to_owned())
+                }
+                "workspace.discard" => Some("已放弃更改（桌面原型）".to_owned()),
+                "settings.logs" => Some("桌面原型还没有连接内核日志".to_owned()),
                 _ => None,
             };
-            call.resolve(reply(message));
+            call.resolve(reply(message.as_deref()));
         });
     }
 }
@@ -102,6 +119,7 @@ fn main() {
             "embedded": true,
             "topInset": 0,
             "bottomInset": 0,
+            "tab": std::env::var("MANIS_NSH_TAB").unwrap_or_else(|_| "connection".into()),
         });
         if let Some(params) = params.as_object() {
             host.set_params(params.clone());

@@ -850,12 +850,11 @@ pub fn nsh_root_data() -> serde_json::Value {
             group.name == "__MANIS_GLOBAL__" || group.name.eq_ignore_ascii_case("GLOBAL")
         })
     });
-    let live_node = global
-        .and_then(|group| group.current)
-        .unwrap_or_default();
-    let mode = live
-        .as_ref()
-        .map_or_else(|| workspace.routing_mode.wire_value(), |snapshot| snapshot.runtime.mode.wire_value());
+    let live_node = global.and_then(|group| group.current).unwrap_or_default();
+    let mode = live.as_ref().map_or_else(
+        || workspace.routing_mode.wire_value(),
+        |snapshot| snapshot.runtime.mode.wire_value(),
+    );
     let kernel_version = live
         .as_ref()
         .and_then(|snapshot| snapshot.version.version.clone())
@@ -863,20 +862,33 @@ pub fn nsh_root_data() -> serde_json::Value {
         .unwrap_or_else(|| "—".into());
     let summary = live.as_ref().map_or_else(
         || "—".into(),
-        |snapshot| format!("{} 个代理 · {} 条规则", snapshot.proxies.len(), snapshot.rules.len()),
+        |snapshot| {
+            format!(
+                "{} 个代理 · {} 条规则",
+                snapshot.proxies.len(),
+                snapshot.rules.len()
+            )
+        },
     );
     let subscription_count = workspace.imported_subscriptions.len();
     let node_count = workspace.saved_single_nodes.len();
     let group_count = workspace.managed_policy_groups.len();
     let has_sources = subscription_count > 0 || node_count > 0;
 
+    let node_page = live.as_ref().map_or_else(
+        || {
+            json!({
+                "global": { "label": "全局", "current": null, "total": 0 },
+                "sources": [],
+                "policyGroups": []
+            })
+        },
+        |snapshot| nsh_node_page(snapshot, &workspace, &live_node),
+    );
+
     json!({
         "pending": false,
-        "nodes": {
-            "global": { "label": "全局", "current": null, "total": 0 },
-            "sources": [],
-            "policyGroups": []
-        },
+        "nodes": node_page,
         "subscriptions": {
             "subscriptions": subscriptions,
             "nodes": nodes,
@@ -921,16 +933,20 @@ pub fn nsh_root_data() -> serde_json::Value {
 }
 
 #[cfg(unix)]
-fn live_snapshot() -> Option<manis_mihomo::MihomoSnapshot> {
+fn live_client() -> Option<manis_mihomo::MihomoClient<manis_mihomo::UnixSocketTransport>> {
     let socket = crate::brand::data_dir()?.join("mihomo/controller.sock");
     if !socket.exists() {
         return None;
     }
-    let client = manis_mihomo::MihomoClient::new(
+    Some(manis_mihomo::MihomoClient::new(
         manis_mihomo::ControllerConfig::default(),
         manis_mihomo::UnixSocketTransport::new(socket),
-    );
-    client.fetch_snapshot().ok()
+    ))
+}
+
+#[cfg(unix)]
+fn live_snapshot() -> Option<manis_mihomo::MihomoSnapshot> {
+    live_client()?.fetch_snapshot().ok()
 }
 
 #[cfg(not(unix))]
@@ -938,10 +954,188 @@ fn live_snapshot() -> Option<manis_mihomo::MihomoSnapshot> {
     None
 }
 
+/// Selects a node in the live desktop controller's global group.
+///
+/// # Errors
+/// Returns a controller error when no live controller or group exists.
+pub fn nsh_select_global_node(name: &str) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        let client = live_client().ok_or_else(|| "桌面内核未运行".to_owned())?;
+        let snapshot = client.fetch_snapshot().map_err(|error| error.to_string())?;
+        let group = snapshot
+            .policy_groups()
+            .into_iter()
+            .find(|group| {
+                group.name == "__MANIS_GLOBAL__" || group.name.eq_ignore_ascii_case("GLOBAL")
+            })
+            .ok_or_else(|| "找不到全局策略组".to_owned())?;
+        client
+            .select_policy_group_node(&group.name, name)
+            .map_err(|error| error.to_string())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = name;
+        Err("桌面控制器只在 Unix 上接入".to_owned())
+    }
+}
+
+/// Selects a node in one live desktop policy group.
+///
+/// # Errors
+/// Returns a controller error when no live controller exists.
+pub fn nsh_select_group_node(group: &str, name: &str) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        live_client()
+            .ok_or_else(|| "桌面内核未运行".to_owned())?
+            .select_policy_group_node(group, name)
+            .map_err(|error| error.to_string())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (group, name);
+        Err("桌面控制器只在 Unix 上接入".to_owned())
+    }
+}
+
+/// Switches the live desktop controller's routing mode.
+///
+/// # Errors
+/// Returns a controller error for an unknown mode or unavailable controller.
+pub fn nsh_set_routing_mode(mode: &str) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        let mode = manis_mihomo::RoutingMode::parse_wire_value(mode)
+            .ok_or_else(|| "未知路由模式".to_owned())?;
+        live_client()
+            .ok_or_else(|| "桌面内核未运行".to_owned())?
+            .set_routing_mode(mode)
+            .map_err(|error| error.to_string())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = mode;
+        Err("桌面控制器只在 Unix 上接入".to_owned())
+    }
+}
+
+fn nsh_node_page(
+    snapshot: &manis_mihomo::MihomoSnapshot,
+    workspace: &StoredWorkspace,
+    global_current: &str,
+) -> serde_json::Value {
+    use serde_json::json;
+
+    let delay = |name: &str| {
+        snapshot
+            .proxies
+            .iter()
+            .find(|proxy| proxy.name == name)
+            .and_then(manis_mihomo::Proxy::latest_latency_ms)
+            .map(|value| value.round() as i64)
+    };
+    let node_item = |name: &str, current: &str| {
+        json!({
+            "name": name,
+            "displayName": name,
+            "delayMs": delay(name),
+            "current": name == current,
+        })
+    };
+
+    let sources: Vec<_> = workspace
+        .imported_subscriptions
+        .iter()
+        .enumerate()
+        .map(|(index, subscription)| {
+            let provider = snapshot.providers.get(index);
+            let nodes = provider.map_or_else(Vec::new, |provider| {
+                provider
+                    .proxies
+                    .iter()
+                    .map(|proxy| node_item(&proxy.name, global_current))
+                    .collect()
+            });
+            json!({
+                "id": format!("subscription-{index}"),
+                "name": subscription.name,
+                "detail": provider.map_or("订阅 · 节点未加载", |_| "订阅 · 实时节点"),
+                "kind": "subscription",
+                "enabled": subscription.enabled,
+                "nodes": nodes,
+            })
+        })
+        .collect();
+    let manual_nodes: Vec<_> = workspace
+        .saved_single_nodes
+        .iter()
+        .map(|node| node_item(&node.name, global_current))
+        .collect();
+    let mut sources = sources;
+    if !manual_nodes.is_empty() {
+        sources.push(json!({
+            "id": "manual",
+            "name": "手动节点",
+            "detail": "分享链接导入",
+            "kind": "manual",
+            "enabled": true,
+            "nodes": manual_nodes,
+        }));
+    }
+
+    let policy_groups: Vec<_> = snapshot
+        .policy_groups()
+        .into_iter()
+        .filter(|group| {
+            group.name != "__MANIS_GLOBAL__" && !group.name.eq_ignore_ascii_case("GLOBAL")
+        })
+        .map(|group| {
+            let members: Vec<_> = group
+                .nodes
+                .iter()
+                .map(|name| node_item(name, group.current.as_deref().unwrap_or("")))
+                .collect();
+            json!({
+                "id": group.name,
+                "label": group.name,
+                "kind": match group.kind {
+                    manis_mihomo::GroupKind::UrlTest => "urltest",
+                    manis_mihomo::GroupKind::Fallback => "fallback",
+                    manis_mihomo::GroupKind::LoadBalance => "load-balance",
+                    manis_mihomo::GroupKind::Selector => "select",
+                },
+                "current": group.current,
+                "members": members,
+            })
+        })
+        .collect();
+
+    json!({
+        "global": {
+            "label": "全局",
+            "current": if global_current.is_empty() { serde_json::Value::Null } else { json!(global_current) },
+            "total": snapshot.proxies.len(),
+        },
+        "sources": sources,
+        "policyGroups": policy_groups,
+    })
+}
+
 fn mask_url(url: &str) -> String {
-    let scheme = url.split_once("://").map(|(scheme, _)| scheme).unwrap_or("");
+    let scheme = url
+        .split_once("://")
+        .map(|(scheme, _)| scheme)
+        .unwrap_or("");
     let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
-    let host = rest.split('/').next().unwrap_or(rest).split('?').next().unwrap_or(rest);
+    let host = rest
+        .split('/')
+        .next()
+        .unwrap_or(rest)
+        .split('?')
+        .next()
+        .unwrap_or(rest);
     if scheme.is_empty() {
         host.to_owned()
     } else {

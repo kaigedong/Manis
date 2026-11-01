@@ -28,11 +28,11 @@ mod theme;
 mod tray;
 
 pub use app::ManisApp;
-pub use app::nsh_root_data;
 #[cfg(feature = "snapshot-fixtures")]
 pub use app::windows::{
     AuxiliaryKind as UtilityWindowFixture, fixture_root as utility_window_fixture_root,
 };
+pub use app::{nsh_root_data, nsh_select_global_node, nsh_select_group_node, nsh_set_routing_mode};
 pub use assets::Assets;
 #[cfg(feature = "snapshot-fixtures")]
 pub use components::button_gallery_fixture;
