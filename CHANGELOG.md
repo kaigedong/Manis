@@ -46,7 +46,8 @@ once the public API and configuration formats stabilize.
 - Android: the Nodes page now renders through NSH (`android/nsh-ui`) inside the existing Compose
   shell, backed by the shared Rust `manis-presentation` model. The Subscriptions page follows:
   subscription/manual-node/group lists, enable/disable, delete, add, refresh and apply are host
-  channel commands, while Kotlin keeps downloads and persistence. Subscription/manual source grouping,
+  channel commands, while Kotlin keeps downloads and persistence. The Rules page is also NSH now:
+  structured rule rows, enable/disable, add/edit/delete and apply go through the same host channel. Subscription/manual source grouping,
   the internal `__MANIS_GLOBAL__` label, current selection and delays are built once instead of
   being reconstructed by the Kotlin UI. The NSH Android runtime is pinned to `v0.3.0`, fetched by
   `android/fetch-nsh.sh`, and raises `minSdk` to 28.

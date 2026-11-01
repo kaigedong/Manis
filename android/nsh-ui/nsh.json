@@ -14,7 +14,11 @@
       "subscriptions.addNode",
       "subscriptions.addGroup",
       "subscriptions.refresh",
-      "subscriptions.apply"
+      "subscriptions.apply",
+      "rules.toggle",
+      "rules.delete",
+      "rules.save",
+      "rules.apply"
     ]
   }
 }

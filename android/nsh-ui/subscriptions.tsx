@@ -415,7 +415,6 @@ export function SubscriptionsPage() {
           >
             {page().subscriptions.map((entry) => (
               <Row
-                key={entry.index}
                 title={entry.name}
                 detail={entry.displayUrl}
                 enabled={entry.enabled}
@@ -439,7 +438,6 @@ export function SubscriptionsPage() {
           >
             {page().nodes.map((entry) => (
               <Row
-                key={entry.index}
                 title={entry.name}
                 detail="VLESS"
                 enabled={entry.enabled}
@@ -467,7 +465,6 @@ export function SubscriptionsPage() {
           >
             {page().groups.map((group) => (
               <Row
-                key={group.index}
                 title={group.name}
                 detail={`${group.strategy === "urltest" ? "自动测速" : "手动选择"} · ${group.subscriptionIndexes.length} 个订阅 / ${group.nodeIndexes.length} 个节点`}
                 onDelete={() => remove("group", group.index)}

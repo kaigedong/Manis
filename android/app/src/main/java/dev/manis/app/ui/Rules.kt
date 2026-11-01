@@ -42,6 +42,17 @@ private data class RuleEditor(val index: Int?, val entry: RuleEntry)
 
 @Composable
 fun RulesScreen(onMessage: (String) -> Unit) {
+    androidx.compose.foundation.layout.Column(Modifier.fillMaxSize()) {
+        ApplyBar()
+        NshRulesPage(
+            onMessage = onMessage,
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+        )
+    }
+}
+
+@Composable
+private fun ComposeRulesScreen(onMessage: (String) -> Unit) {
     val config = Workspace.config.value
     var editor by remember { mutableStateOf<RuleEditor?>(null) }
 
