@@ -794,6 +794,7 @@ impl Render for ManisApp {
 /// subscriptions, nodes, groups and routing mode. Connection state and writes
 /// still belong to the running Manis app.
 #[must_use]
+#[allow(clippy::too_many_lines)]
 pub fn nsh_root_data() -> serde_json::Value {
     use serde_json::json;
 
@@ -926,7 +927,7 @@ pub fn nsh_root_data() -> serde_json::Value {
             "nodes": node_count,
             "groups": group_count,
             "abi": "desktop",
-            "dataDir": directory.map(|path| path.display().to_string()).unwrap_or_else(|| "—".into()),
+            "dataDir": directory.map_or_else(|| "—".into(), |path| path.display().to_string()),
             "installedVersion": crate::version(),
             "update": { "state": "idle" }
         },
@@ -1012,6 +1013,25 @@ pub fn nsh_select_group_node(group: &str, name: &str) -> Result<(), String> {
     }
 }
 
+/// Enables or disables the live desktop controller's TUN interface.
+///
+/// # Errors
+/// Returns a controller error when no live controller exists.
+pub fn nsh_set_tun(enabled: bool) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        live_client()
+            .ok_or_else(|| "桌面内核未运行".to_owned())?
+            .set_tun_enabled(enabled)
+            .map_err(|error| error.to_string())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = enabled;
+        Err("桌面控制器只在 Unix 上接入".to_owned())
+    }
+}
+
 /// Switches the live desktop controller's routing mode.
 ///
 /// # Errors
@@ -1033,6 +1053,7 @@ pub fn nsh_set_routing_mode(mode: &str) -> Result<(), String> {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn nsh_node_page(
     snapshot: &manis_mihomo::MihomoSnapshot,
     workspace: &StoredWorkspace,
@@ -1046,7 +1067,11 @@ fn nsh_node_page(
             .iter()
             .find(|proxy| proxy.name == name)
             .and_then(manis_mihomo::Proxy::latest_latency_ms)
-            .map(|value| value.round() as i64)
+            .map(|value| {
+                #[allow(clippy::cast_possible_truncation)]
+                let value = value.round() as i64;
+                value
+            })
     };
     let node_item = |name: &str, current: &str| {
         json!({
@@ -1422,9 +1447,7 @@ pub fn nsh_delete_subscription(index: usize) -> Result<(), String> {
     let source = sources
         .get(index)
         .ok_or_else(|| "订阅已变化，请刷新".to_owned())?;
-    mihomo::remove_subscription_source_in(&directory, &source.id)
-        .map(|_| ())
-        .map_err(|error| error.to_string())
+    mihomo::remove_subscription_source_in(&directory, &source.id).map_err(|error| error.to_string())
 }
 
 /// Enables or disables one saved desktop manual node by list index.
@@ -1454,9 +1477,7 @@ pub fn nsh_delete_node(index: usize) -> Result<(), String> {
     let node = nodes
         .get(index)
         .ok_or_else(|| "节点已变化，请刷新".to_owned())?;
-    mihomo::remove_single_node_source_in(&directory, &node.id)
-        .map(|_| ())
-        .map_err(|error| error.to_string())
+    mihomo::remove_single_node_source_in(&directory, &node.id).map_err(|error| error.to_string())
 }
 
 /// Last lines of the desktop kernel log for the NSH settings page.
@@ -1476,10 +1497,7 @@ pub fn nsh_logs() -> Vec<String> {
 }
 
 fn mask_url(url: &str) -> String {
-    let scheme = url
-        .split_once("://")
-        .map(|(scheme, _)| scheme)
-        .unwrap_or("");
+    let scheme = url.split_once("://").map_or("", |(scheme, _)| scheme);
     let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
     let host = rest
         .split('/')
