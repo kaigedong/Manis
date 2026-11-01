@@ -349,7 +349,7 @@ export function RulesPage() {
             <Card>
               <Text role="header" style={{ fontSize: 16, fontWeight: "600" }}>解析提示</Text>
               {page().warnings.map((warning, index) => (
-                <Text key={index} style={{ fontSize: 12, color: "#6b7280" }}>{warning}</Text>
+                <Text style={{ fontSize: 12, color: "#6b7280" }}>{warning}</Text>
               ))}
             </Card>
           ) : null}

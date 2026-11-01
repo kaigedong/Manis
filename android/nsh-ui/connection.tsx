@@ -216,7 +216,7 @@ export function ConnectionPage() {
             >
               <Text style={{ fontSize: 15, fontWeight: "600" }}>配置提示</Text>
               {page().warnings.map((warning, index) => (
-                <Text key={index} style={{ fontSize: 12, color: "#6b7280" }}>
+                <Text style={{ fontSize: 12, color: "#6b7280" }}>
                   {warning}
                 </Text>
               ))}

@@ -86,7 +86,6 @@ function TabBar() {
     >
       {tabs.map((entry) => (
         <View
-          key={entry.id}
           onPress={() => tab.set(entry.id)}
           role="button"
           accessible

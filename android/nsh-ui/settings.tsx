@@ -206,7 +206,7 @@ function LogsPanel() {
         <View style={{ gap: 2 }}>
           {logs().map((line, index) => (
             <Text
-              key={index}
+             
               style={{ fontSize: 11, fontFamily: "monospace", color: "#374151" }}
             >
               {line}
