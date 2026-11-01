@@ -3,13 +3,14 @@
 pkgname=manis
 pkgver="$($startdir/../package-version.sh)"
 pkgrel=1
-pkgdesc="GPUI desktop workbench for policy-based proxy routing"
+pkgdesc="NSH desktop workbench for policy-based proxy routing"
 arch=('x86_64')
 url="https://github.com/kaigedong/Manis"
 license=('Apache-2.0' 'GPL-3.0-only')
 depends=(
   'alsa-lib'
   'fontconfig'
+  'gtk4'
   'hicolor-icon-theme'
   'libcap'
   'libx11'
@@ -34,6 +35,10 @@ build() {
   RUSTFLAGS="$rust_flags" \
     CARGO_TARGET_DIR="$target_dir" \
     cargo build -p manis-ui --lib --release --locked
+
+  RUSTFLAGS="$rust_flags" \
+    CARGO_TARGET_DIR="$target_dir" \
+    cargo build -p manis-nsh-desktop --release --locked
 
   RUSTFLAGS="$rust_flags" \
     CARGO_TARGET_DIR="$target_dir" \
@@ -86,8 +91,10 @@ check() {
 }
 
 package() {
-  install -Dm755 "$startdir/../../target/archlinux/release/manis-ui" \
+  install -Dm755 "$startdir/../../target/archlinux/release/manis-nsh-desktop" \
     "$pkgdir/usr/bin/manis"
+  install -Dm755 "$startdir/../../target/archlinux/release/manis-ui" \
+    "$pkgdir/usr/bin/manis-ui"
   install -Dm755 "$startdir/../../target/archlinux/release/mihomo" \
     "$pkgdir/usr/lib/manis/mihomo"
   install -Dm755 "$startdir/../../target/archlinux/release/manis-linux-helper" \

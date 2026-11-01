@@ -3,13 +3,14 @@
 pkgname=manis-bin
 pkgver=@PKGVER@
 pkgrel=1
-pkgdesc="GPUI desktop workbench for policy-based proxy routing"
+pkgdesc="NSH desktop workbench for policy-based proxy routing"
 arch=('x86_64')
 url="https://github.com/kaigedong/Manis"
 license=('Apache-2.0' 'GPL-3.0-only')
 depends=(
   'alsa-lib'
   'fontconfig'
+  'gtk4'
   'freetype2'
   'gcc-libs'
   'glibc'

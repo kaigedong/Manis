@@ -78,7 +78,9 @@ once the public API and configuration formats stabilize.
   tests run in CI.
 - Desktop launch: `manis-ui --headless` runs the managed engine without a window. The NSH host
   starts it when no controller is running, waits for the Unix controller, and stops the owned
-  engine when its window closes. With an existing controller it attaches instead. Subscription/manual source grouping,
+  engine when its window closes. With an existing controller it attaches instead.
+- Packaging: the Arch/AUR `manis` entry now installs the NSH host as `manis` and the GPUI binary
+  as `manis-ui` (the headless engine), with the `gtk4` dependency. Subscription/manual source grouping,
   the internal `__MANIS_GLOBAL__` label, current selection and delays are built once instead of
   being reconstructed by the Kotlin UI. The NSH Android runtime is pinned to `v0.3.0`, fetched by
   `android/fetch-nsh.sh`, and raises `minSdk` to 28.

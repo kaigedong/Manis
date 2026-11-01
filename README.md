@@ -121,8 +121,10 @@ fontconfig 与 ALSA 开发包。Linux 托盘通过会话 D-Bus 使用 StatusNoti
 ```bash
 git clone https://github.com/kaigedong/Manis.git
 cd Manis
-cargo run -p manis-ui
+cargo run -p manis-nsh-desktop
 ```
+
+发行包的 `manis` 入口已经是 NSH 桌面宿主；`manis-ui` 保留为引擎和开发用的 GPUI 窗口。源码模式下两者可以分别运行。
 
 桌面端还有一条 NSH 迁移支线：`manis-nsh-desktop` 用同一个 TSX bundle 在 GTK 4 的 NSH
 宿主里打开单根页面。它读取桌面已保存的订阅、手动节点、策略组和路由模式，并通过本地 controller socket 读取实时连接状态、出口节点、代理/规则数量、路由模式、订阅/手动节点来源和策略组；节点选择、路由模式切换、运行时规则、内核日志订阅/手动节点的添加、启停、删除、重新载入配置，手动规则的添加/编辑/启停/删除，以及连接页的 TUN 开关已接入；运行时规则只读，正式替换和发布链路仍待完成：

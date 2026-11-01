@@ -298,6 +298,10 @@ mod desktop {
     }
 
     pub(crate) fn main() {
+        if std::env::args_os().any(|argument| argument == "--version") {
+            println!("Manis {}", manis_ui::version());
+            return;
+        }
         let engine = Rc::new(RefCell::new(ensure_engine()));
         let engine_for_activate = Rc::clone(&engine);
         let app = gtk::Application::builder()
