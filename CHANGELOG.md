@@ -59,7 +59,9 @@ once the public API and configuration formats stabilize.
 - Desktop: add `manis-nsh-desktop`, the first NSH embedding host. It loads the Android TSX bundle
   in NSH's GTK 4 `AppView` and renders the same single-root UI. Its read-only bridge reuses the
   desktop storage loader for saved subscriptions, manual nodes, policy groups and routing mode;
-  live connection state and mutations are the next step. Subscription/manual source grouping,
+  live connection state from the desktop controller socket is now included
+  (connection status, exit node, proxy/rule counts and routing mode). Mutations, the full node
+  page and the settings/update commands are the next step. Subscription/manual source grouping,
   the internal `__MANIS_GLOBAL__` label, current selection and delays are built once instead of
   being reconstructed by the Kotlin UI. The NSH Android runtime is pinned to `v0.3.0`, fetched by
   `android/fetch-nsh.sh`, and raises `minSdk` to 28.

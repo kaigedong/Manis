@@ -841,7 +841,30 @@ pub fn nsh_root_data() -> serde_json::Value {
             })
         })
         .collect();
-    let mode = workspace.routing_mode.wire_value();
+    let live = live_snapshot();
+    let active = live
+        .as_ref()
+        .is_some_and(|snapshot| snapshot.runtime.tun.enable);
+    let global = live.as_ref().and_then(|snapshot| {
+        snapshot.policy_groups().into_iter().find(|group| {
+            group.name == "__MANIS_GLOBAL__" || group.name.eq_ignore_ascii_case("GLOBAL")
+        })
+    });
+    let live_node = global
+        .and_then(|group| group.current)
+        .unwrap_or_default();
+    let mode = live
+        .as_ref()
+        .map_or_else(|| workspace.routing_mode.wire_value(), |snapshot| snapshot.runtime.mode.wire_value());
+    let kernel_version = live
+        .as_ref()
+        .and_then(|snapshot| snapshot.version.version.clone())
+        .filter(|version| !version.is_empty())
+        .unwrap_or_else(|| "—".into());
+    let summary = live.as_ref().map_or_else(
+        || "—".into(),
+        |snapshot| format!("{} 个代理 · {} 条规则", snapshot.proxies.len(), snapshot.rules.len()),
+    );
     let subscription_count = workspace.imported_subscriptions.len();
     let node_count = workspace.saved_single_nodes.len();
     let group_count = workspace.managed_policy_groups.len();
@@ -870,11 +893,11 @@ pub fn nsh_root_data() -> serde_json::Value {
             "summary": ""
         },
         "settings": {
-            "status": "未连接",
+            "status": if active { "已连接" } else { "未连接" },
             "mode": mode,
             "proxyDns": { "mode": "doh", "custom": [], "discovered": [], "label": "加密 DNS（DoH）" },
-            "kernelVersion": "—",
-            "summary": "—",
+            "kernelVersion": kernel_version,
+            "summary": summary,
             "subscriptions": subscription_count,
             "nodes": node_count,
             "groups": group_count,
@@ -884,10 +907,10 @@ pub fn nsh_root_data() -> serde_json::Value {
             "update": { "state": "idle" }
         },
         "connection": {
-            "active": false,
-            "node": "",
+            "active": active,
+            "node": live_node,
             "mode": mode,
-            "summary": "",
+            "summary": summary,
             "error": "",
             "unreachable": false,
             "warnings": [],
@@ -895,6 +918,24 @@ pub fn nsh_root_data() -> serde_json::Value {
             "hasSources": has_sources
         }
     })
+}
+
+#[cfg(unix)]
+fn live_snapshot() -> Option<manis_mihomo::MihomoSnapshot> {
+    let socket = crate::brand::data_dir()?.join("mihomo/controller.sock");
+    if !socket.exists() {
+        return None;
+    }
+    let client = manis_mihomo::MihomoClient::new(
+        manis_mihomo::ControllerConfig::default(),
+        manis_mihomo::UnixSocketTransport::new(socket),
+    );
+    client.fetch_snapshot().ok()
+}
+
+#[cfg(not(unix))]
+fn live_snapshot() -> Option<manis_mihomo::MihomoSnapshot> {
+    None
 }
 
 fn mask_url(url: &str) -> String {

@@ -125,7 +125,7 @@ cargo run -p manis-ui
 ```
 
 桌面端还有一条 NSH 迁移支线：`manis-nsh-desktop` 用同一个 TSX bundle 在 GTK 4 的 NSH
-宿主里打开单根页面。它读取桌面已保存的订阅、手动节点、策略组和路由模式，尚未接入实时连接和写入，也还没替换正式 `manis-ui`：
+宿主里打开单根页面。它读取桌面已保存的订阅、手动节点、策略组和路由模式，并通过本地 controller socket 读取实时连接状态、出口节点、代理/规则数量和路由模式；写入和完整节点页仍未接入，也还没替换正式 `manis-ui`：
 
 ```bash
 cargo run -p manis-nsh-desktop
