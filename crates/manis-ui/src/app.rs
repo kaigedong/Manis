@@ -806,6 +806,7 @@ pub fn nsh_root_data() -> serde_json::Value {
         .map(|(index, subscription)| {
             json!({
                 "index": index,
+                "id": subscription.id,
                 "name": subscription.name,
                 "displayUrl": subscription.source.expose_to(mask_url),
                 "enabled": subscription.enabled,
@@ -819,6 +820,7 @@ pub fn nsh_root_data() -> serde_json::Value {
         .map(|(index, node)| {
             json!({
                 "index": index,
+                "id": node.id,
                 "name": node.name,
                 "enabled": node.enabled,
             })
@@ -1177,6 +1179,70 @@ fn nsh_rules_page(snapshot: &manis_mihomo::MihomoSnapshot) -> serde_json::Value 
         "warnings": [],
         "summary": format!("{} 条运行时规则", snapshot.rules.len()),
     })
+}
+
+/// Enables or disables one saved desktop subscription by list index.
+///
+/// # Errors
+/// Returns a store error when the index is stale or the write fails.
+pub fn nsh_toggle_subscription(index: usize, enabled: bool) -> Result<(), String> {
+    let directory = crate::brand::config_dir().ok_or_else(|| "找不到配置目录".to_owned())?;
+    let sources =
+        mihomo::load_subscription_sources_in(&directory).map_err(|error| error.to_string())?;
+    let source = sources
+        .get(index)
+        .ok_or_else(|| "订阅已变化，请刷新".to_owned())?;
+    mihomo::update_subscription_source_enabled_in(&directory, &source.id, enabled)
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
+/// Deletes one saved desktop subscription by list index.
+///
+/// # Errors
+/// Returns a store error when the index is stale or the write fails.
+pub fn nsh_delete_subscription(index: usize) -> Result<(), String> {
+    let directory = crate::brand::config_dir().ok_or_else(|| "找不到配置目录".to_owned())?;
+    let sources =
+        mihomo::load_subscription_sources_in(&directory).map_err(|error| error.to_string())?;
+    let source = sources
+        .get(index)
+        .ok_or_else(|| "订阅已变化，请刷新".to_owned())?;
+    mihomo::remove_subscription_source_in(&directory, &source.id)
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
+/// Enables or disables one saved desktop manual node by list index.
+///
+/// # Errors
+/// Returns a store error when the index is stale or the write fails.
+pub fn nsh_toggle_node(index: usize, enabled: bool) -> Result<(), String> {
+    let directory = crate::brand::config_dir().ok_or_else(|| "找不到配置目录".to_owned())?;
+    let nodes =
+        mihomo::load_single_node_sources_in(&directory).map_err(|error| error.to_string())?;
+    let node = nodes
+        .get(index)
+        .ok_or_else(|| "节点已变化，请刷新".to_owned())?;
+    mihomo::update_single_node_source_enabled_in(&directory, &node.id, enabled)
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
+/// Deletes one saved desktop manual node by list index.
+///
+/// # Errors
+/// Returns a store error when the index is stale or the write fails.
+pub fn nsh_delete_node(index: usize) -> Result<(), String> {
+    let directory = crate::brand::config_dir().ok_or_else(|| "找不到配置目录".to_owned())?;
+    let nodes =
+        mihomo::load_single_node_sources_in(&directory).map_err(|error| error.to_string())?;
+    let node = nodes
+        .get(index)
+        .ok_or_else(|| "节点已变化，请刷新".to_owned())?;
+    mihomo::remove_single_node_source_in(&directory, &node.id)
+        .map(|_| ())
+        .map_err(|error| error.to_string())
 }
 
 /// Last lines of the desktop kernel log for the NSH settings page.

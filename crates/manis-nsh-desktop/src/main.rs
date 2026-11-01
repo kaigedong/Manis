@@ -89,6 +89,43 @@ fn install_handlers(host: &nsh_engine::HostChannel) {
                     manis_ui::nsh_set_routing_mode(&mode)
                         .map_or_else(|error| error, |()| "模式已切换".to_owned())
                 }),
+                "subscriptions.toggle" => {
+                    let kind = string_field("kind");
+                    let index = data
+                        .get("index")
+                        .and_then(Value::as_u64)
+                        .map(|value| value as usize);
+                    let enabled = data.get("enabled").and_then(Value::as_bool);
+                    match (kind.as_deref(), index, enabled) {
+                        (Some("subscription"), Some(index), Some(enabled)) => Some(
+                            manis_ui::nsh_toggle_subscription(index, enabled)
+                                .map_or_else(|error| error, |()| "订阅状态已保存".to_owned()),
+                        ),
+                        (Some("node"), Some(index), Some(enabled)) => Some(
+                            manis_ui::nsh_toggle_node(index, enabled)
+                                .map_or_else(|error| error, |()| "节点状态已保存".to_owned()),
+                        ),
+                        _ => Some("无法识别要修改的来源".to_owned()),
+                    }
+                }
+                "subscriptions.delete" => {
+                    let kind = string_field("kind");
+                    let index = data
+                        .get("index")
+                        .and_then(Value::as_u64)
+                        .map(|value| value as usize);
+                    match (kind.as_deref(), index) {
+                        (Some("subscription"), Some(index)) => Some(
+                            manis_ui::nsh_delete_subscription(index)
+                                .map_or_else(|error| error, |()| "订阅已删除".to_owned()),
+                        ),
+                        (Some("node"), Some(index)) => Some(
+                            manis_ui::nsh_delete_node(index)
+                                .map_or_else(|error| error, |()| "节点已删除".to_owned()),
+                        ),
+                        _ => Some("暂时只能删除订阅或手动节点".to_owned()),
+                    }
+                }
                 "workspace.apply" | "rules.apply" | "subscriptions.apply" => {
                     Some("已应用（桌面原型）".to_owned())
                 }
