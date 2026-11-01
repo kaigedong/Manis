@@ -143,6 +143,23 @@ mod desktop {
                     call.resolve(payload);
                     return;
                 }
+                if matches!(
+                    command,
+                    "settings.update.download" | "settings.update.release"
+                ) {
+                    let _ = std::process::Command::new("xdg-open")
+                        .arg("https://github.com/kaigedong/Manis/releases")
+                        .stdin(std::process::Stdio::null())
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null())
+                        .spawn();
+                    call.resolve(reply(Some("已在浏览器打开 Release")));
+                    return;
+                }
+                if command == "settings.update.install" {
+                    call.resolve(reply(Some("桌面版请从 Release 下载安装包")));
+                    return;
+                }
                 if command == "settings.update.check" {
                     let mut payload = reply(None);
                     payload["data"]["settings"]["update"] = match manis_ui::nsh_check_update() {

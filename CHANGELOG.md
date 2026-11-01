@@ -84,7 +84,8 @@ once the public API and configuration formats stabilize.
 - Desktop shell: add a StatusNotifierItem tray with open/quit, and hide the window on close while
   the tray is available. The tray registers as `dev.manis.app`.
 - Settings: expose the desktop login-startup preference and toggle it from the NSH Settings page;
-  verified enable/disable writes/removes the XDG autostart entry. Subscription/manual source grouping,
+  verified enable/disable writes/removes the XDG autostart entry. Desktop update actions open the
+  GitHub Release page; install points at the manual release package (matching the GPUI flow). Subscription/manual source grouping,
   the internal `__MANIS_GLOBAL__` label, current selection and delays are built once instead of
   being reconstructed by the Kotlin UI. The NSH Android runtime is pinned to `v0.3.0`, fetched by
   `android/fetch-nsh.sh`, and raises `minSdk` to 28.
