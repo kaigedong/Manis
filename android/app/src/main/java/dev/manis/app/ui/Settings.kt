@@ -1,6 +1,7 @@
 package dev.manis.app.ui
 
 import android.content.ClipData
+import android.content.Intent
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -31,6 +32,7 @@ import dev.manis.app.data.MobileConfig
 import dev.manis.app.data.PROXY_DNS_DOH
 import dev.manis.app.data.PROXY_DNS_SYSTEM
 import dev.manis.app.data.Workspace
+import dev.manis.app.nsh.NshSpikeActivity
 import java.io.File
 
 @Composable
@@ -103,6 +105,16 @@ fun SettingsScreen(onMessage: (String) -> Unit) {
 
         SectionCard("诊断") {
             TextButton(onClick = { showLogs = true }) { Text("查看内核日志") }
+            TextButton(
+                onClick = { context.startActivity(Intent(context, NshSpikeActivity::class.java)) },
+            ) { Text("NSH 节点页（实验）") }
+            TextButton(
+                onClick = {
+                    context.startActivity(
+                        Intent(context, NshSpikeActivity::class.java).putExtra("rust", true),
+                    )
+                },
+            ) { Text("NSH Rust 页（实验）") }
         }
 
         UpdateSection(onMessage)

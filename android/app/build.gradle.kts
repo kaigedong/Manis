@@ -16,7 +16,8 @@ android {
 
     defaultConfig {
         applicationId = "dev.manis.app"
-        minSdk = 26
+        // NSH embed requires API 28; this is a spike-only change.
+        minSdk = 28
         targetSdk = 35
         versionCode = manisVersionCode
         versionName = manisVersionName
@@ -71,4 +72,5 @@ dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+    implementation(files("libs/nsh.aar"))
 }
