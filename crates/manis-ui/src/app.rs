@@ -1068,6 +1068,7 @@ fn nsh_node_page(
                 provider
                     .proxies
                     .iter()
+                    .filter(|proxy| !is_subscription_info_node(&proxy.name))
                     .map(|proxy| node_item(&proxy.name, global_current))
                     .collect()
             });
@@ -1108,6 +1109,7 @@ fn nsh_node_page(
             let members: Vec<_> = group
                 .nodes
                 .iter()
+                .filter(|name| !is_subscription_info_node(name))
                 .map(|name| node_item(name, group.current.as_deref().unwrap_or("")))
                 .collect();
             json!({
@@ -1129,12 +1131,32 @@ fn nsh_node_page(
         "global": {
             "label": "全局",
             "current": if global_current.is_empty() { serde_json::Value::Null } else { json!(global_current) },
-            "total": snapshot.providers.iter().map(|provider| provider.proxies.len()).sum::<usize>()
-                + workspace.saved_single_nodes.len(),
+            "total": snapshot
+                .providers
+                .iter()
+                .filter(|provider| provider.name != "default")
+                .flat_map(|provider| provider.proxies.iter())
+                .filter(|proxy| !is_subscription_info_node(&proxy.name))
+                .count(),
         },
         "sources": sources,
         "policyGroups": policy_groups,
     })
+}
+
+fn is_subscription_info_node(name: &str) -> bool {
+    [
+        "剩余流量",
+        "距离下次重置",
+        "套餐到期",
+        "到期时间",
+        "过期时间",
+        "防失联",
+        "流量重置",
+        "官网",
+    ]
+    .iter()
+    .any(|marker| name.contains(marker))
 }
 
 fn nsh_rules_page(snapshot: &manis_mihomo::MihomoSnapshot) -> serde_json::Value {
