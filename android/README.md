@@ -1,6 +1,6 @@
 # Manis for Android (experimental)
 
-Kotlin/Compose 外壳 + NSH 页面，内置受管的 Mihomo 内核，通过 `VpnService` 接管整机流量。
+单个 NSH 根页面 + Kotlin 平台宿主，内置受管的 Mihomo 内核，通过 `VpnService` 接管整机流量。底部导航、ApplyBar 和全部内容页都由 NSH 渲染；Compose 只保留不可见的 AndroidView 容器、轮询和权限宿主。
 工作区模型、配置渲染和节点页表现层复用 Rust 实现，手机和桌面生成的 `config.yaml` 语义一致。
 
 ## 现在能做什么
@@ -27,8 +27,8 @@ Compose 外壳 ──workspace.json──▶ Rust (crates/manis-android)
      │                              ▼
      │                        config.yaml (tun.file-descriptor: 3)
      │                              │
-     ├── NSH 节点页 ◀── manis-presentation
-     └── NSH 订阅页
+     └── NSH 单根页面（连接/节点/订阅/规则/设置）
+           └── 节点模型 ◀── manis-presentation
                                     │
 VpnService ──TUN fd──▶ 打包的 libmihomo.so ──▶ 127.0.0.1:9090（每次启动随机 secret）
 ```

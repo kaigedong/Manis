@@ -1,5 +1,6 @@
-import { host, Scroll, signal, Text, View } from "nsh";
+import { computed, host, Scroll, signal, Text, View } from "nsh";
 import { Input } from "nsh/base";
+import { embedded, root } from "./store";
 
 type UpdateInfo = {
   state: "idle" | "checking" | "upToDate" | "available" | "downloading" | "ready" | "failed";
@@ -30,9 +31,8 @@ type Data = {
   update: UpdateInfo;
 };
 
-type Reply = { data?: Data; message?: string; logs?: string[] };
+type Reply = { data?: unknown; message?: string; logs?: string[] };
 
-const params = (host.params ?? {}) as { data?: Data; embedded?: boolean };
 const empty: Data = {
   status: "未连接",
   mode: "rule",
@@ -47,7 +47,7 @@ const empty: Data = {
   installedVersion: "未知",
   update: { state: "idle" },
 };
-const page = signal<Data>(params.data ?? empty);
+const page = computed<Data>(() => (root().settings ?? empty) as Data);
 const message = signal("");
 const busy = signal(false);
 const showDns = signal(false);
@@ -55,11 +55,6 @@ const dnsMode = signal("doh");
 const dnsServers = signal("");
 const logs = signal<string[]>([]);
 const showLogs = signal(false);
-
-host.on("settings.updated", (payload) => {
-  const next = (payload as { data?: Data } | undefined)?.data;
-  if (next) page.set(next);
-});
 
 async function invoke(command: string, payload: Record<string, unknown> = {}) {
   if (!host.available()) {
@@ -69,7 +64,7 @@ async function invoke(command: string, payload: Record<string, unknown> = {}) {
   busy.set(true);
   try {
     const reply = (await host.call(command, payload)) as Reply | null;
-    if (reply?.data) page.set(reply.data);
+    if (reply?.data) root.set(reply.data as any);
     if (reply?.logs) {
       logs.set(reply.logs);
       showLogs.set(true);
@@ -309,7 +304,7 @@ function UpdateCard() {
 
 export function SettingsPage() {
   return (
-    <View class={params.embedded ? "flex-1 bg-background" : "flex-1 bg-background pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"}>
+    <View class={embedded ? "flex-1 bg-background" : "flex-1 bg-background pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"}>
       <Scroll style={{ flex: 1 }}>
         <View style={{ paddingHorizontal: 20, paddingTop: 18, paddingBottom: 24, gap: 12 }}>
           <Text style={{ fontSize: 28, fontWeight: "600" }}>设置</Text>

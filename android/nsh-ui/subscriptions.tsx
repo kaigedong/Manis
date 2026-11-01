@@ -1,5 +1,6 @@
-import { host, Scroll, signal, Text, View } from "nsh";
+import { computed, host, Scroll, signal, Text, View } from "nsh";
 import { Input } from "nsh/base";
+import { embedded, root } from "./store";
 
 type SubscriptionItem = {
   index: number;
@@ -28,11 +29,10 @@ type Data = {
   groups: GroupItem[];
 };
 
-type Reply = { data?: Data; message?: string };
+type Reply = { data?: unknown; message?: string };
 
-const params = (host.params ?? {}) as { data?: Data; embedded?: boolean };
 const empty: Data = { subscriptions: [], nodes: [], groups: [] };
-const page = signal<Data>(params.data ?? empty);
+const page = computed<Data>(() => (root().subscriptions ?? empty) as Data);
 const message = signal("");
 const busy = signal(false);
 const adding = signal<"subscription" | "node" | "group" | null>(null);
@@ -45,11 +45,6 @@ const groupStrategy = signal("urltest");
 const selectedSubscriptions = signal<number[]>([]);
 const selectedNodes = signal<number[]>([]);
 
-host.on("subscriptions.updated", (payload) => {
-  const next = (payload as { data?: Data } | undefined)?.data;
-  if (next) page.set(next);
-});
-
 async function invoke(command: string, payload: Record<string, unknown> = {}) {
   if (!host.available()) {
     message.set("独立运行模式：没有宿主可执行");
@@ -58,7 +53,7 @@ async function invoke(command: string, payload: Record<string, unknown> = {}) {
   busy.set(true);
   try {
     const reply = (await host.call(command, payload)) as Reply | null;
-    if (reply?.data) page.set(reply.data);
+    if (reply?.data) root.set(reply.data as any);
     message.set(reply?.message ?? "");
     return reply;
   } catch (error) {
@@ -382,7 +377,7 @@ function GroupForm() {
 
 export function SubscriptionsPage() {
   return (
-    <View class={params.embedded ? "flex-1 bg-background" : "flex-1 bg-background pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"}>
+    <View class={embedded ? "flex-1 bg-background" : "flex-1 bg-background pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"}>
       <Scroll style={{ flex: 1 }}>
         <View style={{ paddingHorizontal: 20, paddingTop: 18, paddingBottom: 24, gap: 12 }}>
           <Text style={{ fontSize: 28, fontWeight: "600" }}>订阅</Text>

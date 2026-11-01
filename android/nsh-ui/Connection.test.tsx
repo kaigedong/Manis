@@ -12,7 +12,7 @@ test("renders connection summary", async () => {
     warningCount: 0,
     hasSources: true,
   };
-  const app = await open("./App.tsx", { host: { params: { page: "connection", data } } });
+  const app = await open("./App.tsx", { host: { params: { tab: "connection", data: { connection: data } } } });
   expect(app.texts()).toContain("已连接");
   expect(app.texts()).toContain("香港 01");
   expect(app.texts()).toContain("规则");

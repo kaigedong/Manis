@@ -15,7 +15,7 @@ test("renders settings summary", async () => {
     installedVersion: "0.1.110",
     update: { state: "idle" },
   };
-  const app = await open("./App.tsx", { host: { params: { page: "settings", data } } });
+  const app = await open("./App.tsx", { host: { params: { tab: "settings", data: { settings: data } } } });
   expect(app.texts()).toContain("设置");
   expect(app.texts()).toContain("v1.19.33");
   expect(app.texts()).toContain("1 订阅 · 2 节点");

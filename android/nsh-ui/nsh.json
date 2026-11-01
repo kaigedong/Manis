@@ -32,7 +32,8 @@
       "connection.toggle",
       "connection.mode",
       "connection.reload",
-      "connection.openNodes"
+      "workspace.apply",
+      "workspace.discard"
     ]
   }
 }

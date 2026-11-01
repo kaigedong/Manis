@@ -1,5 +1,6 @@
-import { host, Scroll, signal, Text, View } from "nsh";
+import { computed, host, Scroll, signal, Text, View } from "nsh";
 import { Input } from "nsh/base";
+import { embedded, root } from "./store";
 
 type Rule = {
   index: number;
@@ -18,7 +19,7 @@ type Data = {
   summary: string;
 };
 
-type Reply = { data?: Data; message?: string };
+type Reply = { data?: unknown; message?: string };
 
 type Editor = {
   index: number | null;
@@ -28,7 +29,6 @@ type Editor = {
   enabled: boolean;
 };
 
-const params = (host.params ?? {}) as { data?: Data; embedded?: boolean };
 const empty: Data = {
   rules: [],
   kinds: ["DOMAIN-SUFFIX", "DOMAIN", "DOMAIN-KEYWORD", "IP-CIDR", "IP6-CIDR", "GEOIP", "IP-ASN", "DST-PORT", "FINAL"],
@@ -36,15 +36,10 @@ const empty: Data = {
   warnings: [],
   summary: "",
 };
-const page = signal<Data>(params.data ?? empty);
+const page = computed<Data>(() => (root().rules ?? empty) as Data);
 const message = signal("");
 const busy = signal(false);
 const editor = signal<Editor | null>(null);
-
-host.on("rules.updated", (payload) => {
-  const next = (payload as { data?: Data } | undefined)?.data;
-  if (next) page.set(next);
-});
 
 async function invoke(command: string, payload: Record<string, unknown> = {}) {
   if (!host.available()) {
@@ -54,7 +49,7 @@ async function invoke(command: string, payload: Record<string, unknown> = {}) {
   busy.set(true);
   try {
     const reply = (await host.call(command, payload)) as Reply | null;
-    if (reply?.data) page.set(reply.data);
+    if (reply?.data) root.set(reply.data as any);
     message.set(reply?.message ?? "");
     return reply;
   } catch (error) {
@@ -265,7 +260,7 @@ function kindHelp(kind: string): string {
 
 export function RulesPage() {
   return (
-    <View class={params.embedded ? "flex-1 bg-background" : "flex-1 bg-background pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"}>
+    <View class={embedded ? "flex-1 bg-background" : "flex-1 bg-background pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"}>
       <Scroll style={{ flex: 1 }}>
         <View style={{ paddingHorizontal: 20, paddingTop: 18, paddingBottom: 24, gap: 12 }}>
           <Text style={{ fontSize: 28, fontWeight: "600" }}>规则</Text>

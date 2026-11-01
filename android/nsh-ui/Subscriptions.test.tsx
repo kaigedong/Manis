@@ -6,7 +6,7 @@ test("subscriptions render", async () => {
     nodes: [],
     groups: [],
   };
-  const app = await open("./App.tsx", { host: { params: { page: "subscriptions", data } } });
+  const app = await open("./App.tsx", { host: { params: { tab: "subscriptions", data: { subscriptions: data } } } });
   expect(app.texts()).toContain("订阅");
   expect(app.texts()).toContain("A");
 });

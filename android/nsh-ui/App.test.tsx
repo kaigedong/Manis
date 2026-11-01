@@ -19,7 +19,7 @@ const nodesPage = {
 };
 
 test("renders source groups and current node", async () => {
-  const app = await open("./App.tsx", { host: { params: { page: "nodes", data: nodesPage } } });
+  const app = await open("./App.tsx", { host: { params: { tab: "nodes", data: { nodes: nodesPage } } } });
   expect(app.texts()).toContain("我的订阅");
   expect(app.texts()).toContain("香港 01");
   expect(app.texts()).toContain("当前");

@@ -59,17 +59,15 @@ object RuntimeState {
 
 @Composable
 fun ManisApp() {
-    var tab by rememberSaveable { mutableStateOf(Tab.Connect) }
-    val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
 
     fun say(message: String) {
-        scope.launch { snackbar.showSnackbar(message) }
+        android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_SHORT).show()
     }
 
     // Re-run the recovery probe when the phone changes networks: a node that timed out on Wi-Fi
     // may be reachable over cellular.
-    val context = LocalContext.current
     DisposableEffect(Unit) {
         val manager = context.getSystemService(ConnectivityManager::class.java)
         val callback = object : ConnectivityManager.NetworkCallback() {
@@ -153,29 +151,6 @@ fun ManisApp() {
         }
     }
 
-    Scaffold(
-        snackbarHost = { SnackbarHost(snackbar) },
-        bottomBar = {
-            NavigationBar {
-                for (entry in Tab.entries) {
-                    NavigationBarItem(
-                        selected = tab == entry,
-                        onClick = { tab = entry },
-                        icon = { Icon(entry.icon, contentDescription = entry.label) },
-                        label = { Text(entry.label) },
-                    )
-                }
-            }
-        },
-    ) { insets ->
-        Box(Modifier.fillMaxSize().padding(insets)) {
-            when (tab) {
-                Tab.Connect -> ConnectionScreen(onMessage = ::say, onNavigate = { tab = it })
-                Tab.Nodes -> ProxiesScreen(onMessage = ::say, onNavigate = { tab = it })
-                Tab.Subscriptions -> SubscriptionsScreen(onMessage = ::say)
-                Tab.Rules -> RulesScreen(onMessage = ::say)
-                Tab.Settings -> SettingsScreen(onMessage = ::say)
-            }
-        }
-    }
+    NshRootPage(onMessage = ::say, modifier = Modifier.fillMaxSize())
+
 }

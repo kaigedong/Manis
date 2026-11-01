@@ -1,4 +1,5 @@
-import { host, Scroll, signal, Text, View } from "nsh";
+import { computed, host, Scroll, signal, Text, View } from "nsh";
+import { embedded, root, tab } from "./store";
 
 type Data = {
   active: boolean;
@@ -12,7 +13,6 @@ type Data = {
   hasSources: boolean;
 };
 
-const params = (host.params ?? {}) as { data?: Data; embedded?: boolean };
 const empty: Data = {
   active: false,
   node: "",
@@ -24,14 +24,9 @@ const empty: Data = {
   warningCount: 0,
   hasSources: false,
 };
-const page = signal<Data>(params.data ?? empty);
+const page = computed<Data>(() => (root().connection ?? empty) as Data);
 const message = signal("");
 const busy = signal(false);
-
-host.on("connection.updated", (payload) => {
-  const next = (payload as { data?: Data } | undefined)?.data;
-  if (next) page.set(next);
-});
 
 async function invoke(command: string, payload: Record<string, unknown> = {}) {
   if (!host.available()) {
@@ -43,7 +38,7 @@ async function invoke(command: string, payload: Record<string, unknown> = {}) {
     const reply = (await host.call(command, payload)) as
       | { data?: Data; message?: string }
       | null;
-    if (reply?.data) page.set(reply.data);
+    if (reply?.data) root.set(reply.data as any);
     message.set(reply?.message ?? "");
     return reply;
   } catch (error) {
@@ -90,7 +85,7 @@ const modes = [
 
 export function ConnectionPage() {
   return (
-    <View class={params.embedded ? "flex-1 bg-background" : "flex-1 bg-background pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"}>
+    <View class={embedded ? "flex-1 bg-background" : "flex-1 bg-background pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"}>
       <Scroll style={{ flex: 1 }}>
         <View style={{ paddingHorizontal: 20, paddingTop: 18, paddingBottom: 24, gap: 14 }}>
           <Text style={{ fontSize: 28, fontWeight: "600" }}>连接</Text>
@@ -140,7 +135,7 @@ export function ConnectionPage() {
               >
                 <Text style={{ fontSize: 13, color: "#6b7280" }}>出口</Text>
                 <Text style={{ fontSize: 14, flex: 1 }}>{page().node || "未选择"}</Text>
-                <Action label="切换" onPress={() => void invoke("connection.openNodes")} />
+                <Action label="切换" onPress={() => tab.set("nodes")} />
               </View>
             ) : null}
           </View>

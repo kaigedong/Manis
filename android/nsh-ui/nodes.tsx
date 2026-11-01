@@ -1,5 +1,6 @@
 import { computed, host, List, signal, Text, View } from "nsh";
 import { Input } from "nsh/base";
+import { embedded, root } from "./store";
 
 type NodeItem = {
   name: string;
@@ -48,34 +49,7 @@ const emptyPage: Page = {
   policyGroups: [],
 };
 
-const params = (host.params ?? {}) as { data?: Page; stress?: boolean; embedded?: boolean };
-const initialPage: Page = params.data?.sources
-  ? JSON.parse(JSON.stringify(params.data))
-  : emptyPage;
-
-if (params.stress) {
-  const stressNodes: NodeItem[] = Array.from({ length: 500 }, (_, index) => ({
-    name: `测试节点 ${String(index + 1).padStart(3, "0")}`,
-    displayName: `测试节点 ${String(index + 1).padStart(3, "0")}`,
-    delayMs: index % 7 === 0 ? null : 20 + ((index * 37) % 300),
-    current: false,
-  }));
-  initialPage.sources.push({
-    id: "stress",
-    name: "压力测试",
-    detail: "500 个节点 · 列表回收测试",
-    kind: "other",
-    enabled: true,
-    nodes: stressNodes,
-  });
-  initialPage.global.total += 500;
-}
-
-const page = signal<Page>(initialPage);
-host.on("nodes.updated", (payload) => {
-  const next = (payload as { page?: Page } | undefined)?.page;
-  if (next) page.set(next);
-});
+const page = computed<Page>(() => (root().nodes ?? emptyPage) as Page);
 const query = signal("");
 const refreshing = signal(false);
 const message = signal("");
@@ -114,8 +88,8 @@ async function refresh() {
   refreshing.set(true);
   message.set("");
   try {
-    const reply = (await host.call("nodes.refresh")) as { page?: Page };
-    if (reply?.page) page.set(reply.page);
+    const reply = (await host.call("nodes.refresh")) as { data?: unknown } | null;
+    if (reply?.data) root.set(reply.data as any);
     message.set("已刷新");
   } catch (error) {
     message.set(error instanceof Error ? error.message : "刷新失败");
@@ -125,38 +99,50 @@ async function refresh() {
 }
 
 function selectSourceNode(name: string) {
-  page.update((current) => ({
-    ...current,
-    global: { ...current.global, current: name },
-    sources: current.sources.map((source) => ({
-      ...source,
-      nodes: source.nodes.map((node) => ({
-        ...node,
-        current: node.name === name,
-      })),
-    })),
-  }));
+  root.update((current) => {
+    const nodes = current.nodes as Page;
+    return {
+      ...current,
+      nodes: {
+        ...nodes,
+        global: { ...nodes.global, current: name },
+        sources: nodes.sources.map((source) => ({
+          ...source,
+          nodes: source.nodes.map((node) => ({
+            ...node,
+            current: node.name === name,
+          })),
+        })),
+      },
+    };
+  });
   if (host.available()) {
     void host.call("nodes.select", { name }).catch(() => undefined);
   }
 }
 
 function selectPolicyNode(groupId: string, name: string) {
-  page.update((current) => ({
-    ...current,
-    policyGroups: current.policyGroups.map((group) =>
-      group.id === groupId
-        ? {
-            ...group,
-            current: name,
-            members: group.members.map((node) => ({
-              ...node,
-              current: node.name === name,
-            })),
-          }
-        : group,
-    ),
-  }));
+  root.update((current) => {
+    const nodes = current.nodes as Page;
+    return {
+      ...current,
+      nodes: {
+        ...nodes,
+        policyGroups: nodes.policyGroups.map((group) =>
+          group.id === groupId
+            ? {
+                ...group,
+                current: name,
+                members: group.members.map((node) => ({
+                  ...node,
+                  current: node.name === name,
+                })),
+              }
+            : group,
+        ),
+      },
+    };
+  });
   if (host.available()) {
     void host.call("nodes.selectGroup", { group: groupId, name }).catch(() => undefined);
   }
@@ -301,7 +287,7 @@ function Dispatch(props: { row: () => Row }) {
 
 export function NodesPage() {
   return (
-    <View class={params.embedded ? "flex-1 bg-background" : "flex-1 bg-background pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"}>
+    <View class={embedded ? "flex-1 bg-background" : "flex-1 bg-background pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"}>
       <View style={{ paddingHorizontal: 20, paddingTop: 18, gap: 12 }}>
         <View style={{ flexDirection: "row", alignItems: "baseline", gap: 10 }}>
           <Text style={{ fontSize: 28, fontWeight: "600", flex: 1 }}>节点</Text>
