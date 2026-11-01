@@ -124,6 +124,16 @@ cd Manis
 cargo run -p manis-ui
 ```
 
+桌面端还有一条 NSH 迁移支线：`manis-nsh-desktop` 用同一个 TSX bundle 在 GTK 4 的 NSH
+宿主里打开单根页面。它目前是静态数据的接入原型，尚未替换正式 `manis-ui`：
+
+```bash
+cargo run -p manis-nsh-desktop
+```
+
+需要 GTK 4.14+ 与 Vulkan/GTK 的常规开发包；窗口使用与 Android 相同的 NSH 根页面和底部
+导航。
+
 Manis 只启动自己管理的 Mihomo 进程，并且只使用自己从界面数据生成的配置。它不会连接
 其他程序启动的 controller，也不会运行用户提供的 Mihomo YAML。发行包携带一个经过
 SHA-256 校验的官方稳定版种子内核；首次运行会安装到 Manis 私有数据目录，之后由应用内

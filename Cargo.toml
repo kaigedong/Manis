@@ -5,6 +5,7 @@ members = [
     "crates/manis-engine",
     "crates/manis-linux-helper",
     "crates/manis-mihomo",
+    "crates/manis-nsh-desktop",
     "crates/manis-presentation",
     "crates/manis-profile",
     "crates/manis-ui",

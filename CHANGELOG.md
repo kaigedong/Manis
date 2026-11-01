@@ -55,7 +55,10 @@ once the public API and configuration formats stabilize.
   five pages, so switching tabs no longer recreates an NshView. Compose is now only the invisible
   AndroidView host for polling, VPN/installer permissions and clipboard/platform effects.
   Remove the now-unused Compose page implementations and per-page NSH hosts, keeping only the
-  shared platform helpers and the single root host. Subscription/manual source grouping,
+  shared platform helpers and the single root host.
+- Desktop: add `manis-nsh-desktop`, the first NSH embedding host. It loads the Android TSX bundle
+  in NSH's GTK 4 `AppView` and renders the same single-root UI with a static empty workspace. The
+  real profile/engine-backed host data and commands are the next step. Subscription/manual source grouping,
   the internal `__MANIS_GLOBAL__` label, current selection and delays are built once instead of
   being reconstructed by the Kotlin UI. The NSH Android runtime is pinned to `v0.3.0`, fetched by
   `android/fetch-nsh.sh`, and raises `minSdk` to 28.
