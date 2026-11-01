@@ -171,7 +171,7 @@ fun ManisApp() {
         Box(Modifier.fillMaxSize().padding(insets)) {
             when (tab) {
                 Tab.Connect -> ConnectionScreen(onMessage = ::say, onNavigate = { tab = it })
-                Tab.Nodes -> ProxiesScreen(onMessage = ::say)
+                Tab.Nodes -> ProxiesScreen(onMessage = ::say, onNavigate = { tab = it })
                 Tab.Subscriptions -> SubscriptionsScreen(onMessage = ::say)
                 Tab.Rules -> RulesScreen(onMessage = ::say)
                 Tab.Settings -> SettingsScreen(onMessage = ::say)

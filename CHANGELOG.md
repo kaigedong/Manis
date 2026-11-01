@@ -81,6 +81,9 @@ once the public API and configuration formats stabilize.
 
 ### Fixed
 
+- Android: the Nodes page now lists saved subscriptions, cached proxy names, and manual nodes while
+  disconnected, with a clear hint that connecting enables switching and latency tests. It previously
+  showed only a short “尚未连接” card, which made a configured account look empty.
 - Android: ship the Manis launcher icon, round icon, and explicit launcher label. The APK had no
   icon resource at all, so phones showed the generic Android marker and some launchers did not list
   the sideloaded app in search. The launcher activity now repeats the icon and label instead of
