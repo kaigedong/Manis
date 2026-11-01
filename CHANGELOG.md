@@ -49,7 +49,9 @@ once the public API and configuration formats stabilize.
   channel commands, while Kotlin keeps downloads and persistence. The Rules page is also NSH now:
   structured rule rows, enable/disable, add/edit/delete and apply go through the same host channel.
   Settings follows with connection/config summaries, DNS mode and custom resolvers, backup and
-  restore, kernel logs, update actions and the license note. Subscription/manual source grouping,
+  restore, kernel logs, update actions and the license note. Connection is the last content tab:
+  VPN start/stop, exit node, routing modes, errors, warnings and the jump to the Nodes page are NSH
+  host commands; only the Compose bottom navigation and ApplyBar remain around the pages. Subscription/manual source grouping,
   the internal `__MANIS_GLOBAL__` label, current selection and delays are built once instead of
   being reconstructed by the Kotlin UI. The NSH Android runtime is pinned to `v0.3.0`, fetched by
   `android/fetch-nsh.sh`, and raises `minSdk` to 28.

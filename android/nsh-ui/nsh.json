@@ -28,7 +28,11 @@
       "settings.update.check",
       "settings.update.download",
       "settings.update.install",
-      "settings.update.release"
+      "settings.update.release",
+      "connection.toggle",
+      "connection.mode",
+      "connection.reload",
+      "connection.openNodes"
     ]
   }
 }

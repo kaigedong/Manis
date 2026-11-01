@@ -43,6 +43,21 @@ fun ConnectionScreen(
     onMessage: (String) -> Unit,
     onNavigate: (Tab) -> Unit,
 ) {
+    androidx.compose.foundation.layout.Column(Modifier.fillMaxSize()) {
+        ApplyBar()
+        NshConnectionPage(
+            onMessage = onMessage,
+            onNavigate = onNavigate,
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+        )
+    }
+}
+
+@Composable
+private fun ComposeConnectionScreen(
+    onMessage: (String) -> Unit,
+    onNavigate: (Tab) -> Unit,
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val config = Workspace.config.value

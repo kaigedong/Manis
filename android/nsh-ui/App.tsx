@@ -3,6 +3,7 @@ import { NodesPage } from "./nodes";
 import { SubscriptionsPage } from "./subscriptions";
 import { RulesPage } from "./rules";
 import { SettingsPage } from "./settings";
+import { ConnectionPage } from "./connection";
 
 const page = ((host.params ?? {}) as { page?: string }).page ?? "nodes";
 
@@ -15,6 +16,8 @@ function App() {
         <RulesPage />
       ) : page === "settings" ? (
         <SettingsPage />
+      ) : page === "connection" ? (
+        <ConnectionPage />
       ) : (
         <NodesPage />
       )}
