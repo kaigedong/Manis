@@ -81,6 +81,19 @@ mod desktop {
                     call.resolve(payload);
                     return;
                 }
+                if command == "settings.update.check" {
+                    let mut payload = reply(None);
+                    payload["data"]["settings"]["update"] = match manis_ui::nsh_check_update() {
+                        Ok(Some(version)) => json!({
+                            "state": "available",
+                            "update": { "version": version },
+                        }),
+                        Ok(None) => json!({ "state": "upToDate" }),
+                        Err(error) => json!({ "state": "failed", "message": error }),
+                    };
+                    call.resolve(payload);
+                    return;
+                }
                 let message = match command {
                     "nodes.select" => string_field("name").map(|name| {
                         manis_ui::nsh_select_global_node(&name)

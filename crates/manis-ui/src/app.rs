@@ -1501,6 +1501,16 @@ pub fn nsh_delete_node(index: usize) -> Result<(), String> {
     mihomo::remove_single_node_source_in(&directory, &node.id).map_err(|error| error.to_string())
 }
 
+/// Checks GitHub Releases for a newer desktop version.
+///
+/// # Errors
+/// Returns a network or metadata error from the desktop updater.
+pub fn nsh_check_update() -> Result<Option<String>, String> {
+    crate::app_update::check_for_update()
+        .map(|update| update.map(|update| update.version))
+        .map_err(|error| error.to_string())
+}
+
 /// Last lines of the desktop kernel log for the NSH settings page.
 #[must_use]
 pub fn nsh_logs() -> Vec<String> {

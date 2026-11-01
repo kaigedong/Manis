@@ -34,10 +34,10 @@ pub use app::windows::{
     AuxiliaryKind as UtilityWindowFixture, fixture_root as utility_window_fixture_root,
 };
 pub use app::{
-    nsh_add_node, nsh_add_subscription, nsh_apply_profile, nsh_delete_node, nsh_delete_rule,
-    nsh_delete_subscription, nsh_logs, nsh_root_data, nsh_save_rule, nsh_select_global_node,
-    nsh_select_group_node, nsh_set_routing_mode, nsh_set_tun, nsh_toggle_node, nsh_toggle_rule,
-    nsh_toggle_subscription,
+    nsh_add_node, nsh_add_subscription, nsh_apply_profile, nsh_check_update, nsh_delete_node,
+    nsh_delete_rule, nsh_delete_subscription, nsh_logs, nsh_root_data, nsh_save_rule,
+    nsh_select_global_node, nsh_select_group_node, nsh_set_routing_mode, nsh_set_tun,
+    nsh_toggle_node, nsh_toggle_rule, nsh_toggle_subscription,
 };
 pub use assets::Assets;
 #[cfg(feature = "snapshot-fixtures")]
