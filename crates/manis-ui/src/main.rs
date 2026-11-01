@@ -9,11 +9,20 @@ fn main() {
         println!("Manis {}", manis_ui::version());
         return;
     }
+    let headless = std::env::args_os().any(|argument| argument == "--headless");
     let instance = claim_single_instance();
     if !instance.is_primary() {
         return;
     }
     let application = application().with_assets(Assets);
+    if headless {
+        application.run(move |cx: &mut App| {
+            init(cx);
+            manis_ui::run_headless(cx);
+            instance.install(cx);
+        });
+        return;
+    }
     application.on_reopen(show_or_open_window);
     application.run(move |cx: &mut App| {
         init(cx);

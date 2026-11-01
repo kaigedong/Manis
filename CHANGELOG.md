@@ -75,7 +75,10 @@ once the public API and configuration formats stabilize.
   GTK 4 and links the NSH desktop host on Linux.
 - Build: add `android/build-nsh-ui.sh` and `android/test-nsh-ui.sh`, pin the NSH CLI to 0.3.0 in
   Android CI, and fail when the committed NSH assets differ from a fresh build. All five NSH UI
-  tests run in CI. Subscription/manual source grouping,
+  tests run in CI.
+- Desktop launch: `manis-ui --headless` runs the managed engine without a window. The NSH host
+  starts it when no controller is running, waits for the Unix controller, and stops the owned
+  engine when its window closes. With an existing controller it attaches instead. Subscription/manual source grouping,
   the internal `__MANIS_GLOBAL__` label, current selection and delays are built once instead of
   being reconstructed by the Kotlin UI. The NSH Android runtime is pinned to `v0.3.0`, fetched by
   `android/fetch-nsh.sh`, and raises `minSdk` to 28.

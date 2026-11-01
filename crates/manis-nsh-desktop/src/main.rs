@@ -217,11 +217,81 @@ mod desktop {
         }
     }
 
+    fn controller_socket() -> Option<std::path::PathBuf> {
+        let data = std::env::var_os("XDG_DATA_HOME")
+            .map(std::path::PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("HOME")
+                    .map(|home| std::path::PathBuf::from(home).join(".local/share"))
+            })?;
+        Some(data.join("manis/mihomo/controller.sock"))
+    }
+
+    fn controller_ready(socket: &std::path::Path) -> bool {
+        use std::io::{Read, Write};
+        use std::os::unix::net::UnixStream;
+
+        let Ok(mut stream) = UnixStream::connect(socket) else {
+            return false;
+        };
+        let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(400)));
+        let _ = stream.set_write_timeout(Some(std::time::Duration::from_millis(400)));
+        if stream
+            .write_all(b"GET /version HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+            .is_err()
+        {
+            return false;
+        }
+        let mut response = String::new();
+        stream.read_to_string(&mut response).is_ok() && response.contains("200")
+    }
+
+    fn ensure_engine() -> Option<std::process::Child> {
+        let socket = controller_socket()?;
+        if controller_ready(&socket) {
+            return None;
+        }
+
+        let mut candidates = Vec::new();
+        if let Some(binary) = std::env::var_os("MANIS_UI_BIN") {
+            candidates.push(std::path::PathBuf::from(binary));
+        }
+        if let Ok(executable) = std::env::current_exe()
+            && let Some(directory) = executable.parent()
+        {
+            candidates.push(directory.join("manis-ui"));
+        }
+        candidates.push(std::path::PathBuf::from("manis-ui"));
+
+        for binary in candidates {
+            let Ok(child) = std::process::Command::new(&binary)
+                .arg("--headless")
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+            else {
+                continue;
+            };
+            for _ in 0..50 {
+                if controller_ready(&socket) {
+                    return Some(child);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+            return None;
+        }
+        None
+    }
+
     pub(crate) fn main() {
+        let engine = Rc::new(RefCell::new(ensure_engine()));
+        let engine_for_activate = Rc::clone(&engine);
         let app = gtk::Application::builder()
             .application_id("dev.manis.desktop.nsh")
             .build();
-        app.connect_activate(|app| {
+        app.connect_activate(move |app| {
+            let engine = Rc::clone(&engine_for_activate);
             let window = gtk::ApplicationWindow::builder()
                 .application(app)
                 .title("Manis")
@@ -250,7 +320,11 @@ mod desktop {
             view.load(Bundle::source(BUNDLE.to_owned()).into());
             window.set_child(Some(&view.widget()));
             let keep = RefCell::new(Some(Rc::clone(&view)));
+            let engine = Rc::clone(&engine);
             window.connect_destroy(move |_| {
+                if let Some(mut engine) = engine.borrow_mut().take() {
+                    let _ = engine.kill();
+                }
                 if let Some(view) = keep.borrow_mut().take() {
                     view.stop();
                 }

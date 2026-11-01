@@ -28,6 +28,7 @@ mod theme;
 mod tray;
 
 pub use app::ManisApp;
+pub use app::run_headless;
 #[cfg(feature = "snapshot-fixtures")]
 pub use app::windows::{
     AuxiliaryKind as UtilityWindowFixture, fixture_root as utility_window_fixture_root,

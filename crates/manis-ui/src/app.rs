@@ -788,6 +788,27 @@ impl Render for ManisApp {
     }
 }
 
+/// Starts the engine without a window, for the NSH desktop host.
+///
+/// The app entity is kept alive by the refresh task; connecting starts the
+/// managed kernel exactly as the GUI does.
+pub fn run_headless(cx: &mut gpui::App) {
+    let app = cx.new(|_cx| ManisApp::new());
+    app.update(cx, |this, cx| {
+        this.connect_mihomo(cx);
+        this.ensure_source_refresh_scheduler(cx);
+    });
+    cx.spawn(async move |cx| {
+        loop {
+            cx.background_executor()
+                .timer(Duration::from_secs(3600))
+                .await;
+            app.update(cx, |_, cx| cx.notify());
+        }
+    })
+    .detach();
+}
+
 /// Read-only root payload for the desktop NSH host.
 ///
 /// It reuses the desktop storage loader so the NSH shell sees the same saved
