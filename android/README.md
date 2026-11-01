@@ -11,7 +11,7 @@ Kotlin/Compose 客户端，内置受管的 Mihomo 内核，通过 `VpnService` �
 | 节点 | 读取内核里的策略组（全局组 + 用户组）；展开后按延迟显示节点；点选立即切换；单组测速                              |
 | 订阅 | 多订阅增删与启停；添加/刷新时直接下载并缓存到内核 provider 目录，不需要先连接 VPN；VLESS 分享链接导入；策略组（手动选择 / 自动测速）的新建与删除；「应用」后热重载内核 |
 | 规则 | 与桌面一致的结构化规则行（`DOMAIN`、`DOMAIN-SUFFIX`、`DOMAIN-KEYWORD`、`DOMAIN-WILDCARD`、`IP-CIDR`、`IP6-CIDR`、`GEOIP`、`IP-ASN`、`DST-PORT`、`FINAL`），可启停、编辑、删除，策略指向 `DIRECT`、`REJECT` 或任意策略组 |
-| 设置 | 内核版本、配置摘要、ABI、数据目录；重新载入；查看内核日志；许可证说明                                            |
+| 设置 | 内核版本、配置摘要、ABI、数据目录；重新载入；查看内核日志；应用内检查更新、下载并安装新 APK；许可证说明 |
 
 与桌面版的差异（有意保留）：
 
@@ -52,6 +52,11 @@ VpnService ──TUN fd──▶ 打包的 libmihomo.so ──▶ 127.0.0.1:9090
 - 节点入口是轮换 IP 的机场，只有机场自己的 DoH 才解析出可用地址。可在「设置 → 维护 →
   节点域名解析 → 自定义 DoH」里填机场给的地址；订阅文档里带 `proxy-server-nameserver` 时应用
   会自动读取并优先使用（手动填写的会覆盖自动值）。
+- 设置页的「应用更新」读取 GitHub 滚动 Release（tag `latest`），按 APK 文件名里的版本号判断
+  是否有新版本。「下载」把 arm64 APK 存到 `cache/updates/` 并显示百分比，完成后用 Release 的
+  `.sha256` 校验，按钮变成「安装」。首次安装会跳到系统的「安装未知应用」页面，授权后自动拉起
+  系统安装器；覆盖安装不会清空 Workspace。应用内更新从 `0.1.104` 起才有，更早的版本需要手动
+  安装一次 `0.1.104`。
 - `addDisallowedApplication(packageName)` 让 Manis 自己的请求（订阅拉取、控制器）绕开 TUN，
   避免自环。
 

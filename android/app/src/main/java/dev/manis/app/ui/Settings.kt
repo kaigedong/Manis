@@ -105,6 +105,8 @@ fun SettingsScreen(onMessage: (String) -> Unit) {
             TextButton(onClick = { showLogs = true }) { Text("查看内核日志") }
         }
 
+        UpdateSection(onMessage)
+
         SectionCard("关于") {
             Text("Manis Android 实验版", style = MaterialTheme.typography.bodyLarge)
             Text(
