@@ -1,0 +1,9 @@
+{
+  "name": "Manis NSH UI",
+  "id": "dev.manis.app.nsh",
+  "version": "0.1.0",
+  "build": 1,
+  "capabilities": {
+    "host": ["nodes.refresh", "nodes.select", "nodes.selectGroup"]
+  }
+}

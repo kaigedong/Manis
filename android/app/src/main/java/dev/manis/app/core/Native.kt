@@ -25,4 +25,7 @@ internal object Native {
     ): Int
 
     external fun stopCore()
+
+    /** Shared node-page presentation from `manis-presentation`; returns JSON. */
+    external fun nodePage(requestJson: String): String
 }

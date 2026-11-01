@@ -1,8 +1,0 @@
-{
-  "name": "NSH Rust",
-  "id": "com.example.nshrust",
-  "version": "1.0.0",
-  "build": 1,
-  "rust": ".",
-  "root": "App"
-}

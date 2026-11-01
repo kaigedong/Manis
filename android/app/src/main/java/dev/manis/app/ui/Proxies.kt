@@ -39,6 +39,17 @@ import kotlinx.coroutines.launch
 
 @Composable
 fun ProxiesScreen(onMessage: (String) -> Unit, onNavigate: (Tab) -> Unit) {
+    androidx.compose.foundation.layout.Column(Modifier.fillMaxSize()) {
+        ApplyBar()
+        NshNodePage(
+            onMessage = onMessage,
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+        )
+    }
+}
+
+@Composable
+private fun ComposeProxiesScreen(onMessage: (String) -> Unit, onNavigate: (Tab) -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val snapshot = RuntimeState.snapshot

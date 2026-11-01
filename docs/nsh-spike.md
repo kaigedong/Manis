@@ -23,7 +23,7 @@
 
 ### TSX 节点页
 
-`android/nsh-spike/App.tsx`：
+`android/nsh-ui/App.tsx`：
 
 - 从 `host.params` 接收 `sources`，从真实 `Workspace` 的订阅缓存和手动节点生成
 - `List` + `estimatedItemSize`，500 节点压力源
@@ -31,10 +31,12 @@
 - 「刷新」通过 `host.call("nodes.refresh")` 回到 Kotlin 取最新数据
 - 点节点通过 `host.call("nodes.select")` 回到 Kotlin（spike 只记录日志）
 
-嵌入入口：`android/app/src/main/java/dev/manis/app/nsh/NshSpikeActivity.kt`。
+嵌入入口：`android/app/src/main/java/dev/manis/app/ui/NshNodePage.kt`（Android 的「节点」Tab）。
 Settings → 诊断里加了实验入口（仅 spike 分支）。
 
 ### Rust root 验证
+
+> Rust root 验证只在 `spike/nsh-node-page` 分支保留；生产迁移分支使用 TSX 嵌入。原始实验步骤：
 
 `android/nsh-rust` 是 `nsh init --template rust` 的最小计数器：
 
@@ -99,7 +101,7 @@ NSH 的方向是对的，但当前不适合“一次性全量迁移”：
 
 ```sh
 # TSX bundle
-nsh build android/nsh-spike/App.tsx --release --out android/app/src/main/assets/nsh
+nsh build android/nsh-ui/App.tsx --release --out android/app/src/main/assets/nsh
 
 # AAR（不提交）
 cp ~/.nsh/embed/android/nsh.aar android/app/libs/nsh.aar
@@ -110,4 +112,4 @@ ANDROID_HOME=$HOME/Android/Sdk ./gradlew -PmanisAbi=x86_64 \
   -PmanisVersionName=0.1.107-nsh -PmanisVersionCode=107 assembleDebug
 ```
 
-安装后：Settings → 诊断 → 「NSH 节点页（实验）」。
+安装后打开「节点」Tab。

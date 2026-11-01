@@ -3706,6 +3706,7 @@ version = "0.1.0"
 dependencies = [
  "jni",
  "libc",
+ "manis-presentation",
  "manis-profile",
  "serde",
  "serde_json",
@@ -3735,6 +3736,14 @@ dependencies = [
  "serde",
  "serde_json",
  "ureq",
+]
+
+[[package]]
+name = "manis-presentation"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

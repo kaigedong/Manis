@@ -43,6 +43,11 @@ once the public API and configuration formats stabilize.
 
 ### Changed
 
+- Android: the Nodes page now renders through NSH (`android/nsh-ui`) inside the existing Compose
+  shell, backed by the shared Rust `manis-presentation` model. Subscription/manual source grouping,
+  the internal `__MANIS_GLOBAL__` label, current selection and delays are built once instead of
+  being reconstructed by the Kotlin UI. The NSH Android runtime is pinned to `v0.3.0`, fetched by
+  `android/fetch-nsh.sh`, and raises `minSdk` to 28.
 - Settings opens inside the main window again: the sidebar item and the settings shortcut no
   longer create a separate window.
 - Android: refresh subscriptions without connecting the VPN. The app downloads each enabled
