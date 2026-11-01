@@ -1053,12 +1053,17 @@ fn nsh_node_page(
         })
     };
 
+    let subscription_providers: Vec<_> = snapshot
+        .providers
+        .iter()
+        .filter(|provider| provider.name.starts_with("Subscription "))
+        .collect();
     let sources: Vec<_> = workspace
         .imported_subscriptions
         .iter()
         .enumerate()
         .map(|(index, subscription)| {
-            let provider = snapshot.providers.get(index);
+            let provider = subscription_providers.get(index).copied();
             let nodes = provider.map_or_else(Vec::new, |provider| {
                 provider
                     .proxies
@@ -1124,7 +1129,8 @@ fn nsh_node_page(
         "global": {
             "label": "全局",
             "current": if global_current.is_empty() { serde_json::Value::Null } else { json!(global_current) },
-            "total": snapshot.proxies.len(),
+            "total": snapshot.providers.iter().map(|provider| provider.proxies.len()).sum::<usize>()
+                + workspace.saved_single_nodes.len(),
         },
         "sources": sources,
         "policyGroups": policy_groups,
@@ -1179,6 +1185,43 @@ fn nsh_rules_page(snapshot: &manis_mihomo::MihomoSnapshot) -> serde_json::Value 
         "warnings": [],
         "summary": format!("{} 条运行时规则", snapshot.rules.len()),
     })
+}
+
+/// Recompiles the saved desktop profile and reloads the live controller.
+///
+/// This is the desktop equivalent of Apply: it makes newly added/removed
+/// sources, toggles and saved rules visible to the running Mihomo. The previous
+/// generated YAML is restored if the reload is rejected.
+///
+/// # Errors
+/// Returns a profile, render, controller or rollback error.
+pub fn nsh_apply_profile() -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        let data_dir = crate::brand::data_dir().ok_or_else(|| "找不到数据目录".to_owned())?;
+        let config_dir = crate::brand::config_dir().ok_or_else(|| "找不到配置目录".to_owned())?;
+        mihomo::sync_single_node_provider_files(&config_dir, &data_dir)
+            .map_err(|error| error.to_string())?;
+        let profile =
+            mihomo::compile_saved_profile(&config_dir, None).map_err(|error| error.to_string())?;
+        let client = live_client().ok_or_else(|| "桌面内核未运行".to_owned())?;
+        let snapshot = client.fetch_snapshot().map_err(|error| error.to_string())?;
+        let rendered =
+            manis_profile::render_mihomo_yaml_with_tun(&profile, snapshot.runtime.tun.enable)
+                .map_err(|error| error.to_string())?;
+        let previous = std::fs::read_to_string(data_dir.join("mihomo/manis-generated.yaml")).ok();
+        if let Err(error) = client.reload_config_payload(&rendered) {
+            if let Some(previous) = previous.as_deref() {
+                let _ = client.reload_config_payload(previous);
+            }
+            return Err(error.to_string());
+        }
+        Ok(())
+    }
+    #[cfg(not(unix))]
+    {
+        Err("桌面控制器只在 Unix 上接入".to_owned())
+    }
 }
 
 /// Adds a subscription URL to the desktop store.

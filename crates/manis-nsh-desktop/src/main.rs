@@ -137,9 +137,14 @@ fn install_handlers(host: &nsh_engine::HostChannel) {
                     manis_ui::nsh_add_node(&link)
                         .map_or_else(|error| error, |()| "节点已保存".to_owned())
                 }),
-                "workspace.apply" | "rules.apply" | "subscriptions.apply" => {
-                    Some("已应用（桌面原型）".to_owned())
-                }
+                "workspace.apply"
+                | "rules.apply"
+                | "subscriptions.apply"
+                | "subscriptions.refresh"
+                | "settings.reload" => Some(
+                    manis_ui::nsh_apply_profile()
+                        .map_or_else(|error| error, |()| "配置已重新载入".to_owned()),
+                ),
                 "workspace.discard" => Some("已放弃更改（桌面原型）".to_owned()),
                 "settings.logs" => Some("桌面原型还没有连接内核日志".to_owned()),
                 _ => None,
