@@ -322,6 +322,20 @@ export function SettingsPage() {
             <Action label="节点域名解析" onPress={openDns} />
           </Card>
 
+          {page().autoStart !== undefined ? (
+            <Card title="启动">
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+                <Text style={{ fontSize: 14, flex: 1 }}>开机自动启动</Text>
+                <Action
+                  label={page().autoStart ? "关闭" : "开启"}
+                  onPress={() =>
+                    void invoke("settings.autostart.set", { enabled: !page().autoStart })
+                  }
+                />
+              </View>
+            </Card>
+          ) : null}
+
           <Card title="配置摘要">
             <Info label="内核版本" value={page().kernelVersion} />
             <Info label="配置" value={page().summary} />

@@ -134,7 +134,7 @@ cargo run -p manis-nsh-desktop
 ```
 
 需要 GTK 4.14+ 与 Vulkan/GTK 的常规开发包；窗口使用与 Android 相同的 NSH 根页面和底部
-导航。关闭窗口会隐藏到系统托盘（托盘菜单可重新打开或退出）。若本地 controller 未运行，NSH 宿主会启动同一构建目录下的 `manis-ui --headless`
+导航。关闭窗口会隐藏到系统托盘（托盘菜单可重新打开或退出），设置页可以切换开机自动启动。若本地 controller 未运行，NSH 宿主会启动同一构建目录下的 `manis-ui --headless`
 作为引擎进程，并在窗口关闭时停止它。NSH TSX 资产可以复现重建：
 
 ```bash

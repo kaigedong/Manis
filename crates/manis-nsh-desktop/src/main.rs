@@ -182,6 +182,20 @@ mod desktop {
                             )
                         })
                     }
+                    "settings.autostart.set" => {
+                        data.get("enabled").and_then(Value::as_bool).map(|enabled| {
+                            manis_ui::nsh_set_autostart(enabled).map_or_else(
+                                |error| error,
+                                |()| {
+                                    if enabled {
+                                        "已开启开机启动".to_owned()
+                                    } else {
+                                        "已关闭开机启动".to_owned()
+                                    }
+                                },
+                            )
+                        })
+                    }
                     "connection.mode" => string_field("mode").map(|mode| {
                         manis_ui::nsh_set_routing_mode(&mode)
                             .map_or_else(|error| error, |()| "模式已切换".to_owned())

@@ -950,6 +950,7 @@ pub fn nsh_root_data() -> serde_json::Value {
             "abi": "desktop",
             "dataDir": directory.map_or_else(|| "—".into(), |path| path.display().to_string()),
             "installedVersion": crate::version(),
+            "autoStart": auto_start_enabled(),
             "update": { "state": "idle" }
         },
         "connection": {
@@ -1499,6 +1500,20 @@ pub fn nsh_delete_node(index: usize) -> Result<(), String> {
         .get(index)
         .ok_or_else(|| "节点已变化，请刷新".to_owned())?;
     mihomo::remove_single_node_source_in(&directory, &node.id).map_err(|error| error.to_string())
+}
+
+fn auto_start_enabled() -> bool {
+    crate::autostart::load_preference(crate::brand::config_dir().as_deref())
+}
+
+/// Reads or changes the desktop login-startup preference.
+///
+/// # Errors
+/// Returns an autostart error when the platform login item cannot be updated.
+pub fn nsh_set_autostart(enabled: bool) -> Result<(), String> {
+    let directory = crate::brand::config_dir().ok_or_else(|| "找不到配置目录".to_owned())?;
+    crate::autostart::save_preference_in(&directory, enabled).map_err(|error| error.to_string())?;
+    crate::autostart::set_enabled(enabled).map_err(|error| error.to_string())
 }
 
 /// Checks GitHub Releases for a newer desktop version.

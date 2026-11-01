@@ -82,7 +82,9 @@ once the public API and configuration formats stabilize.
 - Packaging: the Arch/AUR `manis` entry now installs the NSH host as `manis` and the GPUI binary
   as `manis-ui` (the headless engine), with the `gtk4` dependency.
 - Desktop shell: add a StatusNotifierItem tray with open/quit, and hide the window on close while
-  the tray is available. The tray registers as `dev.manis.app`. Subscription/manual source grouping,
+  the tray is available. The tray registers as `dev.manis.app`.
+- Settings: expose the desktop login-startup preference and toggle it from the NSH Settings page;
+  verified enable/disable writes/removes the XDG autostart entry. Subscription/manual source grouping,
   the internal `__MANIS_GLOBAL__` label, current selection and delays are built once instead of
   being reconstructed by the Kotlin UI. The NSH Android runtime is pinned to `v0.3.0`, fetched by
   `android/fetch-nsh.sh`, and raises `minSdk` to 28.
