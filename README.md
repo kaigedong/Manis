@@ -132,7 +132,15 @@ cargo run -p manis-nsh-desktop
 ```
 
 需要 GTK 4.14+ 与 Vulkan/GTK 的常规开发包；窗口使用与 Android 相同的 NSH 根页面和底部
-导航。
+导航。NSH TSX 资产可以复现重建：
+
+```bash
+android/build-nsh-ui.sh      # 需要 nsh 0.3.0
+android/test-nsh-ui.sh
+```
+
+Android 的 `MANIS_BUILD_NSH=1 android/build-apk.sh` 也会在打包前重建同一份资产；CI 会校验
+提交的资产与重建结果一致。
 
 Manis 只启动自己管理的 Mihomo 进程，并且只使用自己从界面数据生成的配置。它不会连接
 其他程序启动的 controller，也不会运行用户提供的 Mihomo YAML。发行包携带一个经过

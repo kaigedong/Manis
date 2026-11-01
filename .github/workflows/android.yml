@@ -69,6 +69,18 @@ jobs:
         with:
           tool: cargo-ndk
 
+      - name: Install NSH CLI
+        run: cargo install nsh-cli --version 0.3.0 --locked
+
+      - name: Rebuild NSH UI assets
+        run: android/build-nsh-ui.sh
+
+      - name: Check committed NSH assets are current
+        run: git diff --exit-code -- android/app/src/main/assets/nsh
+
+      - name: Test NSH UI
+        run: android/test-nsh-ui.sh
+
       - name: Build APK
         run: android/build-apk.sh arm64-v8a
 
