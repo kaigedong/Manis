@@ -35,6 +35,17 @@ import java.io.File
 
 @Composable
 fun SettingsScreen(onMessage: (String) -> Unit) {
+    androidx.compose.foundation.layout.Column(Modifier.fillMaxSize()) {
+        ApplyBar()
+        NshSettingsPage(
+            onMessage = onMessage,
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+        )
+    }
+}
+
+@Composable
+private fun ComposeSettingsScreen(onMessage: (String) -> Unit) {
     val context = LocalContext.current
     var showLogs by remember { mutableStateOf(false) }
     var showAbout by remember { mutableStateOf(false) }
@@ -216,7 +227,7 @@ private fun LogsDialog(onDismiss: () -> Unit) {
     )
 }
 
-private fun readLog(context: android.content.Context): List<String> {
+internal fun readLog(context: android.content.Context): List<String> {
     val file = File(context.filesDir, "mihomo/core.log")
     if (!file.isFile) return listOf("还没有日志：连接一次 VPN 后生成。")
     return runCatching {
@@ -224,7 +235,7 @@ private fun readLog(context: android.content.Context): List<String> {
     }.getOrDefault(listOf("日志读取失败"))
 }
 
-private fun proxyDnsLabel(mode: String, custom: List<String>, discovered: List<String>): String = when {
+internal fun proxyDnsLabel(mode: String, custom: List<String>, discovered: List<String>): String = when {
     custom.isNotEmpty() -> "自定义 DoH（${custom.size} 条）"
     discovered.isNotEmpty() -> "机场 DNS（自动 ${discovered.size} 条）"
     mode == PROXY_DNS_SYSTEM -> "本机 DNS"
@@ -297,7 +308,7 @@ private fun ProxyDnsDialog(
  * The document is compiled by the same Rust renderer the core uses, so a broken or empty workspace
  * is rejected here instead of after the VPN restarts. Returns null on success, otherwise a message.
  */
-private fun importWorkspace(context: android.content.Context, text: String): String? {
+internal fun importWorkspace(context: android.content.Context, text: String): String? {
     if (text.isBlank()) return "剪贴板里没有配置"
     val imported = runCatching { MobileConfig.fromJson(text) }
         .getOrElse { return "剪贴板内容不是 Manis 配置" }

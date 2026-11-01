@@ -33,7 +33,7 @@ import dev.manis.app.data.UpdateManager
 import dev.manis.app.data.UpdateState
 import java.io.File
 
-private const val RELEASE_PAGE = "https://github.com/kaigedong/Manis/releases/tag/latest"
+internal const val RELEASE_PAGE = "https://github.com/kaigedong/Manis/releases/tag/latest"
 
 /**
  * In-app update flow: check the rolling GitHub release, download its APK, then turn the action
@@ -182,7 +182,7 @@ fun UpdateSection(onMessage: (String) -> Unit) {
     }
 }
 
-private fun launchInstaller(context: Context, file: File, onMessage: (String) -> Unit) {
+internal fun launchInstaller(context: Context, file: File, onMessage: (String) -> Unit) {
     runCatching {
         val uri = FileProvider.getUriForFile(
             context,
@@ -200,7 +200,7 @@ private fun launchInstaller(context: Context, file: File, onMessage: (String) ->
     }
 }
 
-private fun openRelease(context: Context, url: String, onMessage: (String) -> Unit) {
+internal fun openRelease(context: Context, url: String, onMessage: (String) -> Unit) {
     runCatching {
         context.startActivity(
             Intent(Intent.ACTION_VIEW, Uri.parse(url))
@@ -211,7 +211,7 @@ private fun openRelease(context: Context, url: String, onMessage: (String) -> Un
     }
 }
 
-private fun formatSize(bytes: Long): String =
+internal fun formatSize(bytes: Long): String =
     if (bytes >= 1024 * 1024) {
         "%.1f MB".format(bytes / 1024.0 / 1024.0)
     } else {
