@@ -4745,6 +4745,7 @@ dependencies = [
 name = "manis-nsh-desktop"
 version = "0.1.0"
 dependencies = [
+ "manis-ui",
  "nsh-engine",
  "nsh-platform-linux",
  "serde_json",

@@ -17,55 +17,11 @@ use serde_json::{json, Map, Value};
 const BUNDLE: &str = include_str!("../../../android/app/src/main/assets/nsh/bundle.js");
 
 fn root_data() -> Value {
-    json!({
-        "pending": false,
-        "nodes": {
-            "global": { "label": "全局", "current": null, "total": 0 },
-            "sources": [],
-            "policyGroups": []
-        },
-        "subscriptions": {
-            "subscriptions": [],
-            "nodes": [],
-            "groups": []
-        },
-        "rules": {
-            "rules": [],
-            "kinds": [
-                "DOMAIN-SUFFIX", "DOMAIN", "DOMAIN-KEYWORD", "DOMAIN-WILDCARD",
-                "IP-CIDR", "IP6-CIDR", "GEOIP", "IP-ASN", "DST-PORT", "FINAL"
-            ],
-            "policies": ["DIRECT", "REJECT", "__MANIS_GLOBAL__"],
-            "warnings": [],
-            "summary": ""
-        },
-        "settings": {
-            "status": "未连接",
-            "mode": "rule",
-            "proxyDns": { "mode": "doh", "custom": [], "discovered": [], "label": "加密 DNS（DoH）" },
-            "kernelVersion": "—",
-            "summary": "—",
-            "subscriptions": 0,
-            "nodes": 0,
-            "groups": 0,
-            "abi": "desktop",
-            "dataDir": "—",
-            "installedVersion": "0.1.0",
-            "update": { "state": "idle" }
-        },
-        "connection": {
-            "active": false,
-            "node": "",
-            "mode": "rule",
-            "summary": "",
-            "error": "",
-            "unreachable": false,
-            "warnings": [],
-            "warningCount": 0,
-            "hasSources": false
-        }
-    })
+    // Reuse the desktop storage loader so saved subscriptions/nodes/groups and
+    // the routing mode appear in the NSH shell.
+    manis_ui::nsh_root_data()
 }
+
 
 fn reply(message: Option<&str>) -> Value {
     let mut payload = Map::new();
@@ -140,8 +96,9 @@ fn main() {
             ..AppOptions::default()
         });
         let host = view.host();
+        let data = root_data();
         let params = json!({
-            "data": root_data(),
+            "data": data,
             "embedded": true,
             "topInset": 0,
             "bottomInset": 0,

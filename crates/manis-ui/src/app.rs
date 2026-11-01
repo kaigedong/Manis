@@ -788,6 +788,126 @@ impl Render for ManisApp {
     }
 }
 
+/// Read-only root payload for the desktop NSH host.
+///
+/// It reuses the desktop storage loader so the NSH shell sees the same saved
+/// subscriptions, nodes, groups and routing mode. Connection state and writes
+/// still belong to the running Manis app.
+#[must_use]
+pub fn nsh_root_data() -> serde_json::Value {
+    use serde_json::json;
+
+    let directory = crate::brand::config_dir();
+    let workspace = StoredWorkspace::load(directory.as_deref());
+    let subscriptions: Vec<_> = workspace
+        .imported_subscriptions
+        .iter()
+        .enumerate()
+        .map(|(index, subscription)| {
+            json!({
+                "index": index,
+                "name": subscription.name,
+                "displayUrl": subscription.source.expose_to(mask_url),
+                "enabled": subscription.enabled,
+            })
+        })
+        .collect();
+    let nodes: Vec<_> = workspace
+        .saved_single_nodes
+        .iter()
+        .enumerate()
+        .map(|(index, node)| {
+            json!({
+                "index": index,
+                "name": node.name,
+                "enabled": node.enabled,
+            })
+        })
+        .collect();
+    let groups: Vec<_> = workspace
+        .managed_policy_groups
+        .iter()
+        .enumerate()
+        .map(|(index, group)| {
+            json!({
+                "index": index,
+                "name": group.name,
+                "strategy": match group.strategy {
+                    manis_core::ManagedPolicyStrategy::LowestLatency => "urltest",
+                    manis_core::ManagedPolicyStrategy::Manual => "select",
+                },
+                "subscriptionIndexes": [],
+                "nodeIndexes": [],
+            })
+        })
+        .collect();
+    let mode = workspace.routing_mode.wire_value();
+    let subscription_count = workspace.imported_subscriptions.len();
+    let node_count = workspace.saved_single_nodes.len();
+    let group_count = workspace.managed_policy_groups.len();
+    let has_sources = subscription_count > 0 || node_count > 0;
+
+    json!({
+        "pending": false,
+        "nodes": {
+            "global": { "label": "全局", "current": null, "total": 0 },
+            "sources": [],
+            "policyGroups": []
+        },
+        "subscriptions": {
+            "subscriptions": subscriptions,
+            "nodes": nodes,
+            "groups": groups
+        },
+        "rules": {
+            "rules": [],
+            "kinds": [
+                "DOMAIN-SUFFIX", "DOMAIN", "DOMAIN-KEYWORD", "DOMAIN-WILDCARD",
+                "IP-CIDR", "IP6-CIDR", "GEOIP", "IP-ASN", "DST-PORT", "FINAL"
+            ],
+            "policies": ["DIRECT", "REJECT", "__MANIS_GLOBAL__"],
+            "warnings": [],
+            "summary": ""
+        },
+        "settings": {
+            "status": "未连接",
+            "mode": mode,
+            "proxyDns": { "mode": "doh", "custom": [], "discovered": [], "label": "加密 DNS（DoH）" },
+            "kernelVersion": "—",
+            "summary": "—",
+            "subscriptions": subscription_count,
+            "nodes": node_count,
+            "groups": group_count,
+            "abi": "desktop",
+            "dataDir": directory.map(|path| path.display().to_string()).unwrap_or_else(|| "—".into()),
+            "installedVersion": crate::version(),
+            "update": { "state": "idle" }
+        },
+        "connection": {
+            "active": false,
+            "node": "",
+            "mode": mode,
+            "summary": "",
+            "error": "",
+            "unreachable": false,
+            "warnings": [],
+            "warningCount": 0,
+            "hasSources": has_sources
+        }
+    })
+}
+
+fn mask_url(url: &str) -> String {
+    let scheme = url.split_once("://").map(|(scheme, _)| scheme).unwrap_or("");
+    let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
+    let host = rest.split('/').next().unwrap_or(rest).split('?').next().unwrap_or(rest);
+    if scheme.is_empty() {
+        host.to_owned()
+    } else {
+        format!("{scheme}://{host}/…")
+    }
+}
+
 #[cfg(all(test, not(windows)))]
 #[path = "app/tests.rs"]
 mod tests;

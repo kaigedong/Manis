@@ -15,6 +15,7 @@ name = "manis-nsh-desktop"
 path = "src/main.rs"
 
 [dependencies]
+manis-ui = { path = "../manis-ui" }
 nsh-engine = "=0.3.0"
 nsh-platform-linux = "=0.3.0"
 serde_json = "1.0.154"
