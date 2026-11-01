@@ -67,6 +67,12 @@ fn install_handlers(host: &nsh_engine::HostChannel) {
             let data = call.data();
             let string_field =
                 |name: &str| data.get(name).and_then(Value::as_str).map(str::to_owned);
+            if command == "settings.logs" {
+                let mut payload = reply(None);
+                payload["logs"] = json!(manis_ui::nsh_logs());
+                call.resolve(payload);
+                return;
+            }
             let message = match command {
                 "nodes.select" => string_field("name").map(|name| {
                     manis_ui::nsh_select_global_node(&name)

@@ -885,6 +885,21 @@ pub fn nsh_root_data() -> serde_json::Value {
         },
         |snapshot| nsh_node_page(snapshot, &workspace, &live_node),
     );
+    let rules_page = live.as_ref().map_or_else(
+        || {
+            json!({
+                "rules": [],
+                "kinds": [
+                    "DOMAIN-SUFFIX", "DOMAIN", "DOMAIN-KEYWORD", "DOMAIN-WILDCARD",
+                    "IP-CIDR", "IP6-CIDR", "GEOIP", "IP-ASN", "DST-PORT", "FINAL"
+                ],
+                "policies": ["DIRECT", "REJECT", "__MANIS_GLOBAL__"],
+                "warnings": [],
+                "summary": ""
+            })
+        },
+        nsh_rules_page,
+    );
 
     json!({
         "pending": false,
@@ -894,16 +909,7 @@ pub fn nsh_root_data() -> serde_json::Value {
             "nodes": nodes,
             "groups": groups
         },
-        "rules": {
-            "rules": [],
-            "kinds": [
-                "DOMAIN-SUFFIX", "DOMAIN", "DOMAIN-KEYWORD", "DOMAIN-WILDCARD",
-                "IP-CIDR", "IP6-CIDR", "GEOIP", "IP-ASN", "DST-PORT", "FINAL"
-            ],
-            "policies": ["DIRECT", "REJECT", "__MANIS_GLOBAL__"],
-            "warnings": [],
-            "summary": ""
-        },
+        "rules": rules_page,
         "settings": {
             "status": if active { "已连接" } else { "未连接" },
             "mode": mode,
@@ -1121,6 +1127,72 @@ fn nsh_node_page(
         "sources": sources,
         "policyGroups": policy_groups,
     })
+}
+
+fn nsh_rules_page(snapshot: &manis_mihomo::MihomoSnapshot) -> serde_json::Value {
+    use serde_json::json;
+
+    let rules: Vec<_> = snapshot
+        .rules
+        .iter()
+        .enumerate()
+        .map(|(index, rule)| {
+            let kind = match rule.kind.as_str() {
+                "Match" | "Final" => "FINAL",
+                "DomainSuffix" => "DOMAIN-SUFFIX",
+                "Domain" => "DOMAIN",
+                "DomainKeyword" => "DOMAIN-KEYWORD",
+                "DomainWildcard" => "DOMAIN-WILDCARD",
+                "IPCIDR" => "IP-CIDR",
+                "IPCIDR6" => "IP6-CIDR",
+                "GeoIP" => "GEOIP",
+                "IPASN" => "IP-ASN",
+                "DstPort" => "DST-PORT",
+                other => other,
+            };
+            json!({
+                "index": index,
+                "kind": kind,
+                "value": if kind == "FINAL" { "" } else { rule.payload.as_str() },
+                "policy": rule.proxy,
+                "policyLabel": if rule.proxy == "__MANIS_GLOBAL__" { "全局" } else { rule.proxy.as_str() },
+                "enabled": !rule.extra.disabled.unwrap_or(false),
+            })
+        })
+        .collect();
+    let policies: Vec<_> = snapshot
+        .policy_groups()
+        .into_iter()
+        .map(|group| group.name)
+        .filter(|name| name != "__MANIS_GLOBAL__")
+        .collect();
+
+    json!({
+        "rules": rules,
+        "kinds": [
+            "DOMAIN-SUFFIX", "DOMAIN", "DOMAIN-KEYWORD", "DOMAIN-WILDCARD",
+            "IP-CIDR", "IP6-CIDR", "GEOIP", "IP-ASN", "DST-PORT", "FINAL"
+        ],
+        "policies": policies,
+        "warnings": [],
+        "summary": format!("{} 条运行时规则", snapshot.rules.len()),
+    })
+}
+
+/// Last lines of the desktop kernel log for the NSH settings page.
+#[must_use]
+pub fn nsh_logs() -> Vec<String> {
+    let Some(path) = crate::brand::data_dir().map(|dir| dir.join("mihomo/manis-core.log")) else {
+        return vec!["还没有日志".to_owned()];
+    };
+    let Ok(contents) = std::fs::read_to_string(path) else {
+        return vec!["还没有日志".to_owned()];
+    };
+    let mut lines: Vec<String> = contents.lines().map(str::to_owned).collect();
+    if lines.len() > 300 {
+        lines.drain(..lines.len() - 300);
+    }
+    lines
 }
 
 fn mask_url(url: &str) -> String {
