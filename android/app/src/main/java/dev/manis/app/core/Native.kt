@@ -31,4 +31,7 @@ internal object Native {
 
     /** Shared connection-page presentation from `manis-presentation`; returns JSON. */
     external fun connectionPage(requestJson: String): String
+
+    /** Shared subscriptions-page presentation from `manis-presentation`; returns JSON. */
+    external fun subscriptionsPage(requestJson: String): String
 }

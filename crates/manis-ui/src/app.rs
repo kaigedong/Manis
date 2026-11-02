@@ -821,50 +821,42 @@ pub fn nsh_root_data() -> serde_json::Value {
 
     let directory = crate::brand::config_dir();
     let workspace = StoredWorkspace::load(directory.as_deref());
-    let subscriptions: Vec<_> = workspace
-        .imported_subscriptions
-        .iter()
-        .enumerate()
-        .map(|(index, subscription)| {
-            json!({
-                "index": index,
-                "id": subscription.id,
-                "name": subscription.name,
-                "displayUrl": subscription.source.expose_to(mask_url),
-                "enabled": subscription.enabled,
-            })
-        })
-        .collect();
-    let nodes: Vec<_> = workspace
-        .saved_single_nodes
-        .iter()
-        .enumerate()
-        .map(|(index, node)| {
-            json!({
-                "index": index,
-                "id": node.id,
-                "name": node.name,
-                "enabled": node.enabled,
-            })
-        })
-        .collect();
-    let groups: Vec<_> = workspace
-        .managed_policy_groups
-        .iter()
-        .enumerate()
-        .map(|(index, group)| {
-            json!({
-                "index": index,
-                "name": group.name,
-                "strategy": match group.strategy {
-                    manis_core::ManagedPolicyStrategy::LowestLatency => "urltest",
-                    manis_core::ManagedPolicyStrategy::Manual => "select",
-                },
-                "subscriptionIndexes": [],
-                "nodeIndexes": [],
-            })
-        })
-        .collect();
+    let subscriptions_page = manis_presentation::SubscriptionsPageView::build(
+        manis_presentation::SubscriptionsPageInput {
+            subscriptions: workspace
+                .imported_subscriptions
+                .iter()
+                .map(|subscription| manis_presentation::SubscriptionRowInput {
+                    name: subscription.name.clone(),
+                    url: subscription.source.expose_to(manis_presentation::mask_url),
+                    enabled: subscription.enabled,
+                    id: Some(subscription.id.clone()),
+                })
+                .collect(),
+            nodes: workspace
+                .saved_single_nodes
+                .iter()
+                .map(|node| manis_presentation::SubscriptionNodeInput {
+                    name: node.name.clone(),
+                    enabled: node.enabled,
+                    id: Some(node.id.clone()),
+                })
+                .collect(),
+            groups: workspace
+                .managed_policy_groups
+                .iter()
+                .map(|group| manis_presentation::SubscriptionGroupInput {
+                    name: group.name.clone(),
+                    strategy: match group.strategy {
+                        manis_core::ManagedPolicyStrategy::LowestLatency => "urltest".into(),
+                        manis_core::ManagedPolicyStrategy::Manual => "select".into(),
+                    },
+                    subscription_indexes: Vec::new(),
+                    node_indexes: Vec::new(),
+                })
+                .collect(),
+        },
+    );
     let live = live_snapshot();
     let active = live
         .as_ref()
@@ -932,11 +924,7 @@ pub fn nsh_root_data() -> serde_json::Value {
     json!({
         "pending": false,
         "nodes": node_page,
-        "subscriptions": {
-            "subscriptions": subscriptions,
-            "nodes": nodes,
-            "groups": groups
-        },
+        "subscriptions": serde_json::to_value(subscriptions_page).unwrap_or_else(|_| json!({})),
         "rules": rules_page,
         "settings": {
             "status": if active { "已连接" } else { "未连接" },
@@ -1557,23 +1545,6 @@ pub fn nsh_logs() -> Vec<String> {
         lines.drain(..lines.len() - 300);
     }
     lines
-}
-
-fn mask_url(url: &str) -> String {
-    let scheme = url.split_once("://").map_or("", |(scheme, _)| scheme);
-    let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
-    let host = rest
-        .split('/')
-        .next()
-        .unwrap_or(rest)
-        .split('?')
-        .next()
-        .unwrap_or(rest);
-    if scheme.is_empty() {
-        host.to_owned()
-    } else {
-        format!("{scheme}://{host}/…")
-    }
 }
 
 #[cfg(all(test, not(windows)))]

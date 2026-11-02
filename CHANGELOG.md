@@ -10,6 +10,9 @@ once the public API and configuration formats stabilize.
 
 - `manis-presentation::ConnectionPageView`: Android and desktop now build the connection page
   through the same Rust model (active/node/mode/summary/error/warnings/hasSources).
+- `manis-presentation::SubscriptionsPageView`: subscription/manual-node/group rows, default
+  names, indices and URL masking are shared. URL userinfo is now stripped from the displayed
+  source address on both platforms.
 - `manis-nsh-host`: the shared NSH bridge (root payload, command handlers and desktop engine
   discovery) used by the desktop shells, so every platform answers the same TSX through one
   backend module.
