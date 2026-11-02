@@ -8,6 +8,9 @@ once the public API and configuration formats stabilize.
 
 ### Added
 
+- `manis-nsh-host`: the shared NSH bridge (root payload, command handlers and desktop engine
+  discovery) used by the desktop shells, so every platform answers the same TSX through one
+  backend module.
 - Rust and GPUI desktop application for policy-based proxy routing.
 - Android client (`android/`) with a `VpnService` TUN, a bundled patched Mihomo core, and a
   workspace model compiled by the same Rust profile code as the desktop: multiple subscriptions,
