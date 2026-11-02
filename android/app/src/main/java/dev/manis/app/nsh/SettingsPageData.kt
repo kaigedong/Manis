@@ -1,6 +1,7 @@
 package dev.manis.app.nsh
 
 import android.content.Context
+import dev.manis.app.core.Native
 import dev.manis.app.data.AvailableUpdate
 import dev.manis.app.data.MobileConfig
 import dev.manis.app.data.UpdateChecker
@@ -41,7 +42,7 @@ internal fun buildSettingsData(
         }
     }
 
-    return JSONObject()
+    val request = JSONObject()
         .put("status", if (RuntimeState.active) "已连接" else "未连接")
         .put("mode", RuntimeState.snapshot?.mode ?: config.mode)
         .put(
@@ -64,6 +65,8 @@ internal fun buildSettingsData(
         .put("dataDir", "files/mihomo")
         .put("installedVersion", UpdateChecker.installedVersion(context).ifBlank { "未知" })
         .put("update", updateJson)
+    return runCatching { JSONObject(Native.settingsPage(request.toString())) }
+        .getOrElse { request }
 }
 
 private fun AvailableUpdate.toJson(): JSONObject = JSONObject()

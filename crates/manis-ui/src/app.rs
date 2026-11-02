@@ -926,27 +926,35 @@ pub fn nsh_root_data() -> serde_json::Value {
         "nodes": node_page,
         "subscriptions": serde_json::to_value(subscriptions_page).unwrap_or_else(|_| json!({})),
         "rules": rules_page,
-        "settings": {
-            "status": if active { "已连接" } else { "未连接" },
-            "mode": mode,
-            "proxyDns": { "mode": "doh", "custom": [], "discovered": [], "label": "加密 DNS（DoH）" },
-            "kernelVersion": kernel_version,
-            "summary": summary,
-            "subscriptions": subscription_count,
-            "nodes": node_count,
-            "groups": group_count,
-            "abi": "desktop",
-            "dataDir": directory.map_or_else(|| "—".into(), |path| path.display().to_string()),
-            "installedVersion": crate::version(),
-            "autoStart": auto_start_enabled(),
-            "update": { "state": "idle" }
-        },
+        "settings": serde_json::to_value(manis_presentation::SettingsPageView::build(
+            manis_presentation::SettingsPageInput {
+                status: if active { "已连接" } else { "未连接" }.into(),
+                mode: mode.to_owned(),
+                proxy_dns: manis_presentation::SettingsProxyDns {
+                    mode: "doh".into(),
+                    custom: Vec::new(),
+                    discovered: Vec::new(),
+                    label: "加密 DNS（DoH）".into(),
+                },
+                kernel_version,
+                summary: summary.clone(),
+                subscriptions: subscription_count,
+                nodes: node_count,
+                groups: group_count,
+                abi: "desktop".into(),
+                data_dir: directory.map_or_else(|| "—".into(), |path| path.display().to_string()),
+                installed_version: crate::version().to_owned(),
+                auto_start: Some(auto_start_enabled()),
+                update: manis_presentation::SettingsUpdate::default(),
+            }
+        ))
+        .unwrap_or_else(|_| json!({})),
         "connection": serde_json::to_value(manis_presentation::ConnectionPageView::build(
             manis_presentation::ConnectionPageInput {
                 active,
                 node: live_node,
                 mode: mode.to_owned(),
-                summary,
+                summary: summary.clone(),
                 error: String::new(),
                 unreachable: false,
                 warnings: Vec::new(),

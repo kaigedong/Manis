@@ -37,4 +37,7 @@ internal object Native {
 
     /** Shared rules-page presentation from `manis-presentation`; returns JSON. */
     external fun rulesPage(requestJson: String): String
+
+    /** Shared settings-page presentation from `manis-presentation`; returns JSON. */
+    external fun settingsPage(requestJson: String): String
 }
