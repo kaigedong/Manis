@@ -25,6 +25,7 @@ pub(crate) fn main() {
         app_id: "dev.manis.desktop.nsh".into(),
         title: "Manis".into(),
         size: (430, 900),
+        keep_alive_on_close: true,
         host,
         ..AppOptions::default()
     };
