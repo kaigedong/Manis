@@ -832,10 +832,26 @@ pub fn nsh_add_group(
     node_indexes: &[usize],
 ) -> Result<(), String> {
     let directory = crate::brand::config_dir().ok_or_else(|| "找不到 Manis 数据目录".to_owned())?;
+    add_group_in(
+        &directory,
+        name,
+        strategy,
+        subscription_indexes,
+        node_indexes,
+    )
+}
+
+fn add_group_in(
+    directory: &Path,
+    name: &str,
+    strategy: &str,
+    subscription_indexes: &[usize],
+    node_indexes: &[usize],
+) -> Result<(), String> {
     let subscriptions =
-        mihomo::load_subscription_sources_in(&directory).map_err(|error| error.to_string())?;
+        mihomo::load_subscription_sources_in(directory).map_err(|error| error.to_string())?;
     let nodes =
-        mihomo::load_single_node_sources_in(&directory).map_err(|error| error.to_string())?;
+        mihomo::load_single_node_sources_in(directory).map_err(|error| error.to_string())?;
 
     let mut members = std::collections::BTreeSet::new();
     for index in subscription_indexes {
@@ -867,7 +883,7 @@ pub fn nsh_add_group(
         manis_core::ManagedPolicyStrategy::Manual
     };
     group.matcher = manis_core::PolicyCandidateMatcher::Explicit(members);
-    mihomo::save_managed_policy_in(&directory, &group).map_err(|error| error.to_string())?;
+    mihomo::save_managed_policy_in(directory, &group).map_err(|error| error.to_string())?;
     Ok(())
 }
 
@@ -965,6 +981,71 @@ mod tests {
         let root = temp_dir("manis-backup-foreign");
         assert!(import_backup_in(&root, "{\"format\":\"other\",\"version\":1}").is_err());
         assert!(import_backup_in(&root, "not json").is_err());
+        std::fs::remove_dir_all(root).expect("remove fixture");
+    }
+}
+
+#[cfg(all(unix, test))]
+mod group_tests {
+    use super::{add_group_in, group_source_indexes};
+    use crate::mihomo;
+
+    #[cfg(unix)]
+    fn temp_dir(name: &str) -> std::path::PathBuf {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let base = std::fs::canonicalize(std::env::temp_dir()).expect("canonical temp dir");
+        let root = base.join(format!("{name}-{}", std::process::id()));
+        if root.exists() {
+            std::fs::remove_dir_all(&root).expect("remove stale fixture");
+        }
+        std::fs::create_dir_all(&root).expect("create fixture");
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700))
+            .expect("private fixture");
+        root
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_group_keeps_a_whole_subscription_and_reads_its_index_back() {
+        let root = temp_dir("manis-add-group");
+        let subscription = mihomo::save_subscription_source_with_options_in(
+            &root,
+            "https://example.com/sub?token=fixture",
+            "示例订阅",
+            mihomo::RemoteSourceRefreshInterval::Manual,
+            true,
+        )
+        .expect("save subscription");
+
+        add_group_in(&root, "自动选择", "urltest", &[0], &[]).expect("add group");
+
+        let groups = mihomo::load_managed_policy_groups_in(&root).expect("load groups");
+        assert_eq!(groups.len(), 1);
+        assert_eq!(
+            groups[0].strategy,
+            manis_core::ManagedPolicyStrategy::LowestLatency
+        );
+        let manis_core::PolicyCandidateMatcher::Explicit(members) = &groups[0].matcher else {
+            panic!("explicit matcher");
+        };
+        assert!(members.iter().any(|member| {
+            member.source_id == format!("subscription:{}", subscription.id)
+                && member.node_name == manis_core::WHOLE_SOURCE_NODE_NAME
+        }));
+
+        let (subscription_indexes, node_indexes) =
+            group_source_indexes(&groups[0], &[subscription], &[]);
+        assert_eq!(subscription_indexes, [0]);
+        assert!(node_indexes.is_empty());
+        std::fs::remove_dir_all(root).expect("remove fixture");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_group_without_members_is_rejected() {
+        let root = temp_dir("manis-add-group-empty");
+        assert!(add_group_in(&root, "空组", "select", &[], &[]).is_err());
         std::fs::remove_dir_all(root).expect("remove fixture");
     }
 }
