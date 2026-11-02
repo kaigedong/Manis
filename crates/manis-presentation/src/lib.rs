@@ -9,11 +9,13 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+pub mod commands;
 pub mod connection;
 pub mod rules;
 pub mod settings;
 pub mod subscriptions;
 
+pub use commands::COMMANDS;
 pub use connection::{ConnectionPageInput, ConnectionPageView};
 pub use rules::{RULE_KINDS, RuleRowInput, RuleRowView, RulesPageInput, RulesPageView};
 pub use settings::{

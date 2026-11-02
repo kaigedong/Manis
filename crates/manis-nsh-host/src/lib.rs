@@ -23,37 +23,7 @@ pub fn reply(message: Option<&str>) -> Value {
 
 #[allow(clippy::too_many_lines)]
 pub fn install_handlers(host: &nsh_engine::HostChannel) {
-    for command in [
-        "workspace.apply",
-        "workspace.discard",
-        "nodes.refresh",
-        "nodes.select",
-        "nodes.selectGroup",
-        "subscriptions.toggle",
-        "subscriptions.delete",
-        "subscriptions.add",
-        "subscriptions.addNode",
-        "subscriptions.addGroup",
-        "subscriptions.refresh",
-        "subscriptions.apply",
-        "rules.toggle",
-        "rules.delete",
-        "rules.save",
-        "rules.apply",
-        "settings.reload",
-        "settings.logs",
-        "settings.copyLogs",
-        "settings.copyBackup",
-        "settings.importBackup",
-        "settings.dns.set",
-        "settings.update.check",
-        "settings.update.download",
-        "settings.update.install",
-        "settings.update.release",
-        "connection.toggle",
-        "connection.mode",
-        "connection.reload",
-    ] {
+    for &command in manis_presentation::COMMANDS {
         host.handle(command, move |call| {
             let data = call.data();
             let string_field =
