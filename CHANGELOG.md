@@ -21,6 +21,8 @@ once the public API and configuration formats stabilize.
   checked against one shared command catalog, so a missing grant fails a unit test.
 - macOS packaging now bundles the NSH host as `Manis.app/Contents/MacOS/Manis` and keeps the GPUI
   binary beside it as the headless engine.
+- Windows: add `packaging/windows/build-release.ps1` for a portable `Manis.exe` +
+  `manis-ui.exe` zip; the managed controller transport remains unavailable there.
 - `manis-nsh-host`: the shared NSH bridge (root payload, command handlers and desktop engine
   discovery) used by the desktop shells, so every platform answers the same TSX through one
   backend module.
