@@ -8,6 +8,10 @@ targets = [
 ]
 
 [advisories]
+# nsh's QuickJS stdlib pulls rsa 0.10 for local signature helpers; there is no
+# patched release and no network timing oracle in this use. Tracked upstream in
+# RustCrypto/RSA#626.
+ignore = ["RUSTSEC-2023-0071"]
 unmaintained = "workspace"
 unsound = "all"
 yanked = "warn"

@@ -125,6 +125,110 @@ pub extern "system" fn Java_dev_manis_app_core_Native_renderConfig<'frame>(
         .resolve::<ThrowIllegalStateAndDefault>()
 }
 
+/// Builds the shared node-page presentation from the host's JSON request.
+///
+/// The Kotlin UI and the NSH screens both consume this result, so source grouping and display
+/// names cannot drift between them. Returns JSON and throws `IllegalStateException` on failure.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_manis_app_core_Native_nodePage<'frame>(
+    mut unowned_env: EnvUnowned<'frame>,
+    _this: JObject<'frame>,
+    request_json: JString<'frame>,
+) -> jstring {
+    unowned_env
+        .with_env(|env| -> Result<jstring, BridgeError> {
+            let request = string_arg(env, request_json)?;
+            let page = manis_presentation::NodePageView::from_json(&request)
+                .map_err(|error| BridgeError::Message(format!("node page request: {error}")))?;
+            let json = serde_json::to_string(&page)
+                .map_err(|error| BridgeError::Message(format!("node page response: {error}")))?;
+            Ok(env.new_string(json)?.into_raw())
+        })
+        .resolve::<ThrowIllegalStateAndDefault>()
+}
+
+/// Builds the shared connection-page presentation from the host's JSON request.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_manis_app_core_Native_connectionPage<'frame>(
+    mut unowned_env: EnvUnowned<'frame>,
+    _this: JObject<'frame>,
+    request_json: JString<'frame>,
+) -> jstring {
+    unowned_env
+        .with_env(|env| -> Result<jstring, BridgeError> {
+            let request = string_arg(env, request_json)?;
+            let page =
+                manis_presentation::ConnectionPageView::from_json(&request).map_err(|error| {
+                    BridgeError::Message(format!("connection page request: {error}"))
+                })?;
+            let json = serde_json::to_string(&page).map_err(|error| {
+                BridgeError::Message(format!("connection page response: {error}"))
+            })?;
+            Ok(env.new_string(json)?.into_raw())
+        })
+        .resolve::<ThrowIllegalStateAndDefault>()
+}
+
+/// Builds the shared subscriptions-page presentation from the host's JSON request.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_manis_app_core_Native_subscriptionsPage<'frame>(
+    mut unowned_env: EnvUnowned<'frame>,
+    _this: JObject<'frame>,
+    request_json: JString<'frame>,
+) -> jstring {
+    unowned_env
+        .with_env(|env| -> Result<jstring, BridgeError> {
+            let request = string_arg(env, request_json)?;
+            let page = manis_presentation::SubscriptionsPageView::from_json(&request).map_err(
+                |error| BridgeError::Message(format!("subscriptions page request: {error}")),
+            )?;
+            let json = serde_json::to_string(&page).map_err(|error| {
+                BridgeError::Message(format!("subscriptions page response: {error}"))
+            })?;
+            Ok(env.new_string(json)?.into_raw())
+        })
+        .resolve::<ThrowIllegalStateAndDefault>()
+}
+
+/// Builds the shared rules-page presentation from the host's JSON request.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_manis_app_core_Native_rulesPage<'frame>(
+    mut unowned_env: EnvUnowned<'frame>,
+    _this: JObject<'frame>,
+    request_json: JString<'frame>,
+) -> jstring {
+    unowned_env
+        .with_env(|env| -> Result<jstring, BridgeError> {
+            let request = string_arg(env, request_json)?;
+            let page = manis_presentation::RulesPageView::from_json(&request)
+                .map_err(|error| BridgeError::Message(format!("rules page request: {error}")))?;
+            let json = serde_json::to_string(&page)
+                .map_err(|error| BridgeError::Message(format!("rules page response: {error}")))?;
+            Ok(env.new_string(json)?.into_raw())
+        })
+        .resolve::<ThrowIllegalStateAndDefault>()
+}
+
+/// Builds the shared settings-page presentation from the host's JSON request.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_manis_app_core_Native_settingsPage<'frame>(
+    mut unowned_env: EnvUnowned<'frame>,
+    _this: JObject<'frame>,
+    request_json: JString<'frame>,
+) -> jstring {
+    unowned_env
+        .with_env(|env| -> Result<jstring, BridgeError> {
+            let request = string_arg(env, request_json)?;
+            let page = manis_presentation::SettingsPageView::from_json(&request)
+                .map_err(|error| BridgeError::Message(format!("settings page request: {error}")))?;
+            let json = serde_json::to_string(&page).map_err(|error| {
+                BridgeError::Message(format!("settings page response: {error}"))
+            })?;
+            Ok(env.new_string(json)?.into_raw())
+        })
+        .resolve::<ThrowIllegalStateAndDefault>()
+}
+
 /// Starts the bundled core with `file_descriptor` duplicated to fd 3.
 ///
 /// Returns the child pid on success and throws `IllegalStateException` on failure.

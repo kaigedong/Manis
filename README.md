@@ -66,7 +66,7 @@ Manis 源码仓库不提交预编译代理内核。发行构建会从 Mihomo 官
 | 平台 | 编译目标 | 运行状态 |
 | --- | --- | --- |
 | macOS 13+ | 持续维护 | 主要开发平台；系统代理已验证，TUN 通过管理员授权路径支持测试 |
-| Windows | 持续维护 | 实验性；托管 controller transport 尚未完成，暂不能启动 Mihomo |
+| Windows | 持续维护 | 实验性；使用 named-pipe controller transport，NSH 壳会启动 headless 引擎 |
 | Linux | 持续维护 | 实验性；仍需覆盖更多发行版与桌面环境 |
 | Android | 实验性 | `arm64-v8a` 真机与模拟器均可运行；功能对齐见 [android/README.md](android/README.md) |
 
@@ -121,8 +121,32 @@ fontconfig 与 ALSA 开发包。Linux 托盘通过会话 D-Bus 使用 StatusNoti
 ```bash
 git clone https://github.com/kaigedong/Manis.git
 cd Manis
-cargo run -p manis-ui
+cargo run -p manis-nsh-desktop
 ```
+
+发行包的 `manis` 入口已经是 NSH 桌面宿主；`manis-ui` 保留为引擎和开发用的 GPUI 窗口。源码模式下两者可以分别运行。
+
+桌面端 NSH 宿主按平台选择原生壳，但共用同一份 TSX 和同一个后端桥
+[`crates/manis-nsh-host`](crates/manis-nsh-host)：
+
+- Linux：GTK 4（`nsh-platform-linux`），含 StatusNotifierItem 托盘
+- macOS：AppKit（`nsh-platform-macos`）
+- Windows：Win32/Direct2D（`nsh-platform-windows`）
+
+三者都读取桌面已保存的订阅、手动节点、策略组和路由模式，并通过本地 controller 读取实时状态；
+节点选择、路由模式切换、运行时规则、内核日志、订阅/手动节点添加/启停/删除、重新载入配置、
+手动规则编辑、TUN 开关、开机启动和更新检查都已接入。Linux 壳已在实机验证；macOS/Windows
+壳由各自 CI runner 编译验证。
+
+NSH TSX 资产可以复现重建：
+
+```bash
+android/build-nsh-ui.sh      # 需要 nsh 0.3.0
+android/test-nsh-ui.sh
+```
+
+Android 的 `MANIS_BUILD_NSH=1 android/build-apk.sh` 也会在打包前重建同一份资产；CI 会校验
+提交的资产与重建结果一致。
 
 Manis 只启动自己管理的 Mihomo 进程，并且只使用自己从界面数据生成的配置。它不会连接
 其他程序启动的 controller，也不会运行用户提供的 Mihomo YAML。发行包携带一个经过

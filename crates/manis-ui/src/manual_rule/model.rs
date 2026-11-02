@@ -210,6 +210,21 @@ impl ManualRule {
         matches!(&self.matcher, ManualRuleMatcher::Final)
     }
 
+    pub(crate) fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    pub(crate) fn condition_kind_label(&self) -> &'static str {
+        match &self.matcher {
+            ManualRuleMatcher::Final => ManualRuleKind::Final.display_label(),
+            ManualRuleMatcher::Conditions(conditions) => conditions
+                .first()
+                .map_or(ManualRuleKind::Host.display_label(), |condition| {
+                    condition.kind.display_label()
+                }),
+        }
+    }
+
     pub(crate) fn target(&self) -> &str {
         self.target.as_str()
     }

@@ -13,6 +13,12 @@ ABI="${1:-arm64-v8a}"
 JNI_DIR="$ROOT/android/app/src/main/jniLibs/$ABI"
 mkdir -p "$JNI_DIR"
 
+"$ROOT/android/fetch-nsh.sh"
+
+if [[ "${MANIS_BUILD_NSH:-0}" == "1" ]]; then
+  "$ROOT/android/build-nsh-ui.sh"
+fi
+
 echo "Building manis-android for $ABI" >&2
 cargo ndk -t "$ABI" -o "$ROOT/android/app/src/main/jniLibs" build -p manis-android --release
 

@@ -163,7 +163,9 @@ fn default_managed_endpoint(data_dir: &Path) -> ControllerEndpoint {
 
 #[cfg(windows)]
 fn default_managed_endpoint(_data_dir: &Path) -> Result<ControllerEndpoint, String> {
-    Err("managed Mihomo controller transport is not implemented on Windows".to_owned())
+    Ok(ControllerEndpoint::NamedPipe(
+        r"\\.\pipe\manis-mihomo".to_owned(),
+    ))
 }
 
 #[cfg(not(any(unix, windows)))]

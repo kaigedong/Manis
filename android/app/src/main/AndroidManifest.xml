@@ -31,6 +31,7 @@
             </intent-filter>
         </activity>
 
+
         <service
             android:name=".ManisVpnService"
             android:exported="false"

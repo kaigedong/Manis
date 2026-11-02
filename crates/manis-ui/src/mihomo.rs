@@ -307,14 +307,17 @@ fn generated_profile_names() -> (&'static str, &'static str) {
     (CANDIDATE_PROFILE_FILE, GENERATED_PROFILE_FILE)
 }
 
-fn compile_saved_profile(
+pub(crate) fn compile_saved_profile(
     store_dir: &Path,
     base_subscription: Option<SecretUrl>,
 ) -> Result<Profile, LoadError> {
     profile_compiler::compile_saved_profile(store_dir, base_subscription)
 }
 
-fn sync_single_node_provider_files(store_dir: &Path, data_dir: &Path) -> Result<(), LoadError> {
+pub(crate) fn sync_single_node_provider_files(
+    store_dir: &Path,
+    data_dir: &Path,
+) -> Result<(), LoadError> {
     let provider_dir = data_dir.join("single_nodes");
     for stored in load_single_node_sources_in(store_dir)
         .map_err(|_error| {
