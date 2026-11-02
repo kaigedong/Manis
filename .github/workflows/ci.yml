@@ -106,7 +106,7 @@ jobs:
       - name: Link desktop executable
         run: cargo build -p manis-ui --bin manis-ui --locked
       - name: Link NSH desktop host
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' || runner.os == 'Windows'
         run: cargo build -p manis-nsh-desktop --locked
       - name: Test restricted controller transports
         run: cargo test -p manis-mihomo --all-targets --locked --quiet
