@@ -39,7 +39,7 @@ mod runtime;
 mod runtime_build;
 mod workspace;
 
-#[cfg(test)]
+#[cfg(all(unix, test))]
 pub(crate) use controller_io::unix_socket_path;
 use policy_store::compile_managed_policy_groups;
 pub(crate) use policy_store::*;

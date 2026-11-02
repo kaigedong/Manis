@@ -138,7 +138,7 @@ else
   codesign --force --identifier "$HELPER_ID" --sign - "$HELPER_TOOLS_DIR/$HELPER_ID"
   codesign --force --identifier "$HELPERCTL_ID" --sign - "$MACOS_DIR/manis-helperctl"
   codesign --force --identifier "$LOCAL_INSTALLER_ID" --sign - "$MACOS_DIR/manis-local-helper-install"
-  codesign --force --identifier "dev.manis.app" --sign - "$BUILD_APP_DIR"
+  codesign --force --deep --identifier "dev.manis.app" --sign - "$BUILD_APP_DIR"
   echo "ad-hoc build: TUN will request administrator approval and pin this app version" >&2
 fi
 

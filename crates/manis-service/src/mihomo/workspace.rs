@@ -84,13 +84,13 @@ pub(crate) use imported_subscription::load_imported_subscription_in;
 pub(crate) use imported_subscription::{
     remove_imported_subscription_in, save_imported_subscription_in,
 };
-#[cfg(test)]
+#[cfg(all(not(windows), test))]
 pub(crate) use qx_rule_sources::{
     remove_qx_rule_source_in, replace_qx_rule_source_definition_in, save_named_qx_rule_source_in,
     update_qx_rule_source_enabled_in, update_qx_rule_source_name_in,
     update_qx_rule_source_refresh_interval_in, update_qx_rule_source_target_in,
 };
-#[cfg(test)]
+#[cfg(all(not(windows), test))]
 pub(crate) use single_node_sources::update_single_node_source_in;
 #[cfg(test)]
 pub(crate) use workspace_preferences::{
