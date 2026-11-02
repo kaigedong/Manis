@@ -4,6 +4,8 @@
 //! and every page command. Nothing here depends on a UI toolkit, so the bridge
 //! is identical on every platform and testable without a window.
 
+use std::path::Path;
+
 use crate::mihomo;
 use crate::stored_workspace::StoredWorkspace;
 
@@ -880,7 +882,11 @@ pub fn nsh_add_group(
 /// Returns a message when the data directory or the store cannot be read.
 pub fn nsh_export_backup() -> Result<String, String> {
     let directory = crate::brand::config_dir().ok_or_else(|| "找不到 Manis 数据目录".to_owned())?;
-    let store = crate::config_toml::read_source(&directory)
+    export_backup_in(&directory)
+}
+
+fn export_backup_in(directory: &Path) -> Result<String, String> {
+    let store = crate::config_toml::read_source(directory)
         .map_err(|_error| "无法读取本地配置".to_owned())?;
     serde_json::to_string(&serde_json::json!({
         "format": "manis-backup",
@@ -898,6 +904,12 @@ pub fn nsh_export_backup() -> Result<String, String> {
 /// store cannot be written.
 pub fn nsh_import_backup(text: &str) -> Result<(), String> {
     let directory = crate::brand::config_dir().ok_or_else(|| "找不到 Manis 数据目录".to_owned())?;
+    import_backup_in(&directory, text)?;
+    let _ = nsh_apply_profile();
+    Ok(())
+}
+
+fn import_backup_in(directory: &Path, text: &str) -> Result<(), String> {
     let document: serde_json::Value =
         serde_json::from_str(text).map_err(|_error| "备份格式无法识别".to_owned())?;
     if document.get("format").and_then(serde_json::Value::as_str) != Some("manis-backup") {
@@ -912,8 +924,47 @@ pub fn nsh_import_backup(text: &str) -> Result<(), String> {
         .ok_or_else(|| "备份内容为空".to_owned())?;
     crate::config_toml::entries_from_source(store)
         .map_err(|_error| "备份内容无法识别".to_owned())?;
-    crate::config_toml::replace_source(&directory, store)
+    crate::config_toml::replace_source(directory, store)
         .map_err(|_error| "无法写入本地配置".to_owned())?;
-    let _ = nsh_apply_profile();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{export_backup_in, import_backup_in};
+    use std::path::PathBuf;
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let base = std::fs::canonicalize(std::env::temp_dir()).expect("canonical temp dir");
+        let root = base.join(format!("{name}-{}", std::process::id()));
+        if root.exists() {
+            std::fs::remove_dir_all(&root).expect("remove stale fixture");
+        }
+        std::fs::create_dir_all(&root).expect("create fixture");
+        root
+    }
+
+    #[test]
+    fn a_backup_restores_the_saved_store() {
+        let root = temp_dir("manis-backup-roundtrip");
+        crate::config_toml::write_entry(&root, "routing.mode", "global").expect("seed store");
+        let backup = export_backup_in(&root).expect("export");
+
+        crate::config_toml::write_entry(&root, "routing.mode", "rule").expect("change store");
+        import_backup_in(&root, &backup).expect("import");
+
+        let restored = crate::config_toml::read_entry(&root, "routing.mode", 1024)
+            .expect("read entry")
+            .expect("entry exists");
+        assert_eq!(restored, "global");
+        std::fs::remove_dir_all(root).expect("remove fixture");
+    }
+
+    #[test]
+    fn a_foreign_document_is_rejected() {
+        let root = temp_dir("manis-backup-foreign");
+        assert!(import_backup_in(&root, "{\"format\":\"other\",\"version\":1}").is_err());
+        assert!(import_backup_in(&root, "not json").is_err());
+        std::fs::remove_dir_all(root).expect("remove fixture");
+    }
 }
