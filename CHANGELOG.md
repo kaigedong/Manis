@@ -11,6 +11,8 @@ once the public API and configuration formats stabilize.
 - `manis-nsh-host`: the shared NSH bridge (root payload, command handlers and desktop engine
   discovery) used by the desktop shells, so every platform answers the same TSX through one
   backend module.
+- macOS (AppKit) and Windows (Win32) NSH shells: both run the same bundle and shared host bridge;
+  Linux keeps the GTK shell.
 - Rust and GPUI desktop application for policy-based proxy routing.
 - Android client (`android/`) with a `VpnService` TUN, a bundled patched Mihomo core, and a
   workspace model compiled by the same Rust profile code as the desktop: multiple subscriptions,

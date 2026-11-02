@@ -14,13 +14,21 @@ rust-version.workspace = true
 name = "manis-nsh-desktop"
 path = "src/main.rs"
 
-[dependencies]
+[target.'cfg(target_os = "linux")'.dependencies]
 ksni = { version = "=0.3.7", default-features = false, features = ["async-io", "blocking"] }
+
+[dependencies]
 manis-nsh-host = { path = "../manis-nsh-host" }
 manis-ui = { path = "../manis-ui" }
 nsh-engine = "=0.3.0"
 nsh-platform-linux = "=0.3.0"
 serde_json = "1.0.154"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+nsh-platform-macos = "=0.3.0"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+nsh-platform-windows = "=0.3.0"
 
 [lints]
 workspace = true

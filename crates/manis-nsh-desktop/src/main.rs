@@ -5,9 +5,14 @@
 //! mutations. It is a development host while the GPUI window is still the
 //! production desktop UI.
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(target_os = "windows")]
+mod windows;
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 fn main() {
-    eprintln!("manis-nsh-desktop requires Linux and GTK 4");
+    eprintln!("manis-nsh-desktop supports Linux, macOS and Windows");
 }
 
 #[cfg(target_os = "linux")]
@@ -171,4 +176,14 @@ mod desktop {
 #[cfg(target_os = "linux")]
 fn main() {
     desktop::main();
+}
+
+#[cfg(target_os = "macos")]
+fn main() {
+    macos::main();
+}
+
+#[cfg(target_os = "windows")]
+fn main() {
+    windows::main();
 }
