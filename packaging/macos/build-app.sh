@@ -124,11 +124,15 @@ sed \
 plutil -lint "$PLIST_OUT" >/dev/null
 
 if [[ -n "${MANIS_CODESIGN_IDENTITY:-}" ]]; then
+  codesign --force --options runtime --identifier "dev.manis.app" --sign "$MANIS_CODESIGN_IDENTITY" "$MACOS_DIR/Manis"
+  codesign --force --options runtime --identifier "dev.manis.app.engine" --sign "$MANIS_CODESIGN_IDENTITY" "$MACOS_DIR/manis-ui"
   codesign --force --options runtime --identifier "$HELPER_ID" --sign "$MANIS_CODESIGN_IDENTITY" "$HELPER_TOOLS_DIR/$HELPER_ID"
   codesign --force --options runtime --identifier "$HELPERCTL_ID" --sign "$MANIS_CODESIGN_IDENTITY" "$MACOS_DIR/manis-helperctl"
   codesign --force --options runtime --identifier "$LOCAL_INSTALLER_ID" --sign "$MANIS_CODESIGN_IDENTITY" "$MACOS_DIR/manis-local-helper-install"
   codesign --force --options runtime --identifier "dev.manis.app" --sign "$MANIS_CODESIGN_IDENTITY" "$BUILD_APP_DIR"
 else
+  codesign --force --options runtime --identifier "dev.manis.app" --sign - "$MACOS_DIR/Manis"
+  codesign --force --options runtime --identifier "dev.manis.app.engine" --sign - "$MACOS_DIR/manis-ui"
   codesign --force --options runtime --identifier "$HELPER_ID" --sign - "$HELPER_TOOLS_DIR/$HELPER_ID"
   codesign --force --options runtime --identifier "$HELPERCTL_ID" --sign - "$MACOS_DIR/manis-helperctl"
   codesign --force --options runtime --identifier "$LOCAL_INSTALLER_ID" --sign - "$MACOS_DIR/manis-local-helper-install"
