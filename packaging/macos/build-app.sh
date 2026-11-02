@@ -64,7 +64,10 @@ if [[ -n "${MANIS_CODESIGN_IDENTITY:-}" ]]; then
   esac
 fi
 
-MANIS_BUILD_VERSION="$BUNDLE_VERSION" CARGO_TARGET_DIR="$CARGO_BUILD_DIR" cargo build -p manis-ui --release --locked
+MANIS_BUILD_VERSION="$BUNDLE_VERSION" CARGO_TARGET_DIR="$CARGO_BUILD_DIR" \
+  cargo build -p manis-ui --release --locked
+MANIS_BUILD_VERSION="$BUNDLE_VERSION" CARGO_TARGET_DIR="$CARGO_BUILD_DIR" \
+  cargo build -p manis-nsh-desktop --release --locked
 
 mkdir -p "$MACOS_DIR" "$LAUNCH_DAEMONS_DIR" "$HELPER_TOOLS_DIR" "$MIHOMO_RESOURCES_DIR"
 
@@ -73,7 +76,8 @@ plutil -replace CFBundleShortVersionString -string "$BUNDLE_VERSION" "$CONTENTS_
 plutil -replace CFBundleVersion -string "$BUNDLE_BUILD" "$CONTENTS_DIR/Info.plist"
 plutil -insert ManisParentCodeSigningRequirement -string "$PARENT_REQUIREMENT" "$CONTENTS_DIR/Info.plist"
 plutil -insert ManisHelperInstallMode -string "$HELPER_INSTALL_MODE" "$CONTENTS_DIR/Info.plist"
-cp "$CARGO_BUILD_DIR/release/manis-ui" "$MACOS_DIR/Manis"
+cp "$CARGO_BUILD_DIR/release/manis-nsh-desktop" "$MACOS_DIR/Manis"
+cp "$CARGO_BUILD_DIR/release/manis-ui" "$MACOS_DIR/manis-ui"
 
 ICONSET_DIR="$BUILD_ROOT/Manis.iconset"
 mkdir -p "$ICONSET_DIR"

@@ -19,6 +19,8 @@ once the public API and configuration formats stabilize.
   autostart/update fields and blank-value defaults are shared by Android and desktop.
 - `manis-presentation::COMMANDS`: the desktop dispatcher and `nsh.json` host capabilities are
   checked against one shared command catalog, so a missing grant fails a unit test.
+- macOS packaging now bundles the NSH host as `Manis.app/Contents/MacOS/Manis` and keeps the GPUI
+  binary beside it as the headless engine.
 - `manis-nsh-host`: the shared NSH bridge (root payload, command handlers and desktop engine
   discovery) used by the desktop shells, so every platform answers the same TSX through one
   backend module.
