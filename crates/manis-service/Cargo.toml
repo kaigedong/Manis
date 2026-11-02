@@ -17,6 +17,9 @@ path = "src/bin/manis-engine.rs"
 # rustdoc output; do not document the binary target as well.
 doc = false
 
+[target.'cfg(unix)'.dependencies]
+signal-hook = "0.3.18"
+
 [dependencies]
 manis-core = { path = "../manis-core" }
 manis-engine = { path = "../manis-engine" }

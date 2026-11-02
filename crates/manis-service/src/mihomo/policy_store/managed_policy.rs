@@ -197,6 +197,9 @@ fn compile_explicit_policy_candidates(
         if !provider_indexes.contains(&index) {
             provider_indexes.push(index);
         }
+        if member.node_name == manis_core::WHOLE_SOURCE_NODE_NAME {
+            continue;
+        }
         provider_names.push(member.node_name.as_str());
     }
     Ok((!provider_names.is_empty()).then(|| {

@@ -43,14 +43,21 @@ pub fn nsh_root_data() -> serde_json::Value {
             groups: workspace
                 .managed_policy_groups
                 .iter()
-                .map(|group| manis_presentation::SubscriptionGroupInput {
-                    name: group.name.clone(),
-                    strategy: match group.strategy {
-                        manis_core::ManagedPolicyStrategy::LowestLatency => "urltest".into(),
-                        manis_core::ManagedPolicyStrategy::Manual => "select".into(),
-                    },
-                    subscription_indexes: Vec::new(),
-                    node_indexes: Vec::new(),
+                .map(|group| {
+                    let (subscription_indexes, node_indexes) = group_source_indexes(
+                        group,
+                        &workspace.imported_subscriptions,
+                        &workspace.saved_single_nodes,
+                    );
+                    manis_presentation::SubscriptionGroupInput {
+                        name: group.name.clone(),
+                        strategy: match group.strategy {
+                            manis_core::ManagedPolicyStrategy::LowestLatency => "urltest".into(),
+                            manis_core::ManagedPolicyStrategy::Manual => "select".into(),
+                        },
+                        subscription_indexes,
+                        node_indexes,
+                    }
                 })
                 .collect(),
         },
@@ -99,6 +106,9 @@ pub fn nsh_root_data() -> serde_json::Value {
         },
         |snapshot| nsh_node_page(snapshot, &workspace, &live_node),
     );
+    let dns = directory
+        .as_deref()
+        .map_or_else(mihomo::ProxyDnsSettings::default, mihomo::load_proxy_dns_in);
     let manual_rules = directory
         .as_deref()
         .and_then(|directory| crate::manual_rule::load_manual_rules_in(directory).ok())
@@ -129,10 +139,10 @@ pub fn nsh_root_data() -> serde_json::Value {
                 status: if active { "已连接" } else { "未连接" }.into(),
                 mode: mode.to_owned(),
                 proxy_dns: manis_presentation::SettingsProxyDns {
-                    mode: "doh".into(),
-                    custom: Vec::new(),
-                    discovered: Vec::new(),
-                    label: "加密 DNS（DoH）".into(),
+                    mode: dns.mode.as_str().into(),
+                    custom: dns.servers.clone(),
+                    discovered: discovered_proxy_dns(&workspace),
+                    label: dns.mode.label().into(),
                 },
                 kernel_version,
                 summary: summary.clone(),
@@ -741,4 +751,169 @@ pub fn nsh_logs() -> Vec<String> {
         lines.drain(..lines.len() - 300);
     }
     lines
+}
+
+/// Saved policy groups name their members by source; the NSH page edits them
+/// with the indexes of the lists it shows, so the root payload decodes back.
+fn group_source_indexes(
+    group: &manis_core::ManagedPolicyGroup,
+    subscriptions: &[mihomo::StoredSubscription],
+    nodes: &[mihomo::StoredSingleNode],
+) -> (Vec<usize>, Vec<usize>) {
+    let mut subscription_indexes = Vec::new();
+    let mut node_indexes = Vec::new();
+    let manis_core::PolicyCandidateMatcher::Explicit(members) = &group.matcher else {
+        return (subscription_indexes, node_indexes);
+    };
+    for member in members {
+        if let Some(id) = member.source_id.strip_prefix("subscription:") {
+            if let Some(index) = subscriptions
+                .iter()
+                .position(|subscription| subscription.id == id)
+                && !subscription_indexes.contains(&index)
+            {
+                subscription_indexes.push(index);
+            }
+        } else if member.source_id == "saved"
+            && let Some(index) = nodes.iter().position(|node| node.name == member.node_name)
+            && !node_indexes.contains(&index)
+        {
+            node_indexes.push(index);
+        }
+    }
+    (subscription_indexes, node_indexes)
+}
+
+/// Resolvers discovered in the saved subscription documents, never edited by
+/// hand; they apply only while no custom resolver is configured.
+fn discovered_proxy_dns(workspace: &StoredWorkspace) -> Vec<String> {
+    let mut servers: Vec<String> = Vec::new();
+    for subscription in &workspace.imported_subscriptions {
+        if !subscription.enabled {
+            continue;
+        }
+        for server in &subscription.proxy_server_nameservers {
+            let value = server.as_str().to_owned();
+            if !servers.contains(&value) {
+                servers.push(value);
+            }
+            if servers.len() >= mihomo::MAX_SUBSCRIPTION_PROXY_DNS_SERVERS {
+                return servers;
+            }
+        }
+    }
+    servers
+}
+
+/// Saves how proxy-server hostnames are resolved (`settings.dns.set`).
+///
+/// # Errors
+/// Returns a message when the data directory is unavailable or a resolver is
+/// not an HTTPS endpoint or plain IP literal.
+pub fn nsh_set_proxy_dns(mode: &str, servers: &[String]) -> Result<(), String> {
+    let directory = crate::brand::config_dir().ok_or_else(|| "找不到 Manis 数据目录".to_owned())?;
+    mihomo::save_proxy_dns_in(&directory, mode, servers).map_err(|error| error.to_string())?;
+    let _ = nsh_apply_profile();
+    Ok(())
+}
+
+/// Creates a policy group from the sources the subscriptions page selected
+/// (`subscriptions.addGroup`).
+///
+/// # Errors
+/// Returns a message when a selected index does not exist, the group has no
+/// member, or the store cannot write it.
+pub fn nsh_add_group(
+    name: &str,
+    strategy: &str,
+    subscription_indexes: &[usize],
+    node_indexes: &[usize],
+) -> Result<(), String> {
+    let directory = crate::brand::config_dir().ok_or_else(|| "找不到 Manis 数据目录".to_owned())?;
+    let subscriptions =
+        mihomo::load_subscription_sources_in(&directory).map_err(|error| error.to_string())?;
+    let nodes =
+        mihomo::load_single_node_sources_in(&directory).map_err(|error| error.to_string())?;
+
+    let mut members = std::collections::BTreeSet::new();
+    for index in subscription_indexes {
+        let subscription = subscriptions
+            .get(*index)
+            .ok_or_else(|| "订阅不存在".to_owned())?;
+        members.insert(
+            manis_core::NodeIdentity::whole_source(&format!("subscription:{}", subscription.id))
+                .map_err(|_error| "订阅成员无效".to_owned())?,
+        );
+    }
+    for index in node_indexes {
+        let node = nodes.get(*index).ok_or_else(|| "节点不存在".to_owned())?;
+        members.insert(
+            manis_core::NodeIdentity::new("saved", &node.name)
+                .map_err(|_error| "节点成员无效".to_owned())?,
+        );
+    }
+    if members.is_empty() {
+        return Err("策略组需要名称和至少一个成员".to_owned());
+    }
+
+    let id = mihomo::new_managed_policy_id();
+    let mut group =
+        manis_core::ManagedPolicyGroup::new(&id, name.trim()).map_err(|error| error.to_string())?;
+    group.strategy = if strategy == "urltest" {
+        manis_core::ManagedPolicyStrategy::LowestLatency
+    } else {
+        manis_core::ManagedPolicyStrategy::Manual
+    };
+    group.matcher = manis_core::PolicyCandidateMatcher::Explicit(members);
+    mihomo::save_managed_policy_in(&directory, &group).map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+/// Exports the saved store as one portable document (`settings.copyBackup`).
+///
+/// The document embeds `config.toml`, which is the whole saved workspace:
+/// subscriptions, saved nodes, policy groups, rule sources, manual rules,
+/// routing mode and the DNS policy. It contains plaintext credentials, so the
+/// shell must copy it only to the user's own clipboard.
+///
+/// # Errors
+/// Returns a message when the data directory or the store cannot be read.
+pub fn nsh_export_backup() -> Result<String, String> {
+    let directory = crate::brand::config_dir().ok_or_else(|| "找不到 Manis 数据目录".to_owned())?;
+    let store = crate::config_toml::read_source(&directory)
+        .map_err(|_error| "无法读取本地配置".to_owned())?;
+    serde_json::to_string(&serde_json::json!({
+        "format": "manis-backup",
+        "version": 1,
+        "store": store,
+    }))
+    .map_err(|_error| "无法生成备份".to_owned())
+}
+
+/// Replaces the saved store from a backup document and reloads the profile
+/// (`settings.importBackup`).
+///
+/// # Errors
+/// Returns a message when the document is not a supported Manis backup or the
+/// store cannot be written.
+pub fn nsh_import_backup(text: &str) -> Result<(), String> {
+    let directory = crate::brand::config_dir().ok_or_else(|| "找不到 Manis 数据目录".to_owned())?;
+    let document: serde_json::Value =
+        serde_json::from_str(text).map_err(|_error| "备份格式无法识别".to_owned())?;
+    if document.get("format").and_then(serde_json::Value::as_str) != Some("manis-backup") {
+        return Err("这不是 Manis 备份".to_owned());
+    }
+    if document.get("version").and_then(serde_json::Value::as_u64) != Some(1) {
+        return Err("备份版本不受支持".to_owned());
+    }
+    let store = document
+        .get("store")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "备份内容为空".to_owned())?;
+    crate::config_toml::entries_from_source(store)
+        .map_err(|_error| "备份内容无法识别".to_owned())?;
+    crate::config_toml::replace_source(&directory, store)
+        .map_err(|_error| "无法写入本地配置".to_owned())?;
+    let _ = nsh_apply_profile();
+    Ok(())
 }

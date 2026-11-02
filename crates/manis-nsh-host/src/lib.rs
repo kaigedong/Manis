@@ -28,6 +28,18 @@ pub fn install_handlers(host: &nsh_engine::HostChannel) {
             let data = call.data();
             let string_field =
                 |name: &str| data.get(name).and_then(Value::as_str).map(str::to_owned);
+            let index_list = |name: &str| -> Vec<usize> {
+                data.get(name)
+                    .and_then(Value::as_array)
+                    .map(|values| {
+                        values
+                            .iter()
+                            .filter_map(Value::as_u64)
+                            .filter_map(|value| usize::try_from(value).ok())
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            };
             if command == "settings.logs" {
                 let mut payload = reply(None);
                 payload["logs"] = json!(manis_service::nsh_logs());
@@ -40,11 +52,36 @@ pub fn install_handlers(host: &nsh_engine::HostChannel) {
             ) {
                 let _ = std::process::Command::new("xdg-open")
                     .arg("https://github.com/kaigedong/Manis/releases")
-                    .stdin(std::process::Stdio::null())
+                    .stdin(std::process::Stdio::piped())
                     .stdout(std::process::Stdio::null())
                     .stderr(std::process::Stdio::null())
                     .spawn();
                 call.resolve(reply(Some("已在浏览器打开 Release")));
+                return;
+            }
+            if command == "settings.copyBackup" {
+                let mut payload = reply(None);
+                match manis_service::nsh_export_backup() {
+                    Ok(backup) => {
+                        payload["backup"] = Value::String(backup);
+                        payload["message"] = Value::String("已生成备份".to_owned());
+                    }
+                    Err(error) => {
+                        payload["message"] = Value::String(error);
+                    }
+                }
+                call.resolve(payload);
+                return;
+            }
+            if command == "settings.importBackup" {
+                let text = data.get("text").and_then(Value::as_str).unwrap_or_default();
+                let message = if text.trim().is_empty() {
+                    "剪贴板里没有备份内容".to_owned()
+                } else {
+                    manis_service::nsh_import_backup(text)
+                        .map_or_else(|error| error, |()| "备份已导入".to_owned())
+                };
+                call.resolve(reply(Some(&message)));
                 return;
             }
             if command == "settings.update.install" {
@@ -197,21 +234,69 @@ pub fn install_handlers(host: &nsh_engine::HostChannel) {
                     manis_service::nsh_add_node(&link)
                         .map_or_else(|error| error, |()| "节点已保存".to_owned())
                 }),
+                "nodes.refresh" => Some("已刷新".to_owned()),
                 "workspace.apply"
                 | "rules.apply"
                 | "subscriptions.apply"
                 | "subscriptions.refresh"
+                | "connection.reload"
                 | "settings.reload" => Some(
                     manis_service::nsh_apply_profile()
                         .map_or_else(|error| error, |()| "配置已重新载入".to_owned()),
                 ),
-                "workspace.discard" => Some("已放弃更改（桌面原型）".to_owned()),
-                "settings.logs" => Some("桌面原型还没有连接内核日志".to_owned()),
+                "workspace.discard" => Some("没有待应用的更改".to_owned()),
+                "settings.dns.set" => {
+                    let mode = string_field("mode").unwrap_or_else(|| "doh".to_owned());
+                    let servers = data
+                        .get("servers")
+                        .and_then(Value::as_array)
+                        .map(|values| {
+                            values
+                                .iter()
+                                .filter_map(Value::as_str)
+                                .map(str::to_owned)
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    Some(
+                        manis_service::nsh_set_proxy_dns(&mode, &servers)
+                            .map_or_else(|error| error, |()| "节点域名解析已更新".to_owned()),
+                    )
+                }
+                "subscriptions.addGroup" => string_field("name").map(|name| {
+                    let strategy = string_field("strategy").unwrap_or_else(|| "urltest".to_owned());
+                    manis_service::nsh_add_group(
+                        &name,
+                        &strategy,
+                        &index_list("subscriptionIndexes"),
+                        &index_list("nodeIndexes"),
+                    )
+                    .map_or_else(
+                        |error| error,
+                        |()| "策略组已添加，点「应用」生效".to_owned(),
+                    )
+                }),
                 _ => None,
             };
             call.resolve(reply(message.as_deref()));
         });
     }
+}
+
+/// Stops an engine this host started, gracefully.
+///
+/// Closing its stdin asks the engine to stop, which stops the Mihomo process it
+/// owns; the hard kill is only the fallback for an engine that ignores that.
+pub fn terminate_engine(child: &mut std::process::Child) {
+    drop(child.stdin.take());
+    for _ in 0..25 {
+        if matches!(child.try_wait(), Ok(Some(_))) {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 #[cfg(unix)]
@@ -269,7 +354,7 @@ pub fn ensure_engine() -> Option<std::process::Child> {
 
         for binary in candidates {
             let Ok(child) = std::process::Command::new(&binary)
-                .stdin(std::process::Stdio::null())
+                .stdin(std::process::Stdio::piped())
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
                 .spawn()

@@ -44,6 +44,22 @@ impl TempLayout {
         }
     }
 
+    /// Publishes an executable fixture by renaming a finished file into
+    /// place. Writing in place can leave the inode open for writing in a
+    /// child forked by a parallel test, which makes execve fail with
+    /// `ETXTBSY`.
+    #[cfg(unix)]
+    fn write_binary(&self, contents: &[u8]) {
+        let staged = self.binary.with_extension("staged");
+        fs::write(&staged, contents).expect("write executable fixture");
+        let mut permissions = fs::metadata(&staged)
+            .expect("fixture metadata")
+            .permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&staged, permissions).expect("make fixture executable");
+        fs::rename(&staged, &self.binary).expect("publish executable fixture");
+    }
+
     fn config(&self) -> ManagedEngineConfig {
         ManagedEngineConfig::new(
             self.binary.clone(),
@@ -417,16 +433,9 @@ fn failed_stop_retains_the_owned_child_for_drop_cleanup() {
 #[test]
 fn standard_adapter_runs_validation_and_owns_a_real_fixture_process() {
     let layout = TempLayout::new();
-    fs::write(
-        &layout.binary,
+    layout.write_binary(
         b"#!/bin/sh\nif [ \"$1\" = \"-t\" ]; then exit 0; fi\nwhile :; do sleep 60; done\n",
-    )
-    .expect("write executable fixture");
-    let mut permissions = fs::metadata(&layout.binary)
-        .expect("fixture metadata")
-        .permissions();
-    permissions.set_mode(0o700);
-    fs::set_permissions(&layout.binary, permissions).expect("make fixture executable");
+    );
 
     let mut manager = EngineManager::new(
         layout.config(),
@@ -447,16 +456,8 @@ fn standard_adapter_runs_validation_and_owns_a_real_fixture_process() {
 #[test]
 fn standard_validation_times_out_and_reaps_a_hung_fixture() {
     let layout = TempLayout::new();
-    fs::write(
-        &layout.binary,
-        b"#!/bin/sh\nif [ \"$1\" = \"-t\" ]; then while :; do :; done; fi\nexit 0\n",
-    )
-    .expect("write executable fixture");
-    let mut permissions = fs::metadata(&layout.binary)
-        .expect("fixture metadata")
-        .permissions();
-    permissions.set_mode(0o700);
-    fs::set_permissions(&layout.binary, permissions).expect("make fixture executable");
+    layout
+        .write_binary(b"#!/bin/sh\nif [ \"$1\" = \"-t\" ]; then while :; do :; done; fi\nexit 0\n");
     let mut manager = EngineManager::new(
         layout.config(),
         ReadinessPolicy::default(),

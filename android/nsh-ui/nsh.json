@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "build": 1,
   "capabilities": {
+    "clipboard": true,
     "host": [
       "nodes.refresh",
       "nodes.select",
@@ -22,7 +23,6 @@
       "settings.reload",
     "settings.autostart.set",
       "settings.logs",
-      "settings.copyLogs",
       "settings.copyBackup",
       "settings.importBackup",
       "settings.dns.set",

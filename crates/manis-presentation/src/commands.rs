@@ -19,7 +19,6 @@ pub const COMMANDS: &[&str] = &[
     "settings.reload",
     "settings.autostart.set",
     "settings.logs",
-    "settings.copyLogs",
     "settings.copyBackup",
     "settings.importBackup",
     "settings.dns.set",

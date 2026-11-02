@@ -10,12 +10,11 @@
 //! `nsh/`. Both talk to this crate through the re-exported bridge functions and
 //! [`run_engine`].
 //!
-//! The saved-workspace and controller store keeps read/write APIs for NSH
-//! commands that are declared in the shared capability list but not wired in
-//! this crate yet (managed policy edits, QX rule source edits, import preview,
-//! routing-rule reordering, node-selection persistence). They are covered by
-//! unit tests, so dead-code analysis is disabled at the crate boundary until
-//! the matching host handlers land.
+//! The saved-workspace and controller store keeps read/write APIs that the NSH
+//! page surface does not call yet (QX rule-source edits, import preview,
+//! routing-rule reordering, node-selection persistence, controller group
+//! helpers). They are covered by unit tests, so dead-code analysis is disabled
+//! at the crate boundary until the matching host handlers land.
 
 #![allow(dead_code)]
 
@@ -41,9 +40,10 @@ mod subscription;
 
 pub use engine::{EngineError, run as run_engine};
 pub use nsh::{
-    nsh_add_node, nsh_add_subscription, nsh_apply_profile, nsh_check_update, nsh_controller_socket,
-    nsh_delete_node, nsh_delete_rule, nsh_delete_subscription, nsh_logs, nsh_root_data,
-    nsh_save_rule, nsh_select_global_node, nsh_select_group_node, nsh_set_autostart,
+    nsh_add_group, nsh_add_node, nsh_add_subscription, nsh_apply_profile, nsh_check_update,
+    nsh_controller_socket, nsh_delete_node, nsh_delete_rule, nsh_delete_subscription,
+    nsh_export_backup, nsh_import_backup, nsh_logs, nsh_root_data, nsh_save_rule,
+    nsh_select_global_node, nsh_select_group_node, nsh_set_autostart, nsh_set_proxy_dns,
     nsh_set_routing_mode, nsh_set_tun, nsh_toggle_node, nsh_toggle_rule, nsh_toggle_subscription,
 };
 

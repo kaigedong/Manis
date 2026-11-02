@@ -80,6 +80,18 @@ impl ProxyDnsServer {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    /// The system resolver, as Mihomo names it: `proxy-server-nameserver: system`.
+    #[must_use]
+    pub fn system() -> Self {
+        Self("system".to_owned())
+    }
+
+    /// Whether this asks Mihomo to use the system resolver.
+    #[must_use]
+    pub fn is_system(&self) -> bool {
+        self.0 == "system"
+    }
 }
 
 impl fmt::Debug for ProxyDnsServer {

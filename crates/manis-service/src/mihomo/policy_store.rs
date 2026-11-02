@@ -3,7 +3,8 @@ mod managed_policy;
 pub(super) use managed_policy::compile_managed_policy_groups;
 pub(crate) use managed_policy::load_managed_policy_groups_in;
 #[cfg(test)]
-pub(crate) use managed_policy::{remove_managed_policy_in, save_managed_policy_in};
+pub(crate) use managed_policy::remove_managed_policy_in;
+pub(crate) use managed_policy::{new_managed_policy_id, save_managed_policy_in};
 
 use super::{
     BTreeMap, BTreeSet, HashMap, LEGACY_MANAGED_POLICY_PREFIX, LEGACY_MANAGED_POLICY_SUFFIX,

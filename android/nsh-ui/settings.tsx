@@ -1,4 +1,4 @@
-import { computed, host, Scroll, signal, Text, View } from "nsh";
+import { Clipboard, computed, host, Scroll, signal, Text, View } from "nsh";
 import { Input } from "nsh/base";
 import { embedded, root } from "./store";
 
@@ -31,7 +31,7 @@ type Data = {
   update: UpdateInfo;
 };
 
-type Reply = { data?: unknown; message?: string; logs?: string[] };
+type Reply = { data?: unknown; message?: string; logs?: string[]; backup?: string };
 
 const empty: Data = {
   status: "未连接",
@@ -83,6 +83,28 @@ function openDns() {
   dnsMode.set(page().proxyDns.mode);
   dnsServers.set(page().proxyDns.custom.join("\n"));
   showDns.set(true);
+}
+
+async function copyLogs() {
+  await Clipboard.writeText(logs().join("\n"));
+  message.set("日志已复制到剪贴板");
+}
+
+async function copyBackup() {
+  const reply = await invoke("settings.copyBackup");
+  if (reply?.backup) {
+    await Clipboard.writeText(reply.backup);
+    message.set("备份已复制到剪贴板");
+  }
+}
+
+async function importBackup() {
+  const text = await Clipboard.readText();
+  if (!text.trim()) {
+    message.set("剪贴板里没有备份内容");
+    return;
+  }
+  await invoke("settings.importBackup", { text });
 }
 
 async function saveDns() {
@@ -217,7 +239,7 @@ function LogsPanel() {
       <View style={{ flexDirection: "row", gap: 8 }}>
         <Action
           label="复制"
-          onPress={() => void invoke("settings.copyLogs", { lines: logs() })}
+          onPress={() => void copyLogs()}
         />
         <Action label="刷新" onPress={() => void invoke("settings.logs")} />
         <Action label="关闭" onPress={() => showLogs.set(false)} />
@@ -353,8 +375,8 @@ export function SettingsPage() {
               导出的是 Manis 备份格式（含订阅链接和节点密钥），不是交给其他客户端的 YAML。
             </Text>
             <View style={{ flexDirection: "row", gap: 8 }}>
-              <Action label="复制到剪贴板" onPress={() => void invoke("settings.copyBackup")} />
-              <Action label="从剪贴板导入" onPress={() => void invoke("settings.importBackup")} />
+              <Action label="复制到剪贴板" onPress={() => void copyBackup()} />
+              <Action label="从剪贴板导入" onPress={() => void importBackup()} />
             </View>
           </Card>
 

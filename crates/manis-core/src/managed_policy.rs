@@ -102,6 +102,13 @@ impl ManagedPolicyStrategy {
     }
 }
 
+/// The node name that stands for every node of a source.
+///
+/// A group member with this name adds the whole provider of its source
+/// (`subscription:<id>`) without filtering its nodes, which is what the NSH
+/// subscriptions page means by selecting a subscription.
+pub const WHOLE_SOURCE_NODE_NAME: &str = "*";
+
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct NodeIdentity {
     pub source_id: String,
@@ -109,6 +116,20 @@ pub struct NodeIdentity {
 }
 
 impl NodeIdentity {
+    /// A member that adds every node of `source_id`.
+    ///
+    /// # Errors
+    /// Returns [`ManagedPolicyError::InvalidMember`] when `source_id` is unsafe.
+    pub fn whole_source(source_id: &str) -> Result<Self, ManagedPolicyError> {
+        if !valid_stable_identity_component(source_id) {
+            return Err(ManagedPolicyError::InvalidMember);
+        }
+        Ok(Self {
+            source_id: source_id.to_owned(),
+            node_name: WHOLE_SOURCE_NODE_NAME.to_owned(),
+        })
+    }
+
     /// Creates a stable node identity from its source and display name.
     ///
     /// # Errors

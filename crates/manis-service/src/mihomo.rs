@@ -33,6 +33,7 @@ mod managed_apply;
 mod policy_store;
 mod preview;
 mod profile_compiler;
+mod proxy_dns;
 mod routing_order;
 mod runtime;
 mod runtime_build;
@@ -49,6 +50,7 @@ use preview::{
     PreviewWorkspace, extract_subscription_proxy_nameservers,
     preview_secret_subscription_with_binary, preview_subscription_with_binary,
 };
+pub(crate) use proxy_dns::{ProxyDnsMode, ProxyDnsSettings, load_proxy_dns_in, save_proxy_dns_in};
 pub(crate) use routing_order::{
     load_routing_rule_group_order_in, normalized_routing_rule_group_order,
 };
@@ -57,7 +59,8 @@ pub(crate) use workspace::*;
 #[cfg(test)]
 pub(crate) use controller_io::select_global_node_at_endpoint;
 #[cfg(test)]
-pub(crate) use policy_store::{remove_managed_policy_in, save_managed_policy_in};
+pub(crate) use policy_store::remove_managed_policy_in;
+pub(crate) use policy_store::{new_managed_policy_id, save_managed_policy_in};
 #[cfg(test)]
 pub(crate) use routing_order::{
     MoveDirection, move_routing_rule_group, place_routing_rule_group,
@@ -109,7 +112,7 @@ const LEGACY_MANIS_STORED_SUBSCRIPTION_VERSION_V2: &str = "manis-subscription-so
 const LEGACY_MANIS_STORED_SUBSCRIPTION_VERSION: &str = "manis-subscription-source-v1";
 const LEGACY_RELAY_STORED_SUBSCRIPTION_VERSION: &str = "relay-subscription-source-v1";
 const MAX_SUBSCRIPTION_DOCUMENT_BYTES: u64 = 4 * 1024 * 1024;
-const MAX_SUBSCRIPTION_PROXY_DNS_SERVERS: usize = 8;
+pub(crate) const MAX_SUBSCRIPTION_PROXY_DNS_SERVERS: usize = 8;
 const MAX_SUBSCRIPTION_SOURCE_NAME_BYTES: usize = 96;
 const LEGACY_GENERATED_PROXY_GROUP_NAME: &str = "Proxy";
 const SUBSCRIPTION_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(15);

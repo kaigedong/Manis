@@ -159,8 +159,8 @@ mod desktop {
             let keep = RefCell::new(Some(Rc::clone(&view)));
             let engine = Rc::clone(&engine);
             window.connect_destroy(move |_| {
-                if let Some(mut engine) = engine.borrow_mut().take() {
-                    let _ = engine.kill();
+                if let Some(mut child) = engine.borrow_mut().take() {
+                    manis_nsh_host::terminate_engine(&mut child);
                 }
                 if let Some(view) = keep.borrow_mut().take() {
                     view.stop();

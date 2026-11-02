@@ -11,7 +11,7 @@ pub use catalog::{
 pub use kernel::{KernelCapabilities, KernelCapability, KernelKind};
 pub use managed_policy::{
     ManagedPolicyError, ManagedPolicyGroup, ManagedPolicyIcon, ManagedPolicyStrategy, NodeIdentity,
-    PolicyCandidateMatcher,
+    PolicyCandidateMatcher, WHOLE_SOURCE_NODE_NAME,
 };
 pub use navigation::{
     CompactNavigation, NodeWorkspaceState, PrimaryWorkspace, ProxyMode, RoutingMode,

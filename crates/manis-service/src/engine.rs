@@ -17,6 +17,41 @@ use crate::{core_update, diagnostics, rule_source};
 /// How often the engine checks saved remote sources for a due refresh.
 const REFRESH_TICK: Duration = Duration::from_secs(60);
 
+/// How long the refresh loop sleeps before checking for a shutdown request.
+const SHUTDOWN_POLL: Duration = Duration::from_millis(250);
+
+/// Watches the host's stdin: the shells keep the pipe open for the lifetime of
+/// the engine and drop it to ask for a graceful stop, which lets the runtime's
+/// destructor stop the owned Mihomo process instead of orphaning it.
+fn spawn_shutdown_watcher() -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+    use std::io::{IsTerminal as _, Read as _};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let stop = Arc::new(AtomicBool::new(false));
+    #[cfg(unix)]
+    {
+        // A plain `kill` (systemd, a shell, the host) stops the engine through
+        // the same flag, so the runtime still stops the Mihomo process it owns.
+        for signal in [signal_hook::consts::SIGTERM, signal_hook::consts::SIGINT] {
+            let _ = signal_hook::flag::register(signal, Arc::clone(&stop));
+        }
+    }
+    if std::io::stdin().is_terminal() {
+        // Run by hand: keep the terminal usable and stop with the default
+        // signal handling.
+        return stop;
+    }
+    let watched = Arc::clone(&stop);
+    thread::spawn(move || {
+        let mut buffer = [0_u8; 64];
+        let mut stdin = std::io::stdin();
+        while matches!(stdin.read(&mut buffer), Ok(read) if read > 0) {}
+        watched.store(true, Ordering::SeqCst);
+    });
+    stop
+}
+
 /// Failure that stops the headless engine before it serves a controller.
 #[derive(Debug)]
 pub struct EngineError(String);
@@ -35,6 +70,7 @@ impl std::error::Error for EngineError {}
 /// Returns an error when the saved profile is invalid or the kernel cannot be
 /// started, so the calling shell can report why no controller appeared.
 pub fn run() -> Result<(), EngineError> {
+    let stop = spawn_shutdown_watcher();
     let store = mihomo::imported_subscription_store_dir().ok();
     diagnostics::initialize(store.as_deref().and_then(Path::parent));
     match core_update::install_bundled_seed_if_missing() {
@@ -68,7 +104,20 @@ pub fn run() -> Result<(), EngineError> {
         return Err(EngineError("找不到 Manis 数据目录".to_owned()));
     };
     loop {
-        thread::sleep(REFRESH_TICK);
+        let mut waited = Duration::ZERO;
+        while waited < REFRESH_TICK {
+            if stop.load(std::sync::atomic::Ordering::SeqCst) {
+                break;
+            }
+            thread::sleep(SHUTDOWN_POLL);
+            waited += SHUTDOWN_POLL;
+        }
+        if stop.load(std::sync::atomic::Ordering::SeqCst) {
+            diagnostics::record_event(diagnostics::LogLevel::Info, "engine.stopped", "signal");
+            // Dropping the runtime stops the owned Mihomo process.
+            drop(runtime);
+            return Ok(());
+        }
         refresh_due_sources(&runtime, &store);
     }
 }

@@ -27,8 +27,20 @@ pub(super) fn compile_saved_profile(
         &stored_single_nodes,
         &provider_indexes,
     )?;
-    if !nameservers.is_empty() {
-        profile.set_proxy_server_nameservers(nameservers);
+    let dns = super::load_proxy_dns_in(store_dir);
+    let effective_nameservers = if dns.servers.is_empty() {
+        match dns.mode {
+            super::ProxyDnsMode::System => vec![ProxyDnsServer::system()],
+            super::ProxyDnsMode::Doh => nameservers,
+        }
+    } else {
+        dns.servers
+            .iter()
+            .filter_map(|server| ProxyDnsServer::parse_any(server).ok())
+            .collect()
+    };
+    if !effective_nameservers.is_empty() {
+        profile.set_proxy_server_nameservers(effective_nameservers);
     }
     apply_saved_routing(store_dir, &mut profile, bootstrap_fallback)?;
     Ok(profile)
