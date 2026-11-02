@@ -40,7 +40,7 @@ format.
 
 ## Implemented so far
 
-- Native NSH interface shared by Android and desktop, with light and dark modes.
+- Native NSH interface shared by Android and desktop; the page copy is Chinese today.
 - HTTP/HTTPS subscriptions and single-node share links with private local persistence.
 - Manual, latency-based, fallback, and load-balancing policy group models, gated by core capability.
 - Ordered routing rules, QX rule-list import, compound domain/port matching, and explicit fallback.

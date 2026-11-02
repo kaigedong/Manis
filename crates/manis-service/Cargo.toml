@@ -13,6 +13,9 @@ rust-version.workspace = true
 [[bin]]
 name = "manis-engine"
 path = "src/bin/manis-engine.rs"
+# The lib target of the `manis-engine` package already owns `manis_engine`
+# rustdoc output; do not document the binary target as well.
+doc = false
 
 [dependencies]
 manis-core = { path = "../manis-core" }

@@ -7,11 +7,15 @@
 //! privilege helpers, update checks and the NSH host bridge.
 //!
 //! `GTK`, `AppKit` and `Win32` live in `manis-nsh-desktop`; the TSX pages live in
-//! `nsh/`. Both talk to this crate through [`nsh`] and [`engine`].
+//! `nsh/`. Both talk to this crate through the re-exported bridge functions and
+//! [`run_engine`].
 //!
-//! The saved-workspace and controller store keeps the full read/write API the
-//! desktop shell will expose as more NSH commands land; only the wired subset is
-//! called today, so dead-code analysis is disabled at the crate boundary.
+//! The saved-workspace and controller store keeps read/write APIs for NSH
+//! commands that are declared in the shared capability list but not wired in
+//! this crate yet (managed policy edits, QX rule source edits, import preview,
+//! routing-rule reordering, node-selection persistence). They are covered by
+//! unit tests, so dead-code analysis is disabled at the crate boundary until
+//! the matching host handlers land.
 
 #![allow(dead_code)]
 

@@ -108,13 +108,19 @@ fn available_exit_ip_probe_port(mixed_port: u16) -> Option<u16> {
 
 fn discover_mihomo_binary() -> Result<PathBuf, String> {
     core_update::managed_core_binary_path()
-        .map_err(|error| error.to_string())
-        .and_then(|path| {
-            canonical_binary(&path).map_err(|_error| {
-                "Manis-managed Mihomo is not installed; download the stable core in Runtime settings"
-                    .to_owned()
-            })
+        .map_err(|error| match error {
+            core_update::CoreUpdateError::Io => missing_managed_core_message(),
+            other => other.to_string(),
         })
+        .and_then(|path| canonical_binary(&path).map_err(|_error| missing_managed_core_message()))
+}
+
+fn missing_managed_core_message() -> String {
+    #[cfg(debug_assertions)]
+    let hint = "install a release package that bundles the core, or set MANIS_MIHOMO_BINARY to a local build";
+    #[cfg(not(debug_assertions))]
+    let hint = "install a release package that bundles the core";
+    format!("Manis-managed Mihomo is not installed; {hint}")
 }
 
 pub(super) fn has_only_clean_components(path: &Path) -> bool {

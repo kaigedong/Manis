@@ -277,8 +277,13 @@ fn remove_file_if_exists(path: &Path) {
 }
 
 fn require_managed_core_file(path: &Path) -> Result<(), CoreUpdateError> {
-    let metadata = fs::symlink_metadata(path)
-        .map_err(|error| CoreUpdateError::caused("inspect managed core", error))?;
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(CoreUpdateError::Io);
+        }
+        Err(error) => return Err(CoreUpdateError::caused("inspect managed core", error)),
+    };
     if metadata.file_type().is_symlink() || !metadata.is_file() {
         return Err(CoreUpdateError::Io);
     }

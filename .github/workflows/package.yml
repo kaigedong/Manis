@@ -169,9 +169,8 @@ jobs:
         shell: bash
         run: |
           pacman -Syu --noconfirm --needed \
-          alsa-lib clang cmake desktop-file-utils fontconfig git gtk4 hicolor-icon-theme \
-          libx11 libxcb libxkbcommon libxkbcommon-x11 mesa pkgconf polkit rustup \
-          vulkan-headers vulkan-icd-loader wayland wayland-protocols
+          clang cmake desktop-file-utils git gtk4 hicolor-icon-theme \
+          libx11 libxcb libxkbcommon libxkbcommon-x11 pkgconf polkit rustup wayland
           useradd --create-home --shell /bin/bash builder
           chown -R builder:builder "$GITHUB_WORKSPACE"
       - name: Resolve package version
@@ -195,6 +194,7 @@ jobs:
             /home/builder/.cargo/registry/cache/
             /home/builder/.cargo/git/db/
             target/archlinux/
+            target/archlinux-nsh/
           key: cargo-package-archlinux-x86_64-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', '**/Cargo.toml') }}
           restore-keys: |
             cargo-package-archlinux-x86_64-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', '**/Cargo.toml') }}-
@@ -231,6 +231,7 @@ jobs:
             /home/builder/.cargo/registry/cache/
             /home/builder/.cargo/git/db/
             target/archlinux/
+            target/archlinux-nsh/
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
       - name: Inspect package metadata
         shell: bash
@@ -238,6 +239,8 @@ jobs:
           package_path="$(find dist -maxdepth 1 -type f -name 'manis-*.pkg.tar.zst' -print -quit)"
           pacman -Qip "$package_path"
           pacman -Qlp "$package_path"
+          pacman -Qlp "$package_path" | grep -Fx 'manis /usr/bin/manis'
+          pacman -Qlp "$package_path" | grep -Fx 'manis /usr/bin/manis-engine'
           pacman -Qlp "$package_path" | grep -Fx 'manis /usr/lib/manis/manis-linux-helper'
           pacman -Qlp "$package_path" | grep -Fx 'manis /usr/share/polkit-1/actions/dev.manis.app.linux-helper.policy'
           bsdtar -xOf "$package_path" .INSTALL | grep -F '/usr/bin/setcap cap_net_admin,cap_net_raw=ep /usr/lib/manis/mihomo'
