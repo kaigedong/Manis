@@ -32,6 +32,10 @@ build() {
   local rust_flags="${RUSTFLAGS:+$RUSTFLAGS }-C linker-features=-lld"
   local target_dir="$startdir/../../target/archlinux"
 
+  # A restored Cargo cache can keep a stale proc-macro artifact that makes
+  # quickjs-jit fail with "can't find crate for rquickjs_macro". Rebuild it.
+  CARGO_TARGET_DIR="$target_dir" cargo clean -p quickjs-jit-macro --release || true
+
   RUSTFLAGS="$rust_flags" \
     CARGO_TARGET_DIR="$target_dir" \
     cargo build -p manis-ui --lib --release --locked
