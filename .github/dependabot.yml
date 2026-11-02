@@ -5,11 +5,6 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
-    # GPUI Kit pins a matching gpui-pre snapshot; update these together with
-    # gpui-component so Dependabot does not propose an incompatible pair.
-    ignore:
-      - dependency-name: gpui-pre
-      - dependency-name: gpui-pre-platform
   - package-ecosystem: github-actions
     directory: /
     schedule:

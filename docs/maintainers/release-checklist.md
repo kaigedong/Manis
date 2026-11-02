@@ -20,8 +20,6 @@ private core binaries.
 ## License gate
 
 - [ ] The exact Rust dependency license report is archived with the release.
-- [ ] The GPUI/Zed `zlog`/`ztracing`/`ztracing_macro` GPL dependency path has received an explicit
-  compatibility decision for the final linked artifact.
 - [ ] The bundled Mihomo binary has an exact version, upstream source location,
   license text, required notices, and corresponding-source fulfillment plan.
 - [ ] `THIRD_PARTY_NOTICES.md` matches the binaries actually shipped.

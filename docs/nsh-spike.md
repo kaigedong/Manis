@@ -1,3 +1,6 @@
+> 历史文档：这次 spike 已完成并合并为 NSH 迁移（#128）。桌面端已不再包含 GPUI，
+> 共享页面位于 `android/nsh-ui`，桥接与无界面引擎位于 `crates/manis-service`。
+
 # NSH Android spike — 节点页
 
 这是一个**实验分支**，不进入 `main`。目标不是交付新节点页，而是回答三个问题：

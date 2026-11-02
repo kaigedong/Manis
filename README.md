@@ -7,7 +7,7 @@
 
 **简体中文** · [English](README.en.md)
 
-Manis 是一个使用 Rust 和 GPUI 编写的小型实验项目。它目前只聚焦一件事：把“有序规则
+Manis 是一个使用 Rust 编写的小型实验项目，Android 与桌面界面都由 NSH 渲染。它目前只聚焦一件事：把“有序规则
 → 策略组 → 节点”的路径展示清楚，并为一部分常用的 Mihomo 操作提供界面。
 
 这是一个个人开源尝试，不是对代理工具的重新定义，也无意取代成熟客户端。现有工具已经能
@@ -38,7 +38,7 @@ Manis 只尝试把一条路由链路直接呈现出来：
 
 ## 目前实现
 
-- 原生自适应 GPUI 界面，支持中英文、浅色和深色模式。
+- 原生 NSH 界面，Android 与桌面共用同一套页面，支持中英文、浅色和深色模式。
 - HTTP/HTTPS 订阅与单节点分享链接导入，并在本地进行私有持久化。
 - 手动、延迟优选、故障转移和负载均衡策略模型；不可用能力由内核能力门禁控制。
 - 有序分流规则、QX 规则列表导入、域名与端口组合匹配、明确的兜底规则。
@@ -113,10 +113,9 @@ Manis 会在启动时及每小时自动检查新版本，只读取版本信息�
 
 ## 从源码运行
 
-仓库通过 `rust-toolchain.toml` 固定 Rust 工具链，并在 `crates/manis-ui/Cargo.toml` 中固定
-GPUI 版本。macOS 需要 Xcode Command Line Tools；Linux 需要 GPUI 使用的 Wayland/X11、
-fontconfig 与 ALSA 开发包。Linux 托盘通过会话 D-Bus 使用 StatusNotifierItem 协议，
-不依赖 GTK 3；GNOME 需要启用 AppIndicator 扩展才能显示托盘。
+仓库通过 `rust-toolchain.toml` 固定 Rust 工具链。macOS 需要 Xcode Command Line Tools；
+Linux 需要 GTK 4 与 Wayland/X11 开发包。Linux 托盘通过会话 D-Bus 使用
+StatusNotifierItem 协议，不依赖 GTK 3；GNOME 需要启用 AppIndicator 扩展才能显示托盘。
 
 ```bash
 git clone https://github.com/kaigedong/Manis.git
@@ -124,7 +123,8 @@ cd Manis
 cargo run -p manis-nsh-desktop
 ```
 
-发行包的 `manis` 入口已经是 NSH 桌面宿主；`manis-ui` 保留为引擎和开发用的 GPUI 窗口。源码模式下两者可以分别运行。
+发行包的 `manis` 入口是 NSH 桌面宿主，`manis-engine` 是无界面的引擎；宿主会启动同目录下的
+`manis-engine` 来持有 Mihomo 内核。桌面端不再包含 GPUI。
 
 桌面端 NSH 宿主按平台选择原生壳，但共用同一份 TSX 和同一个后端桥
 [`crates/manis-nsh-host`](crates/manis-nsh-host)：
@@ -163,7 +163,6 @@ Manis 校验并写入私有运行目录。controller endpoint 也由 Manis 分�
 ```bash
 cargo fmt --all -- --check
 cargo check --workspace --all-targets --locked
-cargo check -p manis-ui --example snapshot --features snapshot-fixtures --locked
 cargo test --workspace --all-targets --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
 ```
@@ -226,7 +225,7 @@ macOS TUN 使用固定用途的特权 helper。GitHub ad-hoc 包通过管理员�
 | `crates/manis-engine` | 内核发现、校验、进程所有权和生命周期 |
 | `crates/manis-profile` | 类型化配置，以及 Mihomo 配置编译 |
 | `crates/manis-mihomo` | 受限的 Mihomo controller 传输和领域映射 |
-| `crates/manis-ui` | GPUI 应用、持久化边界和平台集成 |
+| `crates/manis-service` | 桌面领域层：存储、Mihomo controller、引擎桥接与无界面引擎 |
 | `packaging/macos` | macOS 打包与固定用途的特权 helper |
 | `packaging/archlinux` | 支持 Wayland 的实验性 Arch Linux 软件包 |
 | `docs` | 架构、设计和维护者文档 |
@@ -235,7 +234,6 @@ macOS TUN 使用固定用途的特权 helper。GitHub ad-hoc 包通过管理员�
 
 - [产品原则](PRODUCT.md)
 - [设计系统](DESIGN.md)
-- [GPUI 实现说明](GPUI_IMPLEMENTATION.md)
 - [开发指南（英文）](docs/development.md)
 - [直连与组合规则](docs/architecture/direct-rules.md)
 - [macOS 打包](packaging/macos/README.md)

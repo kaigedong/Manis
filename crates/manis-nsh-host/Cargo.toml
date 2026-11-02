@@ -8,6 +8,6 @@ rust-version.workspace = true
 
 [dependencies]
 manis-presentation = { path = "../manis-presentation" }
-manis-ui = { path = "../manis-ui" }
+manis-service = { path = "../manis-service" }
 nsh-engine = "=0.3.0"
 serde_json = "1"

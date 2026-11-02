@@ -7,7 +7,7 @@
 
 [简体中文](README.md) · **English**
 
-Manis is a small, experimental desktop client built with Rust and GPUI. Its current focus is narrow:
+Manis is a small, experimental client built with Rust; Android and desktop both render their UI with NSH. Its current focus is narrow:
 showing how an ordered rule leads to a policy group and then to a proxy node, while providing a UI
 for a limited set of common Mihomo tasks.
 
@@ -40,7 +40,7 @@ format.
 
 ## Implemented so far
 
-- Native adaptive GPUI interface with English, Simplified Chinese, light, and dark modes.
+- Native NSH interface shared by Android and desktop, with light and dark modes.
 - HTTP/HTTPS subscriptions and single-node share links with private local persistence.
 - Manual, latency-based, fallback, and load-balancing policy group models, gated by core capability.
 - Ordered routing rules, QX rule-list import, compound domain/port matching, and explicit fallback.
@@ -114,18 +114,20 @@ Mihomo core updates are unchanged.
 
 ## Build from source
 
-The repository pins its Rust toolchain in `rust-toolchain.toml` and its GPUI revision in
-`crates/manis-ui/Cargo.toml`.
+The repository pins its Rust toolchain in `rust-toolchain.toml`.
 
-On macOS, install Xcode Command Line Tools. On Linux, install the Wayland/X11, fontconfig, and
-ALSA development packages required by GPUI. The Linux tray uses StatusNotifierItem over the session
-D-Bus without GTK 3; GNOME needs an AppIndicator extension to display it. Then run:
+On macOS, install Xcode Command Line Tools. On Linux, install GTK 4 with its Wayland/X11
+development packages. The Linux tray uses StatusNotifierItem over the session D-Bus without GTK 3;
+GNOME needs an AppIndicator extension to display it. Then run:
 
 ```bash
 git clone https://github.com/kaigedong/Manis.git
 cd Manis
-cargo run -p manis-ui
+cargo run -p manis-nsh-desktop
 ```
+
+Release packages install the NSH host as `manis` and the headless engine as `manis-engine`; the
+host launches the sibling engine to own the Mihomo process. There is no GPUI window any more.
 
 Manis only starts Mihomo processes it owns and only runs configuration generated from data managed
 through the application. It does not attach to another application's controller or run a supplied
@@ -164,7 +166,6 @@ are excluded, and importing does not enable a proxy.
 ```bash
 cargo fmt --all -- --check
 cargo check --workspace --all-targets --locked
-cargo check -p manis-ui --example snapshot --features snapshot-fixtures --locked
 cargo test --workspace --all-targets --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
 ```
@@ -205,7 +206,7 @@ vulnerabilities through GitHub private vulnerability reporting.
 | `crates/manis-engine` | Core discovery, validation, process ownership, and lifecycle |
 | `crates/manis-profile` | Typed profiles and Mihomo configuration compilation |
 | `crates/manis-mihomo` | Restricted Mihomo controller transport and domain mapping |
-| `crates/manis-ui` | GPUI application, persistence boundaries, and platform integration |
+| `crates/manis-service` | Desktop domain layer: storage, Mihomo controller, NSH bridge, headless engine |
 | `packaging/macos` | macOS bundle and fixed-purpose privileged-helper tooling |
 | `packaging/archlinux` | Experimental Arch Linux package with Wayland support |
 | `docs` | Architecture, design, and maintainer documentation |
@@ -214,7 +215,6 @@ Additional reading:
 
 - [Product principles](PRODUCT.md)
 - [Design system](DESIGN.md)
-- [GPUI implementation notes](GPUI_IMPLEMENTATION.md)
 - [Development guide](docs/development.md)
 - [Direct and compound routing rules](docs/architecture/direct-rules.md)
 - [macOS packaging](packaging/macos/README.md)

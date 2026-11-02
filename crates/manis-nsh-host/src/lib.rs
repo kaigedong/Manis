@@ -9,7 +9,7 @@ use serde_json::{Map, Value, json};
 pub fn root_data() -> Value {
     // Reuse the desktop storage loader so saved subscriptions/nodes/groups and
     // the routing mode appear in the NSH shell.
-    manis_ui::nsh_root_data()
+    manis_service::nsh_root_data()
 }
 
 pub fn reply(message: Option<&str>) -> Value {
@@ -30,7 +30,7 @@ pub fn install_handlers(host: &nsh_engine::HostChannel) {
                 |name: &str| data.get(name).and_then(Value::as_str).map(str::to_owned);
             if command == "settings.logs" {
                 let mut payload = reply(None);
-                payload["logs"] = json!(manis_ui::nsh_logs());
+                payload["logs"] = json!(manis_service::nsh_logs());
                 call.resolve(payload);
                 return;
             }
@@ -53,7 +53,7 @@ pub fn install_handlers(host: &nsh_engine::HostChannel) {
             }
             if command == "settings.update.check" {
                 let mut payload = reply(None);
-                payload["data"]["settings"]["update"] = match manis_ui::nsh_check_update() {
+                payload["data"]["settings"]["update"] = match manis_service::nsh_check_update() {
                     Ok(Some(version)) => json!({
                         "state": "available",
                         "update": { "version": version },
@@ -66,19 +66,19 @@ pub fn install_handlers(host: &nsh_engine::HostChannel) {
             }
             let message = match command {
                 "nodes.select" => string_field("name").map(|name| {
-                    manis_ui::nsh_select_global_node(&name)
+                    manis_service::nsh_select_global_node(&name)
                         .map_or_else(|error| error, |()| "已切换".to_owned())
                 }),
                 "nodes.selectGroup" => match (string_field("group"), string_field("name")) {
                     (Some(group), Some(name)) => Some(
-                        manis_ui::nsh_select_group_node(&group, &name)
+                        manis_service::nsh_select_group_node(&group, &name)
                             .map_or_else(|error| error, |()| "已选择".to_owned()),
                     ),
                     _ => Some("缺少策略组或节点".to_owned()),
                 },
                 "connection.toggle" => {
                     data.get("enabled").and_then(Value::as_bool).map(|enabled| {
-                        manis_ui::nsh_set_tun(enabled).map_or_else(
+                        manis_service::nsh_set_tun(enabled).map_or_else(
                             |error| error,
                             |()| {
                                 if enabled {
@@ -92,7 +92,7 @@ pub fn install_handlers(host: &nsh_engine::HostChannel) {
                 }
                 "settings.autostart.set" => {
                     data.get("enabled").and_then(Value::as_bool).map(|enabled| {
-                        manis_ui::nsh_set_autostart(enabled).map_or_else(
+                        manis_service::nsh_set_autostart(enabled).map_or_else(
                             |error| error,
                             |()| {
                                 if enabled {
@@ -105,7 +105,7 @@ pub fn install_handlers(host: &nsh_engine::HostChannel) {
                     })
                 }
                 "connection.mode" => string_field("mode").map(|mode| {
-                    manis_ui::nsh_set_routing_mode(&mode)
+                    manis_service::nsh_set_routing_mode(&mode)
                         .map_or_else(|error| error, |()| "模式已切换".to_owned())
                 }),
                 "subscriptions.toggle" => {
@@ -117,11 +117,11 @@ pub fn install_handlers(host: &nsh_engine::HostChannel) {
                     let enabled = data.get("enabled").and_then(Value::as_bool);
                     match (kind.as_deref(), index, enabled) {
                         (Some("subscription"), Some(index), Some(enabled)) => Some(
-                            manis_ui::nsh_toggle_subscription(index, enabled)
+                            manis_service::nsh_toggle_subscription(index, enabled)
                                 .map_or_else(|error| error, |()| "订阅状态已保存".to_owned()),
                         ),
                         (Some("node"), Some(index), Some(enabled)) => Some(
-                            manis_ui::nsh_toggle_node(index, enabled)
+                            manis_service::nsh_toggle_node(index, enabled)
                                 .map_or_else(|error| error, |()| "节点状态已保存".to_owned()),
                         ),
                         _ => Some("无法识别要修改的来源".to_owned()),
@@ -135,11 +135,11 @@ pub fn install_handlers(host: &nsh_engine::HostChannel) {
                         .and_then(|value| usize::try_from(value).ok());
                     match (kind.as_deref(), index) {
                         (Some("subscription"), Some(index)) => Some(
-                            manis_ui::nsh_delete_subscription(index)
+                            manis_service::nsh_delete_subscription(index)
                                 .map_or_else(|error| error, |()| "订阅已删除".to_owned()),
                         ),
                         (Some("node"), Some(index)) => Some(
-                            manis_ui::nsh_delete_node(index)
+                            manis_service::nsh_delete_node(index)
                                 .map_or_else(|error| error, |()| "节点已删除".to_owned()),
                         ),
                         _ => Some("暂时只能删除订阅或手动节点".to_owned()),
@@ -156,7 +156,7 @@ pub fn install_handlers(host: &nsh_engine::HostChannel) {
                         string_field("policy"),
                     ) {
                         (Some(kind), Some(value), Some(policy)) => Some(
-                            manis_ui::nsh_save_rule(index, &kind, &value, &policy)
+                            manis_service::nsh_save_rule(index, &kind, &value, &policy)
                                 .map_or_else(|error| error, |()| "规则已保存".to_owned()),
                         ),
                         _ => Some("规则类型、内容和策略不能为空".to_owned()),
@@ -170,7 +170,7 @@ pub fn install_handlers(host: &nsh_engine::HostChannel) {
                     let enabled = data.get("enabled").and_then(Value::as_bool);
                     match (index, enabled) {
                         (Some(index), Some(enabled)) => Some(
-                            manis_ui::nsh_toggle_rule(index, enabled)
+                            manis_service::nsh_toggle_rule(index, enabled)
                                 .map_or_else(|error| error, |()| "规则状态已保存".to_owned()),
                         ),
                         _ => Some("缺少规则索引".to_owned()),
@@ -182,19 +182,19 @@ pub fn install_handlers(host: &nsh_engine::HostChannel) {
                         .and_then(Value::as_u64)
                         .and_then(|value| usize::try_from(value).ok());
                     index.map(|index| {
-                        manis_ui::nsh_delete_rule(index)
+                        manis_service::nsh_delete_rule(index)
                             .map_or_else(|error| error, |()| "规则已删除".to_owned())
                     })
                 }
                 "subscriptions.add" => match (string_field("name"), string_field("url")) {
                     (Some(name), Some(url)) => Some(
-                        manis_ui::nsh_add_subscription(&name, &url)
+                        manis_service::nsh_add_subscription(&name, &url)
                             .map_or_else(|error| error, |()| "订阅已保存".to_owned()),
                     ),
                     _ => Some("订阅名称和地址不能为空".to_owned()),
                 },
                 "subscriptions.addNode" => string_field("link").map(|link| {
-                    manis_ui::nsh_add_node(&link)
+                    manis_service::nsh_add_node(&link)
                         .map_or_else(|error| error, |()| "节点已保存".to_owned())
                 }),
                 "workspace.apply"
@@ -202,7 +202,7 @@ pub fn install_handlers(host: &nsh_engine::HostChannel) {
                 | "subscriptions.apply"
                 | "subscriptions.refresh"
                 | "settings.reload" => Some(
-                    manis_ui::nsh_apply_profile()
+                    manis_service::nsh_apply_profile()
                         .map_or_else(|error| error, |()| "配置已重新载入".to_owned()),
                 ),
                 "workspace.discard" => Some("已放弃更改（桌面原型）".to_owned()),
@@ -257,19 +257,18 @@ pub fn ensure_engine() -> Option<std::process::Child> {
         }
 
         let mut candidates = Vec::new();
-        if let Some(binary) = std::env::var_os("MANIS_UI_BIN") {
+        if let Some(binary) = std::env::var_os("MANIS_ENGINE_BIN") {
             candidates.push(std::path::PathBuf::from(binary));
         }
         if let Ok(executable) = std::env::current_exe()
             && let Some(directory) = executable.parent()
         {
-            candidates.push(directory.join("manis-ui"));
+            candidates.push(directory.join("manis-engine"));
         }
-        candidates.push(std::path::PathBuf::from("manis-ui"));
+        candidates.push(std::path::PathBuf::from("manis-engine"));
 
         for binary in candidates {
             let Ok(child) = std::process::Command::new(&binary)
-                .arg("--headless")
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())

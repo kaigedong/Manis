@@ -6,7 +6,7 @@ pub(crate) fn main() {
     const BUNDLE: &str = include_str!("../../../android/app/src/main/assets/nsh/bundle.js");
 
     if std::env::args_os().any(|argument| argument == "--version") {
-        println!("Manis {}", manis_ui::version());
+        println!("Manis {}", manis_service::version());
         return;
     }
     let _engine = manis_nsh_host::ensure_engine();

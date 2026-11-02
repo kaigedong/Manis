@@ -9,7 +9,7 @@ members = [
     "crates/manis-nsh-host",
     "crates/manis-presentation",
     "crates/manis-profile",
-    "crates/manis-ui",
+    "crates/manis-service",
 ]
 resolver = "2"
 

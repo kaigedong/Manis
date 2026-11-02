@@ -2,8 +2,7 @@
 //!
 //! It runs the same TSX bundle as Android in the GTK NSH host and bridges
 //! saved desktop sources, the live controller snapshot and the desktop store
-//! mutations. It is a development host while the GPUI window is still the
-//! production desktop UI.
+//! mutations. It is the production desktop UI on Linux, macOS and Windows.
 
 #[cfg(target_os = "macos")]
 mod macos;
@@ -94,7 +93,7 @@ mod desktop {
 
     pub(crate) fn main() {
         if std::env::args_os().any(|argument| argument == "--version") {
-            println!("Manis {}", manis_ui::version());
+            println!("Manis {}", manis_service::version());
             return;
         }
         let engine = Rc::new(RefCell::new(ensure_engine()));

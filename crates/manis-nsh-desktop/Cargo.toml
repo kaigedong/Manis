@@ -19,7 +19,7 @@ ksni = { version = "=0.3.7", default-features = false, features = ["async-io", "
 
 [dependencies]
 manis-nsh-host = { path = "../manis-nsh-host" }
-manis-ui = { path = "../manis-ui" }
+manis-service = { path = "../manis-service" }
 nsh-engine = "=0.3.0"
 nsh-platform-linux = "=0.3.0"
 serde_json = "1.0.154"

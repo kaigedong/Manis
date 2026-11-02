@@ -6,6 +6,15 @@ once the public API and configuration formats stabilize.
 
 ## [Unreleased]
 
+### Removed
+
+- GPUI is gone. `crates/manis-ui` is replaced by the toolkit-neutral `crates/manis-service`, which
+  owns the saved workspace, the Mihomo controller, the NSH bridge and the new `manis-engine`
+  headless binary. The workspace no longer depends on `gpui`, `gpui-component`,
+  `gpui-pre-platform` or the Zed git sources; `Cargo.lock` drops the whole GPUI graph.
+- The GPUI window, the snapshot example and the GPUI tray implementation are deleted. Packaging now
+  installs `manis` (NSH host) and `manis-engine` on Linux/macOS/Windows.
+
 ### Added
 
 - `manis-presentation::ConnectionPageView`: Android and desktop now build the connection page
@@ -19,10 +28,10 @@ once the public API and configuration formats stabilize.
   autostart/update fields and blank-value defaults are shared by Android and desktop.
 - `manis-presentation::COMMANDS`: the desktop dispatcher and `nsh.json` host capabilities are
   checked against one shared command catalog, so a missing grant fails a unit test.
-- macOS packaging now bundles the NSH host as `Manis.app/Contents/MacOS/Manis` and keeps the GPUI
-  binary beside it as the headless engine.
+- macOS packaging now bundles the NSH host as `Manis.app/Contents/MacOS/Manis` and keeps the
+  headless engine beside it as `Manis.app/Contents/MacOS/manis-engine`.
 - Windows: add `packaging/windows/build-release.ps1` for a portable `Manis.exe` +
-  `manis-ui.exe` zip. Add a Windows named-pipe controller transport (`-ext-ctl-pipe`), the
+  `manis-engine.exe` zip. Add a Windows named-pipe controller transport (`-ext-ctl-pipe`), the
   managed `\\.\pipe\manis-mihomo` endpoint, a live client for it, and host auto-start of the
   headless engine.
 - `manis-nsh-host`: the shared NSH bridge (root payload, command handlers and desktop engine
@@ -32,7 +41,7 @@ once the public API and configuration formats stabilize.
   Linux keeps the GTK shell. The shared bridge resolves the controller path through the same brand
   data directory as the engine, so the macOS shell probes the real socket. Windows cross-checks
   with the GNU target.
-- Rust and GPUI desktop application for policy-based proxy routing.
+- Rust desktop application for policy-based proxy routing, now rendered by NSH.
 - Android client (`android/`) with a `VpnService` TUN, a bundled patched Mihomo core, and a
   workspace model compiled by the same Rust profile code as the desktop: multiple subscriptions,
   VLESS imports, user policy groups, QX rules, rule/global/direct modes, node switching with
@@ -93,23 +102,22 @@ once the public API and configuration formats stabilize.
   delete). Apply/refresh now syncs single-node provider files, recompiles the saved profile and
   reloads the live controller through `/configs`, restoring the previous YAML on failure.
   Manual rules can now be added, edited, toggled and deleted from the Rules page; each write is
-  followed by the same profile apply. Runtime rules remain read-only. Connection stop and the final
-  `manis-ui` replacement are the next step. The Connection page can now toggle the live TUN
+  followed by the same profile apply. Runtime rules remain read-only. Connection stop is the next step. The Connection page can now toggle the live TUN
   interface (verified off → on), and connection.reload now reapplies the saved profile. CI installs
   GTK 4 and links the NSH desktop host on Linux.
 - Build: add `android/build-nsh-ui.sh` and `android/test-nsh-ui.sh`, pin the NSH CLI to 0.3.0 in
   Android CI, and fail when the committed NSH assets differ from a fresh build. All five NSH UI
   tests run in CI.
-- Desktop launch: `manis-ui --headless` runs the managed engine without a window. The NSH host
+- Desktop launch: `manis-engine` runs the managed engine without a window. The NSH host
   starts it when no controller is running, waits for the Unix controller, and stops the owned
   engine when its window closes. With an existing controller it attaches instead.
-- Packaging: the Arch/AUR `manis` entry now installs the NSH host as `manis` and the GPUI binary
-  as `manis-ui` (the headless engine), with the `gtk4` dependency.
+- Packaging: the Arch/AUR `manis` entry now installs the NSH host as `manis` and the headless
+  engine as `manis-engine`, with the `gtk4` dependency.
 - Desktop shell: add a StatusNotifierItem tray with open/quit, and hide the window on close while
   the tray is available. The tray registers as `dev.manis.app`.
 - Settings: expose the desktop login-startup preference and toggle it from the NSH Settings page;
   verified enable/disable writes/removes the XDG autostart entry. Desktop update actions open the
-  GitHub Release page; install points at the manual release package (matching the GPUI flow). Subscription/manual source grouping,
+  GitHub Release page; install points at the manual release package. Subscription/manual source grouping,
   the internal `__MANIS_GLOBAL__` label, current selection and delays are built once instead of
   being reconstructed by the Kotlin UI. The NSH Android runtime is pinned to `v0.3.0`, fetched by
   `android/fetch-nsh.sh`, and raises `minSdk` to 28.
@@ -122,10 +130,8 @@ once the public API and configuration formats stabilize.
   (type, value, target, enable/disable, edit/delete). The rule/global/direct mode selector now lives
   only on the connection page.
 
-- Upgrade every direct dependency to its newest release, including GPUI `0.3.10`, GPUI Component
-  `0.8.1`, `zip` 9.1.3, `zbus` 6.2, and `ureq` 3.5. The core archive reader accepts `zip` 9's
-  fallible entry names, and the Linux tray integration test drives `zbus` 6 from its process-wide
-  multithreaded runtime now that the blocking API is gone. The Android bridge moves to `jni` 0.22's
+- Upgrade every direct dependency to its newest release, including `zip` 9.1.3 and `ureq` 3.5.
+  The core archive reader accepts `zip` 9's fallible entry names. The Android bridge moves to `jni` 0.22's
   `EnvUnowned` native-method entry point and reports every failure as `IllegalStateException`
   through one error policy. Every GitHub Actions pin moves to its current release (`checkout` 7,
   `cache` 6, `setup-java` 6, `setup-go` 7, `setup-android` 4, artifact upload/download 7/8,

@@ -3,7 +3,7 @@
 `build-release.ps1` builds a portable directory and zip:
 
 - `Manis.exe` — the shared NSH desktop host
-- `manis-ui.exe` — the headless engine binary
+- `manis-engine.exe` — the headless engine binary
 
 The managed Mihomo controller transport is not implemented on Windows yet, so
 the shell can read saved sources and settings but cannot start the core. The
