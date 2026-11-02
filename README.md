@@ -126,16 +126,19 @@ cargo run -p manis-nsh-desktop
 
 发行包的 `manis` 入口已经是 NSH 桌面宿主；`manis-ui` 保留为引擎和开发用的 GPUI 窗口。源码模式下两者可以分别运行。
 
-桌面端还有一条 NSH 迁移支线：`manis-nsh-desktop` 用同一个 TSX bundle 在 GTK 4 的 NSH
-宿主里打开单根页面。它读取桌面已保存的订阅、手动节点、策略组和路由模式，并通过本地 controller socket 读取实时连接状态、出口节点、代理/规则数量、路由模式、订阅/手动节点来源和策略组；节点选择、路由模式切换、运行时规则、内核日志订阅/手动节点的添加、启停、删除、重新载入配置，手动规则的添加/编辑/启停/删除，以及连接页的 TUN 开关已接入；运行时规则只读，正式替换和发布链路仍待完成：
+桌面端 NSH 宿主按平台选择原生壳，但共用同一份 TSX 和同一个后端桥
+[`crates/manis-nsh-host`](crates/manis-nsh-host)：
 
-```bash
-cargo run -p manis-nsh-desktop
-```
+- Linux：GTK 4（`nsh-platform-linux`），含 StatusNotifierItem 托盘
+- macOS：AppKit（`nsh-platform-macos`）
+- Windows：Win32/Direct2D（`nsh-platform-windows`）
 
-需要 GTK 4.14+ 与 Vulkan/GTK 的常规开发包；窗口使用与 Android 相同的 NSH 根页面和底部
-导航。关闭窗口会隐藏到系统托盘（托盘菜单可重新打开或退出），设置页可以切换开机自动启动。若本地 controller 未运行，NSH 宿主会启动同一构建目录下的 `manis-ui --headless`
-作为引擎进程，并在窗口关闭时停止它。NSH TSX 资产可以复现重建：
+三者都读取桌面已保存的订阅、手动节点、策略组和路由模式，并通过本地 controller 读取实时状态；
+节点选择、路由模式切换、运行时规则、内核日志、订阅/手动节点添加/启停/删除、重新载入配置、
+手动规则编辑、TUN 开关、开机启动和更新检查都已接入。Linux 壳已在实机验证；macOS/Windows
+壳由各自 CI runner 编译验证。
+
+NSH TSX 资产可以复现重建：
 
 ```bash
 android/build-nsh-ui.sh      # 需要 nsh 0.3.0
