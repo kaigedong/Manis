@@ -29,10 +29,6 @@ build() {
   local rust_flags="${RUSTFLAGS:+$RUSTFLAGS }-C linker-features=-lld"
   local target_dir="$startdir/../../target/archlinux"
 
-  # A restored cache can keep ring's rlib without the C archive its build
-  # script produced, which fails the link with undefined ring_core_* symbols.
-  CARGO_TARGET_DIR="$target_dir" cargo clean -p ring --release || true
-
   # The headless engine owns the Mihomo process and the saved profile.
   RUSTFLAGS="$rust_flags" \
     CARGO_TARGET_DIR="$target_dir" \

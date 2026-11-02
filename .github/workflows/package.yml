@@ -105,7 +105,6 @@ jobs:
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-            target/
           key: cargo-package-macos-${{ matrix.architecture }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', '**/Cargo.toml') }}
           restore-keys: |
             cargo-package-macos-${{ matrix.architecture }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', '**/Cargo.toml') }}-
@@ -125,7 +124,6 @@ jobs:
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-            target/
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
       - name: Verify and archive bundle
         shell: bash
@@ -193,8 +191,6 @@ jobs:
             /home/builder/.cargo/registry/index/
             /home/builder/.cargo/registry/cache/
             /home/builder/.cargo/git/db/
-            target/archlinux/
-            target/archlinux-nsh/
           key: cargo-package-archlinux-x86_64-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', '**/Cargo.toml') }}
           restore-keys: |
             cargo-package-archlinux-x86_64-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', '**/Cargo.toml') }}-
@@ -230,8 +226,6 @@ jobs:
             /home/builder/.cargo/registry/index/
             /home/builder/.cargo/registry/cache/
             /home/builder/.cargo/git/db/
-            target/archlinux/
-            target/archlinux-nsh/
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
       - name: Inspect package metadata
         shell: bash
