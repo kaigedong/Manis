@@ -1,4 +1,4 @@
-//! AppKit shell for the shared NSH bridge.
+//! `AppKit` shell for the shared NSH bridge.
 
 pub(crate) fn main() {
     use nsh_platform_macos::{AppOptions, AppSource, Bundle, run_app};
