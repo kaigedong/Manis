@@ -1,5 +1,6 @@
 package dev.manis.app.nsh
 
+import dev.manis.app.core.Native
 import dev.manis.app.data.MobileConfig
 import dev.manis.app.ui.RuntimeState
 import dev.manis.app.ui.displayProxyName
@@ -14,7 +15,7 @@ internal fun buildConnectionData(
     val global = RuntimeState.snapshot?.groups?.firstOrNull { it.name == "__MANIS_GLOBAL__" }
     val warnings = JSONArray()
     RuntimeState.warnings.take(4).forEach(warnings::put)
-    return JSONObject()
+    val request = JSONObject()
         .put("active", RuntimeState.active)
         .put("node", displayProxyName(global?.now) ?: "")
         .put("mode", RuntimeState.snapshot?.mode ?: config.mode)
@@ -27,4 +28,6 @@ internal fun buildConnectionData(
             "hasSources",
             config.subscriptions.any { it.enabled } || config.nodes.any { it.enabled },
         )
+    return runCatching { JSONObject(Native.connectionPage(request.toString())) }
+        .getOrElse { request }
 }

@@ -147,6 +147,28 @@ pub extern "system" fn Java_dev_manis_app_core_Native_nodePage<'frame>(
         .resolve::<ThrowIllegalStateAndDefault>()
 }
 
+/// Builds the shared connection-page presentation from the host's JSON request.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_manis_app_core_Native_connectionPage<'frame>(
+    mut unowned_env: EnvUnowned<'frame>,
+    _this: JObject<'frame>,
+    request_json: JString<'frame>,
+) -> jstring {
+    unowned_env
+        .with_env(|env| -> Result<jstring, BridgeError> {
+            let request = string_arg(env, request_json)?;
+            let page =
+                manis_presentation::ConnectionPageView::from_json(&request).map_err(|error| {
+                    BridgeError::Message(format!("connection page request: {error}"))
+                })?;
+            let json = serde_json::to_string(&page).map_err(|error| {
+                BridgeError::Message(format!("connection page response: {error}"))
+            })?;
+            Ok(env.new_string(json)?.into_raw())
+        })
+        .resolve::<ThrowIllegalStateAndDefault>()
+}
+
 /// Starts the bundled core with `file_descriptor` duplicated to fd 3.
 ///
 /// Returns the child pid on success and throws `IllegalStateException` on failure.

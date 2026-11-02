@@ -4797,6 +4797,7 @@ dependencies = [
  "manis-core",
  "manis-engine",
  "manis-mihomo",
+ "manis-presentation",
  "manis-profile",
  "serde",
  "serde_json",

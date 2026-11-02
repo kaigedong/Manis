@@ -1,12 +1,17 @@
-//! Platform-neutral presentation for the node page.
+//! Platform-neutral presentation shared by the desktop and Android shells.
 //!
-//! The desktop and the Android UI used to derive this model separately: the desktop rebuilt
+//! The node page and the connection page are built here. The desktop and Android UI used to
+//! derive the node model separately: the desktop rebuilt
 //! source groups from its providers, while Android read the raw Mihomo `GLOBAL` selector. That
 //! difference leaked internal names such as `__MANIS_GLOBAL__` and merged every subscription into
 //! one list. This crate owns the shared rules instead: display names, source grouping, current
 //! selection, delays and which runtime groups are user-facing.
 
 use std::collections::{BTreeMap, BTreeSet};
+
+pub mod connection;
+
+pub use connection::{ConnectionPageInput, ConnectionPageView};
 
 use serde::{Deserialize, Serialize};
 

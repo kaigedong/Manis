@@ -953,17 +953,20 @@ pub fn nsh_root_data() -> serde_json::Value {
             "autoStart": auto_start_enabled(),
             "update": { "state": "idle" }
         },
-        "connection": {
-            "active": active,
-            "node": live_node,
-            "mode": mode,
-            "summary": summary,
-            "error": "",
-            "unreachable": false,
-            "warnings": [],
-            "warningCount": 0,
-            "hasSources": has_sources
-        }
+        "connection": serde_json::to_value(manis_presentation::ConnectionPageView::build(
+            manis_presentation::ConnectionPageInput {
+                active,
+                node: live_node,
+                mode: mode.to_owned(),
+                summary,
+                error: String::new(),
+                unreachable: false,
+                warnings: Vec::new(),
+                warning_count: 0,
+                has_sources,
+            }
+        ))
+        .unwrap_or_else(|_| json!({}))
     })
 }
 
