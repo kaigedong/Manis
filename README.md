@@ -66,7 +66,7 @@ Manis 源码仓库不提交预编译代理内核。发行构建会从 Mihomo 官
 | 平台 | 编译目标 | 运行状态 |
 | --- | --- | --- |
 | macOS 13+ | 持续维护 | 主要开发平台；系统代理已验证，TUN 通过管理员授权路径支持测试 |
-| Windows | 持续维护 | 实验性；托管 controller transport 尚未完成，暂不能启动 Mihomo |
+| Windows | 持续维护 | 实验性；使用 named-pipe controller transport，NSH 壳会启动 headless 引擎 |
 | Linux | 持续维护 | 实验性；仍需覆盖更多发行版与桌面环境 |
 | Android | 实验性 | `arm64-v8a` 真机与模拟器均可运行；功能对齐见 [android/README.md](android/README.md) |
 

@@ -992,12 +992,20 @@ fn live_client() -> Option<manis_mihomo::MihomoClient<manis_mihomo::UnixSocketTr
     ))
 }
 
-#[cfg(unix)]
+#[cfg(windows)]
+fn live_client() -> Option<manis_mihomo::MihomoClient<manis_mihomo::NamedPipeTransport>> {
+    Some(manis_mihomo::MihomoClient::new(
+        manis_mihomo::ControllerConfig::default(),
+        manis_mihomo::NamedPipeTransport::new(r"\\.\pipe\manis-mihomo"),
+    ))
+}
+
+#[cfg(any(unix, windows))]
 fn live_snapshot() -> Option<manis_mihomo::MihomoSnapshot> {
     live_client()?.fetch_snapshot().ok()
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn live_snapshot() -> Option<manis_mihomo::MihomoSnapshot> {
     None
 }
@@ -1007,7 +1015,7 @@ fn live_snapshot() -> Option<manis_mihomo::MihomoSnapshot> {
 /// # Errors
 /// Returns a controller error when no live controller or group exists.
 pub fn nsh_select_global_node(name: &str) -> Result<(), String> {
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     {
         let client = live_client().ok_or_else(|| "桌面内核未运行".to_owned())?;
         let snapshot = client.fetch_snapshot().map_err(|error| error.to_string())?;
@@ -1022,10 +1030,10 @@ pub fn nsh_select_global_node(name: &str) -> Result<(), String> {
             .select_policy_group_node(&group.name, name)
             .map_err(|error| error.to_string())
     }
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = name;
-        Err("桌面控制器只在 Unix 上接入".to_owned())
+        Err("桌面控制器只在 Unix/Windows 上接入".to_owned())
     }
 }
 
@@ -1034,17 +1042,17 @@ pub fn nsh_select_global_node(name: &str) -> Result<(), String> {
 /// # Errors
 /// Returns a controller error when no live controller exists.
 pub fn nsh_select_group_node(group: &str, name: &str) -> Result<(), String> {
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     {
         live_client()
             .ok_or_else(|| "桌面内核未运行".to_owned())?
             .select_policy_group_node(group, name)
             .map_err(|error| error.to_string())
     }
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = (group, name);
-        Err("桌面控制器只在 Unix 上接入".to_owned())
+        Err("桌面控制器只在 Unix/Windows 上接入".to_owned())
     }
 }
 
@@ -1053,17 +1061,17 @@ pub fn nsh_select_group_node(group: &str, name: &str) -> Result<(), String> {
 /// # Errors
 /// Returns a controller error when no live controller exists.
 pub fn nsh_set_tun(enabled: bool) -> Result<(), String> {
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     {
         live_client()
             .ok_or_else(|| "桌面内核未运行".to_owned())?
             .set_tun_enabled(enabled)
             .map_err(|error| error.to_string())
     }
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = enabled;
-        Err("桌面控制器只在 Unix 上接入".to_owned())
+        Err("桌面控制器只在 Unix/Windows 上接入".to_owned())
     }
 }
 
@@ -1072,7 +1080,7 @@ pub fn nsh_set_tun(enabled: bool) -> Result<(), String> {
 /// # Errors
 /// Returns a controller error for an unknown mode or unavailable controller.
 pub fn nsh_set_routing_mode(mode: &str) -> Result<(), String> {
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     {
         let mode = manis_mihomo::RoutingMode::parse_wire_value(mode)
             .ok_or_else(|| "未知路由模式".to_owned())?;
@@ -1081,10 +1089,10 @@ pub fn nsh_set_routing_mode(mode: &str) -> Result<(), String> {
             .set_routing_mode(mode)
             .map_err(|error| error.to_string())
     }
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = mode;
-        Err("桌面控制器只在 Unix 上接入".to_owned())
+        Err("桌面控制器只在 Unix/Windows 上接入".to_owned())
     }
 }
 
@@ -1377,7 +1385,7 @@ fn manual_rule_kind(label: &str) -> Option<crate::manual_rule::ManualRuleKind> {
 /// # Errors
 /// Returns a profile, render, controller or rollback error.
 pub fn nsh_apply_profile() -> Result<(), String> {
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     {
         let data_dir = crate::brand::data_dir().ok_or_else(|| "找不到数据目录".to_owned())?;
         let config_dir = crate::brand::config_dir().ok_or_else(|| "找不到配置目录".to_owned())?;
@@ -1399,9 +1407,9 @@ pub fn nsh_apply_profile() -> Result<(), String> {
         }
         Ok(())
     }
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     {
-        Err("桌面控制器只在 Unix 上接入".to_owned())
+        Err("桌面控制器只在 Unix/Windows 上接入".to_owned())
     }
 }
 

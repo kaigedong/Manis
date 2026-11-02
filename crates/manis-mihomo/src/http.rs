@@ -193,6 +193,8 @@ pub(crate) enum Target<'a> {
     Loopback(&'a ControllerConfig),
     #[cfg(unix)]
     Unix(&'a ControllerConfig, &'a Path),
+    #[cfg(windows)]
+    NamedPipe(&'a ControllerConfig, &'a str),
 }
 
 impl Target<'_> {
@@ -207,6 +209,8 @@ impl Target<'_> {
             Self::Loopback(config) => config,
             #[cfg(unix)]
             Self::Unix(config, _) => config,
+            #[cfg(windows)]
+            Self::NamedPipe(config, _) => config,
         };
         // Validate the whole request, including authentication, before opening any socket.
         let request = build_request(
@@ -235,6 +239,11 @@ impl Target<'_> {
             Self::Unix(_, path) => {
                 validate_unix_socket_path(path)?;
                 Socket::Unix(UnixStream::connect(path)?)
+            }
+            #[cfg(windows)]
+            Self::NamedPipe(_, name) => {
+                use std::fs::OpenOptions;
+                Socket::Pipe(OpenOptions::new().read(true).write(true).open(name)?)
             }
         };
         let settings = ureq::Agent::config_builder()
@@ -439,5 +448,60 @@ mod tests {
         )
         .unwrap();
         assert!(!format!("{request:?}").contains("secret-token"));
+    }
+}
+
+/// Controller transport over a Windows named pipe.
+#[cfg(windows)]
+#[derive(Clone, Debug)]
+pub struct NamedPipeTransport {
+    name: std::sync::Arc<str>,
+    body_limit: usize,
+}
+
+#[cfg(windows)]
+impl NamedPipeTransport {
+    /// Creates a transport for a validated pipe path such as `\\.\pipe\manis-mihomo`.
+    #[must_use]
+    pub fn new(name: impl Into<std::sync::Arc<str>>) -> Self {
+        Self {
+            name: name.into(),
+            body_limit: DEFAULT_BODY_LIMIT_BYTES,
+        }
+    }
+}
+
+#[cfg(windows)]
+impl ControllerTransport for NamedPipeTransport {
+    fn get(&self, config: &ControllerConfig, path: &str) -> Result<String, MihomoError> {
+        Target::NamedPipe(config, &self.name).request(Method::GET, path, None, self.body_limit)
+    }
+
+    fn patch_json(
+        &self,
+        config: &ControllerConfig,
+        path: &str,
+        body: &Value,
+    ) -> Result<String, MihomoError> {
+        Target::NamedPipe(config, &self.name).request(
+            Method::PATCH,
+            path,
+            Some(body),
+            self.body_limit,
+        )
+    }
+
+    fn put_json(
+        &self,
+        config: &ControllerConfig,
+        path: &str,
+        body: &Value,
+    ) -> Result<String, MihomoError> {
+        Target::NamedPipe(config, &self.name).request(
+            Method::PUT,
+            path,
+            Some(body),
+            self.body_limit,
+        )
     }
 }

@@ -22,7 +22,9 @@ once the public API and configuration formats stabilize.
 - macOS packaging now bundles the NSH host as `Manis.app/Contents/MacOS/Manis` and keeps the GPUI
   binary beside it as the headless engine.
 - Windows: add `packaging/windows/build-release.ps1` for a portable `Manis.exe` +
-  `manis-ui.exe` zip; the managed controller transport remains unavailable there.
+  `manis-ui.exe` zip. Add a Windows named-pipe controller transport (`-ext-ctl-pipe`), the
+  managed `\\.\pipe\manis-mihomo` endpoint, a live client for it, and host auto-start of the
+  headless engine.
 - `manis-nsh-host`: the shared NSH bridge (root payload, command handlers and desktop engine
   discovery) used by the desktop shells, so every platform answers the same TSX through one
   backend module.

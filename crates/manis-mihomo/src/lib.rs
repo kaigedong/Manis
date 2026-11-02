@@ -13,6 +13,8 @@ pub use catalog::to_policy_catalog;
 pub use client::MihomoClient;
 pub use config::ControllerConfig;
 pub use error::MihomoError;
+#[cfg(windows)]
+pub use http::NamedPipeTransport;
 #[cfg(unix)]
 pub use http::UnixSocketTransport;
 pub use http::{ControllerTransport, StdHttpTransport};

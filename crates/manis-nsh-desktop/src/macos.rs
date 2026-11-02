@@ -9,6 +9,8 @@ pub(crate) fn main() {
         println!("Manis {}", manis_ui::version());
         return;
     }
+    let _engine = manis_nsh_host::ensure_engine();
+    std::thread::sleep(std::time::Duration::from_millis(1500));
     let host = nsh_engine::HostChannel::default();
     let params = serde_json::json!({
         "data": manis_nsh_host::root_data(),
@@ -29,7 +31,6 @@ pub(crate) fn main() {
         host,
         ..AppOptions::default()
     };
-    let _ = manis_nsh_host::ensure_engine();
     let _ = run_app(
         AppSource::Bundle(Bundle::source(BUNDLE.to_owned())),
         options,

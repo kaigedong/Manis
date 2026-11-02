@@ -3,6 +3,8 @@
 //! A one-shot connector cannot fall back to TCP, a proxy, or a redirected destination. Keep
 //! ureq's unversioned extension API confined here and test it whenever the pinned version changes.
 
+#[cfg(windows)]
+use std::fs::File;
 use std::io::{self, Read, Write};
 use std::net::TcpStream;
 #[cfg(unix)]
@@ -23,6 +25,8 @@ pub(crate) enum Socket {
     Tcp(TcpStream),
     #[cfg(unix)]
     Unix(UnixStream),
+    #[cfg(windows)]
+    Pipe(File),
 }
 
 impl Socket {
@@ -31,6 +35,8 @@ impl Socket {
             Self::Tcp(stream) => stream.set_read_timeout(timeout),
             #[cfg(unix)]
             Self::Unix(stream) => stream.set_read_timeout(timeout),
+            #[cfg(windows)]
+            Self::Pipe(_) => Ok(()),
         }
     }
 
@@ -65,6 +71,8 @@ impl Socket {
             Self::Tcp(stream) => stream.set_write_timeout(timeout),
             #[cfg(unix)]
             Self::Unix(stream) => stream.set_write_timeout(timeout),
+            #[cfg(windows)]
+            Self::Pipe(_) => Ok(()),
         }
     }
 }
@@ -75,6 +83,8 @@ impl Read for Socket {
             Self::Tcp(stream) => stream.read(bytes),
             #[cfg(unix)]
             Self::Unix(stream) => stream.read(bytes),
+            #[cfg(windows)]
+            Self::Pipe(stream) => stream.read(bytes),
         }
     }
 }
@@ -85,6 +95,8 @@ impl Write for Socket {
             Self::Tcp(stream) => stream.write(bytes),
             #[cfg(unix)]
             Self::Unix(stream) => stream.write(bytes),
+            #[cfg(windows)]
+            Self::Pipe(stream) => stream.write(bytes),
         }
     }
 
@@ -93,6 +105,8 @@ impl Write for Socket {
             Self::Tcp(stream) => stream.flush(),
             #[cfg(unix)]
             Self::Unix(stream) => stream.flush(),
+            #[cfg(windows)]
+            Self::Pipe(stream) => stream.flush(),
         }
     }
 }
