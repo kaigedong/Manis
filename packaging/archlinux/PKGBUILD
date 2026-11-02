@@ -32,16 +32,16 @@ build() {
   local rust_flags="${RUSTFLAGS:+$RUSTFLAGS }-C linker-features=-lld"
   local target_dir="$startdir/../../target/archlinux"
 
-  # A restored Cargo cache can keep a stale proc-macro artifact that makes
-  # quickjs-jit fail with "can't find crate for rquickjs_macro". Rebuild it.
-  CARGO_TARGET_DIR="$target_dir" cargo clean -p quickjs-jit-macro --release || true
-
   RUSTFLAGS="$rust_flags" \
     CARGO_TARGET_DIR="$target_dir" \
     cargo build -p manis-ui --lib --release --locked
 
+  # Use a separate target dir: a restored Cargo cache can keep a stale
+  # quickjs-jit-macro artifact that makes quickjs-jit fail with
+  # "can't find crate for rquickjs_macro".
+  local nsh_target="$startdir/../../target/archlinux-nsh"
   RUSTFLAGS="$rust_flags" \
-    CARGO_TARGET_DIR="$target_dir" \
+    CARGO_TARGET_DIR="$nsh_target" \
     cargo build -p manis-nsh-desktop --release --locked
 
   RUSTFLAGS="$rust_flags" \
@@ -95,7 +95,7 @@ check() {
 }
 
 package() {
-  install -Dm755 "$startdir/../../target/archlinux/release/manis-nsh-desktop" \
+  install -Dm755 "$startdir/../../target/archlinux-nsh/release/manis-nsh-desktop" \
     "$pkgdir/usr/bin/manis"
   install -Dm755 "$startdir/../../target/archlinux/release/manis-ui" \
     "$pkgdir/usr/bin/manis-ui"
