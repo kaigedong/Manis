@@ -1223,82 +1223,64 @@ fn nsh_rules_page(
 
     let mut rules: Vec<_> = manual_rules
         .iter()
-        .enumerate()
-        .map(|(index, rule)| {
-            let value = rule
+        .map(|rule| manis_presentation::RuleRowInput {
+            kind: rule.condition_kind_label().to_owned(),
+            value: rule
                 .conditions()
                 .iter()
                 .map(crate::manual_rule::ManualRuleCondition::parameter)
                 .collect::<Vec<_>>()
-                .join(" / ");
-            json!({
-                "index": index,
-                "kind": rule.condition_kind_label(),
-                "value": value,
-                "policy": rule.target(),
-                "policyLabel": if rule.target() == "__MANIS_GLOBAL__" { "全局" } else { rule.target() },
-                "enabled": rule.enabled(),
-                "source": "manual",
-            })
+                .join(" / "),
+            policy: rule.target().to_owned(),
+            enabled: rule.enabled(),
+            source: Some("manual".into()),
         })
         .collect();
-    let runtime_rules: Vec<_> = snapshot
-        .rules
-        .iter()
-        .enumerate()
-        .map(|(index, rule)| {
-            let kind = match rule.kind.as_str() {
-                "Match" | "Final" => "FINAL",
-                "DomainSuffix" => "DOMAIN-SUFFIX",
-                "Domain" => "DOMAIN",
-                "DomainKeyword" => "DOMAIN-KEYWORD",
-                "DomainWildcard" => "DOMAIN-WILDCARD",
-                "IPCIDR" => "IP-CIDR",
-                "IPCIDR6" => "IP6-CIDR",
-                "GeoIP" => "GEOIP",
-                "IPASN" => "IP-ASN",
-                "DstPort" => "DST-PORT",
-                other => other,
-            };
-            json!({
-                "index": manual_rules.len() + index,
-                "kind": kind,
-                "value": if kind == "FINAL" { "" } else { rule.payload.as_str() },
-                "policy": rule.proxy,
-                "policyLabel": if rule.proxy == "__MANIS_GLOBAL__" { "全局" } else { rule.proxy.as_str() },
-                "enabled": !rule.extra.disabled.unwrap_or(false),
-                "source": "runtime",
-            })
-        })
+    rules.extend(snapshot.rules.iter().map(|rule| {
+        let kind = match rule.kind.as_str() {
+            "Match" | "Final" => "FINAL",
+            "DomainSuffix" => "DOMAIN-SUFFIX",
+            "Domain" => "DOMAIN",
+            "DomainKeyword" => "DOMAIN-KEYWORD",
+            "DomainWildcard" => "DOMAIN-WILDCARD",
+            "IPCIDR" => "IP-CIDR",
+            "IPCIDR6" => "IP6-CIDR",
+            "GeoIP" => "GEOIP",
+            "IPASN" => "IP-ASN",
+            "DstPort" => "DST-PORT",
+            other => other,
+        };
+        manis_presentation::RuleRowInput {
+            kind: kind.to_owned(),
+            value: if kind == "FINAL" {
+                String::new()
+            } else {
+                rule.payload.clone()
+            },
+            policy: rule.proxy.clone(),
+            enabled: !rule.extra.disabled.unwrap_or(false),
+            source: Some("runtime".into()),
+        }
+    }));
+    let policies: Vec<_> = snapshot
+        .policy_groups()
+        .into_iter()
+        .map(|group| group.name)
+        .filter(|name| name != "__MANIS_GLOBAL__" && name != "DIRECT" && name != "REJECT")
         .collect();
-    rules.extend(runtime_rules);
-    let mut policies = vec![
-        "DIRECT".to_owned(),
-        "REJECT".to_owned(),
-        "__MANIS_GLOBAL__".to_owned(),
-    ];
-    policies.extend(
-        snapshot
-            .policy_groups()
-            .into_iter()
-            .map(|group| group.name)
-            .filter(|name| name != "__MANIS_GLOBAL__" && name != "DIRECT" && name != "REJECT"),
-    );
-
-    json!({
-        "rules": rules,
-        "kinds": [
-            "DOMAIN-SUFFIX", "DOMAIN", "DOMAIN-KEYWORD", "DOMAIN-WILDCARD",
-            "IP-CIDR", "IP6-CIDR", "GEOIP", "IP-ASN", "DST-PORT", "FINAL"
-        ],
-        "policies": policies,
-        "warnings": [],
-        "summary": format!(
-            "{} 条手动规则 · {} 条运行时规则",
-            manual_rules.len(),
-            snapshot.rules.len()
-        ),
-    })
+    serde_json::to_value(manis_presentation::RulesPageView::build(
+        manis_presentation::RulesPageInput {
+            rules,
+            policies,
+            warnings: Vec::new(),
+            summary: format!(
+                "{} 条手动规则 · {} 条运行时规则",
+                manual_rules.len(),
+                snapshot.rules.len()
+            ),
+        },
+    ))
+    .unwrap_or_else(|_| json!({}))
 }
 
 /// Adds or replaces one saved manual desktop rule, then applies the profile.

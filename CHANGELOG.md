@@ -13,6 +13,8 @@ once the public API and configuration formats stabilize.
 - `manis-presentation::SubscriptionsPageView`: subscription/manual-node/group rows, default
   names, indices and URL masking are shared. URL userinfo is now stripped from the displayed
   source address on both platforms.
+- `manis-presentation::RulesPageView`: rule rows, policy labels, policy deduplication, rule kinds
+  and warning limits are shared; Android and desktop both build the rules page through it.
 - `manis-nsh-host`: the shared NSH bridge (root payload, command handlers and desktop engine
   discovery) used by the desktop shells, so every platform answers the same TSX through one
   backend module.

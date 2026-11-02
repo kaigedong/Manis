@@ -10,9 +10,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 pub mod connection;
+pub mod rules;
 pub mod subscriptions;
 
 pub use connection::{ConnectionPageInput, ConnectionPageView};
+pub use rules::{RULE_KINDS, RuleRowInput, RuleRowView, RulesPageInput, RulesPageView};
 pub use subscriptions::{
     SubscriptionGroupInput, SubscriptionGroupView, SubscriptionNodeInput, SubscriptionNodeView,
     SubscriptionRowInput, SubscriptionRowView, SubscriptionsPageInput, SubscriptionsPageView,
