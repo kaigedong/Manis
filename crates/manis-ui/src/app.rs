@@ -967,6 +967,20 @@ pub fn nsh_root_data() -> serde_json::Value {
     })
 }
 
+/// Path of the desktop controller socket, for platform shells that start or
+/// probe the headless engine before connecting.
+#[must_use]
+pub fn nsh_controller_socket() -> Option<std::path::PathBuf> {
+    #[cfg(unix)]
+    {
+        crate::brand::data_dir().map(|directory| directory.join("mihomo/controller.sock"))
+    }
+    #[cfg(not(unix))]
+    {
+        None
+    }
+}
+
 #[cfg(unix)]
 fn live_client() -> Option<manis_mihomo::MihomoClient<manis_mihomo::UnixSocketTransport>> {
     let socket = crate::brand::data_dir()?.join("mihomo/controller.sock");

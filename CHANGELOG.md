@@ -12,7 +12,9 @@ once the public API and configuration formats stabilize.
   discovery) used by the desktop shells, so every platform answers the same TSX through one
   backend module.
 - macOS (AppKit) and Windows (Win32) NSH shells: both run the same bundle and shared host bridge;
-  Linux keeps the GTK shell.
+  Linux keeps the GTK shell. The shared bridge resolves the controller path through the same brand
+  data directory as the engine, so the macOS shell probes the real socket. Windows cross-checks
+  with the GNU target.
 - Rust and GPUI desktop application for policy-based proxy routing.
 - Android client (`android/`) with a `VpnService` TUN, a bundled patched Mihomo core, and a
   workspace model compiled by the same Rust profile code as the desktop: multiple subscriptions,
