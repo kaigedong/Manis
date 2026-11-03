@@ -10,8 +10,6 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -46,11 +44,18 @@ object RuntimeState {
 
 @Composable
 fun ManisApp() {
-    val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+    var toast by remember { mutableStateOf<String?>(null) }
 
     fun say(message: String) {
-        scope.launch { snackbar.showSnackbar(message) }
+        toast = message
+    }
+
+    LaunchedEffect(toast) {
+        if (toast != null) {
+            delay(2_400)
+            toast = null
+        }
     }
 
     // Re-run the recovery probe when the phone changes networks: a node that timed out on Wi-Fi
@@ -219,10 +224,14 @@ fun ManisApp() {
                     onOpenLogs = { workspace = PrimaryWorkspace.Logs },
                 )
             }
-            SnackbarHost(
-                snackbar,
-                Modifier.align(Alignment.BottomCenter).padding(ManisDimens.spaceLg),
-            )
+            toast?.let { message ->
+                ManisToast(
+                    message,
+                    Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(ManisDimens.spaceLg),
+                )
+            }
         }
     }
 }

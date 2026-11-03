@@ -208,18 +208,3 @@ private fun StatusBar(text: String, ok: Boolean, workspace: PrimaryWorkspace) {
     }
 }
 
-/** A GPUI pane with a title and a hint, used while a workspace is still being ported. */
-@Composable
-fun PlaceholderWorkspace(title: String, hint: String) {
-    val colors = LocalManisColors.current
-    Box(Modifier.fillMaxSize().background(colors.surfaceBase), contentAlignment = Alignment.Center) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
-        ) {
-            Text(title, style = ManisType.sectionTitle, color = colors.textPrimary)
-            Text(hint, style = ManisType.metadata, color = colors.textTertiary)
-        }
-    }
-}
-

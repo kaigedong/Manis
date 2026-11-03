@@ -285,3 +285,18 @@ fun ManisProgress(fraction: Float) {
         ) {}
     }
 }
+
+/** A GPUI status toast shown above the status bar. */
+@Composable
+fun ManisToast(message: String, modifier: Modifier = Modifier) {
+    val colors = LocalManisColors.current
+    Row(
+        modifier
+            .clip(RoundedCornerShape(ManisDimens.radiusControl))
+            .background(colors.surfaceChrome)
+            .border(1.dp, colors.outlineSubtle, RoundedCornerShape(ManisDimens.radiusControl))
+            .padding(horizontal = ManisDimens.spaceMd, vertical = ManisDimens.spaceSm),
+    ) {
+        Text(message, style = ManisType.body, color = colors.textPrimary)
+    }
+}
