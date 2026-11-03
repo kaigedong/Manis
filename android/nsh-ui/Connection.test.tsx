@@ -74,4 +74,5 @@ test("english connection page follows the language", async () => {
   await app.setViewport(390, 844);
   expect(app.texts()).toContain("Connected");
   expect(app.texts()).toContain("Route chain");
+  expect(app.texts()).toContain("Rule");
 });

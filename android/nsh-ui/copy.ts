@@ -243,6 +243,11 @@ const table: Record<string, Entry> = {
   "settings.logs.copy": { zh: "复制", en: "Copy" },
   "settings.logs.refresh": { zh: "刷新", en: "Refresh" },
   "settings.logs.close": { zh: "关闭", en: "Close" },
+  "strategy.selector": { zh: "手动选择", en: "Manual" },
+  "strategy.urltest": { zh: "自动测速", en: "Auto" },
+  "strategy.fallback": { zh: "故障转移", en: "Fallback" },
+  "strategy.loadBalance": { zh: "负载均衡", en: "Load balance" },
+  "strategy.relay": { zh: "链式代理", en: "Relay" },
   "settings.language": { zh: "语言", en: "Language" },
   "settings.languageHint": { zh: "界面语言，立即生效。", en: "Interface language; applies at once." },
 };

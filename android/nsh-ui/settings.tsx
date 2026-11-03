@@ -1,6 +1,7 @@
 import { Clipboard, computed, host, Scroll, signal, Text, View } from "nsh";
 import { Input } from "nsh/base";
 import { lang, setLanguage, t } from "./copy";
+import { dnsLabel, modeLabel } from "./labels";
 import { embedded, layoutWidth, root } from "./store";
 import { desktopColors } from "./theme";
 import { Action, Card, Info } from "./ui";
@@ -322,8 +323,8 @@ function MobileSettingsPage() {
           </Card>
           <Card title={t("settings.connection")}>
             <Info label={t("settings.status")} value={page().status} />
-            <Info label={t("settings.mode")} value={page().mode} />
-            <Info label={t("settings.dnsLabel")} value={page().proxyDns.label} />
+            <Info label={t("settings.mode")} value={modeLabel(page().mode)} />
+            <Info label={t("settings.dnsLabel")} value={dnsLabel(page().proxyDns.mode)} />
             <Action label={t("settings.dns.title")} onPress={openDns} />
           </Card>
 
@@ -449,8 +450,8 @@ function DesktopSettingsPage() {
           </Card>
           <Card title={t("settings.connection")}>
             <Info label={t("settings.status")} value={page().status} />
-            <Info label={t("settings.mode")} value={page().mode} />
-            <Info label={t("settings.dnsLabel")} value={page().proxyDns.label} />
+            <Info label={t("settings.mode")} value={modeLabel(page().mode)} />
+            <Info label={t("settings.dnsLabel")} value={dnsLabel(page().proxyDns.mode)} />
             <Action label={t("settings.dns.title")} onPress={openDns} />
           </Card>
           {page().autoStart !== undefined ? (

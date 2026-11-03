@@ -1,5 +1,6 @@
 import { Text, View } from "nsh";
 import { t } from "./copy";
+import { modeLabel } from "./labels";
 import { embedded } from "./store";
 import { desktopColors } from "./theme";
 
@@ -185,7 +186,7 @@ export function RouteChainCard(props: { node: string; mode: string }) {
         {t("conn.chainFlow")}
       </Text>
       <Info label={t("conn.currentNode")} value={props.node || "—"} />
-      <Info label={t("conn.modeLabel")} value={props.mode || "—"} />
+      <Info label={t("conn.modeLabel")} value={props.mode ? modeLabel(props.mode) : "—"} />
     </Card>
   );
 }

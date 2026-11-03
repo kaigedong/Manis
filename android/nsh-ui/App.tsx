@@ -8,6 +8,7 @@ import { RulesPage } from "./rules";
 import { SettingsPage } from "./settings";
 import { SubscriptionsPage } from "./subscriptions";
 import { t } from "./copy";
+import { modeLabel } from "./labels";
 import { desktopColors } from "./theme";
 import {
   bottomInset,
@@ -239,7 +240,7 @@ function RuntimeIndicator() {
       />
       <Text style={{ fontSize: 12, color: desktopColors.secondary }}>
         {label}
-        {connection.mode ? ` · ${connection.mode}` : ""}
+        {connection.mode ? ` · ${modeLabel(connection.mode)}` : ""}
       </Text>
     </View>
   );
@@ -495,7 +496,7 @@ function DesktopStatusBar() {
       }}
     >
       <Text style={{ fontSize: 12, color: desktopColors.secondary }}>
-        {connection.summary || connection.mode || t("status.waiting")}
+        {connection.summary || modeLabel(connection.mode) || t("status.waiting")}
       </Text>
       <View style={{ flex: 1 }} />
       <Text style={{ fontSize: 12, color: desktopColors.tertiary }}>

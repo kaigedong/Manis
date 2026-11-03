@@ -2,6 +2,7 @@ import { computed, host, List, Scroll, signal, Text, View } from "nsh";
 import { Input } from "nsh/base";
 import { embedded, layoutWidth, root } from "./store";
 import { t } from "./copy";
+import { modeLabel, sourceKindLabel, strategyLabel } from "./labels";
 import { desktopColors } from "./theme";
 import { NodeRow as SharedNodeRow } from "./ui";
 
@@ -205,7 +206,7 @@ function PolicyHeader(props: { row: () => Row }) {
         </Text>
       </View>
       <Text style={{ fontSize: 12, color: "#6b7280", marginTop: 4 }}>
-        {group().kind} · {t("conn.currentNode")}：{group().current ?? "—"}
+        {strategyLabel(group().kind)} · {t("conn.currentNode")}：{group().current ?? "—"}
       </Text>
     </View>
   );
@@ -401,10 +402,10 @@ function selectionTitle() {
 function selectionDetail() {
   const current = selection();
   if (current.kind === "group") {
-    return `${current.group.kind} · ${t("conn.currentNode")}：${current.group.current ?? "—"} · ${t("nodes.count", { count: current.group.members.length })}`;
+    return `${strategyLabel(current.group.kind)} · ${t("conn.currentNode")}：${current.group.current ?? "—"} · ${t("nodes.count", { count: current.group.members.length })}`;
   }
   if (current.kind === "source") {
-    return `${current.source.kind === "subscription" ? t("nodes.subscription") : t("nodes.manual")} · ${current.source.enabled ? t("nodes.enabled") : t("nodes.disabled")} · ${t("nodes.count", { count: current.source.nodes.length })}`;
+    return `${sourceKindLabel(current.source.kind)} · ${current.source.enabled ? t("nodes.enabled") : t("nodes.disabled")} · ${t("nodes.count", { count: current.source.nodes.length })}`;
   }
   return `${t("nodes.sources")} · ${t("nodes.count", { count: page().global.total })} · ${t("conn.currentNode")}：${page().global.current ?? "—"}`;
 }
@@ -478,7 +479,7 @@ function DesktopGroupList() {
       {page().policyGroups.map((group) => (
         <DesktopNavCard
           title={group.label}
-          meta={`${group.kind} · ${group.current ?? "—"}`}
+          meta={`${strategyLabel(group.kind)} · ${group.current ?? "—"}`}
           count={group.members.length}
           selected={selectedKey() === `group:${group.id}` || (selectedKey() === "" && selection().kind === "group" && selection().group?.id === group.id)}
           onPress={() => selectedKey.set(`group:${group.id}`)}
@@ -504,7 +505,7 @@ function DesktopGroupList() {
       {page().sources.map((source) => (
         <DesktopNavCard
           title={source.name}
-          meta={source.kind === "subscription" ? t("nodes.subscription") : t("nodes.manual")}
+          meta={sourceKindLabel(source.kind)}
           count={source.nodes.length}
           selected={selectedKey() === `source:${source.id}`}
           onPress={() => selectedKey.set(`source:${source.id}`)}
@@ -637,7 +638,7 @@ function DesktopInspector() {
         </Text>
         <Text style={{ fontSize: 13, color: desktopColors.text }}>{t("conn.currentNode")}：{current}</Text>
         <Text style={{ fontSize: 12, color: desktopColors.secondary }}>
-          {t("nodes.mode")}：{connection.mode || "—"}
+          {t("nodes.mode")}：{connection.mode ? modeLabel(connection.mode) : "—"}
         </Text>
       </DesktopInspectorCard>
       <DesktopInspectorCard title={t("nodes.runtime")}>
