@@ -372,3 +372,24 @@ pub fn ensure_engine() -> Option<std::process::Child> {
         None
     }
 }
+
+#[cfg(test)]
+mod capability_tests {
+    const CAPABILITIES: &str =
+        include_str!("../../../android/app/src/main/assets/nsh/capabilities.json");
+
+    #[test]
+    fn capabilities_json_grants_every_host_command() {
+        let capabilities =
+            nsh_engine::parse_capabilities(CAPABILITIES).expect("capabilities.json parses");
+        for command in manis_presentation::COMMANDS {
+            assert!(
+                capabilities
+                    .host
+                    .iter()
+                    .any(|grant| grant.as_str() == *command),
+                "{command} is missing from capabilities.host"
+            );
+        }
+    }
+}

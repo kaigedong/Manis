@@ -28,6 +28,17 @@ mod desktop {
     use serde_json::json;
 
     const BUNDLE: &str = include_str!("../../../android/app/src/main/assets/nsh/bundle.js");
+    const CAPABILITIES: &str =
+        include_str!("../../../android/app/src/main/assets/nsh/capabilities.json");
+
+    /// The host functions are never granted without a declaration
+    /// (`Capabilities::all` leaves `host` empty), so the desktop shell must
+    /// pass the manifest the bundle was built with.
+    fn bundle() -> Bundle {
+        Bundle::source(BUNDLE.to_owned())
+            .with_capabilities_json(Some(CAPABILITIES))
+            .expect("the bundled capabilities.json parses")
+    }
 
     #[derive(Clone, Copy)]
     enum TrayAction {
@@ -154,7 +165,7 @@ mod desktop {
                 host.set_params(params.clone());
             }
             install_handlers(&host);
-            view.load(Bundle::source(BUNDLE.to_owned()).into());
+            view.load(bundle().into());
             window.set_child(Some(&view.widget()));
             let keep = RefCell::new(Some(Rc::clone(&view)));
             let engine = Rc::clone(&engine);

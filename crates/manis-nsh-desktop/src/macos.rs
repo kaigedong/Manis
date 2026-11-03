@@ -4,6 +4,17 @@ pub(crate) fn main() {
     use nsh_platform_macos::{AppOptions, AppSource, Bundle, run_app};
 
     const BUNDLE: &str = include_str!("../../../android/app/src/main/assets/nsh/bundle.js");
+    const CAPABILITIES: &str =
+        include_str!("../../../android/app/src/main/assets/nsh/capabilities.json");
+
+    /// The host functions are never granted without a declaration
+    /// (`Capabilities::all` leaves `host` empty), so the desktop shell must
+    /// pass the manifest the bundle was built with.
+    fn bundle() -> Bundle {
+        Bundle::source(BUNDLE.to_owned())
+            .with_capabilities_json(Some(CAPABILITIES))
+            .expect("the bundled capabilities.json parses")
+    }
 
     if std::env::args_os().any(|argument| argument == "--version") {
         println!("Manis {}", manis_service::version());
@@ -31,8 +42,5 @@ pub(crate) fn main() {
         host,
         ..AppOptions::default()
     };
-    let _ = run_app(
-        AppSource::Bundle(Bundle::source(BUNDLE.to_owned())),
-        options,
-    );
+    let _ = run_app(AppSource::Bundle(bundle()), options);
 }
