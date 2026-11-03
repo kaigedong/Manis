@@ -1,5 +1,5 @@
 import { computed, host, Scroll, signal, Text, View } from "nsh";
-import { embedded, root, tab, windowWidth } from "./store";
+import { embedded, layoutWidth, root, tab } from "./store";
 import { desktopColors } from "./theme";
 import { Action, Card, Chip, Info, RouteChainCard } from "./ui";
 
@@ -350,7 +350,7 @@ function DesktopConnectionPage() {
           ) : null}
         </Scroll>
       </View>
-      {windowWidth === 0 || windowWidth >= 1100 ? (
+      {layoutWidth() === 0 || layoutWidth() >= 1100 ? (
       <View
         style={{
           width: 300,

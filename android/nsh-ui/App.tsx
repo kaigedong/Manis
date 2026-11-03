@@ -14,8 +14,9 @@ import {
   tab,
   toast,
   topInset,
+  layoutWidth,
   type Tab,
-  windowWidth,
+  viewportWidth,
 } from "./store";
 
 const tabs: Array<{ id: Tab; label: string; icon: string; hint: string }> = [
@@ -271,8 +272,12 @@ function DesktopChrome() {
   );
 }
 
-const narrowWindow = windowWidth > 0 && windowWidth < 900;
-const sidebarCollapsed = signal(narrowWindow);
+const sidebarCollapsed = signal(false);
+
+function railNow(): boolean {
+  const width = layoutWidth();
+  return sidebarCollapsed() || (width > 0 && width < 900);
+}
 const macChrome = embedded && desktopAvailable && platform() === "macos";
 
 function installDesktopChrome() {
@@ -362,7 +367,7 @@ function DesktopSidebar() {
   return (
     <View
       style={{
-        width: sidebarCollapsed() ? 56 : 220,
+        width: railNow() ? 56 : 220,
         backgroundColor: desktopColors.low,
         borderRightWidth: 1,
         borderRightColor: desktopColors.outline,
@@ -377,11 +382,11 @@ function DesktopSidebar() {
           flexDirection: "row",
           alignItems: "center",
           gap: 8,
-          paddingHorizontal: sidebarCollapsed() ? 0 : 8,
+          paddingHorizontal: railNow() ? 0 : 8,
           paddingBottom: 16,
         }}
       >
-        {sidebarCollapsed() ? null : (
+        {railNow() ? null : (
           <View style={{ flex: 1, gap: 2 }}>
             <Text style={{ fontSize: 17, fontWeight: "700", color: desktopColors.text }}>
               Manis
@@ -391,6 +396,7 @@ function DesktopSidebar() {
             </Text>
           </View>
         )}
+        {layoutWidth() > 0 && layoutWidth() < 900 ? null : (
         <View
           onPress={() => sidebarCollapsed.set(!sidebarCollapsed())}
           role="button"
@@ -402,6 +408,7 @@ function DesktopSidebar() {
             {sidebarCollapsed() ? "»" : "«"}
           </Text>
         </View>
+        )}
       </View>
       {tabs.map((entry) => {
         const selected = tab() === entry.id;
@@ -431,7 +438,7 @@ function DesktopSidebar() {
             >
               {entry.icon}
             </Text>
-            {sidebarCollapsed() ? null : (
+            {railNow() ? null : (
               <Text
                 style={{
                   fontSize: 13,
@@ -446,7 +453,7 @@ function DesktopSidebar() {
         );
       })}
       <View style={{ flex: 1 }} />
-      {sidebarCollapsed() ? null : (
+      {railNow() ? null : (
         <View style={{ paddingHorizontal: 8, gap: 4 }}>
           <RuntimeIndicator />
           <Text style={{ fontSize: 11, color: desktopColors.tertiary }}>
@@ -487,7 +494,10 @@ function DesktopStatusBar() {
 
 function DesktopApp() {
   return (
-    <View style={{ flex: 1, flexDirection: "row", backgroundColor: desktopColors.base }}>
+    <View
+      onLayout={(bounds) => viewportWidth.set(Math.round(bounds.size.width))}
+      style={{ flex: 1, flexDirection: "row", backgroundColor: desktopColors.base }}
+    >
       <DesktopSidebar />
       <View style={{ flex: 1, flexDirection: "column" }}>
         <DesktopChrome />

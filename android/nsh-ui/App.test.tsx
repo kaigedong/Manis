@@ -73,7 +73,7 @@ test("desktop sidebar collapses to an icon rail", async () => {
   expect(app.texts()).toContain("策略路由工作台");
   await app.press("收起侧栏");
   expect(app.texts()).not.toContain("策略路由工作台");
-  expect(app.texts()).toContain("»");
+  expect(app.texts()).toContain("策略组");
 });
 
 test("medium window drops the inspector column", async () => {
@@ -104,5 +104,17 @@ test("narrow window starts with the rail", async () => {
     },
   });
   expect(app.texts()).not.toContain("策略路由工作台");
-  expect(app.texts()).toContain("»");
+  expect(app.texts()).toContain("策略组");
+});
+
+test("resizing adapts the layout live", async () => {
+  const app = await open("./App.tsx", {
+    width: 1400,
+    height: 900,
+    platform: "macos",
+    host: { params: { embedded: true, tab: "nodes", data: { nodes: nodesPage } } },
+  });
+  expect(app.texts()).toContain("路由链");
+  await app.setViewport(1000, 760);
+  expect(app.texts()).not.toContain("路由链");
 });

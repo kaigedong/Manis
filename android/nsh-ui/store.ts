@@ -26,6 +26,13 @@ export const topInset = params.topInset ?? 0;
 export const bottomInset = params.bottomInset ?? 0;
 /** The host's window width in points (0 when it does not report one). */
 export const windowWidth = params.width ?? 0;
+/** The width the desktop shell last laid itself out at (0 before the first layout). */
+export const viewportWidth = signal(0);
+
+/** The width to pick the layout class from: the live layout, else the host's window. */
+export function layoutWidth(): number {
+  return viewportWidth() || windowWidth;
+}
 export const root = signal<RootData>(
   params.data ?? {
     pending: false,
