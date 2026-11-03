@@ -141,12 +141,12 @@ private fun SectionGrid(active: ConfigSection, onSelect: (ConfigSection) -> Unit
     Column(
         Modifier
             .fillMaxWidth()
-            .background(colors.surfaceChrome)
-            .padding(horizontal = ManisDimens.spaceMd, vertical = ManisDimens.spaceSm),
-        verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceXs),
+            .background(colors.surfaceBase)
+            .padding(horizontal = ManisDimens.spaceLg, vertical = ManisDimens.spaceSm),
+        verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
     ) {
         for (chunk in ConfigSection.entries.chunked(3)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceXs)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm)) {
                 for (entry in chunk) {
                     val selected = entry == active
                     Box(
@@ -154,13 +154,13 @@ private fun SectionGrid(active: ConfigSection, onSelect: (ConfigSection) -> Unit
                             .weight(1f)
                             .height(ManisDimens.controlCompact)
                             .clip(RoundedCornerShape(ManisDimens.radiusControl))
-                            .background(if (selected) colors.actionSoft else colors.buttonBg)
+                            .background(if (selected) colors.actionSoft else colors.surfaceLow)
                             .clickable { onSelect(entry) },
                         contentAlignment = Alignment.Center,
                     ) {
                         Text(
                             entry.label,
-                            style = ManisType.metadata,
+                            style = ManisType.data,
                             color = if (selected) colors.actionPrimary else colors.textSecondary,
                         )
                     }
@@ -197,12 +197,12 @@ private fun SectionSidebar(active: ConfigSection, onSelect: (ConfigSection) -> U
                     .clip(RoundedCornerShape(ManisDimens.radiusRow))
                     .background(if (selected) colors.actionSoft else Color.Transparent)
                     .clickable { onSelect(entry) }
-                    .padding(horizontal = ManisDimens.spaceSm),
+                    .padding(horizontal = ManisDimens.spaceMd),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
                     entry.label,
-                    style = ManisType.body,
+                    style = ManisType.label,
                     color = if (selected) colors.actionPrimary else colors.textPrimary,
                 )
             }

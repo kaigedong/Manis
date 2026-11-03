@@ -80,7 +80,7 @@ fun RulesWorkspace(onMessage: (String) -> Unit) {
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = ManisDimens.spaceMd, vertical = ManisDimens.spaceLg),
+                    .padding(horizontal = ManisDimens.spaceLg, vertical = ManisDimens.spaceLg),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
             ) {
@@ -262,6 +262,7 @@ private fun RuleEditorPane(
     }
 }
 
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun ChipGrid(
     options: List<String>,
@@ -269,13 +270,12 @@ private fun ChipGrid(
     display: (String) -> String = { it },
     onSelect: (String) -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceXs)) {
-        for (chunk in options.chunked(3)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceXs)) {
-                for (option in chunk) {
-                    ManisChip(display(option), option == selected) { onSelect(option) }
-                }
-            }
+    androidx.compose.foundation.layout.FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
+        verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
+    ) {
+        for (option in options) {
+            ManisChip(display(option), option == selected) { onSelect(option) }
         }
     }
 }

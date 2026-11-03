@@ -64,7 +64,7 @@ fun ActivityWorkspace(onMessage: (String) -> Unit) {
         Row(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = ManisDimens.spaceMd, vertical = ManisDimens.spaceLg),
+                .padding(horizontal = ManisDimens.spaceLg, vertical = ManisDimens.spaceLg),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
         ) {

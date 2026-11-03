@@ -245,7 +245,7 @@ private fun WorkspaceHeader(
     Row(
         Modifier
             .fillMaxWidth()
-            .padding(horizontal = ManisDimens.spaceMd, vertical = ManisDimens.spaceLg),
+            .padding(horizontal = ManisDimens.spaceLg, vertical = ManisDimens.spaceLg),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceMd),
     ) {
@@ -333,7 +333,7 @@ private fun GroupDetail(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
         ) {
-            if (showBack) BackButton(onBack)
+            if (showBack) ManisBackButton(onBack)
             Column(Modifier.weight(1f)) {
                 Text(
                     displayProxyName(group.name) ?: group.name,
@@ -402,7 +402,7 @@ private fun SavedGroupDetail(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
         ) {
-            if (showBack) BackButton(onBack)
+            if (showBack) ManisBackButton(onBack)
             Column(Modifier.weight(1f)) {
                 Text(name, style = ManisType.sectionTitle, color = colors.textPrimary)
                 ManisMeta(group?.let { strategyLabel(it.strategy) } ?: "策略组")
@@ -428,21 +428,6 @@ private fun SavedGroupDetail(
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun BackButton(onBack: () -> Unit) {
-    val colors = LocalManisColors.current
-    Box(
-        Modifier
-            .size(ManisDimens.controlStandard)
-            .clip(RoundedCornerShape(ManisDimens.radiusControl))
-            .background(colors.buttonBg)
-            .clickable(onClick = onBack),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text("‹", style = ManisType.sectionTitle, color = colors.textPrimary)
     }
 }
 

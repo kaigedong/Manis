@@ -2,6 +2,8 @@ package dev.manis.app.ui
 
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Shapes
+import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
@@ -14,7 +16,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-/** The exact palette of the GPUI desktop theme (`crates/manis-ui/src/theme.rs`). */
+/**
+ * The semantic palette, mapped onto Material 3 roles from a teal seed. The names are kept from
+ * the desktop port so the workspaces stay untouched, but every value follows the M3 tonal scale.
+ */
 data class ManisColors(
     val windowBackdrop: Color,
     val surfaceBase: Color,
@@ -44,94 +49,93 @@ data class ManisColors(
 )
 
 private val LightManisColors = ManisColors(
-    windowBackdrop = Color(0xFFFAFBFC),
-    surfaceBase = Color(0xFFFAFBFC),
-    surfaceLow = Color(0xFFF0F3F5),
-    surfaceHigh = Color(0xFFE9EEF2),
+    windowBackdrop = Color(0xFFF5FBF8),
+    surfaceBase = Color(0xFFF5FBF8),
+    surfaceLow = Color(0xFFEFF5F2),
+    surfaceHigh = Color(0xFFE3EAE7),
     surfaceOverlay = Color(0xFFFFFFFF),
-    surfaceChrome = Color(0xFFE9EEF2),
-    textPrimary = Color(0xFF0D0D0D),
-    textSecondary = Color(0xFF5D5D5D),
-    textTertiary = Color(0xFF666666),
-    outlineSubtle = Color(0xFFDDE3E8),
-    outlineStrong = Color(0xFF78828C),
-    actionPrimary = Color(0xFF176C62),
+    surfaceChrome = Color(0xFFE9EFEC),
+    textPrimary = Color(0xFF171D1B),
+    textSecondary = Color(0xFF3F4946),
+    textTertiary = Color(0xFF6F7976),
+    outlineSubtle = Color(0xFFBEC9C4),
+    outlineStrong = Color(0xFF6F7976),
+    actionPrimary = Color(0xFF006A60),
     actionOnPrimary = Color(0xFFFFFFFF),
-    actionSoft = Color(0xFFE3F0ED),
-    buttonBg = Color(0xFFEDF1F4),
-    buttonHover = Color(0xFFE2E8ED),
-    focusRing = Color(0xFF2563EB),
-    routeTrace = Color(0xFF923B0F),
-    routeSoft = Color(0xFFFFF5F0),
-    statusSuccess = Color(0xFF00692A),
-    statusWarning = Color(0xFF875500),
-    statusError = Color(0xFFB42318),
+    actionSoft = Color(0xFFCCE8E2),
+    buttonBg = Color(0xFFE3EAE7),
+    buttonHover = Color(0xFFDDE4E1),
+    focusRing = Color(0xFF006A60),
+    routeTrace = Color(0xFF3E6374),
+    routeSoft = Color(0xFFC1E8FB),
+    statusSuccess = Color(0xFF2F6E4F),
+    statusWarning = Color(0xFF8A5300),
+    statusError = Color(0xFFBA1A1A),
     logInfo = Color(0xFF1D4ED8),
     logDebug = Color(0xFF7E22CE),
     logTrace = Color(0xFF0E7490),
 )
 
 private val DarkManisColors = ManisColors(
-    windowBackdrop = Color(0xFF15191E),
-    surfaceBase = Color(0xFF15191E),
-    surfaceLow = Color(0xFF1C2229),
-    surfaceHigh = Color(0xFF242C35),
-    surfaceOverlay = Color(0xFF242C35),
-    surfaceChrome = Color(0xFF1C2229),
-    textPrimary = Color(0xFFF3F3F3),
-    textSecondary = Color(0xFFB9B9B9),
-    textTertiary = Color(0xFFABABAB),
-    outlineSubtle = Color(0xFF35404C),
-    outlineStrong = Color(0xFF858F9B),
-    actionPrimary = Color(0xFF79D7C6),
-    actionOnPrimary = Color(0xFF0D0D0D),
-    actionSoft = Color(0xFF203B35),
-    buttonBg = Color(0xFF29333E),
-    buttonHover = Color(0xFF354251),
-    focusRing = Color(0xFF8CB4FF),
-    routeTrace = Color(0xFFFFB790),
-    routeSoft = Color(0xFF362820),
-    statusSuccess = Color(0xFF73D499),
-    statusWarning = Color(0xFFF0C36A),
-    statusError = Color(0xFFFF9A96),
-    logInfo = Color(0xFF93C5FD),
+    windowBackdrop = Color(0xFF0E1513),
+    surfaceBase = Color(0xFF0E1513),
+    surfaceLow = Color(0xFF171D1B),
+    surfaceHigh = Color(0xFF252B29),
+    surfaceOverlay = Color(0xFF171D1B),
+    surfaceChrome = Color(0xFF1B211F),
+    textPrimary = Color(0xFFDDE4E0),
+    textSecondary = Color(0xFFBEC9C4),
+    textTertiary = Color(0xFF88938F),
+    outlineSubtle = Color(0xFF3F4946),
+    outlineStrong = Color(0xFF88938F),
+    actionPrimary = Color(0xFF83D5C8),
+    actionOnPrimary = Color(0xFF003731),
+    actionSoft = Color(0xFF324B46),
+    buttonBg = Color(0xFF252B29),
+    buttonHover = Color(0xFF303634),
+    focusRing = Color(0xFF83D5C8),
+    routeTrace = Color(0xFFA5CCDF),
+    routeSoft = Color(0xFF264C5C),
+    statusSuccess = Color(0xFF8FD8B0),
+    statusWarning = Color(0xFFF2C36B),
+    statusError = Color(0xFFFFB4AB),
+    logInfo = Color(0xFFA8C7FA),
     logDebug = Color(0xFFD8B4FE),
     logTrace = Color(0xFF67E8F9),
 )
 
-/** The GPUI text roles (`TextRole`). */
+/** The Material 3 type scale, expressed with the app's role names. */
 object ManisType {
-    val pageTitle = TextStyle(fontSize = 24.sp, lineHeight = 32.sp, fontWeight = FontWeight.SemiBold)
-    val sectionTitle = TextStyle(fontSize = 16.sp, lineHeight = 22.sp, fontWeight = FontWeight.SemiBold)
-    val body = TextStyle(fontSize = 13.sp, lineHeight = 20.sp)
-    val label = TextStyle(fontSize = 12.sp, lineHeight = 16.sp, fontWeight = FontWeight.Medium)
-    val data = TextStyle(fontSize = 12.sp, lineHeight = 18.sp, fontWeight = FontWeight.Medium)
-    val metadata = TextStyle(fontSize = 11.sp, lineHeight = 16.sp)
+    val pageTitle = TextStyle(fontSize = 26.sp, lineHeight = 32.sp, fontWeight = FontWeight.SemiBold)
+    val dialogTitle = TextStyle(fontSize = 20.sp, lineHeight = 26.sp, fontWeight = FontWeight.SemiBold)
+    val sectionTitle = TextStyle(fontSize = 16.sp, lineHeight = 24.sp, fontWeight = FontWeight.SemiBold)
+    val body = TextStyle(fontSize = 14.sp, lineHeight = 20.sp)
+    val label = TextStyle(fontSize = 14.sp, lineHeight = 20.sp, fontWeight = FontWeight.Medium)
+    val data = TextStyle(fontSize = 13.sp, lineHeight = 18.sp, fontWeight = FontWeight.Medium)
+    val metadata = TextStyle(fontSize = 12.sp, lineHeight = 16.sp)
 }
 
-/** The GPUI spacing, radius and control metrics (`Space`, `Radius`, `ControlSize`, `LayoutMetric`). */
+/** Spacing, shape and control metrics on a 4dp grid. */
 object ManisDimens {
     val spaceXs = 4.dp
     val spaceSm = 8.dp
     val spaceMd = 12.dp
     val spaceLg = 16.dp
     val spaceXl = 24.dp
+    val space2xl = 32.dp
 
-    val radiusControl = 8.dp
-    val radiusRow = 8.dp
-    val radiusPane = 12.dp
+    val radiusControl = 12.dp
+    val radiusRow = 12.dp
+    val radiusPane = 16.dp
 
-    val controlCompact = 34.dp
-    val controlStandard = 38.dp
-    val controlIcon = 32.dp
+    val controlCompact = 40.dp
+    val controlStandard = 48.dp
+    val controlIcon = 40.dp
 
-    /** The application chrome: `ControlSize::Standard.height() + Space::Md`. */
-    val chromeHeight = 50.dp
-    val statusBarHeight = 38.dp
-    /** The phone tab bar; the rail replaces it from the medium class. */
-    val bottomNavigationHeight = 58.dp
+    val chromeHeight = 64.dp
+    val statusBarHeight = 44.dp
+    val bottomNavigationHeight = 80.dp
 
-    /** The navigation widths of the three window size classes. */
     val navCompact = 56.dp
     val navMedium = 66.dp
     val navWide = 220.dp
@@ -144,44 +148,94 @@ private fun ManisColors.toScheme(dark: Boolean) = if (dark) {
         primary = actionPrimary,
         onPrimary = actionOnPrimary,
         primaryContainer = actionSoft,
-        onPrimaryContainer = textPrimary,
-        secondary = surfaceHigh,
-        onSecondary = textPrimary,
+        onPrimaryContainer = Color(0xFF9EF2E4),
+        secondary = Color(0xFFB0CCC6),
+        onSecondary = Color(0xFF1B3530),
+        secondaryContainer = actionSoft,
+        onSecondaryContainer = textPrimary,
         tertiary = routeTrace,
-        onTertiary = actionOnPrimary,
+        onTertiary = Color(0xFF093543),
+        tertiaryContainer = routeSoft,
+        onTertiaryContainer = Color(0xFFC1E8FB),
+        error = statusError,
+        onError = Color(0xFF690005),
+        errorContainer = Color(0xFF93000A),
+        onErrorContainer = Color(0xFFFFDAD6),
         background = surfaceBase,
         onBackground = textPrimary,
-        surface = surfaceOverlay,
+        surface = surfaceBase,
         onSurface = textPrimary,
-        surfaceVariant = surfaceLow,
+        surfaceVariant = Color(0xFF3F4946),
         onSurfaceVariant = textSecondary,
-        outline = outlineSubtle,
+        surfaceContainerLowest = Color(0xFF090F0D),
+        surfaceContainerLow = Color(0xFF171D1B),
+        surfaceContainer = Color(0xFF1B211F),
+        surfaceContainerHigh = Color(0xFF252B29),
+        surfaceContainerHighest = Color(0xFF303634),
+        outline = outlineStrong,
         outlineVariant = outlineSubtle,
-        error = statusError,
-        onError = actionOnPrimary,
+        inverseSurface = Color(0xFFDDE4E0),
+        inverseOnSurface = Color(0xFF2B3230),
+        inversePrimary = Color(0xFF006A60),
+        scrim = Color(0xFF000000),
     )
 } else {
     lightColorScheme(
         primary = actionPrimary,
         onPrimary = actionOnPrimary,
-        primaryContainer = actionSoft,
-        onPrimaryContainer = textPrimary,
-        secondary = surfaceHigh,
-        onSecondary = textPrimary,
+        primaryContainer = Color(0xFF9EF2E4),
+        onPrimaryContainer = Color(0xFF00201C),
+        secondary = Color(0xFF4A635E),
+        onSecondary = Color(0xFFFFFFFF),
+        secondaryContainer = actionSoft,
+        onSecondaryContainer = Color(0xFF05201C),
         tertiary = routeTrace,
-        onTertiary = actionOnPrimary,
+        onTertiary = Color(0xFFFFFFFF),
+        tertiaryContainer = routeSoft,
+        onTertiaryContainer = Color(0xFF001F2A),
+        error = statusError,
+        onError = Color(0xFFFFFFFF),
+        errorContainer = Color(0xFFFFDAD6),
+        onErrorContainer = Color(0xFF410002),
         background = surfaceBase,
         onBackground = textPrimary,
-        surface = surfaceOverlay,
+        surface = surfaceBase,
         onSurface = textPrimary,
-        surfaceVariant = surfaceLow,
+        surfaceVariant = Color(0xFFDAE5E0),
         onSurfaceVariant = textSecondary,
-        outline = outlineSubtle,
+        surfaceContainerLowest = Color(0xFFFFFFFF),
+        surfaceContainerLow = Color(0xFFEFF5F2),
+        surfaceContainer = Color(0xFFE9EFEC),
+        surfaceContainerHigh = Color(0xFFE3EAE7),
+        surfaceContainerHighest = Color(0xFFDDE4E1),
+        outline = outlineStrong,
         outlineVariant = outlineSubtle,
-        error = statusError,
-        onError = actionOnPrimary,
+        inverseSurface = Color(0xFF2B3230),
+        inverseOnSurface = Color(0xFFECF2EF),
+        inversePrimary = Color(0xFF83D5C8),
+        scrim = Color(0xFF000000),
     )
 }
+
+private val ManisShapes = Shapes(
+    extraSmall = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
+    small = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+    medium = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+    large = androidx.compose.foundation.shape.RoundedCornerShape(24.dp),
+    extraLarge = androidx.compose.foundation.shape.RoundedCornerShape(28.dp),
+)
+
+private val ManisTypography = Typography(
+    headlineMedium = ManisType.pageTitle,
+    titleLarge = ManisType.dialogTitle,
+    titleMedium = ManisType.sectionTitle,
+    titleSmall = ManisType.label,
+    bodyMedium = ManisType.body,
+    bodySmall = ManisType.metadata,
+    labelLarge = ManisType.label,
+    labelMedium = ManisType.data,
+    labelSmall = ManisType.metadata,
+)
 
 /** The user's explicit theme choice; null follows the system. */
 object UiPrefs {
@@ -189,11 +243,9 @@ object UiPrefs {
     private const val DARK_KEY = "dark"
     private var prefs: android.content.SharedPreferences? = null
 
-    /** The stored theme choice; null follows the system, as on the desktop. */
     var dark = mutableStateOf<Boolean?>(null)
         private set
 
-    /** Loads the stored theme once the activity's context exists. */
     fun attach(context: android.content.Context) {
         if (prefs != null) return
         val store = context.getSharedPreferences(STORE, android.content.Context.MODE_PRIVATE)
@@ -209,7 +261,7 @@ object UiPrefs {
     }
 }
 
-/** Applies the GPUI palette and typography to the whole application. */
+/** Applies the Material 3 palette, type scale and shapes to the whole application. */
 @Composable
 fun ManisTheme(
     darkTheme: Boolean = UiPrefs.dark.value ?: isSystemInDarkTheme(),
@@ -219,6 +271,8 @@ fun ManisTheme(
     CompositionLocalProvider(LocalManisColors provides colors) {
         MaterialTheme(
             colorScheme = colors.toScheme(darkTheme),
+            typography = ManisTypography,
+            shapes = ManisShapes,
             content = content,
         )
     }

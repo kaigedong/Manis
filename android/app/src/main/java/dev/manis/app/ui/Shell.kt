@@ -2,7 +2,6 @@ package dev.manis.app.ui
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -10,20 +9,25 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.safeDrawing
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -39,9 +43,9 @@ enum class SizeClass { Compact, Medium, Wide }
 
 val LocalSizeClass = androidx.compose.runtime.compositionLocalOf { SizeClass.Compact }
 
-/** The five GPUI primary workspaces, in navigation order. */
 enum class StatusTone { Ok, Route, Error }
 
+/** The five primary workspaces, in navigation order. */
 enum class PrimaryWorkspace(val label: String, val iconRes: Int) {
     Nodes("节点", R.drawable.ic_globe),
     RoutingRules("分流规则", R.drawable.ic_map),
@@ -51,8 +55,8 @@ enum class PrimaryWorkspace(val label: String, val iconRes: Int) {
 }
 
 /**
- * The GPUI shell: the chrome bar, the workspace, the status bar and the navigation. Phones put
- * the navigation at the bottom, where a thumb reaches it; the wider classes keep the rail.
+ * The application shell: a Material 3 top app bar, the workspace, a status strip and the
+ * navigation. Phones put the navigation in a bottom bar; wider classes keep the rail.
  */
 @Composable
 fun ManisShell(
@@ -81,7 +85,7 @@ fun ManisShell(
             Column(
                 Modifier
                     .fillMaxSize()
-                    .background(colors.windowBackdrop)
+                    .background(colors.surfaceBase)
                     .windowInsetsPadding(WindowInsets.safeDrawing),
             ) {
                 Chrome(
@@ -95,14 +99,14 @@ fun ManisShell(
                 )
                 if (sizeClass == SizeClass.Compact) {
                     Box(Modifier.fillMaxWidth().weight(1f)) { content() }
-                    StatusBar(statusText, statusTone, downloadText, uploadText)
+                    StatusStrip(statusText, statusTone, downloadText, uploadText)
                     BottomNavigation(workspace, onWorkspace)
                 } else {
                     Row(Modifier.fillMaxWidth().weight(1f)) {
                         Navigation(workspace, onWorkspace, sizeClass)
                         Box(Modifier.weight(1f).fillMaxHeight()) { content() }
                     }
-                    StatusBar(statusText, statusTone, downloadText, uploadText)
+                    StatusStrip(statusText, statusTone, downloadText, uploadText)
                 }
             }
         }
@@ -130,180 +134,69 @@ private fun Chrome(
         Modifier
             .fillMaxWidth()
             .height(ManisDimens.chromeHeight)
-            .background(colors.surfaceChrome)
-            .border(width = 1.dp, color = colors.outlineSubtle)
+            .background(colors.surfaceBase)
             .padding(horizontal = ManisDimens.spaceLg),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceMd),
+        horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
     ) {
         Box(Modifier.width(navWidth - ManisDimens.spaceLg), contentAlignment = Alignment.CenterStart) {
-            Image(
-                painter = painterResource(R.drawable.ic_brand),
-                contentDescription = "Manis",
-                modifier = Modifier.size(24.dp).clip(RoundedCornerShape(6.dp)),
-            )
-        }
-        Spacer(Modifier.weight(1f))
-        ChromeButton(if (darkTheme) "浅色" else "深色", onToggleTheme)
-        ChromeButton(proxyLabel, onProxyToggle)
-        ChromeButton(routingLabel, onRoutingCycle)
-    }
-}
-
-@Composable
-private fun ChromeButton(label: String, onClick: () -> Unit) {
-    val colors = LocalManisColors.current
-    Box(
-        Modifier
-            .height(ManisDimens.controlCompact)
-            .clip(RoundedCornerShape(ManisDimens.radiusControl))
-            .background(colors.buttonBg)
-            .clickable(onClick = onClick)
-            .padding(horizontal = ManisDimens.spaceMd),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(label, style = ManisType.label, color = colors.textPrimary)
-    }
-}
-
-/** The phone navigation: one row of icon-and-label tabs under the status bar. */
-@Composable
-private fun BottomNavigation(
-    workspace: PrimaryWorkspace,
-    onWorkspace: (PrimaryWorkspace) -> Unit,
-) {
-    val colors = LocalManisColors.current
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .height(ManisDimens.bottomNavigationHeight)
-            .background(colors.surfaceChrome)
-            .border(width = 1.dp, color = colors.outlineSubtle)
-            .padding(horizontal = ManisDimens.spaceSm),
-    ) {
-        for (entry in PrimaryWorkspace.entries) {
-            val selected = entry == workspace
-            val tint = if (selected) colors.actionPrimary else colors.textSecondary
-            Column(
-                Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
-                    .clickable { onWorkspace(entry) }
-                    .padding(vertical = ManisDimens.spaceXs),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center,
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = colors.surfaceHigh,
             ) {
-                Box(
-                    Modifier
-                        .clip(RoundedCornerShape(ManisDimens.radiusControl))
-                        .background(if (selected) colors.actionSoft else Color.Transparent)
-                        .padding(horizontal = ManisDimens.spaceSm, vertical = 2.dp),
-                ) {
-                    if (entry.iconRes != 0) {
-                        Icon(
-                            painter = painterResource(entry.iconRes),
-                            contentDescription = entry.label,
-                            modifier = Modifier.size(20.dp),
-                            tint = tint,
-                        )
-                    } else {
-                        Icon(
-                            imageVector = Icons.Filled.Settings,
-                            contentDescription = entry.label,
-                            modifier = Modifier.size(20.dp),
-                            tint = tint,
-                        )
-                    }
-                }
-                Text(
-                    entry.label,
-                    style = ManisType.metadata,
-                    color = tint,
-                    maxLines = 1,
+                Image(
+                    painter = painterResource(R.drawable.ic_brand),
+                    contentDescription = "Manis",
+                    modifier = Modifier.size(36.dp).padding(4.dp),
                 )
             }
         }
+        Spacer(Modifier.weight(1f))
+        ChromePill(if (darkTheme) "浅色" else "深色", onToggleTheme)
+        ChromePill(proxyLabel, onProxyToggle, emphasized = true)
+        ChromePill(routingLabel, onRoutingCycle)
     }
 }
 
+/** A tonal pill for the three chrome controls. */
 @Composable
-private fun Navigation(
-    workspace: PrimaryWorkspace,
-    onWorkspace: (PrimaryWorkspace) -> Unit,
-    sizeClass: SizeClass,
-) {
+private fun ChromePill(label: String, onClick: () -> Unit, emphasized: Boolean = false) {
     val colors = LocalManisColors.current
-    Column(
-        Modifier
-            .width(navWidth(sizeClass))
-            .fillMaxHeight()
-            .background(colors.surfaceBase)
-            .padding(ManisDimens.spaceSm),
-        verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceXs),
+    FilledTonalButton(
+        onClick = onClick,
+        modifier = Modifier.height(ManisDimens.controlCompact),
+        shape = CircleShape,
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(
+            horizontal = ManisDimens.spaceLg,
+        ),
     ) {
-        for (entry in PrimaryWorkspace.entries) {
-            NavigationItem(entry, entry == workspace, sizeClass == SizeClass.Wide) {
-                onWorkspace(entry)
-            }
+        if (emphasized) {
+            Box(
+                Modifier
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(colors.actionPrimary),
+            )
+            Spacer(Modifier.width(ManisDimens.spaceSm))
         }
+        Text(label, style = ManisType.label, maxLines = 1)
     }
 }
 
 @Composable
-private fun NavigationItem(
-    workspace: PrimaryWorkspace,
-    selected: Boolean,
-    showLabel: Boolean,
-    onClick: () -> Unit,
+private fun StatusStrip(
+    text: String,
+    tone: StatusTone,
+    downloadText: String,
+    uploadText: String,
 ) {
-    val colors = LocalManisColors.current
-    val tint = if (selected) colors.actionPrimary else colors.textSecondary
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .height(ManisDimens.controlStandard)
-            .clip(RoundedCornerShape(ManisDimens.radiusRow))
-            .background(if (selected) colors.actionSoft else Color.Transparent)
-            .clickable(onClick = onClick)
-            .padding(horizontal = if (showLabel) ManisDimens.spaceSm else 0.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = if (showLabel) Arrangement.spacedBy(ManisDimens.spaceSm) else Arrangement.Center,
-    ) {
-        if (workspace.iconRes != 0) {
-            Icon(
-                painter = painterResource(workspace.iconRes),
-                contentDescription = workspace.label,
-                modifier = Modifier.size(18.dp),
-                tint = tint,
-            )
-        } else {
-            Icon(
-                imageVector = Icons.Filled.Settings,
-                contentDescription = workspace.label,
-                modifier = Modifier.size(18.dp),
-                tint = tint,
-            )
-        }
-        if (showLabel) {
-            Text(
-                workspace.label,
-                style = ManisType.body,
-                color = if (selected) colors.actionPrimary else colors.textPrimary,
-            )
-        }
-    }
-}
-
-@Composable
-private fun StatusBar(text: String, tone: StatusTone, downloadText: String, uploadText: String) {
     val colors = LocalManisColors.current
     Row(
         Modifier
             .fillMaxWidth()
             .height(ManisDimens.statusBarHeight)
-            .background(colors.surfaceChrome)
-            .border(width = 1.dp, color = colors.outlineSubtle)
-            .padding(horizontal = ManisDimens.spaceMd),
+            .background(colors.surfaceBase)
+            .padding(horizontal = ManisDimens.spaceLg),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
     ) {
@@ -326,8 +219,118 @@ private fun StatusBar(text: String, tone: StatusTone, downloadText: String, uplo
             maxLines = 1,
         )
         Spacer(Modifier.weight(1f))
-        Text(downloadText, style = ManisType.data, color = colors.textSecondary)
-        Text(uploadText, style = ManisType.data, color = colors.textSecondary)
+        Text("↓ $downloadText", style = ManisType.metadata, color = colors.textSecondary)
+        Text("↑ $uploadText", style = ManisType.metadata, color = colors.textSecondary)
     }
 }
 
+/** The phone navigation: the Material 3 bottom bar. */
+@Composable
+private fun BottomNavigation(
+    workspace: PrimaryWorkspace,
+    onWorkspace: (PrimaryWorkspace) -> Unit,
+) {
+    val colors = LocalManisColors.current
+    NavigationBar(
+        containerColor = colors.surfaceChrome,
+        contentColor = colors.textSecondary,
+        tonalElevation = 0.dp,
+        windowInsets = WindowInsets(0, 0, 0, 0),
+    ) {
+        for (entry in PrimaryWorkspace.entries) {
+            val selected = entry == workspace
+            NavigationBarItem(
+                selected = selected,
+                onClick = { onWorkspace(entry) },
+                icon = {
+                    WorkspaceIcon(
+                        entry,
+                        if (selected) colors.actionPrimary else colors.textSecondary,
+                    )
+                },
+                label = {
+                    Text(entry.label, style = ManisType.metadata, maxLines = 1)
+                },
+                colors = NavigationBarItemDefaults.colors(
+                    selectedIconColor = colors.actionPrimary,
+                    selectedTextColor = colors.actionPrimary,
+                    unselectedIconColor = colors.textSecondary,
+                    unselectedTextColor = colors.textSecondary,
+                    indicatorColor = colors.actionSoft,
+                ),
+            )
+        }
+    }
+}
+
+@Composable
+private fun WorkspaceIcon(entry: PrimaryWorkspace, tint: Color) {
+    if (entry.iconRes != 0) {
+        Icon(
+            painter = painterResource(entry.iconRes),
+            contentDescription = entry.label,
+            modifier = Modifier.size(22.dp),
+            tint = tint,
+        )
+    } else {
+        Icon(
+            imageVector = Icons.Filled.Settings,
+            contentDescription = entry.label,
+            modifier = Modifier.size(22.dp),
+            tint = tint,
+        )
+    }
+}
+
+/** The rail used from the medium class up. */
+@Composable
+private fun Navigation(
+    workspace: PrimaryWorkspace,
+    onWorkspace: (PrimaryWorkspace) -> Unit,
+    sizeClass: SizeClass,
+) {
+    val colors = LocalManisColors.current
+    Column(
+        Modifier
+            .width(navWidth(sizeClass))
+            .fillMaxHeight()
+            .background(colors.surfaceBase)
+            .padding(ManisDimens.spaceSm),
+        verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceXs),
+    ) {
+        for (entry in PrimaryWorkspace.entries) {
+            val selected = entry == workspace
+            val wide = sizeClass == SizeClass.Wide
+            Surface(
+                onClick = { onWorkspace(entry) },
+                modifier = Modifier.fillMaxWidth().height(ManisDimens.controlStandard),
+                shape = RoundedCornerShape(ManisDimens.radiusControl),
+                color = if (selected) colors.actionSoft else Color.Transparent,
+            ) {
+                Row(
+                    Modifier.padding(
+                        horizontal = if (wide) ManisDimens.spaceMd else 0.dp,
+                    ),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = if (wide) {
+                        Arrangement.spacedBy(ManisDimens.spaceMd)
+                    } else {
+                        Arrangement.Center
+                    },
+                ) {
+                    WorkspaceIcon(
+                        entry,
+                        if (selected) colors.actionPrimary else colors.textSecondary,
+                    )
+                    if (wide) {
+                        Text(
+                            entry.label,
+                            style = ManisType.label,
+                            color = if (selected) colors.actionPrimary else colors.textPrimary,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}

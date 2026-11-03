@@ -1,64 +1,79 @@
 package dev.manis.app.ui
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.clickable
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
-/** A GPUI pane card: overlay surface, one-pixel outline, 12dp radius. */
+/** A Material 3 filled card: tonal surface, 16dp corners, no hairline border. */
 @Composable
 fun ManisCard(
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val colors = LocalManisColors.current
-    Column(
-        modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(ManisDimens.radiusPane))
-            .background(colors.surfaceOverlay)
-            .border(1.dp, colors.outlineSubtle, RoundedCornerShape(ManisDimens.radiusPane))
-            .padding(ManisDimens.spaceMd),
-        verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
-        content = content,
-    )
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(ManisDimens.radiusPane),
+        color = colors.surfaceOverlay,
+    ) {
+        Column(
+            Modifier.padding(ManisDimens.spaceLg),
+            verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceMd),
+            content = content,
+        )
+    }
 }
 
-/** A GPUI section heading. */
 @Composable
 fun ManisSectionTitle(text: String) {
     Text(text, style = ManisType.sectionTitle, color = LocalManisColors.current.textPrimary)
 }
 
-/** Secondary metadata text. */
 @Composable
 fun ManisMeta(text: String, color: Color? = null) {
     Text(
@@ -68,7 +83,7 @@ fun ManisMeta(text: String, color: Color? = null) {
     )
 }
 
-/** A GPUI control-sized button: 34dp tall, 8dp radius, label type. */
+/** A Material 3 button: filled for the primary action, tonal for everything else. */
 @Composable
 fun ManisButton(
     label: String,
@@ -77,36 +92,42 @@ fun ManisButton(
     enabled: Boolean = true,
     onClick: () -> Unit,
 ) {
-    val colors = LocalManisColors.current
-    Row(
-        modifier
-            .height(ManisDimens.controlCompact)
-            .clip(RoundedCornerShape(ManisDimens.radiusControl))
-            .background(
-                when {
-                    !enabled -> colors.surfaceLow
-                    primary -> colors.actionPrimary
-                    else -> colors.buttonBg
-                },
-            )
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = ManisDimens.spaceMd),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.Center,
-    ) {
-        Text(
-            label,
-            style = ManisType.label,
-            color = when {
-                !enabled -> colors.textTertiary
-                primary -> colors.actionOnPrimary
-                else -> colors.textPrimary
-            },
-        )
+    val shape = CircleShape
+    val contentPadding = PaddingValues(horizontal = ManisDimens.spaceXl)
+    val colors = ButtonDefaults.buttonColors(
+        containerColor = MaterialTheme.colorScheme.primary,
+        contentColor = MaterialTheme.colorScheme.onPrimary,
+    )
+    val tonalColors = ButtonDefaults.filledTonalButtonColors(
+        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+    )
+    if (primary) {
+        Button(
+            onClick = onClick,
+            modifier = modifier.height(ManisDimens.controlCompact),
+            enabled = enabled,
+            shape = shape,
+            colors = colors,
+            contentPadding = contentPadding,
+        ) {
+            Text(label, style = ManisType.label, maxLines = 1)
+        }
+    } else {
+        FilledTonalButton(
+            onClick = onClick,
+            modifier = modifier.height(ManisDimens.controlCompact),
+            enabled = enabled,
+            shape = shape,
+            colors = tonalColors,
+            contentPadding = contentPadding,
+        ) {
+            Text(label, style = ManisType.label, maxLines = 1)
+        }
     }
 }
 
-/** A selectable GPUI list row: title, metadata and an optional trailing text. */
+/** A list row: title, supporting text and an optional trailing value. */
 @Composable
 fun ManisListRow(
     title: String,
@@ -124,99 +145,86 @@ fun ManisListRow(
             .clip(RoundedCornerShape(ManisDimens.radiusRow))
             .background(if (selected) colors.actionSoft else Color.Transparent)
             .clickable(enabled = enabled && onClick != null) { onClick?.invoke() }
-            .padding(horizontal = ManisDimens.spaceMd, vertical = ManisDimens.spaceSm),
+            .padding(horizontal = ManisDimens.spaceMd, vertical = ManisDimens.spaceMd),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
+        horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceMd),
     ) {
         leading?.invoke(this)
         Column(Modifier.weight(1f)) {
             Text(
                 title,
-                style = ManisType.body,
+                style = ManisType.label,
                 color = if (selected) colors.actionPrimary else colors.textPrimary,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
             )
             if (meta != null) ManisMeta(meta)
         }
         if (trailing != null) {
-            Text(trailing, style = ManisType.metadata, color = colors.textTertiary)
+            Text(trailing, style = ManisType.data, color = colors.textSecondary)
         }
     }
 }
 
-/** A one-pixel divider between list rows. */
 @Composable
 fun ManisDivider() {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .height(1.dp)
-            .background(LocalManisColors.current.outlineSubtle),
-    ) {}
+    HorizontalDivider(
+        thickness = 1.dp,
+        color = LocalManisColors.current.outlineSubtle.copy(alpha = 0.6f),
+    )
 }
 
-/** A GPUI toggle: a 36x20 track with a 16dp thumb. */
+/** A Material 3 switch. */
 @Composable
 fun ManisToggle(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
-    val colors = LocalManisColors.current
-    Row(
-        Modifier
-            .height(20.dp)
-            .width(36.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .background(if (checked) colors.actionPrimary else colors.outlineSubtle)
-            .clickable { onCheckedChange(!checked) }
-            .padding(2.dp),
-        horizontalArrangement = if (checked) Arrangement.End else Arrangement.Start,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Row(
-            Modifier
-                .size(16.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(colors.surfaceOverlay),
-        ) {}
-    }
+    Switch(checked = checked, onCheckedChange = onCheckedChange)
 }
 
-/** A GPUI chip: 26dp tall, 8dp radius, action-soft when selected. */
+/** A Material 3 filter chip. */
 @Composable
 fun ManisChip(label: String, selected: Boolean, onClick: () -> Unit) {
     val colors = LocalManisColors.current
-    Row(
-        Modifier
-            .height(26.dp)
-            .clip(RoundedCornerShape(ManisDimens.radiusControl))
-            .background(if (selected) colors.actionSoft else colors.surfaceLow)
-            .clickable(onClick = onClick)
-            .padding(horizontal = ManisDimens.spaceSm),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            label,
-            style = ManisType.metadata,
-            color = if (selected) colors.actionPrimary else colors.textSecondary,
-        )
-    }
+    FilterChip(
+        selected = selected,
+        onClick = onClick,
+        label = { Text(label, style = ManisType.data, maxLines = 1) },
+        shape = RoundedCornerShape(ManisDimens.radiusControl),
+        colors = FilterChipDefaults.filterChipColors(
+            containerColor = colors.surfaceLow,
+            labelColor = colors.textSecondary,
+            selectedContainerColor = colors.actionSoft,
+            selectedLabelColor = colors.actionPrimary,
+        ),
+        border = FilterChipDefaults.filterChipBorder(
+            enabled = true,
+            selected = selected,
+            borderColor = colors.outlineSubtle,
+            selectedBorderColor = Color.Transparent,
+        ),
+    )
 }
 
 /** The compact back control used by the drill-in panes. */
 @Composable
 fun ManisBackButton(onBack: () -> Unit) {
-    val colors = LocalManisColors.current
-    Row(
-        Modifier
-            .size(ManisDimens.controlStandard)
-            .clip(RoundedCornerShape(ManisDimens.radiusControl))
-            .background(colors.buttonBg)
-            .clickable(onClick = onBack),
-        horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically,
+    FilledTonalIconButton(
+        onClick = onBack,
+        modifier = Modifier.size(ManisDimens.controlStandard),
+        shape = CircleShape,
+        colors = IconButtonDefaults.filledTonalIconButtonColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            contentColor = MaterialTheme.colorScheme.onSurface,
+        ),
     ) {
-        Text("‹", style = ManisType.sectionTitle, color = colors.textPrimary)
+        Icon(
+            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+            contentDescription = "返回",
+            modifier = Modifier.size(20.dp),
+        )
     }
 }
 
-/** A single-line GPUI text field. */
+/** A Material 3 outlined text field. */
 @Composable
 fun ManisTextField(
     value: String,
@@ -224,90 +232,93 @@ fun ManisTextField(
     placeholder: String = "",
 ) {
     val colors = LocalManisColors.current
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(ManisDimens.radiusControl))
-            .background(colors.surfaceOverlay)
-            .border(1.dp, colors.outlineStrong, RoundedCornerShape(ManisDimens.radiusControl))
-            .padding(horizontal = ManisDimens.spaceMd, vertical = ManisDimens.spaceSm),
-    ) {
-        if (value.isEmpty()) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        modifier = Modifier.fillMaxWidth(),
+        singleLine = true,
+        shape = RoundedCornerShape(ManisDimens.radiusControl),
+        textStyle = ManisType.body,
+        placeholder = {
             Text(placeholder, style = ManisType.body, color = colors.textTertiary)
-        }
-        BasicTextField(
-            value = value,
-            onValueChange = onValueChange,
-            singleLine = true,
-            textStyle = ManisType.body.copy(color = colors.textPrimary),
-            cursorBrush = SolidColor(colors.actionPrimary),
-            modifier = Modifier.fillMaxWidth(),
+        },
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedContainerColor = colors.surfaceOverlay,
+            unfocusedContainerColor = colors.surfaceOverlay,
+            focusedBorderColor = colors.actionPrimary,
+            unfocusedBorderColor = colors.outlineSubtle,
+            cursorColor = colors.actionPrimary,
+            focusedTextColor = colors.textPrimary,
+            unfocusedTextColor = colors.textPrimary,
+        ),
+    )
+}
+
+/** A label/value row. */
+@Composable
+fun ManisInfoRow(label: String, value: String) {
+    val colors = LocalManisColors.current
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = ManisDimens.spaceXs),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, style = ManisType.body, color = colors.textSecondary)
+        Spacer(Modifier.weight(1f))
+        Text(value, style = ManisType.data, color = colors.textPrimary)
+    }
+}
+
+/** A Material 3 text action. */
+@Composable
+fun ManisTextAction(label: String, onClick: () -> Unit) {
+    TextButton(
+        onClick = onClick,
+        shape = CircleShape,
+        contentPadding = PaddingValues(horizontal = ManisDimens.spaceMd),
+    ) {
+        Text(label, style = ManisType.label)
+    }
+}
+
+/** A Material 3 progress bar. */
+@Composable
+fun ManisProgress(fraction: Float) {
+    val colors = LocalManisColors.current
+    LinearProgressIndicator(
+        progress = { fraction.coerceIn(0f, 1f) },
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(8.dp)
+            .clip(RoundedCornerShape(4.dp)),
+        color = colors.actionPrimary,
+        trackColor = colors.surfaceLow,
+        drawStopIndicator = {},
+    )
+}
+
+/** A Material 3 snackbar-style toast. */
+@Composable
+fun ManisToast(message: String, modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(ManisDimens.radiusControl),
+        color = MaterialTheme.colorScheme.inverseSurface,
+        contentColor = MaterialTheme.colorScheme.inverseOnSurface,
+        shadowElevation = 6.dp,
+    ) {
+        Text(
+            message,
+            style = ManisType.body,
+            color = MaterialTheme.colorScheme.inverseOnSurface,
+            modifier = Modifier.padding(
+                horizontal = ManisDimens.spaceLg,
+                vertical = ManisDimens.spaceMd,
+            ),
         )
     }
 }
 
-/** A label/value row in a GPUI pane. */
-@Composable
-fun ManisInfoRow(label: String, value: String) {
-    val colors = LocalManisColors.current
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, style = ManisType.metadata, color = colors.textSecondary)
-        Spacer(Modifier.weight(1f))
-        Text(value, style = ManisType.body, color = colors.textPrimary)
-    }
-}
-
-/** A borderless text action, as used at the end of GPUI rows. */
-@Composable
-fun ManisTextAction(label: String, onClick: () -> Unit) {
-    val colors = LocalManisColors.current
-    Row(
-        Modifier
-            .clip(RoundedCornerShape(ManisDimens.radiusControl))
-            .clickable(onClick = onClick)
-            .padding(horizontal = ManisDimens.spaceSm, vertical = ManisDimens.spaceXs),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(label, style = ManisType.metadata, color = colors.actionPrimary)
-    }
-}
-
-/** A GPUI progress track: 4dp tall, action-primary fill. */
-@Composable
-fun ManisProgress(fraction: Float) {
-    val colors = LocalManisColors.current
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .height(4.dp)
-            .clip(RoundedCornerShape(2.dp))
-            .background(colors.surfaceLow),
-    ) {
-        Row(
-            Modifier
-                .fillMaxWidth(fraction.coerceIn(0f, 1f))
-                .height(4.dp)
-                .background(colors.actionPrimary),
-        ) {}
-    }
-}
-
-/** A GPUI status toast shown above the status bar. */
-@Composable
-fun ManisToast(message: String, modifier: Modifier = Modifier) {
-    val colors = LocalManisColors.current
-    Row(
-        modifier
-            .clip(RoundedCornerShape(ManisDimens.radiusControl))
-            .background(colors.surfaceChrome)
-            .border(1.dp, colors.outlineSubtle, RoundedCornerShape(ManisDimens.radiusControl))
-            .padding(horizontal = ManisDimens.spaceMd, vertical = ManisDimens.spaceSm),
-    ) {
-        Text(message, style = ManisType.body, color = colors.textPrimary)
-    }
-}
-
-/** A GPUI dialog: a scrim and a centred pane with a titled header and a footer. */
+/** A Material 3 dialog: scrim, rounded surface, title, body and actions. */
 @Composable
 fun ManisDialog(
     title: String,
@@ -320,42 +331,45 @@ fun ManisDialog(
     Box(
         Modifier
             .fillMaxSize()
-            .background(Color(0x66000000))
+            .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.45f))
             .clickable(onClick = onDismiss),
         contentAlignment = Alignment.Center,
     ) {
-        Column(
-            Modifier
+        Surface(
+            modifier = Modifier
                 .fillMaxWidth()
-                .padding(ManisDimens.spaceLg)
-                .clip(RoundedCornerShape(ManisDimens.radiusPane))
-                .background(colors.surfaceOverlay)
-                .border(1.dp, colors.outlineSubtle, RoundedCornerShape(ManisDimens.radiusPane))
+                .padding(ManisDimens.spaceXl)
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
                 ) {},
+            shape = RoundedCornerShape(28.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            tonalElevation = 3.dp,
         ) {
-            Column(Modifier.padding(ManisDimens.spaceLg)) {
-                Text(title, style = ManisType.sectionTitle, color = colors.textPrimary)
-                if (subtitle != null) ManisMeta(subtitle)
+            Column {
+                Column(Modifier.padding(ManisDimens.spaceXl)) {
+                    Text(title, style = ManisType.dialogTitle, color = colors.textPrimary)
+                    if (subtitle != null) {
+                        Spacer(Modifier.height(ManisDimens.spaceXs))
+                        ManisMeta(subtitle)
+                    }
+                }
+                Column(
+                    Modifier
+                        .padding(horizontal = ManisDimens.spaceXl)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceMd),
+                    content = content,
+                )
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(ManisDimens.spaceLg),
+                    horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm, Alignment.End),
+                    content = actions,
+                )
             }
-            ManisDivider()
-            Column(
-                Modifier
-                    .padding(ManisDimens.spaceLg)
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
-                content = content,
-            )
-            ManisDivider()
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(ManisDimens.spaceMd),
-                horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceXs, Alignment.End),
-                content = actions,
-            )
         }
     }
 }

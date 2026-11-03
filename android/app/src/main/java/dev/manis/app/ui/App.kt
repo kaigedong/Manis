@@ -232,8 +232,8 @@ fun ManisApp() {
             RuntimeState.unreachable -> StatusTone.Error
             else -> StatusTone.Ok
         },
-        downloadText = "↓ ${formatTraffic(RuntimeState.downloadTotal)}",
-        uploadText = "↑ ${formatTraffic(RuntimeState.uploadTotal)}",
+        downloadText = formatTraffic(RuntimeState.downloadTotal),
+        uploadText = formatTraffic(RuntimeState.uploadTotal),
     ) {
         Box(Modifier.fillMaxSize()) {
             when (workspace) {
