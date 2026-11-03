@@ -1,6 +1,7 @@
 import { computed, host, Scroll, signal, Text, View } from "nsh";
 import { Input } from "nsh/base";
 import { embedded, root } from "./store";
+import { desktopColors } from "./theme";
 
 type SubscriptionItem = {
   index: number;
@@ -375,7 +376,7 @@ function GroupForm() {
   );
 }
 
-export function SubscriptionsPage() {
+function MobileSubscriptionsPage() {
   return (
     <View class={embedded ? "flex-1 bg-background" : "flex-1 bg-background pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"}>
       <Scroll style={{ flex: 1 }}>
@@ -474,4 +475,410 @@ export function SubscriptionsPage() {
       </Scroll>
     </View>
   );
+}
+
+function DButton(props: {
+  label: string;
+  onPress: () => void;
+  primary?: boolean;
+  disabled?: boolean;
+}) {
+  const disabled = () => props.disabled || busy();
+  return (
+    <View
+      onPress={disabled() ? undefined : props.onPress}
+      role="button"
+      accessible
+      disabled={disabled()}
+      style={{
+        opacity: disabled() ? 0.45 : 1,
+        borderRadius: 8,
+        borderWidth: props.primary ? 0 : 1,
+        borderColor: desktopColors.outline,
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        backgroundColor: props.primary ? desktopColors.primary : desktopColors.high,
+      }}
+    >
+      <Text
+        style={{
+          fontSize: 12,
+          color: props.primary ? desktopColors.onPrimary : desktopColors.text,
+        }}
+      >
+        {props.label}
+      </Text>
+    </View>
+  );
+}
+
+function DCard(props: { title: string; count?: number; action?: any; children: any }) {
+  return (
+    <View
+      style={{
+        borderWidth: 1,
+        borderColor: desktopColors.outline,
+        borderRadius: 10,
+        backgroundColor: desktopColors.high,
+      }}
+    >
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          gap: 8,
+          paddingHorizontal: 12,
+          paddingVertical: 8,
+          borderBottomWidth: 1,
+          borderBottomColor: desktopColors.outline,
+          backgroundColor: desktopColors.low,
+        }}
+      >
+        <Text style={{ fontSize: 13, fontWeight: "600", flex: 1, color: desktopColors.text }}>
+          {props.title}
+        </Text>
+        {props.count === undefined ? null : (
+          <Text style={{ fontSize: 11, color: desktopColors.tertiary }}>{props.count}</Text>
+        )}
+        {props.action}
+      </View>
+      <View>{props.children}</View>
+    </View>
+  );
+}
+
+function DTableRow(props: {
+  title: string;
+  detail: string;
+  enabled?: boolean;
+  onToggle?: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <View
+      style={{
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 12,
+        paddingHorizontal: 12,
+        paddingVertical: 9,
+        borderBottomWidth: 1,
+        borderBottomColor: "#EDF2EF",
+      }}
+    >
+      <View style={{ flex: 1, gap: 2 }}>
+        <Text style={{ fontSize: 13, color: desktopColors.text }}>{props.title}</Text>
+        <Text style={{ fontSize: 11, color: desktopColors.secondary }}>{props.detail}</Text>
+      </View>
+      {props.onToggle ? (
+        <View
+          onPress={props.onToggle}
+          role="button"
+          accessible
+          accessibilityLabel={props.enabled ? "停用" : "启用"}
+          style={{
+            borderRadius: 6,
+            paddingHorizontal: 8,
+            paddingVertical: 3,
+            backgroundColor: props.enabled ? "#E6F1EE" : desktopColors.low,
+          }}
+        >
+          <Text style={{ fontSize: 11, color: props.enabled ? desktopColors.success : desktopColors.secondary }}>
+            {props.enabled ? "已启用" : "已停用"}
+          </Text>
+        </View>
+      ) : null}
+      <View
+        onPress={props.onDelete}
+        role="button"
+        accessible
+        accessibilityLabel="删除"
+        style={{ paddingHorizontal: 6, paddingVertical: 3 }}
+      >
+        <Text style={{ fontSize: 12, color: desktopColors.error }}>删除</Text>
+      </View>
+    </View>
+  );
+}
+
+function DInput(props: {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  multiline?: boolean;
+}) {
+  return (
+    <Input
+      value={props.value}
+      onChange={props.onChange}
+      placeholder={props.placeholder}
+      multiline={props.multiline}
+      style={{
+        borderWidth: 1,
+        borderColor: desktopColors.outlineStrong,
+        borderRadius: 8,
+        paddingHorizontal: 10,
+        paddingVertical: 7,
+        fontSize: 13,
+        minHeight: props.multiline ? 72 : undefined,
+      }}
+    />
+  );
+}
+
+function DCheck(props: { label: string; checked: boolean; onPress: () => void }) {
+  return (
+    <View
+      onPress={props.onPress}
+      role="button"
+      accessible
+      accessibilityLabel={props.label}
+      accessibilityState={{ checked: props.checked }}
+      style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 4 }}
+    >
+      <View
+        style={{
+          width: 16,
+          height: 16,
+          borderRadius: 4,
+          borderWidth: 1,
+          borderColor: props.checked ? desktopColors.primary : desktopColors.outlineStrong,
+          backgroundColor: props.checked ? desktopColors.primary : desktopColors.high,
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        {props.checked ? <Text style={{ fontSize: 11, color: desktopColors.onPrimary }}>✓</Text> : null}
+      </View>
+      <Text style={{ fontSize: 12, color: desktopColors.text }}>{props.label}</Text>
+    </View>
+  );
+}
+
+function DFormFrame(props: { title: string; hint: string; children: any }) {
+  return (
+    <View
+      style={{
+        borderWidth: 1,
+        borderColor: desktopColors.primary,
+        borderRadius: 10,
+        padding: 12,
+        gap: 8,
+        backgroundColor: "#F7FBFA",
+      }}
+    >
+      <Text style={{ fontSize: 13, fontWeight: "600", color: desktopColors.text }}>{props.title}</Text>
+      <Text style={{ fontSize: 11, color: desktopColors.secondary }}>{props.hint}</Text>
+      {props.children}
+    </View>
+  );
+}
+
+function DSubscriptionForm() {
+  return (
+    <DFormFrame title="添加订阅" hint="粘贴 Clash 格式订阅地址；添加后会立即下载。">
+      <DInput value={subName()} onChange={(value) => subName.set(value)} placeholder="名称（可选）" />
+      <DInput value={subUrl()} onChange={(value) => subUrl.set(value)} placeholder="https://…" />
+      <View style={{ flexDirection: "row", gap: 8 }}>
+        <DButton label="添加" primary onPress={() => void addSubscription()} />
+        <DButton label="取消" onPress={() => adding.set(null)} />
+      </View>
+    </DFormFrame>
+  );
+}
+
+function DNodeForm() {
+  return (
+    <DFormFrame title="添加 VLESS 节点" hint="支持 TLS / WebSocket / Reality 分享链接。">
+      <DInput value={nodeLink()} onChange={(value) => nodeLink.set(value)} placeholder="vless://…" multiline />
+      <View style={{ flexDirection: "row", gap: 8 }}>
+        <DButton label="添加" primary onPress={() => void addNode()} />
+        <DButton label="取消" onPress={() => adding.set(null)} />
+      </View>
+    </DFormFrame>
+  );
+}
+
+function DGroupForm() {
+  return (
+    <DFormFrame title="添加策略组" hint="选择成员；自动测速组会按延迟选最快节点。">
+      <DInput value={groupName()} onChange={(value) => groupName.set(value)} placeholder="组名" />
+      <View style={{ flexDirection: "row", gap: 8 }}>
+        <DButton
+          label="手动选择"
+          primary={groupStrategy() === "select"}
+          onPress={() => groupStrategy.set("select")}
+        />
+        <DButton
+          label="自动测速"
+          primary={groupStrategy() === "urltest"}
+          onPress={() => groupStrategy.set("urltest")}
+        />
+      </View>
+      <Text style={{ fontSize: 12, fontWeight: "600", color: desktopColors.text }}>订阅成员</Text>
+      {page().subscriptions.map((entry) => (
+        <DCheck
+          label={entry.name}
+          checked={selectedSubscriptions().includes(entry.index)}
+          onPress={() => selectedSubscriptions.set(toggleIndex(selectedSubscriptions(), entry.index))}
+        />
+      ))}
+      <Text style={{ fontSize: 12, fontWeight: "600", color: desktopColors.text }}>手动节点成员</Text>
+      {page().nodes.map((entry) => (
+        <DCheck
+          label={entry.name}
+          checked={selectedNodes().includes(entry.index)}
+          onPress={() => selectedNodes.set(toggleIndex(selectedNodes(), entry.index))}
+        />
+      ))}
+      <View style={{ flexDirection: "row", gap: 8 }}>
+        <DButton label="添加" primary onPress={() => void addGroup()} />
+        <DButton label="取消" onPress={() => adding.set(null)} />
+      </View>
+    </DFormFrame>
+  );
+}
+
+function DesktopSubscriptionsPage() {
+  const enabledSubscriptions = page().subscriptions.filter((entry) => entry.enabled).length;
+  const enabledNodes = page().nodes.filter((entry) => entry.enabled).length;
+  return (
+    <View style={{ flex: 1, flexDirection: "row", backgroundColor: desktopColors.high }}>
+      <View style={{ flex: 1, minWidth: 0, flexDirection: "column" }}>
+        <View
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 8,
+            paddingHorizontal: 16,
+            paddingVertical: 10,
+            borderBottomWidth: 1,
+            borderBottomColor: desktopColors.outline,
+          }}
+        >
+          <Text style={{ fontSize: 12, color: desktopColors.secondary, flex: 1 }}>
+            {message() || "订阅、手动节点和策略组都会进入同一份内核配置。"}
+          </Text>
+          <DButton label={busy() ? "刷新中…" : "刷新订阅"} onPress={() => void invoke("subscriptions.refresh")} />
+          <DButton label="应用" primary onPress={() => void invoke("subscriptions.apply")} />
+        </View>
+        <Scroll style={{ flex: 1 }} contentStyle={{ padding: 12, gap: 10 }}>
+          {adding() === "subscription" ? <DSubscriptionForm /> : null}
+          {adding() === "node" ? <DNodeForm /> : null}
+          {adding() === "group" ? <DGroupForm /> : null}
+          <DCard
+            title="订阅"
+            count={page().subscriptions.length}
+            action={
+              <DButton
+                label="添加"
+                onPress={() => adding.set(adding() === "subscription" ? null : "subscription")}
+              />
+            }
+          >
+            {page().subscriptions.map((entry) => (
+              <DTableRow
+                title={entry.name}
+                detail={entry.displayUrl}
+                enabled={entry.enabled}
+                onToggle={() => toggleSubscription(entry)}
+                onDelete={() => remove("subscription", entry.index)}
+              />
+            ))}
+            {page().subscriptions.length === 0 ? (
+              <Text style={{ fontSize: 12, color: desktopColors.tertiary, padding: 12 }}>还没有订阅。</Text>
+            ) : null}
+          </DCard>
+          <DCard
+            title="手动节点"
+            count={page().nodes.length}
+            action={
+              <DButton
+                label="添加"
+                onPress={() => adding.set(adding() === "node" ? null : "node")}
+              />
+            }
+          >
+            {page().nodes.map((entry) => (
+              <DTableRow
+                title={entry.name}
+                detail="VLESS"
+                enabled={entry.enabled}
+                onToggle={() => toggleNode(entry)}
+                onDelete={() => remove("node", entry.index)}
+              />
+            ))}
+            {page().nodes.length === 0 ? (
+              <Text style={{ fontSize: 12, color: desktopColors.tertiary, padding: 12 }}>还没有手动节点。</Text>
+            ) : null}
+          </DCard>
+          <DCard
+            title="策略组"
+            count={page().groups.length}
+            action={
+              <DButton
+                label="添加"
+                onPress={() => adding.set(adding() === "group" ? null : "group")}
+              />
+            }
+          >
+            {page().groups.map((group) => (
+              <DTableRow
+                title={group.name}
+                detail={`${group.strategy === "urltest" ? "自动测速" : "手动选择"} · ${group.subscriptionIndexes.length} 个订阅 / ${group.nodeIndexes.length} 个节点`}
+                onDelete={() => remove("group", group.index)}
+              />
+            ))}
+            {page().groups.length === 0 ? (
+              <Text style={{ fontSize: 12, color: desktopColors.tertiary, padding: 12 }}>
+                全局组始终存在；再加一个自动测速组即可按延迟选最快节点。
+              </Text>
+            ) : null}
+          </DCard>
+        </Scroll>
+      </View>
+      <View style={{ width: 280, borderLeftWidth: 1, borderLeftColor: desktopColors.outline, backgroundColor: desktopColors.low }}>
+        <Scroll style={{ flex: 1 }} contentStyle={{ padding: 12, gap: 10 }}>
+          <View
+            style={{
+              borderWidth: 1,
+              borderColor: desktopColors.outline,
+              borderRadius: 10,
+              backgroundColor: desktopColors.high,
+              padding: 12,
+              gap: 6,
+            }}
+          >
+            <Text style={{ fontSize: 11, fontWeight: "600", color: desktopColors.tertiary }}>汇总</Text>
+            <Text style={{ fontSize: 12, color: desktopColors.text }}>
+              订阅 {page().subscriptions.length}（已启用 {enabledSubscriptions}）
+            </Text>
+            <Text style={{ fontSize: 12, color: desktopColors.text }}>
+              手动节点 {page().nodes.length}（已启用 {enabledNodes}）
+            </Text>
+            <Text style={{ fontSize: 12, color: desktopColors.text }}>策略组 {page().groups.length}</Text>
+          </View>
+          <View
+            style={{
+              borderWidth: 1,
+              borderColor: desktopColors.outline,
+              borderRadius: 10,
+              backgroundColor: desktopColors.high,
+              padding: 12,
+              gap: 6,
+            }}
+          >
+            <Text style={{ fontSize: 11, fontWeight: "600", color: desktopColors.tertiary }}>应用</Text>
+            <Text style={{ fontSize: 12, color: desktopColors.secondary }}>
+              修改会先保存；点「应用」后内核重启并使用已下载的缓存，VPN 接口不会断开。
+            </Text>
+          </View>
+        </Scroll>
+      </View>
+    </View>
+  );
+}
+
+export function SubscriptionsPage() {
+  return embedded ? <DesktopSubscriptionsPage /> : <MobileSubscriptionsPage />;
 }

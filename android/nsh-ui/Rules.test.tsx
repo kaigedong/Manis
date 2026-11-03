@@ -22,3 +22,38 @@ test("renders rules and policies", async () => {
   expect(app.texts()).toContain("example.com");
   expect(app.texts().some((text) => text.includes("全局"))).toBe(true);
 });
+
+test("desktop rules renders the table and inspector", async () => {
+  const app = await open("./App.tsx", {
+    width: 1400,
+    height: 900,
+    platform: "macos",
+    host: {
+      params: {
+        embedded: true,
+        tab: "rules",
+        data: {
+          rules: {
+            rules: [
+              {
+                index: 0,
+                kind: "DOMAIN-SUFFIX",
+                value: "example.com",
+                policy: "__MANIS_GLOBAL__",
+                policyLabel: "全局",
+                enabled: true,
+              },
+            ],
+            kinds: ["DOMAIN-SUFFIX", "FINAL"],
+            policies: ["DIRECT", "__MANIS_GLOBAL__"],
+            warnings: [],
+            summary: "1 条规则",
+          },
+        },
+      },
+    },
+  });
+  expect(app.texts()).toContain("example.com");
+  expect(app.texts()).toContain("摘要");
+  expect(app.texts()).toContain("顺序");
+});
