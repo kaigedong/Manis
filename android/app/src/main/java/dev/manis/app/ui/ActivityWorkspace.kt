@@ -70,11 +70,15 @@ fun ActivityWorkspace(onMessage: (String) -> Unit) {
         ) {
             Column(Modifier.weight(1f)) {
                 Text("网络活动", style = ManisType.pageTitle, color = colors.textPrimary)
+                val countLabel = when {
+                    query.isBlank() -> "${allConnections.size} 个连接"
+                    else -> "${connections.size}/${allConnections.size} 个连接"
+                }
                 ManisMeta(
                     when {
-                        !RuntimeState.active -> "连接后显示实时连接"
+                        !RuntimeState.active && query.isBlank() -> "$countLabel · ↓ 0 B · ↑ 0 B"
                         snapshot == null -> "正在读取连接…"
-                        else -> "${connections.size} 个连接 · ↓ ${formatBytes(connections.sumOf { it.download })} ↑ ${formatBytes(connections.sumOf { it.upload })}"
+                        else -> "$countLabel · ↓ ${formatBytes(connections.sumOf { it.download })} · ↑ ${formatBytes(connections.sumOf { it.upload })}"
                     },
                 )
             }

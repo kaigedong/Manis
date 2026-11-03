@@ -103,11 +103,7 @@ fun NodesWorkspace(
             else -> {
                 WorkspaceHeader(
                     title = "节点",
-                    subtitle = when {
-                        snapshot != null -> "${groups.size} 个策略组 · ${snapshot.nodes.size} 个节点"
-                        savedGroups.isNotEmpty() -> "${savedGroups.size} 个策略组 · 未连接"
-                        else -> "暂无节点"
-                    },
+                    subtitle = null,
                     action = if (refreshing) "刷新中…" else "刷新",
                     onAction = ::refresh,
                 )
@@ -167,7 +163,7 @@ fun NodesWorkspace(
 @Composable
 private fun WorkspaceHeader(
     title: String,
-    subtitle: String,
+    subtitle: String?,
     action: String? = null,
     onAction: (() -> Unit)? = null,
 ) {
@@ -181,7 +177,7 @@ private fun WorkspaceHeader(
     ) {
         Column(Modifier.weight(1f)) {
             Text(title, style = ManisType.pageTitle, color = colors.textPrimary)
-            ManisMeta(subtitle)
+            if (subtitle != null) ManisMeta(subtitle)
         }
         if (action != null && onAction != null) {
             ManisButton(action, onClick = onAction)

@@ -51,7 +51,7 @@ fun LogsWorkspace(onMessage: (String) -> Unit) {
         ) {
             Column(Modifier.weight(1f)) {
                 Text("日志", style = ManisType.pageTitle, color = colors.textPrimary)
-                ManisMeta("${filtered.size} 行 · 内核日志来自本机 controller")
+                ManisMeta("${filtered.size} 条日志 · 敏感信息已隐藏")
             }
             ManisButton("刷新", onClick = {
                 lines = readKernelLog(context)

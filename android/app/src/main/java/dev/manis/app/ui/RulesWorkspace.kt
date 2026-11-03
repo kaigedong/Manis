@@ -86,7 +86,15 @@ fun RulesWorkspace(onMessage: (String) -> Unit) {
             ) {
                 Column(Modifier.weight(1f)) {
                     Text("分流规则", style = ManisType.pageTitle, color = colors.textPrimary)
-                    ManisMeta("${config.ruleEntries.size} 条规则 · ${config.ruleEntries.count { it.enabled }} 条已启用")
+                    val enabledRules = config.ruleEntries.count { it.enabled }
+                    val disabledRules = config.ruleEntries.size - enabledRules
+                    ManisMeta(
+                        if (disabledRules == 0) {
+                            "${config.ruleEntries.size} 条规则"
+                        } else {
+                            "$enabledRules 条生效 · $disabledRules 条已禁用"
+                        },
+                    )
                 }
                 if (pending) {
                     ManisButton("应用", primary = true, onClick = {
