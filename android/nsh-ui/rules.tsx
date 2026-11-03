@@ -2,7 +2,7 @@ import { computed, host, Scroll, signal, Text, View } from "nsh";
 import { Input } from "nsh/base";
 import { embedded, root } from "./store";
 import { desktopColors } from "./theme";
-import { ToggleBadge } from "./ui";
+import { RuleRow } from "./ui";
 
 type Rule = {
   index: number;
@@ -291,46 +291,16 @@ function MobileRulesPage() {
               </Text>
             ) : null}
             {page().rules.map((rule) => (
-              <View
-                style={{
-                  borderTopWidth: 1,
-                  borderTopColor: "#f3f4f6",
-                  paddingTop: 10,
-                  flexDirection: "row",
-                  alignItems: "center",
-                  gap: 8,
-                }}
-              >
-                <View style={{ flex: 1, gap: 3 }}>
-                  <Text style={{ fontSize: 12, color: "#7c3aed" }}>{rule.kind}</Text>
-                  <Text style={{ fontSize: 15 }}>{rule.kind === "FINAL" ? "所有剩余流量" : rule.value}</Text>
-                  <Text style={{ fontSize: 12, color: "#6b7280" }}>→ {rule.policyLabel}</Text>
-                </View>
-                <ToggleBadge
-                  enabled={rule.enabled}
-                  onOn="已启用"
-                  onOff="已停用"
-                  onPress={() => void invoke("rules.toggle", { index: rule.index, enabled: !rule.enabled })}
-                />
-                <View
-                  onPress={() => openEdit(rule)}
-                  role="button"
-                  accessible
-                  accessibilityLabel="编辑规则"
-                  style={{ paddingHorizontal: 6, paddingVertical: 5 }}
-                >
-                  <Text style={{ fontSize: 13, color: "#5b21b6" }}>编辑</Text>
-                </View>
-                <View
-                  onPress={() => void invoke("rules.delete", { index: rule.index })}
-                  role="button"
-                  accessible
-                  accessibilityLabel="删除规则"
-                  style={{ paddingHorizontal: 6, paddingVertical: 5 }}
-                >
-                  <Text style={{ fontSize: 13, color: "#b91c1c" }}>删除</Text>
-                </View>
-              </View>
+              <RuleRow
+                index={rule.index}
+                kind={rule.kind}
+                value={rule.value}
+                policyLabel={rule.policyLabel}
+                enabled={rule.enabled}
+                onToggle={() => void invoke("rules.toggle", { index: rule.index, enabled: !rule.enabled })}
+                onEdit={() => openEdit(rule)}
+                onDelete={() => void invoke("rules.delete", { index: rule.index })}
+              />
             ))}
             <Text style={{ fontSize: 12, color: "#6b7280" }}>
               规则从上到下匹配；策略可以是 DIRECT、REJECT 或任意策略组。最终规则之后的规则不会再生效。
@@ -468,49 +438,6 @@ function DesktopRuleEditor() {
   );
 }
 
-function DesktopRuleRow(props: { rule: Rule }) {
-  const rule = () => props.rule;
-  return (
-    <View
-      style={{
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 10,
-        paddingHorizontal: 12,
-        paddingVertical: 8,
-        borderBottomWidth: 1,
-        borderBottomColor: "#EDF2EF",
-        opacity: rule().enabled ? 1 : 0.55,
-      }}
-    >
-      <Text style={{ fontSize: 11, color: desktopColors.tertiary, width: 34 }}>{rule().index + 1}</Text>
-      <Text style={{ fontSize: 11, color: desktopColors.primary, width: 120 }}>{rule().kind}</Text>
-      <Text style={{ fontSize: 12, color: desktopColors.text, flex: 1 }}>
-        {rule().kind === "FINAL" ? "所有剩余流量" : rule().value}
-      </Text>
-      <Text style={{ fontSize: 11, color: desktopColors.secondary, width: 110 }}>→ {rule().policyLabel}</Text>
-      <ToggleBadge
-        enabled={rule().enabled}
-        onOn="已启用"
-        onOff="已停用"
-        onPress={() => void invoke("rules.toggle", { index: rule().index, enabled: !rule().enabled })}
-      />
-      <View onPress={() => openEdit(rule())} role="button" accessible accessibilityLabel="编辑规则" style={{ paddingHorizontal: 4 }}>
-        <Text style={{ fontSize: 12, color: desktopColors.primary }}>编辑</Text>
-      </View>
-      <View
-        onPress={() => void invoke("rules.delete", { index: rule().index })}
-        role="button"
-        accessible
-        accessibilityLabel="删除规则"
-        style={{ paddingHorizontal: 4 }}
-      >
-        <Text style={{ fontSize: 12, color: desktopColors.error }}>删除</Text>
-      </View>
-    </View>
-  );
-}
-
 function DesktopRulesPage() {
   return (
     <View style={{ flex: 1, flexDirection: "row", backgroundColor: desktopColors.high }}>
@@ -552,7 +479,16 @@ function DesktopRulesPage() {
         </View>
         <Scroll style={{ flex: 1 }}>
           {page().rules.map((rule) => (
-            <DesktopRuleRow rule={rule} />
+            <RuleRow
+              index={rule.index}
+              kind={rule.kind}
+              value={rule.value}
+              policyLabel={rule.policyLabel}
+              enabled={rule.enabled}
+              onToggle={() => void invoke("rules.toggle", { index: rule.index, enabled: !rule.enabled })}
+              onEdit={() => openEdit(rule)}
+              onDelete={() => void invoke("rules.delete", { index: rule.index })}
+            />
           ))}
           {page().rules.length === 0 ? (
             <Text style={{ padding: 16, fontSize: 12, color: desktopColors.tertiary }}>

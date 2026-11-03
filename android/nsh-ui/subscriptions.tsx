@@ -2,7 +2,7 @@ import { computed, host, Scroll, signal, Text, View } from "nsh";
 import { Input } from "nsh/base";
 import { embedded, root } from "./store";
 import { desktopColors } from "./theme";
-import { ToggleBadge } from "./ui";
+import { SubscriptionRow } from "./ui";
 
 type SubscriptionItem = {
   index: number;
@@ -198,50 +198,6 @@ function Section(props: {
   );
 }
 
-function Row(props: {
-  title: string;
-  detail: string;
-  enabled?: boolean;
-  onToggle?: () => void;
-  onDelete: () => void;
-  deleteLabel?: string;
-}) {
-  return (
-    <View
-      style={{
-        borderTopWidth: 1,
-        borderTopColor: "#f3f4f6",
-        paddingTop: 10,
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 8,
-      }}
-    >
-      <View style={{ flex: 1, gap: 3 }}>
-        <Text style={{ fontSize: 15 }}>{props.title}</Text>
-        <Text style={{ fontSize: 12, color: "#6b7280" }}>{props.detail}</Text>
-      </View>
-      {props.onToggle ? (
-        <ToggleBadge
-          enabled={props.enabled === true}
-          onOn="已启用"
-          onOff="已停用"
-          onPress={props.onToggle}
-        />
-      ) : null}
-      <View
-        onPress={props.onDelete}
-        role="button"
-        accessible
-        accessibilityLabel={props.deleteLabel ?? "删除"}
-        style={{ paddingHorizontal: 6, paddingVertical: 5 }}
-      >
-        <Text style={{ fontSize: 13, color: "#b91c1c" }}>删除</Text>
-      </View>
-    </View>
-  );
-}
-
 function ChoiceRow(props: {
   label: string;
   checked: boolean;
@@ -401,7 +357,7 @@ function MobileSubscriptionsPage() {
             }
           >
             {page().subscriptions.map((entry) => (
-              <Row
+              <SubscriptionRow
                 title={entry.name}
                 detail={entry.displayUrl}
                 enabled={entry.enabled}
@@ -424,7 +380,7 @@ function MobileSubscriptionsPage() {
             }
           >
             {page().nodes.map((entry) => (
-              <Row
+              <SubscriptionRow
                 title={entry.name}
                 detail="VLESS"
                 enabled={entry.enabled}
@@ -451,7 +407,7 @@ function MobileSubscriptionsPage() {
             }
           >
             {page().groups.map((group) => (
-              <Row
+              <SubscriptionRow
                 title={group.name}
                 detail={`${group.strategy === "urltest" ? "自动测速" : "手动选择"} · ${group.subscriptionIndexes.length} 个订阅 / ${group.nodeIndexes.length} 个节点`}
                 onDelete={() => remove("group", group.index)}
@@ -534,50 +490,6 @@ function DCard(props: { title: string; count?: number; action?: any; children: a
         {props.action}
       </View>
       <View>{props.children}</View>
-    </View>
-  );
-}
-
-function DTableRow(props: {
-  title: string;
-  detail: string;
-  enabled?: boolean;
-  onToggle?: () => void;
-  onDelete: () => void;
-}) {
-  return (
-    <View
-      style={{
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 12,
-        paddingHorizontal: 12,
-        paddingVertical: 9,
-        borderBottomWidth: 1,
-        borderBottomColor: "#EDF2EF",
-      }}
-    >
-      <View style={{ flex: 1, gap: 2 }}>
-        <Text style={{ fontSize: 13, color: desktopColors.text }}>{props.title}</Text>
-        <Text style={{ fontSize: 11, color: desktopColors.secondary }}>{props.detail}</Text>
-      </View>
-      {props.onToggle ? (
-        <ToggleBadge
-          enabled={props.enabled === true}
-          onOn="已启用"
-          onOff="已停用"
-          onPress={props.onToggle}
-        />
-      ) : null}
-      <View
-        onPress={props.onDelete}
-        role="button"
-        accessible
-        accessibilityLabel="删除"
-        style={{ paddingHorizontal: 6, paddingVertical: 3 }}
-      >
-        <Text style={{ fontSize: 12, color: desktopColors.error }}>删除</Text>
-      </View>
     </View>
   );
 }
@@ -758,7 +670,7 @@ function DesktopSubscriptionsPage() {
             }
           >
             {page().subscriptions.map((entry) => (
-              <DTableRow
+              <SubscriptionRow
                 title={entry.name}
                 detail={entry.displayUrl}
                 enabled={entry.enabled}
@@ -781,7 +693,7 @@ function DesktopSubscriptionsPage() {
             }
           >
             {page().nodes.map((entry) => (
-              <DTableRow
+              <SubscriptionRow
                 title={entry.name}
                 detail="VLESS"
                 enabled={entry.enabled}
@@ -804,7 +716,7 @@ function DesktopSubscriptionsPage() {
             }
           >
             {page().groups.map((group) => (
-              <DTableRow
+              <SubscriptionRow
                 title={group.name}
                 detail={`${group.strategy === "urltest" ? "自动测速" : "手动选择"} · ${group.subscriptionIndexes.length} 个订阅 / ${group.nodeIndexes.length} 个节点`}
                 onDelete={() => remove("group", group.index)}

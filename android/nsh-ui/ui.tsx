@@ -312,3 +312,139 @@ export function ToggleBadge(props: {
     </View>
   );
 }
+
+/** A subscription/manual-node row shared by both shells. */
+export function SubscriptionRow(props: {
+  title: string;
+  detail: string;
+  enabled?: boolean;
+  onToggle?: () => void;
+  onDelete: () => void;
+}) {
+  if (embedded) {
+    return (
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          gap: 12,
+          paddingHorizontal: 12,
+          paddingVertical: 9,
+          borderBottomWidth: 1,
+          borderBottomColor: "#EDF2EF",
+        }}
+      >
+        <View style={{ flex: 1, gap: 2 }}>
+          <Text style={{ fontSize: 13, color: desktopColors.text }}>{props.title}</Text>
+          <Text style={{ fontSize: 11, color: desktopColors.secondary }}>{props.detail}</Text>
+        </View>
+        {props.onToggle ? (
+          <ToggleBadge
+            enabled={props.enabled === true}
+            onOn="已启用"
+            onOff="已停用"
+            onPress={props.onToggle}
+          />
+        ) : null}
+        <View onPress={props.onDelete} role="button" accessible accessibilityLabel="删除" style={{ paddingHorizontal: 6, paddingVertical: 3 }}>
+          <Text style={{ fontSize: 12, color: desktopColors.error }}>删除</Text>
+        </View>
+      </View>
+    );
+  }
+  return (
+    <View
+      style={{
+        borderTopWidth: 1,
+        borderTopColor: "#f3f4f6",
+        paddingTop: 10,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 8,
+      }}
+    >
+      <View style={{ flex: 1, gap: 3 }}>
+        <Text style={{ fontSize: 15 }}>{props.title}</Text>
+        <Text style={{ fontSize: 12, color: "#6b7280" }}>{props.detail}</Text>
+      </View>
+      {props.onToggle ? (
+        <ToggleBadge
+          enabled={props.enabled === true}
+          onOn="已启用"
+          onOff="已停用"
+          onPress={props.onToggle}
+        />
+      ) : null}
+      <View onPress={props.onDelete} role="button" accessible accessibilityLabel="删除" style={{ paddingHorizontal: 6, paddingVertical: 5 }}>
+        <Text style={{ fontSize: 13, color: "#b91c1c" }}>删除</Text>
+      </View>
+    </View>
+  );
+}
+
+/** A routing-rule row shared by both shells. */
+export function RuleRow(props: {
+  index: number;
+  kind: string;
+  value: string;
+  policyLabel: string;
+  enabled: boolean;
+  onToggle: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  const match = props.kind === "FINAL" ? "所有剩余流量" : props.value;
+  if (embedded) {
+    return (
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          gap: 10,
+          paddingHorizontal: 12,
+          paddingVertical: 8,
+          borderBottomWidth: 1,
+          borderBottomColor: "#EDF2EF",
+          opacity: props.enabled ? 1 : 0.55,
+        }}
+      >
+        <Text style={{ fontSize: 11, color: desktopColors.tertiary, width: 34 }}>{props.index + 1}</Text>
+        <Text style={{ fontSize: 11, color: desktopColors.primary, width: 120 }}>{props.kind}</Text>
+        <Text style={{ fontSize: 12, color: desktopColors.text, flex: 1 }}>{match}</Text>
+        <Text style={{ fontSize: 11, color: desktopColors.secondary, width: 110 }}>→ {props.policyLabel}</Text>
+        <ToggleBadge enabled={props.enabled} onOn="已启用" onOff="已停用" onPress={props.onToggle} />
+        <View onPress={props.onEdit} role="button" accessible accessibilityLabel="编辑规则" style={{ paddingHorizontal: 4 }}>
+          <Text style={{ fontSize: 12, color: desktopColors.primary }}>编辑</Text>
+        </View>
+        <View onPress={props.onDelete} role="button" accessible accessibilityLabel="删除规则" style={{ paddingHorizontal: 4 }}>
+          <Text style={{ fontSize: 12, color: desktopColors.error }}>删除</Text>
+        </View>
+      </View>
+    );
+  }
+  return (
+    <View
+      style={{
+        borderTopWidth: 1,
+        borderTopColor: "#f3f4f6",
+        paddingTop: 10,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 8,
+      }}
+    >
+      <View style={{ flex: 1, gap: 3 }}>
+        <Text style={{ fontSize: 12, color: "#7c3aed" }}>{props.kind}</Text>
+        <Text style={{ fontSize: 15 }}>{match}</Text>
+        <Text style={{ fontSize: 12, color: "#6b7280" }}>→ {props.policyLabel}</Text>
+      </View>
+      <ToggleBadge enabled={props.enabled} onOn="已启用" onOff="已停用" onPress={props.onToggle} />
+      <View onPress={props.onEdit} role="button" accessible accessibilityLabel="编辑规则" style={{ paddingHorizontal: 6, paddingVertical: 5 }}>
+        <Text style={{ fontSize: 13, color: "#5b21b6" }}>编辑</Text>
+      </View>
+      <View onPress={props.onDelete} role="button" accessible accessibilityLabel="删除规则" style={{ paddingHorizontal: 6, paddingVertical: 5 }}>
+        <Text style={{ fontSize: 13, color: "#b91c1c" }}>删除</Text>
+      </View>
+    </View>
+  );
+}
