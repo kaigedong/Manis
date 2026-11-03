@@ -4,6 +4,7 @@ import { NodesPage } from "./nodes";
 import { RulesPage } from "./rules";
 import { SettingsPage } from "./settings";
 import { SubscriptionsPage } from "./subscriptions";
+import { desktopColors } from "./theme";
 import {
   bottomInset,
   embedded,
@@ -21,22 +22,6 @@ const tabs: Array<{ id: Tab; label: string; icon: string; hint: string }> = [
   { id: "rules", label: "规则", icon: "✎", hint: "有序分流规则" },
   { id: "settings", label: "设置", icon: "⚙", hint: "外观、更新与内核" },
 ];
-
-/** The GPUI desktop palette, used by the desktop shell. */
-const desktopColors = {
-  base: "#F4F7F5",
-  low: "#EDF2EF",
-  high: "#FFFFFF",
-  chrome: "#E7EEEA",
-  text: "#152321",
-  secondary: "#5F6E69",
-  tertiary: "#84918D",
-  outline: "#CBD6D2",
-  primary: "#176C62",
-  onPrimary: "#FFFFFF",
-  success: "#24795F",
-  warning: "#A96620",
-};
 
 function Action(props: {
   label: string;

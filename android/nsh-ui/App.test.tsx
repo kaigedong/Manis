@@ -24,3 +24,41 @@ test("renders source groups and current node", async () => {
   expect(app.texts()).toContain("香港 01");
   expect(app.texts()).toContain("当前");
 });
+
+test("desktop shell renders the three-column policy workspace", async () => {
+  const app = await open("./App.tsx", {
+    width: 1400,
+    height: 900,
+    platform: "macos",
+    host: {
+      params: {
+        embedded: true,
+        tab: "nodes",
+        data: {
+          nodes: {
+            ...nodesPage,
+            policyGroups: [
+              {
+                id: "policy-0",
+                label: "香港",
+                kind: "手动选择",
+                current: "香港 01",
+                members: [
+                  { name: "香港 01", displayName: "香港 01", delayMs: 42, current: true },
+                  { name: "香港 02", displayName: "香港 02", delayMs: 51, current: false },
+                ],
+              },
+            ],
+            global: { label: "全局", current: "香港 01", total: 3 },
+          },
+          connection: { active: true, mode: "rule", summary: "规则模式 · 香港 01" },
+          rules: { summary: "12 条规则", warnings: [] },
+        },
+      },
+    },
+  });
+  expect(app.texts()).toContain("策略组");
+  expect(app.texts()).toContain("香港");
+  expect(app.texts()).toContain("路由链");
+  expect(app.texts()).toContain("当前节点：香港 01");
+});
