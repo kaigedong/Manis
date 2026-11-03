@@ -10,8 +10,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Spacer
@@ -20,6 +22,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -298,5 +304,58 @@ fun ManisToast(message: String, modifier: Modifier = Modifier) {
             .padding(horizontal = ManisDimens.spaceMd, vertical = ManisDimens.spaceSm),
     ) {
         Text(message, style = ManisType.body, color = colors.textPrimary)
+    }
+}
+
+/** A GPUI dialog: a scrim and a centred pane with a titled header and a footer. */
+@Composable
+fun ManisDialog(
+    title: String,
+    subtitle: String? = null,
+    onDismiss: () -> Unit,
+    actions: @Composable RowScope.() -> Unit,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val colors = LocalManisColors.current
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(Color(0x66000000))
+            .clickable(onClick = onDismiss),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(ManisDimens.spaceLg)
+                .clip(RoundedCornerShape(ManisDimens.radiusPane))
+                .background(colors.surfaceOverlay)
+                .border(1.dp, colors.outlineSubtle, RoundedCornerShape(ManisDimens.radiusPane))
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                ) {},
+        ) {
+            Column(Modifier.padding(ManisDimens.spaceLg)) {
+                Text(title, style = ManisType.sectionTitle, color = colors.textPrimary)
+                if (subtitle != null) ManisMeta(subtitle)
+            }
+            ManisDivider()
+            Column(
+                Modifier
+                    .padding(ManisDimens.spaceLg)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
+                content = content,
+            )
+            ManisDivider()
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(ManisDimens.spaceMd),
+                horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceXs, Alignment.End),
+                content = actions,
+            )
+        }
     }
 }

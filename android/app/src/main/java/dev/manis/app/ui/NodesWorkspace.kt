@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.dp
 import dev.manis.app.core.ControllerApi
 import dev.manis.app.core.GroupInfo
 import dev.manis.app.data.GroupEntry
+import dev.manis.app.data.SubscriptionEntry
 import dev.manis.app.data.Workspace
 import kotlinx.coroutines.launch
 
@@ -113,7 +114,11 @@ fun NodesWorkspace(
                         .padding(ManisDimens.spaceMd),
                     verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceMd),
                 ) {
-                    SourceCards(onOpenConfiguration = onOpenConfiguration)
+                    SourceCards(
+                        subscriptions = subscriptionsOf(config),
+                        manualCount = config.nodes.count { it.enabled },
+                        onOpenConfiguration = onOpenConfiguration,
+                    )
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         ManisSectionTitle("策略组")
                         Spacer(Modifier.weight(1f))
@@ -182,11 +187,12 @@ private fun WorkspaceHeader(
 }
 
 @Composable
-private fun SourceCards(onOpenConfiguration: () -> Unit) {
+private fun SourceCards(
+    subscriptions: List<SubscriptionEntry>,
+    manualCount: Int,
+    onOpenConfiguration: () -> Unit,
+) {
     val colors = LocalManisColors.current
-    val config = Workspace.config.value
-    val subscriptions = config.subscriptions.filter { it.enabled }
-    val manualCount = config.nodes.count { it.enabled }
     if (subscriptions.isEmpty() && manualCount == 0) {
         ManisCard {
             Text("还没有来源", style = ManisType.label, color = colors.textPrimary)
@@ -195,22 +201,44 @@ private fun SourceCards(onOpenConfiguration: () -> Unit) {
         }
         return
     }
-    for (subscription in subscriptions) {
+    for ((index, subscription) in subscriptions.withIndex()) {
         ManisCard {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text(subscription.name, style = ManisType.label, color = colors.textPrimary)
-                    ManisMeta("订阅 · 已启用")
+                    Text(
+                        subscription.name.ifBlank { "订阅 ${index + 1}" },
+                        style = ManisType.label,
+                        color = colors.textPrimary,
+                    )
+                    ManisMeta(
+                        "${if (subscription.url.startsWith("https")) "HTTPS 订阅" else "HTTP 订阅"} · " +
+                            sourceHost(subscription.url),
+                    )
                 }
+                ManisTextAction("配置") { onOpenConfiguration() }
             }
         }
     }
     if (manualCount > 0) {
         ManisCard {
-            Text("手动节点", style = ManisType.label, color = colors.textPrimary)
-            ManisMeta("$manualCount 个已启用的手动节点")
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("手动节点", style = ManisType.label, color = colors.textPrimary)
+                    ManisMeta("$manualCount 个已启用的手动节点")
+                }
+                ManisTextAction("配置") { onOpenConfiguration() }
+            }
         }
     }
+}
+
+private fun subscriptionsOf(config: dev.manis.app.data.MobileConfig): List<SubscriptionEntry> =
+    config.subscriptions.filter { it.enabled }
+
+/** The host of a subscription URL, as GPUI shows the transport target. */
+private fun sourceHost(url: String): String {
+    val rest = url.substringAfter("://", url)
+    return rest.substringBefore('/').substringBefore('?').ifBlank { url }
 }
 
 @Composable

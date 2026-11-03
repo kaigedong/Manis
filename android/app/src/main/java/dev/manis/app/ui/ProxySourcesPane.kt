@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -20,6 +21,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.unit.dp
 import dev.manis.app.core.ControllerApi
 import dev.manis.app.core.CoreController
@@ -200,36 +203,57 @@ private fun SourceEditorPane(
     var nodeMembers by remember { mutableStateOf(setOf<Int>()) }
     var error by remember { mutableStateOf<String?>(null) }
 
-    Column(Modifier.fillMaxWidth()) {
-        Row(
-            Modifier.fillMaxWidth().padding(vertical = ManisDimens.spaceSm),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
-        ) {
-            ManisBackButton(onCancel)
-            Column(Modifier.weight(1f)) {
-                Text(
-                    when (editor) {
-                        SourceEditor.Subscription -> "添加订阅"
-                        SourceEditor.Node -> "添加 VLESS 节点"
-                        SourceEditor.Group -> "添加策略组"
-                    },
-                    style = ManisType.sectionTitle,
-                    color = colors.textPrimary,
-                )
-                ManisMeta(
-                    when (editor) {
-                        SourceEditor.Subscription -> "粘贴 Clash 格式订阅地址"
-                        SourceEditor.Node -> "支持 TLS / WebSocket / Reality 分享链接"
-                        SourceEditor.Group -> "选择成员；自动测速组按延迟选最快节点"
-                    },
+    fun submit() {
+        when (editor) {
+            SourceEditor.Subscription -> {
+                if (url.isBlank()) {
+                    error = "订阅地址不能为空"
+                    return
+                }
+                onSaveSubscription(name, url)
+            }
+            SourceEditor.Node -> {
+                if (!link.startsWith("vless://")) {
+                    error = "请输入 vless:// 分享链接"
+                    return
+                }
+                onSaveNode(link)
+            }
+            SourceEditor.Group -> {
+                if (name.isBlank() || (subscriptionMembers.isEmpty() && nodeMembers.isEmpty())) {
+                    error = "策略组需要名称和至少一个成员"
+                    return
+                }
+                onSaveGroup(
+                    GroupEntry(
+                        name = name.trim(),
+                        strategy = strategy,
+                        subscriptionIndexes = subscriptionMembers.sorted(),
+                        nodeIndexes = nodeMembers.sorted(),
+                    ),
                 )
             }
         }
-        ManisDivider()
-        Column(
-            Modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
+    }
+
+    Popup(onDismissRequest = onCancel, properties = PopupProperties(focusable = true)) {
+        ManisDialog(
+            title = when (editor) {
+                SourceEditor.Subscription -> "添加订阅"
+                SourceEditor.Node -> "添加 VLESS 节点"
+                SourceEditor.Group -> "添加策略组"
+            },
+            subtitle = when (editor) {
+                SourceEditor.Subscription -> "粘贴 Clash 格式订阅地址"
+                SourceEditor.Node -> "支持 TLS / WebSocket / Reality 分享链接"
+                SourceEditor.Group -> "选择成员；自动测速组按延迟选最快节点"
+            },
+            onDismiss = onCancel,
+            actions = {
+                Spacer(Modifier.weight(1f))
+                ManisButton("取消", onClick = onCancel)
+                ManisButton("添加", primary = true, onClick = ::submit)
+            },
         ) {
             when (editor) {
                 SourceEditor.Subscription -> {
@@ -237,24 +261,10 @@ private fun SourceEditorPane(
                     ManisTextField(value = name, onValueChange = { name = it }, placeholder = "名称")
                     Text("订阅地址", style = ManisType.label, color = colors.textPrimary)
                     ManisTextField(value = url, onValueChange = { url = it }, placeholder = "https://…")
-                    ManisButton("添加", primary = true, onClick = {
-                        if (url.isBlank()) {
-                            error = "订阅地址不能为空"
-                            return@ManisButton
-                        }
-                        onSaveSubscription(name, url)
-                    })
                 }
                 SourceEditor.Node -> {
                     Text("vless:// 分享链接", style = ManisType.label, color = colors.textPrimary)
                     ManisTextField(value = link, onValueChange = { link = it }, placeholder = "vless://…")
-                    ManisButton("添加", primary = true, onClick = {
-                        if (!link.startsWith("vless://")) {
-                            error = "请输入 vless:// 分享链接"
-                            return@ManisButton
-                        }
-                        onSaveNode(link)
-                    })
                 }
                 SourceEditor.Group -> {
                     Text("组名", style = ManisType.label, color = colors.textPrimary)
@@ -282,20 +292,6 @@ private fun SourceEditorPane(
                             nodeMembers = nodeMembers.toggle(index)
                         }
                     }
-                    ManisButton("添加", primary = true, onClick = {
-                        if (name.isBlank() || (subscriptionMembers.isEmpty() && nodeMembers.isEmpty())) {
-                            error = "策略组需要名称和至少一个成员"
-                            return@ManisButton
-                        }
-                        onSaveGroup(
-                            GroupEntry(
-                                name = name.trim(),
-                                strategy = strategy,
-                                subscriptionIndexes = subscriptionMembers.sorted(),
-                                nodeIndexes = nodeMembers.sorted(),
-                            ),
-                        )
-                    })
                 }
             }
             error?.let { Text(it, style = ManisType.metadata, color = colors.statusError) }

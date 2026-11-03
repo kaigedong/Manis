@@ -21,6 +21,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.unit.dp
 import dev.manis.app.data.MobileConfig
 import dev.manis.app.data.RULE_KINDS
@@ -199,69 +201,56 @@ private fun RuleEditorPane(
     var policy by remember { mutableStateOf(initial.policy) }
     var error by remember { mutableStateOf<String?>(null) }
 
-    Column(Modifier.fillMaxSize()) {
-        Row(
-            Modifier.fillMaxWidth().padding(ManisDimens.spaceMd),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
-        ) {
-            ManisBackButton(onCancel)
-            Column(Modifier.weight(1f)) {
-                Text(
-                    if (editingIndex == null) "添加规则" else "编辑规则",
-                    style = ManisType.sectionTitle,
-                    color = colors.textPrimary,
-                )
-                ManisMeta("规则按顺序匹配")
-            }
-            ManisButton("保存", primary = true, onClick = {
-                if (kind != "FINAL" && value.isBlank()) {
-                    error = "请填写匹配内容"
-                    return@ManisButton
-                }
-                val anotherFinal = existing.withIndex().any { (index, rule) ->
-                    index != editingIndex && rule.enabled && rule.kind == "FINAL"
-                }
-                if (kind == "FINAL" && anotherFinal) {
-                    error = "只能有一条启用的最终规则"
-                    return@ManisButton
-                }
-                onConfirm(
-                    RuleEntry(
-                        kind = kind,
-                        value = if (kind == "FINAL") "" else value.trim(),
-                        policy = policy,
-                        enabled = initial.enabled,
-                    ),
-                )
-            })
+    fun submit() {
+        if (kind != "FINAL" && value.isBlank()) {
+            error = "请填写匹配内容"
+            return
         }
-        ManisDivider()
-        Column(
-            Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(ManisDimens.spaceMd),
-            verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
-        ) {
-            Text("类型", style = ManisType.label, color = colors.textPrimary)
-            ChipGrid(options = RULE_KINDS.toList(), selected = kind) {
-                kind = it
-                if (it == "FINAL") value = ""
-            }
-            if (kind != "FINAL") {
-                Text("匹配", style = ManisType.label, color = colors.textPrimary)
-                ManisTextField(value = value, onValueChange = { value = it }, placeholder = kindPlaceholder(kind))
-            }
-            Text("策略", style = ManisType.label, color = colors.textPrimary)
-            ChipGrid(options = policies, selected = policy, display = ::policyLabel) { policy = it }
-            ManisMeta(kindHelp(kind))
-            error?.let { Text(it, style = ManisType.metadata, color = colors.statusError) }
+        val anotherFinal = existing.withIndex().any { (index, rule) ->
+            index != editingIndex && rule.enabled && rule.kind == "FINAL"
+        }
+        if (kind == "FINAL" && anotherFinal) {
+            error = "只能有一条启用的最终规则"
+            return
+        }
+        onConfirm(
+            RuleEntry(
+                kind = kind,
+                value = if (kind == "FINAL") "" else value.trim(),
+                policy = policy,
+                enabled = initial.enabled,
+            ),
+        )
+    }
+
+    Popup(onDismissRequest = onCancel, properties = PopupProperties(focusable = true)) {
+    ManisDialog(
+        title = if (editingIndex == null) "添加规则" else "编辑规则",
+        subtitle = "规则按顺序匹配",
+        onDismiss = onCancel,
+        actions = {
             if (editingIndex != null) {
-                Spacer(Modifier.padding(top = ManisDimens.spaceSm))
-                ManisButton("删除规则", onClick = onDelete)
+                ManisButton("删除", onClick = onDelete)
             }
+            Spacer(Modifier.weight(1f))
+            ManisButton("取消", onClick = onCancel)
+            ManisButton("保存", primary = true, onClick = ::submit)
+        },
+    ) {
+        Text("类型", style = ManisType.label, color = colors.textPrimary)
+        ChipGrid(options = RULE_KINDS.toList(), selected = kind) {
+            kind = it
+            if (it == "FINAL") value = ""
         }
+        if (kind != "FINAL") {
+            Text("匹配", style = ManisType.label, color = colors.textPrimary)
+            ManisTextField(value = value, onValueChange = { value = it }, placeholder = kindPlaceholder(kind))
+        }
+        Text("策略", style = ManisType.label, color = colors.textPrimary)
+        ChipGrid(options = policies, selected = policy, display = ::policyLabel) { policy = it }
+        ManisMeta(kindHelp(kind))
+        error?.let { Text(it, style = ManisType.metadata, color = colors.statusError) }
+    }
     }
 }
 
