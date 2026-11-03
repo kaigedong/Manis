@@ -1,0 +1,554 @@
+use super::{
+    GroupBenchmarkNodeState, GroupBenchmarkProgressQueue, GroupBenchmarkState,
+    GroupBenchmarkSummary, ManisApp, benchmark_timestamp, managed_subscription_provider_index,
+    stored_workspace,
+};
+use crate::{
+    components::{ActionRole, style_action_button},
+    diagnostics::{LogLevel, record_event},
+    localization::{Language, Message, copy},
+    mihomo,
+    theme::{ControlSize, Space, TextRole, Theme},
+};
+use gpui::{
+    AnyElement, Context, Div, FontWeight, IntoElement, ParentElement, Styled, Window, div,
+    prelude::*, px,
+};
+use gpui_component::{Sizable, button::Button, spinner::Spinner};
+use manis_core::{ManagedPolicyIcon, PolicyCatalog, PolicyGroup, PolicyNode};
+use std::time::Duration;
+
+mod benchmark;
+
+#[derive(Clone, Copy)]
+pub(super) struct PolicyGroupIconView<'a> {
+    pub(super) id: &'a str,
+    pub(super) icon: ManagedPolicyIcon,
+    pub(super) policy_name: &'a str,
+    pub(super) benchmarkable: bool,
+    pub(super) running: bool,
+    pub(super) language: Language,
+    pub(super) theme: Theme,
+}
+
+impl ManisApp {
+    pub(super) fn persist_node_workspace(&mut self) {
+        if self.configuration_transfer.active {
+            return;
+        }
+        let Some(store_dir) = self.subscription_store_dir.as_ref() else {
+            return;
+        };
+        if let Err(error) =
+            mihomo::save_collapsed_groups_in(store_dir, self.node_workspace.collapsed_group_ids())
+        {
+            self.source_store_error = Some(error);
+            self.language()
+                .localized(copy::app::COULD_NOT_SAVE_NODE_SOURCE_EXPANSION)
+                .clone_into(&mut self.status);
+        }
+    }
+
+    pub(super) fn theme(&self) -> Theme {
+        if self.dark {
+            Theme::dark()
+        } else {
+            Theme::light()
+        }
+    }
+
+    pub(super) fn policy_groups(&self) -> impl Iterator<Item = &PolicyGroup> {
+        self.catalog.iter().flat_map(PolicyCatalog::iter)
+    }
+
+    pub(super) fn policy_icon_visual(
+        icon: ManagedPolicyIcon,
+        policy_name: &str,
+        size: f32,
+        theme: Theme,
+    ) -> Div {
+        let glyph = match icon {
+            ManagedPolicyIcon::None => Self::policy_initial_glyph(policy_name, theme),
+            ManagedPolicyIcon::Bolt => Self::policy_bolt_glyph(theme),
+            ManagedPolicyIcon::Globe => Self::policy_globe_glyph(theme),
+            ManagedPolicyIcon::Shield => Self::policy_shield_glyph(theme),
+            ManagedPolicyIcon::Compass => Self::policy_compass_glyph(theme),
+        };
+        div()
+            .size(px(size))
+            .rounded_full()
+            .bg(theme.action_soft)
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(glyph)
+    }
+
+    fn policy_initial_glyph(policy_name: &str, theme: Theme) -> Div {
+        div()
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .font_weight(FontWeight::BOLD)
+            .text_color(theme.action_primary)
+            .child(
+                policy_name
+                    .chars()
+                    .next()
+                    .map_or_else(|| "?".to_owned(), |character| character.to_string()),
+            )
+    }
+
+    fn policy_bolt_glyph(theme: Theme) -> Div {
+        let color = theme.action_primary;
+        div()
+            .relative()
+            .size(px(20.0))
+            .child(
+                div()
+                    .absolute()
+                    .left(px(9.0))
+                    .top(px(1.0))
+                    .w(px(5.0))
+                    .h(px(8.0))
+                    .rounded_sm()
+                    .bg(color),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .left(px(6.0))
+                    .top(px(7.0))
+                    .w(px(8.0))
+                    .h(px(6.0))
+                    .rounded_sm()
+                    .bg(color),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .left(px(6.0))
+                    .top(px(12.0))
+                    .w(px(5.0))
+                    .h(px(7.0))
+                    .rounded_sm()
+                    .bg(color),
+            )
+    }
+
+    fn policy_globe_glyph(theme: Theme) -> Div {
+        let color = theme.action_primary;
+        div()
+            .relative()
+            .size(px(20.0))
+            .rounded_full()
+            .border_2()
+            .border_color(color)
+            .child(
+                div()
+                    .absolute()
+                    .left(px(7.0))
+                    .top(px(1.0))
+                    .w(px(2.0))
+                    .h(px(14.0))
+                    .rounded_full()
+                    .bg(color),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .left(px(1.0))
+                    .top(px(7.0))
+                    .w(px(14.0))
+                    .h(px(2.0))
+                    .rounded_full()
+                    .bg(color),
+            )
+    }
+
+    fn policy_shield_glyph(theme: Theme) -> Div {
+        div()
+            .size(px(19.0))
+            .rounded_md()
+            .border_2()
+            .border_color(theme.action_primary)
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(div().size(px(7.0)).rounded_full().bg(theme.action_primary))
+    }
+
+    fn policy_compass_glyph(theme: Theme) -> Div {
+        div()
+            .relative()
+            .size(px(20.0))
+            .rounded_full()
+            .border_2()
+            .border_color(theme.action_primary)
+            .child(
+                div()
+                    .absolute()
+                    .left(px(7.0))
+                    .top(px(3.0))
+                    .w(px(3.0))
+                    .h(px(10.0))
+                    .rounded_full()
+                    .bg(theme.action_primary),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .left(px(5.0))
+                    .top(px(7.0))
+                    .size(px(7.0))
+                    .rounded_full()
+                    .border_2()
+                    .border_color(theme.surface_high),
+            )
+    }
+
+    pub(super) fn policy_group_icon(
+        view: PolicyGroupIconView<'_>,
+        listener: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
+    ) -> AnyElement {
+        let PolicyGroupIconView {
+            id,
+            icon,
+            policy_name,
+            benchmarkable,
+            running,
+            language,
+            theme,
+        } = view;
+        if !benchmarkable {
+            return Self::policy_icon_visual(icon, policy_name, 38.0, theme)
+                .flex_shrink_0()
+                .into_any_element();
+        }
+        style_action_button(
+            Button::new(format!("policy-icon-{id}"))
+                .accessibility_label(language.localized(if running {
+                    copy::nodes::POLICY_BENCHMARK_IN_PROGRESS
+                } else {
+                    copy::nodes::TEST_POLICY_CANDIDATE_LATENCY
+                }))
+                .loading(running),
+            ActionRole::Secondary,
+            ControlSize::Standard,
+        )
+        .when(running, gpui::Styled::cursor_default)
+        .w(ControlSize::Standard.height())
+        .px_0()
+        .rounded_full()
+        .flex_shrink_0()
+        .when(!running, |button| {
+            button.child(
+                Self::policy_icon_visual(icon, policy_name, 32.0, theme)
+                    .bg(gpui::rgba(0x0000_0000)),
+            )
+        })
+        .on_click(listener)
+        .into_any_element()
+    }
+
+    pub(super) fn group_benchmark_icon(
+        id: &str,
+        running: bool,
+        language: Language,
+        theme: Theme,
+        listener: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
+    ) -> Button {
+        style_action_button(
+            Button::new(format!("group-benchmark-{id}"))
+                .accessibility_label(language.localized(if running {
+                    copy::nodes::GROUP_BENCHMARK_IN_PROGRESS
+                } else {
+                    copy::nodes::TEST_GROUP_LATENCY
+                }))
+                .loading(running),
+            ActionRole::Secondary,
+            ControlSize::Icon,
+        )
+        .when(running, gpui::Styled::cursor_default)
+        .flex_shrink_0()
+        .when(!running, |button| {
+            button.child(
+                div()
+                    .flex()
+                    .items_end()
+                    .gap(px(2.0))
+                    .children([5.0, 9.0, 13.0].map(|height| {
+                        div()
+                            .w(px(2.0))
+                            .h(px(height))
+                            .rounded_full()
+                            .bg(theme.text_secondary)
+                    })),
+            )
+        })
+        .on_click(listener)
+    }
+
+    pub(super) fn benchmark_latency_content(
+        state: GroupBenchmarkNodeState,
+        idle_label: String,
+        spinner_id: &str,
+        language: Language,
+        theme: Theme,
+    ) -> Div {
+        let cell = div()
+            .min_w(px(42.0))
+            .flex()
+            .items_center()
+            .justify_end()
+            .font_weight(FontWeight::SEMIBOLD)
+            .text_size(TextRole::Data.size())
+            .line_height(TextRole::Data.line_height());
+        match state {
+            GroupBenchmarkNodeState::Idle => cell.text_color(theme.text_tertiary).child(idle_label),
+            GroupBenchmarkNodeState::Pending => cell.child(Self::benchmark_latency_spinner(
+                spinner_id.to_owned(),
+                theme,
+            )),
+            GroupBenchmarkNodeState::Measured(delay) => cell
+                .text_color(theme.status_success)
+                .child(format!("{delay} ms")),
+            GroupBenchmarkNodeState::Failed => cell
+                .text_color(theme.route_trace)
+                .child(language.localized(copy::nodes::BENCHMARK_FAILED)),
+        }
+    }
+
+    pub(super) fn exit_ip_content(ip: Option<String>, theme: Theme) -> Div {
+        div()
+            .text_size(TextRole::Metadata.size())
+            .line_height(TextRole::Metadata.line_height())
+            .text_color(theme.text_tertiary)
+            .child(ip.map_or_else(|| "IP —".to_owned(), |ip| format!("IP {ip}")))
+    }
+
+    pub(super) fn benchmark_latency_spinner(id: String, theme: Theme) -> impl IntoElement {
+        div().id(id).size(px(14.0)).child(
+            Spinner::new()
+                .with_size(px(14.0))
+                .color(theme.action_primary.into()),
+        )
+    }
+
+    pub(super) fn policy_benchmark_status(
+        language: Language,
+        kind: manis_core::PolicyGroupKind,
+        current: Option<&str>,
+        summary: GroupBenchmarkSummary,
+    ) -> String {
+        copy::app::policy_benchmark_complete(
+            language,
+            kind.is_automatic(),
+            current,
+            summary.succeeded,
+            summary.total,
+        )
+    }
+
+    pub(super) fn benchmark_failure_description(
+        language: Language,
+        error: &mihomo::LoadError,
+    ) -> String {
+        use manis_mihomo::MihomoError;
+        use std::io::ErrorKind;
+        let message = match error {
+            mihomo::LoadError::NoLatencyResults => copy::app::BENCHMARK_NO_RESULTS,
+            mihomo::LoadError::Mihomo(MihomoError::HttpStatus {
+                status_code: 401 | 403,
+                ..
+            }) => copy::app::BENCHMARK_ACCESS_DENIED,
+            mihomo::LoadError::Mihomo(MihomoError::HttpStatus {
+                status_code: 404, ..
+            }) => copy::app::BENCHMARK_TARGET_MISSING,
+            mihomo::LoadError::Mihomo(MihomoError::HttpStatus {
+                status_code: 408 | 504,
+                ..
+            }) => copy::app::BENCHMARK_PROBE_TIMEOUT,
+            mihomo::LoadError::Mihomo(MihomoError::HttpStatus {
+                status_code: 503, ..
+            }) => copy::app::BENCHMARK_PROBE_FAILED,
+            mihomo::LoadError::Mihomo(MihomoError::Io(source))
+                if matches!(source.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock) =>
+            {
+                copy::app::BENCHMARK_RESPONSE_TIMEOUT
+            }
+            mihomo::LoadError::Mihomo(MihomoError::Io(_)) => {
+                copy::app::BENCHMARK_CONTROLLER_UNREACHABLE
+            }
+            mihomo::LoadError::Mihomo(
+                MihomoError::Json { .. } | MihomoError::InvalidResponse(_),
+            ) => copy::app::BENCHMARK_INVALID_RESPONSE,
+            _ => return error.to_string(),
+        };
+        language.localized(message).to_owned()
+    }
+
+    pub(super) fn policy_group_benchmark_feedback(
+        language: Language,
+        state: &GroupBenchmarkState,
+        total: usize,
+        theme: Theme,
+    ) -> Option<Div> {
+        let (label, color) = match state {
+            GroupBenchmarkState::Idle => return None,
+            GroupBenchmarkState::Running { results, .. } => (
+                copy::app::benchmark_progress(language, results.len(), total),
+                theme.action_primary,
+            ),
+            GroupBenchmarkState::Complete { summary, .. } => (
+                format!(
+                    "{}{}",
+                    copy::app::benchmark_complete(
+                        language,
+                        summary.succeeded,
+                        summary.total,
+                        summary.minimum_ms,
+                        summary.average_ms,
+                    ),
+                    state.finished_age_secs(benchmark_timestamp()).map_or_else(
+                        String::new,
+                        |age| format!(" · {}", copy::app::benchmark_age(language, age))
+                    )
+                ),
+                theme.status_success,
+            ),
+            GroupBenchmarkState::Failed { message, .. } => (
+                format!(
+                    "{}：{}{}",
+                    language.localized(copy::app::POLICY_GROUP_BENCHMARK_FAILED),
+                    message.as_deref().unwrap_or_else(|| {
+                        language.localized(copy::common::MIHOMO_DID_NOT_RETURN_A_RESULT)
+                    }),
+                    state.finished_age_secs(benchmark_timestamp()).map_or_else(
+                        String::new,
+                        |age| format!(" · {}", copy::app::benchmark_age(language, age))
+                    )
+                ),
+                theme.route_trace,
+            ),
+        };
+        Some(
+            div()
+                .mt(Space::Sm.px())
+                .text_size(TextRole::Metadata.size())
+                .line_height(TextRole::Metadata.line_height())
+                .font_weight(TextRole::Label.weight())
+                .text_color(color)
+                .child(label),
+        )
+    }
+
+    pub(super) fn selected_node_for_policy<'a>(
+        &self,
+        policy: &'a PolicyGroup,
+    ) -> Option<&'a PolicyNode> {
+        let selected = if policy.kind.allows_manual_selection() {
+            self.workspace
+                .selection_for(&policy.id)
+                .and_then(|selected| policy.nodes.iter().find(|node| node.id == *selected))
+                .or_else(|| {
+                    policy
+                        .target
+                        .as_deref()
+                        .and_then(|target| policy.nodes.iter().find(|node| node.name == target))
+                })
+        } else {
+            policy
+                .target
+                .as_deref()
+                .and_then(|target| policy.nodes.iter().find(|node| node.name == target))
+        };
+        selected.or_else(|| policy.nodes.first())
+    }
+
+    #[cfg(all(test, not(windows)))]
+    pub(super) fn node_for_policy(&self, policy: &PolicyGroup) -> PolicyNode {
+        self.selected_node_for_policy(policy)
+            .cloned()
+            .unwrap_or_else(|| PolicyNode {
+                id: manis_core::ProxyId::new("unavailable"),
+                name: self
+                    .language()
+                    .localized(copy::app::NO_AVAILABLE_NODES)
+                    .to_owned(),
+                kind: manis_core::PolicyCandidateKind::Node,
+                provider: None,
+                detail: self
+                    .language()
+                    .localized(copy::app::NO_AVAILABLE_NODES)
+                    .to_owned(),
+                latency_ms: None,
+                alive: None,
+            })
+    }
+
+    pub(super) fn policy_candidate_display_name(name: &str) -> &str {
+        if name == manis_profile::MANIS_GLOBAL_GROUP_NAME {
+            "Proxy"
+        } else {
+            name
+        }
+    }
+
+    pub(super) fn policy_node_source_label(&self, node: &PolicyNode, language: Language) -> String {
+        if node.name == manis_profile::MANIS_GLOBAL_GROUP_NAME {
+            return language.localized(copy::nodes::BUILT_IN).to_owned();
+        }
+        if node.kind == manis_core::PolicyCandidateKind::PolicyGroup {
+            return language.message(Message::PolicyGroup).to_owned();
+        }
+
+        if let Some(index) = node
+            .provider
+            .as_deref()
+            .and_then(managed_subscription_provider_index)
+            && let Some(subscription) = self
+                .imported_subscriptions
+                .iter()
+                .filter(|subscription| subscription.enabled)
+                .nth(index)
+        {
+            return subscription.name.clone();
+        }
+
+        if let Some(provider) = node.provider.as_ref() {
+            return provider.clone();
+        }
+
+        if self
+            .saved_single_nodes
+            .iter()
+            .filter(|saved| saved.enabled)
+            .any(|saved| saved.source.preview().name == node.name)
+        {
+            return language.localized(copy::common::SAVED).to_owned();
+        }
+
+        if let Some((_index, subscription)) = self
+            .imported_subscriptions
+            .iter()
+            .enumerate()
+            .filter(|(_, subscription)| subscription.enabled)
+            .find(|(_, subscription)| {
+                subscription.providers.iter().any(|provider| {
+                    provider
+                        .nodes
+                        .iter()
+                        .any(|candidate| candidate.name == node.name)
+                })
+            })
+        {
+            return subscription.name.clone();
+        }
+
+        language
+            .localized(copy::app::LOCAL_CONFIGURATION)
+            .to_owned()
+    }
+}

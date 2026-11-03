@@ -7,7 +7,7 @@
 
 [简体中文](README.md) · **English**
 
-Manis is a small, experimental client built with Rust; Android and desktop both render their UI with NSH. Its current focus is narrow:
+Manis is a small, experimental client built with Rust; the desktop app uses a native GPUI interface; Android renders its pages with NSH. Its current focus is narrow:
 showing how an ordered rule leads to a policy group and then to a proxy node, while providing a UI
 for a limited set of common Mihomo tasks.
 
@@ -40,7 +40,7 @@ format.
 
 ## Implemented so far
 
-- Native NSH interface shared by Android and desktop; the page copy is Chinese today.
+- Native GPUI desktop interface with wide, medium and compact window layouts; Android uses NSH pages; the copy is Chinese today.
 - HTTP/HTTPS subscriptions and single-node share links with private local persistence.
 - Manual, latency-based, fallback, and load-balancing policy group models, gated by core capability.
 - Ordered routing rules, QX rule-list import, compound domain/port matching, and explicit fallback.
@@ -123,11 +123,11 @@ GNOME needs an AppIndicator extension to display it. Then run:
 ```bash
 git clone https://github.com/kaigedong/Manis.git
 cd Manis
-cargo run -p manis-nsh-desktop
+cargo run -p manis-ui
 ```
 
-Release packages install the NSH host as `manis` and the headless engine as `manis-engine`; the
-host launches the sibling engine to own the Mihomo process. There is no GPUI window any more.
+Release packages install the GPUI desktop app as `manis`; `manis-engine` is the headless engine
+used by NSH shells and headless setups.
 
 Manis only starts Mihomo processes it owns and only runs configuration generated from data managed
 through the application. It does not attach to another application's controller or run a supplied
@@ -206,7 +206,8 @@ vulnerabilities through GitHub private vulnerability reporting.
 | `crates/manis-engine` | Core discovery, validation, process ownership, and lifecycle |
 | `crates/manis-profile` | Typed profiles and Mihomo configuration compilation |
 | `crates/manis-mihomo` | Restricted Mihomo controller transport and domain mapping |
-| `crates/manis-service` | Desktop domain layer: storage, Mihomo controller, NSH bridge, headless engine |
+| `crates/manis-ui` | GPUI desktop application |
+| `crates/manis-service` | Domain layer: storage, Mihomo controller, NSH bridge, headless engine |
 | `packaging/macos` | macOS bundle and fixed-purpose privileged-helper tooling |
 | `packaging/archlinux` | Experimental Arch Linux package with Wayland support |
 | `docs` | Architecture, design, and maintainer documentation |

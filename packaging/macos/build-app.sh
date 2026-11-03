@@ -69,9 +69,7 @@ if [[ -n "${MANIS_CODESIGN_IDENTITY:-}" ]]; then
 fi
 
 MANIS_BUILD_VERSION="$BUNDLE_VERSION" CARGO_TARGET_DIR="$CARGO_BUILD_DIR" \
-  cargo build -p manis-service --release --locked
-MANIS_BUILD_VERSION="$BUNDLE_VERSION" CARGO_TARGET_DIR="$CARGO_BUILD_DIR" \
-  cargo build -p manis-nsh-desktop --release --locked
+  cargo build -p manis-ui --release --locked
 
 mkdir -p "$MACOS_DIR" "$LAUNCH_DAEMONS_DIR" "$HELPER_TOOLS_DIR" "$MIHOMO_RESOURCES_DIR"
 
@@ -80,8 +78,7 @@ plutil -replace CFBundleShortVersionString -string "$BUNDLE_VERSION" "$CONTENTS_
 plutil -replace CFBundleVersion -string "$BUNDLE_BUILD" "$CONTENTS_DIR/Info.plist"
 plutil -insert ManisParentCodeSigningRequirement -string "$PARENT_REQUIREMENT" "$CONTENTS_DIR/Info.plist"
 plutil -insert ManisHelperInstallMode -string "$HELPER_INSTALL_MODE" "$CONTENTS_DIR/Info.plist"
-cp "$CARGO_BUILD_DIR/release/manis-nsh-desktop" "$MACOS_DIR/Manis"
-cp "$CARGO_BUILD_DIR/release/manis-engine" "$MACOS_DIR/manis-engine"
+cp "$CARGO_BUILD_DIR/release/manis-ui" "$MACOS_DIR/Manis"
 
 ICONSET_DIR="$BUILD_ROOT/Manis.iconset"
 mkdir -p "$ICONSET_DIR"
@@ -129,14 +126,12 @@ plutil -lint "$PLIST_OUT" >/dev/null
 
 if [[ -n "${MANIS_CODESIGN_IDENTITY:-}" ]]; then
   codesign --force --options runtime --identifier "dev.manis.app" --sign "$MANIS_CODESIGN_IDENTITY" "$MACOS_DIR/Manis"
-  codesign --force --options runtime --identifier "dev.manis.app.engine" --sign "$MANIS_CODESIGN_IDENTITY" "$MACOS_DIR/manis-engine"
   codesign --force --options runtime --identifier "$HELPER_ID" --sign "$MANIS_CODESIGN_IDENTITY" "$HELPER_TOOLS_DIR/$HELPER_ID"
   codesign --force --options runtime --identifier "$HELPERCTL_ID" --sign "$MANIS_CODESIGN_IDENTITY" "$MACOS_DIR/manis-helperctl"
   codesign --force --options runtime --identifier "$LOCAL_INSTALLER_ID" --sign "$MANIS_CODESIGN_IDENTITY" "$MACOS_DIR/manis-local-helper-install"
   codesign --force --options runtime --identifier "dev.manis.app" --sign "$MANIS_CODESIGN_IDENTITY" "$BUILD_APP_DIR"
 else
   codesign --force --options runtime --identifier "dev.manis.app" --sign - "$MACOS_DIR/Manis"
-  codesign --force --options runtime --identifier "dev.manis.app.engine" --sign - "$MACOS_DIR/manis-engine"
   codesign --force --options runtime --identifier "$HELPER_ID" --sign - "$HELPER_TOOLS_DIR/$HELPER_ID"
   codesign --force --options runtime --identifier "$HELPERCTL_ID" --sign - "$MACOS_DIR/manis-helperctl"
   codesign --force --options runtime --identifier "$LOCAL_INSTALLER_ID" --sign - "$MACOS_DIR/manis-local-helper-install"

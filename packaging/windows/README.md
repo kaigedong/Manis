@@ -1,13 +1,11 @@
-# Windows NSH bundle
+# Windows desktop bundle
 
 `build-release.ps1` builds a portable directory and zip:
 
-- `Manis.exe` — the shared NSH desktop host
-- `manis-engine.exe` — the headless engine binary
+- `Manis.exe` — the GPUI desktop application
 
 The managed Mihomo controller transport is not implemented on Windows yet, so
-the shell can read saved sources and settings but cannot start the core. The
-NSH frontend, host bridge and page models are the same as Linux/macOS.
+the app can read saved sources and settings but cannot start the core.
 
 Run from a Developer PowerShell with Rust installed:
 
