@@ -7,6 +7,7 @@ import { NodesPage } from "./nodes";
 import { RulesPage } from "./rules";
 import { SettingsPage } from "./settings";
 import { SubscriptionsPage } from "./subscriptions";
+import { t } from "./copy";
 import { desktopColors } from "./theme";
 import {
   bottomInset,
@@ -20,13 +21,13 @@ import {
   viewportWidth,
 } from "./store";
 
-const tabs: Array<{ id: Tab; label: string; icon: string; hint: string }> = [
-  { id: "connection", label: "连接", icon: "⌂", hint: "运行状态与出口" },
-  { id: "nodes", label: "节点", icon: "☷", hint: "策略组与节点选择" },
-  { id: "subscriptions", label: "订阅", icon: "↻", hint: "订阅、手动节点与策略组" },
-  { id: "rules", label: "规则", icon: "✎", hint: "有序分流规则" },
-  { id: "settings", label: "设置", icon: "⚙", hint: "外观、更新与内核" },
-  { id: "logs", label: "日志", icon: "≡", hint: "内核日志" },
+const tabs: Array<{ id: Tab; labelKey: string; icon: string; hintKey: string }> = [
+  { id: "connection", labelKey: "nav.connection", icon: "⌂", hintKey: "hint.connection" },
+  { id: "nodes", labelKey: "nav.nodes", icon: "☷", hintKey: "hint.nodes" },
+  { id: "subscriptions", labelKey: "nav.subscriptions", icon: "↻", hintKey: "hint.subscriptions" },
+  { id: "rules", labelKey: "nav.rules", icon: "✎", hintKey: "hint.rules" },
+  { id: "settings", labelKey: "nav.settings", icon: "⚙", hintKey: "hint.settings" },
+  { id: "logs", labelKey: "nav.logs", icon: "≡", hintKey: "hint.logs" },
 ];
 
 function Action(props: {
@@ -171,7 +172,7 @@ function TabBar() {
           onPress={() => tab.set(entry.id)}
           role="button"
           accessible
-          accessibilityLabel={entry.label}
+          accessibilityLabel={t(entry.labelKey)}
           accessibilityState={{ selected: tab() === entry.id }}
           style={{ flex: 1, alignItems: "center", gap: 3, paddingVertical: 4 }}
         >
@@ -185,7 +186,7 @@ function TabBar() {
               fontWeight: tab() === entry.id ? "600" : "400",
             }}
           >
-            {entry.label}
+            {t(entry.labelKey)}
           </Text>
         </View>
       ))}
@@ -215,9 +216,9 @@ function SectionLabel() {
   return (
     <View style={{ flexDirection: "column", gap: 2 }}>
       <Text style={{ fontSize: 17, fontWeight: "600", color: desktopColors.text }}>
-        {current.label}
+        {t(current.labelKey)}
       </Text>
-      <Text style={{ fontSize: 12, color: desktopColors.secondary }}>{current.hint}</Text>
+      <Text style={{ fontSize: 12, color: desktopColors.secondary }}>{t(current.hintKey)}</Text>
     </View>
   );
 }
@@ -266,7 +267,7 @@ function DesktopChrome() {
       <View style={{ flex: 1 }} />
       <RuntimeIndicator />
       <DesktopAction
-        label={active ? "断开" : "连接"}
+        label={active ? t("chrome.disconnect") : t("chrome.connect")}
         primary={!active}
         onPress={() => {
           void host.call("connection.toggle").catch(() => undefined);
@@ -292,28 +293,28 @@ function installDesktopChrome() {
       {
         label: "Manis",
         submenu: [
-          { label: "关于 Manis", role: "about" },
+          { label: t("menu.about"), role: "about" },
           { type: "separator" },
-          { label: "隐藏", role: "hide" },
-          { label: "隐藏其他", role: "hideOthers" },
-          { label: "显示全部", role: "showAll" },
+          { label: t("menu.hide"), role: "hide" },
+          { label: t("menu.hideOthers"), role: "hideOthers" },
+          { label: t("menu.showAll"), role: "showAll" },
           { type: "separator" },
-          { label: "退出 Manis", role: "quit" },
+          { label: t("menu.quit"), role: "quit" },
         ],
       },
       {
-        label: "视图",
+        label: t("menu.view"),
         submenu: tabs.map((entry, index) => ({
-          label: entry.label,
+          label: t(entry.labelKey),
           shortcut: `mod+${index + 1}`,
           onSelect: () => tab.set(entry.id),
         })),
       },
       {
-        label: "连接",
+        label: t("menu.connection"),
         submenu: [
           {
-            label: "连接 / 断开",
+            label: t("menu.connectToggle"),
             shortcut: "mod+shift+c",
             onSelect: () => {
               void host.call("connection.toggle", {
@@ -322,7 +323,7 @@ function installDesktopChrome() {
             },
           },
           {
-            label: "刷新节点",
+            label: t("menu.refreshNodes"),
             shortcut: "mod+r",
             onSelect: () => {
               void host.call("nodes.refresh");
@@ -330,7 +331,7 @@ function installDesktopChrome() {
           },
           { type: "separator" },
           {
-            label: "应用工作区",
+            label: t("menu.applyWorkspace"),
             shortcut: "mod+shift+s",
             onSelect: () => {
               void host.call("workspace.apply");
@@ -339,24 +340,24 @@ function installDesktopChrome() {
         ],
       },
       {
-        label: "编辑",
+        label: t("menu.edit"),
         submenu: [
-          { label: "撤销", role: "undo" },
-          { label: "重做", role: "redo" },
+          { label: t("menu.undo"), role: "undo" },
+          { label: t("menu.redo"), role: "redo" },
           { type: "separator" },
-          { label: "剪切", role: "cut" },
-          { label: "复制", role: "copy" },
-          { label: "粘贴", role: "paste" },
-          { label: "全选", role: "selectAll" },
+          { label: t("menu.cut"), role: "cut" },
+          { label: t("menu.copy"), role: "copy" },
+          { label: t("menu.paste"), role: "paste" },
+          { label: t("menu.selectAll"), role: "selectAll" },
         ],
       },
       {
-        label: "窗口",
+        label: t("menu.window"),
         submenu: [
-          { label: "最小化", role: "minimize" },
-          { label: "缩放", role: "zoom" },
+          { label: t("menu.minimize"), role: "minimize" },
+          { label: t("menu.zoom"), role: "zoom" },
           { type: "separator" },
-          { label: "关闭", role: "close" },
+          { label: t("menu.close"), role: "close" },
         ],
       },
     ]);
@@ -404,7 +405,7 @@ function DesktopSidebar() {
               Manis
             </Text>
             <Text style={{ fontSize: 12, color: desktopColors.tertiary }}>
-              策略路由工作台
+              {t("brand.subtitle")}
             </Text>
           </View>
         )}
@@ -429,7 +430,7 @@ function DesktopSidebar() {
             onPress={() => tab.set(entry.id)}
             role="button"
             accessible
-            accessibilityLabel={entry.label}
+            accessibilityLabel={t(entry.labelKey)}
             accessibilityState={{ selected }}
             style={{
               flexDirection: "row",
@@ -458,7 +459,7 @@ function DesktopSidebar() {
                   fontWeight: selected ? "600" : "400",
                 }}
               >
-                {entry.label}
+                {t(entry.labelKey)}
               </Text>
             )}
           </View>
@@ -469,7 +470,7 @@ function DesktopSidebar() {
         <View style={{ paddingHorizontal: 8, gap: 4 }}>
           <RuntimeIndicator />
           <Text style={{ fontSize: 11, color: desktopColors.tertiary }}>
-            {root().connection?.node || "未选择节点"}
+            {root().connection?.node || t("status.noNode")}
           </Text>
         </View>
       )}
@@ -494,11 +495,11 @@ function DesktopStatusBar() {
       }}
     >
       <Text style={{ fontSize: 12, color: desktopColors.secondary }}>
-        {connection.summary || connection.mode || "等待内核状态"}
+        {connection.summary || connection.mode || t("status.waiting")}
       </Text>
       <View style={{ flex: 1 }} />
       <Text style={{ fontSize: 12, color: desktopColors.tertiary }}>
-        节点 {total} · NSH
+        {t("status.nodes", { count: total })}
       </Text>
     </View>
   );

@@ -118,3 +118,14 @@ test("resizing adapts the layout live", async () => {
   await app.setViewport(1000, 760);
   expect(app.texts()).not.toContain("路由链");
 });
+
+test("english language translates the shell", async () => {
+  const app = await open("./App.tsx", {
+    storage: { language: "en" },
+    host: { params: { tab: "nodes", data: { nodes: nodesPage } } },
+  });
+  await app.setViewport(390, 844);
+  expect(app.texts()).toContain("Nodes");
+  expect(app.texts()).toContain("Settings");
+  expect(app.texts()).toContain("Logs");
+});

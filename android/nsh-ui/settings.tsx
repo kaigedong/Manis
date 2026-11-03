@@ -1,5 +1,6 @@
 import { Clipboard, computed, host, Scroll, signal, Text, View } from "nsh";
 import { Input } from "nsh/base";
+import { lang, setLanguage, t } from "./copy";
 import { embedded, layoutWidth, root } from "./store";
 import { desktopColors } from "./theme";
 import { Action, Card, Info } from "./ui";
@@ -280,6 +281,45 @@ function MobileSettingsPage() {
           {showDns() ? <DnsPanel /> : null}
           {showLogs() ? <LogsPanel /> : null}
 
+          <Card title={t("settings.language")}>
+            <Text style={{ fontSize: 12, color: embedded ? desktopColors.secondary : "#6b7280" }}>
+              {t("settings.languageHint")}
+            </Text>
+            <View style={{ flexDirection: "row", gap: 8 }}>
+              <View
+                onPress={() => void setLanguage("zh")}
+                role="button"
+                accessible
+                accessibilityState={{ selected: lang() === "zh" }}
+                style={{
+                  borderRadius: 8,
+                  paddingHorizontal: 12,
+                  paddingVertical: 6,
+                  backgroundColor: lang() === "zh" ? (embedded ? desktopColors.primary : "#7c3aed") : embedded ? desktopColors.low : "#f3f4f6",
+                }}
+              >
+                <Text style={{ fontSize: 12, color: lang() === "zh" ? "#ffffff" : embedded ? desktopColors.text : "#374151" }}>
+                  中文
+                </Text>
+              </View>
+              <View
+                onPress={() => void setLanguage("en")}
+                role="button"
+                accessible
+                accessibilityState={{ selected: lang() === "en" }}
+                style={{
+                  borderRadius: 8,
+                  paddingHorizontal: 12,
+                  paddingVertical: 6,
+                  backgroundColor: lang() === "en" ? (embedded ? desktopColors.primary : "#7c3aed") : embedded ? desktopColors.low : "#f3f4f6",
+                }}
+              >
+                <Text style={{ fontSize: 12, color: lang() === "en" ? "#ffffff" : embedded ? desktopColors.text : "#374151" }}>
+                  English
+                </Text>
+              </View>
+            </View>
+          </Card>
           <Card title="连接">
             <Info label="状态" value={page().status} />
             <Info label="路由模式" value={page().mode} />
@@ -368,6 +408,46 @@ function DesktopSettingsPage() {
         <Scroll style={{ flex: 1 }} contentStyle={{ padding: 12, gap: 10 }}>
           {showDns() ? <DnsPanel /> : null}
           {showLogs() ? <LogsPanel /> : null}
+          
+          <Card title={t("settings.language")}>
+            <Text style={{ fontSize: 12, color: embedded ? desktopColors.secondary : "#6b7280" }}>
+              {t("settings.languageHint")}
+            </Text>
+            <View style={{ flexDirection: "row", gap: 8 }}>
+              <View
+                onPress={() => void setLanguage("zh")}
+                role="button"
+                accessible
+                accessibilityState={{ selected: lang() === "zh" }}
+                style={{
+                  borderRadius: 8,
+                  paddingHorizontal: 12,
+                  paddingVertical: 6,
+                  backgroundColor: lang() === "zh" ? (embedded ? desktopColors.primary : "#7c3aed") : embedded ? desktopColors.low : "#f3f4f6",
+                }}
+              >
+                <Text style={{ fontSize: 12, color: lang() === "zh" ? "#ffffff" : embedded ? desktopColors.text : "#374151" }}>
+                  中文
+                </Text>
+              </View>
+              <View
+                onPress={() => void setLanguage("en")}
+                role="button"
+                accessible
+                accessibilityState={{ selected: lang() === "en" }}
+                style={{
+                  borderRadius: 8,
+                  paddingHorizontal: 12,
+                  paddingVertical: 6,
+                  backgroundColor: lang() === "en" ? (embedded ? desktopColors.primary : "#7c3aed") : embedded ? desktopColors.low : "#f3f4f6",
+                }}
+              >
+                <Text style={{ fontSize: 12, color: lang() === "en" ? "#ffffff" : embedded ? desktopColors.text : "#374151" }}>
+                  English
+                </Text>
+              </View>
+            </View>
+          </Card>
           <Card title="连接">
             <Info label="状态" value={page().status} />
             <Info label="路由模式" value={page().mode} />
