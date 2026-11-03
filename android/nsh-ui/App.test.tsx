@@ -62,3 +62,16 @@ test("desktop shell renders the three-column policy workspace", async () => {
   expect(app.texts()).toContain("路由链");
   expect(app.texts()).toContain("当前节点：香港 01");
 });
+
+test("desktop sidebar collapses to an icon rail", async () => {
+  const app = await open("./App.tsx", {
+    width: 1400,
+    height: 900,
+    platform: "macos",
+    host: { params: { embedded: true, tab: "nodes", data: { nodes: nodesPage } } },
+  });
+  expect(app.texts()).toContain("策略路由工作台");
+  await app.press("收起侧栏");
+  expect(app.texts()).not.toContain("策略路由工作台");
+  expect(app.texts()).toContain("»");
+});

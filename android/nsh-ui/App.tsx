@@ -1,4 +1,4 @@
-import { host, mount, Text, View } from "nsh";
+import { host, mount, signal, Text, View } from "nsh";
 import { ConnectionPage } from "./connection";
 import { NodesPage } from "./nodes";
 import { RulesPage } from "./rules";
@@ -266,11 +266,13 @@ function DesktopChrome() {
   );
 }
 
+const sidebarCollapsed = signal(false);
+
 function DesktopSidebar() {
   return (
     <View
       style={{
-        width: 220,
+        width: sidebarCollapsed() ? 56 : 220,
         backgroundColor: desktopColors.low,
         borderRightWidth: 1,
         borderRightColor: desktopColors.outline,
@@ -279,13 +281,36 @@ function DesktopSidebar() {
         gap: 4,
       }}
     >
-      <View style={{ paddingHorizontal: 8, paddingBottom: 16, gap: 2 }}>
-        <Text style={{ fontSize: 17, fontWeight: "700", color: desktopColors.text }}>
-          Manis
-        </Text>
-        <Text style={{ fontSize: 12, color: desktopColors.tertiary }}>
-          策略路由工作台
-        </Text>
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          gap: 8,
+          paddingHorizontal: sidebarCollapsed() ? 0 : 8,
+          paddingBottom: 16,
+        }}
+      >
+        {sidebarCollapsed() ? null : (
+          <View style={{ flex: 1, gap: 2 }}>
+            <Text style={{ fontSize: 17, fontWeight: "700", color: desktopColors.text }}>
+              Manis
+            </Text>
+            <Text style={{ fontSize: 12, color: desktopColors.tertiary }}>
+              策略路由工作台
+            </Text>
+          </View>
+        )}
+        <View
+          onPress={() => sidebarCollapsed.set(!sidebarCollapsed())}
+          role="button"
+          accessible
+          accessibilityLabel={sidebarCollapsed() ? "展开侧栏" : "收起侧栏"}
+          style={{ paddingHorizontal: 6, paddingVertical: 4 }}
+        >
+          <Text style={{ fontSize: 14, color: desktopColors.secondary }}>
+            {sidebarCollapsed() ? "»" : "«"}
+          </Text>
+        </View>
       </View>
       {tabs.map((entry) => {
         const selected = tab() === entry.id;
@@ -315,25 +340,29 @@ function DesktopSidebar() {
             >
               {entry.icon}
             </Text>
-            <Text
-              style={{
-                fontSize: 13,
-                color: selected ? desktopColors.onPrimary : desktopColors.text,
-                fontWeight: selected ? "600" : "400",
-              }}
-            >
-              {entry.label}
-            </Text>
+            {sidebarCollapsed() ? null : (
+              <Text
+                style={{
+                  fontSize: 13,
+                  color: selected ? desktopColors.onPrimary : desktopColors.text,
+                  fontWeight: selected ? "600" : "400",
+                }}
+              >
+                {entry.label}
+              </Text>
+            )}
           </View>
         );
       })}
       <View style={{ flex: 1 }} />
-      <View style={{ paddingHorizontal: 8, gap: 4 }}>
-        <RuntimeIndicator />
-        <Text style={{ fontSize: 11, color: desktopColors.tertiary }}>
-          {root().connection?.node || "未选择节点"}
-        </Text>
-      </View>
+      {sidebarCollapsed() ? null : (
+        <View style={{ paddingHorizontal: 8, gap: 4 }}>
+          <RuntimeIndicator />
+          <Text style={{ fontSize: 11, color: desktopColors.tertiary }}>
+            {root().connection?.node || "未选择节点"}
+          </Text>
+        </View>
+      )}
     </View>
   );
 }
