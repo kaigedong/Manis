@@ -220,7 +220,7 @@ fun ManisApp() {
                     },
                 )
                 PrimaryWorkspace.RoutingRules -> RulesWorkspace(onMessage = ::say)
-                PrimaryWorkspace.Activity -> PlaceholderWorkspace("活动", "网络活动正在迁移中")
+                PrimaryWorkspace.Activity -> ActivityWorkspace(onMessage = ::say)
                 PrimaryWorkspace.Logs -> LogsWorkspace(onMessage = ::say)
                 PrimaryWorkspace.Configuration -> ConfigurationWorkspace(section, { section = it }, ::say)
             }

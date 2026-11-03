@@ -21,6 +21,23 @@ data class GroupInfo(
     val hidden: Boolean = false,
 )
 
+data class ConnectionInfo(
+    val id: String,
+    val host: String,
+    val network: String,
+    val rule: String,
+    val chains: List<String>,
+    val upload: Long,
+    val download: Long,
+    val start: String,
+)
+
+data class ConnectionsSnapshot(
+    val uploadTotal: Long,
+    val downloadTotal: Long,
+    val connections: List<ConnectionInfo>,
+)
+
 data class Snapshot(
     val groups: List<GroupInfo>,
     val nodes: Map<String, NodeInfo>,
@@ -167,6 +184,38 @@ internal object ControllerApi {
             failures.size < names.size -> "部分订阅刷新失败：${failures.first()}"
             else -> error(failures.first())
         }
+    }
+
+    suspend fun connections(): ConnectionsSnapshot = withContext(Dispatchers.IO) {
+        val json = request("/connections")
+        val items = mutableListOf<ConnectionInfo>()
+        val array = json.optJSONArray("connections")
+        if (array != null) {
+            for (index in 0 until array.length()) {
+                val item = array.getJSONObject(index)
+                val metadata = item.optJSONObject("metadata") ?: continue
+                val chains = mutableListOf<String>()
+                item.optJSONArray("chains")?.let { chain ->
+                    for (at in 0 until chain.length()) chains += chain.optString(at)
+                }
+                items += ConnectionInfo(
+                    id = item.optString("id"),
+                    host = metadata.optString("host")
+                        .ifBlank { metadata.optString("destinationIP") },
+                    network = metadata.optString("network"),
+                    rule = item.optString("rule"),
+                    chains = chains,
+                    upload = item.optLong("upload"),
+                    download = item.optLong("download"),
+                    start = item.optString("start"),
+                )
+            }
+        }
+        ConnectionsSnapshot(
+            uploadTotal = json.optLong("uploadTotal"),
+            downloadTotal = json.optLong("downloadTotal"),
+            connections = items,
+        )
     }
 
     private fun historyDelay(proxy: JSONObject): Int? {
