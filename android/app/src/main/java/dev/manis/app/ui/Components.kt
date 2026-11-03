@@ -1,0 +1,142 @@
+package dev.manis.app.ui
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
+
+/** A GPUI pane card: overlay surface, one-pixel outline, 12dp radius. */
+@Composable
+fun ManisCard(
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val colors = LocalManisColors.current
+    Column(
+        modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(ManisDimens.radiusPane))
+            .background(colors.surfaceOverlay)
+            .border(1.dp, colors.outlineSubtle, RoundedCornerShape(ManisDimens.radiusPane))
+            .padding(ManisDimens.spaceMd),
+        verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
+        content = content,
+    )
+}
+
+/** A GPUI section heading. */
+@Composable
+fun ManisSectionTitle(text: String) {
+    Text(text, style = ManisType.sectionTitle, color = LocalManisColors.current.textPrimary)
+}
+
+/** Secondary metadata text. */
+@Composable
+fun ManisMeta(text: String, color: Color? = null) {
+    Text(
+        text,
+        style = ManisType.metadata,
+        color = color ?: LocalManisColors.current.textTertiary,
+    )
+}
+
+/** A GPUI control-sized button: 34dp tall, 8dp radius, label type. */
+@Composable
+fun ManisButton(
+    label: String,
+    modifier: Modifier = Modifier,
+    primary: Boolean = false,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
+    val colors = LocalManisColors.current
+    Row(
+        modifier
+            .height(ManisDimens.controlCompact)
+            .clip(RoundedCornerShape(ManisDimens.radiusControl))
+            .background(
+                when {
+                    !enabled -> colors.surfaceLow
+                    primary -> colors.actionPrimary
+                    else -> colors.buttonBg
+                },
+            )
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = ManisDimens.spaceMd),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center,
+    ) {
+        Text(
+            label,
+            style = ManisType.label,
+            color = when {
+                !enabled -> colors.textTertiary
+                primary -> colors.actionOnPrimary
+                else -> colors.textPrimary
+            },
+        )
+    }
+}
+
+/** A selectable GPUI list row: title, metadata and an optional trailing text. */
+@Composable
+fun ManisListRow(
+    title: String,
+    meta: String? = null,
+    trailing: String? = null,
+    selected: Boolean = false,
+    enabled: Boolean = true,
+    onClick: (() -> Unit)? = null,
+    leading: (@Composable RowScope.() -> Unit)? = null,
+) {
+    val colors = LocalManisColors.current
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(ManisDimens.radiusRow))
+            .background(if (selected) colors.actionSoft else Color.Transparent)
+            .clickable(enabled = enabled && onClick != null) { onClick?.invoke() }
+            .padding(horizontal = ManisDimens.spaceMd, vertical = ManisDimens.spaceSm),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
+    ) {
+        leading?.invoke(this)
+        Column(Modifier.weight(1f)) {
+            Text(
+                title,
+                style = ManisType.body,
+                color = if (selected) colors.actionPrimary else colors.textPrimary,
+            )
+            if (meta != null) ManisMeta(meta)
+        }
+        if (trailing != null) {
+            Text(trailing, style = ManisType.metadata, color = colors.textTertiary)
+        }
+    }
+}
+
+/** A one-pixel divider between list rows. */
+@Composable
+fun ManisDivider() {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(1.dp)
+            .background(LocalManisColors.current.outlineSubtle),
+    ) {}
+}

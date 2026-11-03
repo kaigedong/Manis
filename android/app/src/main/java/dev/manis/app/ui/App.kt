@@ -10,12 +10,6 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.List
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
@@ -29,7 +23,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import dev.manis.app.ManisVpnService
 import dev.manis.app.core.ControllerApi
@@ -38,14 +31,6 @@ import dev.manis.app.core.Snapshot
 import dev.manis.app.data.Workspace
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-
-enum class Tab(val label: String, val icon: ImageVector) {
-    Connect("连接", Icons.Filled.Home),
-    Nodes("节点", Icons.Filled.List),
-    Subscriptions("订阅", Icons.Filled.Refresh),
-    Rules("规则", Icons.Filled.Edit),
-    Settings("设置", Icons.Filled.Settings),
-}
 
 /** Runtime state polled from the service and the controller. */
 object RuntimeState {
@@ -61,7 +46,6 @@ object RuntimeState {
 
 @Composable
 fun ManisApp() {
-    var tab by rememberSaveable { mutableStateOf(Tab.Connect) }
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
@@ -228,13 +212,11 @@ fun ManisApp() {
     ) {
         Box(Modifier.fillMaxSize()) {
             when (workspace) {
-                PrimaryWorkspace.Nodes -> ProxiesScreen(
+                PrimaryWorkspace.Nodes -> NodesWorkspace(
                     onMessage = ::say,
-                    onNavigate = { tab ->
-                        if (tab == Tab.Subscriptions) {
-                            workspace = PrimaryWorkspace.Configuration
-                            section = ConfigurationSection.Subscriptions
-                        }
+                    onOpenConfiguration = {
+                        workspace = PrimaryWorkspace.Configuration
+                        section = ConfigurationSection.Subscriptions
                     },
                 )
                 PrimaryWorkspace.RoutingRules -> RulesScreen(onMessage = ::say)
