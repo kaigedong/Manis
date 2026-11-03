@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Manis
+Comment=Policy-based proxy routing workbench
+Comment[zh_CN]=基于策略的代理分流工作台
+Exec=manis
+Icon=dev.manis.app
+Terminal=false
+StartupNotify=true
+Categories=Network;Utility;
+Keywords=proxy;network;rules;wayland;
+Keywords[zh_CN]=代理;网络;分流;规则;

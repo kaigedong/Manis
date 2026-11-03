@@ -19,7 +19,10 @@ depends=(
   'wayland'
 )
 makedepends=('cargo' 'clang' 'cmake' 'desktop-file-utils' 'git' 'pkgconf' 'rust')
-options=('!debug')
+# Arch enables LTO in makepkg.conf by default; ring's C objects then go into
+# the archive as GCC LTO bitcode that plain `ar` cannot index, so the final
+# Rust link loses every ring_core_* symbol. Build the package without LTO.
+options=(!lto '!debug')
 install=manis.install
 source=()
 sha256sums=()
