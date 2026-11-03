@@ -129,3 +129,24 @@ test("english language translates the shell", async () => {
   expect(app.texts()).toContain("Settings");
   expect(app.texts()).toContain("Logs");
 });
+
+test("restores the saved tab", async () => {
+  const app = await open("./App.tsx", {
+    storage: { "session.tab": "rules" },
+    host: { params: { data: {} } },
+  });
+  await app.setViewport(390, 844);
+  expect(app.texts()).toContain("规则");
+});
+
+test("restores the collapsed rail", async () => {
+  const app = await open("./App.tsx", {
+    storage: { "session.rail": "true" },
+    width: 1400,
+    height: 900,
+    platform: "macos",
+    host: { params: { embedded: true, tab: "nodes", data: { nodes: nodesPage } } },
+  });
+  await app.setViewport(1400, 900);
+  expect(app.texts()).not.toContain("策略路由工作台");
+});

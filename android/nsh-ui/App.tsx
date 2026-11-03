@@ -1,4 +1,4 @@
-import { effect, host, mount, signal, Text, View } from "nsh";
+import { effect, host, mount, Text, View } from "nsh";
 import { isAvailable as desktopAvailable, Menu, titleBar, Window } from "nsh/desktop";
 import { platform } from "os";
 import { ConnectionPage } from "./connection";
@@ -18,6 +18,7 @@ import {
   toast,
   topInset,
   layoutWidth,
+  sidebarCollapsed,
   type Tab,
   viewportWidth,
 } from "./store";
@@ -277,8 +278,6 @@ function DesktopChrome() {
     </View>
   );
 }
-
-const sidebarCollapsed = signal(false);
 
 function railNow(): boolean {
   const width = layoutWidth();

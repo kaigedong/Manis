@@ -1,4 +1,4 @@
-import { host, signal } from "nsh";
+import { effect, host, signal, Storage } from "nsh";
 
 export type Tab = "connection" | "nodes" | "subscriptions" | "rules" | "settings" | "logs";
 
@@ -44,6 +44,42 @@ export const root = signal<RootData>(
   },
 );
 export const tab = signal<Tab>(params.tab ?? "connection");
+/** Whether the desktop sidebar is collapsed; restored from the last session. */
+export const sidebarCollapsed = signal(false);
+
+const SESSION_TAB = "session.tab";
+const SESSION_RAIL = "session.rail";
+
+/** Restores the tab and rail the last session left; launch parameters win. */
+export async function loadSession(): Promise<void> {
+  try {
+    if (params.tab === undefined) {
+      const saved = await Storage.getItem(SESSION_TAB);
+      if (saved) tab.set(saved as Tab);
+    }
+    const rail = await Storage.getItem(SESSION_RAIL);
+    if (rail === "true") sidebarCollapsed.set(true);
+  } catch {
+    // The defaults stay.
+  }
+}
+
+/** Saves the tab and rail whenever they change. */
+export function watchSession(): void {
+  effect(() => {
+    const current = tab();
+    void Storage.setItem(SESSION_TAB, current).catch(() => undefined);
+  });
+  effect(() => {
+    const rail = sidebarCollapsed();
+    void Storage.setItem(SESSION_RAIL, rail ? "true" : "false").catch(() => undefined);
+  });
+}
+
+if (typeof Storage !== "undefined") {
+  void loadSession();
+  watchSession();
+}
 export const toast = signal("");
 
 host.on("app.updated", (payload) => {
