@@ -1,4 +1,6 @@
 import { host, mount, signal, Text, View } from "nsh";
+import { isAvailable as desktopAvailable, Menu, titleBar, Window } from "nsh/desktop";
+import { platform } from "os";
 import { ConnectionPage } from "./connection";
 import { NodesPage } from "./nodes";
 import { RulesPage } from "./rules";
@@ -241,12 +243,14 @@ function DesktopChrome() {
   const active = connection.active === true;
   return (
     <View
+      desktop={{ windowDrag: true }}
       style={{
-        height: 56,
+        height: macChrome ? Math.max(titleBar().height, 56) : 56,
         flexDirection: "row",
         alignItems: "center",
         gap: 16,
-        paddingHorizontal: 20,
+        paddingLeft: macChrome ? 20 + titleBar().left : 20,
+        paddingRight: 20,
         backgroundColor: desktopColors.chrome,
         borderBottomWidth: 1,
         borderBottomColor: desktopColors.outline,
@@ -267,6 +271,90 @@ function DesktopChrome() {
 }
 
 const sidebarCollapsed = signal(false);
+const macChrome = embedded && desktopAvailable && platform() === "macos";
+
+function installDesktopChrome() {
+  if (!embedded || !desktopAvailable) return;
+  try {
+    if (macChrome) Window.setTitleBar("hidden", 56);
+    Menu.setApplicationMenu([
+      {
+        label: "Manis",
+        submenu: [
+          { label: "关于 Manis", role: "about" },
+          { type: "separator" },
+          { label: "隐藏", role: "hide" },
+          { label: "隐藏其他", role: "hideOthers" },
+          { label: "显示全部", role: "showAll" },
+          { type: "separator" },
+          { label: "退出 Manis", role: "quit" },
+        ],
+      },
+      {
+        label: "视图",
+        submenu: tabs.map((entry, index) => ({
+          label: entry.label,
+          shortcut: `mod+${index + 1}`,
+          onSelect: () => tab.set(entry.id),
+        })),
+      },
+      {
+        label: "连接",
+        submenu: [
+          {
+            label: "连接 / 断开",
+            shortcut: "mod+shift+c",
+            onSelect: () => {
+              void host.call("connection.toggle", {
+                enabled: !(root().connection?.active === true),
+              });
+            },
+          },
+          {
+            label: "刷新节点",
+            shortcut: "mod+r",
+            onSelect: () => {
+              void host.call("nodes.refresh");
+            },
+          },
+          { type: "separator" },
+          {
+            label: "应用工作区",
+            shortcut: "mod+shift+s",
+            onSelect: () => {
+              void host.call("workspace.apply");
+            },
+          },
+        ],
+      },
+      {
+        label: "编辑",
+        submenu: [
+          { label: "撤销", role: "undo" },
+          { label: "重做", role: "redo" },
+          { type: "separator" },
+          { label: "剪切", role: "cut" },
+          { label: "复制", role: "copy" },
+          { label: "粘贴", role: "paste" },
+          { label: "全选", role: "selectAll" },
+        ],
+      },
+      {
+        label: "窗口",
+        submenu: [
+          { label: "最小化", role: "minimize" },
+          { label: "缩放", role: "zoom" },
+          { type: "separator" },
+          { label: "关闭", role: "close" },
+        ],
+      },
+    ]);
+  } catch {
+    // Native chrome is optional: a host without it keeps its own window.
+  }
+}
+
+installDesktopChrome();
 
 function DesktopSidebar() {
   return (
@@ -277,7 +365,8 @@ function DesktopSidebar() {
         borderRightWidth: 1,
         borderRightColor: desktopColors.outline,
         paddingHorizontal: 12,
-        paddingVertical: 16,
+        paddingTop: macChrome ? 40 : 16,
+        paddingBottom: 16,
         gap: 4,
       }}
     >
