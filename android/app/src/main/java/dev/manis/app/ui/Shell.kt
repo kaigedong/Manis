@@ -9,6 +9,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -61,7 +64,12 @@ fun ManisShell(
     content: @Composable () -> Unit,
 ) {
     val colors = LocalManisColors.current
-    Column(Modifier.fillMaxSize().background(colors.windowBackdrop)) {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(colors.windowBackdrop)
+            .windowInsetsPadding(WindowInsets.safeDrawing),
+    ) {
         Chrome(
             proxyLabel = proxyLabel,
             onProxyToggle = onProxyToggle,
@@ -100,7 +108,7 @@ private fun Chrome(
     ) {
         Box(Modifier.width(ManisDimens.navCompact), contentAlignment = Alignment.CenterStart) {
             Image(
-                painter = painterResource(R.mipmap.ic_launcher),
+                painter = painterResource(R.drawable.ic_brand),
                 contentDescription = "Manis",
                 modifier = Modifier.size(24.dp).clip(RoundedCornerShape(6.dp)),
             )
