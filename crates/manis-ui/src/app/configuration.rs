@@ -576,7 +576,7 @@ impl ManisApp {
                 .into_any_element(),
             self.advanced_configuration_panel(theme, compact)
                 .into_any_element(),
-            self.app_update_panel(theme, compact).into_any_element(),
+            self.app_update_panel(theme, compact, cx).into_any_element(),
         ];
         let navigation = self.configuration_navigation(theme, compact, cx);
         let content = div()

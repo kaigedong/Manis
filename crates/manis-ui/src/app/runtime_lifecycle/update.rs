@@ -21,8 +21,14 @@ pub(in crate::app) enum AppUpdateState {
     Idle,
     Checking,
     Available(AvailableUpdate),
+    Downloading(AvailableUpdate),
+    Ready {
+        update: AvailableUpdate,
+        package: std::path::PathBuf,
+    },
     Current,
     Failed(AppUpdateError),
+    InstallFailed(String),
 }
 
 pub(super) fn perform_mihomo_core_update(
@@ -116,7 +122,7 @@ impl ManisApp {
         .detach();
     }
 
-    fn check_for_app_update(&mut self, cx: &mut Context<Self>) {
+    pub(in crate::app) fn check_for_app_update(&mut self, cx: &mut Context<Self>) {
         if self.runtime.is_fixture() || matches!(self.app_update_state, AppUpdateState::Checking) {
             return;
         }
@@ -134,6 +140,73 @@ impl ManisApp {
             .ok();
         })
         .detach();
+    }
+
+    pub(in crate::app) fn start_app_update_download(&mut self, cx: &mut Context<Self>) {
+        let AppUpdateState::Available(update) = self.app_update_state.clone() else {
+            return;
+        };
+        self.app_update_state = AppUpdateState::Downloading(update.clone());
+        cx.notify();
+        let executor = cx.background_executor().clone();
+        let download = update.clone();
+        cx.spawn(async move |this, cx| {
+            let package = executor
+                .spawn(async move { app_update::download_package(&download) })
+                .await;
+            this.update(cx, |this, cx| {
+                this.finish_app_update_download(update, package);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn finish_app_update_download(
+        &mut self,
+        update: AvailableUpdate,
+        result: Result<std::path::PathBuf, AppUpdateError>,
+    ) {
+        self.app_update_state = match result {
+            Ok(package) => {
+                record_event(
+                    LogLevel::Info,
+                    "app.update.downloaded",
+                    format!("version={}", update.version),
+                );
+                AppUpdateState::Ready { update, package }
+            }
+            Err(error) => {
+                record_event(
+                    LogLevel::Warn,
+                    "app.update.download.failed",
+                    error.to_string(),
+                );
+                AppUpdateState::Failed(error)
+            }
+        };
+    }
+
+    pub(in crate::app) fn install_app_update(&mut self, cx: &mut Context<Self>) {
+        let AppUpdateState::Ready { package, .. } = self.app_update_state.clone() else {
+            return;
+        };
+        match app_update::install_package(&package) {
+            Ok(()) => {
+                record_event(LogLevel::Info, "app.update.install", "restarting");
+                cx.quit();
+            }
+            Err(message) => {
+                record_event(
+                    LogLevel::Error,
+                    "app.update.install.failed",
+                    message.clone(),
+                );
+                self.app_update_state = AppUpdateState::InstallFailed(message);
+                cx.notify();
+            }
+        }
     }
 
     pub(in crate::app) fn finish_app_update_check(
@@ -159,10 +232,12 @@ impl ManisApp {
                 record_event(LogLevel::Warn, "app.update.check.failed", error.to_string());
                 // A temporary network failure must not hide an already discovered release.
                 match previous {
-                    AppUpdateState::Available(_) => previous,
+                    AppUpdateState::Available(_) | AppUpdateState::Ready { .. } => previous,
                     AppUpdateState::Idle
                     | AppUpdateState::Checking
                     | AppUpdateState::Current
+                    | AppUpdateState::Downloading(_)
+                    | AppUpdateState::InstallFailed(_)
                     | AppUpdateState::Failed(_) => AppUpdateState::Failed(error),
                 }
             }
