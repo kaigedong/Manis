@@ -249,3 +249,18 @@ fun ManisInfoRow(label: String, value: String) {
         Text(value, style = ManisType.body, color = colors.textPrimary)
     }
 }
+
+/** A borderless text action, as used at the end of GPUI rows. */
+@Composable
+fun ManisTextAction(label: String, onClick: () -> Unit) {
+    val colors = LocalManisColors.current
+    Row(
+        Modifier
+            .clip(RoundedCornerShape(ManisDimens.radiusControl))
+            .clickable(onClick = onClick)
+            .padding(horizontal = ManisDimens.spaceSm, vertical = ManisDimens.spaceXs),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, style = ManisType.metadata, color = colors.actionPrimary)
+    }
+}
