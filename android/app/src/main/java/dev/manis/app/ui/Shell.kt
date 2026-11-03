@@ -56,6 +56,8 @@ fun ManisShell(
     onToggleTheme: () -> Unit,
     statusText: String,
     statusOk: Boolean,
+    downloadText: String,
+    uploadText: String,
     content: @Composable () -> Unit,
 ) {
     val colors = LocalManisColors.current
@@ -72,7 +74,7 @@ fun ManisShell(
             Navigation(workspace, onWorkspace)
             Box(Modifier.weight(1f).fillMaxHeight()) { content() }
         }
-        StatusBar(statusText, statusOk, workspace)
+        StatusBar(statusText, statusOk, downloadText, uploadText)
     }
 }
 
@@ -179,7 +181,7 @@ private fun NavigationItem(
 }
 
 @Composable
-private fun StatusBar(text: String, ok: Boolean, workspace: PrimaryWorkspace) {
+private fun StatusBar(text: String, ok: Boolean, downloadText: String, uploadText: String) {
     val colors = LocalManisColors.current
     Row(
         Modifier
@@ -200,11 +202,12 @@ private fun StatusBar(text: String, ok: Boolean, workspace: PrimaryWorkspace) {
         Text(
             text,
             style = ManisType.metadata,
-            color = colors.textSecondary,
+            color = if (ok) colors.textSecondary else colors.textTertiary,
             maxLines = 1,
         )
         Spacer(Modifier.weight(1f))
-        Text(workspace.label, style = ManisType.metadata, color = colors.textTertiary)
+        Text(downloadText, style = ManisType.data, color = colors.textSecondary)
+        Text(uploadText, style = ManisType.data, color = colors.textSecondary)
     }
 }
 

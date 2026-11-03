@@ -127,7 +127,7 @@ object ManisDimens {
 
     /** The application chrome: `ControlSize::Standard.height() + Space::Md`. */
     val chromeHeight = 50.dp
-    val statusBarHeight = 28.dp
+    val statusBarHeight = 38.dp
 
     /** The navigation widths of the three window size classes. */
     val navCompact = 56.dp

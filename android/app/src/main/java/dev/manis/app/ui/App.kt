@@ -30,6 +30,13 @@ import dev.manis.app.data.Workspace
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+private fun formatTraffic(bytes: Long): String = when {
+    bytes >= 1024L * 1024L * 1024L -> "%.1f GB".format(bytes / (1024.0 * 1024.0 * 1024.0))
+    bytes >= 1024L * 1024L -> "%.1f MB".format(bytes / (1024.0 * 1024.0))
+    bytes >= 1024L -> "%.1f KB".format(bytes / 1024.0)
+    else -> "$bytes B"
+}
+
 /** Runtime state polled from the service and the controller. */
 object RuntimeState {
     var active by mutableStateOf(false)
@@ -38,6 +45,8 @@ object RuntimeState {
     var summary by mutableStateOf("")
     var controllerError by mutableStateOf<String?>(null)
     var warnings by mutableStateOf(listOf<String>())
+    var downloadTotal by mutableStateOf(0L)
+    var uploadTotal by mutableStateOf(0L)
     var unreachable by mutableStateOf(false)
     var networkEpoch by mutableStateOf(0)
 }
@@ -79,7 +88,9 @@ fun ManisApp() {
     LaunchedEffect(Unit) {
         var autoFixDone = false
         var epoch = RuntimeState.networkEpoch
+        var ticks = 0
         while (true) {
+            ticks += 1
             RuntimeState.active = ManisVpnService.active
             RuntimeState.error = ManisVpnService.lastError ?: CoreController.lastError
             RuntimeState.summary = CoreController.summary
@@ -98,7 +109,15 @@ fun ManisApp() {
             } else {
                 RuntimeState.snapshot = null
                 RuntimeState.unreachable = false
+                RuntimeState.downloadTotal = 0
+                RuntimeState.uploadTotal = 0
                 autoFixDone = false
+            }
+            if (RuntimeState.active && ticks % 2 == 0) {
+                runCatching { ControllerApi.connections() }.onSuccess { traffic ->
+                    RuntimeState.downloadTotal = traffic.downloadTotal
+                    RuntimeState.uploadTotal = traffic.uploadTotal
+                }
             }
             if (epoch != RuntimeState.networkEpoch) {
                 epoch = RuntimeState.networkEpoch
@@ -209,6 +228,8 @@ fun ManisApp() {
         onToggleTheme = { UiPrefs.dark.value = !dark },
         statusText = RuntimeState.summary.ifBlank { if (RuntimeState.active) "已连接" else "未连接" },
         statusOk = RuntimeState.active,
+        downloadText = "↓ ${formatTraffic(RuntimeState.downloadTotal)}",
+        uploadText = "↑ ${formatTraffic(RuntimeState.uploadTotal)}",
     ) {
         Box(Modifier.fillMaxSize()) {
             when (workspace) {
