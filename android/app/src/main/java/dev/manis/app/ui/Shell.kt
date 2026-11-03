@@ -51,8 +51,8 @@ enum class PrimaryWorkspace(val label: String, val iconRes: Int) {
 }
 
 /**
- * The GPUI shell: the chrome bar, the compact navigation rail, the workspace and the status bar.
- * Compact (under 900dp) hides the navigation labels, exactly like the desktop window does.
+ * The GPUI shell: the chrome bar, the workspace, the status bar and the navigation. Phones put
+ * the navigation at the bottom, where a thumb reaches it; the wider classes keep the rail.
  */
 @Composable
 fun ManisShell(
@@ -93,11 +93,17 @@ fun ManisShell(
                     onToggleTheme = onToggleTheme,
                     navWidth = navWidth(sizeClass),
                 )
-                Row(Modifier.fillMaxWidth().weight(1f)) {
-                    Navigation(workspace, onWorkspace, sizeClass)
-                    Box(Modifier.weight(1f).fillMaxHeight()) { content() }
+                if (sizeClass == SizeClass.Compact) {
+                    Box(Modifier.fillMaxWidth().weight(1f)) { content() }
+                    StatusBar(statusText, statusTone, downloadText, uploadText)
+                    BottomNavigation(workspace, onWorkspace)
+                } else {
+                    Row(Modifier.fillMaxWidth().weight(1f)) {
+                        Navigation(workspace, onWorkspace, sizeClass)
+                        Box(Modifier.weight(1f).fillMaxHeight()) { content() }
+                    }
+                    StatusBar(statusText, statusTone, downloadText, uploadText)
                 }
-                StatusBar(statusText, statusTone, downloadText, uploadText)
             }
         }
     }
@@ -157,6 +163,66 @@ private fun ChromeButton(label: String, onClick: () -> Unit) {
         contentAlignment = Alignment.Center,
     ) {
         Text(label, style = ManisType.label, color = colors.textPrimary)
+    }
+}
+
+/** The phone navigation: one row of icon-and-label tabs under the status bar. */
+@Composable
+private fun BottomNavigation(
+    workspace: PrimaryWorkspace,
+    onWorkspace: (PrimaryWorkspace) -> Unit,
+) {
+    val colors = LocalManisColors.current
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(ManisDimens.bottomNavigationHeight)
+            .background(colors.surfaceChrome)
+            .border(width = 1.dp, color = colors.outlineSubtle)
+            .padding(horizontal = ManisDimens.spaceSm),
+    ) {
+        for (entry in PrimaryWorkspace.entries) {
+            val selected = entry == workspace
+            val tint = if (selected) colors.actionPrimary else colors.textSecondary
+            Column(
+                Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .clickable { onWorkspace(entry) }
+                    .padding(vertical = ManisDimens.spaceXs),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+            ) {
+                Box(
+                    Modifier
+                        .clip(RoundedCornerShape(ManisDimens.radiusControl))
+                        .background(if (selected) colors.actionSoft else Color.Transparent)
+                        .padding(horizontal = ManisDimens.spaceSm, vertical = 2.dp),
+                ) {
+                    if (entry.iconRes != 0) {
+                        Icon(
+                            painter = painterResource(entry.iconRes),
+                            contentDescription = entry.label,
+                            modifier = Modifier.size(20.dp),
+                            tint = tint,
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Filled.Settings,
+                            contentDescription = entry.label,
+                            modifier = Modifier.size(20.dp),
+                            tint = tint,
+                        )
+                    }
+                }
+                Text(
+                    entry.label,
+                    style = ManisType.metadata,
+                    color = tint,
+                    maxLines = 1,
+                )
+            }
+        }
     }
 }
 
