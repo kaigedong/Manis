@@ -17,11 +17,15 @@ const params = (host.params ?? {}) as {
   tab?: Tab;
   topInset?: number;
   bottomInset?: number;
+  width?: number;
+  height?: number;
 };
 
 export const embedded = params.embedded === true;
 export const topInset = params.topInset ?? 0;
 export const bottomInset = params.bottomInset ?? 0;
+/** The host's window width in points (0 when it does not report one). */
+export const windowWidth = params.width ?? 0;
 export const root = signal<RootData>(
   params.data ?? {
     pending: false,

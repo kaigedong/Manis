@@ -1,6 +1,6 @@
 import { computed, host, List, Scroll, signal, Text, View } from "nsh";
 import { Input } from "nsh/base";
-import { embedded, root } from "./store";
+import { embedded, root, windowWidth } from "./store";
 import { desktopColors } from "./theme";
 import { NodeRow as SharedNodeRow } from "./ui";
 
@@ -678,7 +678,7 @@ function DesktopNodesPage() {
         <DesktopDetailHeader />
         <DesktopDetail />
       </View>
-      <DesktopInspector />
+      {windowWidth === 0 || windowWidth >= 1100 ? <DesktopInspector /> : null}
     </View>
   );
 }

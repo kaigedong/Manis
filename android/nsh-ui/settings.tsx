@@ -1,6 +1,6 @@
 import { Clipboard, computed, host, Scroll, signal, Text, View } from "nsh";
 import { Input } from "nsh/base";
-import { embedded, root } from "./store";
+import { embedded, root, windowWidth } from "./store";
 import { desktopColors } from "./theme";
 import { Action, Card, Info } from "./ui";
 
@@ -416,6 +416,7 @@ function DesktopSettingsPage() {
           </Card>
         </Scroll>
       </View>
+      {windowWidth === 0 || windowWidth >= 1100 ? (
       <View
         style={{
           width: 300,
@@ -437,6 +438,7 @@ function DesktopSettingsPage() {
           </Card>
         </Scroll>
       </View>
+      ) : null}
     </View>
   );
 }

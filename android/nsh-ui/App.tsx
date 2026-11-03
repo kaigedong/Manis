@@ -15,6 +15,7 @@ import {
   toast,
   topInset,
   type Tab,
+  windowWidth,
 } from "./store";
 
 const tabs: Array<{ id: Tab; label: string; icon: string; hint: string }> = [
@@ -270,7 +271,8 @@ function DesktopChrome() {
   );
 }
 
-const sidebarCollapsed = signal(false);
+const narrowWindow = windowWidth > 0 && windowWidth < 900;
+const sidebarCollapsed = signal(narrowWindow);
 const macChrome = embedded && desktopAvailable && platform() === "macos";
 
 function installDesktopChrome() {

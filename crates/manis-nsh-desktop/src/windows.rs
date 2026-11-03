@@ -28,6 +28,8 @@ pub(crate) fn main() {
         "embedded": true,
         "topInset": 0,
         "bottomInset": 0,
+        "width": 1180,
+        "height": 760,
         "tab": std::env::var("MANIS_NSH_TAB").unwrap_or_else(|_| "connection".into()),
     });
     if let Some(params) = params.as_object() {

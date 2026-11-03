@@ -75,3 +75,34 @@ test("desktop sidebar collapses to an icon rail", async () => {
   expect(app.texts()).not.toContain("策略路由工作台");
   expect(app.texts()).toContain("»");
 });
+
+test("medium window drops the inspector column", async () => {
+  const app = await open("./App.tsx", {
+    width: 1000,
+    height: 760,
+    platform: "macos",
+    host: {
+      params: {
+        embedded: true,
+        width: 1000,
+        tab: "nodes",
+        data: { nodes: { ...nodesPage, policyGroups: [] } },
+      },
+    },
+  });
+  expect(app.texts()).toContain("策略组");
+  expect(app.texts()).not.toContain("路由链");
+});
+
+test("narrow window starts with the rail", async () => {
+  const app = await open("./App.tsx", {
+    width: 800,
+    height: 760,
+    platform: "macos",
+    host: {
+      params: { embedded: true, width: 800, tab: "nodes", data: { nodes: nodesPage } },
+    },
+  });
+  expect(app.texts()).not.toContain("策略路由工作台");
+  expect(app.texts()).toContain("»");
+});
