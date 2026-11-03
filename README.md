@@ -65,7 +65,7 @@ Manis 源码仓库不提交预编译代理内核。发行构建会从 Mihomo 官
 
 | 平台 | 编译目标 | 运行状态 |
 | --- | --- | --- |
-| macOS 13+ | 持续维护 | 主要开发平台；系统代理已验证，TUN 通过管理员授权路径支持测试 |
+| macOS 13+ | 持续维护 | 仅 Apple Silicon（`arm64`）；主要开发平台；系统代理已验证，TUN 通过管理员授权路径支持测试 |
 | Windows | 持续维护 | 实验性；使用 named-pipe controller transport，NSH 壳会启动 headless 引擎 |
 | Linux | 持续维护 | 实验性；仍需覆盖更多发行版与桌面环境 |
 | Android | 实验性 | `arm64-v8a` 真机与模拟器均可运行；功能对齐见 [android/README.md](android/README.md) |
@@ -73,7 +73,7 @@ Manis 源码仓库不提交预编译代理内核。发行构建会从 Mihomo 官
 CI 会检查桌面平台，Android 由独立工作流构建；但“能够编译”不代表该平台上的所有网络集成都
 已经完成真实验证。
 
-Package workflow 会分别构建 Apple Silicon、Intel 的未公证 macOS 应用包、支持原生
+Package workflow 会构建 Apple Silicon（`arm64`）的未公证 macOS 应用包、支持原生
 Wayland 的实验性 Arch Linux `x86_64` 软件包，以及 Android `arm64-v8a` 的调试 APK，
 并附带校验文件。每次提交合并到 `main` 后，
 工作流会覆盖更新名为 `latest` 的公开滚动 Pre-release；手动运行的 Actions 产物保留 14 天。
@@ -90,7 +90,7 @@ Wayland 的实验性 Arch Linux `x86_64` 软件包，以及 Android `arm64-v8a` 
 可以直接从 [Releases 页面](https://github.com/kaigedong/Manis/releases) 中名为
 `Latest Manis development build` 的 Pre-release 下载最近一次成功合并到 `main` 的测试
 产物，也可以在 [GitHub Actions 的 Package 页面](https://github.com/kaigedong/Manis/actions/workflows/package.yml)
-下载单次运行产物。Apple Silicon Mac 选择 `arm64`，Intel Mac 选择 `x86_64`；CachyOS 和
+下载单次运行产物。macOS 仅支持 Apple Silicon，选择 `arm64`；CachyOS 和
 Arch Linux 使用 `.pkg.tar.zst` 软件包；Android 手机选择
 `Manis-<版本>-android-arm64-debug.apk`。版本标签产生的正式候选包仍只保存为 Draft Release。
 

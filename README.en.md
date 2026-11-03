@@ -64,7 +64,7 @@ and include it as a first-launch seed. The application then uses and updates onl
 
 | Platform | Build target | Runtime status |
 | --- | --- | --- |
-| macOS 13+ | Maintained | Primary development platform; system proxy verified, TUN supported for testing through administrator approval |
+| macOS 13+ | Maintained | Apple Silicon (`arm64`) only; primary development platform; system proxy verified, TUN supported for testing through administrator approval |
 | Windows | Maintained | Experimental; managed controller transport is not implemented yet |
 | Linux | Maintained | Experimental; native packages and desktop environments need broader testing |
 | Android | Experimental | Runs on `arm64-v8a` devices and emulators; feature parity is tracked in [android/README.md](android/README.md) |
@@ -73,7 +73,7 @@ The CI configuration checks the desktop platforms; Android builds through its ow
 compile check is not a claim that every network integration has been validated on that operating
 system.
 
-The Package workflow builds unnotarized macOS bundles for Apple Silicon and Intel, an experimental
+The Package workflow builds an unnotarized Apple Silicon (`arm64`) macOS bundle, an experimental
 Arch Linux `x86_64` package with native Wayland support, and an Android `arm64-v8a` debug APK, and
 generates checksums for each package. Every commit merged into `main` replaces the public rolling
 `latest` pre-release, while manual workflow artifacts are retained for 14 days. Pushing any version
@@ -87,7 +87,7 @@ installing them.
 The most recent successful `main` build is available from the `Latest Manis development build`
 pre-release on the [Releases page](https://github.com/kaigedong/Manis/releases), or download a single run from the
 [Package workflow page](https://github.com/kaigedong/Manis/actions/workflows/package.yml). Choose
-`arm64` for an Apple Silicon Mac, `x86_64` for an Intel Mac, the `.pkg.tar.zst` package for
+`arm64` for an Apple Silicon Mac (Intel Macs are not supported), the `.pkg.tar.zst` package for
 CachyOS and Arch Linux, or `Manis-<version>-android-arm64-debug.apk` for an Android phone. Version
 tags continue to produce maintainer-only draft releases.
 

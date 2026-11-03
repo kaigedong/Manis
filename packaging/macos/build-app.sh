@@ -34,6 +34,10 @@ if [[ ! "$BUNDLE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   echo "MANIS_BUNDLE_VERSION must contain exactly three numeric components" >&2
   exit 1
 fi
+if [[ "$(uname -m)" != "arm64" ]]; then
+  echo "Manis supports Apple Silicon macOS builds only" >&2
+  exit 1
+fi
 if [[ ! "$BUNDLE_BUILD" =~ ^[1-9][0-9]*$ ]]; then
   echo "MANIS_BUNDLE_BUILD must be a positive integer" >&2
   exit 1
@@ -131,10 +135,12 @@ if [[ -n "${MANIS_CODESIGN_IDENTITY:-}" ]]; then
   codesign --force --options runtime --identifier "$LOCAL_INSTALLER_ID" --sign "$MANIS_CODESIGN_IDENTITY" "$MACOS_DIR/manis-local-helper-install"
   codesign --force --options runtime --identifier "dev.manis.app" --sign "$MANIS_CODESIGN_IDENTITY" "$BUILD_APP_DIR"
 else
-  # Intel codesign rejects --options runtime on ad-hoc inputs; one deep pass
-  # signs the nested helpers and the bundle together, which the strict verify
-  # needs.
-  codesign --force --deep --sign - "$BUILD_APP_DIR"
+  codesign --force --options runtime --identifier "dev.manis.app" --sign - "$MACOS_DIR/Manis"
+  codesign --force --options runtime --identifier "dev.manis.app.engine" --sign - "$MACOS_DIR/manis-engine"
+  codesign --force --options runtime --identifier "$HELPER_ID" --sign - "$HELPER_TOOLS_DIR/$HELPER_ID"
+  codesign --force --options runtime --identifier "$HELPERCTL_ID" --sign - "$MACOS_DIR/manis-helperctl"
+  codesign --force --options runtime --identifier "$LOCAL_INSTALLER_ID" --sign - "$MACOS_DIR/manis-local-helper-install"
+  codesign --force --deep --options runtime --identifier "dev.manis.app" --sign - "$BUILD_APP_DIR"
   echo "ad-hoc build: TUN will request administrator approval and pin this app version" >&2
 fi
 
