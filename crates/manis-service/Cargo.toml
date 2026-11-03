@@ -18,7 +18,7 @@ path = "src/bin/manis-engine.rs"
 doc = false
 
 [target.'cfg(unix)'.dependencies]
-signal-hook = "0.3.18"
+signal-hook = "0.4.5"
 
 [dependencies]
 manis-core = { path = "../manis-core" }
