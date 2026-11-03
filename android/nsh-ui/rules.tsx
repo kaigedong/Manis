@@ -2,7 +2,7 @@ import { computed, host, Scroll, signal, Text, View } from "nsh";
 import { Input } from "nsh/base";
 import { embedded, layoutWidth, root } from "./store";
 import { desktopColors } from "./theme";
-import { RuleRow } from "./ui";
+import { Action, Chip, RuleRow } from "./ui";
 
 type Rule = {
   index: number;
@@ -94,34 +94,6 @@ async function saveRule() {
   if (reply?.message?.startsWith("规则已保存")) editor.set(null);
 }
 
-function Action(props: {
-  label: string;
-  onPress: () => void;
-  primary?: boolean;
-  disabled?: boolean;
-}) {
-  const disabled = () => props.disabled || busy();
-  return (
-    <View
-      onPress={disabled() ? undefined : props.onPress}
-      role="button"
-      accessible
-      disabled={disabled()}
-      style={{
-        opacity: disabled() ? 0.45 : 1,
-        borderRadius: 10,
-        paddingHorizontal: 14,
-        paddingVertical: 8,
-        backgroundColor: props.primary ? "#7c3aed" : "#ede9fe",
-      }}
-    >
-      <Text style={{ fontSize: 14, color: props.primary ? "#ffffff" : "#5b21b6" }}>
-        {props.label}
-      </Text>
-    </View>
-  );
-}
-
 function Card(props: { children: any }) {
   return (
     <View
@@ -141,40 +113,44 @@ function Card(props: { children: any }) {
   );
 }
 
-function Chip(props: {
-  label: string;
-  active: boolean;
-  onPress: () => void;
-}) {
-  return (
-    <View
-      onPress={props.onPress}
-      role="button"
-      accessible
-      accessibilityState={{ selected: props.active }}
-      style={{
-        borderRadius: 8,
-        paddingHorizontal: 10,
-        paddingVertical: 6,
-        backgroundColor: props.active ? "#7c3aed" : "#f3f4f6",
-      }}
-    >
-      <Text style={{ fontSize: 12, color: props.active ? "#ffffff" : "#374151" }}>
-        {props.label}
-      </Text>
-    </View>
-  );
-}
-
 function RuleForm() {
   const current = () => editor();
   return (
-    <Card>
-      <Text role="header" style={{ fontSize: 18, fontWeight: "600" }}>
+    <View
+      style={
+        embedded
+          ? {
+              borderWidth: 1,
+              borderColor: desktopColors.primary,
+              borderRadius: 10,
+              padding: 12,
+              gap: 8,
+              backgroundColor: "#F7FBFA",
+            }
+          : {
+              marginHorizontal: 16,
+              marginTop: 14,
+              borderWidth: 1,
+              borderColor: "#e5e7eb",
+              borderRadius: 16,
+              padding: 14,
+              gap: 10,
+              backgroundColor: "#ffffff",
+            }
+      }
+    >
+      <Text
+        role="header"
+        style={{
+          fontSize: embedded ? 13 : 18,
+          fontWeight: "600",
+          color: embedded ? desktopColors.text : undefined,
+        }}
+      >
         {current()?.index === null ? "添加规则" : "编辑规则"}
       </Text>
-      <Text style={{ fontSize: 12, color: "#6b7280" }}>类型</Text>
-      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+      <Text style={{ fontSize: embedded ? 11 : 12, color: embedded ? desktopColors.tertiary : "#6b7280" }}>类型</Text>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: embedded ? 4 : 6 }}>
         {page().kinds.map((kind) => (
           <Chip
             label={kind}
@@ -188,11 +164,22 @@ function RuleForm() {
           value={current()?.value ?? ""}
           onChange={(value) => updateEditor({ value })}
           placeholder={kindPlaceholder(current()?.kind ?? "")}
-          style={{ borderWidth: 1, borderColor: "#d1d5db", borderRadius: 10, padding: 10 }}
+          style={
+            embedded
+              ? {
+                  borderWidth: 1,
+                  borderColor: desktopColors.outlineStrong,
+                  borderRadius: 8,
+                  paddingHorizontal: 10,
+                  paddingVertical: 7,
+                  fontSize: 12,
+                }
+              : { borderWidth: 1, borderColor: "#d1d5db", borderRadius: 10, padding: 10 }
+          }
         />
       ) : null}
-      <Text style={{ fontSize: 12, color: "#6b7280" }}>策略</Text>
-      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+      <Text style={{ fontSize: embedded ? 11 : 12, color: embedded ? desktopColors.tertiary : "#6b7280" }}>策略</Text>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: embedded ? 4 : 6 }}>
         {page().policies.map((policy) => (
           <Chip
             label={policy === "__MANIS_GLOBAL__" ? "全局" : policy}
@@ -201,12 +188,14 @@ function RuleForm() {
           />
         ))}
       </View>
-      <Text style={{ fontSize: 12, color: "#6b7280" }}>{kindHelp(current()?.kind ?? "")}</Text>
-      <View style={{ flexDirection: "row", gap: 8 }}>
+      <Text style={{ fontSize: embedded ? 11 : 12, color: embedded ? desktopColors.secondary : "#6b7280" }}>
+        {kindHelp(current()?.kind ?? "")}
+      </Text>
+      <View style={{ flexDirection: "row", gap: embedded ? 6 : 8 }}>
         <Action label="保存" primary onPress={() => void saveRule()} />
         <Action label="取消" onPress={() => editor.set(null)} />
       </View>
-    </Card>
+    </View>
   );
 }
 
@@ -325,119 +314,6 @@ function MobileRulesPage() {
   );
 }
 
-function DButton(props: {
-  label: string;
-  onPress: () => void;
-  primary?: boolean;
-  disabled?: boolean;
-}) {
-  const disabled = () => props.disabled || busy();
-  return (
-    <View
-      onPress={disabled() ? undefined : props.onPress}
-      role="button"
-      accessible
-      disabled={disabled()}
-      style={{
-        opacity: disabled() ? 0.45 : 1,
-        borderRadius: 8,
-        borderWidth: props.primary ? 0 : 1,
-        borderColor: desktopColors.outline,
-        paddingHorizontal: 12,
-        paddingVertical: 6,
-        backgroundColor: props.primary ? desktopColors.primary : desktopColors.high,
-      }}
-    >
-      <Text style={{ fontSize: 12, color: props.primary ? desktopColors.onPrimary : desktopColors.text }}>
-        {props.label}
-      </Text>
-    </View>
-  );
-}
-
-function DChip(props: { label: string; active: boolean; onPress: () => void }) {
-  return (
-    <View
-      onPress={props.onPress}
-      role="button"
-      accessible
-      accessibilityState={{ selected: props.active }}
-      style={{
-        borderRadius: 6,
-        borderWidth: 1,
-        borderColor: props.active ? desktopColors.primary : desktopColors.outline,
-        paddingHorizontal: 8,
-        paddingVertical: 4,
-        backgroundColor: props.active ? "#E6F1EE" : desktopColors.high,
-      }}
-    >
-      <Text style={{ fontSize: 11, color: props.active ? desktopColors.primary : desktopColors.text }}>
-        {props.label}
-      </Text>
-    </View>
-  );
-}
-
-function DesktopRuleEditor() {
-  const current = () => editor();
-  return (
-    <View
-      style={{
-        borderWidth: 1,
-        borderColor: desktopColors.primary,
-        borderRadius: 10,
-        padding: 12,
-        gap: 8,
-        backgroundColor: "#F7FBFA",
-      }}
-    >
-      <Text style={{ fontSize: 13, fontWeight: "600", color: desktopColors.text }}>
-        {current()?.index === null ? "添加规则" : "编辑规则"}
-      </Text>
-      <Text style={{ fontSize: 11, color: desktopColors.tertiary }}>类型</Text>
-      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 4 }}>
-        {page().kinds.map((kind) => (
-          <DChip
-            label={kind}
-            active={current()?.kind === kind}
-            onPress={() => updateEditor({ kind, value: kind === "FINAL" ? "" : current()?.value ?? "" })}
-          />
-        ))}
-      </View>
-      {current()?.kind !== "FINAL" ? (
-        <Input
-          value={current()?.value ?? ""}
-          onChange={(value) => updateEditor({ value })}
-          placeholder={kindPlaceholder(current()?.kind ?? "")}
-          style={{
-            borderWidth: 1,
-            borderColor: desktopColors.outlineStrong,
-            borderRadius: 8,
-            paddingHorizontal: 10,
-            paddingVertical: 7,
-            fontSize: 12,
-          }}
-        />
-      ) : null}
-      <Text style={{ fontSize: 11, color: desktopColors.tertiary }}>策略</Text>
-      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 4 }}>
-        {page().policies.map((policy) => (
-          <DChip
-            label={policy === "__MANIS_GLOBAL__" ? "全局" : policy}
-            active={current()?.policy === policy}
-            onPress={() => updateEditor({ policy })}
-          />
-        ))}
-      </View>
-      <Text style={{ fontSize: 11, color: desktopColors.secondary }}>{kindHelp(current()?.kind ?? "")}</Text>
-      <View style={{ flexDirection: "row", gap: 6 }}>
-        <DButton label="保存" primary onPress={() => void saveRule()} />
-        <DButton label="取消" onPress={() => editor.set(null)} />
-      </View>
-    </View>
-  );
-}
-
 function DesktopRulesPage() {
   return (
     <View style={{ flex: 1, flexDirection: "row", backgroundColor: desktopColors.high }}>
@@ -456,8 +332,8 @@ function DesktopRulesPage() {
           <Text style={{ fontSize: 12, color: desktopColors.secondary, flex: 1 }}>
             {message() || page().summary || "按顺序匹配；未命中的流量自动走全局组。"}
           </Text>
-          <DButton label="添加" onPress={openNew} />
-          <DButton label={busy() ? "处理中…" : "应用"} primary onPress={() => void invoke("rules.apply")} />
+          <Action label="添加" onPress={openNew} />
+          <Action label={busy() ? "处理中…" : "应用"} primary onPress={() => void invoke("rules.apply")} />
         </View>
         <View
           style={{
@@ -500,7 +376,7 @@ function DesktopRulesPage() {
       {layoutWidth() === 0 || layoutWidth() >= 1100 ? (
       <View style={{ width: 320, borderLeftWidth: 1, borderLeftColor: desktopColors.outline, backgroundColor: desktopColors.low }}>
         <Scroll style={{ flex: 1 }} contentStyle={{ padding: 12, gap: 10 }}>
-          {editor() ? <DesktopRuleEditor /> : null}
+          {editor() ? <RuleForm /> : null}
           <View
             style={{
               borderWidth: 1,
