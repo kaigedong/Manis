@@ -13,10 +13,12 @@ import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 import dev.manis.app.ui.ManisApp
 import dev.manis.app.ui.ManisTheme
+import dev.manis.app.ui.UiPrefs
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        UiPrefs.attach(this)
         setContent {
             ManisTheme {
                 val view = LocalView.current

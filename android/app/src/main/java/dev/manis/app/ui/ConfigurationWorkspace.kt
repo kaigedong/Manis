@@ -182,9 +182,9 @@ private fun GeneralSection(onMessage: (String) -> Unit) {
                 null -> "跟随系统"
             })
             Row(horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceXs)) {
-                ManisChip("跟随系统", UiPrefs.dark.value == null) { UiPrefs.dark.value = null }
-                ManisChip("浅色", UiPrefs.dark.value == false) { UiPrefs.dark.value = false }
-                ManisChip("深色", UiPrefs.dark.value == true) { UiPrefs.dark.value = true }
+                ManisChip("跟随系统", UiPrefs.dark.value == null) { UiPrefs.setDark(null) }
+                ManisChip("浅色", UiPrefs.dark.value == false) { UiPrefs.setDark(false) }
+                ManisChip("深色", UiPrefs.dark.value == true) { UiPrefs.setDark(true) }
             }
             ManisInfoRow("语言", "中文")
         }

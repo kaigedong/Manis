@@ -225,7 +225,7 @@ fun ManisApp() {
         routingLabel = routingLabel,
         onRoutingCycle = ::cycleRouting,
         darkTheme = dark,
-        onToggleTheme = { UiPrefs.dark.value = !dark },
+        onToggleTheme = { UiPrefs.setDark(!dark) },
         statusText = RuntimeState.summary.ifBlank { if (RuntimeState.active) "已连接" else "未连接" },
         statusOk = RuntimeState.active,
         downloadText = "↓ ${formatTraffic(RuntimeState.downloadTotal)}",

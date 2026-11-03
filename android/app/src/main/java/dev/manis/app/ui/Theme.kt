@@ -183,7 +183,28 @@ private fun ManisColors.toScheme(dark: Boolean) = if (dark) {
 
 /** The user's explicit theme choice; null follows the system. */
 object UiPrefs {
+    private const val STORE = "manis-ui"
+    private const val DARK_KEY = "dark"
+    private var prefs: android.content.SharedPreferences? = null
+
+    /** The stored theme choice; null follows the system, as on the desktop. */
     var dark = mutableStateOf<Boolean?>(null)
+        private set
+
+    /** Loads the stored theme once the activity's context exists. */
+    fun attach(context: android.content.Context) {
+        if (prefs != null) return
+        val store = context.getSharedPreferences(STORE, android.content.Context.MODE_PRIVATE)
+        prefs = store
+        dark.value = if (store.contains(DARK_KEY)) store.getBoolean(DARK_KEY, false) else null
+    }
+
+    fun setDark(value: Boolean?) {
+        dark.value = value
+        prefs?.edit()?.apply {
+            if (value == null) remove(DARK_KEY) else putBoolean(DARK_KEY, value)
+        }?.apply()
+    }
 }
 
 /** Applies the GPUI palette and typography to the whole application. */
