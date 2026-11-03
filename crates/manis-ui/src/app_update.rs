@@ -369,7 +369,6 @@ mod macos_install {
     const MAX_ENTRIES: usize = 20_000;
     const MAX_EXTRACTED_BYTES: u64 = 1_024 * 1_024 * 1_024;
 
-    #[cfg(target_os = "macos")]
     pub(super) fn install(package: &Path) -> Result<(), String> {
         use std::process::{Command, Stdio};
         let executable = std::env::current_exe().map_err(|error| error.to_string())?;
@@ -378,9 +377,9 @@ mod macos_install {
             .and_then(Path::parent)
             .and_then(Path::parent)
             .ok_or_else(|| "cannot locate the application bundle".to_owned())?;
-        if !bundle
+        if bundle
             .extension()
-            .is_some_and(|extension| extension == "app")
+            .is_none_or(|extension| extension != "app")
         {
             return Err("the app is not running from an application bundle".to_owned());
         }
@@ -402,14 +401,8 @@ mod macos_install {
             return Err("the update package does not contain a Manis app".to_owned());
         }
 
-        let pid = std::process::id();
         let script = staging.join("install.sh");
-        let script_body = format!(
-            "#!/bin/sh\nwhile kill -0 {pid} 2>/dev/null; do sleep 0.2; done\nbackup=\"{bundle}.old.$$\"\nrm -rf \"$backup\"\nmv \"{bundle}\" \"$backup\" || exit 1\nmv \"{replacement}\" \"{bundle}\" || {{ mv \"$backup\" \"{bundle}\"; exit 1; }}\nopen -n \"{bundle}\"\nsleep 2\nrm -rf \"$backup\"\n",
-            pid = pid,
-            bundle = bundle.display(),
-            replacement = replacement.display(),
-        );
+        let script_body = swap_script(std::process::id(), bundle, &replacement);
         std::fs::write(&script, script_body).map_err(|error| error.to_string())?;
         {
             use std::os::unix::fs::PermissionsExt as _;
@@ -425,6 +418,17 @@ mod macos_install {
             .spawn()
             .map_err(|error| error.to_string())?;
         Ok(())
+    }
+
+    /// The detached swap: wait for this process, move the old bundle aside, move the new one in
+    /// and reopen it. Quoting keeps paths with spaces intact.
+    pub(super) fn swap_script(pid: u32, bundle: &Path, replacement: &Path) -> String {
+        format!(
+            "#!/bin/sh\nwhile kill -0 {pid} 2>/dev/null; do sleep 0.2; done\nbackup=\"{bundle}.old.$$\"\nrm -rf \"$backup\"\nmv \"{bundle}\" \"$backup\" || exit 1\nmv \"{replacement}\" \"{bundle}\" || {{ mv \"$backup\" \"{bundle}\"; exit 1; }}\nopen -n \"{bundle}\"\nsleep 2\nrm -rf \"$backup\"\nrm -rf \"$(dirname \"{replacement}\")\"\n",
+            pid = pid,
+            bundle = bundle.display(),
+            replacement = replacement.display(),
+        )
     }
 
     pub(super) fn extract_zip(bytes: &[u8], destination: &Path) -> Result<(), String> {
@@ -515,6 +519,19 @@ mod tests {
             assert_eq!(platform_asset_name("0.1.104"), None);
             assert!(!supports_self_install());
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn swap_script_waits_and_quotes_paths() {
+        let script = super::macos_install::swap_script(
+            4242,
+            std::path::Path::new("/Applications/Manis App.app"),
+            std::path::Path::new("/tmp/extract/Manis.app"),
+        );
+        assert!(script.contains("kill -0 4242"));
+        assert!(script.contains("\"/Applications/Manis App.app\""));
+        assert!(script.contains("open -n \"/Applications/Manis App.app\""));
     }
 
     #[cfg(unix)]
