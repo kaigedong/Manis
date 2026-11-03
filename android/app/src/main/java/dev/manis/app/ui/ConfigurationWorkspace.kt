@@ -8,8 +8,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
@@ -27,6 +29,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInParent
@@ -69,11 +72,16 @@ fun ConfigurationWorkspace(onMessage: (String) -> Unit, onOpenLogs: () -> Unit) 
         }
     }
 
+    val compact = LocalSizeClass.current == SizeClass.Compact
+
     Column(Modifier.fillMaxSize().background(colors.surfaceBase)) {
         Row(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = ManisDimens.spaceMd, vertical = ManisDimens.spaceLg),
+                .padding(
+                    horizontal = if (compact) ManisDimens.spaceMd else ManisDimens.spaceXl,
+                    vertical = ManisDimens.spaceLg,
+                ),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
         ) {
@@ -91,65 +99,147 @@ fun ConfigurationWorkspace(onMessage: (String) -> Unit, onOpenLogs: () -> Unit) 
             }
         }
         ManisDivider()
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .background(colors.surfaceChrome)
-                .padding(horizontal = ManisDimens.spaceMd, vertical = ManisDimens.spaceSm),
-            verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceXs),
-        ) {
-            for (chunk in ConfigSection.entries.chunked(3)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceXs)) {
-                    for (entry in chunk) {
-                        val selected = entry == active
-                        Box(
-                            Modifier
-                                .weight(1f)
-                                .height(ManisDimens.controlCompact)
-                                .clip(RoundedCornerShape(ManisDimens.radiusControl))
-                                .background(if (selected) colors.actionSoft else colors.buttonBg)
-                                .clickable {
-                                    scope.launch {
-                                        scroll.animateScrollTo(sectionTops[entry] ?: 0)
-                                    }
-                                },
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(
-                                entry.label,
-                                style = ManisType.metadata,
-                                color = if (selected) colors.actionPrimary else colors.textSecondary,
-                            )
-                        }
+        if (compact) {
+            SectionGrid(active = active) { entry ->
+                scope.launch { scroll.animateScrollTo(sectionTops[entry] ?: 0) }
+            }
+            ManisDivider()
+            SectionScrollContent(
+                modifier = Modifier.fillMaxSize(),
+                scroll = scroll,
+                sectionTops = sectionTops,
+                onMessage = onMessage,
+                onOpenLogs = onOpenLogs,
+            )
+        } else {
+            Row(Modifier.fillMaxWidth().weight(1f)) {
+                SectionSidebar(active = active) { entry ->
+                    scope.launch { scroll.animateScrollTo(sectionTops[entry] ?: 0) }
+                }
+                Box(
+                    Modifier
+                        .fillMaxHeight()
+                        .width(1.dp)
+                        .background(colors.outlineSubtle),
+                )
+                SectionScrollContent(
+                    modifier = Modifier.fillMaxHeight().weight(1f),
+                    scroll = scroll,
+                    sectionTops = sectionTops,
+                    onMessage = onMessage,
+                    onOpenLogs = onOpenLogs,
+                )
+            }
+        }
+    }
+}
+
+/** The compact three-column section grid. */
+@Composable
+private fun SectionGrid(active: ConfigSection, onSelect: (ConfigSection) -> Unit) {
+    val colors = LocalManisColors.current
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(colors.surfaceChrome)
+            .padding(horizontal = ManisDimens.spaceMd, vertical = ManisDimens.spaceSm),
+        verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceXs),
+    ) {
+        for (chunk in ConfigSection.entries.chunked(3)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceXs)) {
+                for (entry in chunk) {
+                    val selected = entry == active
+                    Box(
+                        Modifier
+                            .weight(1f)
+                            .height(ManisDimens.controlCompact)
+                            .clip(RoundedCornerShape(ManisDimens.radiusControl))
+                            .background(if (selected) colors.actionSoft else colors.buttonBg)
+                            .clickable { onSelect(entry) },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            entry.label,
+                            style = ManisType.metadata,
+                            color = if (selected) colors.actionPrimary else colors.textSecondary,
+                        )
                     }
                 }
             }
         }
-        ManisDivider()
-        Column(
-            Modifier
-                .fillMaxSize()
-                .verticalScroll(scroll)
-                .padding(ManisDimens.spaceMd),
-            verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceLg),
-        ) {
-            for (entry in ConfigSection.entries) {
-                Column(
-                    Modifier
-                        .fillMaxWidth()
-                        .onGloballyPositioned { coordinates ->
-                            sectionTops[entry] = coordinates.positionInParent().y.roundToInt()
-                        },
-                    verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceMd),
-                ) {
-                    when (entry) {
-                        ConfigSection.General -> GeneralSection(onMessage)
-                        ConfigSection.Runtime -> RuntimeSection(onMessage)
-                        ConfigSection.ProxySources -> ProxySourcesContent(onMessage)
-                        ConfigSection.RuleSources -> RuleSourcesSection()
-                        ConfigSection.Advanced -> AdvancedSection(onMessage, onOpenLogs)
-                        ConfigSection.Updates -> UpdatesContent(onMessage)
-                    }
+    }
+}
+
+/** The desktop section directory beside the content. */
+@Composable
+private fun SectionSidebar(active: ConfigSection, onSelect: (ConfigSection) -> Unit) {
+    val colors = LocalManisColors.current
+    Column(
+        Modifier
+            .width(228.dp)
+            .fillMaxHeight()
+            .background(colors.surfaceChrome)
+            .padding(ManisDimens.spaceMd),
+        verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceXs),
+    ) {
+        Text(
+            "设置",
+            style = ManisType.metadata,
+            color = colors.textTertiary,
+            modifier = Modifier.padding(horizontal = ManisDimens.spaceSm, vertical = ManisDimens.spaceXs),
+        )
+        for (entry in ConfigSection.entries) {
+            val selected = entry == active
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .height(ManisDimens.controlStandard)
+                    .clip(RoundedCornerShape(ManisDimens.radiusRow))
+                    .background(if (selected) colors.actionSoft else Color.Transparent)
+                    .clickable { onSelect(entry) }
+                    .padding(horizontal = ManisDimens.spaceSm),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    entry.label,
+                    style = ManisType.body,
+                    color = if (selected) colors.actionPrimary else colors.textPrimary,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SectionScrollContent(
+    modifier: Modifier,
+    scroll: androidx.compose.foundation.ScrollState,
+    sectionTops: MutableMap<ConfigSection, Int>,
+    onMessage: (String) -> Unit,
+    onOpenLogs: () -> Unit,
+) {
+    Column(
+        modifier
+            .verticalScroll(scroll)
+            .padding(ManisDimens.spaceMd),
+        verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceLg),
+    ) {
+        for (entry in ConfigSection.entries) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .onGloballyPositioned { coordinates ->
+                        sectionTops[entry] = coordinates.positionInParent().y.roundToInt()
+                    },
+                verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceMd),
+            ) {
+                when (entry) {
+                    ConfigSection.General -> GeneralSection(onMessage)
+                    ConfigSection.Runtime -> RuntimeSection(onMessage)
+                    ConfigSection.ProxySources -> ProxySourcesContent(onMessage)
+                    ConfigSection.RuleSources -> RuleSourcesSection()
+                    ConfigSection.Advanced -> AdvancedSection(onMessage, onOpenLogs)
+                    ConfigSection.Updates -> UpdatesContent(onMessage)
                 }
             }
         }
