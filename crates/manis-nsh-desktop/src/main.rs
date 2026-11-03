@@ -149,7 +149,7 @@ mod desktop {
             let view = AppView::new(AppOptions {
                 app_id: "dev.manis.desktop.nsh".to_owned(),
                 title: "Manis".into(),
-                size: (430, 900),
+                size: (1180, 760),
                 ..AppOptions::default()
             });
             let host = view.host();

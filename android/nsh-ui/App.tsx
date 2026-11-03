@@ -4,15 +4,39 @@ import { NodesPage } from "./nodes";
 import { RulesPage } from "./rules";
 import { SettingsPage } from "./settings";
 import { SubscriptionsPage } from "./subscriptions";
-import { bottomInset, root, tab, toast, topInset, type Tab } from "./store";
+import {
+  bottomInset,
+  embedded,
+  root,
+  tab,
+  toast,
+  topInset,
+  type Tab,
+} from "./store";
 
-const tabs: Array<{ id: Tab; label: string; icon: string }> = [
-  { id: "connection", label: "连接", icon: "⌂" },
-  { id: "nodes", label: "节点", icon: "☷" },
-  { id: "subscriptions", label: "订阅", icon: "↻" },
-  { id: "rules", label: "规则", icon: "✎" },
-  { id: "settings", label: "设置", icon: "⚙" },
+const tabs: Array<{ id: Tab; label: string; icon: string; hint: string }> = [
+  { id: "connection", label: "连接", icon: "⌂", hint: "运行状态与出口" },
+  { id: "nodes", label: "节点", icon: "☷", hint: "策略组与节点选择" },
+  { id: "subscriptions", label: "订阅", icon: "↻", hint: "订阅、手动节点与策略组" },
+  { id: "rules", label: "规则", icon: "✎", hint: "有序分流规则" },
+  { id: "settings", label: "设置", icon: "⚙", hint: "外观、更新与内核" },
 ];
+
+/** The GPUI desktop palette, used by the desktop shell. */
+const desktopColors = {
+  base: "#F4F7F5",
+  low: "#EDF2EF",
+  high: "#FFFFFF",
+  chrome: "#E7EEEA",
+  text: "#152321",
+  secondary: "#5F6E69",
+  tertiary: "#84918D",
+  outline: "#CBD6D2",
+  primary: "#176C62",
+  onPrimary: "#FFFFFF",
+  success: "#24795F",
+  warning: "#A96620",
+};
 
 function Action(props: {
   label: string;
@@ -32,6 +56,35 @@ function Action(props: {
       }}
     >
       <Text style={{ fontSize: 13, color: props.primary ? "#ffffff" : "#5b21b6" }}>
+        {props.label}
+      </Text>
+    </View>
+  );
+}
+
+function DesktopAction(props: {
+  label: string;
+  onPress: () => void;
+  primary?: boolean;
+}) {
+  return (
+    <View
+      onPress={props.onPress}
+      role="button"
+      accessible
+      style={{
+        borderRadius: 8,
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        backgroundColor: props.primary ? desktopColors.primary : desktopColors.low,
+      }}
+    >
+      <Text
+        style={{
+          fontSize: 13,
+          color: props.primary ? desktopColors.onPrimary : desktopColors.text,
+        }}
+      >
         {props.label}
       </Text>
     </View>
@@ -62,6 +115,44 @@ function ApplyBar() {
         }}
       />
       <Action
+        label="应用"
+        primary
+        onPress={() => {
+          void host.call("workspace.apply").catch(() => undefined);
+        }}
+      />
+    </View>
+  );
+}
+
+function DesktopApplyBar() {
+  if (!root().pending) return null;
+  return (
+    <View
+      style={{
+        marginHorizontal: 12,
+        marginTop: 8,
+        borderRadius: 8,
+        borderWidth: 1,
+        borderColor: desktopColors.outline,
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        backgroundColor: desktopColors.low,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 8,
+      }}
+    >
+      <Text style={{ fontSize: 13, flex: 1, color: desktopColors.text }}>
+        有未应用的更改
+      </Text>
+      <DesktopAction
+        label="放弃"
+        onPress={() => {
+          void host.call("workspace.discard").catch(() => undefined);
+        }}
+      />
+      <DesktopAction
         label="应用"
         primary
         onPress={() => {
@@ -126,7 +217,203 @@ function CurrentPage() {
   }
 }
 
-function App() {
+function SectionLabel() {
+  const current = tabs.find((entry) => entry.id === tab()) ?? tabs[0];
+  return (
+    <View style={{ flexDirection: "column", gap: 2 }}>
+      <Text style={{ fontSize: 17, fontWeight: "600", color: desktopColors.text }}>
+        {current.label}
+      </Text>
+      <Text style={{ fontSize: 12, color: desktopColors.secondary }}>{current.hint}</Text>
+    </View>
+  );
+}
+
+function RuntimeIndicator() {
+  const connection = root().connection ?? {};
+  const active = connection.active === true;
+  const label = active ? "已连接" : "未连接";
+  return (
+    <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+      <View
+        style={{
+          width: 8,
+          height: 8,
+          borderRadius: 4,
+          backgroundColor: active ? desktopColors.success : desktopColors.warning,
+        }}
+      />
+      <Text style={{ fontSize: 12, color: desktopColors.secondary }}>
+        {label}
+        {connection.mode ? ` · ${connection.mode}` : ""}
+      </Text>
+    </View>
+  );
+}
+
+function DesktopChrome() {
+  const connection = root().connection ?? {};
+  const active = connection.active === true;
+  return (
+    <View
+      style={{
+        height: 56,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 16,
+        paddingHorizontal: 20,
+        backgroundColor: desktopColors.chrome,
+        borderBottomWidth: 1,
+        borderBottomColor: desktopColors.outline,
+      }}
+    >
+      <SectionLabel />
+      <View style={{ flex: 1 }} />
+      <RuntimeIndicator />
+      <DesktopAction
+        label={active ? "断开" : "连接"}
+        primary={!active}
+        onPress={() => {
+          void host.call("connection.toggle").catch(() => undefined);
+        }}
+      />
+    </View>
+  );
+}
+
+function DesktopSidebar() {
+  return (
+    <View
+      style={{
+        width: 220,
+        backgroundColor: desktopColors.low,
+        borderRightWidth: 1,
+        borderRightColor: desktopColors.outline,
+        paddingHorizontal: 12,
+        paddingVertical: 16,
+        gap: 4,
+      }}
+    >
+      <View style={{ paddingHorizontal: 8, paddingBottom: 16, gap: 2 }}>
+        <Text style={{ fontSize: 17, fontWeight: "700", color: desktopColors.text }}>
+          Manis
+        </Text>
+        <Text style={{ fontSize: 12, color: desktopColors.tertiary }}>
+          策略路由工作台
+        </Text>
+      </View>
+      {tabs.map((entry) => {
+        const selected = tab() === entry.id;
+        return (
+          <View
+            onPress={() => tab.set(entry.id)}
+            role="button"
+            accessible
+            accessibilityLabel={entry.label}
+            accessibilityState={{ selected }}
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 10,
+              paddingHorizontal: 10,
+              paddingVertical: 8,
+              borderRadius: 8,
+              backgroundColor: selected ? desktopColors.primary : "transparent",
+            }}
+          >
+            <Text
+              style={{
+                fontSize: 16,
+                width: 20,
+                color: selected ? desktopColors.onPrimary : desktopColors.secondary,
+              }}
+            >
+              {entry.icon}
+            </Text>
+            <Text
+              style={{
+                fontSize: 13,
+                color: selected ? desktopColors.onPrimary : desktopColors.text,
+                fontWeight: selected ? "600" : "400",
+              }}
+            >
+              {entry.label}
+            </Text>
+          </View>
+        );
+      })}
+      <View style={{ flex: 1 }} />
+      <View style={{ paddingHorizontal: 8, gap: 4 }}>
+        <RuntimeIndicator />
+        <Text style={{ fontSize: 11, color: desktopColors.tertiary }}>
+          {root().connection?.node || "未选择节点"}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
+function DesktopStatusBar() {
+  const connection = root().connection ?? {};
+  const total = root().nodes?.global?.total ?? 0;
+  return (
+    <View
+      style={{
+        height: 30,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 12,
+        paddingHorizontal: 20,
+        backgroundColor: desktopColors.chrome,
+        borderTopWidth: 1,
+        borderTopColor: desktopColors.outline,
+      }}
+    >
+      <Text style={{ fontSize: 12, color: desktopColors.secondary }}>
+        {connection.summary || connection.mode || "等待内核状态"}
+      </Text>
+      <View style={{ flex: 1 }} />
+      <Text style={{ fontSize: 12, color: desktopColors.tertiary }}>
+        节点 {total} · NSH
+      </Text>
+    </View>
+  );
+}
+
+function DesktopApp() {
+  return (
+    <View style={{ flex: 1, flexDirection: "row", backgroundColor: desktopColors.base }}>
+      <DesktopSidebar />
+      <View style={{ flex: 1, flexDirection: "column" }}>
+        <DesktopChrome />
+        {toast() ? (
+          <View style={{ paddingHorizontal: 20, paddingTop: 8 }}>
+            <Text style={{ fontSize: 12, color: desktopColors.secondary }}>{toast()}</Text>
+          </View>
+        ) : null}
+        <DesktopApplyBar />
+        <View
+          style={{
+            flex: 1,
+            margin: 12,
+            borderRadius: 12,
+            borderWidth: 1,
+            borderColor: desktopColors.outline,
+            backgroundColor: desktopColors.high,
+            overflow: "hidden",
+          }}
+        >
+          <View style={{ flex: 1 }}>
+            <CurrentPage />
+          </View>
+        </View>
+        <DesktopStatusBar />
+      </View>
+    </View>
+  );
+}
+
+function MobileApp() {
   return (
     <View class="flex-1 bg-background" style={{ paddingTop: topInset }}>
       {toast() ? (
@@ -135,17 +422,7 @@ function App() {
         </View>
       ) : null}
       <View style={{ flex: 1 }}>
-        {tab() === "nodes" ? (
-          <NodesPage />
-        ) : tab() === "subscriptions" ? (
-          <SubscriptionsPage />
-        ) : tab() === "rules" ? (
-          <RulesPage />
-        ) : tab() === "settings" ? (
-          <SettingsPage />
-        ) : (
-          <ConnectionPage />
-        )}
+        <CurrentPage />
       </View>
       {root().pending ? (
         <View
@@ -189,6 +466,10 @@ function App() {
       </View>
     </View>
   );
+}
+
+function App() {
+  return embedded ? <DesktopApp /> : <MobileApp />;
 }
 
 export function Root() {

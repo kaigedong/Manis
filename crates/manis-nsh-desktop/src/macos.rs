@@ -37,7 +37,7 @@ pub(crate) fn main() {
     let options = AppOptions {
         app_id: "dev.manis.desktop.nsh".into(),
         title: "Manis".into(),
-        size: (430, 900),
+        size: (1180, 760),
         keep_alive_on_close: true,
         host,
         ..AppOptions::default()
