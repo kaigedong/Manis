@@ -42,6 +42,14 @@ fun RulesWorkspace(onMessage: (String) -> Unit) {
         Workspace.update { it.copy(ruleEntries = entries) }
     }
 
+    fun moveRule(from: Int, to: Int) {
+        val entries = config.ruleEntries.toMutableList()
+        if (from !in entries.indices || to !in entries.indices) return
+        val moved = entries.removeAt(from)
+        entries.add(to, moved)
+        save(entries)
+    }
+
     Column(Modifier.fillMaxSize().background(colors.surfaceBase)) {
         val state = editor
         if (state != null) {
@@ -113,6 +121,16 @@ fun RulesWorkspace(onMessage: (String) -> Unit) {
                                     )
                                 },
                                 onEdit = { editor = RuleEditor(index, rule) },
+                                onMoveUp = if (index > 0) {
+                                    { moveRule(index, index - 1) }
+                                } else {
+                                    null
+                                },
+                                onMoveDown = if (index < config.ruleEntries.lastIndex) {
+                                    { moveRule(index, index + 1) }
+                                } else {
+                                    null
+                                },
                             )
                             if (index != config.ruleEntries.lastIndex) ManisDivider()
                         }
@@ -138,6 +156,8 @@ private fun RuleListRow(
     rule: RuleEntry,
     onToggle: (Boolean) -> Unit,
     onEdit: () -> Unit,
+    onMoveUp: (() -> Unit)?,
+    onMoveDown: (() -> Unit)?,
 ) {
     val colors = LocalManisColors.current
     Row(
@@ -158,6 +178,8 @@ private fun RuleListRow(
             ManisMeta("${rule.kind} → ${policyLabel(rule.policy)}")
         }
         ManisToggle(checked = rule.enabled, onCheckedChange = onToggle)
+        onMoveUp?.let { move -> ManisTextAction("↑", move) }
+        onMoveDown?.let { move -> ManisTextAction("↓", move) }
     }
 }
 
