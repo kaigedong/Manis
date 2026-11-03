@@ -140,9 +140,8 @@ fun ManisApp() {
     }
 
     var workspace by rememberSaveable { mutableStateOf(PrimaryWorkspace.Nodes) }
-    var section by rememberSaveable { mutableStateOf(ConfigurationSection.Subscriptions) }
     val systemDark = isSystemInDarkTheme()
-    var dark by rememberSaveable { mutableStateOf(UiPrefs.dark.value ?: systemDark) }
+    val dark = UiPrefs.dark.value ?: systemDark
     val config = Workspace.config.value
     val mode = RuntimeState.snapshot?.mode ?: config.mode
     val routingLabel = when (mode) {
@@ -166,7 +165,6 @@ fun ManisApp() {
         if (config.subscriptions.none { it.enabled } && config.nodes.none { it.enabled }) {
             say("先在配置里添加订阅或节点")
             workspace = PrimaryWorkspace.Configuration
-            section = ConfigurationSection.Subscriptions
             return
         }
         val prepare = VpnService.prepare(context)
@@ -203,10 +201,7 @@ fun ManisApp() {
         routingLabel = routingLabel,
         onRoutingCycle = ::cycleRouting,
         darkTheme = dark,
-        onToggleTheme = {
-            dark = !dark
-            UiPrefs.dark.value = dark
-        },
+        onToggleTheme = { UiPrefs.dark.value = !dark },
         statusText = RuntimeState.summary.ifBlank { if (RuntimeState.active) "已连接" else "未连接" },
         statusOk = RuntimeState.active,
     ) {
@@ -214,15 +209,15 @@ fun ManisApp() {
             when (workspace) {
                 PrimaryWorkspace.Nodes -> NodesWorkspace(
                     onMessage = ::say,
-                    onOpenConfiguration = {
-                        workspace = PrimaryWorkspace.Configuration
-                        section = ConfigurationSection.Subscriptions
-                    },
+                    onOpenConfiguration = { workspace = PrimaryWorkspace.Configuration },
                 )
                 PrimaryWorkspace.RoutingRules -> RulesWorkspace(onMessage = ::say)
                 PrimaryWorkspace.Activity -> ActivityWorkspace(onMessage = ::say)
                 PrimaryWorkspace.Logs -> LogsWorkspace(onMessage = ::say)
-                PrimaryWorkspace.Configuration -> ConfigurationWorkspace(section, { section = it }, ::say)
+                PrimaryWorkspace.Configuration -> ConfigurationWorkspace(
+                    onMessage = ::say,
+                    onOpenLogs = { workspace = PrimaryWorkspace.Logs },
+                )
             }
             SnackbarHost(
                 snackbar,

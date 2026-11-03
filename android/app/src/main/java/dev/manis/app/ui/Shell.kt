@@ -40,12 +40,6 @@ enum class PrimaryWorkspace(val label: String, val iconRes: Int) {
     Configuration("配置", 0),
 }
 
-/** The sections of the configuration workspace. */
-enum class ConfigurationSection(val label: String) {
-    Subscriptions("订阅"),
-    Settings("设置"),
-}
-
 /**
  * The GPUI shell: the chrome bar, the compact navigation rail, the workspace and the status bar.
  * Compact (under 900dp) hides the navigation labels, exactly like the desktop window does.
@@ -229,49 +223,3 @@ fun PlaceholderWorkspace(title: String, hint: String) {
     }
 }
 
-/** The configuration workspace: its two sections share the GPUI frame. */
-@Composable
-fun ConfigurationWorkspace(
-    section: ConfigurationSection,
-    onSection: (ConfigurationSection) -> Unit,
-    onMessage: (String) -> Unit,
-) {
-    val colors = LocalManisColors.current
-    Column(Modifier.fillMaxSize().background(colors.surfaceBase)) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .height(ManisDimens.chromeHeight)
-                .background(colors.surfaceChrome)
-                .border(width = 1.dp, color = colors.outlineSubtle)
-                .padding(horizontal = ManisDimens.spaceLg),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
-        ) {
-            for (entry in ConfigurationSection.entries) {
-                val selected = entry == section
-                Box(
-                    Modifier
-                        .height(ManisDimens.controlCompact)
-                        .clip(RoundedCornerShape(ManisDimens.radiusControl))
-                        .background(if (selected) colors.actionSoft else Color.Transparent)
-                        .clickable { onSection(entry) }
-                        .padding(horizontal = ManisDimens.spaceMd),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        entry.label,
-                        style = ManisType.label,
-                        color = if (selected) colors.actionPrimary else colors.textSecondary,
-                    )
-                }
-            }
-        }
-        Box(Modifier.weight(1f)) {
-            when (section) {
-                ConfigurationSection.Subscriptions -> SubscriptionsScreen(onMessage = onMessage)
-                ConfigurationSection.Settings -> SettingsScreen(onMessage = onMessage)
-            }
-        }
-    }
-}

@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -235,5 +236,16 @@ fun ManisTextField(
             cursorBrush = SolidColor(colors.actionPrimary),
             modifier = Modifier.fillMaxWidth(),
         )
+    }
+}
+
+/** A label/value row in a GPUI pane. */
+@Composable
+fun ManisInfoRow(label: String, value: String) {
+    val colors = LocalManisColors.current
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, style = ManisType.metadata, color = colors.textSecondary)
+        Spacer(Modifier.weight(1f))
+        Text(value, style = ManisType.body, color = colors.textPrimary)
     }
 }
