@@ -94,6 +94,7 @@ fun NodesWorkspace(
             detail != null -> SavedGroupDetail(
                 name = detail ?: "",
                 group = savedGroups.firstOrNull { it.name == detail },
+                config = config,
                 onBack = { detail = null },
             )
             else -> {
@@ -305,8 +306,19 @@ private fun GroupDetail(
 }
 
 @Composable
-private fun SavedGroupDetail(name: String, group: GroupEntry?, onBack: () -> Unit) {
+private fun SavedGroupDetail(
+    name: String,
+    group: GroupEntry?,
+    config: dev.manis.app.data.MobileConfig,
+    onBack: () -> Unit,
+) {
     val colors = LocalManisColors.current
+    val subscriptionMembers = group?.subscriptionIndexes.orEmpty().mapNotNull { index ->
+        config.subscriptions.getOrNull(index)?.let { "订阅 · ${it.name.ifBlank { "订阅 ${index + 1}" }}" }
+    }
+    val nodeMembers = group?.nodeIndexes.orEmpty().mapNotNull { index ->
+        config.nodes.getOrNull(index)?.displayName
+    }
     Column(Modifier.fillMaxSize()) {
         Row(
             Modifier
@@ -327,9 +339,18 @@ private fun SavedGroupDetail(name: String, group: GroupEntry?, onBack: () -> Uni
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
                 .padding(ManisDimens.spaceMd),
+            verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceMd),
         ) {
             ManisCard {
-                ManisMeta("连接后可以查看成员、测速和切换节点。")
+                ManisMeta("连接后可以测速和切换节点。")
+            }
+            if (subscriptionMembers.isNotEmpty() || nodeMembers.isNotEmpty()) {
+                ManisCard {
+                    for ((index, member) in (subscriptionMembers + nodeMembers).withIndex()) {
+                        Text(member, style = ManisType.body, color = colors.textPrimary)
+                        if (index != (subscriptionMembers + nodeMembers).lastIndex) ManisDivider()
+                    }
+                }
             }
         }
     }
