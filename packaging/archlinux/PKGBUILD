@@ -8,8 +8,6 @@ arch=('x86_64')
 url="https://github.com/kaigedong/Manis"
 license=('Apache-2.0' 'GPL-3.0-only')
 depends=(
-  'alsa-lib'
-  'fontconfig'
   'gtk4'
   'hicolor-icon-theme'
   'libcap'
@@ -18,7 +16,6 @@ depends=(
   'libxkbcommon'
   'libxkbcommon-x11'
   'polkit'
-  'vulkan-icd-loader'
   'wayland'
 )
 makedepends=('cargo' 'clang' 'cmake' 'desktop-file-utils' 'git' 'pkgconf' 'rust')
@@ -35,43 +32,22 @@ build() {
   local rust_flags="${RUSTFLAGS:+$RUSTFLAGS }-C linker-features=-lld"
   local target_dir="$startdir/../../target/archlinux"
 
+  # The headless engine owns the Mihomo process and the saved profile.
   RUSTFLAGS="$rust_flags" \
     CARGO_TARGET_DIR="$target_dir" \
-    cargo build -p manis-ui --lib --release --locked
+    cargo build -p manis-service --release --locked
+
+  # Use a separate target dir: a restored Cargo cache can keep a stale
+  # quickjs-jit-macro artifact that makes quickjs-jit fail with
+  # "can't find crate for rquickjs_macro".
+  local nsh_target="$startdir/../../target/archlinux-nsh"
+  RUSTFLAGS="$rust_flags" \
+    CARGO_TARGET_DIR="$nsh_target" \
+    cargo build -p manis-nsh-desktop --release --locked
 
   RUSTFLAGS="$rust_flags" \
     CARGO_TARGET_DIR="$target_dir" \
     cargo build -p manis-linux-helper --release --locked
-
-  local ring_archive
-  ring_archive="$(find "$target_dir/release/build" \
-    -path '*/ring-*/out/libring_core_*.a' ! -name '*_test.a' -print -quit)"
-  if [[ -z "$ring_archive" ]]; then
-    error "ring native archive was not produced"
-    return 1
-  fi
-
-  local ring_directory="${ring_archive%/*}"
-  local ring_library="${ring_archive##*/lib}"
-  ring_library="${ring_library%.a}"
-
-  local wayland_log_archive
-  wayland_log_archive="$(find "$target_dir/release/build" \
-    -path '*/wayland-backend-*/out/liblog_shim_client.a' -print -quit)"
-  if [[ -z "$wayland_log_archive" ]]; then
-    error "Wayland client log shim archive was not produced"
-    return 1
-  fi
-
-  local wayland_log_directory="${wayland_log_archive%/*}"
-
-  # Rust 1.98 does not propagate these bundled native archives to this Linux
-  # binary, so pass the already-built archives to the final target explicitly.
-  RUSTFLAGS="$rust_flags" \
-    CARGO_TARGET_DIR="$target_dir" \
-    cargo rustc -p manis-ui --bin manis-ui --release --locked -- \
-      -L "native=$ring_directory" -l "static:+whole-archive=$ring_library" \
-      -L "native=$wayland_log_directory" -l 'static:+whole-archive=log_shim_client'
 
   if [[ -n "${MANIS_MIHOMO_BINARY:-}" ]]; then
     if [[ ! -x "$MANIS_MIHOMO_BINARY" ]]; then

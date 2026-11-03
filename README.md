@@ -7,7 +7,7 @@
 
 **简体中文** · [English](README.en.md)
 
-Manis 是一个使用 Rust 编写的小型实验项目，桌面端使用 GPUI 原生界面，Android 使用 NSH 页面。它目前只聚焦一件事：把“有序规则
+Manis 是一个使用 Rust 编写的小型实验项目，Android 与桌面界面都由 NSH 渲染。它目前只聚焦一件事：把“有序规则
 → 策略组 → 节点”的路径展示清楚，并为一部分常用的 Mihomo 操作提供界面。
 
 这是一个个人开源尝试，不是对代理工具的重新定义，也无意取代成熟客户端。现有工具已经能
@@ -38,7 +38,7 @@ Manis 只尝试把一条路由链路直接呈现出来：
 
 ## 目前实现
 
-- 原生 GPUI 桌面界面（宽/中/窄三档窗口布局）；Android 使用 NSH 页面；界面文案目前为中文。
+- 原生 NSH 界面，Android 与桌面共用同一套页面；界面文案目前为中文。
 - HTTP/HTTPS 订阅与单节点分享链接导入，并在本地进行私有持久化。
 - 手动、延迟优选、故障转移和负载均衡策略模型；不可用能力由内核能力门禁控制。
 - 有序分流规则、QX 规则列表导入、域名与端口组合匹配、明确的兜底规则。
@@ -66,7 +66,7 @@ Manis 源码仓库不提交预编译代理内核。发行构建会从 Mihomo 官
 | 平台 | 编译目标 | 运行状态 |
 | --- | --- | --- |
 | macOS 13+ | 持续维护 | 仅 Apple Silicon（`arm64`）；主要开发平台；系统代理已验证，TUN 通过管理员授权路径支持测试 |
-| Windows | 持续维护 | 实验性；GPUI 桌面界面使用 named-pipe controller transport |
+| Windows | 持续维护 | 实验性；使用 named-pipe controller transport，NSH 壳会启动 headless 引擎 |
 | Linux | 持续维护 | 实验性；仍需覆盖更多发行版与桌面环境 |
 | Android | 实验性 | `arm64-v8a` 真机与模拟器均可运行；功能对齐见 [android/README.md](android/README.md) |
 
@@ -120,13 +120,23 @@ StatusNotifierItem 协议，不依赖 GTK 3；GNOME 需要启用 AppIndicator �
 ```bash
 git clone https://github.com/kaigedong/Manis.git
 cd Manis
-cargo run -p manis-ui
+cargo run -p manis-nsh-desktop
 ```
 
-发行包的 `manis` 入口是 GPUI 桌面应用；`manis-engine` 是供 NSH 壳与无界面场景使用的引擎。
+发行包的 `manis` 入口是 NSH 桌面宿主，`manis-engine` 是无界面的引擎；宿主会启动同目录下的
+`manis-engine` 来持有 Mihomo 内核。桌面端不再包含 GPUI。
 
-Android 的 NSH 页面通过 [`crates/manis-nsh-host`](crates/manis-nsh-host) 与桌面保存的数据和
-本地 controller 通信；桌面应用本身仍走 [`crates/manis-ui`](crates/manis-ui) 的 GPUI 界面。
+桌面端 NSH 宿主按平台选择原生壳，但共用同一份 TSX 和同一个后端桥
+[`crates/manis-nsh-host`](crates/manis-nsh-host)：
+
+- Linux：GTK 4（`nsh-platform-linux`），含 StatusNotifierItem 托盘
+- macOS：AppKit（`nsh-platform-macos`）
+- Windows：Win32/Direct2D（`nsh-platform-windows`）
+
+三者都读取桌面已保存的订阅、手动节点、策略组和路由模式，并通过本地 controller 读取实时状态；
+节点选择、路由模式切换、运行时规则、内核日志、订阅/手动节点添加/启停/删除、重新载入配置、
+手动规则编辑、TUN 开关、开机启动和更新检查都已接入。Linux 壳已在实机验证；macOS/Windows
+壳由各自 CI runner 编译验证。
 
 NSH TSX 资产可以复现重建：
 
