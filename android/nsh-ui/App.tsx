@@ -1,7 +1,8 @@
-import { host, mount, signal, Text, View } from "nsh";
+import { effect, host, mount, signal, Text, View } from "nsh";
 import { isAvailable as desktopAvailable, Menu, titleBar, Window } from "nsh/desktop";
 import { platform } from "os";
 import { ConnectionPage } from "./connection";
+import { LogsPage } from "./logs";
 import { NodesPage } from "./nodes";
 import { RulesPage } from "./rules";
 import { SettingsPage } from "./settings";
@@ -25,6 +26,7 @@ const tabs: Array<{ id: Tab; label: string; icon: string; hint: string }> = [
   { id: "subscriptions", label: "订阅", icon: "↻", hint: "订阅、手动节点与策略组" },
   { id: "rules", label: "规则", icon: "✎", hint: "有序分流规则" },
   { id: "settings", label: "设置", icon: "⚙", hint: "外观、更新与内核" },
+  { id: "logs", label: "日志", icon: "≡", hint: "内核日志" },
 ];
 
 function Action(props: {
@@ -201,6 +203,8 @@ function CurrentPage() {
       return <RulesPage />;
     case "settings":
       return <SettingsPage />;
+    case "logs":
+      return <LogsPage />;
     default:
       return <ConnectionPage />;
   }
@@ -356,6 +360,14 @@ function installDesktopChrome() {
         ],
       },
     ]);
+    effect(() => {
+      const connection = root().connection ?? {};
+      Window.setTitle(
+        connection.active
+          ? `Manis — 已连接${connection.node ? ` · ${connection.node}` : ""}`
+          : "Manis",
+      );
+    });
   } catch {
     // Native chrome is optional: a host without it keeps its own window.
   }

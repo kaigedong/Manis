@@ -1,6 +1,6 @@
 import { host, signal } from "nsh";
 
-export type Tab = "connection" | "nodes" | "subscriptions" | "rules" | "settings";
+export type Tab = "connection" | "nodes" | "subscriptions" | "rules" | "settings" | "logs";
 
 export type RootData = {
   pending: boolean;
