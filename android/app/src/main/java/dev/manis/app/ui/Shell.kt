@@ -35,6 +35,8 @@ import androidx.compose.ui.unit.dp
 import dev.manis.app.R
 
 /** The five GPUI primary workspaces, in navigation order. */
+enum class StatusTone { Ok, Route, Error }
+
 enum class PrimaryWorkspace(val label: String, val iconRes: Int) {
     Nodes("节点", R.drawable.ic_globe),
     RoutingRules("分流规则", R.drawable.ic_map),
@@ -58,7 +60,7 @@ fun ManisShell(
     darkTheme: Boolean,
     onToggleTheme: () -> Unit,
     statusText: String,
-    statusOk: Boolean,
+    statusTone: StatusTone,
     downloadText: String,
     uploadText: String,
     content: @Composable () -> Unit,
@@ -82,7 +84,7 @@ fun ManisShell(
             Navigation(workspace, onWorkspace)
             Box(Modifier.weight(1f).fillMaxHeight()) { content() }
         }
-        StatusBar(statusText, statusOk, downloadText, uploadText)
+        StatusBar(statusText, statusTone, downloadText, uploadText)
     }
 }
 
@@ -189,7 +191,7 @@ private fun NavigationItem(
 }
 
 @Composable
-private fun StatusBar(text: String, ok: Boolean, downloadText: String, uploadText: String) {
+private fun StatusBar(text: String, tone: StatusTone, downloadText: String, uploadText: String) {
     val colors = LocalManisColors.current
     Row(
         Modifier
@@ -205,12 +207,18 @@ private fun StatusBar(text: String, ok: Boolean, downloadText: String, uploadTex
             Modifier
                 .size(8.dp)
                 .clip(CircleShape)
-                .background(if (ok) colors.statusSuccess else colors.textTertiary),
+                .background(
+                    when (tone) {
+                        StatusTone.Ok -> colors.statusSuccess
+                        StatusTone.Route -> colors.routeTrace
+                        StatusTone.Error -> colors.statusError
+                    },
+                ),
         )
         Text(
             text,
             style = ManisType.metadata,
-            color = if (ok) colors.textSecondary else colors.textTertiary,
+            color = if (tone == StatusTone.Ok) colors.textSecondary else colors.textTertiary,
             maxLines = 1,
         )
         Spacer(Modifier.weight(1f))

@@ -227,7 +227,11 @@ fun ManisApp() {
         darkTheme = dark,
         onToggleTheme = { UiPrefs.setDark(!dark) },
         statusText = RuntimeState.summary.ifBlank { if (RuntimeState.active) "已连接" else "未连接" },
-        statusOk = RuntimeState.active,
+        statusTone = when {
+            !RuntimeState.active -> StatusTone.Route
+            RuntimeState.unreachable -> StatusTone.Error
+            else -> StatusTone.Ok
+        },
         downloadText = "↓ ${formatTraffic(RuntimeState.downloadTotal)}",
         uploadText = "↑ ${formatTraffic(RuntimeState.uploadTotal)}",
     ) {
