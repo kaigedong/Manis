@@ -38,3 +38,5 @@ relay-generated.*
 
 # NSH spike: the 37 MB embed runtime is a local download, not a repo artifact
 /android/app/libs/nsh.aar
+/packaging/archlinux/pkg/
+/packaging/archlinux/src/
