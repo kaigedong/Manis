@@ -219,7 +219,7 @@ fun ManisApp() {
                         section = ConfigurationSection.Subscriptions
                     },
                 )
-                PrimaryWorkspace.RoutingRules -> RulesScreen(onMessage = ::say)
+                PrimaryWorkspace.RoutingRules -> RulesWorkspace(onMessage = ::say)
                 PrimaryWorkspace.Activity -> PlaceholderWorkspace("活动", "网络活动正在迁移中")
                 PrimaryWorkspace.Logs -> PlaceholderWorkspace("日志", "内核日志正在迁移中")
                 PrimaryWorkspace.Configuration -> ConfigurationWorkspace(section, { section = it }, ::say)

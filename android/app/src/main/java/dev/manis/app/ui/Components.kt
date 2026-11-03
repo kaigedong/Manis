@@ -2,7 +2,9 @@ package dev.manis.app.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -11,6 +13,8 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -18,6 +22,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.unit.dp
 
 /** A GPUI pane card: overlay surface, one-pixel outline, 12dp radius. */
@@ -139,4 +144,96 @@ fun ManisDivider() {
             .height(1.dp)
             .background(LocalManisColors.current.outlineSubtle),
     ) {}
+}
+
+/** A GPUI toggle: a 36x20 track with a 16dp thumb. */
+@Composable
+fun ManisToggle(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    val colors = LocalManisColors.current
+    Row(
+        Modifier
+            .height(20.dp)
+            .width(36.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(if (checked) colors.actionPrimary else colors.outlineSubtle)
+            .clickable { onCheckedChange(!checked) }
+            .padding(2.dp),
+        horizontalArrangement = if (checked) Arrangement.End else Arrangement.Start,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Row(
+            Modifier
+                .size(16.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(colors.surfaceOverlay),
+        ) {}
+    }
+}
+
+/** A GPUI chip: 26dp tall, 8dp radius, action-soft when selected. */
+@Composable
+fun ManisChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    val colors = LocalManisColors.current
+    Row(
+        Modifier
+            .height(26.dp)
+            .clip(RoundedCornerShape(ManisDimens.radiusControl))
+            .background(if (selected) colors.actionSoft else colors.surfaceLow)
+            .clickable(onClick = onClick)
+            .padding(horizontal = ManisDimens.spaceSm),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            label,
+            style = ManisType.metadata,
+            color = if (selected) colors.actionPrimary else colors.textSecondary,
+        )
+    }
+}
+
+/** The compact back control used by the drill-in panes. */
+@Composable
+fun ManisBackButton(onBack: () -> Unit) {
+    val colors = LocalManisColors.current
+    Row(
+        Modifier
+            .size(ManisDimens.controlStandard)
+            .clip(RoundedCornerShape(ManisDimens.radiusControl))
+            .background(colors.buttonBg)
+            .clickable(onClick = onBack),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("‹", style = ManisType.sectionTitle, color = colors.textPrimary)
+    }
+}
+
+/** A single-line GPUI text field. */
+@Composable
+fun ManisTextField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    placeholder: String = "",
+) {
+    val colors = LocalManisColors.current
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(ManisDimens.radiusControl))
+            .background(colors.surfaceOverlay)
+            .border(1.dp, colors.outlineStrong, RoundedCornerShape(ManisDimens.radiusControl))
+            .padding(horizontal = ManisDimens.spaceMd, vertical = ManisDimens.spaceSm),
+    ) {
+        if (value.isEmpty()) {
+            Text(placeholder, style = ManisType.body, color = colors.textTertiary)
+        }
+        BasicTextField(
+            value = value,
+            onValueChange = onValueChange,
+            singleLine = true,
+            textStyle = ManisType.body.copy(color = colors.textPrimary),
+            cursorBrush = SolidColor(colors.actionPrimary),
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
 }
