@@ -175,3 +175,16 @@ export function Chip(props: { label: string; active: boolean; onPress: () => voi
     </View>
   );
 }
+
+/** The route chain, shared by the mobile connection page and the desktop inspector. */
+export function RouteChainCard(props: { node: string; mode: string }) {
+  return (
+    <Card title="路由链">
+      <Text style={{ fontSize: embedded ? 12 : 13, color: embedded ? desktopColors.secondary : "#6b7280" }}>
+        规则 → 策略组 → 节点
+      </Text>
+      <Info label="当前节点" value={props.node || "未选择"} />
+      <Info label="模式" value={props.mode || "—"} />
+    </Card>
+  );
+}

@@ -16,6 +16,7 @@ test("renders connection summary", async () => {
   expect(app.texts()).toContain("已连接");
   expect(app.texts()).toContain("香港 01");
   expect(app.texts()).toContain("规则");
+  expect(app.texts()).toContain("路由链");
 });
 
 test("desktop connection renders the status and overview", async () => {

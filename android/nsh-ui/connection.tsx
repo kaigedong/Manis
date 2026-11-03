@@ -1,7 +1,7 @@
 import { computed, host, Scroll, signal, Text, View } from "nsh";
 import { embedded, root, tab } from "./store";
 import { desktopColors } from "./theme";
-import { Action, Card, Chip, Info } from "./ui";
+import { Action, Card, Chip, Info, RouteChainCard } from "./ui";
 
 type Data = {
   active: boolean;
@@ -117,6 +117,8 @@ function MobileConnectionPage() {
           {message() ? (
             <Text style={{ fontSize: 12, color: "#6b7280" }}>{message()}</Text>
           ) : null}
+
+          <RouteChainCard node={page().node} mode={page().mode} />
 
           <Text style={{ fontSize: 16, fontWeight: "600" }}>路由模式</Text>
           <View style={{ flexDirection: "row", gap: 8 }}>
@@ -359,10 +361,9 @@ function DesktopConnectionPage() {
         <Scroll style={{ flex: 1 }} contentStyle={{ padding: 12, gap: 10 }}>
           <Card title="概览">
             <Info label="状态" value={page().active ? "已连接" : "未连接"} />
-            <Info label="出口" value={page().node || "未选择"} />
-            <Info label="路由模式" value={page().mode} />
             <Info label="摘要" value={page().summary || "—"} />
           </Card>
+          <RouteChainCard node={page().node} mode={page().mode} />
           <Card title="提示">
             <Text style={{ fontSize: 12, color: desktopColors.secondary }}>
               规则、策略组与节点来自同一份已保存工作区；切换节点后立即生效。
