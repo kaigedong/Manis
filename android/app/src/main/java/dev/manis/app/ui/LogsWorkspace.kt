@@ -73,7 +73,7 @@ fun LogsWorkspace(onMessage: (String) -> Unit) {
             ManisTextField(value = query, onValueChange = { query = it }, placeholder = "搜索日志")
             ManisCard {
                 if (filtered.isEmpty()) {
-                    ManisMeta(if (lines.isEmpty()) "还没有日志：连接一次 VPN 后生成。" else "没有匹配的日志行。")
+                    ManisMeta(if (lines.isEmpty()) "暂无日志：连接一次 VPN 后生成。" else "没有符合当前筛选的结果")
                 } else {
                     for (line in filtered.takeLast(400)) {
                         Text(

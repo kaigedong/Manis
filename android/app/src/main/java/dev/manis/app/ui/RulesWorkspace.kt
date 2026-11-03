@@ -85,7 +85,7 @@ fun RulesWorkspace(onMessage: (String) -> Unit) {
                 horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text("规则", style = ManisType.pageTitle, color = colors.textPrimary)
+                    Text("分流规则", style = ManisType.pageTitle, color = colors.textPrimary)
                     ManisMeta("${config.ruleEntries.size} 条规则 · ${config.ruleEntries.count { it.enabled }} 条已启用")
                 }
                 if (pending) {

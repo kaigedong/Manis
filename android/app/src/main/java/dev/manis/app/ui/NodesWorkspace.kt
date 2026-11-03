@@ -102,7 +102,7 @@ fun NodesWorkspace(
                     subtitle = when {
                         snapshot != null -> "${groups.size} 个策略组 · ${snapshot.nodes.size} 个节点"
                         savedGroups.isNotEmpty() -> "${savedGroups.size} 个策略组 · 未连接"
-                        else -> "还没有节点"
+                        else -> "暂无节点"
                     },
                     action = if (refreshing) "刷新中…" else "刷新",
                     onAction = ::refresh,

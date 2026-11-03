@@ -32,6 +32,7 @@ fun ActivityWorkspace(onMessage: (String) -> Unit) {
     val colors = LocalManisColors.current
     var snapshot by remember { mutableStateOf<ConnectionsSnapshot?>(null) }
     var refreshing by remember { mutableStateOf(false) }
+    var query by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(Unit) {
@@ -46,7 +47,18 @@ fun ActivityWorkspace(onMessage: (String) -> Unit) {
         }
     }
 
-    val connections = snapshot?.connections ?: emptyList()
+    val allConnections = snapshot?.connections ?: emptyList()
+    val connections = remember(allConnections, query) {
+        if (query.isBlank()) {
+            allConnections
+        } else {
+            allConnections.filter { connection ->
+                connection.host.contains(query, ignoreCase = true) ||
+                    connection.rule.contains(query, ignoreCase = true) ||
+                    connection.chains.any { it.contains(query, ignoreCase = true) }
+            }
+        }
+    }
 
     Column(Modifier.fillMaxSize().background(colors.surfaceBase)) {
         Row(
@@ -57,12 +69,12 @@ fun ActivityWorkspace(onMessage: (String) -> Unit) {
             horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
         ) {
             Column(Modifier.weight(1f)) {
-                Text("活动", style = ManisType.pageTitle, color = colors.textPrimary)
+                Text("网络活动", style = ManisType.pageTitle, color = colors.textPrimary)
                 ManisMeta(
                     when {
                         !RuntimeState.active -> "连接后显示实时连接"
                         snapshot == null -> "正在读取连接…"
-                        else -> "${connections.size} 个连接 · ↑ ${formatBytes(snapshot!!.uploadTotal)} ↓ ${formatBytes(snapshot!!.downloadTotal)}"
+                        else -> "${connections.size} 个连接 · ↓ ${formatBytes(connections.sumOf { it.download })} ↑ ${formatBytes(connections.sumOf { it.upload })}"
                     },
                 )
             }
@@ -91,9 +103,10 @@ fun ActivityWorkspace(onMessage: (String) -> Unit) {
                 .padding(ManisDimens.spaceMd),
             verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
         ) {
+            ManisTextField(value = query, onValueChange = { query = it }, placeholder = "搜索连接")
             if (!RuntimeState.active) {
                 ManisCard {
-                    Text("没有实时数据", style = ManisType.label, color = colors.textPrimary)
+                    Text("暂无活动连接", style = ManisType.label, color = colors.textPrimary)
                     ManisMeta("连接 VPN 后，这里会显示每条连接的域名、规则与流量。")
                 }
             } else if (connections.isEmpty()) {

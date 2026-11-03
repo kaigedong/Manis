@@ -37,8 +37,8 @@ import dev.manis.app.R
 /** The five GPUI primary workspaces, in navigation order. */
 enum class PrimaryWorkspace(val label: String, val iconRes: Int) {
     Nodes("节点", R.drawable.ic_globe),
-    RoutingRules("规则", R.drawable.ic_map),
-    Activity("活动", R.drawable.ic_pie_chart),
+    RoutingRules("分流规则", R.drawable.ic_map),
+    Activity("网络活动", R.drawable.ic_pie_chart),
     Logs("日志", R.drawable.ic_terminal),
     Configuration("配置", 0),
 }
