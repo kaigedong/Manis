@@ -126,29 +126,29 @@ function formatSize(bytes: number): string {
 
 function DnsPanel() {
   return (
-    <Card title="节点域名解析">
+    <Card title={t("settings.dns.title")}>
       <Text style={{ fontSize: 12, color: "#6b7280" }}>
-        代理服务器域名如何变成地址。所有节点超时但桌面正常时，先检查这里。
+        {t("settings.dns.hint")}
       </Text>
       <View style={{ flexDirection: "row", gap: 8 }}>
         <Action
-          label="加密 DNS（DoH）"
+          label={t("settings.dns.doh")}
           primary={dnsMode() === "doh"}
           onPress={() => dnsMode.set("doh")}
         />
         <Action
-          label="本机 DNS"
+          label={t("settings.dns.system")}
           primary={dnsMode() === "system"}
           onPress={() => dnsMode.set("system")}
         />
       </View>
       {page().proxyDns.discovered.length > 0 ? (
         <Text style={{ fontSize: 12, color: "#6b7280" }}>
-          订阅自带 DoH：{page().proxyDns.discovered.join("，")}
+          {t("settings.dns.discovered", { servers: page().proxyDns.discovered.join("，") })}
         </Text>
       ) : null}
       <Text style={{ fontSize: 12, color: "#6b7280" }}>
-        自定义 DoH（留空则使用当前模式）
+        {t("settings.dns.custom")}
       </Text>
       <Input
         value={dnsServers()}
@@ -158,8 +158,8 @@ function DnsPanel() {
         style={{ borderWidth: 1, borderColor: "#d1d5db", borderRadius: 10, padding: 10, minHeight: 80 }}
       />
       <View style={{ flexDirection: "row", gap: 8 }}>
-        <Action label="保存并重新载入" primary onPress={() => void saveDns()} />
-        <Action label="取消" onPress={() => showDns.set(false)} />
+        <Action label={t("settings.dns.save")} primary onPress={() => void saveDns()} />
+        <Action label={t("settings.dns.cancel")} onPress={() => showDns.set(false)} />
       </View>
     </Card>
   );
@@ -167,7 +167,7 @@ function DnsPanel() {
 
 function LogsPanel() {
   return (
-    <Card title="内核日志">
+    <Card title={t("settings.logs.title")}>
       <Scroll style={{ height: 340 }}>
         <View style={{ gap: 2 }}>
           {logs().map((line, index) => (
@@ -182,11 +182,11 @@ function LogsPanel() {
       </Scroll>
       <View style={{ flexDirection: "row", gap: 8 }}>
         <Action
-          label="复制"
+          label={t("settings.logs.copy")}
           onPress={() => void copyLogs()}
         />
-        <Action label="刷新" onPress={() => void invoke("settings.logs")} />
-        <Action label="关闭" onPress={() => showLogs.set(false)} />
+        <Action label={t("settings.logs.refresh")} onPress={() => void invoke("settings.logs")} />
+        <Action label={t("settings.logs.close")} onPress={() => showLogs.set(false)} />
       </View>
     </Card>
   );
@@ -195,37 +195,37 @@ function LogsPanel() {
 function UpdateCard() {
   const update = () => page().update;
   return (
-    <Card title="应用更新">
-      <Info label="当前版本" value={page().installedVersion} />
+    <Card title={t("settings.updates")}>
+      <Info label={t("settings.currentVersion")} value={page().installedVersion} />
       {update().state === "idle" ? (
-        <Action label="检查更新" onPress={() => void invoke("settings.update.check")} />
+        <Action label={t("settings.checkUpdates")} onPress={() => void invoke("settings.update.check")} />
       ) : null}
       {update().state === "checking" ? (
-        <Text style={{ fontSize: 13, color: "#6b7280" }}>正在检查 GitHub Release…</Text>
+        <Text style={{ fontSize: 13, color: "#6b7280" }}>{t("settings.checking")}</Text>
       ) : null}
       {update().state === "upToDate" ? (
         <View style={{ gap: 8 }}>
-          <Text style={{ fontSize: 13 }}>已是最新版本</Text>
-          <Action label="重新检查" onPress={() => void invoke("settings.update.check")} />
+          <Text style={{ fontSize: 13 }}>{t("settings.upToDate")}</Text>
+          <Action label={t("settings.checkAgain")} onPress={() => void invoke("settings.update.check")} />
         </View>
       ) : null}
       {update().state === "available" ? (
         <View style={{ gap: 8 }}>
-          <Text style={{ fontSize: 15 }}>发现新版本 {update().update?.version}</Text>
+          <Text style={{ fontSize: 15 }}>{t("settings.available", { version: update().update?.version ?? "" })}</Text>
           {update().update && update().update!.size > 0 ? (
             <Text style={{ fontSize: 12, color: "#6b7280" }}>
-              安装包 {formatSize(update().update!.size)}
+              {t("settings.packageSize", { size: formatSize(update().update!.size) })}
             </Text>
           ) : null}
           <View style={{ flexDirection: "row", gap: 8 }}>
-            <Action label="下载" primary onPress={() => void invoke("settings.update.download")} />
-            <Action label="查看 Release" onPress={() => void invoke("settings.update.release")} />
+            <Action label={t("settings.download")} primary onPress={() => void invoke("settings.update.download")} />
+            <Action label={t("settings.viewRelease")} onPress={() => void invoke("settings.update.release")} />
           </View>
         </View>
       ) : null}
       {update().state === "downloading" ? (
         <View style={{ gap: 6 }}>
-          <Text style={{ fontSize: 13 }}>正在下载 {update().update?.version}…</Text>
+          <Text style={{ fontSize: 13 }}>{t("settings.downloading", { version: update().update?.version ?? "" })}</Text>
           <View style={{ height: 8, borderRadius: 4, backgroundColor: "#ede9fe" }}>
             <View
               style={{
@@ -241,8 +241,8 @@ function UpdateCard() {
       ) : null}
       {update().state === "ready" ? (
         <View style={{ gap: 8 }}>
-          <Text style={{ fontSize: 15 }}>新版本 {update().update?.version} 已下载</Text>
-          <Action label="安装" primary onPress={() => void invoke("settings.update.install")} />
+          <Text style={{ fontSize: 15 }}>{t("settings.ready", { version: update().update?.version ?? "" })}</Text>
+          <Action label={t("settings.install")} primary onPress={() => void invoke("settings.update.install")} />
         </View>
       ) : null}
       {update().state === "failed" ? (
@@ -250,19 +250,19 @@ function UpdateCard() {
           <Text style={{ fontSize: 12, color: "#b91c1c" }}>{update().message}</Text>
           <View style={{ flexDirection: "row", gap: 8 }}>
             <Action
-              label={update().update ? "重试下载" : "重新检查"}
+              label={update().update ? t("settings.retryDownload") : t("settings.checkAgain")}
               onPress={() =>
                 void invoke(
                   update().update ? "settings.update.download" : "settings.update.check",
                 )
               }
             />
-            <Action label="打开 Release" onPress={() => void invoke("settings.update.release")} />
+            <Action label={t("settings.openRelease")} onPress={() => void invoke("settings.update.release")} />
           </View>
         </View>
       ) : null}
       <Text style={{ fontSize: 12, color: "#6b7280" }}>
-        从 GitHub Release 下载官方 APK，校验同名 .sha256 后才会启动系统安装器。
+        {t("settings.updateNote")}
       </Text>
     </Card>
   );
@@ -273,7 +273,7 @@ function MobileSettingsPage() {
     <View class={embedded ? "flex-1 bg-background" : "flex-1 bg-background pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"}>
       <Scroll style={{ flex: 1 }}>
         <View style={{ paddingHorizontal: 20, paddingTop: 18, paddingBottom: 24, gap: 12 }}>
-          <Text style={{ fontSize: 28, fontWeight: "600" }}>设置</Text>
+          <Text style={{ fontSize: 28, fontWeight: "600" }}>{t("settings.title")}</Text>
           {message() ? (
             <Text style={{ fontSize: 12, color: "#6b7280" }}>{message()}</Text>
           ) : null}
@@ -320,19 +320,19 @@ function MobileSettingsPage() {
               </View>
             </View>
           </Card>
-          <Card title="连接">
-            <Info label="状态" value={page().status} />
-            <Info label="路由模式" value={page().mode} />
-            <Info label="节点域名解析" value={page().proxyDns.label} />
-            <Action label="节点域名解析" onPress={openDns} />
+          <Card title={t("settings.connection")}>
+            <Info label={t("settings.status")} value={page().status} />
+            <Info label={t("settings.mode")} value={page().mode} />
+            <Info label={t("settings.dnsLabel")} value={page().proxyDns.label} />
+            <Action label={t("settings.dns.title")} onPress={openDns} />
           </Card>
 
           {page().autoStart !== undefined ? (
-            <Card title="启动">
+            <Card title={t("settings.startup")}>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
-                <Text style={{ fontSize: 14, flex: 1 }}>开机自动启动</Text>
+                <Text style={{ fontSize: 14, flex: 1 }}>{t("settings.launchAtLogin")}</Text>
                 <Action
-                  label={page().autoStart ? "关闭" : "开启"}
+                  label={page().autoStart ? t("settings.turnOff") : t("settings.turnOn")}
                   onPress={() =>
                     void invoke("settings.autostart.set", { enabled: !page().autoStart })
                   }
@@ -341,42 +341,41 @@ function MobileSettingsPage() {
             </Card>
           ) : null}
 
-          <Card title="配置摘要">
-            <Info label="内核版本" value={page().kernelVersion} />
-            <Info label="配置" value={page().summary} />
+          <Card title={t("settings.summaryCard")}>
+            <Info label={t("settings.kernelVersion")} value={page().kernelVersion} />
+            <Info label={t("settings.config")} value={page().summary} />
             <Info
-              label="工作区"
+              label={t("settings.workspace")}
               value={`${page().subscriptions} 订阅 · ${page().nodes} 节点 · ${page().groups} 策略组`}
             />
-            <Info label="设备 ABI" value={page().abi} />
-            <Info label="数据目录" value={page().dataDir} />
-            <Action label="重新载入配置" onPress={() => void invoke("settings.reload")} />
+            <Info label={t("settings.abi")} value={page().abi} />
+            <Info label={t("settings.dataDir")} value={page().dataDir} />
+            <Action label={t("settings.reload")} onPress={() => void invoke("settings.reload")} />
           </Card>
 
-          <Card title="备份与恢复">
+          <Card title={t("settings.backup")}>
             <Text style={{ fontSize: 12, color: "#6b7280" }}>
-              导出的是 Manis 备份格式（含订阅链接和节点密钥），不是交给其他客户端的 YAML。
+              {t("settings.backupHint")}
             </Text>
             <View style={{ flexDirection: "row", gap: 8 }}>
-              <Action label="复制到剪贴板" onPress={() => void copyBackup()} />
-              <Action label="从剪贴板导入" onPress={() => void importBackup()} />
+              <Action label={t("settings.copyBackup")} onPress={() => void copyBackup()} />
+              <Action label={t("settings.importBackup")} onPress={() => void importBackup()} />
             </View>
           </Card>
 
-          <Card title="诊断">
-            <Action label="查看内核日志" onPress={() => void invoke("settings.logs")} />
+          <Card title={t("settings.diagnostics")}>
+            <Action label={t("settings.viewLogs")} onPress={() => void invoke("settings.logs")} />
           </Card>
 
           <UpdateCard />
 
-          <Card title="关于">
-            <Text style={{ fontSize: 14 }}>Manis Android 实验版</Text>
+          <Card title={t("settings.about")}>
+            <Text style={{ fontSize: 14 }}>{t("settings.aboutAndroid")}</Text>
             <Text style={{ fontSize: 12, color: "#6b7280" }}>
-              Mihomo 内核 v1.19.33 + Android 兼容补丁，随 APK 以 GPL-3.0 分发；补丁与构建脚本见仓库
-              android/ 目录。
+              {t("settings.aboutAndroidHint")}
             </Text>
             <Text style={{ fontSize: 12, color: "#6b7280" }}>
-              Manis 应用代码为 Apache-2.0。Mihomo 是 GPL-3.0，APK 内打包了自行编译的内核，对应源码与补丁随仓库发布。
+              {t("settings.aboutLicenses")}
             </Text>
           </Card>
         </View>
@@ -401,9 +400,9 @@ function DesktopSettingsPage() {
           }}
         >
           <Text style={{ fontSize: 12, color: desktopColors.secondary, flex: 1 }}>
-            {message() || "连接、解析、备份、更新与内核信息。"}
+            {message() || t("settings.headerHint")}
           </Text>
-          <Action label="重新载入配置" onPress={() => void invoke("settings.reload")} />
+          <Action label={t("settings.reload")} onPress={() => void invoke("settings.reload")} />
         </View>
         <Scroll style={{ flex: 1 }} contentStyle={{ padding: 12, gap: 10 }}>
           {showDns() ? <DnsPanel /> : null}
@@ -448,50 +447,50 @@ function DesktopSettingsPage() {
               </View>
             </View>
           </Card>
-          <Card title="连接">
-            <Info label="状态" value={page().status} />
-            <Info label="路由模式" value={page().mode} />
-            <Info label="节点域名解析" value={page().proxyDns.label} />
-            <Action label="节点域名解析" onPress={openDns} />
+          <Card title={t("settings.connection")}>
+            <Info label={t("settings.status")} value={page().status} />
+            <Info label={t("settings.mode")} value={page().mode} />
+            <Info label={t("settings.dnsLabel")} value={page().proxyDns.label} />
+            <Action label={t("settings.dns.title")} onPress={openDns} />
           </Card>
           {page().autoStart !== undefined ? (
-            <Card title="启动">
+            <Card title={t("settings.startup")}>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
-                <Text style={{ fontSize: 12, flex: 1, color: desktopColors.text }}>开机自动启动</Text>
+                <Text style={{ fontSize: 12, flex: 1, color: desktopColors.text }}>{t("settings.launchAtLogin")}</Text>
                 <Action
-                  label={page().autoStart ? "关闭" : "开启"}
+                  label={page().autoStart ? t("settings.turnOff") : t("settings.turnOn")}
                   onPress={() => void invoke("settings.autostart.set", { enabled: !page().autoStart })}
                 />
               </View>
             </Card>
           ) : null}
-          <Card title="配置摘要">
-            <Info label="内核版本" value={page().kernelVersion} />
-            <Info label="配置" value={page().summary} />
+          <Card title={t("settings.summaryCard")}>
+            <Info label={t("settings.kernelVersion")} value={page().kernelVersion} />
+            <Info label={t("settings.config")} value={page().summary} />
             <Info
-              label="工作区"
+              label={t("settings.workspace")}
               value={`${page().subscriptions} 订阅 · ${page().nodes} 节点 · ${page().groups} 策略组`}
             />
-            <Info label="设备 ABI" value={page().abi} />
-            <Info label="数据目录" value={page().dataDir} />
+            <Info label={t("settings.abi")} value={page().abi} />
+            <Info label={t("settings.dataDir")} value={page().dataDir} />
           </Card>
-          <Card title="备份与恢复">
+          <Card title={t("settings.backup")}>
             <Text style={{ fontSize: 12, color: desktopColors.secondary }}>
-              导出的是 Manis 备份格式（含订阅链接和节点密钥），不是交给其他客户端的 YAML。
+              {t("settings.backupHint")}
             </Text>
             <View style={{ flexDirection: "row", gap: 8 }}>
-              <Action label="复制到剪贴板" onPress={() => void copyBackup()} />
-              <Action label="从剪贴板导入" onPress={() => void importBackup()} />
+              <Action label={t("settings.copyBackup")} onPress={() => void copyBackup()} />
+              <Action label={t("settings.importBackup")} onPress={() => void importBackup()} />
             </View>
           </Card>
-          <Card title="诊断">
-            <Action label="查看内核日志" onPress={() => void invoke("settings.logs")} />
+          <Card title={t("settings.diagnostics")}>
+            <Action label={t("settings.viewLogs")} onPress={() => void invoke("settings.logs")} />
           </Card>
           <UpdateCard />
-          <Card title="关于">
-            <Text style={{ fontSize: 12, color: desktopColors.text }}>Manis 桌面版</Text>
+          <Card title={t("settings.about")}>
+            <Text style={{ fontSize: 12, color: desktopColors.text }}>{t("settings.aboutDesktop")}</Text>
             <Text style={{ fontSize: 11, color: desktopColors.secondary }}>
-              Mihomo 内核随发行包分发；补丁与构建脚本见仓库 android/ 目录。
+              {t("settings.aboutHint")}
             </Text>
           </Card>
         </Scroll>
@@ -506,15 +505,15 @@ function DesktopSettingsPage() {
         }}
       >
         <Scroll style={{ flex: 1 }} contentStyle={{ padding: 12, gap: 10 }}>
-          <Card title="状态">
-            <Info label="连接" value={page().status} />
-            <Info label="已安装版本" value={page().installedVersion} />
-            <Info label="更新" value={page().update.state} />
+          <Card title={t("settings.status")}>
+            <Info label={t("settings.connection")} value={page().status} />
+            <Info label={t("settings.installedVersion")} value={page().installedVersion} />
+            <Info label={t("settings.updateState")} value={page().update.state} />
           </Card>
-          <Card title="工作区">
-            <Info label="订阅" value={`${page().subscriptions}`} />
-            <Info label="节点" value={`${page().nodes}`} />
-            <Info label="策略组" value={`${page().groups}`} />
+          <Card title={t("settings.workspace")}>
+            <Info label={t("subs.subscriptions")} value={`${page().subscriptions}`} />
+            <Info label={t("nodes.title")} value={`${page().nodes}`} />
+            <Info label={t("subs.groups")} value={`${page().groups}`} />
           </Card>
         </Scroll>
       </View>

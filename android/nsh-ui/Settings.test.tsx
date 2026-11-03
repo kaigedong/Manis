@@ -53,3 +53,34 @@ test("desktop settings renders the sections and status panel", async () => {
   expect(app.texts()).toContain("状态");
   expect(app.texts()).toContain("工作区");
 });
+
+test("english settings follows the language", async () => {
+  const app = await open("./App.tsx", {
+    storage: { language: "en" },
+    host: {
+      params: {
+        tab: "settings",
+        data: {
+          settings: {
+            status: "Connected",
+            mode: "rule",
+            proxyDns: { mode: "doh", custom: [], discovered: [], label: "Encrypted DNS (DoH)" },
+            kernelVersion: "v1.19.33",
+            summary: "12 rules",
+            subscriptions: 1,
+            nodes: 2,
+            groups: 1,
+            abi: "arm64-v8a",
+            dataDir: "files/mihomo",
+            installedVersion: "0.1.123",
+            update: { state: "idle" },
+          },
+        },
+      },
+    },
+  });
+  await app.setViewport(390, 844);
+  expect(app.texts()).toContain("Configuration");
+  expect(app.texts()).toContain("Language");
+  expect(app.texts()).toContain("About");
+});
