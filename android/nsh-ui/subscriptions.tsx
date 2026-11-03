@@ -2,7 +2,7 @@ import { computed, host, Scroll, signal, Text, View } from "nsh";
 import { Input } from "nsh/base";
 import { embedded, layoutWidth, root } from "./store";
 import { desktopColors } from "./theme";
-import { SubscriptionRow } from "./ui";
+import { Action, SubscriptionRow } from "./ui";
 
 type SubscriptionItem = {
   index: number;
@@ -137,34 +137,6 @@ async function addGroup() {
   }
 }
 
-function Action(props: {
-  label: string;
-  onPress: () => void;
-  primary?: boolean;
-  disabled?: boolean;
-}) {
-  const disabled = () => props.disabled || busy();
-  return (
-    <View
-      onPress={disabled() ? undefined : props.onPress}
-      role="button"
-      accessible
-      disabled={disabled()}
-      style={{
-        opacity: disabled() ? 0.45 : 1,
-        borderRadius: 10,
-        paddingHorizontal: 14,
-        paddingVertical: 8,
-        backgroundColor: props.primary ? "#7c3aed" : "#ede9fe",
-      }}
-    >
-      <Text style={{ fontSize: 14, color: props.primary ? "#ffffff" : "#5b21b6" }}>
-        {props.label}
-      </Text>
-    </View>
-  );
-}
-
 function Section(props: {
   title: string;
   hint?: string;
@@ -235,54 +207,33 @@ function ChoiceRow(props: {
 
 function SubscriptionForm() {
   return (
-    <Section title="添加订阅" hint="粘贴 Clash 格式订阅地址；添加后会立即下载。">
-      <Input
-        value={subName()}
-        onChange={(value) => subName.set(value)}
-        placeholder="名称（可选）"
-        style={{ borderWidth: 1, borderColor: "#d1d5db", borderRadius: 10, padding: 10 }}
-      />
-      <Input
-        value={subUrl()}
-        onChange={(value) => subUrl.set(value)}
-        placeholder="https://…"
-        style={{ borderWidth: 1, borderColor: "#d1d5db", borderRadius: 10, padding: 10 }}
-      />
+    <DFormFrame title="添加订阅" hint="粘贴 Clash 格式订阅地址；添加后会立即下载。">
+      <DInput value={subName()} onChange={(value) => subName.set(value)} placeholder="名称（可选）" />
+      <DInput value={subUrl()} onChange={(value) => subUrl.set(value)} placeholder="https://…" />
       <View style={{ flexDirection: "row", gap: 8 }}>
         <Action label="添加" primary onPress={() => void addSubscription()} />
         <Action label="取消" onPress={() => adding.set(null)} />
       </View>
-    </Section>
+    </DFormFrame>
   );
 }
 
 function NodeForm() {
   return (
-    <Section title="添加 VLESS 节点" hint="支持 TLS / WebSocket / Reality 分享链接。">
-      <Input
-        value={nodeLink()}
-        onChange={(value) => nodeLink.set(value)}
-        placeholder="vless://…"
-        multiline
-        style={{ borderWidth: 1, borderColor: "#d1d5db", borderRadius: 10, padding: 10, minHeight: 88 }}
-      />
+    <DFormFrame title="添加 VLESS 节点" hint="支持 TLS / WebSocket / Reality 分享链接。">
+      <DInput value={nodeLink()} onChange={(value) => nodeLink.set(value)} placeholder="vless://…" multiline />
       <View style={{ flexDirection: "row", gap: 8 }}>
         <Action label="添加" primary onPress={() => void addNode()} />
         <Action label="取消" onPress={() => adding.set(null)} />
       </View>
-    </Section>
+    </DFormFrame>
   );
 }
 
 function GroupForm() {
   return (
-    <Section title="添加策略组" hint="选择成员；自动测速组会按延迟选最快节点。">
-      <Input
-        value={groupName()}
-        onChange={(value) => groupName.set(value)}
-        placeholder="组名"
-        style={{ borderWidth: 1, borderColor: "#d1d5db", borderRadius: 10, padding: 10 }}
-      />
+    <DFormFrame title="添加策略组" hint="选择成员；自动测速组会按延迟选最快节点。">
+      <DInput value={groupName()} onChange={(value) => groupName.set(value)} placeholder="组名" />
       <View style={{ flexDirection: "row", gap: 8 }}>
         <Action
           label="手动选择"
@@ -295,21 +246,21 @@ function GroupForm() {
           onPress={() => groupStrategy.set("urltest")}
         />
       </View>
-      <Text style={{ fontSize: 13, fontWeight: "600", marginTop: 4 }}>订阅成员</Text>
+      <Text style={{ fontSize: embedded ? 12 : 13, fontWeight: "600", color: embedded ? desktopColors.text : undefined }}>
+        订阅成员
+      </Text>
       {page().subscriptions.map((entry) => (
-        <ChoiceRow
+        <DCheck
           label={entry.name}
           checked={selectedSubscriptions().includes(entry.index)}
-          onPress={() =>
-            selectedSubscriptions.set(
-              toggleIndex(selectedSubscriptions(), entry.index),
-            )
-          }
+          onPress={() => selectedSubscriptions.set(toggleIndex(selectedSubscriptions(), entry.index))}
         />
       ))}
-      <Text style={{ fontSize: 13, fontWeight: "600", marginTop: 4 }}>手动节点成员</Text>
+      <Text style={{ fontSize: embedded ? 12 : 13, fontWeight: "600", color: embedded ? desktopColors.text : undefined }}>
+        手动节点成员
+      </Text>
       {page().nodes.map((entry) => (
-        <ChoiceRow
+        <DCheck
           label={entry.name}
           checked={selectedNodes().includes(entry.index)}
           onPress={() => selectedNodes.set(toggleIndex(selectedNodes(), entry.index))}
@@ -319,7 +270,7 @@ function GroupForm() {
         <Action label="添加" primary onPress={() => void addGroup()} />
         <Action label="取消" onPress={() => adding.set(null)} />
       </View>
-    </Section>
+    </DFormFrame>
   );
 }
 
@@ -424,41 +375,6 @@ function MobileSubscriptionsPage() {
   );
 }
 
-function DButton(props: {
-  label: string;
-  onPress: () => void;
-  primary?: boolean;
-  disabled?: boolean;
-}) {
-  const disabled = () => props.disabled || busy();
-  return (
-    <View
-      onPress={disabled() ? undefined : props.onPress}
-      role="button"
-      accessible
-      disabled={disabled()}
-      style={{
-        opacity: disabled() ? 0.45 : 1,
-        borderRadius: 8,
-        borderWidth: props.primary ? 0 : 1,
-        borderColor: desktopColors.outline,
-        paddingHorizontal: 12,
-        paddingVertical: 6,
-        backgroundColor: props.primary ? desktopColors.primary : desktopColors.high,
-      }}
-    >
-      <Text
-        style={{
-          fontSize: 12,
-          color: props.primary ? desktopColors.onPrimary : desktopColors.text,
-        }}
-      >
-        {props.label}
-      </Text>
-    </View>
-  );
-}
-
 function DCard(props: { title: string; count?: number; action?: any; children: any }) {
   return (
     <View
@@ -506,15 +422,25 @@ function DInput(props: {
       onChange={props.onChange}
       placeholder={props.placeholder}
       multiline={props.multiline}
-      style={{
-        borderWidth: 1,
-        borderColor: desktopColors.outlineStrong,
-        borderRadius: 8,
-        paddingHorizontal: 10,
-        paddingVertical: 7,
-        fontSize: 13,
-        minHeight: props.multiline ? 72 : undefined,
-      }}
+      style={
+        embedded
+          ? {
+              borderWidth: 1,
+              borderColor: desktopColors.outlineStrong,
+              borderRadius: 8,
+              paddingHorizontal: 10,
+              paddingVertical: 7,
+              fontSize: 13,
+              minHeight: props.multiline ? 72 : undefined,
+            }
+          : {
+              borderWidth: 1,
+              borderColor: "#d1d5db",
+              borderRadius: 10,
+              padding: 10,
+              minHeight: props.multiline ? 88 : undefined,
+            }
+      }
     />
   );
 }
@@ -551,84 +477,36 @@ function DCheck(props: { label: string; checked: boolean; onPress: () => void })
 function DFormFrame(props: { title: string; hint: string; children: any }) {
   return (
     <View
-      style={{
-        borderWidth: 1,
-        borderColor: desktopColors.primary,
-        borderRadius: 10,
-        padding: 12,
-        gap: 8,
-        backgroundColor: "#F7FBFA",
-      }}
+      style={
+        embedded
+          ? {
+              borderWidth: 1,
+              borderColor: desktopColors.primary,
+              borderRadius: 10,
+              padding: 12,
+              gap: 8,
+              backgroundColor: "#F7FBFA",
+            }
+          : {
+              marginHorizontal: 16,
+              marginTop: 14,
+              borderWidth: 1,
+              borderColor: "#7c3aed",
+              borderRadius: 16,
+              padding: 14,
+              gap: 10,
+              backgroundColor: "#ffffff",
+            }
+      }
     >
-      <Text style={{ fontSize: 13, fontWeight: "600", color: desktopColors.text }}>{props.title}</Text>
-      <Text style={{ fontSize: 11, color: desktopColors.secondary }}>{props.hint}</Text>
+      <Text role="header" style={{ fontSize: embedded ? 13 : 18, fontWeight: "600", color: embedded ? desktopColors.text : undefined }}>
+        {props.title}
+      </Text>
+      <Text style={{ fontSize: embedded ? 11 : 12, color: embedded ? desktopColors.secondary : "#6b7280" }}>
+        {props.hint}
+      </Text>
       {props.children}
     </View>
-  );
-}
-
-function DSubscriptionForm() {
-  return (
-    <DFormFrame title="添加订阅" hint="粘贴 Clash 格式订阅地址；添加后会立即下载。">
-      <DInput value={subName()} onChange={(value) => subName.set(value)} placeholder="名称（可选）" />
-      <DInput value={subUrl()} onChange={(value) => subUrl.set(value)} placeholder="https://…" />
-      <View style={{ flexDirection: "row", gap: 8 }}>
-        <DButton label="添加" primary onPress={() => void addSubscription()} />
-        <DButton label="取消" onPress={() => adding.set(null)} />
-      </View>
-    </DFormFrame>
-  );
-}
-
-function DNodeForm() {
-  return (
-    <DFormFrame title="添加 VLESS 节点" hint="支持 TLS / WebSocket / Reality 分享链接。">
-      <DInput value={nodeLink()} onChange={(value) => nodeLink.set(value)} placeholder="vless://…" multiline />
-      <View style={{ flexDirection: "row", gap: 8 }}>
-        <DButton label="添加" primary onPress={() => void addNode()} />
-        <DButton label="取消" onPress={() => adding.set(null)} />
-      </View>
-    </DFormFrame>
-  );
-}
-
-function DGroupForm() {
-  return (
-    <DFormFrame title="添加策略组" hint="选择成员；自动测速组会按延迟选最快节点。">
-      <DInput value={groupName()} onChange={(value) => groupName.set(value)} placeholder="组名" />
-      <View style={{ flexDirection: "row", gap: 8 }}>
-        <DButton
-          label="手动选择"
-          primary={groupStrategy() === "select"}
-          onPress={() => groupStrategy.set("select")}
-        />
-        <DButton
-          label="自动测速"
-          primary={groupStrategy() === "urltest"}
-          onPress={() => groupStrategy.set("urltest")}
-        />
-      </View>
-      <Text style={{ fontSize: 12, fontWeight: "600", color: desktopColors.text }}>订阅成员</Text>
-      {page().subscriptions.map((entry) => (
-        <DCheck
-          label={entry.name}
-          checked={selectedSubscriptions().includes(entry.index)}
-          onPress={() => selectedSubscriptions.set(toggleIndex(selectedSubscriptions(), entry.index))}
-        />
-      ))}
-      <Text style={{ fontSize: 12, fontWeight: "600", color: desktopColors.text }}>手动节点成员</Text>
-      {page().nodes.map((entry) => (
-        <DCheck
-          label={entry.name}
-          checked={selectedNodes().includes(entry.index)}
-          onPress={() => selectedNodes.set(toggleIndex(selectedNodes(), entry.index))}
-        />
-      ))}
-      <View style={{ flexDirection: "row", gap: 8 }}>
-        <DButton label="添加" primary onPress={() => void addGroup()} />
-        <DButton label="取消" onPress={() => adding.set(null)} />
-      </View>
-    </DFormFrame>
   );
 }
 
@@ -652,18 +530,18 @@ function DesktopSubscriptionsPage() {
           <Text style={{ fontSize: 12, color: desktopColors.secondary, flex: 1 }}>
             {message() || "订阅、手动节点和策略组都会进入同一份内核配置。"}
           </Text>
-          <DButton label={busy() ? "刷新中…" : "刷新订阅"} onPress={() => void invoke("subscriptions.refresh")} />
-          <DButton label="应用" primary onPress={() => void invoke("subscriptions.apply")} />
+          <Action label={busy() ? "刷新中…" : "刷新订阅"} onPress={() => void invoke("subscriptions.refresh")} />
+          <Action label="应用" primary onPress={() => void invoke("subscriptions.apply")} />
         </View>
         <Scroll style={{ flex: 1 }} contentStyle={{ padding: 12, gap: 10 }}>
-          {adding() === "subscription" ? <DSubscriptionForm /> : null}
-          {adding() === "node" ? <DNodeForm /> : null}
-          {adding() === "group" ? <DGroupForm /> : null}
+          {adding() === "subscription" ? <SubscriptionForm /> : null}
+          {adding() === "node" ? <NodeForm /> : null}
+          {adding() === "group" ? <GroupForm /> : null}
           <DCard
             title="订阅"
             count={page().subscriptions.length}
             action={
-              <DButton
+              <Action
                 label="添加"
                 onPress={() => adding.set(adding() === "subscription" ? null : "subscription")}
               />
@@ -686,7 +564,7 @@ function DesktopSubscriptionsPage() {
             title="手动节点"
             count={page().nodes.length}
             action={
-              <DButton
+              <Action
                 label="添加"
                 onPress={() => adding.set(adding() === "node" ? null : "node")}
               />
@@ -709,7 +587,7 @@ function DesktopSubscriptionsPage() {
             title="策略组"
             count={page().groups.length}
             action={
-              <DButton
+              <Action
                 label="添加"
                 onPress={() => adding.set(adding() === "group" ? null : "group")}
               />
