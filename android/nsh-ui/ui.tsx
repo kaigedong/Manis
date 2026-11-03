@@ -188,3 +188,127 @@ export function RouteChainCard(props: { node: string; mode: string }) {
     </Card>
   );
 }
+
+/** A node row shared by the mobile list and the desktop workspace. */
+export function NodeRow(props: {
+  name: string;
+  current: boolean;
+  delayMs: number | null;
+  onPress: () => void;
+}) {
+  const delay = props.delayMs === null ? "未测速" : `${props.delayMs} 毫秒`;
+  if (embedded) {
+    return (
+      <View
+        onPress={props.onPress}
+        role="button"
+        accessible
+        accessibilityLabel={`${props.name}${props.current ? "，当前" : ""}，${delay}`}
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          gap: 10,
+          paddingHorizontal: 20,
+          paddingVertical: 10,
+          borderBottomWidth: 1,
+          borderBottomColor: "#EDF2EF",
+          backgroundColor: props.current ? "#E6F1EE" : "transparent",
+        }}
+      >
+        <Text style={{ fontSize: 13, flex: 1, color: desktopColors.text }}>{props.name}</Text>
+        {props.current ? (
+          <Text style={{ fontSize: 11, color: desktopColors.primary }}>当前</Text>
+        ) : null}
+        <Text
+          style={{
+            fontSize: 11,
+            color: desktopColors.tertiary,
+            width: 60,
+            textAlign: "right",
+          }}
+        >
+          {props.delayMs === null ? "—" : `${props.delayMs} ms`}
+        </Text>
+      </View>
+    );
+  }
+  return (
+    <View
+      onPress={props.onPress}
+      role="button"
+      accessible
+      accessibilityLabel={`${props.name}${props.current ? "，当前" : ""}，${delay}`}
+      style={{
+        marginHorizontal: 16,
+        paddingHorizontal: 14,
+        paddingVertical: 14,
+        backgroundColor: "#f3f4f6",
+        borderBottomWidth: 1,
+        borderBottomColor: "#e5e7eb",
+        borderBottomLeftRadius: 14,
+        borderBottomRightRadius: 14,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 8,
+      }}
+    >
+      <Text style={{ fontSize: 15, flex: 1 }}>{props.name}</Text>
+      {props.current ? <Text style={{ fontSize: 11, color: "#7c3aed" }}>当前</Text> : null}
+      <Text style={{ fontSize: 12, color: "#6b7280" }}>
+        {props.delayMs === null ? "—" : `${props.delayMs} ms`}
+      </Text>
+    </View>
+  );
+}
+
+/** An enabled/disabled badge shared by the mobile rows and the desktop tables. */
+export function ToggleBadge(props: {
+  enabled: boolean;
+  onOn: string;
+  onOff: string;
+  onPress: () => void;
+}) {
+  if (embedded) {
+    return (
+      <View
+        onPress={props.onPress}
+        role="button"
+        accessible
+        accessibilityLabel={props.enabled ? props.onOff : props.onOn}
+        style={{
+          borderRadius: 6,
+          paddingHorizontal: 8,
+          paddingVertical: 3,
+          backgroundColor: props.enabled ? "#E6F1EE" : desktopColors.low,
+        }}
+      >
+        <Text
+          style={{
+            fontSize: 11,
+            color: props.enabled ? desktopColors.success : desktopColors.secondary,
+          }}
+        >
+          {props.enabled ? props.onOn : props.onOff}
+        </Text>
+      </View>
+    );
+  }
+  return (
+    <View
+      onPress={props.onPress}
+      role="button"
+      accessible
+      accessibilityLabel={props.enabled ? props.onOff : props.onOn}
+      style={{
+        borderRadius: 8,
+        paddingHorizontal: 8,
+        paddingVertical: 5,
+        backgroundColor: props.enabled ? "#dcfce7" : "#f3f4f6",
+      }}
+    >
+      <Text style={{ fontSize: 12, color: props.enabled ? "#166534" : "#6b7280" }}>
+        {props.enabled ? props.onOn : props.onOff}
+      </Text>
+    </View>
+  );
+}

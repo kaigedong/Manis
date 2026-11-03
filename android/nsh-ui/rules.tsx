@@ -2,6 +2,7 @@ import { computed, host, Scroll, signal, Text, View } from "nsh";
 import { Input } from "nsh/base";
 import { embedded, root } from "./store";
 import { desktopColors } from "./theme";
+import { ToggleBadge } from "./ui";
 
 type Rule = {
   index: number;
@@ -305,22 +306,12 @@ function MobileRulesPage() {
                   <Text style={{ fontSize: 15 }}>{rule.kind === "FINAL" ? "所有剩余流量" : rule.value}</Text>
                   <Text style={{ fontSize: 12, color: "#6b7280" }}>→ {rule.policyLabel}</Text>
                 </View>
-                <View
+                <ToggleBadge
+                  enabled={rule.enabled}
+                  onOn="已启用"
+                  onOff="已停用"
                   onPress={() => void invoke("rules.toggle", { index: rule.index, enabled: !rule.enabled })}
-                  role="button"
-                  accessible
-                  accessibilityLabel={rule.enabled ? "停用规则" : "启用规则"}
-                  style={{
-                    borderRadius: 8,
-                    paddingHorizontal: 8,
-                    paddingVertical: 5,
-                    backgroundColor: rule.enabled ? "#dcfce7" : "#f3f4f6",
-                  }}
-                >
-                  <Text style={{ fontSize: 12, color: rule.enabled ? "#166534" : "#6b7280" }}>
-                    {rule.enabled ? "已启用" : "已停用"}
-                  </Text>
-                </View>
+                />
                 <View
                   onPress={() => openEdit(rule)}
                   role="button"
@@ -498,22 +489,12 @@ function DesktopRuleRow(props: { rule: Rule }) {
         {rule().kind === "FINAL" ? "所有剩余流量" : rule().value}
       </Text>
       <Text style={{ fontSize: 11, color: desktopColors.secondary, width: 110 }}>→ {rule().policyLabel}</Text>
-      <View
+      <ToggleBadge
+        enabled={rule().enabled}
+        onOn="已启用"
+        onOff="已停用"
         onPress={() => void invoke("rules.toggle", { index: rule().index, enabled: !rule().enabled })}
-        role="button"
-        accessible
-        accessibilityLabel={rule().enabled ? "停用规则" : "启用规则"}
-        style={{
-          borderRadius: 6,
-          paddingHorizontal: 8,
-          paddingVertical: 3,
-          backgroundColor: rule().enabled ? "#E6F1EE" : desktopColors.low,
-        }}
-      >
-        <Text style={{ fontSize: 11, color: rule().enabled ? desktopColors.success : desktopColors.secondary }}>
-          {rule().enabled ? "已启用" : "已停用"}
-        </Text>
-      </View>
+      />
       <View onPress={() => openEdit(rule())} role="button" accessible accessibilityLabel="编辑规则" style={{ paddingHorizontal: 4 }}>
         <Text style={{ fontSize: 12, color: desktopColors.primary }}>编辑</Text>
       </View>

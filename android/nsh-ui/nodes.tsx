@@ -2,6 +2,7 @@ import { computed, host, List, Scroll, signal, Text, View } from "nsh";
 import { Input } from "nsh/base";
 import { embedded, root } from "./store";
 import { desktopColors } from "./theme";
+import { NodeRow as SharedNodeRow } from "./ui";
 
 type NodeItem = {
   name: string;
@@ -209,41 +210,15 @@ function PolicyHeader(props: { row: () => Row }) {
   );
 }
 
-function NodeRow(props: {
-  node: () => NodeItem;
-  onPress: () => void;
-}) {
+function NodeRow(props: { node: () => NodeItem; onPress: () => void }) {
   const node = () => props.node();
   return (
-    <View
+    <SharedNodeRow
+      name={node().displayName || node().name}
+      current={node().current}
+      delayMs={node().delayMs}
       onPress={props.onPress}
-      role="button"
-      accessible
-      accessibilityLabel={`${node().displayName || node().name}${node().current ? "，当前" : ""}，${node().delayMs === null ? "未测速" : `${node().delayMs} 毫秒`}`}
-      style={{
-        marginHorizontal: 16,
-        paddingHorizontal: 14,
-        paddingVertical: 14,
-        backgroundColor: "#f3f4f6",
-        borderBottomWidth: 1,
-        borderBottomColor: "#e5e7eb",
-        borderBottomLeftRadius: 14,
-        borderBottomRightRadius: 14,
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 8,
-      }}
-    >
-      <Text style={{ fontSize: 15, flex: 1 }}>
-        {node().displayName || node().name}
-      </Text>
-      {node().current ? (
-        <Text style={{ fontSize: 11, color: "#7c3aed" }}>当前</Text>
-      ) : null}
-      <Text style={{ fontSize: 12, color: "#6b7280" }}>
-        {node().delayMs === null ? "—" : `${node().delayMs} ms`}
-      </Text>
-    </View>
+    />
   );
 }
 
@@ -598,38 +573,6 @@ function DesktopDetailHeader() {
   );
 }
 
-function DesktopNodeRow(props: { node: () => NodeItem; onPress: () => void }) {
-  const node = () => props.node();
-  return (
-    <View
-      onPress={props.onPress}
-      role="button"
-      accessible
-      accessibilityLabel={`${node().displayName || node().name}${node().current ? "，当前" : ""}，${node().delayMs === null ? "未测速" : `${node().delayMs} 毫秒`}`}
-      style={{
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 10,
-        paddingHorizontal: 20,
-        paddingVertical: 10,
-        borderBottomWidth: 1,
-        borderBottomColor: "#EDF2EF",
-        backgroundColor: node().current ? "#E6F1EE" : "transparent",
-      }}
-    >
-      <Text style={{ fontSize: 13, flex: 1, color: desktopColors.text }}>
-        {node().displayName || node().name}
-      </Text>
-      {node().current ? (
-        <Text style={{ fontSize: 11, color: desktopColors.primary }}>当前</Text>
-      ) : null}
-      <Text style={{ fontSize: 11, color: desktopColors.tertiary, width: 60, textAlign: "right" }}>
-        {node().delayMs === null ? "—" : `${node().delayMs} ms`}
-      </Text>
-    </View>
-  );
-}
-
 function DesktopDetail() {
   if (selection().kind === "global") {
     return (
@@ -643,7 +586,12 @@ function DesktopDetail() {
   return (
     <Scroll style={{ flex: 1 }}>
       {visibleNodes().map((node) => (
-        <DesktopNodeRow node={() => node} onPress={() => selectNode(node)} />
+        <SharedNodeRow
+          name={node.displayName || node.name}
+          current={node.current}
+          delayMs={node.delayMs}
+          onPress={() => selectNode(node)}
+        />
       ))}
       {visibleNodes().length === 0 ? (
         <Text style={{ padding: 20, fontSize: 12, color: desktopColors.tertiary }}>

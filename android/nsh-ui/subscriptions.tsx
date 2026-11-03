@@ -2,6 +2,7 @@ import { computed, host, Scroll, signal, Text, View } from "nsh";
 import { Input } from "nsh/base";
 import { embedded, root } from "./store";
 import { desktopColors } from "./theme";
+import { ToggleBadge } from "./ui";
 
 type SubscriptionItem = {
   index: number;
@@ -221,22 +222,12 @@ function Row(props: {
         <Text style={{ fontSize: 12, color: "#6b7280" }}>{props.detail}</Text>
       </View>
       {props.onToggle ? (
-        <View
+        <ToggleBadge
+          enabled={props.enabled === true}
+          onOn="已启用"
+          onOff="已停用"
           onPress={props.onToggle}
-          role="button"
-          accessible
-          accessibilityLabel={props.enabled ? "停用" : "启用"}
-          style={{
-            borderRadius: 8,
-            paddingHorizontal: 8,
-            paddingVertical: 5,
-            backgroundColor: props.enabled ? "#dcfce7" : "#f3f4f6",
-          }}
-        >
-          <Text style={{ fontSize: 12, color: props.enabled ? "#166534" : "#6b7280" }}>
-            {props.enabled ? "已启用" : "已停用"}
-          </Text>
-        </View>
+        />
       ) : null}
       <View
         onPress={props.onDelete}
@@ -571,22 +562,12 @@ function DTableRow(props: {
         <Text style={{ fontSize: 11, color: desktopColors.secondary }}>{props.detail}</Text>
       </View>
       {props.onToggle ? (
-        <View
+        <ToggleBadge
+          enabled={props.enabled === true}
+          onOn="已启用"
+          onOff="已停用"
           onPress={props.onToggle}
-          role="button"
-          accessible
-          accessibilityLabel={props.enabled ? "停用" : "启用"}
-          style={{
-            borderRadius: 6,
-            paddingHorizontal: 8,
-            paddingVertical: 3,
-            backgroundColor: props.enabled ? "#E6F1EE" : desktopColors.low,
-          }}
-        >
-          <Text style={{ fontSize: 11, color: props.enabled ? desktopColors.success : desktopColors.secondary }}>
-            {props.enabled ? "已启用" : "已停用"}
-          </Text>
-        </View>
+        />
       ) : null}
       <View
         onPress={props.onDelete}
