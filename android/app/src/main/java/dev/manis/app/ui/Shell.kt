@@ -34,6 +34,11 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import dev.manis.app.R
 
+/** The GPUI window size classes: labels appear only in the wide layout. */
+enum class SizeClass { Compact, Medium, Wide }
+
+val LocalSizeClass = androidx.compose.runtime.compositionLocalOf { SizeClass.Compact }
+
 /** The five GPUI primary workspaces, in navigation order. */
 enum class StatusTone { Ok, Route, Error }
 
@@ -66,26 +71,42 @@ fun ManisShell(
     content: @Composable () -> Unit,
 ) {
     val colors = LocalManisColors.current
-    Column(
-        Modifier
-            .fillMaxSize()
-            .background(colors.windowBackdrop)
-            .windowInsetsPadding(WindowInsets.safeDrawing),
-    ) {
-        Chrome(
-            proxyLabel = proxyLabel,
-            onProxyToggle = onProxyToggle,
-            routingLabel = routingLabel,
-            onRoutingCycle = onRoutingCycle,
-            darkTheme = darkTheme,
-            onToggleTheme = onToggleTheme,
-        )
-        Row(Modifier.fillMaxWidth().weight(1f)) {
-            Navigation(workspace, onWorkspace)
-            Box(Modifier.weight(1f).fillMaxHeight()) { content() }
+    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
+        val sizeClass = when {
+            maxWidth < 900.dp -> SizeClass.Compact
+            maxWidth < 1280.dp -> SizeClass.Medium
+            else -> SizeClass.Wide
         }
-        StatusBar(statusText, statusTone, downloadText, uploadText)
+        androidx.compose.runtime.CompositionLocalProvider(LocalSizeClass provides sizeClass) {
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .background(colors.windowBackdrop)
+                    .windowInsetsPadding(WindowInsets.safeDrawing),
+            ) {
+                Chrome(
+                    proxyLabel = proxyLabel,
+                    onProxyToggle = onProxyToggle,
+                    routingLabel = routingLabel,
+                    onRoutingCycle = onRoutingCycle,
+                    darkTheme = darkTheme,
+                    onToggleTheme = onToggleTheme,
+                    navWidth = navWidth(sizeClass),
+                )
+                Row(Modifier.fillMaxWidth().weight(1f)) {
+                    Navigation(workspace, onWorkspace, sizeClass)
+                    Box(Modifier.weight(1f).fillMaxHeight()) { content() }
+                }
+                StatusBar(statusText, statusTone, downloadText, uploadText)
+            }
+        }
     }
+}
+
+private fun navWidth(sizeClass: SizeClass) = when (sizeClass) {
+    SizeClass.Compact -> ManisDimens.navCompact
+    SizeClass.Medium -> ManisDimens.navMedium
+    SizeClass.Wide -> ManisDimens.navWide
 }
 
 @Composable
@@ -96,6 +117,7 @@ private fun Chrome(
     onRoutingCycle: () -> Unit,
     darkTheme: Boolean,
     onToggleTheme: () -> Unit,
+    navWidth: androidx.compose.ui.unit.Dp,
 ) {
     val colors = LocalManisColors.current
     Row(
@@ -108,7 +130,7 @@ private fun Chrome(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceMd),
     ) {
-        Box(Modifier.width(ManisDimens.navCompact), contentAlignment = Alignment.CenterStart) {
+        Box(Modifier.width(navWidth - ManisDimens.spaceLg), contentAlignment = Alignment.CenterStart) {
             Image(
                 painter = painterResource(R.drawable.ic_brand),
                 contentDescription = "Manis",
@@ -139,18 +161,24 @@ private fun ChromeButton(label: String, onClick: () -> Unit) {
 }
 
 @Composable
-private fun Navigation(workspace: PrimaryWorkspace, onWorkspace: (PrimaryWorkspace) -> Unit) {
+private fun Navigation(
+    workspace: PrimaryWorkspace,
+    onWorkspace: (PrimaryWorkspace) -> Unit,
+    sizeClass: SizeClass,
+) {
     val colors = LocalManisColors.current
     Column(
         Modifier
-            .width(ManisDimens.navCompact)
+            .width(navWidth(sizeClass))
             .fillMaxHeight()
             .background(colors.surfaceBase)
             .padding(ManisDimens.spaceSm),
         verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceXs),
     ) {
         for (entry in PrimaryWorkspace.entries) {
-            NavigationItem(entry, entry == workspace) { onWorkspace(entry) }
+            NavigationItem(entry, entry == workspace, sizeClass == SizeClass.Wide) {
+                onWorkspace(entry)
+            }
         }
     }
 }
@@ -159,18 +187,21 @@ private fun Navigation(workspace: PrimaryWorkspace, onWorkspace: (PrimaryWorkspa
 private fun NavigationItem(
     workspace: PrimaryWorkspace,
     selected: Boolean,
+    showLabel: Boolean,
     onClick: () -> Unit,
 ) {
     val colors = LocalManisColors.current
     val tint = if (selected) colors.actionPrimary else colors.textSecondary
-    Box(
+    Row(
         Modifier
             .fillMaxWidth()
             .height(ManisDimens.controlStandard)
             .clip(RoundedCornerShape(ManisDimens.radiusRow))
             .background(if (selected) colors.actionSoft else Color.Transparent)
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
+            .clickable(onClick = onClick)
+            .padding(horizontal = if (showLabel) ManisDimens.spaceSm else 0.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = if (showLabel) Arrangement.spacedBy(ManisDimens.spaceSm) else Arrangement.Center,
     ) {
         if (workspace.iconRes != 0) {
             Icon(
@@ -185,6 +216,13 @@ private fun NavigationItem(
                 contentDescription = workspace.label,
                 modifier = Modifier.size(18.dp),
                 tint = tint,
+            )
+        }
+        if (showLabel) {
+            Text(
+                workspace.label,
+                style = ManisType.body,
+                color = if (selected) colors.actionPrimary else colors.textPrimary,
             )
         }
     }

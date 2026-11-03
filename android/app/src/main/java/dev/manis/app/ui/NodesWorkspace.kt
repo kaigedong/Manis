@@ -8,9 +8,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -83,78 +85,150 @@ fun NodesWorkspace(
         }
     }
 
-    BackHandler(enabled = detail != null) { detail = null }
+    val compact = LocalSizeClass.current == SizeClass.Compact
+    BackHandler(enabled = compact && detail != null) { detail = null }
 
     Column(Modifier.fillMaxSize().background(colors.surfaceBase)) {
-        when {
-            current != null -> GroupDetail(
-                group = current,
-                delays = delays,
-                onBack = { detail = null },
-                onTest = { test(current.name) },
-                onSelect = { node -> select(current.name, node) },
-            )
-            detail != null -> SavedGroupDetail(
-                name = detail ?: "",
-                group = savedGroups.firstOrNull { it.name == detail },
-                config = config,
-                onBack = { detail = null },
-            )
-            else -> {
-                WorkspaceHeader(
-                    title = "节点",
-                    subtitle = null,
-                    action = if (refreshing) "刷新中…" else "刷新",
-                    onAction = ::refresh,
+        if (compact) {
+            when {
+                current != null -> GroupDetail(
+                    group = current,
+                    delays = delays,
+                    showBack = true,
+                    onBack = { detail = null },
+                    onTest = { test(current.name) },
+                    onSelect = { node -> select(current.name, node) },
                 )
-                Column(
-                    Modifier
-                        .fillMaxSize()
-                        .verticalScroll(rememberScrollState())
-                        .padding(ManisDimens.spaceMd),
-                    verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceMd),
-                ) {
-                    SourceCards(
-                        subscriptions = subscriptionsOf(config),
-                        manualCount = config.nodes.count { it.enabled },
+                detail != null -> SavedGroupDetail(
+                    name = detail ?: "",
+                    group = savedGroups.firstOrNull { it.name == detail },
+                    config = config,
+                    showBack = true,
+                    onBack = { detail = null },
+                )
+                else -> {
+                    WorkspaceHeader(
+                        title = "节点",
+                        subtitle = null,
+                        action = if (refreshing) "刷新中…" else "刷新",
+                        onAction = ::refresh,
+                    )
+                    NodesDirectory(
+                        groups = groups,
+                        savedGroups = savedGroups,
+                        config = config,
+                        snapshotAvailable = snapshot != null,
+                        selected = detail,
+                        onSelect = { detail = it },
                         onOpenConfiguration = onOpenConfiguration,
                     )
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        ManisSectionTitle("策略组")
-                        Spacer(Modifier.weight(1f))
-                        ManisMeta(if (snapshot != null) "点击分组切换到详情" else "连接后显示运行时状态")
-                    }
-                    if (groups.isNotEmpty()) {
-                        ManisCard {
-                            groups.forEachIndexed { index, group ->
-                                ManisListRow(
-                                    title = displayProxyName(group.name) ?: group.name,
-                                    meta = "${strategyLabel(group.type)} · 当前 ${displayProxyName(group.now) ?: "未选择"}",
-                                    trailing = "${group.all.size}",
-                                    onClick = { detail = group.name },
-                                )
-                                if (index != groups.lastIndex) ManisDivider()
-                            }
-                        }
-                    } else if (savedGroups.isNotEmpty()) {
-                        ManisCard {
-                            savedGroups.forEachIndexed { index, group ->
-                                ManisListRow(
-                                    title = group.name,
-                                    meta = "${strategyLabel(group.strategy)} · ${group.subscriptionIndexes.size + group.nodeIndexes.size} 个成员",
-                                    onClick = { detail = group.name },
-                                )
-                                if (index != savedGroups.lastIndex) ManisDivider()
-                            }
-                        }
-                    } else {
-                        ManisCard {
-                            Text("还没有策略组", style = ManisType.label, color = colors.textPrimary)
-                            ManisMeta("在配置里添加订阅或手动节点后，策略组会出现在这里。")
-                            ManisButton("打开配置", primary = true, onClick = onOpenConfiguration)
+                }
+            }
+        } else {
+            WorkspaceHeader(
+                title = "节点",
+                subtitle = null,
+                action = if (refreshing) "刷新中…" else "刷新",
+                onAction = ::refresh,
+            )
+            Row(Modifier.fillMaxWidth().weight(1f)) {
+                Box(Modifier.fillMaxHeight().width(340.dp)) {
+                    NodesDirectory(
+                        groups = groups,
+                        savedGroups = savedGroups,
+                        config = config,
+                        snapshotAvailable = snapshot != null,
+                        selected = detail,
+                        onSelect = { detail = it },
+                        onOpenConfiguration = onOpenConfiguration,
+                    )
+                }
+                Box(Modifier.fillMaxHeight().width(1.dp).background(colors.outlineSubtle))
+                Box(Modifier.fillMaxHeight().weight(1f)) {
+                    when {
+                        current != null -> GroupDetail(
+                            group = current,
+                            delays = delays,
+                            showBack = false,
+                            onBack = {},
+                            onTest = { test(current.name) },
+                            onSelect = { node -> select(current.name, node) },
+                        )
+                        detail != null -> SavedGroupDetail(
+                            name = detail ?: "",
+                            group = savedGroups.firstOrNull { it.name == detail },
+                            config = config,
+                            showBack = false,
+                            onBack = {},
+                        )
+                        else -> Column(Modifier.padding(ManisDimens.spaceMd)) {
+                            ManisMeta("从左侧选择一个策略组查看成员。")
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun NodesDirectory(
+    groups: List<GroupInfo>,
+    savedGroups: List<GroupEntry>,
+    config: dev.manis.app.data.MobileConfig,
+    snapshotAvailable: Boolean,
+    selected: String?,
+    onSelect: (String) -> Unit,
+    onOpenConfiguration: () -> Unit,
+) {
+    val colors = LocalManisColors.current
+    Column(
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(ManisDimens.spaceMd),
+        verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceMd),
+    ) {
+        SourceCards(
+            subscriptions = subscriptionsOf(config),
+            manualCount = config.nodes.count { it.enabled },
+            onOpenConfiguration = onOpenConfiguration,
+        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            ManisSectionTitle("策略组")
+            Spacer(Modifier.weight(1f))
+            ManisMeta(if (snapshotAvailable) "点击分组切换到详情" else "连接后显示运行时状态")
+        }
+        if (groups.isNotEmpty()) {
+            ManisCard {
+                groups.forEachIndexed { index, group ->
+                    ManisListRow(
+                        title = displayProxyName(group.name) ?: group.name,
+                        meta = "${strategyLabel(group.type)} · 当前 ${displayProxyName(group.now) ?: "未选择"}",
+                        trailing = "${group.all.size}",
+                        selected = group.name == selected,
+                        onClick = { onSelect(group.name) },
+                    )
+                    if (index != groups.lastIndex) ManisDivider()
+                }
+            }
+        } else if (savedGroups.isNotEmpty()) {
+            ManisCard {
+                savedGroups.forEachIndexed { index, group ->
+                    ManisListRow(
+                        title = group.name,
+                        meta = "${strategyLabel(group.strategy)} · ${group.subscriptionIndexes.size + group.nodeIndexes.size} 个成员",
+                        selected = group.name == selected,
+                        onClick = { onSelect(group.name) },
+                    )
+                    if (index != savedGroups.lastIndex) ManisDivider()
+                }
+            }
+        } else {
+            ManisCard {
+                Text("还没有策略组", style = ManisType.label, color = colors.textPrimary)
+                ManisMeta("在配置里添加订阅或手动节点后，策略组会出现在这里。")
+                ManisButton("打开配置", primary = true, onClick = onOpenConfiguration)
             }
         }
     }
@@ -245,6 +319,7 @@ private fun sourceHost(url: String): String {
 private fun GroupDetail(
     group: GroupInfo,
     delays: Map<String, Int>,
+    showBack: Boolean,
     onBack: () -> Unit,
     onTest: () -> Unit,
     onSelect: (String) -> Unit,
@@ -258,7 +333,7 @@ private fun GroupDetail(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
         ) {
-            BackButton(onBack)
+            if (showBack) BackButton(onBack)
             Column(Modifier.weight(1f)) {
                 Text(
                     displayProxyName(group.name) ?: group.name,
@@ -309,6 +384,7 @@ private fun SavedGroupDetail(
     name: String,
     group: GroupEntry?,
     config: dev.manis.app.data.MobileConfig,
+    showBack: Boolean,
     onBack: () -> Unit,
 ) {
     val colors = LocalManisColors.current
@@ -326,7 +402,7 @@ private fun SavedGroupDetail(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
         ) {
-            BackButton(onBack)
+            if (showBack) BackButton(onBack)
             Column(Modifier.weight(1f)) {
                 Text(name, style = ManisType.sectionTitle, color = colors.textPrimary)
                 ManisMeta(group?.let { strategyLabel(it.strategy) } ?: "策略组")
