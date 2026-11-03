@@ -1,5 +1,12 @@
 package dev.manis.app.ui
 
+import android.app.Activity
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.VpnService
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -9,31 +16,26 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.Icon
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import android.net.ConnectivityManager
-import android.net.Network
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import dev.manis.app.ManisVpnService
 import dev.manis.app.core.ControllerApi
 import dev.manis.app.core.CoreController
 import dev.manis.app.core.Snapshot
+import dev.manis.app.data.Workspace
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -153,29 +155,97 @@ fun ManisApp() {
         }
     }
 
-    Scaffold(
-        snackbarHost = { SnackbarHost(snackbar) },
-        bottomBar = {
-            NavigationBar {
-                for (entry in Tab.entries) {
-                    NavigationBarItem(
-                        selected = tab == entry,
-                        onClick = { tab = entry },
-                        icon = { Icon(entry.icon, contentDescription = entry.label) },
-                        label = { Text(entry.label) },
-                    )
-                }
-            }
+    var workspace by rememberSaveable { mutableStateOf(PrimaryWorkspace.Nodes) }
+    var section by rememberSaveable { mutableStateOf(ConfigurationSection.Subscriptions) }
+    val systemDark = isSystemInDarkTheme()
+    var dark by rememberSaveable { mutableStateOf(UiPrefs.dark.value ?: systemDark) }
+    val config = Workspace.config.value
+    val mode = RuntimeState.snapshot?.mode ?: config.mode
+    val routingLabel = when (mode) {
+        "global" -> "全局"
+        "direct" -> "直连"
+        else -> "规则"
+    }
+    val proxyLabel = if (RuntimeState.active) "VPN 代理" else "关闭代理"
+
+    val permission = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) startVpn(context) else say("已取消 VPN 授权")
+    }
+
+    fun toggleProxy() {
+        if (RuntimeState.active) {
+            stopVpn(context)
+            return
+        }
+        if (config.subscriptions.none { it.enabled } && config.nodes.none { it.enabled }) {
+            say("先在配置里添加订阅或节点")
+            workspace = PrimaryWorkspace.Configuration
+            section = ConfigurationSection.Subscriptions
+            return
+        }
+        val prepare = VpnService.prepare(context)
+        if (prepare != null) permission.launch(prepare) else startVpn(context)
+    }
+
+    fun cycleRouting() {
+        if (!RuntimeState.active) {
+            say("连接后才能切换路由模式")
+            return
+        }
+        val next = when (mode) {
+            "rule" -> "global"
+            "global" -> "direct"
+            else -> "rule"
+        }
+        val label = when (next) {
+            "global" -> "全局"
+            "direct" -> "直连"
+            else -> "规则"
+        }
+        scope.launch {
+            runCatching { ControllerApi.setMode(next) }
+                .onSuccess { say("路由模式：$label") }
+                .onFailure { say("切换路由模式失败") }
+        }
+    }
+
+    ManisShell(
+        workspace = workspace,
+        onWorkspace = { workspace = it },
+        proxyLabel = proxyLabel,
+        onProxyToggle = ::toggleProxy,
+        routingLabel = routingLabel,
+        onRoutingCycle = ::cycleRouting,
+        darkTheme = dark,
+        onToggleTheme = {
+            dark = !dark
+            UiPrefs.dark.value = dark
         },
-    ) { insets ->
-        Box(Modifier.fillMaxSize().padding(insets)) {
-            when (tab) {
-                Tab.Connect -> ConnectionScreen(onMessage = ::say, onNavigate = { tab = it })
-                Tab.Nodes -> ProxiesScreen(onMessage = ::say, onNavigate = { tab = it })
-                Tab.Subscriptions -> SubscriptionsScreen(onMessage = ::say)
-                Tab.Rules -> RulesScreen(onMessage = ::say)
-                Tab.Settings -> SettingsScreen(onMessage = ::say)
+        statusText = RuntimeState.summary.ifBlank { if (RuntimeState.active) "已连接" else "未连接" },
+        statusOk = RuntimeState.active,
+    ) {
+        Box(Modifier.fillMaxSize()) {
+            when (workspace) {
+                PrimaryWorkspace.Nodes -> ProxiesScreen(
+                    onMessage = ::say,
+                    onNavigate = { tab ->
+                        if (tab == Tab.Subscriptions) {
+                            workspace = PrimaryWorkspace.Configuration
+                            section = ConfigurationSection.Subscriptions
+                        }
+                    },
+                )
+                PrimaryWorkspace.RoutingRules -> RulesScreen(onMessage = ::say)
+                PrimaryWorkspace.Activity -> PlaceholderWorkspace("活动", "网络活动正在迁移中")
+                PrimaryWorkspace.Logs -> PlaceholderWorkspace("日志", "内核日志正在迁移中")
+                PrimaryWorkspace.Configuration -> ConfigurationWorkspace(section, { section = it }, ::say)
             }
+            SnackbarHost(
+                snackbar,
+                Modifier.align(Alignment.BottomCenter).padding(ManisDimens.spaceLg),
+            )
         }
     }
 }
