@@ -48,3 +48,30 @@ test("desktop connection renders the status and overview", async () => {
   expect(app.texts()).toContain("概览");
   expect(app.texts()).toContain("路由模式");
 });
+
+test("english connection page follows the language", async () => {
+  const app = await open("./App.tsx", {
+    storage: { language: "en" },
+    host: {
+      params: {
+        tab: "connection",
+        data: {
+          connection: {
+            active: true,
+            node: "HK 01",
+            mode: "rule",
+            summary: "1 subscription",
+            error: "",
+            unreachable: false,
+            warnings: [],
+            warningCount: 0,
+            hasSources: true,
+          },
+        },
+      },
+    },
+  });
+  await app.setViewport(390, 844);
+  expect(app.texts()).toContain("Connected");
+  expect(app.texts()).toContain("Route chain");
+});

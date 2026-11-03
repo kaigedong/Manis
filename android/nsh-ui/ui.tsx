@@ -1,4 +1,5 @@
 import { Text, View } from "nsh";
+import { t } from "./copy";
 import { embedded } from "./store";
 import { desktopColors } from "./theme";
 
@@ -179,12 +180,12 @@ export function Chip(props: { label: string; active: boolean; onPress: () => voi
 /** The route chain, shared by the mobile connection page and the desktop inspector. */
 export function RouteChainCard(props: { node: string; mode: string }) {
   return (
-    <Card title="路由链">
+    <Card title={t("conn.chain")}>
       <Text style={{ fontSize: embedded ? 12 : 13, color: embedded ? desktopColors.secondary : "#6b7280" }}>
-        规则 → 策略组 → 节点
+        {t("conn.chainFlow")}
       </Text>
-      <Info label="当前节点" value={props.node || "未选择"} />
-      <Info label="模式" value={props.mode || "—"} />
+      <Info label={t("conn.currentNode")} value={props.node || "—"} />
+      <Info label={t("conn.modeLabel")} value={props.mode || "—"} />
     </Card>
   );
 }
@@ -196,14 +197,14 @@ export function NodeRow(props: {
   delayMs: number | null;
   onPress: () => void;
 }) {
-  const delay = props.delayMs === null ? "未测速" : `${props.delayMs} 毫秒`;
+  const delay = props.delayMs === null ? t("common.notMeasured") : t("common.ms", { value: props.delayMs });
   if (embedded) {
     return (
       <View
         onPress={props.onPress}
         role="button"
         accessible
-        accessibilityLabel={`${props.name}${props.current ? "，当前" : ""}，${delay}`}
+        accessibilityLabel={`${props.name}${props.current ? `，${t("common.current")}` : ""}，${delay}`}
         style={{
           flexDirection: "row",
           alignItems: "center",
@@ -217,7 +218,7 @@ export function NodeRow(props: {
       >
         <Text style={{ fontSize: 13, flex: 1, color: desktopColors.text }}>{props.name}</Text>
         {props.current ? (
-          <Text style={{ fontSize: 11, color: desktopColors.primary }}>当前</Text>
+          <Text style={{ fontSize: 11, color: desktopColors.primary }}>{t("common.current")}</Text>
         ) : null}
         <Text
           style={{
@@ -237,7 +238,7 @@ export function NodeRow(props: {
       onPress={props.onPress}
       role="button"
       accessible
-      accessibilityLabel={`${props.name}${props.current ? "，当前" : ""}，${delay}`}
+      accessibilityLabel={`${props.name}${props.current ? `，${t("common.current")}` : ""}，${delay}`}
       style={{
         marginHorizontal: 16,
         paddingHorizontal: 14,
@@ -253,7 +254,7 @@ export function NodeRow(props: {
       }}
     >
       <Text style={{ fontSize: 15, flex: 1 }}>{props.name}</Text>
-      {props.current ? <Text style={{ fontSize: 11, color: "#7c3aed" }}>当前</Text> : null}
+      {props.current ? <Text style={{ fontSize: 11, color: "#7c3aed" }}>{t("common.current")}</Text> : null}
       <Text style={{ fontSize: 12, color: "#6b7280" }}>
         {props.delayMs === null ? "—" : `${props.delayMs} ms`}
       </Text>

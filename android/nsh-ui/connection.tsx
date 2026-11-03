@@ -1,5 +1,6 @@
 import { computed, host, Scroll, signal, Text, View } from "nsh";
 import { embedded, layoutWidth, root, tab } from "./store";
+import { t } from "./copy";
 import { desktopColors } from "./theme";
 import { Action, Card, Chip, Info, RouteChainCard } from "./ui";
 
@@ -52,9 +53,9 @@ async function invoke(command: string, payload: Record<string, unknown> = {}) {
 }
 
 const modes = [
-  ["rule", "规则"],
-  ["global", "全局"],
-  ["direct", "直连"],
+  ["rule", "conn.mode.rule"],
+  ["global", "conn.mode.global"],
+  ["direct", "conn.mode.direct"],
 ] as const;
 
 function MobileConnectionPage() {
@@ -62,9 +63,9 @@ function MobileConnectionPage() {
     <View class={embedded ? "flex-1 bg-background" : "flex-1 bg-background pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"}>
       <Scroll style={{ flex: 1 }}>
         <View style={{ paddingHorizontal: 20, paddingTop: 18, paddingBottom: 24, gap: 14 }}>
-          <Text style={{ fontSize: 28, fontWeight: "600" }}>连接</Text>
+          <Text style={{ fontSize: 28, fontWeight: "600" }}>{t("conn.title")}</Text>
           <Text style={{ fontSize: 13, color: "#6b7280" }}>
-            手机与桌面共用同一份规则和渲染器。
+            {t("conn.hint")}
           </Text>
 
           <View
@@ -80,16 +81,16 @@ function MobileConnectionPage() {
             <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
               <View style={{ flex: 1, gap: 4 }}>
                 <Text style={{ fontSize: 22, fontWeight: "600" }}>
-                  {page().active ? "已连接" : "未连接"}
+                  {page().active ? t("conn.connected") : t("conn.disconnected")}
                 </Text>
                 <Text style={{ fontSize: 13, color: "#6b7280" }}>
                   {page().active
-                    ? page().node || "正在加载节点"
-                    : "打开开关建立 VPN"}
+                    ? page().node || t("conn.loadingNode")
+                    : t("conn.openVpn")}
                 </Text>
               </View>
               <Action
-                label={page().active ? "断开" : "连接"}
+                label={page().active ? t("chrome.disconnect") : t("chrome.connect")}
                 primary={!page().active}
                 onPress={() =>
                   void invoke("connection.toggle", { enabled: !page().active })
@@ -107,9 +108,9 @@ function MobileConnectionPage() {
                   gap: 8,
                 }}
               >
-                <Text style={{ fontSize: 13, color: "#6b7280" }}>出口</Text>
-                <Text style={{ fontSize: 14, flex: 1 }}>{page().node || "未选择"}</Text>
-                <Action label="切换" onPress={() => tab.set("nodes")} />
+                <Text style={{ fontSize: 13, color: "#6b7280" }}>{t("conn.exit")}</Text>
+                <Text style={{ fontSize: 14, flex: 1 }}>{page().node || "—"}</Text>
+                <Action label={t("conn.switch")} onPress={() => tab.set("nodes")} />
               </View>
             ) : null}
           </View>
@@ -120,7 +121,7 @@ function MobileConnectionPage() {
 
           <RouteChainCard node={page().node} mode={page().mode} />
 
-          <Text style={{ fontSize: 16, fontWeight: "600" }}>路由模式</Text>
+          <Text style={{ fontSize: 16, fontWeight: "600" }}>{t("conn.routeMode")}</Text>
           <View style={{ flexDirection: "row", gap: 8 }}>
             {modes.map(([value, label]) => (
               <View
@@ -136,7 +137,7 @@ function MobileConnectionPage() {
                 }}
               >
                 <Text style={{ fontSize: 13, color: page().mode === value ? "#ffffff" : "#374151" }}>
-                  {label}
+                  {t(label)}
                 </Text>
               </View>
             ))}
@@ -175,7 +176,7 @@ function MobileConnectionPage() {
                 所有节点都连不上
               </Text>
               <Text style={{ fontSize: 12, color: "#6b7280" }}>
-                手机网络到订阅节点的链路超时，流量现在无法出去。先换一个 Wi-Fi 或移动数据，或到节点页点「选最快」重试；仍然失败时，去设置里切换「节点域名解析」。
+                {t("conn.unreachableHint")}
               </Text>
             </View>
           ) : null}
@@ -190,7 +191,7 @@ function MobileConnectionPage() {
                 gap: 6,
               }}
             >
-              <Text style={{ fontSize: 15, fontWeight: "600" }}>配置提示</Text>
+              <Text style={{ fontSize: 15, fontWeight: "600" }}>{t("conn.warnings")}</Text>
               {page().warnings.map((warning, index) => (
                 <Text style={{ fontSize: 12, color: "#6b7280" }}>
                   {warning}
@@ -198,14 +199,14 @@ function MobileConnectionPage() {
               ))}
               {page().warningCount > page().warnings.length ? (
                 <Text style={{ fontSize: 12, color: "#6b7280" }}>
-                  以及另外 {page().warningCount - page().warnings.length} 条
+                  {t("conn.moreWarnings", { count: page().warningCount - page().warnings.length })}
                 </Text>
               ) : null}
             </View>
           ) : null}
 
           <View style={{ flexDirection: "row", gap: 8 }}>
-            <Action label="重新载入配置" onPress={() => void invoke("connection.reload")} />
+            <Action label={t("conn.reload")} onPress={() => void invoke("connection.reload")} />
             {page().active ? (
               <Action label="断开" onPress={() => void invoke("connection.toggle", { enabled: false })} />
             ) : null}
@@ -213,7 +214,7 @@ function MobileConnectionPage() {
 
           {!page().hasSources ? (
             <Text style={{ fontSize: 12, color: "#b45309" }}>
-              还没有启用的订阅或节点；先在「订阅」里添加一个。
+              {t("conn.noSources")}
             </Text>
           ) : null}
         </View>
@@ -238,11 +239,11 @@ function DesktopConnectionPage() {
           }}
         >
           <Text style={{ fontSize: 12, color: desktopColors.secondary, flex: 1 }}>
-            {message() || page().summary || "手机与桌面共用同一份规则和渲染器。"}
+            {message() || page().summary || t("conn.hint")}
           </Text>
-          <Action label="重新载入配置" onPress={() => void invoke("connection.reload")} />
+          <Action label={t("conn.reload")} onPress={() => void invoke("connection.reload")} />
           <Action
-            label={page().active ? "断开" : "连接"}
+            label={page().active ? t("chrome.disconnect") : t("chrome.connect")}
             primary={!page().active}
             onPress={() => void invoke("connection.toggle", { enabled: !page().active })}
           />
@@ -261,10 +262,10 @@ function DesktopConnectionPage() {
             <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
               <View style={{ flex: 1, gap: 4 }}>
                 <Text style={{ fontSize: 20, fontWeight: "600", color: desktopColors.text }}>
-                  {page().active ? "已连接" : "未连接"}
+                  {page().active ? t("conn.connected") : t("conn.disconnected")}
                 </Text>
                 <Text style={{ fontSize: 12, color: desktopColors.secondary }}>
-                  {page().active ? page().node || "正在加载节点" : "打开开关建立 VPN"}
+                  {page().active ? page().node || t("conn.loadingNode") : t("conn.openVpn")}
                 </Text>
               </View>
               <View
@@ -287,20 +288,20 @@ function DesktopConnectionPage() {
                   gap: 8,
                 }}
               >
-                <Text style={{ fontSize: 12, color: desktopColors.secondary }}>出口</Text>
+                <Text style={{ fontSize: 12, color: desktopColors.secondary }}>{t("conn.exit")}</Text>
                 <Text style={{ fontSize: 13, flex: 1, color: desktopColors.text }}>
-                  {page().node || "未选择"}
+                  {page().node || "—"}
                 </Text>
-                <Action label="切换" onPress={() => tab.set("nodes")} />
+                <Action label={t("conn.switch")} onPress={() => tab.set("nodes")} />
               </View>
             ) : null}
           </View>
 
-          <Card title="路由模式">
+          <Card title={t("conn.routeMode")}>
             <View style={{ flexDirection: "row", gap: 8 }}>
               {modes.map(([value, label]) => (
                 <Chip
-                  label={label}
+                  label={t(label)}
                   active={page().mode === value}
                   onPress={() => void invoke("connection.mode", { mode: value })}
                 />
@@ -323,21 +324,21 @@ function DesktopConnectionPage() {
           ) : null}
 
           {page().unreachable ? (
-            <Card title="所有节点都连不上">
+            <Card title={t("conn.unreachable")}>
               <Text style={{ fontSize: 12, color: desktopColors.secondary }}>
-                到订阅节点的链路超时，流量现在无法出去。先换一个网络，或到节点页点「刷新」重试；仍然失败时，去设置里切换「节点域名解析」。
+                {t("conn.unreachableHint")}
               </Text>
             </Card>
           ) : null}
 
           {page().warnings.length > 0 ? (
-            <Card title="配置提示">
+            <Card title={t("conn.warnings")}>
               {page().warnings.map((warning) => (
                 <Text style={{ fontSize: 12, color: desktopColors.secondary }}>{warning}</Text>
               ))}
               {page().warningCount > page().warnings.length ? (
                 <Text style={{ fontSize: 12, color: desktopColors.secondary }}>
-                  以及另外 {page().warningCount - page().warnings.length} 条
+                  {t("conn.moreWarnings", { count: page().warningCount - page().warnings.length })}
                 </Text>
               ) : null}
             </Card>
@@ -345,7 +346,7 @@ function DesktopConnectionPage() {
 
           {!page().hasSources ? (
             <Text style={{ fontSize: 12, color: desktopColors.warning }}>
-              还没有启用的订阅或节点；先在「订阅」里添加一个。
+              {t("conn.noSources")}
             </Text>
           ) : null}
         </Scroll>
@@ -360,14 +361,14 @@ function DesktopConnectionPage() {
         }}
       >
         <Scroll style={{ flex: 1 }} contentStyle={{ padding: 12, gap: 10 }}>
-          <Card title="概览">
-            <Info label="状态" value={page().active ? "已连接" : "未连接"} />
-            <Info label="摘要" value={page().summary || "—"} />
+          <Card title={t("conn.overview")}>
+            <Info label="状态" value={page().active ? t("conn.connected") : t("conn.disconnected")} />
+            <Info label={t("conn.summary")} value={page().summary || "—"} />
           </Card>
           <RouteChainCard node={page().node} mode={page().mode} />
-          <Card title="提示">
+          <Card title={t("conn.tips")}>
             <Text style={{ fontSize: 12, color: desktopColors.secondary }}>
-              规则、策略组与节点来自同一份已保存工作区；切换节点后立即生效。
+              {t("conn.tipsBody")}
             </Text>
           </Card>
         </Scroll>

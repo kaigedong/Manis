@@ -1,6 +1,7 @@
 import { computed, host, List, Scroll, signal, Text, View } from "nsh";
 import { Input } from "nsh/base";
 import { embedded, layoutWidth, root } from "./store";
+import { t } from "./copy";
 import { desktopColors } from "./theme";
 import { NodeRow as SharedNodeRow } from "./ui";
 
@@ -84,7 +85,7 @@ const rows = computed<Row[]>(() => {
 
 async function refresh() {
   if (!host.available()) {
-    message.set("独立运行模式：没有宿主可刷新");
+    message.set(t("nodes.noHost"));
     return;
   }
   refreshing.set(true);
@@ -92,9 +93,9 @@ async function refresh() {
   try {
     const reply = (await host.call("nodes.refresh")) as { data?: unknown } | null;
     if (reply?.data) root.set(reply.data as any);
-    message.set("已刷新");
+    message.set(t("nodes.refreshed"));
   } catch (error) {
-    message.set(error instanceof Error ? error.message : "刷新失败");
+    message.set(error instanceof Error ? error.message : t("nodes.refreshFailed"));
   } finally {
     refreshing.set(false);
   }
@@ -170,7 +171,7 @@ function SourceHeader(props: { row: () => Row }) {
           {source().name}
         </Text>
         <Text style={{ fontSize: 12, color: "#6b7280" }}>
-          {source().nodes.length} 个
+          {t("nodes.count", { count: source().nodes.length })}
         </Text>
       </View>
       <Text style={{ fontSize: 12, color: "#6b7280", marginTop: 4 }}>
@@ -200,11 +201,11 @@ function PolicyHeader(props: { row: () => Row }) {
           {group().label}
         </Text>
         <Text style={{ fontSize: 12, color: "#6b7280" }}>
-          {group().members.length} 个
+          {t("nodes.count", { count: group().members.length })}
         </Text>
       </View>
       <Text style={{ fontSize: 12, color: "#6b7280", marginTop: 4 }}>
-        {group().kind} · 当前：{group().current ?? "未选择"}
+        {group().kind} · {t("conn.currentNode")}：{group().current ?? "—"}
       </Text>
     </View>
   );
@@ -266,18 +267,18 @@ function MobileNodesPage() {
     <View class={embedded ? "flex-1 bg-background" : "flex-1 bg-background pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"}>
       <View style={{ paddingHorizontal: 20, paddingTop: 18, gap: 12 }}>
         <View style={{ flexDirection: "row", alignItems: "baseline", gap: 10 }}>
-          <Text style={{ fontSize: 28, fontWeight: "600", flex: 1 }}>节点</Text>
+          <Text style={{ fontSize: 28, fontWeight: "600", flex: 1 }}>{t("nodes.title")}</Text>
           <Text style={{ fontSize: 13, color: "#6b7280" }}>
-            {page().global.total} 个 · NSH
+            {t("nodes.count", { count: page().global.total })} · NSH
           </Text>
         </View>
         <Text style={{ fontSize: 13, color: "#6b7280" }}>
-          按来源分组；点选立即切换，搜索支持中文和英文。
+          {t("nodes.hint")}
         </Text>
         <Input
           value={query()}
           onChange={(value) => query.set(value)}
-          placeholder="搜索节点"
+          placeholder={t("nodes.search")}
           style={{
             borderWidth: 1,
             borderColor: "#d1d5db",
@@ -299,7 +300,7 @@ function MobileNodesPage() {
           }}
         >
           <Text style={{ color: "#ffffff", fontSize: 14 }}>
-            {refreshing() ? "刷新中…" : "刷新"}
+            {refreshing() ? t("nodes.refreshing") : t("nodes.refresh")}
           </Text>
         </View>
         {message() ? (
@@ -320,7 +321,7 @@ function MobileNodesPage() {
             所有订阅和手动节点 · {page().global.total} 个
           </Text>
           <Text style={{ fontSize: 14, color: "#7c3aed" }}>
-            当前：{page().global.current ?? "未选择"}
+            {t("conn.currentNode")}：{page().global.current ?? "—"}
           </Text>
         </View>
       </View>
@@ -328,7 +329,7 @@ function MobileNodesPage() {
       {rows().length === 0 ? (
         <View style={{ padding: 20 }}>
           <Text style={{ fontSize: 14, color: "#6b7280" }}>
-            没有匹配的节点。
+            {t("nodes.noMatch")}
           </Text>
         </View>
       ) : (
@@ -400,12 +401,12 @@ function selectionTitle() {
 function selectionDetail() {
   const current = selection();
   if (current.kind === "group") {
-    return `${current.group.kind} · 当前：${current.group.current ?? "未选择"} · ${current.group.members.length} 个节点`;
+    return `${current.group.kind} · ${t("conn.currentNode")}：${current.group.current ?? "—"} · ${t("nodes.count", { count: current.group.members.length })}`;
   }
   if (current.kind === "source") {
-    return `${current.source.kind === "subscription" ? "订阅" : "手动节点"} · ${current.source.enabled ? "已启用" : "已停用"} · ${current.source.nodes.length} 个节点`;
+    return `${current.source.kind === "subscription" ? t("nodes.subscription") : t("nodes.manual")} · ${current.source.enabled ? t("nodes.enabled") : t("nodes.disabled")} · ${t("nodes.count", { count: current.source.nodes.length })}`;
   }
-  return `所有订阅和手动节点 · ${page().global.total} 个 · 当前：${page().global.current ?? "未选择"}`;
+  return `${t("nodes.sources")} · ${t("nodes.count", { count: page().global.total })} · ${t("conn.currentNode")}：${page().global.current ?? "—"}`;
 }
 
 function selectNode(node: NodeItem) {
@@ -472,12 +473,12 @@ function DesktopGroupList() {
           paddingBottom: 4,
         }}
       >
-        策略组
+        {t("nodes.groups")}
       </Text>
       {page().policyGroups.map((group) => (
         <DesktopNavCard
           title={group.label}
-          meta={`${group.kind} · ${group.current ?? "未选择"}`}
+          meta={`${group.kind} · ${group.current ?? "—"}`}
           count={group.members.length}
           selected={selectedKey() === `group:${group.id}` || (selectedKey() === "" && selection().kind === "group" && selection().group?.id === group.id)}
           onPress={() => selectedKey.set(`group:${group.id}`)}
@@ -485,7 +486,7 @@ function DesktopGroupList() {
       ))}
       {page().policyGroups.length === 0 ? (
         <Text style={{ fontSize: 12, color: desktopColors.tertiary, paddingHorizontal: 10, paddingVertical: 6 }}>
-          还没有策略组
+          {t("nodes.noGroups")}
         </Text>
       ) : null}
       <Text
@@ -498,12 +499,12 @@ function DesktopGroupList() {
           paddingBottom: 4,
         }}
       >
-        订阅与手动节点
+        {t("nodes.sources")}
       </Text>
       {page().sources.map((source) => (
         <DesktopNavCard
           title={source.name}
-          meta={source.kind === "subscription" ? "订阅" : "手动节点"}
+          meta={source.kind === "subscription" ? t("nodes.subscription") : t("nodes.manual")}
           count={source.nodes.length}
           selected={selectedKey() === `source:${source.id}`}
           onPress={() => selectedKey.set(`source:${source.id}`)}
@@ -511,7 +512,7 @@ function DesktopGroupList() {
       ))}
       {page().sources.length === 0 ? (
         <Text style={{ fontSize: 12, color: desktopColors.tertiary, paddingHorizontal: 10, paddingVertical: 6 }}>
-          还没有订阅或手动节点
+          {t("nodes.noSources")}
         </Text>
       ) : null}
     </Scroll>
@@ -547,7 +548,7 @@ function DesktopDetailHeader() {
           }}
         >
           <Text style={{ fontSize: 12, color: desktopColors.onPrimary }}>
-            {refreshing() ? "刷新中…" : "刷新"}
+            {refreshing() ? t("nodes.refreshing") : t("nodes.refresh")}
           </Text>
         </View>
       </View>
@@ -555,7 +556,7 @@ function DesktopDetailHeader() {
       <Input
         value={query()}
         onChange={(value) => query.set(value)}
-        placeholder="搜索节点"
+        placeholder={t("nodes.search")}
         style={{
           marginTop: 4,
           borderWidth: 1,
@@ -578,7 +579,7 @@ function DesktopDetail() {
     return (
       <View style={{ flex: 1, padding: 20 }}>
         <Text style={{ fontSize: 13, color: desktopColors.secondary }}>
-          全局策略使用所有已启用的订阅与手动节点；从左侧选择一个策略组或订阅查看节点。
+          {t("nodes.globalHint")}
         </Text>
       </View>
     );
@@ -595,7 +596,7 @@ function DesktopDetail() {
       ))}
       {visibleNodes().length === 0 ? (
         <Text style={{ padding: 20, fontSize: 12, color: desktopColors.tertiary }}>
-          没有匹配的节点。
+          {t("nodes.noMatch")}
         </Text>
       ) : null}
     </Scroll>
@@ -630,29 +631,29 @@ function DesktopInspector() {
   return (
     <View style={{ width: 320, flexDirection: "column", backgroundColor: desktopColors.low }}>
     <Scroll style={{ flex: 1 }} contentStyle={{ padding: 12, gap: 10 }}>
-      <DesktopInspectorCard title="路由链">
+      <DesktopInspectorCard title={t("conn.chain")}>
         <Text style={{ fontSize: 12, color: desktopColors.secondary }}>
-          规则 → 策略组 → 节点
+          {t("conn.chainFlow")}
         </Text>
-        <Text style={{ fontSize: 13, color: desktopColors.text }}>当前节点：{current}</Text>
+        <Text style={{ fontSize: 13, color: desktopColors.text }}>{t("conn.currentNode")}：{current}</Text>
         <Text style={{ fontSize: 12, color: desktopColors.secondary }}>
-          模式：{connection.mode || "—"}
-        </Text>
-      </DesktopInspectorCard>
-      <DesktopInspectorCard title="运行状态">
-        <Text style={{ fontSize: 12, color: desktopColors.secondary }}>
-          {connection.summary || "等待内核状态"}
-        </Text>
-        <Text style={{ fontSize: 12, color: desktopColors.secondary }}>
-          {connection.active ? "已连接" : "未连接"}
+          {t("nodes.mode")}：{connection.mode || "—"}
         </Text>
       </DesktopInspectorCard>
-      <DesktopInspectorCard title="规则">
+      <DesktopInspectorCard title={t("nodes.runtime")}>
         <Text style={{ fontSize: 12, color: desktopColors.secondary }}>
-          {rules.summary || "暂无规则摘要"}
+          {connection.summary || t("nodes.waiting")}
+        </Text>
+        <Text style={{ fontSize: 12, color: desktopColors.secondary }}>
+          {connection.active ? t("conn.connected") : t("conn.disconnected")}
+        </Text>
+      </DesktopInspectorCard>
+      <DesktopInspectorCard title={t("nodes.rules")}>
+        <Text style={{ fontSize: 12, color: desktopColors.secondary }}>
+          {rules.summary || t("nodes.noSummary")}
         </Text>
         <Text style={{ fontSize: 12, color: warningCount > 0 ? desktopColors.warning : desktopColors.secondary }}>
-          {warningCount > 0 ? `${warningCount} 条规则警告` : "没有规则警告"}
+          {warningCount > 0 ? t("nodes.warnings", { count: warningCount }) : t("nodes.noWarnings")}
         </Text>
       </DesktopInspectorCard>
     </Scroll>
