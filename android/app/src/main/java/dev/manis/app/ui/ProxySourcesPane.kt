@@ -37,7 +37,7 @@ private enum class SourceEditor { Subscription, Node, Group }
 
 /** The GPUI proxy-sources section: subscriptions, manual nodes and policy groups. */
 @Composable
-fun ProxySourcesPane(onMessage: (String) -> Unit) {
+fun ProxySourcesContent(onMessage: (String) -> Unit) {
     val colors = LocalManisColors.current
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -77,10 +77,7 @@ fun ProxySourcesPane(onMessage: (String) -> Unit) {
     }
 
     Column(
-        Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(ManisDimens.spaceMd),
+        Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceMd),
     ) {
         if (Workspace.pending.value) {
@@ -203,9 +200,9 @@ private fun SourceEditorPane(
     var nodeMembers by remember { mutableStateOf(setOf<Int>()) }
     var error by remember { mutableStateOf<String?>(null) }
 
-    Column(Modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxWidth()) {
         Row(
-            Modifier.fillMaxWidth().padding(ManisDimens.spaceMd),
+            Modifier.fillMaxWidth().padding(vertical = ManisDimens.spaceSm),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
         ) {
@@ -231,10 +228,7 @@ private fun SourceEditorPane(
         }
         ManisDivider()
         Column(
-            Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(ManisDimens.spaceMd),
+            Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
         ) {
             when (editor) {

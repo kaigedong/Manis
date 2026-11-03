@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -34,7 +35,7 @@ private const val RELEASE_PAGE = "https://github.com/kaigedong/Manis/releases/ta
 
 /** The GPUI app-update pane: check the rolling release, download and install its APK. */
 @Composable
-fun UpdatesPane(onMessage: (String) -> Unit) {
+fun UpdatesContent(onMessage: (String) -> Unit) {
     val colors = LocalManisColors.current
     val context = LocalContext.current
     val currentVersion = remember { UpdateChecker.installedVersion(context).ifBlank { "未知" } }
@@ -71,10 +72,7 @@ fun UpdatesPane(onMessage: (String) -> Unit) {
     }
 
     Column(
-        Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(ManisDimens.spaceMd),
+        Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceMd),
     ) {
         ManisCard {
