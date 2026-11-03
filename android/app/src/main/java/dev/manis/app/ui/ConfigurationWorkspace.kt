@@ -87,9 +87,7 @@ fun ConfigurationWorkspace(onMessage: (String) -> Unit, onOpenLogs: () -> Unit) 
                 ConfigSection.ProxySources -> ProxySourcesPane(onMessage = onMessage)
                 ConfigSection.RuleSources -> RuleSourcesSection()
                 ConfigSection.Advanced -> AdvancedSection(onMessage, onOpenLogs)
-                ConfigSection.Updates -> Box(Modifier.padding(ManisDimens.spaceMd)) {
-                    UpdateSection(onMessage)
-                }
+                ConfigSection.Updates -> UpdatesPane(onMessage)
             }
         }
     }

@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.size
@@ -262,5 +263,25 @@ fun ManisTextAction(label: String, onClick: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(label, style = ManisType.metadata, color = colors.actionPrimary)
+    }
+}
+
+/** A GPUI progress track: 4dp tall, action-primary fill. */
+@Composable
+fun ManisProgress(fraction: Float) {
+    val colors = LocalManisColors.current
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(4.dp)
+            .clip(RoundedCornerShape(2.dp))
+            .background(colors.surfaceLow),
+    ) {
+        Row(
+            Modifier
+                .fillMaxWidth(fraction.coerceIn(0f, 1f))
+                .height(4.dp)
+                .background(colors.actionPrimary),
+        ) {}
     }
 }
