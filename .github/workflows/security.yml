@@ -7,7 +7,6 @@ on:
       - "**/Cargo.toml"
       - Cargo.lock
       - deny.toml
-      - .cargo/audit.toml
       - .github/workflows/security.yml
   push:
     branches: [main]
@@ -15,7 +14,6 @@ on:
       - "**/Cargo.toml"
       - Cargo.lock
       - deny.toml
-      - .cargo/audit.toml
       - .github/workflows/security.yml
   schedule:
     - cron: "17 3 * * 1"
@@ -48,11 +46,8 @@ jobs:
     permissions:
       contents: read
       checks: write
-      issues: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          # QuickJS stdlib's local RSA path; no patched release (RustCrypto/RSA#626).
-          ignore: RUSTSEC-2023-0071

@@ -1,40 +1,37 @@
-# Maintainer: bobo <https://aur.archlinux.org/account/bobosingle>
+# Arch Linux package
 
-pkgname=manis-bin
-pkgver=@PKGVER@
-pkgrel=1
-pkgdesc="NSH desktop workbench for policy-based proxy routing"
-arch=('x86_64')
-url="https://github.com/kaigedong/Manis"
-license=('Apache-2.0' 'GPL-3.0-only')
-depends=(
-  'alsa-lib'
-  'fontconfig'
-  'gtk4'
-  'freetype2'
-  'gcc-libs'
-  'glibc'
-  'hicolor-icon-theme'
-  'libcap'
-  'libx11'
-  'libxcb'
-  'libxkbcommon'
-  'libxkbcommon-x11'
-  'polkit'
-  'vulkan-icd-loader'
-  'wayland'
-)
-provides=("manis=${pkgver}")
-conflicts=('manis')
-options=('!debug' '!strip')
-install=manis.install
-_upstream_pkgrel=1
-source_x86_64=(
-  "manis-${pkgver}-${_upstream_pkgrel}-${CARCH}.pkg.tar.zst::https://github.com/kaigedong/Manis/releases/download/build-${pkgver}/manis-${pkgver}-${_upstream_pkgrel}-${CARCH}.pkg.tar.zst"
-)
-sha256sums_x86_64=('@SHA256@')
+The Arch package builds Manis from the current checkout and installs:
 
-package() {
-  cp -a "${srcdir}/usr" "${pkgdir}/"
-  rm "${pkgdir}/usr/share/licenses/manis/Mihomo-GPL-3.0.txt"
-}
+- `/usr/bin/manis`
+- `/usr/lib/manis/mihomo`, the SHA-256-verified stable first-launch seed
+- `/usr/lib/manis/manis-linux-helper`, a fixed-purpose TUN DNS helper
+- a PolicyKit policy restricted to that helper
+- a freedesktop desktop entry
+- a scalable application icon
+- the project license and third-party notices
+
+The package depends on polkit for its narrow privileged integration. Package installation assigns
+only `CAP_NET_ADMIN` and `CAP_NET_RAW` to the root-owned packaged core. The fixed-purpose helper may
+only install or restore DNS routing for the managed `Meta` interface, and PolicyKit permits that
+helper for the active local session without another password prompt. Ordinary proxy mode and the
+GUI remain unprivileged. Manis only checks application version metadata in the background; it
+never downloads packages or invokes `pacman` for an upgrade. Configuration → App updates links to
+GitHub, where users can download the package and install it through their package manager.
+
+The Linux GPUI backend is compiled with Wayland and X11 support. A native Wayland session is the
+primary target; X11 remains available as a compatibility fallback. The build fetches the official
+stable Mihomo release for x86_64 and verifies its GitHub release digest before packaging.
+
+The tray uses StatusNotifierItem over the user's session D-Bus and does not require GTK 3 or
+libappindicator. Plasma provides a compatible host; GNOME needs an AppIndicator extension. If no
+host is available, Manis keeps normal window-close behavior instead of hiding to an unavailable tray.
+
+Build on an up-to-date Arch Linux system:
+
+```bash
+cd packaging/archlinux
+makepkg --syncdeps --cleanbuild
+```
+
+Install the resulting package with `pacman -U`. System proxy and TUN integration should still be
+validated on the target desktop, Polkit agent, network manager, and kernel combination.

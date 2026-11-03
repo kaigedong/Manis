@@ -7,7 +7,7 @@
 
 **简体中文** · [English](README.en.md)
 
-Manis 是一个使用 Rust 编写的小型实验项目，Android 与桌面界面都由 NSH 渲染。它目前只聚焦一件事：把“有序规则
+Manis 是一个使用 Rust 和 GPUI 编写的小型实验项目。它目前只聚焦一件事：把“有序规则
 → 策略组 → 节点”的路径展示清楚，并为一部分常用的 Mihomo 操作提供界面。
 
 这是一个个人开源尝试，不是对代理工具的重新定义，也无意取代成熟客户端。现有工具已经能
@@ -38,7 +38,7 @@ Manis 只尝试把一条路由链路直接呈现出来：
 
 ## 目前实现
 
-- 原生 NSH 界面，Android 与桌面共用同一套页面；界面文案目前为中文。
+- 原生自适应 GPUI 界面，支持中英文、浅色和深色模式。
 - HTTP/HTTPS 订阅与单节点分享链接导入，并在本地进行私有持久化。
 - 手动、延迟优选、故障转移和负载均衡策略模型；不可用能力由内核能力门禁控制。
 - 有序分流规则、QX 规则列表导入、域名与端口组合匹配、明确的兜底规则。
@@ -65,15 +65,15 @@ Manis 源码仓库不提交预编译代理内核。发行构建会从 Mihomo 官
 
 | 平台 | 编译目标 | 运行状态 |
 | --- | --- | --- |
-| macOS 13+ | 持续维护 | 仅 Apple Silicon（`arm64`）；主要开发平台；系统代理已验证，TUN 通过管理员授权路径支持测试 |
-| Windows | 持续维护 | 实验性；使用 named-pipe controller transport，NSH 壳会启动 headless 引擎 |
+| macOS 13+ | 持续维护 | 主要开发平台；系统代理已验证，TUN 通过管理员授权路径支持测试 |
+| Windows | 持续维护 | 实验性；托管 controller transport 尚未完成，暂不能启动 Mihomo |
 | Linux | 持续维护 | 实验性；仍需覆盖更多发行版与桌面环境 |
 | Android | 实验性 | `arm64-v8a` 真机与模拟器均可运行；功能对齐见 [android/README.md](android/README.md) |
 
 CI 会检查桌面平台，Android 由独立工作流构建；但“能够编译”不代表该平台上的所有网络集成都
 已经完成真实验证。
 
-Package workflow 会构建 Apple Silicon（`arm64`）的未公证 macOS 应用包、支持原生
+Package workflow 会分别构建 Apple Silicon、Intel 的未公证 macOS 应用包、支持原生
 Wayland 的实验性 Arch Linux `x86_64` 软件包，以及 Android `arm64-v8a` 的调试 APK，
 并附带校验文件。每次提交合并到 `main` 后，
 工作流会覆盖更新名为 `latest` 的公开滚动 Pre-release；手动运行的 Actions 产物保留 14 天。
@@ -90,7 +90,7 @@ Wayland 的实验性 Arch Linux `x86_64` 软件包，以及 Android `arm64-v8a` 
 可以直接从 [Releases 页面](https://github.com/kaigedong/Manis/releases) 中名为
 `Latest Manis development build` 的 Pre-release 下载最近一次成功合并到 `main` 的测试
 产物，也可以在 [GitHub Actions 的 Package 页面](https://github.com/kaigedong/Manis/actions/workflows/package.yml)
-下载单次运行产物。macOS 仅支持 Apple Silicon，选择 `arm64`；CachyOS 和
+下载单次运行产物。Apple Silicon Mac 选择 `arm64`，Intel Mac 选择 `x86_64`；CachyOS 和
 Arch Linux 使用 `.pkg.tar.zst` 软件包；Android 手机选择
 `Manis-<版本>-android-arm64-debug.apk`。版本标签产生的正式候选包仍只保存为 Draft Release。
 
@@ -113,40 +113,16 @@ Manis 会在启动时及每小时自动检查新版本，只读取版本信息�
 
 ## 从源码运行
 
-仓库通过 `rust-toolchain.toml` 固定 Rust 工具链。macOS 需要 Xcode Command Line Tools；
-Linux 需要 GTK 4 与 Wayland/X11 开发包。Linux 托盘通过会话 D-Bus 使用
-StatusNotifierItem 协议，不依赖 GTK 3；GNOME 需要启用 AppIndicator 扩展才能显示托盘。
+仓库通过 `rust-toolchain.toml` 固定 Rust 工具链，并在 `crates/manis-ui/Cargo.toml` 中固定
+GPUI 版本。macOS 需要 Xcode Command Line Tools；Linux 需要 GPUI 使用的 Wayland/X11、
+fontconfig 与 ALSA 开发包。Linux 托盘通过会话 D-Bus 使用 StatusNotifierItem 协议，
+不依赖 GTK 3；GNOME 需要启用 AppIndicator 扩展才能显示托盘。
 
 ```bash
 git clone https://github.com/kaigedong/Manis.git
 cd Manis
-cargo run -p manis-nsh-desktop
+cargo run -p manis-ui
 ```
-
-发行包的 `manis` 入口是 NSH 桌面宿主，`manis-engine` 是无界面的引擎；宿主会启动同目录下的
-`manis-engine` 来持有 Mihomo 内核。桌面端不再包含 GPUI。
-
-桌面端 NSH 宿主按平台选择原生壳，但共用同一份 TSX 和同一个后端桥
-[`crates/manis-nsh-host`](crates/manis-nsh-host)：
-
-- Linux：GTK 4（`nsh-platform-linux`），含 StatusNotifierItem 托盘
-- macOS：AppKit（`nsh-platform-macos`）
-- Windows：Win32/Direct2D（`nsh-platform-windows`）
-
-三者都读取桌面已保存的订阅、手动节点、策略组和路由模式，并通过本地 controller 读取实时状态；
-节点选择、路由模式切换、运行时规则、内核日志、订阅/手动节点添加/启停/删除、重新载入配置、
-手动规则编辑、TUN 开关、开机启动和更新检查都已接入。Linux 壳已在实机验证；macOS/Windows
-壳由各自 CI runner 编译验证。
-
-NSH TSX 资产可以复现重建：
-
-```bash
-android/build-nsh-ui.sh      # 需要 nsh 0.3.0
-android/test-nsh-ui.sh
-```
-
-Android 的 `MANIS_BUILD_NSH=1 android/build-apk.sh` 也会在打包前重建同一份资产；CI 会校验
-提交的资产与重建结果一致。
 
 Manis 只启动自己管理的 Mihomo 进程，并且只使用自己从界面数据生成的配置。它不会连接
 其他程序启动的 controller，也不会运行用户提供的 Mihomo YAML。发行包携带一个经过
@@ -163,6 +139,7 @@ Manis 校验并写入私有运行目录。controller endpoint 也由 Manis 分�
 ```bash
 cargo fmt --all -- --check
 cargo check --workspace --all-targets --locked
+cargo check -p manis-ui --example snapshot --features snapshot-fixtures --locked
 cargo test --workspace --all-targets --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
 ```
@@ -225,7 +202,7 @@ macOS TUN 使用固定用途的特权 helper。GitHub ad-hoc 包通过管理员�
 | `crates/manis-engine` | 内核发现、校验、进程所有权和生命周期 |
 | `crates/manis-profile` | 类型化配置，以及 Mihomo 配置编译 |
 | `crates/manis-mihomo` | 受限的 Mihomo controller 传输和领域映射 |
-| `crates/manis-service` | 桌面领域层：存储、Mihomo controller、引擎桥接与无界面引擎 |
+| `crates/manis-ui` | GPUI 应用、持久化边界和平台集成 |
 | `packaging/macos` | macOS 打包与固定用途的特权 helper |
 | `packaging/archlinux` | 支持 Wayland 的实验性 Arch Linux 软件包 |
 | `docs` | 架构、设计和维护者文档 |
@@ -234,6 +211,7 @@ macOS TUN 使用固定用途的特权 helper。GitHub ad-hoc 包通过管理员�
 
 - [产品原则](PRODUCT.md)
 - [设计系统](DESIGN.md)
+- [GPUI 实现说明](GPUI_IMPLEMENTATION.md)
 - [开发指南（英文）](docs/development.md)
 - [直连与组合规则](docs/architecture/direct-rules.md)
 - [macOS 打包](packaging/macos/README.md)

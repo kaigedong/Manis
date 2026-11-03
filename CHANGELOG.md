@@ -6,42 +6,9 @@ once the public API and configuration formats stabilize.
 
 ## [Unreleased]
 
-### Removed
-
-- GPUI is gone. `crates/manis-ui` is replaced by the toolkit-neutral `crates/manis-service`, which
-  owns the saved workspace, the Mihomo controller, the NSH bridge and the new `manis-engine`
-  headless binary. The workspace no longer depends on `gpui`, `gpui-component`,
-  `gpui-pre-platform` or the Zed git sources; `Cargo.lock` drops the whole GPUI graph.
-- The GPUI window, the snapshot example and the GPUI tray implementation are deleted. Packaging now
-  installs `manis` (NSH host) and `manis-engine` on Linux/macOS/Windows.
-
 ### Added
 
-- `manis-presentation::ConnectionPageView`: Android and desktop now build the connection page
-  through the same Rust model (active/node/mode/summary/error/warnings/hasSources).
-- `manis-presentation::SubscriptionsPageView`: subscription/manual-node/group rows, default
-  names, indices and URL masking are shared. URL userinfo is now stripped from the displayed
-  source address on both platforms.
-- `manis-presentation::RulesPageView`: rule rows, policy labels, policy deduplication, rule kinds
-  and warning limits are shared; Android and desktop both build the rules page through it.
-- `manis-presentation::SettingsPageView`: status/mode/proxy-DNS/kernel/counts/data-dir/version/
-  autostart/update fields and blank-value defaults are shared by Android and desktop.
-- `manis-presentation::COMMANDS`: the desktop dispatcher and `nsh.json` host capabilities are
-  checked against one shared command catalog, so a missing grant fails a unit test.
-- macOS packaging now bundles the NSH host as `Manis.app/Contents/MacOS/Manis` and keeps the
-  headless engine beside it as `Manis.app/Contents/MacOS/manis-engine`.
-- Windows: add `packaging/windows/build-release.ps1` for a portable `Manis.exe` +
-  `manis-engine.exe` zip. Add a Windows named-pipe controller transport (`-ext-ctl-pipe`), the
-  managed `\\.\pipe\manis-mihomo` endpoint, a live client for it, and host auto-start of the
-  headless engine.
-- `manis-nsh-host`: the shared NSH bridge (root payload, command handlers and desktop engine
-  discovery) used by the desktop shells, so every platform answers the same TSX through one
-  backend module.
-- macOS (AppKit) and Windows (Win32) NSH shells: both run the same bundle and shared host bridge;
-  Linux keeps the GTK shell. The shared bridge resolves the controller path through the same brand
-  data directory as the engine, so the macOS shell probes the real socket. Windows cross-checks
-  with the GNU target.
-- Rust desktop application for policy-based proxy routing, now rendered by NSH.
+- Rust and GPUI desktop application for policy-based proxy routing.
 - Android client (`android/`) with a `VpnService` TUN, a bundled patched Mihomo core, and a
   workspace model compiled by the same Rust profile code as the desktop: multiple subscriptions,
   VLESS imports, user policy groups, QX rules, rule/global/direct modes, node switching with
@@ -76,51 +43,6 @@ once the public API and configuration formats stabilize.
 
 ### Changed
 
-- Android: the Nodes page now renders through NSH (`android/nsh-ui`) inside the existing Compose
-  shell, backed by the shared Rust `manis-presentation` model. The Subscriptions page follows:
-  subscription/manual-node/group lists, enable/disable, delete, add, refresh and apply are host
-  channel commands, while Kotlin keeps downloads and persistence. The Rules page is also NSH now:
-  structured rule rows, enable/disable, add/edit/delete and apply go through the same host channel.
-  Settings follows with connection/config summaries, DNS mode and custom resolvers, backup and
-  restore, kernel logs, update actions and the license note. Connection is the last content tab:
-  VPN start/stop, exit node, routing modes, errors, warnings and the jump to the Nodes page are NSH
-  host commands. The shell is NSH too: one root owns the bottom navigation, ApplyBar and all
-  five pages, so switching tabs no longer recreates an NshView. Compose is now only the invisible
-  AndroidView host for polling, VPN/installer permissions and clipboard/platform effects.
-  Remove the now-unused Compose page implementations and per-page NSH hosts, keeping only the
-  shared platform helpers and the single root host.
-- Desktop: add `manis-nsh-desktop`, the first NSH embedding host. It loads the Android TSX bundle
-  in NSH's GTK 4 `AppView` and renders the same single-root UI. Its read-only bridge reuses the
-  desktop storage loader for saved subscriptions, manual nodes, policy groups and routing mode;
-  live connection state from the desktop controller socket is now included
-  (connection status, exit node, proxy/rule counts and routing mode). The Nodes page now shows
-  live subscription/manual sources and policy groups, and selecting a node or routing mode goes
-  through the desktop controller. The Rules page now shows the live runtime rules (with the FINAL
-  row), and the Settings page can read the desktop kernel log. Subscription and manual-node
-  enable/disable and deletion now write through the desktop store (verified disable → restore).
-  New subscription URLs and manual share links can also be added and removed (verified add →
-  delete). Apply/refresh now syncs single-node provider files, recompiles the saved profile and
-  reloads the live controller through `/configs`, restoring the previous YAML on failure.
-  Manual rules can now be added, edited, toggled and deleted from the Rules page; each write is
-  followed by the same profile apply. Runtime rules remain read-only. Connection stop is the next step. The Connection page can now toggle the live TUN
-  interface (verified off → on), and connection.reload now reapplies the saved profile. CI installs
-  GTK 4 and links the NSH desktop host on Linux.
-- Build: add `android/build-nsh-ui.sh` and `android/test-nsh-ui.sh`, pin the NSH CLI to 0.3.0 in
-  Android CI, and fail when the committed NSH assets differ from a fresh build. All five NSH UI
-  tests run in CI.
-- Desktop launch: `manis-engine` runs the managed engine without a window. The NSH host
-  starts it when no controller is running, waits for the Unix controller, and stops the owned
-  engine when its window closes. With an existing controller it attaches instead.
-- Packaging: the Arch/AUR `manis` entry now installs the NSH host as `manis` and the headless
-  engine as `manis-engine`, with the `gtk4` dependency.
-- Desktop shell: add a StatusNotifierItem tray with open/quit, and hide the window on close while
-  the tray is available. The tray registers as `dev.manis.app`.
-- Settings: expose the desktop login-startup preference and toggle it from the NSH Settings page;
-  verified enable/disable writes/removes the XDG autostart entry. Desktop update actions open the
-  GitHub Release page; install points at the manual release package. Subscription/manual source grouping,
-  the internal `__MANIS_GLOBAL__` label, current selection and delays are built once instead of
-  being reconstructed by the Kotlin UI. The NSH Android runtime is pinned to `v0.3.0`, fetched by
-  `android/fetch-nsh.sh`, and raises `minSdk` to 28.
 - Settings opens inside the main window again: the sidebar item and the settings shortcut no
   longer create a separate window.
 - Android: refresh subscriptions without connecting the VPN. The app downloads each enabled
@@ -130,8 +52,10 @@ once the public API and configuration formats stabilize.
   (type, value, target, enable/disable, edit/delete). The rule/global/direct mode selector now lives
   only on the connection page.
 
-- Upgrade every direct dependency to its newest release, including `zip` 9.1.3 and `ureq` 3.5.
-  The core archive reader accepts `zip` 9's fallible entry names. The Android bridge moves to `jni` 0.22's
+- Upgrade every direct dependency to its newest release, including GPUI `0.3.10`, GPUI Component
+  `0.8.1`, `zip` 9.1.3, `zbus` 6.2, and `ureq` 3.5. The core archive reader accepts `zip` 9's
+  fallible entry names, and the Linux tray integration test drives `zbus` 6 from its process-wide
+  multithreaded runtime now that the blocking API is gone. The Android bridge moves to `jni` 0.22's
   `EnvUnowned` native-method entry point and reports every failure as `IllegalStateException`
   through one error policy. Every GitHub Actions pin moves to its current release (`checkout` 7,
   `cache` 6, `setup-java` 6, `setup-go` 7, `setup-android` 4, artifact upload/download 7/8,

@@ -62,6 +62,7 @@ asset_json() {
 }
 
 macos_arm64="$(single_asset "Manis-$version-macos-arm64-unsigned.zip")"
+macos_x86_64="$(single_asset "Manis-$version-macos-x86_64-unsigned.zip")"
 linux_x86_64="$(single_asset "manis-$version-1-x86_64.pkg.tar.zst")"
 
 manifest="$release_dir/manis-update.json"
@@ -73,8 +74,9 @@ jq -n \
   --arg version "$version" \
   --arg commit "$commit" \
   --argjson macos_arm64 "$(asset_json macos aarch64 "$macos_arm64")" \
+  --argjson macos_x86_64 "$(asset_json macos x86_64 "$macos_x86_64")" \
   --argjson linux_x86_64 "$(asset_json linux x86_64 "$linux_x86_64")" \
-  '{schema_version: 1, version: $version, commit: $commit, assets: [$macos_arm64, $linux_x86_64]}' \
+  '{schema_version: 1, version: $version, commit: $commit, assets: [$macos_arm64, $macos_x86_64, $linux_x86_64]}' \
   > "$temporary"
 mv "$temporary" "$manifest"
 (cd "$release_dir" && sha256sum manis-update.json > manis-update.json.sha256)

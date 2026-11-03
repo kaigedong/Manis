@@ -1,6 +1,6 @@
 # Runtime foundations
 
-NSH is Manis's UI stack. This change standardizes infrastructure, not the
+GPUI and gpui-component remain Manis's UI stack. This change standardizes infrastructure, not the
 product model or the UI framework. Library popularity alone is not a migration criterion: prefer
 maintained implementations that fit our execution model, platform requirements, and trust boundary.
 
@@ -8,7 +8,7 @@ maintained implementations that fit our execution model, platform requirements, 
 
 Both ordinary controller calls and long-lived connection/log streams use ureq's HTTP implementation.
 Manis already uses ureq for downloads; reusing it avoids introducing an additional HTTP stack or
-requiring a Tokio runtime in the domain layer's worker threads. The domain-facing transport trait remains
+requiring a Tokio runtime in GPUI background workers. The domain-facing transport trait remains
 mockable, and the `StdHttpTransport` name is retained for source compatibility.
 
 Manis still owns the security policy: validate paths/authentication before connecting, allow only
@@ -37,7 +37,7 @@ it into ordered, typed YAML values, then encode with serde-saphyr for Mihomo.
 The `preserve_order` feature preserves field insertion order; rule/group/provider sequence order is
 unchanged. No hand-written JSON/YAML escaping, commas, or indentation remain in these renderers.
 
-[serde-saphyr](https://docs.rs/serde-saphyr/0.0.29/serde_saphyr/) already exists in the dependency
+[serde-saphyr](https://docs.rs/serde-saphyr/0.0.29/serde_saphyr/) already exists in the GPUI dependency
 graph and provides Serde serialization and explicit quoting. It is a fit-based choice, not a claim
 that it is the most widely used YAML crate. The small `QuotedYaml` Serde adapter requests
 double-quoted scalar values; the library performs all escaping and layout. Empty collections now
@@ -54,13 +54,13 @@ ordering, Linux strict-route, fake-IP persistence, and existing DNS choices rema
 The existing event/operation API emits structured tracing events. A dedicated
 [tracing-subscriber layer](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/layer/index.html)
 captures only the `manis::events` target and known typed fields. Its private dispatch does not replace
-the process-wide subscriber or collect third-party request logs. Sanitize before emission and again at
+GPUI's global subscriber or collect third-party request logs. Sanitize before emission and again at
 the sink; ignore arbitrary Debug fields instead of stringifying possibly secret values.
 
 The UI ring and file receive the same entry, with operation IDs and sequence numbers assigned in
 write order. New `logs/manis-events.log` records are JSON Lines; old tab-separated records are still
 readable. Restored records are sanitized, malformed records are skipped, and history reads are
-bounded. `MANIS_ENGINE_TRACE` still mirrors events to stderr. Raw core logs remain a separate source
+bounded. `MANIS_UI_TRACE` still mirrors events to stderr. Raw core logs remain a separate source
 that may contain sensitive data.
 
 The small synchronous file writer deliberately retains the existing size-based rotation (4 MiB,

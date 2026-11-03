@@ -5,11 +5,8 @@ members = [
     "crates/manis-engine",
     "crates/manis-linux-helper",
     "crates/manis-mihomo",
-    "crates/manis-nsh-desktop",
-    "crates/manis-nsh-host",
-    "crates/manis-presentation",
     "crates/manis-profile",
-    "crates/manis-service",
+    "crates/manis-ui",
 ]
 resolver = "2"
 

@@ -6,7 +6,7 @@ adaptive
 
 ## Stack
 
-Manis is a Rust desktop application targeting Windows, macOS, and Linux. Mihomo is the managed routing core. A UI-toolkit-neutral service layer owns the product model, orchestration, and persistence, and the NSH shell renders it on every platform.
+Manis is a Rust + GPUI desktop application targeting Windows, macOS, and Linux. Mihomo is the managed routing core. The GPUI application owns the product model, orchestration, and presentation.
 
 ## Users
 
@@ -33,7 +33,7 @@ The app is a long-running desktop utility used from a normal window and system t
 - Subscription/node import, profile management, system proxy control, and capability-gated TUN controls.
 - One shared product language across Windows/macOS/Linux, with platform-specific title bar, menu, keyboard shortcut, tray, and permission conventions.
 - The product configuration is structured; raw YAML is an isolated advanced escape hatch rather than the main interface.
-- The UI is rendered by NSH from one shared TSX bundle; a Rust service layer keeps the product model and persistence platform-neutral so one change reaches every platform.
+- The implementation framework is fixed: GPUI must not be replaced by another UI framework.
 
 ## Brand Commitments
 
@@ -41,7 +41,7 @@ The app is a long-running desktop utility used from a normal window and system t
 
 ## Evidence on Hand
 
-The NSH interface, adaptive layout, tray presence, macOS package, native review screenshots, and source brand artwork are implemented. Production user research, a signed release process, and broad Windows/Linux runtime validation do not yet exist. Example nodes, domains, latency values, and traffic data in screenshots remain illustrative rather than product claims.
+The GPUI interface, adaptive layout, tray presence, macOS package, native review screenshots, and source brand artwork are implemented. Production user research, a signed release process, and broad Windows/Linux runtime validation do not yet exist. Example nodes, domains, latency values, and traffic data in screenshots remain illustrative rather than product claims.
 
 ## Product Principles
 

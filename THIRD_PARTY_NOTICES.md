@@ -5,6 +5,16 @@ interacts with third-party components governed by their own licenses. This file 
 components that require explicit release attention; it is not a substitute for the license report
 generated from the exact dependency lockfile of a release.
 
+## GPUI and Zed crates
+
+Manis pins `gpui` and `gpui_platform` to Zed commit
+`5631830c564afa89b3aba679f45d9c3345f9460f`.
+
+- Upstream: <https://github.com/zed-industries/zed>
+- GPUI license: Apache-2.0
+- Important transitive licenses: the pinned dependency graph includes `zlog`, `ztracing`, and
+  `ztracing_macro`, which declare GPL-3.0-or-later.
+
 Maintainers must review the complete linked dependency graph before distributing Manis binaries.
 The Apache-2.0 license of Manis source does not override the licenses of linked dependencies.
 
@@ -37,8 +47,8 @@ Before publishing any binary release:
 
 1. run `cargo deny check` and `cargo audit` against the committed `Cargo.lock`;
 2. generate a complete machine-readable license inventory for all Rust dependencies;
-3. review the NSH QuickJS `rsa` advisory exception recorded in `deny.toml` and
-   `.cargo/audit.toml` and choose release terms compatible with the final linked artifact;
+3. review the GPUI/Zed GPL dependency path and choose release terms compatible with the final
+   linked artifact;
 4. include the exact license texts and notices for every bundled executable; and
 5. record the reviewed component versions in the release notes.
 

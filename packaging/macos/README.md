@@ -71,7 +71,7 @@ The packaging script generates `Contents/Resources/Manis.icns` from
 `MANIS_BUNDLE_VERSION` sets the same three-component version in the app bundle and the application,
 including the About dialog. `MANIS_BUNDLE_BUILD` may set its positive integer build number.
 The Package workflow uses these inputs to create separate
-Apple Silicon verification artifacts. Each successful `main` build replaces the public
+Apple Silicon and Intel verification artifacts. Each successful `main` build replaces the public
 `latest` pre-release, manual runs keep short-lived Actions artifacts, and pushing any version tag
 creates a separate draft release. Versioned drafts are never published automatically. Rolling
 builds use `0.1.<Package run number>` as the monotonic application version. The release also

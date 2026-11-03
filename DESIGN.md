@@ -138,7 +138,7 @@ Manis 是安静的原生网络工作台。清晰的标题、说明和当前内�
 
 品牌延续 [PRODUCT.md](PRODUCT.md) 已确认的 Manis 名称与青绿、铜色语义。`assets/brand/manis-mark.svg` 用于小尺寸标识；高细节 `manis-shanshui.svg` 留给大尺寸文档和发布物料。小于 64px 的场景使用抽象标识；macOS 菜单栏仍使用单色透明模板。
 
-本文合并现有方向与实际 NSH 实现。规范 token 与共享控件来自 `android/nsh-ui` 的 TSX 页面。前置信息中的 CSS 字体名称是原生系统字体的可移植表达，NSH 和系统提供实际字体。原生窗口行为与截图范围见 [interface-design.md](docs/interface-design.md)。
+本文合并现有方向与实际 GPUI 实现。规范 token 来自 `crates/manis-ui/src/theme.rs`；共享控件来自 `components.rs`。前置信息中的 CSS 字体名称是原生系统字体的可移植表达，GPUI 和系统提供实际字体。原生窗口行为与截图范围见 [interface-design.md](docs/interface-design.md)。
 
 **Key Characteristics:**
 
@@ -171,9 +171,9 @@ Manis 是安静的原生网络工作台。清晰的标题、说明和当前内�
 
 ## Typography
 
-UI 沿用平台系统字体与 CJK fallback。等宽字体用于需要逐字检查的数据和日志；不要把整页说明文字做成代码编辑器。标题与正文遵循前置 token 的角色关系：页面标题、区域标题、正文、标签、元数据、数据。
+UI 沿用 GPUI 的平台系统字体与 CJK fallback。等宽字体用于需要逐字检查的数据和日志；不要把整页说明文字做成代码编辑器。标题与正文遵循前置 token 的角色关系：页面标题、区域标题、正文、标签、元数据、数据。
 
-共享页面标题为 semibold，说明为 normal；标签与数据为 medium。共享按钮沿用 14px 小号标签，主按钮 semibold，其余 medium。当前编辑器标题有局部 17px 样式，不能将所有辅助窗口标题误标为 24px 页面标题。
+共享页面标题为 semibold，说明为 normal；标签与数据为 medium。共享按钮沿用 gpui-component 的 14px 小号标签，主按钮 semibold，其余 medium。当前编辑器标题有局部 17px 样式，不能将所有辅助窗口标题误标为 24px 页面标题。
 
 原文提出的 Windows `Segoe UI Variable`、macOS `SF Pro`、Linux `Noto Sans` 显式优先级与全部数字 tabular numerals 尚未作为全局字体规则落地；它们是设计意向，不能作为验证过的当前行为。
 
@@ -203,7 +203,7 @@ Nodes 当前使用一个页面滚动容器：来源与节点列表在前，策�
 
 **The Opaque Workspace Rule.** 正文、列表、输入框、编辑器与弹出内容使用不透明主题表面。
 
-原文的 140/220ms 动效、传播式铜色信号和 reduced-motion 切换策略尚未作为统一动效系统实现，不作为当前动效 token。
+原文的 140/220ms 动效、传播式铜色信号和 reduced-motion 切换策略尚未作为统一 GPUI 动效系统实现，不作为当前动效 token。
 
 ## Shapes
 
@@ -259,4 +259,4 @@ Cmd/Ctrl+, 打开设置，Cmd/Ctrl+W 关闭辅助窗口，Escape 关闭编辑器
 - **Don't** 把铜色路由语义用于普通动作或装饰。
 - **Don't** 将本地预测标成内核已观察结果。
 - **Don't** 将旧布局、动效和快捷键意向写成已实现事实。
-- **Don't** 把离屏渲染截图称为真实 OS 标题栏或合成器验证。
+- **Don't** 把离屏 GPUI 内容截图称为真实 OS 标题栏或合成器验证。

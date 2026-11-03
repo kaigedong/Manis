@@ -7,7 +7,7 @@
 
 [简体中文](README.md) · **English**
 
-Manis is a small, experimental client built with Rust; Android and desktop both render their UI with NSH. Its current focus is narrow:
+Manis is a small, experimental desktop client built with Rust and GPUI. Its current focus is narrow:
 showing how an ordered rule leads to a policy group and then to a proxy node, while providing a UI
 for a limited set of common Mihomo tasks.
 
@@ -40,7 +40,7 @@ format.
 
 ## Implemented so far
 
-- Native NSH interface shared by Android and desktop; the page copy is Chinese today.
+- Native adaptive GPUI interface with English, Simplified Chinese, light, and dark modes.
 - HTTP/HTTPS subscriptions and single-node share links with private local persistence.
 - Manual, latency-based, fallback, and load-balancing policy group models, gated by core capability.
 - Ordered routing rules, QX rule-list import, compound domain/port matching, and explicit fallback.
@@ -64,7 +64,7 @@ and include it as a first-launch seed. The application then uses and updates onl
 
 | Platform | Build target | Runtime status |
 | --- | --- | --- |
-| macOS 13+ | Maintained | Apple Silicon (`arm64`) only; primary development platform; system proxy verified, TUN supported for testing through administrator approval |
+| macOS 13+ | Maintained | Primary development platform; system proxy verified, TUN supported for testing through administrator approval |
 | Windows | Maintained | Experimental; managed controller transport is not implemented yet |
 | Linux | Maintained | Experimental; native packages and desktop environments need broader testing |
 | Android | Experimental | Runs on `arm64-v8a` devices and emulators; feature parity is tracked in [android/README.md](android/README.md) |
@@ -73,7 +73,7 @@ The CI configuration checks the desktop platforms; Android builds through its ow
 compile check is not a claim that every network integration has been validated on that operating
 system.
 
-The Package workflow builds an unnotarized Apple Silicon (`arm64`) macOS bundle, an experimental
+The Package workflow builds unnotarized macOS bundles for Apple Silicon and Intel, an experimental
 Arch Linux `x86_64` package with native Wayland support, and an Android `arm64-v8a` debug APK, and
 generates checksums for each package. Every commit merged into `main` replaces the public rolling
 `latest` pre-release, while manual workflow artifacts are retained for 14 days. Pushing any version
@@ -87,7 +87,7 @@ installing them.
 The most recent successful `main` build is available from the `Latest Manis development build`
 pre-release on the [Releases page](https://github.com/kaigedong/Manis/releases), or download a single run from the
 [Package workflow page](https://github.com/kaigedong/Manis/actions/workflows/package.yml). Choose
-`arm64` for an Apple Silicon Mac (Intel Macs are not supported), the `.pkg.tar.zst` package for
+`arm64` for an Apple Silicon Mac, `x86_64` for an Intel Mac, the `.pkg.tar.zst` package for
 CachyOS and Arch Linux, or `Manis-<version>-android-arm64-debug.apk` for an Android phone. Version
 tags continue to produce maintainer-only draft releases.
 
@@ -114,20 +114,18 @@ Mihomo core updates are unchanged.
 
 ## Build from source
 
-The repository pins its Rust toolchain in `rust-toolchain.toml`.
+The repository pins its Rust toolchain in `rust-toolchain.toml` and its GPUI revision in
+`crates/manis-ui/Cargo.toml`.
 
-On macOS, install Xcode Command Line Tools. On Linux, install GTK 4 with its Wayland/X11
-development packages. The Linux tray uses StatusNotifierItem over the session D-Bus without GTK 3;
-GNOME needs an AppIndicator extension to display it. Then run:
+On macOS, install Xcode Command Line Tools. On Linux, install the Wayland/X11, fontconfig, and
+ALSA development packages required by GPUI. The Linux tray uses StatusNotifierItem over the session
+D-Bus without GTK 3; GNOME needs an AppIndicator extension to display it. Then run:
 
 ```bash
 git clone https://github.com/kaigedong/Manis.git
 cd Manis
-cargo run -p manis-nsh-desktop
+cargo run -p manis-ui
 ```
-
-Release packages install the NSH host as `manis` and the headless engine as `manis-engine`; the
-host launches the sibling engine to own the Mihomo process. There is no GPUI window any more.
 
 Manis only starts Mihomo processes it owns and only runs configuration generated from data managed
 through the application. It does not attach to another application's controller or run a supplied
@@ -166,6 +164,7 @@ are excluded, and importing does not enable a proxy.
 ```bash
 cargo fmt --all -- --check
 cargo check --workspace --all-targets --locked
+cargo check -p manis-ui --example snapshot --features snapshot-fixtures --locked
 cargo test --workspace --all-targets --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
 ```
@@ -206,7 +205,7 @@ vulnerabilities through GitHub private vulnerability reporting.
 | `crates/manis-engine` | Core discovery, validation, process ownership, and lifecycle |
 | `crates/manis-profile` | Typed profiles and Mihomo configuration compilation |
 | `crates/manis-mihomo` | Restricted Mihomo controller transport and domain mapping |
-| `crates/manis-service` | Desktop domain layer: storage, Mihomo controller, NSH bridge, headless engine |
+| `crates/manis-ui` | GPUI application, persistence boundaries, and platform integration |
 | `packaging/macos` | macOS bundle and fixed-purpose privileged-helper tooling |
 | `packaging/archlinux` | Experimental Arch Linux package with Wayland support |
 | `docs` | Architecture, design, and maintainer documentation |
@@ -215,6 +214,7 @@ Additional reading:
 
 - [Product principles](PRODUCT.md)
 - [Design system](DESIGN.md)
+- [GPUI implementation notes](GPUI_IMPLEMENTATION.md)
 - [Development guide](docs/development.md)
 - [Direct and compound routing rules](docs/architecture/direct-rules.md)
 - [macOS packaging](packaging/macos/README.md)

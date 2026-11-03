@@ -15,11 +15,11 @@ well-tested changes are easier to review than broad rewrites.
 ## Development setup
 
 Install the Rust toolchain declared in `rust-toolchain.toml`. macOS development requires Xcode
-Command Line Tools. Linux additionally requires the GTK 4 and Wayland/X11 development packages used by the
-NSH desktop host.
+Command Line Tools. Linux additionally requires the native Wayland/X11, GTK 3, fontconfig, and ALSA
+development packages used by GPUI.
 
 ```bash
-cargo run -p manis-nsh-desktop
+cargo run -p manis-ui
 ```
 
 Mihomo is an external program and is not included in this repository. Most tests use local fixtures

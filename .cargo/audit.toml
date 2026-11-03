@@ -1,4 +1,0 @@
-[advisories]
-# Pulled by nsh's QuickJS stdlib; no patched release and no remote timing
-# oracle in this local signature path. See deny.toml.
-ignore = ["RUSTSEC-2023-0071"]

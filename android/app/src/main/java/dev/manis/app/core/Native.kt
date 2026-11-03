@@ -25,19 +25,4 @@ internal object Native {
     ): Int
 
     external fun stopCore()
-
-    /** Shared node-page presentation from `manis-presentation`; returns JSON. */
-    external fun nodePage(requestJson: String): String
-
-    /** Shared connection-page presentation from `manis-presentation`; returns JSON. */
-    external fun connectionPage(requestJson: String): String
-
-    /** Shared subscriptions-page presentation from `manis-presentation`; returns JSON. */
-    external fun subscriptionsPage(requestJson: String): String
-
-    /** Shared rules-page presentation from `manis-presentation`; returns JSON. */
-    external fun rulesPage(requestJson: String): String
-
-    /** Shared settings-page presentation from `manis-presentation`; returns JSON. */
-    external fun settingsPage(requestJson: String): String
 }
