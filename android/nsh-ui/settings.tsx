@@ -1,6 +1,8 @@
 import { Clipboard, computed, host, Scroll, signal, Text, View } from "nsh";
 import { Input } from "nsh/base";
 import { embedded, root } from "./store";
+import { desktopColors } from "./theme";
+import { Action, Card, Info } from "./ui";
 
 type UpdateInfo = {
   state: "idle" | "checking" | "upToDate" | "available" | "downloading" | "ready" | "failed";
@@ -114,65 +116,6 @@ async function saveDns() {
     .filter(Boolean);
   const reply = await invoke("settings.dns.set", { mode: dnsMode(), servers });
   if (reply?.message?.includes("已更新")) showDns.set(false);
-}
-
-function Action(props: {
-  label: string;
-  onPress: () => void;
-  primary?: boolean;
-  disabled?: boolean;
-}) {
-  const disabled = () => props.disabled || busy();
-  return (
-    <View
-      onPress={disabled() ? undefined : props.onPress}
-      role="button"
-      accessible
-      disabled={disabled()}
-      style={{
-        opacity: disabled() ? 0.45 : 1,
-        borderRadius: 10,
-        paddingHorizontal: 14,
-        paddingVertical: 8,
-        backgroundColor: props.primary ? "#7c3aed" : "#ede9fe",
-      }}
-    >
-      <Text style={{ fontSize: 14, color: props.primary ? "#ffffff" : "#5b21b6" }}>
-        {props.label}
-      </Text>
-    </View>
-  );
-}
-
-function Card(props: { title: string; children: any }) {
-  return (
-    <View
-      style={{
-        marginHorizontal: 16,
-        marginTop: 14,
-        borderWidth: 1,
-        borderColor: "#e5e7eb",
-        borderRadius: 16,
-        padding: 14,
-        gap: 10,
-        backgroundColor: "#ffffff",
-      }}
-    >
-      <Text role="header" style={{ fontSize: 18, fontWeight: "600" }}>
-        {props.title}
-      </Text>
-      {props.children}
-    </View>
-  );
-}
-
-function Info(props: { label: string; value: string }) {
-  return (
-    <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 12, paddingVertical: 4 }}>
-      <Text style={{ fontSize: 13, color: "#6b7280", width: 96 }}>{props.label}</Text>
-      <Text style={{ fontSize: 13, flex: 1 }}>{props.value}</Text>
-    </View>
-  );
 }
 
 function formatSize(bytes: number): string {
@@ -324,7 +267,7 @@ function UpdateCard() {
   );
 }
 
-export function SettingsPage() {
+function MobileSettingsPage() {
   return (
     <View class={embedded ? "flex-1 bg-background" : "flex-1 bg-background pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"}>
       <Scroll style={{ flex: 1 }}>
@@ -400,4 +343,104 @@ export function SettingsPage() {
       </Scroll>
     </View>
   );
+}
+
+function DesktopSettingsPage() {
+  return (
+    <View style={{ flex: 1, flexDirection: "row", backgroundColor: desktopColors.high }}>
+      <View style={{ flex: 1, minWidth: 0, flexDirection: "column" }}>
+        <View
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 8,
+            paddingHorizontal: 16,
+            paddingVertical: 10,
+            borderBottomWidth: 1,
+            borderBottomColor: desktopColors.outline,
+          }}
+        >
+          <Text style={{ fontSize: 12, color: desktopColors.secondary, flex: 1 }}>
+            {message() || "连接、解析、备份、更新与内核信息。"}
+          </Text>
+          <Action label="重新载入配置" onPress={() => void invoke("settings.reload")} />
+        </View>
+        <Scroll style={{ flex: 1 }} contentStyle={{ padding: 12, gap: 10 }}>
+          {showDns() ? <DnsPanel /> : null}
+          {showLogs() ? <LogsPanel /> : null}
+          <Card title="连接">
+            <Info label="状态" value={page().status} />
+            <Info label="路由模式" value={page().mode} />
+            <Info label="节点域名解析" value={page().proxyDns.label} />
+            <Action label="节点域名解析" onPress={openDns} />
+          </Card>
+          {page().autoStart !== undefined ? (
+            <Card title="启动">
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+                <Text style={{ fontSize: 12, flex: 1, color: desktopColors.text }}>开机自动启动</Text>
+                <Action
+                  label={page().autoStart ? "关闭" : "开启"}
+                  onPress={() => void invoke("settings.autostart.set", { enabled: !page().autoStart })}
+                />
+              </View>
+            </Card>
+          ) : null}
+          <Card title="配置摘要">
+            <Info label="内核版本" value={page().kernelVersion} />
+            <Info label="配置" value={page().summary} />
+            <Info
+              label="工作区"
+              value={`${page().subscriptions} 订阅 · ${page().nodes} 节点 · ${page().groups} 策略组`}
+            />
+            <Info label="设备 ABI" value={page().abi} />
+            <Info label="数据目录" value={page().dataDir} />
+          </Card>
+          <Card title="备份与恢复">
+            <Text style={{ fontSize: 12, color: desktopColors.secondary }}>
+              导出的是 Manis 备份格式（含订阅链接和节点密钥），不是交给其他客户端的 YAML。
+            </Text>
+            <View style={{ flexDirection: "row", gap: 8 }}>
+              <Action label="复制到剪贴板" onPress={() => void copyBackup()} />
+              <Action label="从剪贴板导入" onPress={() => void importBackup()} />
+            </View>
+          </Card>
+          <Card title="诊断">
+            <Action label="查看内核日志" onPress={() => void invoke("settings.logs")} />
+          </Card>
+          <UpdateCard />
+          <Card title="关于">
+            <Text style={{ fontSize: 12, color: desktopColors.text }}>Manis 桌面版</Text>
+            <Text style={{ fontSize: 11, color: desktopColors.secondary }}>
+              Mihomo 内核随发行包分发；补丁与构建脚本见仓库 android/ 目录。
+            </Text>
+          </Card>
+        </Scroll>
+      </View>
+      <View
+        style={{
+          width: 300,
+          borderLeftWidth: 1,
+          borderLeftColor: desktopColors.outline,
+          backgroundColor: desktopColors.low,
+        }}
+      >
+        <Scroll style={{ flex: 1 }} contentStyle={{ padding: 12, gap: 10 }}>
+          <Card title="状态">
+            <Info label="连接" value={page().status} />
+            <Info label="已安装版本" value={page().installedVersion} />
+            <Info label="更新" value={page().update.state} />
+          </Card>
+          <Card title="工作区">
+            <Info label="订阅" value={`${page().subscriptions}`} />
+            <Info label="节点" value={`${page().nodes}`} />
+            <Info label="策略组" value={`${page().groups}`} />
+          </Card>
+        </Scroll>
+      </View>
+    </View>
+  );
+}
+
+export function SettingsPage() {
+  return embedded ? <DesktopSettingsPage /> : <MobileSettingsPage />;
 }
