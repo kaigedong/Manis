@@ -1,6 +1,7 @@
 import { computed, host, Scroll, signal, Text, View } from "nsh";
 import { Input } from "nsh/base";
 import { embedded, layoutWidth, root } from "./store";
+import { t } from "./copy";
 import { desktopColors } from "./theme";
 import { Action, SubscriptionRow } from "./ui";
 
@@ -49,7 +50,7 @@ const selectedNodes = signal<number[]>([]);
 
 async function invoke(command: string, payload: Record<string, unknown> = {}) {
   if (!host.available()) {
-    message.set("独立运行模式：没有宿主可执行");
+    message.set(t("subs.noHost"));
     return null;
   }
   busy.set(true);
@@ -59,7 +60,7 @@ async function invoke(command: string, payload: Record<string, unknown> = {}) {
     message.set(reply?.message ?? "");
     return reply;
   } catch (error) {
-    message.set(error instanceof Error ? error.message : "操作失败");
+    message.set(error instanceof Error ? error.message : t("subs.failed"));
     return null;
   } finally {
     busy.set(false);
@@ -92,7 +93,7 @@ function toggleIndex(list: number[], value: number): number[] {
 
 async function addSubscription() {
   if (!subUrl().trim()) {
-    message.set("订阅地址不能为空");
+    message.set(t("subs.nameRequired"));
     return;
   }
   const reply = await invoke("subscriptions.add", {
@@ -108,7 +109,7 @@ async function addSubscription() {
 
 async function addNode() {
   if (!nodeLink().trim().startsWith("vless://")) {
-    message.set("请输入 vless:// 分享链接");
+    message.set(t("subs.vlessRequired"));
     return;
   }
   const reply = await invoke("subscriptions.addNode", { link: nodeLink().trim() });
@@ -120,7 +121,7 @@ async function addNode() {
 
 async function addGroup() {
   if (!groupName().trim() || (selectedSubscriptions().length === 0 && selectedNodes().length === 0)) {
-    message.set("策略组需要名称和至少一个成员");
+    message.set(t("subs.groupRequired"));
     return;
   }
   const reply = await invoke("subscriptions.addGroup", {
@@ -207,12 +208,12 @@ function ChoiceRow(props: {
 
 function SubscriptionForm() {
   return (
-    <DFormFrame title="添加订阅" hint="粘贴 Clash 格式订阅地址；添加后会立即下载。">
-      <DInput value={subName()} onChange={(value) => subName.set(value)} placeholder="名称（可选）" />
+    <DFormFrame title={t("subs.addSubscription")} hint={t("subs.addSubscriptionHint")}>
+      <DInput value={subName()} onChange={(value) => subName.set(value)} placeholder={t("subs.nameOptional")} />
       <DInput value={subUrl()} onChange={(value) => subUrl.set(value)} placeholder="https://…" />
       <View style={{ flexDirection: "row", gap: 8 }}>
-        <Action label="添加" primary onPress={() => void addSubscription()} />
-        <Action label="取消" onPress={() => adding.set(null)} />
+        <Action label={t("subs.add")} primary onPress={() => void addSubscription()} />
+        <Action label={t("subs.cancel")} onPress={() => adding.set(null)} />
       </View>
     </DFormFrame>
   );
@@ -220,11 +221,11 @@ function SubscriptionForm() {
 
 function NodeForm() {
   return (
-    <DFormFrame title="添加 VLESS 节点" hint="支持 TLS / WebSocket / Reality 分享链接。">
+    <DFormFrame title={t("subs.addNode")} hint={t("subs.addNodeHint")}>
       <DInput value={nodeLink()} onChange={(value) => nodeLink.set(value)} placeholder="vless://…" multiline />
       <View style={{ flexDirection: "row", gap: 8 }}>
-        <Action label="添加" primary onPress={() => void addNode()} />
-        <Action label="取消" onPress={() => adding.set(null)} />
+        <Action label={t("subs.add")} primary onPress={() => void addNode()} />
+        <Action label={t("subs.cancel")} onPress={() => adding.set(null)} />
       </View>
     </DFormFrame>
   );
@@ -232,22 +233,22 @@ function NodeForm() {
 
 function GroupForm() {
   return (
-    <DFormFrame title="添加策略组" hint="选择成员；自动测速组会按延迟选最快节点。">
-      <DInput value={groupName()} onChange={(value) => groupName.set(value)} placeholder="组名" />
+    <DFormFrame title={t("subs.addGroup")} hint={t("subs.addGroupHint")}>
+      <DInput value={groupName()} onChange={(value) => groupName.set(value)} placeholder={t("subs.groupName")} />
       <View style={{ flexDirection: "row", gap: 8 }}>
         <Action
-          label="手动选择"
+          label={t("subs.manualSelect")}
           primary={groupStrategy() === "select"}
           onPress={() => groupStrategy.set("select")}
         />
         <Action
-          label="自动测速"
+          label={t("subs.autoSelect")}
           primary={groupStrategy() === "urltest"}
           onPress={() => groupStrategy.set("urltest")}
         />
       </View>
       <Text style={{ fontSize: embedded ? 12 : 13, fontWeight: "600", color: embedded ? desktopColors.text : undefined }}>
-        订阅成员
+        {t("subs.membersSubscriptions")}
       </Text>
       {page().subscriptions.map((entry) => (
         <DCheck
@@ -257,7 +258,7 @@ function GroupForm() {
         />
       ))}
       <Text style={{ fontSize: embedded ? 12 : 13, fontWeight: "600", color: embedded ? desktopColors.text : undefined }}>
-        手动节点成员
+        {t("subs.membersNodes")}
       </Text>
       {page().nodes.map((entry) => (
         <DCheck
@@ -267,8 +268,8 @@ function GroupForm() {
         />
       ))}
       <View style={{ flexDirection: "row", gap: 8 }}>
-        <Action label="添加" primary onPress={() => void addGroup()} />
-        <Action label="取消" onPress={() => adding.set(null)} />
+        <Action label={t("subs.add")} primary onPress={() => void addGroup()} />
+        <Action label={t("subs.cancel")} onPress={() => adding.set(null)} />
       </View>
     </DFormFrame>
   );
@@ -279,13 +280,13 @@ function MobileSubscriptionsPage() {
     <View class={embedded ? "flex-1 bg-background" : "flex-1 bg-background pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"}>
       <Scroll style={{ flex: 1 }}>
         <View style={{ paddingHorizontal: 20, paddingTop: 18, paddingBottom: 24, gap: 12 }}>
-          <Text style={{ fontSize: 28, fontWeight: "600" }}>订阅</Text>
+          <Text style={{ fontSize: 28, fontWeight: "600" }}>{t("subs.title")}</Text>
           <Text style={{ fontSize: 13, color: "#6b7280" }}>
-            订阅、手动节点和策略组都会进入同一份内核配置。
+            {t("subs.hint")}
           </Text>
           <View style={{ flexDirection: "row", gap: 8, marginTop: 4 }}>
-            <Action label={busy() ? "刷新中…" : "刷新订阅"} onPress={() => void invoke("subscriptions.refresh")} />
-            <Action label="应用" primary onPress={() => void invoke("subscriptions.apply")} />
+            <Action label={busy() ? t("nodes.refreshing") : t("subs.refresh")} onPress={() => void invoke("subscriptions.refresh")} />
+            <Action label={t("subs.apply")} primary onPress={() => void invoke("subscriptions.apply")} />
           </View>
           {message() ? (
             <Text style={{ fontSize: 12, color: "#6b7280" }}>{message()}</Text>
@@ -296,11 +297,11 @@ function MobileSubscriptionsPage() {
           {adding() === "group" ? <GroupForm /> : null}
 
           <Section
-            title="订阅"
-            hint={page().subscriptions.length === 0 ? "还没有订阅。" : undefined}
+            title={t("subs.subscriptions")}
+            hint={page().subscriptions.length === 0 ? t("subs.noSubscriptions") : undefined}
             action={
               <Action
-                label="添加"
+                label={t("subs.add")}
                 onPress={() => {
                   adding.set(adding() === "subscription" ? null : "subscription");
                 }}
@@ -319,11 +320,11 @@ function MobileSubscriptionsPage() {
           </Section>
 
           <Section
-            title="手动节点"
-            hint={page().nodes.length === 0 ? "还没有手动节点。" : undefined}
+            title={t("subs.nodes")}
+            hint={page().nodes.length === 0 ? t("subs.noNodes") : undefined}
             action={
               <Action
-                label="添加"
+                label={t("subs.add")}
                 onPress={() => {
                   adding.set(adding() === "node" ? null : "node");
                 }}
@@ -342,7 +343,7 @@ function MobileSubscriptionsPage() {
           </Section>
 
           <Section
-            title="策略组"
+            title={t("subs.groups")}
             hint={
               page().groups.length === 0
                 ? "全局组始终存在；再加一个自动测速组即可按延迟选最快节点。"
@@ -350,7 +351,7 @@ function MobileSubscriptionsPage() {
             }
             action={
               <Action
-                label="添加"
+                label={t("subs.add")}
                 onPress={() => {
                   adding.set(adding() === "group" ? null : "group");
                 }}
@@ -360,14 +361,14 @@ function MobileSubscriptionsPage() {
             {page().groups.map((group) => (
               <SubscriptionRow
                 title={group.name}
-                detail={`${group.strategy === "urltest" ? "自动测速" : "手动选择"} · ${group.subscriptionIndexes.length} 个订阅 / ${group.nodeIndexes.length} 个节点`}
+                detail={`${group.strategy === "urltest" ? t("subs.autoSelect") : t("subs.manualSelect")} · ${group.subscriptionIndexes.length} 个订阅 / ${group.nodeIndexes.length} 个节点`}
                 onDelete={() => remove("group", group.index)}
               />
             ))}
           </Section>
 
           <Text style={{ fontSize: 12, color: "#6b7280", marginHorizontal: 2 }}>
-            修改会先保存；点「应用」后内核重启并使用已下载的缓存，VPN 接口不会断开。
+            {t("subs.applyNote")}
           </Text>
         </View>
       </Scroll>
@@ -528,21 +529,21 @@ function DesktopSubscriptionsPage() {
           }}
         >
           <Text style={{ fontSize: 12, color: desktopColors.secondary, flex: 1 }}>
-            {message() || "订阅、手动节点和策略组都会进入同一份内核配置。"}
+            {message() || t("subs.hint")}
           </Text>
-          <Action label={busy() ? "刷新中…" : "刷新订阅"} onPress={() => void invoke("subscriptions.refresh")} />
-          <Action label="应用" primary onPress={() => void invoke("subscriptions.apply")} />
+          <Action label={busy() ? t("nodes.refreshing") : t("subs.refresh")} onPress={() => void invoke("subscriptions.refresh")} />
+          <Action label={t("subs.apply")} primary onPress={() => void invoke("subscriptions.apply")} />
         </View>
         <Scroll style={{ flex: 1 }} contentStyle={{ padding: 12, gap: 10 }}>
           {adding() === "subscription" ? <SubscriptionForm /> : null}
           {adding() === "node" ? <NodeForm /> : null}
           {adding() === "group" ? <GroupForm /> : null}
           <DCard
-            title="订阅"
+            title={t("subs.subscriptions")}
             count={page().subscriptions.length}
             action={
               <Action
-                label="添加"
+                label={t("subs.add")}
                 onPress={() => adding.set(adding() === "subscription" ? null : "subscription")}
               />
             }
@@ -557,15 +558,15 @@ function DesktopSubscriptionsPage() {
               />
             ))}
             {page().subscriptions.length === 0 ? (
-              <Text style={{ fontSize: 12, color: desktopColors.tertiary, padding: 12 }}>还没有订阅。</Text>
+              <Text style={{ fontSize: 12, color: desktopColors.tertiary, padding: 12 }}>{t("subs.noSubscriptions")}</Text>
             ) : null}
           </DCard>
           <DCard
-            title="手动节点"
+            title={t("subs.nodes")}
             count={page().nodes.length}
             action={
               <Action
-                label="添加"
+                label={t("subs.add")}
                 onPress={() => adding.set(adding() === "node" ? null : "node")}
               />
             }
@@ -580,15 +581,15 @@ function DesktopSubscriptionsPage() {
               />
             ))}
             {page().nodes.length === 0 ? (
-              <Text style={{ fontSize: 12, color: desktopColors.tertiary, padding: 12 }}>还没有手动节点。</Text>
+              <Text style={{ fontSize: 12, color: desktopColors.tertiary, padding: 12 }}>{t("subs.noNodes")}</Text>
             ) : null}
           </DCard>
           <DCard
-            title="策略组"
+            title={t("subs.groups")}
             count={page().groups.length}
             action={
               <Action
-                label="添加"
+                label={t("subs.add")}
                 onPress={() => adding.set(adding() === "group" ? null : "group")}
               />
             }
@@ -596,13 +597,13 @@ function DesktopSubscriptionsPage() {
             {page().groups.map((group) => (
               <SubscriptionRow
                 title={group.name}
-                detail={`${group.strategy === "urltest" ? "自动测速" : "手动选择"} · ${group.subscriptionIndexes.length} 个订阅 / ${group.nodeIndexes.length} 个节点`}
+                detail={`${group.strategy === "urltest" ? t("subs.autoSelect") : t("subs.manualSelect")} · ${group.subscriptionIndexes.length} 个订阅 / ${group.nodeIndexes.length} 个节点`}
                 onDelete={() => remove("group", group.index)}
               />
             ))}
             {page().groups.length === 0 ? (
               <Text style={{ fontSize: 12, color: desktopColors.tertiary, padding: 12 }}>
-                全局组始终存在；再加一个自动测速组即可按延迟选最快节点。
+                {t("subs.noGroups")}
               </Text>
             ) : null}
           </DCard>
@@ -621,14 +622,14 @@ function DesktopSubscriptionsPage() {
               gap: 6,
             }}
           >
-            <Text style={{ fontSize: 11, fontWeight: "600", color: desktopColors.tertiary }}>汇总</Text>
+            <Text style={{ fontSize: 11, fontWeight: "600", color: desktopColors.tertiary }}>{t("subs.summary")}</Text>
             <Text style={{ fontSize: 12, color: desktopColors.text }}>
-              订阅 {page().subscriptions.length}（已启用 {enabledSubscriptions}）
+              {t("subs.subscriptions")} {page().subscriptions.length} · {t("subs.enabledCount", { count: enabledSubscriptions })}
             </Text>
             <Text style={{ fontSize: 12, color: desktopColors.text }}>
-              手动节点 {page().nodes.length}（已启用 {enabledNodes}）
+              {t("subs.nodes")} {page().nodes.length} · {t("subs.enabledCount", { count: enabledNodes })}
             </Text>
-            <Text style={{ fontSize: 12, color: desktopColors.text }}>策略组 {page().groups.length}</Text>
+            <Text style={{ fontSize: 12, color: desktopColors.text }}>{t("subs.groups")} {page().groups.length}</Text>
           </View>
           <View
             style={{
@@ -640,9 +641,9 @@ function DesktopSubscriptionsPage() {
               gap: 6,
             }}
           >
-            <Text style={{ fontSize: 11, fontWeight: "600", color: desktopColors.tertiary }}>应用</Text>
+            <Text style={{ fontSize: 11, fontWeight: "600", color: desktopColors.tertiary }}>{t("subs.applyTitle")}</Text>
             <Text style={{ fontSize: 12, color: desktopColors.secondary }}>
-              修改会先保存；点「应用」后内核重启并使用已下载的缓存，VPN 接口不会断开。
+              {t("subs.applyNote")}
             </Text>
           </View>
         </Scroll>

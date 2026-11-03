@@ -1,6 +1,7 @@
 import { computed, host, Scroll, signal, Text, View } from "nsh";
 import { Input } from "nsh/base";
 import { embedded, layoutWidth, root } from "./store";
+import { t } from "./copy";
 import { desktopColors } from "./theme";
 import { Action, Chip, RuleRow } from "./ui";
 
@@ -45,7 +46,7 @@ const editor = signal<Editor | null>(null);
 
 async function invoke(command: string, payload: Record<string, unknown> = {}) {
   if (!host.available()) {
-    message.set("独立运行模式：没有宿主可执行");
+    message.set(t("subs.noHost"));
     return null;
   }
   busy.set(true);
@@ -55,7 +56,7 @@ async function invoke(command: string, payload: Record<string, unknown> = {}) {
     message.set(reply?.message ?? "");
     return reply;
   } catch (error) {
-    message.set(error instanceof Error ? error.message : "操作失败");
+    message.set(error instanceof Error ? error.message : t("subs.failed"));
     return null;
   } finally {
     busy.set(false);
@@ -147,9 +148,9 @@ function RuleForm() {
           color: embedded ? desktopColors.text : undefined,
         }}
       >
-        {current()?.index === null ? "添加规则" : "编辑规则"}
+        {current()?.index === null ? t("rules.addRule") : t("rules.editRule")}
       </Text>
-      <Text style={{ fontSize: embedded ? 11 : 12, color: embedded ? desktopColors.tertiary : "#6b7280" }}>类型</Text>
+      <Text style={{ fontSize: embedded ? 11 : 12, color: embedded ? desktopColors.tertiary : "#6b7280" }}>{t("rules.kindLabel")}</Text>
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: embedded ? 4 : 6 }}>
         {page().kinds.map((kind) => (
           <Chip
@@ -178,7 +179,7 @@ function RuleForm() {
           }
         />
       ) : null}
-      <Text style={{ fontSize: embedded ? 11 : 12, color: embedded ? desktopColors.tertiary : "#6b7280" }}>策略</Text>
+      <Text style={{ fontSize: embedded ? 11 : 12, color: embedded ? desktopColors.tertiary : "#6b7280" }}>{t("rules.policyLabel")}</Text>
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: embedded ? 4 : 6 }}>
         {page().policies.map((policy) => (
           <Chip
@@ -192,8 +193,8 @@ function RuleForm() {
         {kindHelp(current()?.kind ?? "")}
       </Text>
       <View style={{ flexDirection: "row", gap: embedded ? 6 : 8 }}>
-        <Action label="保存" primary onPress={() => void saveRule()} />
-        <Action label="取消" onPress={() => editor.set(null)} />
+        <Action label={t("rules.save")} primary onPress={() => void saveRule()} />
+        <Action label={t("rules.cancel")} onPress={() => editor.set(null)} />
       </View>
     </View>
   );
@@ -254,12 +255,12 @@ function MobileRulesPage() {
     <View class={embedded ? "flex-1 bg-background" : "flex-1 bg-background pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"}>
       <Scroll style={{ flex: 1 }}>
         <View style={{ paddingHorizontal: 20, paddingTop: 18, paddingBottom: 24, gap: 12 }}>
-          <Text style={{ fontSize: 28, fontWeight: "600" }}>规则</Text>
+          <Text style={{ fontSize: 28, fontWeight: "600" }}>{t("rules.title")}</Text>
           <Text style={{ fontSize: 13, color: "#6b7280" }}>
-            按顺序匹配；未命中的流量自动走全局组。
+            {t("rules.hint")}
           </Text>
           <View style={{ flexDirection: "row", gap: 8, marginTop: 4 }}>
-            <Action label={busy() ? "处理中…" : "应用"} primary onPress={() => void invoke("rules.apply")} />
+            <Action label={busy() ? t("nodes.refreshing") : t("rules.apply")} primary onPress={() => void invoke("rules.apply")} />
           </View>
           {message() ? (
             <Text style={{ fontSize: 12, color: "#6b7280" }}>{message()}</Text>
@@ -272,11 +273,11 @@ function MobileRulesPage() {
               <Text role="header" style={{ fontSize: 18, fontWeight: "600", flex: 1 }}>
                 规则
               </Text>
-              <Action label="添加" onPress={openNew} />
+              <Action label={t("rules.add")} onPress={openNew} />
             </View>
             {page().rules.length === 0 ? (
               <Text style={{ fontSize: 12, color: "#6b7280" }}>
-                还没有规则。添加一条 DOMAIN-SUFFIX 或 IP-CIDR 规则即可开始。
+                {t("rules.empty")}
               </Text>
             ) : null}
             {page().rules.map((rule) => (
@@ -292,13 +293,13 @@ function MobileRulesPage() {
               />
             ))}
             <Text style={{ fontSize: 12, color: "#6b7280" }}>
-              规则从上到下匹配；策略可以是 DIRECT、REJECT 或任意策略组。最终规则之后的规则不会再生效。
+              {t("rules.noteBody")}
             </Text>
           </Card>
 
           {page().warnings.length > 0 ? (
             <Card>
-              <Text role="header" style={{ fontSize: 16, fontWeight: "600" }}>解析提示</Text>
+              <Text role="header" style={{ fontSize: 16, fontWeight: "600" }}>{t("rules.warnings")}</Text>
               {page().warnings.map((warning, index) => (
                 <Text style={{ fontSize: 12, color: "#6b7280" }}>{warning}</Text>
               ))}
@@ -306,7 +307,7 @@ function MobileRulesPage() {
           ) : null}
 
           <Text style={{ fontSize: 12, color: "#6b7280" }}>
-            {page().summary || "尚未连接，应用后可在「连接」页查看摘要"}
+            {page().summary || t("rules.noSummary")}
           </Text>
         </View>
       </Scroll>
@@ -330,10 +331,10 @@ function DesktopRulesPage() {
           }}
         >
           <Text style={{ fontSize: 12, color: desktopColors.secondary, flex: 1 }}>
-            {message() || page().summary || "按顺序匹配；未命中的流量自动走全局组。"}
+            {message() || page().summary || t("rules.hint")}
           </Text>
-          <Action label="添加" onPress={openNew} />
-          <Action label={busy() ? "处理中…" : "应用"} primary onPress={() => void invoke("rules.apply")} />
+          <Action label={t("rules.add")} onPress={openNew} />
+          <Action label={busy() ? t("nodes.refreshing") : t("rules.apply")} primary onPress={() => void invoke("rules.apply")} />
         </View>
         <View
           style={{
@@ -346,12 +347,12 @@ function DesktopRulesPage() {
             borderBottomColor: desktopColors.outline,
           }}
         >
-          <Text style={{ fontSize: 10, color: desktopColors.tertiary, width: 34 }}>顺序</Text>
-          <Text style={{ fontSize: 10, color: desktopColors.tertiary, width: 120 }}>类型</Text>
-          <Text style={{ fontSize: 10, color: desktopColors.tertiary, flex: 1 }}>匹配</Text>
-          <Text style={{ fontSize: 10, color: desktopColors.tertiary, width: 110 }}>策略</Text>
-          <Text style={{ fontSize: 10, color: desktopColors.tertiary, width: 90 }}>状态</Text>
-          <Text style={{ fontSize: 10, color: desktopColors.tertiary, width: 64 }}>操作</Text>
+          <Text style={{ fontSize: 10, color: desktopColors.tertiary, width: 34 }}>{t("rules.col.order")}</Text>
+          <Text style={{ fontSize: 10, color: desktopColors.tertiary, width: 120 }}>{t("rules.kindLabel")}</Text>
+          <Text style={{ fontSize: 10, color: desktopColors.tertiary, flex: 1 }}>{t("rules.col.match")}</Text>
+          <Text style={{ fontSize: 10, color: desktopColors.tertiary, width: 110 }}>{t("rules.policyLabel")}</Text>
+          <Text style={{ fontSize: 10, color: desktopColors.tertiary, width: 90 }}>{t("rules.col.state")}</Text>
+          <Text style={{ fontSize: 10, color: desktopColors.tertiary, width: 64 }}>{t("rules.col.actions")}</Text>
         </View>
         <Scroll style={{ flex: 1 }}>
           {page().rules.map((rule) => (
@@ -368,7 +369,7 @@ function DesktopRulesPage() {
           ))}
           {page().rules.length === 0 ? (
             <Text style={{ padding: 16, fontSize: 12, color: desktopColors.tertiary }}>
-              还没有规则。添加一条 DOMAIN-SUFFIX 或 IP-CIDR 规则即可开始。
+              {t("rules.empty")}
             </Text>
           ) : null}
         </Scroll>
@@ -387,10 +388,10 @@ function DesktopRulesPage() {
               gap: 6,
             }}
           >
-            <Text style={{ fontSize: 11, fontWeight: "600", color: desktopColors.tertiary }}>摘要</Text>
-            <Text style={{ fontSize: 12, color: desktopColors.text }}>{page().summary || "尚未连接"}</Text>
+            <Text style={{ fontSize: 11, fontWeight: "600", color: desktopColors.tertiary }}>{t("rules.summary")}</Text>
+            <Text style={{ fontSize: 12, color: desktopColors.text }}>{page().summary || t("rules.noSummary")}</Text>
             <Text style={{ fontSize: 11, color: desktopColors.secondary }}>
-              {page().rules.length} 条规则 · {page().rules.filter((rule) => rule.enabled).length} 条已启用
+              {t("rules.count", { total: page().rules.length, enabled: page().rules.filter((rule) => rule.enabled).length })}
             </Text>
           </View>
           {page().warnings.length > 0 ? (
@@ -404,7 +405,7 @@ function DesktopRulesPage() {
                 gap: 4,
               }}
             >
-              <Text style={{ fontSize: 11, fontWeight: "600", color: desktopColors.warning }}>解析提示</Text>
+              <Text style={{ fontSize: 11, fontWeight: "600", color: desktopColors.warning }}>{t("rules.warnings")}</Text>
               {page().warnings.map((warning) => (
                 <Text style={{ fontSize: 11, color: desktopColors.secondary }}>{warning}</Text>
               ))}
@@ -420,9 +421,9 @@ function DesktopRulesPage() {
               gap: 4,
             }}
           >
-            <Text style={{ fontSize: 11, fontWeight: "600", color: desktopColors.tertiary }}>说明</Text>
+            <Text style={{ fontSize: 11, fontWeight: "600", color: desktopColors.tertiary }}>{t("rules.note")}</Text>
             <Text style={{ fontSize: 11, color: desktopColors.secondary }}>
-              规则从上到下匹配；策略可以是 DIRECT、REJECT 或任意策略组。最终规则之后的规则不会再生效。
+              {t("rules.noteBody")}
             </Text>
           </View>
         </Scroll>

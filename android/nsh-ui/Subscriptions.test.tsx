@@ -39,3 +39,24 @@ test("desktop subscriptions renders the tables and summary", async () => {
   expect(app.texts()).toContain("自动测速");
   expect(app.texts()).toContain("汇总");
 });
+
+test("english subscriptions follows the language", async () => {
+  const app = await open("./App.tsx", {
+    storage: { language: "en" },
+    host: {
+      params: {
+        tab: "subscriptions",
+        data: {
+          subscriptions: {
+            subscriptions: [],
+            nodes: [],
+            groups: [],
+          },
+        },
+      },
+    },
+  });
+  await app.setViewport(390, 844);
+  expect(app.texts()).toContain("Subscriptions");
+  expect(app.texts()).toContain("Manual nodes");
+});
