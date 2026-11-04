@@ -5,6 +5,14 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.height
+import dev.manis.app.R
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.res.painterResource
+import androidx.compose.material3.Icon
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -95,28 +103,27 @@ fun ProxySourcesContent(onMessage: (String) -> Unit) {
             }
         }
         ManisCard {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("订阅", style = ManisType.label, color = colors.textPrimary, modifier = Modifier.weight(1f))
-                ManisButton(if (refreshing) "刷新中…" else "刷新", onClick = {
-                    if (refreshing || config.subscriptions.none { it.enabled }) return@ManisButton
+            SourceHeader("订阅") {
+                ManisTextAction(if (refreshing) "刷新中…" else "刷新", onClick = {
+                    if (refreshing || config.subscriptions.none { it.enabled }) return@ManisTextAction
                     refreshing = true
                     scope.launch {
                         onMessage(refreshSubscriptions(context, Workspace.config.value))
                         refreshing = false
                     }
                 })
-                ManisButton("添加", onClick = { editor = SourceEditor.Subscription })
+                ManisTextAction("添加", onClick = { editor = SourceEditor.Subscription })
             }
             if (config.subscriptions.isEmpty()) {
-                ManisMeta("粘贴 Clash 格式订阅地址；添加后会立即下载，点「应用」生效。")
+                ManisMeta("粘贴 Clash 订阅地址，添加后立即下载。")
             }
             config.subscriptions.forEachIndexed { index, entry ->
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.weight(1f)) {
-                        Text(entry.name.ifBlank { "订阅 ${index + 1}" }, style = ManisType.body, color = colors.textPrimary)
-                        ManisMeta(maskUrl(entry.url))
-                    }
-                    ManisToggle(checked = entry.enabled) { enabled ->
+                ManisDivider()
+                SourceRow(
+                    title = entry.name.ifBlank { "订阅 ${index + 1}" },
+                    subtitle = maskUrl(entry.url),
+                    checked = entry.enabled,
+                    onToggle = { enabled ->
                         Workspace.update { current ->
                             current.copy(
                                 subscriptions = current.subscriptions.mapIndexed { at, item ->
@@ -124,26 +131,25 @@ fun ProxySourcesContent(onMessage: (String) -> Unit) {
                                 },
                             )
                         }
-                    }
-                    ManisTextAction("删除") { Workspace.removeSubscription(index) }
-                }
+                    },
+                    onDelete = { Workspace.removeSubscription(index) },
+                )
             }
         }
         ManisCard {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("手动节点", style = ManisType.label, color = colors.textPrimary, modifier = Modifier.weight(1f))
-                ManisButton("添加", onClick = { editor = SourceEditor.Node })
+            SourceHeader("手动节点") {
+                ManisTextAction("添加", onClick = { editor = SourceEditor.Node })
             }
             if (config.nodes.isEmpty()) {
                 ManisMeta("粘贴 vless:// 分享链接，一行一个。")
             }
             config.nodes.forEachIndexed { index, entry ->
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.weight(1f)) {
-                        Text(entry.displayName, style = ManisType.body, color = colors.textPrimary)
-                        ManisMeta("VLESS")
-                    }
-                    ManisToggle(checked = entry.enabled) { enabled ->
+                ManisDivider()
+                SourceRow(
+                    title = entry.displayName,
+                    subtitle = "VLESS",
+                    checked = entry.enabled,
+                    onToggle = { enabled ->
                         Workspace.update { current ->
                             current.copy(
                                 nodes = current.nodes.mapIndexed { at, item ->
@@ -151,37 +157,96 @@ fun ProxySourcesContent(onMessage: (String) -> Unit) {
                                 },
                             )
                         }
-                    }
-                    ManisTextAction("删除") { Workspace.removeNode(index) }
-                }
+                    },
+                    onDelete = { Workspace.removeNode(index) },
+                )
             }
         }
         ManisCard {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("策略组", style = ManisType.label, color = colors.textPrimary, modifier = Modifier.weight(1f))
-                ManisButton("添加", onClick = { editor = SourceEditor.Group })
+            SourceHeader("策略组") {
+                ManisTextAction("添加", onClick = { editor = SourceEditor.Group })
             }
             if (config.groups.isEmpty()) {
-                ManisMeta("全局组始终存在；再加一个「自动测速」组即可按延迟选最快节点。")
+                ManisMeta("没有策略组时，直接使用来源里选中的节点。")
             }
             config.groups.forEachIndexed { index, group ->
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.weight(1f)) {
-                        Text(group.name, style = ManisType.body, color = colors.textPrimary)
-                        ManisMeta(
-                            "${if (group.strategy == "urltest") "自动测速" else "手动选择"} · " +
-                                "${group.subscriptionIndexes.size} 个订阅 / ${group.nodeIndexes.size} 个节点",
-                        )
-                    }
-                    ManisTextAction("删除") {
+                ManisDivider()
+                SourceRow(
+                    title = group.name,
+                    subtitle = "${if (group.strategy == "urltest") "自动测速" else "手动选择"} · " +
+                        "${group.subscriptionIndexes.size} 个订阅 / ${group.nodeIndexes.size} 个节点",
+                    checked = null,
+                    onToggle = null,
+                    onDelete = {
                         Workspace.update { current ->
                             current.copy(groups = current.groups.filterIndexed { at, _ -> at != index })
                         }
-                    }
-                }
+                    },
+                )
             }
         }
-        ManisMeta("修改会先保存；点「应用」后内核重启并使用已下载的订阅缓存，VPN 接口不会断开。")
+        ManisMeta("修改会先保存；点「应用」后内核重载配置，VPN 不会断开。")
+    }
+}
+
+/** A section header inside a card: a label and its text actions on one line. */
+@Composable
+private fun SourceHeader(title: String, actions: @Composable RowScope.() -> Unit) {
+    val colors = LocalManisColors.current
+    Row(
+        Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            title,
+            style = ManisType.label,
+            color = colors.textPrimary,
+            modifier = Modifier.weight(1f),
+        )
+        actions()
+    }
+}
+
+/** One source row: what it is, whether it is on, and a quiet delete action. */
+@Composable
+private fun SourceRow(
+    title: String,
+    subtitle: String,
+    checked: Boolean?,
+    onToggle: ((Boolean) -> Unit)?,
+    onDelete: () -> Unit,
+) {
+    val colors = LocalManisColors.current
+    Row(
+        Modifier.fillMaxWidth().height(56.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                title,
+                style = ManisType.body,
+                color = colors.textPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                subtitle,
+                style = ManisType.metadata,
+                color = colors.textTertiary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (checked != null && onToggle != null) {
+            ManisToggle(checked = checked, onCheckedChange = onToggle)
+        }
+        Icon(
+            painter = painterResource(R.drawable.ic_delete),
+            contentDescription = "删除 $title",
+            modifier = Modifier.size(20.dp).clickable(onClick = onDelete),
+            tint = colors.textTertiary,
+        )
     }
 }
 
