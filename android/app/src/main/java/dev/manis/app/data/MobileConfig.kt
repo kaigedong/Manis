@@ -93,6 +93,8 @@ data class MobileConfig(
      * Only used when [proxyDnsServers] is empty.
      */
     val discoveredDns: List<String> = emptyList(),
+    /** A node picked while the VPN was off; applied as soon as the core is running. */
+    val pendingNode: String? = null,
 ) {
     fun toJson(): String {
         val subscriptionsJson = JSONArray()
@@ -135,6 +137,7 @@ data class MobileConfig(
             .put("proxy_dns", proxyDns)
             .put("proxy_dns_servers", JSONArray(proxyDnsServers))
             .put("discovered_dns", JSONArray(discoveredDns))
+            .put("pending_node", pendingNode ?: JSONObject.NULL)
             .put("mode", mode)
             .put("mixed_port", mixedPort)
             .put("subscriptions", subscriptionsJson)
@@ -213,6 +216,7 @@ data class MobileConfig(
                 },
                 proxyDnsServers = servers,
                 discoveredDns = discovered,
+                pendingNode = json.optString("pending_node").takeIf { it.isNotBlank() && it != "null" },
             )
         }
 
@@ -343,6 +347,13 @@ object Workspace {
         config.value = next
         MobileConfig.save(AppContext.get(), next)
         pending.value = true
+    }
+
+    /** Remembers a node chosen while the VPN is off so connecting can apply it. */
+    fun setPendingNode(node: String?) {
+        val next = config.value.copy(pendingNode = node)
+        config.value = next
+        MobileConfig.save(AppContext.get(), next)
     }
 
     /** Live changes that do not need a core restart (routing mode). */

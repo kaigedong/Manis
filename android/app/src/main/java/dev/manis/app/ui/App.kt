@@ -87,6 +87,7 @@ fun ManisApp() {
 
     LaunchedEffect(Unit) {
         var autoFixDone = false
+        var pendingAttempt: String? = null
         var epoch = RuntimeState.networkEpoch
         var ticks = 0
         while (true) {
@@ -123,6 +124,22 @@ fun ManisApp() {
                 epoch = RuntimeState.networkEpoch
                 autoFixDone = false
             }
+            val pendingNode = Workspace.config.value.pendingNode
+            if (RuntimeState.active && pendingNode != null && pendingNode != pendingAttempt) {
+                pendingAttempt = pendingNode
+                scope.launch {
+                    ControllerApi.configure(CoreController.secret)
+                    val snap = runCatching { ControllerApi.snapshot() }.getOrNull()
+                    val group = snap?.groups?.firstOrNull { pendingNode in it.all }
+                    if (group != null &&
+                        runCatching { ControllerApi.select(group.name, pendingNode) }.isSuccess
+                    ) {
+                        Workspace.setPendingNode(null)
+                        pendingAttempt = null
+                    }
+                }
+            }
+            if (!RuntimeState.active) pendingAttempt = null
             if (RuntimeState.active && !autoFixDone) {
                 autoFixDone = true
                 scope.launch {

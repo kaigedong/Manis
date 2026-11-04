@@ -121,6 +121,7 @@ internal object ControllerApi {
     }
 
     suspend fun select(group: String, name: String) = withContext(Dispatchers.IO) {
+        configure(CoreController.secret)
         request(
             "/proxies/${encode(group)}",
             method = "PUT",
@@ -140,6 +141,7 @@ internal object ControllerApi {
 
     /** Health-checks one proxy; returns null when it cannot reach the test URL. */
     suspend fun testNode(name: String): Int? = withContext(Dispatchers.IO) {
+        configure(CoreController.secret)
         val result = request(
             "/proxies/${encode(name)}/delay?url=${encode(TEST_URL)}&timeout=5000",
         )
@@ -148,6 +150,7 @@ internal object ControllerApi {
 
     /** Runs the built-in health check for one group and returns per-node delays. */
     suspend fun testGroup(group: String): Map<String, Int> = withContext(Dispatchers.IO) {
+        configure(CoreController.secret)
         val result = request(
             "/group/${encode(group)}/delay?url=${encode(TEST_URL)}&timeout=5000",
         )

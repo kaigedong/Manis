@@ -87,7 +87,7 @@ fun NodesWorkspace(
         scope.launch {
             runCatching { ControllerApi.select(group, node) }
                 .onSuccess { onMessage("已切换到 $node") }
-                .onFailure { onMessage("切换节点失败，请先连接") }
+                .onFailure { onMessage("切换节点失败：${it.message ?: "内核没有响应"}") }
         }
     }
 
@@ -116,12 +116,23 @@ fun NodesWorkspace(
     }
 
     fun switchTo(name: String) {
-        val group = snapshot?.groups?.firstOrNull { name in it.all }
-        if (group == null) {
-            onMessage(if (snapshot == null) "连接 VPN 后才能切换节点" else "这个节点不在任何策略组里")
-            return
+        scope.launch {
+            // Use the cached snapshot when it has the group; otherwise ask the core once so a
+            // slow first snapshot does not push the user into the offline path.
+            val snap = snapshot ?: runCatching { ControllerApi.snapshot() }.getOrNull()
+            val group = snap?.groups
+                ?.firstOrNull { name in it.all && it.type.contains("select", ignoreCase = true) }
+                ?: snap?.groups?.firstOrNull { name in it.all }
+            if (group == null) {
+                Workspace.setPendingNode(name)
+                onMessage("已选中 $name，连接后自动切换")
+                return@launch
+            }
+            Workspace.setPendingNode(null)
+            runCatching { ControllerApi.select(group.name, name) }
+                .onSuccess { onMessage("已切换到 $name") }
+                .onFailure { onMessage("切换节点失败：${it.message ?: "内核没有响应"}") }
         }
-        select(group.name, name)
     }
 
     fun testAll() {
@@ -131,13 +142,22 @@ fun NodesWorkspace(
         }
         scope.launch {
             var tested = 0
+            var failure: String? = null
             for (group in groups) {
-                runCatching { ControllerApi.testGroup(group.name) }.onSuccess {
-                    delays = delays + it
-                    tested += it.size
-                }
+                runCatching { ControllerApi.testGroup(group.name) }
+                    .onSuccess {
+                        delays = delays + it
+                        tested += it.size
+                    }
+                    .onFailure { failure = failure ?: it.message }
             }
-            onMessage(if (tested == 0) "测速失败" else "已测速 $tested 个节点")
+            onMessage(
+                when {
+                    tested > 0 -> "已测速 $tested 个节点"
+                    failure != null -> "测速失败：$failure"
+                    else -> "没有可测速的节点"
+                },
+            )
         }
     }
 
@@ -148,7 +168,7 @@ fun NodesWorkspace(
                     if (delay != null) delays = delays + (node to delay)
                     onMessage(if (delay == null) "$node 测速失败" else "$node：$delay ms")
                 }
-                .onFailure { onMessage("测速失败，请先连接") }
+                .onFailure { onMessage("测速失败：${it.message ?: "内核没有响应"}") }
         }
     }
 
@@ -159,7 +179,7 @@ fun NodesWorkspace(
                     delays = delays + it
                     onMessage("测速完成")
                 }
-                .onFailure { onMessage("测速失败，请先连接") }
+                .onFailure { onMessage("测速失败：${it.message ?: "内核没有响应"}") }
         }
     }
 
@@ -206,7 +226,8 @@ fun NodesWorkspace(
                                 name = node.name,
                                 type = node.type,
                                 delay = delays[node.name] ?: snapshot?.nodes?.get(node.name)?.delay,
-                                selected = snapshot?.groups?.any { it.now == node.name } == true,
+                                selected = snapshot?.groups?.any { it.now == node.name } == true ||
+                                    config.pendingNode == node.name,
                                 onSelect = { switchTo(node.name) },
                                 onTest = if (snapshot != null) {
                                     { testNode(node.name) }
@@ -233,7 +254,8 @@ fun NodesWorkspace(
                             name = node.displayName,
                             type = "VLESS",
                             delay = delays[node.displayName] ?: snapshot?.nodes?.get(node.displayName)?.delay,
-                            selected = snapshot?.groups?.any { it.now == node.displayName } == true,
+                            selected = snapshot?.groups?.any { it.now == node.displayName } == true ||
+                                config.pendingNode == node.displayName,
                             onSelect = { switchTo(node.displayName) },
                             onTest = if (snapshot != null) {
                                 { testNode(node.displayName) }
@@ -280,10 +302,10 @@ fun NodesWorkspace(
                 }
             }
             ManisMeta(
-                if (snapshot != null) {
-                    "点节点即可切换；「测速」会检测组内全部成员。"
-                } else {
-                    "连接 VPN 后可以切换节点并测速。"
+                when {
+                    snapshot != null -> "点节点即可切换；「测速」会检测组内全部成员。"
+                    RuntimeState.active -> "正在读取内核状态，稍后即可切换节点和测速。"
+                    else -> "未连接时也可以先选节点，连接后会自动切换。"
                 },
             )
         }
