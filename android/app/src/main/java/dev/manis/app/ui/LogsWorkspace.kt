@@ -90,7 +90,7 @@ fun LogsWorkspace(onMessage: (String) -> Unit) {
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Box(Modifier.weight(1f)) {
-                        ManisTextField(value = query, onValueChange = { query = it }, placeholder = "搜索日志")
+                        ManisSearchField(value = query, onValueChange = { query = it }, placeholder = "搜索日志")
                     }
                     ManisTextAction("刷新") {
                         reloads += 1

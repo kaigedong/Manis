@@ -1,6 +1,8 @@
 package dev.manis.app.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -48,6 +50,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import dev.manis.app.R
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
@@ -235,6 +239,65 @@ fun ManisBackButton(onBack: () -> Unit) {
 }
 
 /** A Material 3 outlined text field. */
+/**
+ * A compact 40dp search field: leading magnifier, inline placeholder and a clear action, so it
+ * sits in the same row as the page's text actions instead of towering over them.
+ */
+@Composable
+fun ManisSearchField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    placeholder: String = "搜索",
+) {
+    val colors = LocalManisColors.current
+    Surface(
+        modifier = Modifier.fillMaxWidth().height(ManisDimens.controlStandard),
+        shape = RoundedCornerShape(ManisDimens.controlStandard / 2),
+        color = colors.surfaceLow,
+    ) {
+        Row(
+            Modifier.fillMaxSize().padding(horizontal = ManisDimens.spaceMd),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_search),
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+                tint = colors.textTertiary,
+            )
+            Box(Modifier.weight(1f)) {
+                if (value.isEmpty()) {
+                    Text(
+                        placeholder,
+                        style = ManisType.body,
+                        color = colors.textTertiary,
+                        maxLines = 1,
+                    )
+                }
+                BasicTextField(
+                    value = value,
+                    onValueChange = onValueChange,
+                    singleLine = true,
+                    textStyle = ManisType.body.copy(color = colors.textPrimary),
+                    cursorBrush = SolidColor(colors.actionPrimary),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            if (value.isNotEmpty()) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_close),
+                    contentDescription = "清除",
+                    modifier = Modifier
+                        .size(20.dp)
+                        .clickable { onValueChange("") },
+                    tint = colors.textTertiary,
+                )
+            }
+        }
+    }
+}
+
 @Composable
 fun ManisTextField(
     value: String,

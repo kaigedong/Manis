@@ -93,7 +93,7 @@ fun ActivityWorkspace(onMessage: (String) -> Unit) {
         ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.weight(1f)) {
-                    ManisTextField(value = query, onValueChange = { query = it }, placeholder = "搜索连接")
+                    ManisSearchField(value = query, onValueChange = { query = it }, placeholder = "搜索连接")
                 }
                 ManisTextAction(if (refreshing) "刷新中…" else "刷新") {
                     if (!RuntimeState.active) {
