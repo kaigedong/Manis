@@ -67,7 +67,13 @@ fun NodesWorkspace(
     var expandedSources by remember { mutableStateOf(emptySet<String>()) }
     var expandedGroups by remember { mutableStateOf(emptySet<String>()) }
 
-    val groups = remember(snapshot) { snapshot?.groups?.filter { !it.hidden } ?: emptyList() }
+    // The core keeps an internal selector for global-mode exits and the exit-IP probe; neither is
+    // a user policy group, so the phone never lists them.
+    val groups = remember(snapshot) {
+        snapshot?.groups
+            ?.filter { !it.hidden && it.name != "__MANIS_GLOBAL__" && it.name != "GLOBAL" }
+            ?: emptyList()
+    }
 
     val subscriptions = config.subscriptions.filter { it.enabled }
     var cachedNodes by remember { mutableStateOf<Map<String, List<SubscriptionCache.CachedNode>>>(emptyMap()) }
@@ -293,7 +299,7 @@ fun NodesWorkspace(
             if (groups.isEmpty() && config.groups.isEmpty()) {
                 ManisCard {
                     Text("还没有策略组", style = ManisType.label, color = colors.textPrimary)
-                    ManisMeta("策略组决定哪些节点可以互相切换：先添加订阅或手动节点，再把它加进组。")
+                    ManisMeta("没有策略组时，直接用「来源」里选中的节点；建组后可以在组内切换。")
                     ManisButton("添加策略组", primary = true, onClick = { addingGroup = true })
                 }
             }
