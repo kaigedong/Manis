@@ -39,6 +39,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.setValue
@@ -56,11 +57,17 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun ManisCard(
     modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val colors = LocalManisColors.current
     Surface(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(ManisDimens.radiusPane))
+            .then(
+                if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier,
+            ),
         shape = RoundedCornerShape(ManisDimens.radiusPane),
         color = colors.surfaceOverlay,
     ) {
@@ -273,13 +280,13 @@ fun ManisInfoRow(label: String, value: String) {
 
 /** A Material 3 text action. */
 @Composable
-fun ManisTextAction(label: String, onClick: () -> Unit) {
+fun ManisTextAction(label: String, tone: Color? = null, onClick: () -> Unit) {
     TextButton(
         onClick = onClick,
         shape = CircleShape,
         contentPadding = PaddingValues(horizontal = ManisDimens.spaceMd),
     ) {
-        Text(label, style = ManisType.label)
+        Text(label, style = ManisType.label, color = tone ?: LocalContentColor.current)
     }
 }
 

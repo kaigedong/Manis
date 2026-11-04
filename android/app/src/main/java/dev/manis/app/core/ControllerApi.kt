@@ -24,6 +24,7 @@ data class GroupInfo(
 data class ConnectionInfo(
     val id: String,
     val host: String,
+    val destinationIp: String,
     val network: String,
     val rule: String,
     val chains: List<String>,
@@ -205,6 +206,7 @@ internal object ControllerApi {
                     id = item.optString("id"),
                     host = metadata.optString("host")
                         .ifBlank { metadata.optString("destinationIP") },
+                    destinationIp = metadata.optString("destinationIP"),
                     network = metadata.optString("network"),
                     rule = item.optString("rule"),
                     chains = chains,

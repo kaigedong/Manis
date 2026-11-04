@@ -63,16 +63,32 @@ fun NodesWorkspace(
     var refreshing by remember { mutableStateOf(false) }
     var delays by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
     var addingGroup by remember { mutableStateOf(false) }
+    var deleting by remember { mutableStateOf<GroupEntry?>(null) }
     var expandedSources by remember { mutableStateOf(emptySet<String>()) }
     var expandedGroups by remember { mutableStateOf(emptySet<String>()) }
 
     val groups = remember(snapshot) { snapshot?.groups?.filter { !it.hidden } ?: emptyList() }
+
     val subscriptions = config.subscriptions.filter { it.enabled }
     var cachedNodes by remember { mutableStateOf<Map<String, List<SubscriptionCache.CachedNode>>>(emptyMap()) }
     LaunchedEffect(config.subscriptions) {
         cachedNodes = withContext(Dispatchers.IO) {
             config.subscriptions.associate { it.url to SubscriptionCache.cachedNodes(context, it.url) }
         }
+    }
+    // Runtime groups come from the core; saved groups fill in while it is off.
+    val groupNames = remember(groups, config.groups) {
+        (groups.map { it.name } + config.groups.map { it.name }).distinct()
+    }
+
+    fun savedMembers(group: GroupEntry?): List<String> {
+        if (group == null) return emptyList()
+        val fromSubscriptions = group.subscriptionIndexes.flatMap { index ->
+            val subscription = config.subscriptions.getOrNull(index) ?: return@flatMap emptyList()
+            cachedNodes[subscription.url].orEmpty().map { it.name }
+        }
+        val manual = group.nodeIndexes.mapNotNull { config.nodes.getOrNull(it)?.displayName }
+        return (fromSubscriptions + manual).distinct()
     }
 
     fun reloadNodes() {
@@ -281,25 +297,22 @@ fun NodesWorkspace(
                     ManisButton("添加策略组", primary = true, onClick = { addingGroup = true })
                 }
             }
-            for (group in groups) {
+            for (name in groupNames) {
+                val runtime = groups.firstOrNull { it.name == name }
+                val saved = config.groups.firstOrNull { it.name == name }
                 GroupCard(
-                    group = group,
+                    title = displayProxyName(name) ?: name,
+                    type = runtime?.type ?: saved?.strategy ?: "select",
+                    current = runtime?.now,
+                    members = runtime?.all ?: savedMembers(saved),
                     delays = delays,
-                    expanded = group.name in expandedGroups,
-                    onToggle = { expandedGroups = toggle(expandedGroups, group.name) },
-                    onTest = { testGroup(group.name) },
-                    onSelect = { node -> select(group.name, node) },
+                    expanded = name in expandedGroups,
+                    canTest = runtime != null,
+                    onToggle = { expandedGroups = toggle(expandedGroups, name) },
+                    onTest = { testGroup(name) },
+                    onSelect = { node -> select(name, node) },
+                    onDelete = saved?.let { entry -> { deleting = entry } },
                 )
-            }
-            if (groups.isEmpty()) {
-                for (saved in config.groups) {
-                    SavedGroupCard(
-                        group = saved,
-                        config = config,
-                        expanded = saved.name in expandedGroups,
-                        onToggle = { expandedGroups = toggle(expandedGroups, saved.name) },
-                    )
-                }
             }
             ManisMeta(
                 when {
@@ -308,6 +321,28 @@ fun NodesWorkspace(
                     else -> "未连接时也可以先选节点，连接后会自动切换。"
                 },
             )
+        }
+    }
+
+    val pendingDelete = deleting
+    if (pendingDelete != null) {
+        ManisDialog(
+            title = "删除策略组",
+            subtitle = pendingDelete.name,
+            onDismiss = { deleting = null },
+            actions = {
+                Spacer(Modifier.weight(1f))
+                ManisButton("取消", onClick = { deleting = null })
+                ManisButton("删除", primary = true, onClick = {
+                    Workspace.update { current ->
+                        current.copy(groups = current.groups.filter { it.name != pendingDelete.name })
+                    }
+                    deleting = null
+                    onMessage("策略组已删除，点「应用」后生效")
+                })
+            },
+        ) {
+            ManisMeta("删除后这一组从配置里移除；正在连接时需要点「应用」才会让内核重新加载。")
         }
     }
 
@@ -401,19 +436,24 @@ private fun NodeRow(
             },
         )
         if (onTest != null) {
-            ManisTextAction("测速", onTest)
+            ManisTextAction("测速", onClick = onTest)
         }
     }
 }
 
 @Composable
 private fun GroupCard(
-    group: GroupInfo,
+    title: String,
+    type: String,
+    current: String?,
+    members: List<String>,
     delays: Map<String, Int>,
     expanded: Boolean,
+    canTest: Boolean,
     onToggle: () -> Unit,
     onTest: () -> Unit,
     onSelect: (String) -> Unit,
+    onDelete: (() -> Unit)?,
 ) {
     val colors = LocalManisColors.current
     ManisCard {
@@ -424,63 +464,18 @@ private fun GroupCard(
         ) {
             Column(Modifier.weight(1f)) {
                 Text(
-                    displayProxyName(group.name) ?: group.name,
+                    title,
                     style = ManisType.label,
                     color = colors.textPrimary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
                 ManisMeta(
-                    "${strategyLabel(group.type)} · 当前 ${displayProxyName(group.now) ?: "未选择"} · " +
-                        "${group.all.size} 个成员",
+                    "${strategyLabel(type)} · 当前 ${displayProxyName(current) ?: "未选择"} · " +
+                        "${members.size} 个成员",
                 )
             }
-            ManisTextAction("测速", onTest)
-            Icon(
-                imageVector = Icons.Filled.KeyboardArrowDown,
-                contentDescription = if (expanded) "收起" else "展开",
-                modifier = Modifier.size(22.dp).rotate(if (expanded) 180f else 0f),
-                tint = colors.textSecondary,
-            )
-        }
-        if (expanded) {
-            ManisDivider()
-            for ((index, node) in group.all.withIndex()) {
-                val delay = delays[node] ?: RuntimeState.snapshot?.nodes?.get(node)?.delay
-                ManisListRow(
-                    title = displayProxyName(node) ?: node,
-                    trailing = if (delay == null) "—" else "$delay ms",
-                    selected = node == group.now,
-                    onClick = { onSelect(node) },
-                )
-                if (index != group.all.lastIndex) ManisDivider()
-            }
-            if (group.all.isEmpty()) ManisMeta("这个策略组还没有成员。")
-        }
-    }
-}
-
-@Composable
-private fun SavedGroupCard(
-    group: GroupEntry,
-    config: dev.manis.app.data.MobileConfig,
-    expanded: Boolean,
-    onToggle: () -> Unit,
-) {
-    val colors = LocalManisColors.current
-    val members = group.subscriptionIndexes.mapNotNull { index ->
-        config.subscriptions.getOrNull(index)?.let { "订阅 · ${it.name.ifBlank { "订阅 ${index + 1}" }}" }
-    } + group.nodeIndexes.mapNotNull { index -> config.nodes.getOrNull(index)?.displayName }
-    ManisCard {
-        Row(
-            Modifier.fillMaxWidth().clickable(onClick = onToggle),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(group.name, style = ManisType.label, color = colors.textPrimary)
-                ManisMeta("${strategyLabel(group.strategy)} · ${members.size} 个成员")
-            }
+            if (canTest) ManisTextAction("测速", onClick = onTest)
             Icon(
                 imageVector = Icons.Filled.KeyboardArrowDown,
                 contentDescription = if (expanded) "收起" else "展开",
@@ -493,9 +488,24 @@ private fun SavedGroupCard(
             if (members.isEmpty()) {
                 ManisMeta("这个策略组还没有成员。")
             }
-            for ((index, member) in members.withIndex()) {
-                Text(member, style = ManisType.body, color = colors.textPrimary, modifier = Modifier.padding(vertical = ManisDimens.spaceSm))
+            for ((index, node) in members.withIndex()) {
+                val delay = delays[node] ?: RuntimeState.snapshot?.nodes?.get(node)?.delay
+                ManisListRow(
+                    title = displayProxyName(node) ?: node,
+                    trailing = if (delay == null) "—" else "$delay ms",
+                    selected = node == current,
+                    onClick = { onSelect(node) },
+                )
                 if (index != members.lastIndex) ManisDivider()
+            }
+            if (onDelete != null) {
+                ManisDivider()
+                Row(
+                    Modifier.fillMaxWidth().padding(vertical = ManisDimens.spaceXs),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    ManisTextAction("删除策略组", tone = colors.statusError, onClick = onDelete)
+                }
             }
         }
     }

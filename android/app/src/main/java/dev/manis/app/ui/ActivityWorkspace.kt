@@ -24,6 +24,8 @@ import androidx.compose.ui.unit.dp
 import dev.manis.app.core.ConnectionInfo
 import dev.manis.app.core.ConnectionsSnapshot
 import dev.manis.app.core.ControllerApi
+import dev.manis.app.data.RuleEntry
+import dev.manis.app.data.Workspace
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -34,6 +36,8 @@ fun ActivityWorkspace(onMessage: (String) -> Unit) {
     var snapshot by remember { mutableStateOf<ConnectionsSnapshot?>(null) }
     var refreshing by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
+    var draft by remember { mutableStateOf<RuleEditor?>(null) }
+    val config = Workspace.config.value
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(Unit) {
@@ -59,6 +63,23 @@ fun ActivityWorkspace(onMessage: (String) -> Unit) {
                     connection.chains.any { it.contains(query, ignoreCase = true) }
             }
         }
+    }
+
+    val state = draft
+    if (state != null) {
+        RuleEditorPane(
+            initial = state.entry,
+            editingIndex = null,
+            existing = config.ruleEntries,
+            policies = policyOptions(config),
+            onCancel = { draft = null },
+            onDelete = { draft = null },
+            onConfirm = { entry ->
+                Workspace.update { it.copy(ruleEntries = it.ruleEntries + entry) }
+                draft = null
+                onMessage("已添加规则，点「应用」后生效")
+            },
+        )
     }
 
     Column(Modifier.fillMaxSize().background(colors.surfaceBase)) {
@@ -109,17 +130,35 @@ fun ActivityWorkspace(onMessage: (String) -> Unit) {
                 }
             } else {
                 for (connection in connections.take(100)) {
-                    ConnectionCard(connection)
+                    ConnectionCard(connection, onClick = { draft = ruleDraft(connection) })
                 }
             }
         }
     }
 }
 
+/**
+ * The rule a tap on a connection would create, mirroring the desktop: a domain suffix for a
+ * hostname and a single-address CIDR for an IP-only connection.
+ */
+private fun ruleDraft(connection: ConnectionInfo): RuleEditor? {
+    val host = connection.host.trim()
+    val address = connection.destinationIp.trim()
+    val ipv6 = address.count { it == ':' } >= 2
+    val ipv4 = Regex("^\\d{1,3}(\\.\\d{1,3}){3}$").matches(address)
+    val entry = when {
+        host.isNotEmpty() && host != address -> RuleEntry(kind = "DOMAIN-SUFFIX", value = host)
+        ipv6 -> RuleEntry(kind = "IP6-CIDR", value = "$address/128")
+        ipv4 -> RuleEntry(kind = "IP-CIDR", value = "$address/32")
+        else -> null
+    }
+    return entry?.let { RuleEditor(null, it) }
+}
+
 @Composable
-private fun ConnectionCard(connection: ConnectionInfo) {
+private fun ConnectionCard(connection: ConnectionInfo, onClick: () -> Unit) {
     val colors = LocalManisColors.current
-    ManisCard {
+    ManisCard(onClick = onClick) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(

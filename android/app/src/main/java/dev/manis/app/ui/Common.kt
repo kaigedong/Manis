@@ -19,7 +19,7 @@ fun stopVpn(context: Context) {
 
 /** Tells the running service to rebuild the core from the current workspace. */
 fun applyWorkspace(context: Context) {
-    Workspace.pending.value = false
+    Workspace.markApplied()
     context.startService(
         Intent(context, ManisVpnService::class.java).setAction(ManisVpnService.ACTION_RELOAD),
     )

@@ -51,7 +51,7 @@ import dev.manis.app.data.RuleEntry
 import dev.manis.app.data.Workspace
 import kotlin.math.roundToInt
 
-private data class RuleEditor(val index: Int?, val entry: RuleEntry)
+internal data class RuleEditor(val index: Int?, val entry: RuleEntry)
 
 /** The row height, and the distance between row tops once the list spacing is added. */
 private val RuleRowHeight = 56.dp
@@ -229,8 +229,8 @@ private fun RuleGroupHeader(
                 Text("手动规则", style = ManisType.label, color = colors.textPrimary)
                 ManisMeta("$count 条 · 从上到下匹配")
             }
-            if (pending) ManisTextAction("应用", onApply)
-            ManisTextAction("添加", onAdd)
+            if (pending) ManisTextAction("应用", onClick = onApply)
+            ManisTextAction("添加", onClick = onAdd)
             Icon(
                 imageVector = Icons.Filled.KeyboardArrowDown,
                 contentDescription = if (expanded) "收起" else "展开",
@@ -315,7 +315,7 @@ private fun RuleRow(
 }
 
 @Composable
-private fun RuleEditorPane(
+internal fun RuleEditorPane(
     initial: RuleEntry,
     editingIndex: Int?,
     existing: List<RuleEntry>,
@@ -392,7 +392,7 @@ private fun RuleEditorPane(
     }
 }
 
-private fun policyOptions(config: MobileConfig): List<String> {
+internal fun policyOptions(config: MobileConfig): List<String> {
     val options = mutableListOf("DIRECT", "REJECT", "__MANIS_GLOBAL__")
     for (group in config.groups) {
         if (group.name !in options) options += group.name
@@ -400,7 +400,7 @@ private fun policyOptions(config: MobileConfig): List<String> {
     return options
 }
 
-private fun policyLabel(policy: String): String = when (policy) {
+internal fun policyLabel(policy: String): String = when (policy) {
     "__MANIS_GLOBAL__" -> "全局"
     else -> policy
 }

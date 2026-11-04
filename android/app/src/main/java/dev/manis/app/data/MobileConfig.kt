@@ -331,6 +331,16 @@ object Workspace {
     val config = mutableStateOf(MobileConfig())
     val pending = mutableStateOf(false)
 
+    /** The workspace as the core last received it; edits are diffs against this. */
+    private var appliedSignature: String? = null
+
+    /** Everything the core reads, without the phone-only pending selection. */
+    private fun MobileConfig.coreSignature(): String {
+        val json = JSONObject(toJson())
+        json.remove("pending_node")
+        return json.toString()
+    }
+
     /** A configuration section another workspace asked to open, cleared once shown. */
     val requestedSection = mutableStateOf<String?>(null)
 
@@ -340,13 +350,21 @@ object Workspace {
 
     fun load(context: Context) {
         config.value = MobileConfig.load(context)
+        appliedSignature = config.value.coreSignature()
+        pending.value = false
     }
 
     fun update(transform: (MobileConfig) -> MobileConfig) {
         val next = transform(config.value)
         config.value = next
         MobileConfig.save(AppContext.get(), next)
-        pending.value = true
+        pending.value = appliedSignature != null && next.coreSignature() != appliedSignature
+    }
+
+    /** Marks the current workspace as applied, so the apply action disappears. */
+    fun markApplied() {
+        appliedSignature = config.value.coreSignature()
+        pending.value = false
     }
 
     /** Remembers a node chosen while the VPN is off so connecting can apply it. */
