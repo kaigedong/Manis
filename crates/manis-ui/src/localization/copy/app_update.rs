@@ -13,8 +13,6 @@ pub(crate) const APP_LICENSE: LocalizedText =
     LocalizedText::new("Application code: Apache-2.0", "应用代码：Apache-2.0");
 pub(crate) const CORE_LICENSE: LocalizedText =
     LocalizedText::new("Bundled Mihomo core: GPL-3.0", "内置 Mihomo 内核：GPL-3.0");
-pub(crate) const CHECK_AUTOMATICALLY: LocalizedText =
-    LocalizedText::new("Automatic checks", "自动检查更新");
 pub(crate) const CHECK_AUTOMATICALLY_DETAIL: LocalizedText = LocalizedText::new(
     "Check at startup and every hour. Download and install updates right here.",
     "启动时及每小时自动检查版本，可直接在应用内下载并安装。",
