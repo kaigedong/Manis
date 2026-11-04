@@ -1,4 +1,15 @@
 package dev.manis.app.ui
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.res.painterResource
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MenuAnchorType
+import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -8,6 +19,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -17,13 +30,17 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.unit.dp
+import dev.manis.app.R
 import dev.manis.app.data.MobileConfig
 import dev.manis.app.data.RULE_KINDS
 import dev.manis.app.data.RuleEntry
@@ -36,6 +53,9 @@ private data class RuleEditor(val index: Int?, val entry: RuleEntry)
 fun RulesWorkspace(onMessage: (String) -> Unit) {
     val colors = LocalManisColors.current
     val context = LocalContext.current
+    val rowHeightPx = with(androidx.compose.ui.platform.LocalDensity.current) { 76.dp.toPx() }
+    var draggingIndex by remember { mutableStateOf<Int?>(null) }
+    var dragDelta by remember { mutableFloatStateOf(0f) }
     val config = Workspace.config.value
     val pending = Workspace.pending.value
     var editor by remember { mutableStateOf<RuleEditor?>(null) }
@@ -131,15 +151,27 @@ fun RulesWorkspace(onMessage: (String) -> Unit) {
                                     )
                                 },
                                 onEdit = { editor = RuleEditor(index, rule) },
-                                onMoveUp = if (index > 0) {
-                                    { moveRule(index, index - 1) }
-                                } else {
-                                    null
+                                dragging = draggingIndex == index,
+                                onDragStart = {
+                                    draggingIndex = index
+                                    dragDelta = 0f
                                 },
-                                onMoveDown = if (index < config.ruleEntries.lastIndex) {
-                                    { moveRule(index, index + 1) }
-                                } else {
-                                    null
+                                onDrag = { amount ->
+                                    val current = draggingIndex ?: return@RuleListRow
+                                    dragDelta += amount
+                                    if (dragDelta > rowHeightPx && current < config.ruleEntries.lastIndex) {
+                                        moveRule(current, current + 1)
+                                        draggingIndex = current + 1
+                                        dragDelta -= rowHeightPx
+                                    } else if (dragDelta < -rowHeightPx && current > 0) {
+                                        moveRule(current, current - 1)
+                                        draggingIndex = current - 1
+                                        dragDelta += rowHeightPx
+                                    }
+                                },
+                                onDragEnd = {
+                                    draggingIndex = null
+                                    dragDelta = 0f
                                 },
                             )
                             if (index != config.ruleEntries.lastIndex) ManisDivider()
@@ -164,32 +196,63 @@ fun RulesWorkspace(onMessage: (String) -> Unit) {
 private fun RuleListRow(
     order: Int,
     rule: RuleEntry,
+    dragging: Boolean,
     onToggle: (Boolean) -> Unit,
     onEdit: () -> Unit,
-    onMoveUp: (() -> Unit)?,
-    onMoveDown: (() -> Unit)?,
+    onDragStart: () -> Unit,
+    onDrag: (Float) -> Unit,
+    onDragEnd: () -> Unit,
 ) {
     val colors = LocalManisColors.current
+    // The row moves while it is dragged, so keep the latest callbacks instead of restarting
+    // the gesture detector when the position changes.
+    val dragStart by rememberUpdatedState(onDragStart)
+    val drag by rememberUpdatedState(onDrag)
+    val dragEnd by rememberUpdatedState(onDragEnd)
     Row(
         Modifier
             .fillMaxWidth()
+            .background(if (dragging) colors.actionSoft else Color.Transparent)
+            .pointerInput(Unit) {
+                detectDragGesturesAfterLongPress(
+                    onDragStart = { dragStart() },
+                    onDragEnd = { dragEnd() },
+                    onDragCancel = { dragEnd() },
+                    onDrag = { change, amount ->
+                        change.consume()
+                        drag(amount.y)
+                    },
+                )
+            }
             .clickable(onClick = onEdit)
-            .padding(horizontal = ManisDimens.spaceMd, vertical = ManisDimens.spaceSm),
+            .height(76.dp)
+            .padding(start = ManisDimens.spaceMd, end = ManisDimens.spaceSm),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
+        horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceMd),
     ) {
-        Text("$order", style = ManisType.metadata, color = colors.textTertiary, modifier = Modifier.width(20.dp))
+        Text(
+            "$order",
+            style = ManisType.metadata,
+            color = colors.textTertiary,
+            modifier = Modifier.width(20.dp),
+        )
         Column(Modifier.weight(1f)) {
             Text(
                 if (rule.kind == "FINAL") "所有剩余流量" else rule.value,
                 style = ManisType.body,
                 color = if (rule.enabled) colors.textPrimary else colors.textTertiary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
             ManisMeta("${rule.kind} → ${policyLabel(rule.policy)}")
         }
         ManisToggle(checked = rule.enabled, onCheckedChange = onToggle)
-        onMoveUp?.let { move -> ManisTextAction("↑", move) }
-        onMoveDown?.let { move -> ManisTextAction("↓", move) }
+        Icon(
+            painter = painterResource(R.drawable.ic_drag_handle),
+            contentDescription = "拖动排序",
+            modifier = Modifier.size(24.dp),
+            tint = colors.textTertiary,
+        )
     }
 }
 
@@ -245,38 +308,29 @@ private fun RuleEditorPane(
             ManisButton("保存", primary = true, onClick = ::submit)
         },
     ) {
-        Text("类型", style = ManisType.label, color = colors.textPrimary)
-        ChipGrid(options = RULE_KINDS.toList(), selected = kind) {
-            kind = it
-            if (it == "FINAL") value = ""
-        }
+        ManisSelect(
+            label = "类型",
+            options = RULE_KINDS.toList(),
+            selected = kind,
+            onSelect = {
+                kind = it
+                if (it == "FINAL") value = ""
+            },
+        )
         if (kind != "FINAL") {
             Text("匹配", style = ManisType.label, color = colors.textPrimary)
             ManisTextField(value = value, onValueChange = { value = it }, placeholder = kindPlaceholder(kind))
         }
-        Text("策略", style = ManisType.label, color = colors.textPrimary)
-        ChipGrid(options = policies, selected = policy, display = ::policyLabel) { policy = it }
+        ManisSelect(
+            label = "策略",
+            options = policies,
+            selected = policy,
+            display = ::policyLabel,
+            onSelect = { policy = it },
+        )
         ManisMeta(kindHelp(kind))
         error?.let { Text(it, style = ManisType.metadata, color = colors.statusError) }
     }
-    }
-}
-
-@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-@Composable
-private fun ChipGrid(
-    options: List<String>,
-    selected: String,
-    display: (String) -> String = { it },
-    onSelect: (String) -> Unit,
-) {
-    androidx.compose.foundation.layout.FlowRow(
-        horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
-        verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
-    ) {
-        for (option in options) {
-            ManisChip(display(option), option == selected) { onSelect(option) }
-        }
     }
 }
 

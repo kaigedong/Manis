@@ -318,6 +318,13 @@ object Workspace {
     val config = mutableStateOf(MobileConfig())
     val pending = mutableStateOf(false)
 
+    /** A configuration section another workspace asked to open, cleared once shown. */
+    val requestedSection = mutableStateOf<String?>(null)
+
+    fun requestSection(key: String) {
+        requestedSection.value = key
+    }
+
     fun load(context: Context) {
         config.value = MobileConfig.load(context)
     }

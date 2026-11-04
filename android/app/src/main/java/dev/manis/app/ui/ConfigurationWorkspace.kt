@@ -13,12 +13,17 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
+import androidx.compose.material3.ScrollableTabRow
+import androidx.compose.material3.Tab
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
@@ -42,44 +47,44 @@ import dev.manis.app.data.PROXY_DNS_DOH
 import dev.manis.app.data.PROXY_DNS_SYSTEM
 import dev.manis.app.data.Workspace
 
-/** The GPUI configuration sections, in navigation order. */
-private enum class ConfigSection(val label: String, val detail: String) {
-    General("通用", "界面语言与启动"),
-    Runtime("运行时", "内核与运行时状态"),
-    ProxySources("订阅与节点", "订阅、手动节点与策略组"),
-    RuleSources("规则集", "远程规则集（暂不支持）"),
-    Advanced("高级", "网络行为与备份"),
-    Updates("更新", "自动检查应用更新"),
+/** The configuration sections, in navigation order, with the keys other workspaces request. */
+private enum class ConfigSection(val key: String, val label: String, val detail: String) {
+    General("general", "通用", "界面语言与启动"),
+    Runtime("runtime", "运行时", "内核与运行时状态"),
+    ProxySources("proxy", "订阅与节点", "订阅、手动节点与策略组"),
+    RuleSources("rule_sources", "规则集", "远程规则集（暂不支持）"),
+    Advanced("advanced", "高级", "网络行为与备份"),
+    Updates("updates", "更新", "自动检查应用更新"),
 }
 
-/** The GPUI configuration workspace, compact: a three-column directory over one stacked scroll. */
+/**
+ * The configuration workspace. Phones page through one section at a time with a tab strip and a
+ * horizontal swipe; wider layouts list the sections beside the selected one.
+ */
 @Composable
 fun ConfigurationWorkspace(onMessage: (String) -> Unit, onOpenLogs: () -> Unit) {
     val colors = LocalManisColors.current
+    val compact = LocalSizeClass.current == SizeClass.Compact
     val scope = rememberCoroutineScope()
-    val scroll = rememberScrollState()
-    val sectionTops = remember { mutableStateMapOf<ConfigSection, Int>() }
-    val active by remember {
-        derivedStateOf {
-            when {
-                scroll.value >= scroll.maxValue - 4 -> ConfigSection.entries.last()
-                else -> sectionTops.entries
-                    .filter { it.value <= scroll.value + 24 }
-                    .maxByOrNull { it.value }
-                    ?.key
-                    ?: ConfigSection.General
-            }
+    val pager = rememberPagerState(pageCount = { ConfigSection.entries.size })
+
+    val requested = Workspace.requestedSection.value
+    LaunchedEffect(requested) {
+        if (requested != null) {
+            val index = ConfigSection.entries.indexOfFirst { it.key == requested }
+            if (index >= 0) pager.scrollToPage(index)
+            Workspace.requestedSection.value = null
         }
     }
 
-    val compact = LocalSizeClass.current == SizeClass.Compact
+    val active = ConfigSection.entries[pager.currentPage]
 
     Column(Modifier.fillMaxSize().background(colors.surfaceBase)) {
         Row(
             Modifier
                 .fillMaxWidth()
                 .padding(
-                    horizontal = if (compact) ManisDimens.spaceMd else ManisDimens.spaceXl,
+                    horizontal = if (compact) ManisDimens.spaceLg else ManisDimens.spaceXl,
                     vertical = ManisDimens.spaceLg,
                 ),
             verticalAlignment = Alignment.CenterVertically,
@@ -87,85 +92,84 @@ fun ConfigurationWorkspace(onMessage: (String) -> Unit, onOpenLogs: () -> Unit) 
         ) {
             Column(Modifier.weight(1f)) {
                 Text("配置", style = ManisType.pageTitle, color = colors.textPrimary)
-                ManisMeta("管理 Manis 偏好设置与数据源")
+                ManisMeta(active.detail)
             }
             Box(
                 Modifier
                     .clip(RoundedCornerShape(ManisDimens.radiusControl))
                     .background(colors.surfaceLow)
-                    .padding(horizontal = ManisDimens.spaceSm, vertical = ManisDimens.spaceXs),
+                    .padding(horizontal = ManisDimens.spaceMd, vertical = ManisDimens.spaceXs),
             ) {
                 Text(active.label, style = ManisType.metadata, color = colors.textSecondary)
             }
         }
         ManisDivider()
         if (compact) {
-            SectionGrid(active = active) { entry ->
-                scope.launch { scroll.animateScrollTo(sectionTops[entry] ?: 0) }
+            ScrollableTabRow(
+                selectedTabIndex = pager.currentPage,
+                edgePadding = ManisDimens.spaceLg,
+                containerColor = colors.surfaceBase,
+                contentColor = colors.actionPrimary,
+                divider = {},
+            ) {
+                ConfigSection.entries.forEachIndexed { index, entry ->
+                    Tab(
+                        selected = index == pager.currentPage,
+                        onClick = { scope.launch { pager.animateScrollToPage(index) } },
+                        text = { Text(entry.label, style = ManisType.label, maxLines = 1) },
+                    )
+                }
             }
-            ManisDivider()
-            SectionScrollContent(
-                modifier = Modifier.fillMaxSize(),
-                scroll = scroll,
-                sectionTops = sectionTops,
-                onMessage = onMessage,
-                onOpenLogs = onOpenLogs,
-            )
+            HorizontalPager(state = pager, modifier = Modifier.weight(1f)) { page ->
+                SectionPane(
+                    entry = ConfigSection.entries[page],
+                    onMessage = onMessage,
+                    onOpenLogs = onOpenLogs,
+                )
+            }
         } else {
             Row(Modifier.fillMaxWidth().weight(1f)) {
                 SectionSidebar(active = active) { entry ->
-                    scope.launch { scroll.animateScrollTo(sectionTops[entry] ?: 0) }
+                    scope.launch { pager.scrollToPage(ConfigSection.entries.indexOf(entry)) }
                 }
                 Box(
                     Modifier
                         .fillMaxHeight()
                         .width(1.dp)
-                        .background(colors.outlineSubtle),
+                        .background(colors.outlineSubtle.copy(alpha = 0.5f)),
                 )
-                SectionScrollContent(
-                    modifier = Modifier.fillMaxHeight().weight(1f),
-                    scroll = scroll,
-                    sectionTops = sectionTops,
+                SectionPane(
+                    entry = active,
                     onMessage = onMessage,
                     onOpenLogs = onOpenLogs,
+                    modifier = Modifier.fillMaxHeight().weight(1f),
                 )
             }
         }
     }
 }
 
-/** The compact three-column section grid. */
+/** One section: its own scroll container, so paging never mixes two sections. */
 @Composable
-private fun SectionGrid(active: ConfigSection, onSelect: (ConfigSection) -> Unit) {
-    val colors = LocalManisColors.current
+private fun SectionPane(
+    entry: ConfigSection,
+    onMessage: (String) -> Unit,
+    onOpenLogs: () -> Unit,
+    modifier: Modifier = Modifier.fillMaxSize(),
+) {
     Column(
-        Modifier
-            .fillMaxWidth()
-            .background(colors.surfaceBase)
-            .padding(horizontal = ManisDimens.spaceLg, vertical = ManisDimens.spaceSm),
-        verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
+        modifier
+            .verticalScroll(rememberScrollState())
+            .padding(ManisDimens.spaceLg),
+        verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceMd),
     ) {
-        for (chunk in ConfigSection.entries.chunked(3)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm)) {
-                for (entry in chunk) {
-                    val selected = entry == active
-                    Box(
-                        Modifier
-                            .weight(1f)
-                            .height(ManisDimens.controlCompact)
-                            .clip(RoundedCornerShape(ManisDimens.radiusControl))
-                            .background(if (selected) colors.actionSoft else colors.surfaceLow)
-                            .clickable { onSelect(entry) },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            entry.label,
-                            style = ManisType.data,
-                            color = if (selected) colors.actionPrimary else colors.textSecondary,
-                        )
-                    }
-                }
-            }
+        when (entry) {
+            ConfigSection.General -> GeneralSection(onMessage)
+            ConfigSection.Runtime -> RuntimeSection(onMessage)
+            ConfigSection.ProxySources -> ProxySourcesContent(onMessage)
+            ConfigSection.RuleSources -> RuleSourcesSection()
+            ConfigSection.Advanced -> AdvancedSection(onMessage, onOpenLogs)
+            ConfigSection.Updates -> UpdatesContent(onMessage)
         }
     }
 }
@@ -178,7 +182,7 @@ private fun SectionSidebar(active: ConfigSection, onSelect: (ConfigSection) -> U
         Modifier
             .width(228.dp)
             .fillMaxHeight()
-            .background(colors.surfaceChrome)
+            .background(colors.surfaceBase)
             .padding(ManisDimens.spaceMd),
         verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceXs),
     ) {
@@ -186,7 +190,7 @@ private fun SectionSidebar(active: ConfigSection, onSelect: (ConfigSection) -> U
             "设置",
             style = ManisType.metadata,
             color = colors.textTertiary,
-            modifier = Modifier.padding(horizontal = ManisDimens.spaceSm, vertical = ManisDimens.spaceXs),
+            modifier = Modifier.padding(horizontal = ManisDimens.spaceMd, vertical = ManisDimens.spaceSm),
         )
         for (entry in ConfigSection.entries) {
             val selected = entry == active
@@ -205,42 +209,6 @@ private fun SectionSidebar(active: ConfigSection, onSelect: (ConfigSection) -> U
                     style = ManisType.label,
                     color = if (selected) colors.actionPrimary else colors.textPrimary,
                 )
-            }
-        }
-    }
-}
-
-@Composable
-private fun SectionScrollContent(
-    modifier: Modifier,
-    scroll: androidx.compose.foundation.ScrollState,
-    sectionTops: MutableMap<ConfigSection, Int>,
-    onMessage: (String) -> Unit,
-    onOpenLogs: () -> Unit,
-) {
-    Column(
-        modifier
-            .verticalScroll(scroll)
-            .padding(ManisDimens.spaceMd),
-        verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceLg),
-    ) {
-        for (entry in ConfigSection.entries) {
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .onGloballyPositioned { coordinates ->
-                        sectionTops[entry] = coordinates.positionInParent().y.roundToInt()
-                    },
-                verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceMd),
-            ) {
-                when (entry) {
-                    ConfigSection.General -> GeneralSection(onMessage)
-                    ConfigSection.Runtime -> RuntimeSection(onMessage)
-                    ConfigSection.ProxySources -> ProxySourcesContent(onMessage)
-                    ConfigSection.RuleSources -> RuleSourcesSection()
-                    ConfigSection.Advanced -> AdvancedSection(onMessage, onOpenLogs)
-                    ConfigSection.Updates -> UpdatesContent(onMessage)
-                }
             }
         }
     }
@@ -266,16 +234,32 @@ private fun GeneralSection(onMessage: (String) -> Unit) {
     PaneColumn {
         ManisCard {
             Text("外观", style = ManisType.label, color = colors.textPrimary)
-            ManisInfoRow("主题", when (UiPrefs.dark.value) {
-                true -> "深色"
-                false -> "浅色"
-                null -> "跟随系统"
-            })
-            Row(horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceXs)) {
-                ManisChip("跟随系统", UiPrefs.dark.value == null) { UiPrefs.setDark(null) }
-                ManisChip("浅色", UiPrefs.dark.value == false) { UiPrefs.setDark(false) }
-                ManisChip("深色", UiPrefs.dark.value == true) { UiPrefs.setDark(true) }
+            val themeChoice = when (UiPrefs.dark.value) {
+                true -> "dark"
+                false -> "light"
+                null -> "system"
             }
+            ManisSelect(
+                label = "主题",
+                options = listOf("system", "light", "dark"),
+                selected = themeChoice,
+                display = { option ->
+                    when (option) {
+                        "light" -> "浅色"
+                        "dark" -> "深色"
+                        else -> "跟随系统"
+                    }
+                },
+                onSelect = { option ->
+                    UiPrefs.setDark(
+                        when (option) {
+                            "light" -> false
+                            "dark" -> true
+                            else -> null
+                        },
+                    )
+                },
+            )
             ManisInfoRow("语言", "中文")
         }
         ManisCard {
@@ -342,18 +326,17 @@ private fun AdvancedSection(onMessage: (String) -> Unit, onOpenLogs: () -> Unit)
         ManisCard {
             Text("节点域名解析", style = ManisType.label, color = colors.textPrimary)
             ManisMeta(proxyDnsLabel(config))
-            Row(horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceXs)) {
-                ManisChip("加密 DNS（DoH）", config.proxyDns == PROXY_DNS_DOH) {
-                    Workspace.update { it.copy(proxyDns = PROXY_DNS_DOH) }
+            ManisSelect(
+                label = "解析方式",
+                options = listOf(PROXY_DNS_DOH, PROXY_DNS_SYSTEM),
+                selected = config.proxyDns,
+                display = { if (it == PROXY_DNS_DOH) "加密 DNS（DoH）" else "本机 DNS" },
+                onSelect = { option ->
+                    Workspace.update { it.copy(proxyDns = option) }
                     applyWorkspace(context)
-                    onMessage("已切换为加密 DNS")
-                }
-                ManisChip("本机 DNS", config.proxyDns == PROXY_DNS_SYSTEM) {
-                    Workspace.update { it.copy(proxyDns = PROXY_DNS_SYSTEM) }
-                    applyWorkspace(context)
-                    onMessage("已切换为本机 DNS")
-                }
-            }
+                    onMessage(if (option == PROXY_DNS_DOH) "已切换为加密 DNS" else "已切换为本机 DNS")
+                },
+            )
         }
         ManisCard {
             Text("备份与恢复", style = ManisType.label, color = colors.textPrimary)

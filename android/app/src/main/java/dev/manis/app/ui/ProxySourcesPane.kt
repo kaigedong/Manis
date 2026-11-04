@@ -36,7 +36,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-private enum class SourceEditor { Subscription, Node, Group }
+internal enum class SourceEditor { Subscription, Node, Group }
 
 /** The GPUI proxy-sources section: subscriptions, manual nodes and policy groups. */
 @Composable
@@ -185,6 +185,23 @@ fun ProxySourcesContent(onMessage: (String) -> Unit) {
     }
 }
 
+/** The group editor, shared with the nodes workspace so a group can be added from there. */
+@Composable
+fun GroupEditorDialog(
+    config: MobileConfig,
+    onDismiss: () -> Unit,
+    onSave: (GroupEntry) -> Unit,
+) {
+    SourceEditorPane(
+        editor = SourceEditor.Group,
+        config = config,
+        onCancel = onDismiss,
+        onSaveSubscription = { _, _ -> },
+        onSaveNode = { },
+        onSaveGroup = onSave,
+    )
+}
+
 @Composable
 private fun SourceEditorPane(
     editor: SourceEditor,
@@ -269,29 +286,27 @@ private fun SourceEditorPane(
                 SourceEditor.Group -> {
                     Text("组名", style = ManisType.label, color = colors.textPrimary)
                     ManisTextField(value = name, onValueChange = { name = it }, placeholder = "组名")
-                    Text("策略", style = ManisType.label, color = colors.textPrimary)
-                    Row(horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceXs)) {
-                        ManisChip("自动测速", strategy == "urltest") { strategy = "urltest" }
-                        ManisChip("手动选择", strategy == "select") { strategy = "select" }
-                    }
-                    Text("订阅成员", style = ManisType.label, color = colors.textPrimary)
-                    if (config.subscriptions.isEmpty()) {
-                        ManisMeta("还没有订阅")
-                    }
-                    for ((index, entry) in config.subscriptions.withIndex()) {
-                        ManisChip(entry.name.ifBlank { "订阅 ${index + 1}" }, index in subscriptionMembers) {
-                            subscriptionMembers = subscriptionMembers.toggle(index)
-                        }
-                    }
-                    Text("手动节点成员", style = ManisType.label, color = colors.textPrimary)
-                    if (config.nodes.isEmpty()) {
-                        ManisMeta("还没有手动节点")
-                    }
-                    for ((index, entry) in config.nodes.withIndex()) {
-                        ManisChip(entry.displayName, index in nodeMembers) {
-                            nodeMembers = nodeMembers.toggle(index)
-                        }
-                    }
+                    ManisSelect(
+                        label = "策略",
+                        options = listOf("urltest", "select"),
+                        selected = strategy,
+                        display = { if (it == "urltest") "自动测速" else "手动选择" },
+                        onSelect = { strategy = it },
+                    )
+                    ManisMultiSelect(
+                        label = "订阅成员",
+                        options = config.subscriptions.mapIndexed { index, entry ->
+                            entry.name.ifBlank { "订阅 ${index + 1}" }
+                        },
+                        selected = subscriptionMembers,
+                        onToggle = { subscriptionMembers = subscriptionMembers.toggle(it) },
+                    )
+                    ManisMultiSelect(
+                        label = "手动节点成员",
+                        options = config.nodes.map { it.displayName },
+                        selected = nodeMembers,
+                        onToggle = { nodeMembers = nodeMembers.toggle(it) },
+                    )
                 }
             }
             error?.let { Text(it, style = ManisType.metadata, color = colors.statusError) }

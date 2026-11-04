@@ -43,6 +43,10 @@ fun NodesWorkspace(
     onMessage: (String) -> Unit,
     onOpenConfiguration: () -> Unit,
 ) {
+    val openSources = {
+        Workspace.requestSection("proxy")
+        onOpenConfiguration()
+    }
     val colors = LocalManisColors.current
     val scope = rememberCoroutineScope()
     val snapshot = RuntimeState.snapshot
@@ -50,6 +54,7 @@ fun NodesWorkspace(
     var detail by rememberSaveable { mutableStateOf<String?>(null) }
     var refreshing by remember { mutableStateOf(false) }
     var delays by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
+    var addingGroup by remember { mutableStateOf(false) }
 
     val groups = remember(snapshot) { snapshot?.groups?.filter { !it.hidden } ?: emptyList() }
     val current = detail?.let { name -> groups.firstOrNull { it.name == name } }
@@ -88,6 +93,18 @@ fun NodesWorkspace(
     val compact = LocalSizeClass.current == SizeClass.Compact
     BackHandler(enabled = compact && detail != null) { detail = null }
 
+    if (addingGroup) {
+        GroupEditorDialog(
+            config = config,
+            onDismiss = { addingGroup = false },
+            onSave = { group ->
+                Workspace.update { current -> current.copy(groups = current.groups + group) }
+                addingGroup = false
+                onMessage("已添加策略组 ${group.name}")
+            },
+        )
+    }
+
     Column(Modifier.fillMaxSize().background(colors.surfaceBase)) {
         if (compact) {
             when {
@@ -120,7 +137,8 @@ fun NodesWorkspace(
                         snapshotAvailable = snapshot != null,
                         selected = detail,
                         onSelect = { detail = it },
-                        onOpenConfiguration = onOpenConfiguration,
+                        onOpenConfiguration = openSources,
+                        onAddGroup = { addingGroup = true },
                     )
                 }
             }
@@ -140,7 +158,8 @@ fun NodesWorkspace(
                         snapshotAvailable = snapshot != null,
                         selected = detail,
                         onSelect = { detail = it },
-                        onOpenConfiguration = onOpenConfiguration,
+                        onOpenConfiguration = openSources,
+                        onAddGroup = { addingGroup = true },
                     )
                 }
                 Box(Modifier.fillMaxHeight().width(1.dp).background(colors.outlineSubtle))
@@ -180,6 +199,7 @@ private fun NodesDirectory(
     selected: String?,
     onSelect: (String) -> Unit,
     onOpenConfiguration: () -> Unit,
+    onAddGroup: () -> Unit,
 ) {
     val colors = LocalManisColors.current
     Column(
@@ -197,7 +217,7 @@ private fun NodesDirectory(
         Row(verticalAlignment = Alignment.CenterVertically) {
             ManisSectionTitle("策略组")
             Spacer(Modifier.weight(1f))
-            ManisMeta(if (snapshotAvailable) "点击分组切换到详情" else "连接后显示运行时状态")
+            ManisTextAction("添加") { onAddGroup() }
         }
         if (groups.isNotEmpty()) {
             ManisCard {
@@ -227,8 +247,8 @@ private fun NodesDirectory(
         } else {
             ManisCard {
                 Text("还没有策略组", style = ManisType.label, color = colors.textPrimary)
-                ManisMeta("在配置里添加订阅或手动节点后，策略组会出现在这里。")
-                ManisButton("打开配置", primary = true, onClick = onOpenConfiguration)
+                ManisMeta("策略组决定哪些节点可以互相切换：先添加订阅或手动节点，再把它加进组。")
+                ManisButton("添加策略组", primary = true, onClick = onAddGroup)
             }
         }
     }

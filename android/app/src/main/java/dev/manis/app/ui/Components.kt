@@ -41,6 +41,9 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -368,6 +371,134 @@ fun ManisDialog(
                         .padding(ManisDimens.spaceLg),
                     horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm, Alignment.End),
                     content = actions,
+                )
+            }
+        }
+    }
+}
+
+/** A Material 3 exposed dropdown for single-choice lists. */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+fun ManisSelect(
+    label: String,
+    options: List<String>,
+    selected: String,
+    modifier: Modifier = Modifier,
+    display: (String) -> String = { it },
+    onSelect: (String) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val colors = LocalManisColors.current
+    androidx.compose.material3.ExposedDropdownMenuBox(
+        expanded = expanded,
+        onExpandedChange = { expanded = it },
+        modifier = modifier,
+    ) {
+        OutlinedTextField(
+            value = display(selected),
+            onValueChange = {},
+            readOnly = true,
+            label = { Text(label, style = ManisType.metadata) },
+            trailingIcon = {
+                androidx.compose.material3.ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded)
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .menuAnchor(androidx.compose.material3.MenuAnchorType.PrimaryNotEditable),
+            singleLine = true,
+            shape = RoundedCornerShape(ManisDimens.radiusControl),
+            textStyle = ManisType.body,
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedContainerColor = colors.surfaceOverlay,
+                unfocusedContainerColor = colors.surfaceOverlay,
+                focusedBorderColor = colors.actionPrimary,
+                unfocusedBorderColor = colors.outlineSubtle,
+                focusedTextColor = colors.textPrimary,
+                unfocusedTextColor = colors.textPrimary,
+            ),
+        )
+        ExposedDropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+        ) {
+            for (option in options) {
+                androidx.compose.material3.DropdownMenuItem(
+                    text = { Text(display(option), style = ManisType.body) },
+                    onClick = {
+                        onSelect(option)
+                        expanded = false
+                    },
+                )
+            }
+        }
+    }
+}
+
+/** A dropdown with checkable entries, for member lists. */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+fun ManisMultiSelect(
+    label: String,
+    options: List<String>,
+    selected: Set<Int>,
+    modifier: Modifier = Modifier,
+    onToggle: (Int) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val colors = LocalManisColors.current
+    val summary = options.withIndex()
+        .filter { it.index in selected }
+        .joinToString("、") { it.value }
+        .ifBlank { "未选择" }
+    androidx.compose.material3.ExposedDropdownMenuBox(
+        expanded = expanded,
+        onExpandedChange = { expanded = it },
+        modifier = modifier,
+    ) {
+        OutlinedTextField(
+            value = summary,
+            onValueChange = {},
+            readOnly = true,
+            label = { Text(label, style = ManisType.metadata) },
+            trailingIcon = {
+                androidx.compose.material3.ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded)
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .menuAnchor(androidx.compose.material3.MenuAnchorType.PrimaryNotEditable),
+            singleLine = true,
+            shape = RoundedCornerShape(ManisDimens.radiusControl),
+            textStyle = ManisType.body,
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedContainerColor = colors.surfaceOverlay,
+                unfocusedContainerColor = colors.surfaceOverlay,
+                focusedBorderColor = colors.actionPrimary,
+                unfocusedBorderColor = colors.outlineSubtle,
+                focusedTextColor = colors.textPrimary,
+                unfocusedTextColor = colors.textPrimary,
+            ),
+        )
+        ExposedDropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+        ) {
+            if (options.isEmpty()) {
+                androidx.compose.material3.DropdownMenuItem(
+                    text = { Text("没有可选项", style = ManisType.body) },
+                    onClick = { expanded = false },
+                )
+            }
+            for ((index, option) in options.withIndex()) {
+                androidx.compose.material3.DropdownMenuItem(
+                    text = { Text(option, style = ManisType.body) },
+                    trailingIcon = {
+                        androidx.compose.material3.Checkbox(
+                            checked = index in selected,
+                            onCheckedChange = null,
+                        )
+                    },
+                    onClick = { onToggle(index) },
                 )
             }
         }
