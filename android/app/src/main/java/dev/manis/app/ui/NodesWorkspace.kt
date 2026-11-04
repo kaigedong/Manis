@@ -1,6 +1,8 @@
 package dev.manis.app.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -375,12 +377,19 @@ private fun ExpandableCard(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val colors = LocalManisColors.current
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
     ManisCard {
         Row(
             Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(ManisDimens.radiusRow))
-                .clickable(onClick = onToggle),
+                .background(if (pressed) colors.surfaceLow else Color.Transparent)
+                .clickable(
+                    interactionSource = interaction,
+                    indication = null,
+                    onClick = onToggle,
+                ),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
         ) {
@@ -463,12 +472,19 @@ private fun GroupCard(
     onDelete: (() -> Unit)?,
 ) {
     val colors = LocalManisColors.current
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
     ManisCard {
         Row(
             Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(ManisDimens.radiusRow))
-                .clickable(onClick = onToggle),
+                .background(if (pressed) colors.surfaceLow else Color.Transparent)
+                .clickable(
+                    interactionSource = interaction,
+                    indication = null,
+                    onClick = onToggle,
+                ),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
         ) {

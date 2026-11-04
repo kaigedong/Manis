@@ -1,6 +1,8 @@
 package dev.manis.app.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -215,11 +217,16 @@ private fun RuleGroupHeader(
     onApply: () -> Unit,
 ) {
     val colors = LocalManisColors.current
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
     Surface(
-        onClick = onToggle,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(if (pressed) colors.surfaceLow else colors.surfaceOverlay)
+            .clickable(interactionSource = interaction, indication = null, onClick = onToggle),
         shape = RoundedCornerShape(16.dp),
-        color = colors.surfaceOverlay,
+        color = Color.Transparent,
     ) {
         Row(
             Modifier.padding(horizontal = ManisDimens.spaceLg, vertical = ManisDimens.spaceMd),
