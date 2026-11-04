@@ -127,7 +127,8 @@ data class MobileConfig(
                     .put("kind", rule.kind)
                     .put("value", rule.value)
                     .put("policy", rule.policy)
-                    .put("enabled", rule.enabled),
+                    .put("enabled", rule.enabled)
+                    .put("id", rule.id),
             )
         }
         return JSONObject()

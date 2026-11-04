@@ -70,6 +70,7 @@ fun RulesWorkspace(onMessage: (String) -> Unit) {
     var editor by remember { mutableStateOf<RuleEditor?>(null) }
     var expanded by rememberSaveable { mutableStateOf(true) }
     var draggingId by remember { mutableStateOf<Long?>(null) }
+    var draggingIndex by remember { mutableStateOf(-1) }
     var dragOffset by remember { mutableFloatStateOf(0f) }
     val rowHeightPx = with(LocalDensity.current) { RuleRowStep.toPx() }
 
@@ -78,7 +79,8 @@ fun RulesWorkspace(onMessage: (String) -> Unit) {
     }
 
     fun moveRule(from: Int, to: Int) {
-        val entries = config.ruleEntries.toMutableList()
+        // Read the live order: a drag can move the row several times before it recomposes.
+        val entries = Workspace.config.value.ruleEntries.toMutableList()
         if (from !in entries.indices || to !in entries.indices) return
         val moved = entries.removeAt(from)
         entries.add(to, moved)
@@ -156,21 +158,24 @@ fun RulesWorkspace(onMessage: (String) -> Unit) {
                         onEdit = { editor = RuleEditor(index, rule) },
                         onDragStart = {
                             draggingId = rule.id
+                            draggingIndex = index
                             dragOffset = 0f
                         },
                         onDrag = { delta ->
-                            val current = config.ruleEntries.indexOfFirst { it.id == rule.id }
-                            if (current < 0) return@RuleRow
+                            val lastIndex = Workspace.config.value.ruleEntries.lastIndex
+                            if (draggingIndex !in 0..lastIndex) return@RuleRow
                             dragOffset += delta
-                            val target = (current + (dragOffset / rowHeightPx).roundToInt())
-                                .coerceIn(0, config.ruleEntries.lastIndex)
-                            if (target != current) {
-                                moveRule(current, target)
-                                dragOffset += (current - target) * rowHeightPx
+                            val target = (draggingIndex + (dragOffset / rowHeightPx).roundToInt())
+                                .coerceIn(0, lastIndex)
+                            if (target != draggingIndex) {
+                                moveRule(draggingIndex, target)
+                                dragOffset += (draggingIndex - target) * rowHeightPx
+                                draggingIndex = target
                             }
                         },
                         onDragEnd = {
                             draggingId = null
+                            draggingIndex = -1
                             dragOffset = 0f
                         },
                     )
@@ -278,7 +283,20 @@ private fun RuleRow(
         shadowElevation = if (dragging) 6.dp else 0.dp,
     ) {
         Row(
-            Modifier.fillMaxSize().padding(start = ManisDimens.spaceLg, end = ManisDimens.spaceSm),
+            Modifier
+                .fillMaxSize()
+                .padding(start = ManisDimens.spaceLg, end = ManisDimens.spaceSm)
+                .pointerInput(rule.id) {
+                    detectDragGestures(
+                        onDragStart = { dragStart() },
+                        onDragEnd = { dragEnd() },
+                        onDragCancel = { dragEnd() },
+                        onDrag = { change, amount ->
+                            change.consume()
+                            drag(amount.y)
+                        },
+                    )
+                },
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceMd),
         ) {
@@ -302,20 +320,7 @@ private fun RuleRow(
             Icon(
                 painter = painterResource(R.drawable.ic_drag_handle),
                 contentDescription = "拖动排序",
-                modifier = Modifier
-                    .size(40.dp)
-                    .padding(ManisDimens.spaceSm)
-                    .pointerInput(rule.id) {
-                        detectDragGestures(
-                            onDragStart = { dragStart() },
-                            onDragEnd = { dragEnd() },
-                            onDragCancel = { dragEnd() },
-                            onDrag = { change, amount ->
-                                change.consume()
-                                drag(amount.y)
-                            },
-                        )
-                    },
+                modifier = Modifier.size(24.dp),
                 tint = colors.textTertiary,
             )
         }
