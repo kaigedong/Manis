@@ -167,18 +167,6 @@ fun NodesWorkspace(
         if (key in set) set - key else set + key
 
     Column(Modifier.fillMaxSize()) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = ManisDimens.spaceLg, vertical = ManisDimens.spaceLg),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
-        ) {
-            Text("节点", style = ManisType.pageTitle, color = colors.textPrimary, modifier = Modifier.weight(1f))
-            ManisButton("测速", onClick = ::testAll)
-            ManisButton(if (refreshing) "刷新中…" else "刷新", onClick = ::refresh)
-        }
-        ManisDivider()
         Column(
             Modifier
                 .fillMaxSize()
@@ -189,6 +177,7 @@ fun NodesWorkspace(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 ManisSectionTitle("来源")
                 Spacer(Modifier.weight(1f))
+                ManisTextAction(if (refreshing) "刷新中…" else "刷新") { refresh() }
                 ManisTextAction("配置") { openSources() }
             }
             if (subscriptions.isEmpty() && config.nodes.isEmpty()) {
@@ -260,6 +249,7 @@ fun NodesWorkspace(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 ManisSectionTitle("策略组")
                 Spacer(Modifier.weight(1f))
+                ManisTextAction("测速") { testAll() }
                 ManisTextAction("添加") { addingGroup = true }
             }
             if (groups.isEmpty() && config.groups.isEmpty()) {

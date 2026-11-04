@@ -2,6 +2,7 @@ package dev.manis.app.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -61,45 +62,6 @@ fun ActivityWorkspace(onMessage: (String) -> Unit) {
     }
 
     Column(Modifier.fillMaxSize().background(colors.surfaceBase)) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = ManisDimens.spaceLg, vertical = ManisDimens.spaceLg),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text("网络活动", style = ManisType.pageTitle, color = colors.textPrimary)
-                val countLabel = when {
-                    query.isBlank() -> "${allConnections.size} 个连接"
-                    else -> "${connections.size}/${allConnections.size} 个连接"
-                }
-                ManisMeta(
-                    when {
-                        !RuntimeState.active && query.isBlank() -> "$countLabel · ↓ 0 B · ↑ 0 B"
-                        snapshot == null -> "正在读取连接…"
-                        else -> "$countLabel · ↓ ${formatBytes(connections.sumOf { it.download })} · ↑ ${formatBytes(connections.sumOf { it.upload })}"
-                    },
-                )
-            }
-            ManisButton(if (refreshing) "刷新中…" else "刷新", onClick = {
-                if (!RuntimeState.active) {
-                    onMessage("先连接 VPN")
-                    return@ManisButton
-                }
-                refreshing = true
-                scope.launch {
-                    runCatching { ControllerApi.connections() }
-                        .onSuccess {
-                            snapshot = it
-                            onMessage("已刷新连接")
-                        }
-                        .onFailure { onMessage("读取连接失败") }
-                    refreshing = false
-                }
-            })
-        }
-        ManisDivider()
         Column(
             Modifier
                 .fillMaxSize()
@@ -107,7 +69,35 @@ fun ActivityWorkspace(onMessage: (String) -> Unit) {
                 .padding(ManisDimens.spaceMd),
             verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
         ) {
-            ManisTextField(value = query, onValueChange = { query = it }, placeholder = "搜索连接")
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.weight(1f)) {
+                    ManisTextField(value = query, onValueChange = { query = it }, placeholder = "搜索连接")
+                }
+                ManisTextAction(if (refreshing) "刷新中…" else "刷新") {
+                    if (!RuntimeState.active) {
+                        onMessage("先连接 VPN")
+                    } else {
+                        refreshing = true
+                        scope.launch {
+                            runCatching { ControllerApi.connections() }
+                                .onSuccess {
+                                    snapshot = it
+                                    onMessage("已刷新连接")
+                                }
+                                .onFailure { onMessage("读取连接失败") }
+                            refreshing = false
+                        }
+                    }
+                }
+            }
+            ManisMeta(
+                when {
+                    !RuntimeState.active && query.isBlank() -> "0 个连接 · ↓ 0 B · ↑ 0 B"
+                    snapshot == null -> "正在读取连接…"
+                    query.isBlank() -> "${allConnections.size} 个连接 · ↓ ${formatBytes(allConnections.sumOf { it.download })} · ↑ ${formatBytes(allConnections.sumOf { it.upload })}"
+                    else -> "${connections.size}/${allConnections.size} 个连接 · ↓ ${formatBytes(connections.sumOf { it.download })} · ↑ ${formatBytes(connections.sumOf { it.upload })}"
+                },
+            )
             if (!RuntimeState.active) {
                 ManisCard {
                     Text("暂无活动连接", style = ManisType.label, color = colors.textPrimary)

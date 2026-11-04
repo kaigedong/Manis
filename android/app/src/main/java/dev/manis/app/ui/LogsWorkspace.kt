@@ -67,36 +67,33 @@ fun LogsWorkspace(onMessage: (String) -> Unit) {
     }
 
     Column(Modifier.fillMaxSize().background(colors.surfaceBase)) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = ManisDimens.spaceLg, vertical = ManisDimens.spaceLg),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text("日志", style = ManisType.pageTitle, color = colors.textPrimary)
-                ManisMeta(
-                    if (loading) "正在读取日志…" else "${filtered.size} 条日志 · 敏感信息已隐藏",
-                )
-            }
-            ManisButton("刷新", onClick = {
-                reloads += 1
-                onMessage("已刷新日志")
-            })
-            ManisButton("复制", primary = true, onClick = {
-                clipboard.setText(AnnotatedString(raw.joinToString("\n")))
-                onMessage("日志已复制到剪贴板")
-            })
-        }
-        ManisDivider()
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(ManisDimens.spaceLg),
             verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
         ) {
             item(key = "search") {
-                ManisTextField(value = query, onValueChange = { query = it }, placeholder = "搜索日志")
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(Modifier.weight(1f)) {
+                        ManisTextField(value = query, onValueChange = { query = it }, placeholder = "搜索日志")
+                    }
+                    ManisTextAction("刷新") {
+                        reloads += 1
+                        onMessage("已刷新日志")
+                    }
+                    ManisTextAction("复制") {
+                        clipboard.setText(AnnotatedString(raw.joinToString("\n")))
+                        onMessage("日志已复制到剪贴板")
+                    }
+                }
+            }
+            item(key = "meta") {
+                ManisMeta(
+                    if (loading) "正在读取日志…" else "${filtered.size} 条日志 · 敏感信息已隐藏",
+                )
             }
             if (filtered.isEmpty()) {
                 item(key = "empty") {

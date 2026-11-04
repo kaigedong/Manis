@@ -88,34 +88,6 @@ fun RulesWorkspace(onMessage: (String) -> Unit) {
     }
 
     Column(Modifier.fillMaxSize().background(colors.surfaceBase)) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = ManisDimens.spaceLg, vertical = ManisDimens.spaceLg),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text("分流规则", style = ManisType.pageTitle, color = colors.textPrimary)
-                val enabledRules = config.ruleEntries.count { it.enabled }
-                val disabledRules = config.ruleEntries.size - enabledRules
-                ManisMeta(
-                    if (disabledRules == 0) {
-                        "${config.ruleEntries.size} 条规则"
-                    } else {
-                        "$enabledRules 条生效 · $disabledRules 条已禁用"
-                    },
-                )
-            }
-            if (pending) {
-                ManisButton("应用", primary = true, onClick = {
-                    applyWorkspace(context)
-                    onMessage("已应用工作区")
-                })
-            }
-            ManisButton("添加规则", onClick = { editor = RuleEditor(null, RuleEntry()) })
-        }
-        ManisDivider()
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(ManisDimens.spaceLg),
@@ -125,7 +97,13 @@ fun RulesWorkspace(onMessage: (String) -> Unit) {
                 RuleGroupHeader(
                     count = config.ruleEntries.size,
                     expanded = expanded,
+                    pending = pending,
                     onToggle = { expanded = !expanded },
+                    onAdd = { editor = RuleEditor(null, RuleEntry()) },
+                    onApply = {
+                        applyWorkspace(context)
+                        onMessage("已应用工作区")
+                    },
                 )
             }
             if (expanded) {
@@ -228,7 +206,14 @@ fun RulesWorkspace(onMessage: (String) -> Unit) {
 }
 
 @Composable
-private fun RuleGroupHeader(count: Int, expanded: Boolean, onToggle: () -> Unit) {
+private fun RuleGroupHeader(
+    count: Int,
+    expanded: Boolean,
+    pending: Boolean,
+    onToggle: () -> Unit,
+    onAdd: () -> Unit,
+    onApply: () -> Unit,
+) {
     val colors = LocalManisColors.current
     Surface(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onToggle),
@@ -244,6 +229,8 @@ private fun RuleGroupHeader(count: Int, expanded: Boolean, onToggle: () -> Unit)
                 Text("手动规则", style = ManisType.label, color = colors.textPrimary)
                 ManisMeta("$count 条 · 从上到下匹配")
             }
+            if (pending) ManisTextAction("应用", onApply)
+            ManisTextAction("添加", onAdd)
             Icon(
                 imageVector = Icons.Filled.KeyboardArrowDown,
                 contentDescription = if (expanded) "收起" else "展开",

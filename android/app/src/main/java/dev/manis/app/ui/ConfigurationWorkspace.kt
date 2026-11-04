@@ -94,30 +94,6 @@ fun ConfigurationWorkspace(onMessage: (String) -> Unit, onOpenLogs: () -> Unit) 
     }
 
     Column(Modifier.fillMaxSize().background(colors.surfaceBase)) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(
-                    horizontal = if (compact) ManisDimens.spaceLg else ManisDimens.spaceXl,
-                    vertical = ManisDimens.spaceLg,
-                ),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text("配置", style = ManisType.pageTitle, color = colors.textPrimary)
-                ManisMeta(active.detail)
-            }
-            Box(
-                Modifier
-                    .clip(RoundedCornerShape(ManisDimens.radiusControl))
-                    .background(colors.surfaceLow)
-                    .padding(horizontal = ManisDimens.spaceMd, vertical = ManisDimens.spaceXs),
-            ) {
-                Text(active.label, style = ManisType.metadata, color = colors.textSecondary)
-            }
-        }
-        ManisDivider()
         if (compact) {
             SectionFeed(
                 modifier = Modifier.fillMaxSize(),

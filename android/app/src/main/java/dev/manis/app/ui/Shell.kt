@@ -73,6 +73,7 @@ fun ManisShell(
     statusTone: StatusTone,
     downloadText: String,
     uploadText: String,
+    showGlobalHeader: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     val colors = LocalManisColors.current
@@ -89,15 +90,17 @@ fun ManisShell(
                     .background(colors.surfaceBase)
                     .windowInsetsPadding(WindowInsets.safeDrawing),
             ) {
-                Chrome(
-                    proxyLabel = proxyLabel,
-                    onProxyToggle = onProxyToggle,
-                    routingLabel = routingLabel,
-                    onRoutingCycle = onRoutingCycle,
-                    darkTheme = darkTheme,
-                    onToggleTheme = onToggleTheme,
-                    navWidth = navWidth(sizeClass),
-                )
+                if (sizeClass != SizeClass.Compact || showGlobalHeader) {
+                    Chrome(
+                        proxyLabel = proxyLabel,
+                        onProxyToggle = onProxyToggle,
+                        routingLabel = routingLabel,
+                        onRoutingCycle = onRoutingCycle,
+                        darkTheme = darkTheme,
+                        onToggleTheme = onToggleTheme,
+                        navWidth = navWidth(sizeClass),
+                    )
+                }
                 if (sizeClass == SizeClass.Compact) {
                     Box(Modifier.fillMaxWidth().weight(1f)) { content() }
                     StatusStrip(statusText, statusTone, downloadText, uploadText)
@@ -251,6 +254,7 @@ private fun BottomNavigation(
 ) {
     val colors = LocalManisColors.current
     NavigationBar(
+        modifier = Modifier.height(ManisDimens.bottomNavigationHeight),
         containerColor = colors.surfaceChrome,
         contentColor = colors.textSecondary,
         tonalElevation = 0.dp,

@@ -132,9 +132,9 @@ object ManisDimens {
     val controlStandard = 48.dp
     val controlIcon = 40.dp
 
-    val chromeHeight = 64.dp
-    val statusBarHeight = 44.dp
-    val bottomNavigationHeight = 80.dp
+    val chromeHeight = 60.dp
+    val statusBarHeight = 32.dp
+    val bottomNavigationHeight = 72.dp
 
     val navCompact = 56.dp
     val navMedium = 66.dp

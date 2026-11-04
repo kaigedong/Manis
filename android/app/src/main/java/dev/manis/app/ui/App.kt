@@ -234,6 +234,7 @@ fun ManisApp() {
         },
         downloadText = formatTraffic(RuntimeState.downloadTotal),
         uploadText = formatTraffic(RuntimeState.uploadTotal),
+        showGlobalHeader = workspace == PrimaryWorkspace.Nodes,
     ) {
         Box(Modifier.fillMaxSize()) {
             when (workspace) {
