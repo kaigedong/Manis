@@ -5,11 +5,16 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.material3.Checkbox
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.height
 import dev.manis.app.R
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.res.painterResource
 import androidx.compose.material3.Icon
@@ -286,10 +291,26 @@ private fun SourceEditorPane(
     var name by remember { mutableStateOf("") }
     var url by remember { mutableStateOf("") }
     var link by remember { mutableStateOf("") }
-    var strategy by remember { mutableStateOf("urltest") }
-    var subscriptionMembers by remember { mutableStateOf(setOf<Int>()) }
-    var nodeMembers by remember { mutableStateOf(setOf<Int>()) }
+    var strategy by remember { mutableStateOf("select") }
+    // Desktop parity: a new group takes every node, or a name filter, or an explicit pick.
+    var scope by remember { mutableStateOf("all") }
+    var contains by remember { mutableStateOf("") }
+    var picked by remember { mutableStateOf(emptySet<String>()) }
+    var available by remember { mutableStateOf(emptyList<Pair<String, Boolean>>()) }
     var error by remember { mutableStateOf<String?>(null) }
+    val context = LocalContext.current
+
+    LaunchedEffect(editor) {
+        if (editor == SourceEditor.Group) {
+            available = withContext(Dispatchers.IO) {
+                val fromSubscriptions = config.subscriptions.flatMap { subscription ->
+                    SubscriptionCache.cachedNodes(context, subscription.url).map { it.name to false }
+                }
+                val manual = config.nodes.map { it.displayName to true }
+                (fromSubscriptions + manual).distinctBy { it.first }
+            }
+        }
+    }
 
     fun submit() {
         when (editor) {
@@ -308,18 +329,55 @@ private fun SourceEditorPane(
                 onSaveNode(link)
             }
             SourceEditor.Group -> {
-                if (name.isBlank() || (subscriptionMembers.isEmpty() && nodeMembers.isEmpty())) {
-                    error = "策略组需要名称和至少一个成员"
+                if (name.isBlank()) {
+                    error = "请填写组名"
                     return
                 }
-                onSaveGroup(
-                    GroupEntry(
+                if (scope == "contains" && contains.isBlank()) {
+                    error = "请填写要匹配的名称关键字"
+                    return
+                }
+                if (scope == "pick" && picked.isEmpty()) {
+                    error = "请至少选择一个节点"
+                    return
+                }
+                val subscriptions = config.subscriptions.withIndex()
+                    .filter { it.value.enabled }
+                    .map { it.index }
+                val manual = config.nodes.withIndex()
+                val group = when (scope) {
+                    "contains" -> GroupEntry(
                         name = name.trim(),
                         strategy = strategy,
-                        subscriptionIndexes = subscriptionMembers.sorted(),
-                        nodeIndexes = nodeMembers.sorted(),
-                    ),
-                )
+                        subscriptionIndexes = subscriptions,
+                        nodeIndexes = manual
+                            .filter { it.value.displayName.contains(contains.trim(), ignoreCase = true) }
+                            .map { it.index },
+                        filter = contains.trim(),
+                    )
+                    "pick" -> GroupEntry(
+                        name = name.trim(),
+                        strategy = strategy,
+                        subscriptionIndexes = subscriptions,
+                        nodeIndexes = manual
+                            .filter { picked.contains(it.value.displayName) }
+                            .map { it.index },
+                        filter = picked
+                            .filter { pickedName -> available.any { it.first == pickedName && !it.second } }
+                            .takeIf { it.isNotEmpty() }
+                            ?.let { names ->
+                                names.joinToString("|", prefix = "^(", postfix = ")$") { Regex.escape(it) }
+                            },
+                        selectedNames = picked.sorted(),
+                    )
+                    else -> GroupEntry(
+                        name = name.trim(),
+                        strategy = strategy,
+                        subscriptionIndexes = subscriptions,
+                        nodeIndexes = manual.filter { it.value.enabled }.map { it.index },
+                    )
+                }
+                onSaveGroup(group)
             }
         }
     }
@@ -334,7 +392,7 @@ private fun SourceEditorPane(
             subtitle = when (editor) {
                 SourceEditor.Subscription -> "粘贴 Clash 格式订阅地址"
                 SourceEditor.Node -> "支持 TLS / WebSocket / Reality 分享链接"
-                SourceEditor.Group -> "选择成员；自动测速组按延迟选最快节点"
+                SourceEditor.Group -> "先选节点范围；自动测速组按延迟选最快节点"
             },
             onDismiss = onCancel,
             actions = {
@@ -364,20 +422,75 @@ private fun SourceEditorPane(
                         display = { if (it == "urltest") "自动测速" else "手动选择" },
                         onSelect = { strategy = it },
                     )
-                    ManisMultiSelect(
-                        label = "订阅成员",
-                        options = config.subscriptions.mapIndexed { index, entry ->
-                            entry.name.ifBlank { "订阅 ${index + 1}" }
+                    ManisSelect(
+                        label = "节点范围",
+                        options = listOf("all", "contains", "pick"),
+                        selected = scope,
+                        display = {
+                            when (it) {
+                                "contains" -> "名称包含"
+                                "pick" -> "选择节点"
+                                else -> "全部节点"
+                            }
                         },
-                        selected = subscriptionMembers,
-                        onToggle = { subscriptionMembers = subscriptionMembers.toggle(it) },
+                        onSelect = { scope = it },
                     )
-                    ManisMultiSelect(
-                        label = "手动节点成员",
-                        options = config.nodes.map { it.displayName },
-                        selected = nodeMembers,
-                        onToggle = { nodeMembers = nodeMembers.toggle(it) },
-                    )
+                    when (scope) {
+                        "contains" -> {
+                            ManisTextField(
+                                value = contains,
+                                onValueChange = { contains = it },
+                                placeholder = "例如 香港",
+                            )
+                            ManisMeta("只收进名称包含该关键字的节点。")
+                        }
+                        "pick" -> {
+                            ManisMeta("已选 ${picked.size} 个节点")
+                            Column(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(max = 260.dp)
+                                    .verticalScroll(rememberScrollState()),
+                            ) {
+                                for ((nodeName, manualNode) in available) {
+                                    Row(
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(ManisDimens.radiusRow))
+                                            .clickable {
+                                                picked = if (nodeName in picked) {
+                                                    picked - nodeName
+                                                } else {
+                                                    picked + nodeName
+                                                }
+                                            }
+                                            .padding(vertical = ManisDimens.spaceXs),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Checkbox(
+                                            checked = nodeName in picked,
+                                            onCheckedChange = null,
+                                        )
+                                        Spacer(Modifier.width(ManisDimens.spaceSm))
+                                        Column(Modifier.weight(1f)) {
+                                            Text(
+                                                nodeName,
+                                                style = ManisType.body,
+                                                color = colors.textPrimary,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
+                                            if (manualNode) ManisMeta("手动节点")
+                                        }
+                                    }
+                                }
+                                if (available.isEmpty()) {
+                                    ManisMeta("还没有节点：先添加订阅或手动节点。")
+                                }
+                            }
+                        }
+                        else -> ManisMeta("使用全部启用的订阅和手动节点。")
+                    }
                 }
             }
             error?.let { Text(it, style = ManisType.metadata, color = colors.statusError) }

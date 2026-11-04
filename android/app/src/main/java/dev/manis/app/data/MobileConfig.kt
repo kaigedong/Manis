@@ -35,6 +35,11 @@ data class GroupEntry(
     val subscriptionIndexes: List<Int> = emptyList(),
     val nodeIndexes: List<Int> = emptyList(),
     val filter: String? = null,
+    /**
+     * The individual nodes the user picked, when the group is not simply "all nodes". The core
+     * receives them as an anchored filter because provider nodes cannot be listed one by one.
+     */
+    val selectedNames: List<String> = emptyList(),
 )
 
 /** Rule kinds shared by the Android editor and the desktop rule model. */
@@ -119,7 +124,8 @@ data class MobileConfig(
                     .put("strategy", group.strategy)
                     .put("subscription_indexes", JSONArray(group.subscriptionIndexes))
                     .put("node_indexes", JSONArray(group.nodeIndexes))
-                    .put("filter", group.filter ?: JSONObject.NULL),
+                    .put("filter", group.filter ?: JSONObject.NULL)
+                    .put("selected_names", JSONArray(group.selectedNames)),
             )
         }
         val ruleEntriesJson = JSONArray()
@@ -186,6 +192,7 @@ data class MobileConfig(
                         subscriptionIndexes = item.optJSONArray("subscription_indexes").ints(),
                         nodeIndexes = item.optJSONArray("node_indexes").ints(),
                         filter = item.optString("filter").takeIf { it.isNotBlank() && it != "null" },
+                        selectedNames = item.optJSONArray("selected_names").strings(),
                     )
                 }
             }
@@ -317,6 +324,16 @@ private fun GroupEntry.withoutNode(index: Int): GroupEntry = copy(
         .filter { it != index }
         .map { if (it > index) it - 1 else it },
 )
+
+private fun JSONArray?.strings(): List<String> {
+    if (this == null) return emptyList()
+    val values = mutableListOf<String>()
+    for (index in 0 until length()) {
+        val value = optString(index)
+        if (value.isNotEmpty()) values += value
+    }
+    return values
+}
 
 private fun JSONArray?.ints(): List<Int> {
     if (this == null) return emptyList()

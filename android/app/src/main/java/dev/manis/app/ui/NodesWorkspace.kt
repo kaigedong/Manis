@@ -91,12 +91,15 @@ fun NodesWorkspace(
 
     fun savedMembers(group: GroupEntry?): List<String> {
         if (group == null) return emptyList()
+        val picked = group.selectedNames.toSet()
         val fromSubscriptions = group.subscriptionIndexes.flatMap { index ->
             val subscription = config.subscriptions.getOrNull(index) ?: return@flatMap emptyList()
             cachedNodes[subscription.url].orEmpty().map { it.name }
         }
         val manual = group.nodeIndexes.mapNotNull { config.nodes.getOrNull(it)?.displayName }
-        return (fromSubscriptions + manual).distinct()
+        return (fromSubscriptions + manual)
+            .filter { picked.isEmpty() || it in picked }
+            .distinct()
     }
 
     fun reloadNodes() {
@@ -498,7 +501,7 @@ private fun GroupCard(
                 )
                 ManisMeta(
                     "${strategyLabel(type)} · 当前 ${displayProxyName(current) ?: "未选择"} · " +
-                        "${members.size} 个成员",
+                        "${members.size} 个节点",
                 )
             }
             if (canTest) ManisTextAction("测速", onClick = onTest)

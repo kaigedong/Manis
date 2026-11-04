@@ -1,5 +1,7 @@
 package dev.manis.app.ui
 
+import dev.manis.app.data.GroupEntry
+
 import android.content.Context
 import android.content.Intent
 import dev.manis.app.ManisVpnService
@@ -30,4 +32,11 @@ internal fun displayProxyName(name: String?): String? = when (name) {
     null -> null
     "__MANIS_GLOBAL__", "GLOBAL" -> "全局"
     else -> name
+}
+
+/** What a saved policy group pulls in, in the same words the editor uses. */
+internal fun GroupEntry.scopeSummary(): String = when {
+    selectedNames.isNotEmpty() -> "${selectedNames.size} 个节点"
+    filter != null -> "名称包含 $filter"
+    else -> "全部节点"
 }
