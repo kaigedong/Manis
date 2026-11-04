@@ -2,12 +2,15 @@ package dev.manis.app.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -17,12 +20,20 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import java.io.File
+import java.time.OffsetDateTime
+import java.time.format.DateTimeFormatter
+
+/** One parsed kernel log line. */
+private data class LogEntry(val time: String, val level: String, val message: String)
 
 /** The GPUI logs workspace: the kernel log with search, refresh and copy. */
 @Composable
@@ -30,14 +41,18 @@ fun LogsWorkspace(onMessage: (String) -> Unit) {
     val colors = LocalManisColors.current
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
-    var lines by remember { mutableStateOf(readKernelLog(context)) }
+    var raw by remember { mutableStateOf(readKernelLog(context)) }
     var query by remember { mutableStateOf("") }
 
-    val filtered = remember(lines, query) {
+    val entries = remember(raw) { raw.map(::parseLogLine) }
+    val filtered = remember(entries, query) {
         if (query.isBlank()) {
-            lines
+            entries
         } else {
-            lines.filter { it.contains(query, ignoreCase = true) }
+            entries.filter {
+                it.message.contains(query, ignoreCase = true) ||
+                    it.level.contains(query, ignoreCase = true)
+            }
         }
     }
 
@@ -54,11 +69,11 @@ fun LogsWorkspace(onMessage: (String) -> Unit) {
                 ManisMeta("${filtered.size} 条日志 · 敏感信息已隐藏")
             }
             ManisButton("刷新", onClick = {
-                lines = readKernelLog(context)
+                raw = readKernelLog(context)
                 onMessage("已刷新日志")
             })
             ManisButton("复制", primary = true, onClick = {
-                clipboard.setText(AnnotatedString(lines.joinToString("\n")))
+                clipboard.setText(AnnotatedString(raw.joinToString("\n")))
                 onMessage("日志已复制到剪贴板")
             })
         }
@@ -67,22 +82,19 @@ fun LogsWorkspace(onMessage: (String) -> Unit) {
             Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(ManisDimens.spaceMd),
-            verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
+                .padding(ManisDimens.spaceLg),
+            verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceMd),
         ) {
             ManisTextField(value = query, onValueChange = { query = it }, placeholder = "搜索日志")
-            ManisCard {
-                if (filtered.isEmpty()) {
-                    ManisMeta(if (lines.isEmpty()) "暂无日志：连接一次 VPN 后生成。" else "没有符合当前筛选的结果")
-                } else {
-                    for (line in filtered.takeLast(400)) {
-                        Text(
-                            line,
-                            style = ManisType.metadata.copy(
-                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                            ),
-                            color = logLineColor(line),
-                        )
+            if (filtered.isEmpty()) {
+                ManisCard {
+                    ManisMeta(if (raw.isEmpty()) "暂无日志：连接一次 VPN 后生成。" else "没有符合当前筛选的结果")
+                }
+            } else {
+                ManisCard {
+                    for ((index, entry) in filtered.takeLast(400).withIndex()) {
+                        LogLine(entry)
+                        if (index != filtered.takeLast(400).lastIndex) ManisDivider()
                     }
                 }
             }
@@ -91,15 +103,78 @@ fun LogsWorkspace(onMessage: (String) -> Unit) {
 }
 
 @Composable
-private fun logLineColor(line: String): Color {
+private fun LogLine(entry: LogEntry) {
     val colors = LocalManisColors.current
-    return when {
-        line.contains("ERROR", true) || line.contains("FATAL", true) -> colors.statusError
-        line.contains("WARN", true) -> colors.statusWarning
-        line.contains("DEBUG", true) -> colors.logDebug
-        line.contains("TRACE", true) -> colors.logTrace
-        else -> colors.textSecondary
+    Column(Modifier.fillMaxWidth().padding(vertical = ManisDimens.spaceXs)) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
+        ) {
+            Text(
+                entry.time,
+                style = ManisType.metadata.copy(fontFamily = FontFamily.Monospace),
+                color = colors.textTertiary,
+            )
+            LevelBadge(entry.level)
+        }
+        Text(
+            entry.message,
+            style = ManisType.metadata.copy(fontFamily = FontFamily.Monospace),
+            color = colors.textSecondary,
+            modifier = Modifier.padding(top = 2.dp),
+        )
     }
+}
+
+@Composable
+private fun LevelBadge(level: String) {
+    val colors = LocalManisColors.current
+    val tone: Color = when (level.lowercase()) {
+        "error", "fatal" -> colors.statusError
+        "warning", "warn" -> colors.statusWarning
+        "debug" -> colors.logDebug
+        "trace" -> colors.logTrace
+        else -> colors.logInfo
+    }
+    Box(
+        Modifier
+            .width(52.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .background(tone.copy(alpha = 0.14f))
+            .padding(vertical = 1.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            level.uppercase(),
+            style = ManisType.metadata.copy(fontFamily = FontFamily.Monospace),
+            color = tone,
+            maxLines = 1,
+            overflow = TextOverflow.Clip,
+        )
+    }
+}
+
+private val LOG_TIME = Regex("time=\"([^\"]*)\"")
+private val LOG_LEVEL = Regex("level=\"?([A-Za-z]+)\"?")
+private val LOG_MESSAGE = Regex("msg=\"(.*)\"$")
+private val CLOCK = DateTimeFormatter.ofPattern("HH:mm:ss")
+
+/** Parses the core's `time="…" level=… msg="…"` format, falling back to the raw line. */
+private fun parseLogLine(line: String): LogEntry {
+    val time = LOG_TIME.find(line)?.groupValues?.get(1).orEmpty()
+    val level = LOG_LEVEL.find(line)?.groupValues?.get(2) ?: "info"
+    val message = LOG_MESSAGE.find(line)?.groupValues?.get(1) ?: line
+    return LogEntry(formatTime(time), level, message)
+}
+
+private fun formatTime(time: String): String {
+    if (time.isBlank()) return "--:--:--"
+    return runCatching { OffsetDateTime.parse(time).format(CLOCK) }
+        .recoverCatching {
+            val clock = time.substringAfter('T', "")
+            if (clock.length >= 8) clock.take(8) else time.takeLast(8)
+        }
+        .getOrDefault(time)
 }
 
 private fun readKernelLog(context: android.content.Context): List<String> {

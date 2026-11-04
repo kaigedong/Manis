@@ -5,6 +5,9 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Icon
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.ui.draw.rotate
 import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.ExposedDropdownMenuBox
@@ -32,6 +35,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
@@ -54,6 +58,7 @@ fun RulesWorkspace(onMessage: (String) -> Unit) {
     val colors = LocalManisColors.current
     val context = LocalContext.current
     val rowHeightPx = with(androidx.compose.ui.platform.LocalDensity.current) { 76.dp.toPx() }
+    var rulesExpanded by rememberSaveable { mutableStateOf(true) }
     var draggingIndex by remember { mutableStateOf<Int?>(null) }
     var dragDelta by remember { mutableFloatStateOf(0f) }
     val config = Workspace.config.value
@@ -139,6 +144,25 @@ fun RulesWorkspace(onMessage: (String) -> Unit) {
                     }
                 } else {
                     ManisCard {
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable { rulesExpanded = !rulesExpanded },
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text("手动规则", style = ManisType.label, color = colors.textPrimary)
+                                ManisMeta("${config.ruleEntries.size} 条 · 从上到下匹配")
+                            }
+                            Icon(
+                                imageVector = Icons.Filled.KeyboardArrowDown,
+                                contentDescription = if (rulesExpanded) "收起" else "展开",
+                                modifier = Modifier.size(22.dp).rotate(if (rulesExpanded) 180f else 0f),
+                                tint = colors.textSecondary,
+                            )
+                        }
+                        if (rulesExpanded) ManisDivider()
                         config.ruleEntries.forEachIndexed { index, rule ->
                             RuleListRow(
                                 order = index + 1,
@@ -174,7 +198,7 @@ fun RulesWorkspace(onMessage: (String) -> Unit) {
                                     dragDelta = 0f
                                 },
                             )
-                            if (index != config.ruleEntries.lastIndex) ManisDivider()
+                            if (rulesExpanded && index != config.ruleEntries.lastIndex) ManisDivider()
                         }
                     }
                 }

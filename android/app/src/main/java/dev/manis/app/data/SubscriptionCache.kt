@@ -108,6 +108,52 @@ internal object SubscriptionCache {
         return count
     }
 
+    /** One node of a cached subscription, as far as the provider file names it. */
+    data class CachedNode(val name: String, val type: String)
+
+    /** Lists the nodes of one subscription from its cached provider file. */
+    fun cachedNodes(context: Context, url: String): List<CachedNode> {
+        val file = File(File(context.filesDir, DIRECTORY), fileName(url))
+        if (!file.isFile) return emptyList()
+        return runCatching { parseNodes(file.readText()) }.getOrDefault(emptyList())
+    }
+
+    /** Reads the top-level `proxies:` entries and their `name`/`type` fields. */
+    internal fun parseNodes(document: String): List<CachedNode> {
+        val nodes = mutableListOf<CachedNode>()
+        var inProxies = false
+        var name: String? = null
+        var type: String? = null
+        fun flush() {
+            if (name != null) nodes += CachedNode(name!!, type ?: "proxy")
+            name = null
+            type = null
+        }
+        for (line in document.lineSequence()) {
+            val trimmed = line.trimStart()
+            if (trimmed.isEmpty() || trimmed.startsWith("#")) continue
+            val indent = line.length - trimmed.length
+            if (!inProxies) {
+                if (indent == 0 && trimmed.startsWith("proxies:")) inProxies = true
+                continue
+            }
+            if (indent == 0) {
+                flush()
+                break
+            }
+            val item = if (trimmed.startsWith("- ")) trimmed.removePrefix("- ") else trimmed
+            if (trimmed.startsWith("- ")) flush()
+            val key = item.substringBefore(':', "").trim()
+            val value = item.substringAfter(':', "").trim().trim('"', '\'')
+            when (key) {
+                "name" -> if (name == null) name = value
+                "type" -> if (type == null) type = value
+            }
+        }
+        flush()
+        return nodes
+    }
+
     private fun fileName(url: String): String = subscriptionCachePath(url).substringAfterLast('/')
 
     private fun isCacheFile(name: String): Boolean =
