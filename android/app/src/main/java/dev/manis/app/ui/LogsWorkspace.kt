@@ -29,8 +29,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import java.io.File
-import java.time.OffsetDateTime
-import java.time.format.DateTimeFormatter
 
 /** One parsed kernel log line. */
 private data class LogEntry(val time: String, val level: String, val message: String)
@@ -157,28 +155,39 @@ private fun LevelBadge(level: String) {
 private val LOG_TIME = Regex("time=\"([^\"]*)\"")
 private val LOG_LEVEL = Regex("level=\"?([A-Za-z]+)\"?")
 private val LOG_MESSAGE = Regex("msg=\"(.*)\"$")
-private val CLOCK = DateTimeFormatter.ofPattern("HH:mm:ss")
 
 /** Parses the core's `time="…" level=… msg="…"` format, falling back to the raw line. */
-private fun parseLogLine(line: String): LogEntry {
+private fun parseLogLine(line: String): LogEntry = runCatching {
     val time = LOG_TIME.find(line)?.groupValues?.get(1).orEmpty()
-    val level = LOG_LEVEL.find(line)?.groupValues?.get(2) ?: "info"
+    val level = LOG_LEVEL.find(line)?.groupValues?.get(1) ?: "info"
     val message = LOG_MESSAGE.find(line)?.groupValues?.get(1) ?: line
-    return LogEntry(formatTime(time), level, message)
-}
+    LogEntry(formatTime(time), level, message)
+}.getOrElse { LogEntry("--:--:--", "info", line) }
 
 private fun formatTime(time: String): String {
     if (time.isBlank()) return "--:--:--"
-    return runCatching { OffsetDateTime.parse(time).format(CLOCK) }
-        .recoverCatching {
-            val clock = time.substringAfter('T', "")
-            if (clock.length >= 8) clock.take(8) else time.takeLast(8)
-        }
-        .getOrDefault(time)
+    val clock = time.substringAfter('T', "")
+    return if (clock.length >= 8) clock.take(8) else time.takeLast(8)
 }
 
+/** Reads only the tail of the kernel log, so a large file cannot exhaust the heap. */
 private fun readKernelLog(context: android.content.Context): List<String> {
     val file = File(context.filesDir, "mihomo/core.log")
     if (!file.isFile) return emptyList()
-    return runCatching { file.readLines().takeLast(300) }.getOrDefault(listOf("日志读取失败"))
+    return runCatching {
+        val maxBytes = 512 * 1024
+        val length = file.length()
+        val from = (length - maxBytes).coerceAtLeast(0)
+        java.io.RandomAccessFile(file, "r").use { handle ->
+            handle.seek(from)
+            val bytes = ByteArray((length - from).toInt())
+            handle.readFully(bytes)
+            bytes.toString(Charsets.UTF_8)
+                .lineSequence()
+                .drop(if (from > 0) 1 else 0)
+                .filter { it.isNotBlank() }
+                .toList()
+                .takeLast(300)
+        }
+    }.getOrDefault(listOf("日志读取失败"))
 }

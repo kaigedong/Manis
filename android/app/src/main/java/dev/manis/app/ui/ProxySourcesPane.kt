@@ -328,11 +328,7 @@ private suspend fun refreshSubscriptions(context: Context, config: MobileConfig)
     val cached = withContext(Dispatchers.IO) { SubscriptionCache.refresh(context, config) }
     val parts = mutableListOf<String>()
     if (cached.downloaded > 0) {
-        parts += if (RuntimeState.active) {
-            "已更新 ${cached.downloaded} 个订阅（${cached.nodes} 个节点）"
-        } else {
-            "已下载 ${cached.downloaded} 个订阅（${cached.nodes} 个节点），连接后生效"
-        }
+        parts += "已下载 ${cached.downloaded} 个订阅（${cached.nodes} 个节点）"
     } else if (cached.nodes > 0) {
         parts += "沿用本地缓存（${cached.nodes} 个节点）"
     }

@@ -141,8 +141,16 @@ internal object SubscriptionCache {
                 flush()
                 break
             }
-            val item = if (trimmed.startsWith("- ")) trimmed.removePrefix("- ") else trimmed
-            if (trimmed.startsWith("- ")) flush()
+            val startsItem = trimmed.startsWith("- ")
+            val item = if (startsItem) trimmed.removePrefix("- ").trim() else trimmed
+            if (startsItem) flush()
+            if (item.startsWith("{")) {
+                // Flow style: `- {name: "…", type: vless, …}`.
+                val flow = item.trim('{', '}', ' ')
+                if (name == null) name = flowField(flow, "name")
+                if (type == null) type = flowField(flow, "type")
+                continue
+            }
             val key = item.substringBefore(':', "").trim()
             val value = item.substringAfter(':', "").trim().trim('"', '\'')
             when (key) {
@@ -153,6 +161,12 @@ internal object SubscriptionCache {
         flush()
         return nodes
     }
+
+    private fun flowField(flow: String, field: String): String? =
+        Regex("""(?:^|[,\s])${Regex.escape(field)}\s*:\s*"([^"]*)"""")
+            .find(flow)?.groupValues?.get(1)
+            ?: Regex("""(?:^|[,\s])${Regex.escape(field)}\s*:\s*([^,}]+)""")
+                .find(flow)?.groupValues?.get(1)?.trim()
 
     private fun fileName(url: String): String = subscriptionCachePath(url).substringAfterLast('/')
 

@@ -13,15 +13,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.pager.HorizontalPager
-import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
-import androidx.compose.material3.ScrollableTabRow
-import androidx.compose.material3.Tab
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -58,26 +54,44 @@ private enum class ConfigSection(val key: String, val label: String, val detail:
 }
 
 /**
- * The configuration workspace. Phones page through one section at a time with a tab strip and a
- * horizontal swipe; wider layouts list the sections beside the selected one.
+ * The configuration workspace: one vertical feed of every section, with the badge following the
+ * scroll position. Wider layouts list the sections beside the same feed.
  */
 @Composable
 fun ConfigurationWorkspace(onMessage: (String) -> Unit, onOpenLogs: () -> Unit) {
     val colors = LocalManisColors.current
     val compact = LocalSizeClass.current == SizeClass.Compact
     val scope = rememberCoroutineScope()
-    val pager = rememberPagerState(pageCount = { ConfigSection.entries.size })
+    val scroll = rememberScrollState()
+    val sectionTops = remember { mutableStateMapOf<ConfigSection, Int>() }
+    var pendingTarget by remember { mutableStateOf<ConfigSection?>(null) }
 
     val requested = Workspace.requestedSection.value
     LaunchedEffect(requested) {
         if (requested != null) {
-            val index = ConfigSection.entries.indexOfFirst { it.key == requested }
-            if (index >= 0) pager.scrollToPage(index)
+            ConfigSection.entries.firstOrNull { it.key == requested }?.let { pendingTarget = it }
             Workspace.requestedSection.value = null
         }
     }
+    LaunchedEffect(sectionTops.size, pendingTarget) {
+        val target = pendingTarget ?: return@LaunchedEffect
+        val top = sectionTops[target] ?: return@LaunchedEffect
+        scroll.scrollTo(top)
+        pendingTarget = null
+    }
 
-    val active = ConfigSection.entries[pager.currentPage]
+    val active by remember {
+        derivedStateOf {
+            when {
+                scroll.value >= scroll.maxValue - 4 -> ConfigSection.entries.last()
+                else -> sectionTops.entries
+                    .filter { it.value <= scroll.value + 24 }
+                    .maxByOrNull { it.value }
+                    ?.key
+                    ?: ConfigSection.General
+            }
+        }
+    }
 
     Column(Modifier.fillMaxSize().background(colors.surfaceBase)) {
         Row(
@@ -105,32 +119,17 @@ fun ConfigurationWorkspace(onMessage: (String) -> Unit, onOpenLogs: () -> Unit) 
         }
         ManisDivider()
         if (compact) {
-            ScrollableTabRow(
-                selectedTabIndex = pager.currentPage,
-                edgePadding = ManisDimens.spaceLg,
-                containerColor = colors.surfaceBase,
-                contentColor = colors.actionPrimary,
-                divider = {},
-            ) {
-                ConfigSection.entries.forEachIndexed { index, entry ->
-                    Tab(
-                        selected = index == pager.currentPage,
-                        onClick = { scope.launch { pager.animateScrollToPage(index) } },
-                        text = { Text(entry.label, style = ManisType.label, maxLines = 1) },
-                    )
-                }
-            }
-            HorizontalPager(state = pager, modifier = Modifier.weight(1f)) { page ->
-                SectionPane(
-                    entry = ConfigSection.entries[page],
-                    onMessage = onMessage,
-                    onOpenLogs = onOpenLogs,
-                )
-            }
+            SectionFeed(
+                modifier = Modifier.fillMaxSize(),
+                scroll = scroll,
+                sectionTops = sectionTops,
+                onMessage = onMessage,
+                onOpenLogs = onOpenLogs,
+            )
         } else {
             Row(Modifier.fillMaxWidth().weight(1f)) {
                 SectionSidebar(active = active) { entry ->
-                    scope.launch { pager.scrollToPage(ConfigSection.entries.indexOf(entry)) }
+                    scope.launch { scroll.animateScrollTo(sectionTops[entry] ?: 0) }
                 }
                 Box(
                     Modifier
@@ -138,38 +137,51 @@ fun ConfigurationWorkspace(onMessage: (String) -> Unit, onOpenLogs: () -> Unit) 
                         .width(1.dp)
                         .background(colors.outlineSubtle.copy(alpha = 0.5f)),
                 )
-                SectionPane(
-                    entry = active,
+                SectionFeed(
+                    modifier = Modifier.fillMaxHeight().weight(1f),
+                    scroll = scroll,
+                    sectionTops = sectionTops,
                     onMessage = onMessage,
                     onOpenLogs = onOpenLogs,
-                    modifier = Modifier.fillMaxHeight().weight(1f),
                 )
             }
         }
     }
 }
 
-/** One section: its own scroll container, so paging never mixes two sections. */
+/** Every section in one scrollable feed; positions feed the badge and the sidebar. */
 @Composable
-private fun SectionPane(
-    entry: ConfigSection,
+private fun SectionFeed(
+    modifier: Modifier,
+    scroll: androidx.compose.foundation.ScrollState,
+    sectionTops: MutableMap<ConfigSection, Int>,
     onMessage: (String) -> Unit,
     onOpenLogs: () -> Unit,
-    modifier: Modifier = Modifier.fillMaxSize(),
 ) {
     Column(
         modifier
-            .verticalScroll(rememberScrollState())
+            .verticalScroll(scroll)
             .padding(ManisDimens.spaceLg),
-        verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceMd),
+        verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceXl),
     ) {
-        when (entry) {
-            ConfigSection.General -> GeneralSection(onMessage)
-            ConfigSection.Runtime -> RuntimeSection(onMessage)
-            ConfigSection.ProxySources -> ProxySourcesContent(onMessage)
-            ConfigSection.RuleSources -> RuleSourcesSection()
-            ConfigSection.Advanced -> AdvancedSection(onMessage, onOpenLogs)
-            ConfigSection.Updates -> UpdatesContent(onMessage)
+        for (entry in ConfigSection.entries) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .onGloballyPositioned { coordinates ->
+                        sectionTops[entry] = coordinates.positionInParent().y.roundToInt()
+                    },
+                verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceMd),
+            ) {
+                when (entry) {
+                    ConfigSection.General -> GeneralSection(onMessage)
+                    ConfigSection.Runtime -> RuntimeSection(onMessage)
+                    ConfigSection.ProxySources -> ProxySourcesContent(onMessage)
+                    ConfigSection.RuleSources -> RuleSourcesSection()
+                    ConfigSection.Advanced -> AdvancedSection(onMessage, onOpenLogs)
+                    ConfigSection.Updates -> UpdatesContent(onMessage)
+                }
+            }
         }
     }
 }

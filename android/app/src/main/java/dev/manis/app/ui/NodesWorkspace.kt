@@ -1,5 +1,6 @@
 package dev.manis.app.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -25,6 +26,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
@@ -71,14 +75,11 @@ fun NodesWorkspace(
         }
     }
 
-    fun refresh() {
-        if (refreshing) return
-        refreshing = true
+    fun reloadNodes() {
         scope.launch {
-            runCatching { ControllerApi.refreshSubscriptions() }
-                .onSuccess { onMessage("已刷新订阅") }
-                .onFailure { onMessage("刷新订阅失败") }
-            refreshing = false
+            cachedNodes = withContext(Dispatchers.IO) {
+                config.subscriptions.associate { it.url to SubscriptionCache.cachedNodes(context, it.url) }
+            }
         }
     }
 
@@ -87,6 +88,56 @@ fun NodesWorkspace(
             runCatching { ControllerApi.select(group, node) }
                 .onSuccess { onMessage("已切换到 $node") }
                 .onFailure { onMessage("切换节点失败，请先连接") }
+        }
+    }
+
+    fun refresh() {
+        if (refreshing) return
+        refreshing = true
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching { SubscriptionCache.refresh(context, config) }.getOrNull()
+            }
+            refreshing = false
+            if (result == null) {
+                onMessage("下载订阅失败")
+                return@launch
+            }
+            reloadNodes()
+            val parts = mutableListOf<String>()
+            if (result.downloaded > 0) parts += "已下载 ${result.downloaded} 个订阅"
+            if (result.nodes > 0) parts += "${result.nodes} 个节点"
+            if (result.failures.isNotEmpty()) {
+                parts += "失败：${result.failures.first()}"
+                if (result.failures.size > 1) parts += "另有 ${result.failures.size - 1} 个失败"
+            }
+            onMessage(parts.joinToString(" · ").ifBlank { "没有启用的订阅" })
+        }
+    }
+
+    fun switchTo(name: String) {
+        val group = snapshot?.groups?.firstOrNull { name in it.all }
+        if (group == null) {
+            onMessage(if (snapshot == null) "连接 VPN 后才能切换节点" else "这个节点不在任何策略组里")
+            return
+        }
+        select(group.name, name)
+    }
+
+    fun testAll() {
+        if (snapshot == null) {
+            onMessage("连接 VPN 后才能测速")
+            return
+        }
+        scope.launch {
+            var tested = 0
+            for (group in groups) {
+                runCatching { ControllerApi.testGroup(group.name) }.onSuccess {
+                    delays = delays + it
+                    tested += it.size
+                }
+            }
+            onMessage(if (tested == 0) "测速失败" else "已测速 $tested 个节点")
         }
     }
 
@@ -124,6 +175,7 @@ fun NodesWorkspace(
             horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
         ) {
             Text("节点", style = ManisType.pageTitle, color = colors.textPrimary, modifier = Modifier.weight(1f))
+            ManisButton("测速", onClick = ::testAll)
             ManisButton(if (refreshing) "刷新中…" else "刷新", onClick = ::refresh)
         }
         ManisDivider()
@@ -165,6 +217,8 @@ fun NodesWorkspace(
                                 name = node.name,
                                 type = node.type,
                                 delay = delays[node.name] ?: snapshot?.nodes?.get(node.name)?.delay,
+                                selected = snapshot?.groups?.any { it.now == node.name } == true,
+                                onSelect = { switchTo(node.name) },
                                 onTest = if (snapshot != null) {
                                     { testNode(node.name) }
                                 } else {
@@ -190,6 +244,8 @@ fun NodesWorkspace(
                             name = node.displayName,
                             type = "VLESS",
                             delay = delays[node.displayName] ?: snapshot?.nodes?.get(node.displayName)?.delay,
+                            selected = snapshot?.groups?.any { it.now == node.displayName } == true,
+                            onSelect = { switchTo(node.displayName) },
                             onTest = if (snapshot != null) {
                                 { testNode(node.displayName) }
                             } else {
@@ -293,15 +349,33 @@ private fun ExpandableCard(
 }
 
 @Composable
-private fun NodeRow(name: String, type: String, delay: Int?, onTest: (() -> Unit)?) {
+private fun NodeRow(
+    name: String,
+    type: String,
+    delay: Int?,
+    selected: Boolean,
+    onSelect: () -> Unit,
+    onTest: (() -> Unit)?,
+) {
     val colors = LocalManisColors.current
     Row(
-        Modifier.fillMaxWidth().padding(vertical = ManisDimens.spaceXs),
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(ManisDimens.radiusRow))
+            .background(if (selected) colors.actionSoft else Color.Transparent)
+            .clickable(onClick = onSelect)
+            .padding(horizontal = ManisDimens.spaceSm, vertical = ManisDimens.spaceXs),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
     ) {
         Column(Modifier.weight(1f)) {
-            Text(name, style = ManisType.body, color = colors.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                (if (selected) "✓ " else "") + name,
+                style = ManisType.body,
+                color = if (selected) colors.actionPrimary else colors.textPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
             ManisMeta(type.uppercase())
         }
         Text(
