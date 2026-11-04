@@ -30,6 +30,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.io.File
 
@@ -47,10 +48,20 @@ fun LogsWorkspace(onMessage: (String) -> Unit) {
     var loading by remember { mutableStateOf(true) }
     var reloads by remember { mutableStateOf(0) }
 
+    // The log tails itself: poll the file and only re-read when it actually grew.
     LaunchedEffect(reloads) {
         loading = true
-        raw = withContext(Dispatchers.IO) { readKernelLog(context) }
-        loading = false
+        var stamp = Long.MIN_VALUE
+        while (true) {
+            val file = File(context.filesDir, "mihomo/core.log")
+            val current = if (file.isFile) file.length() xor file.lastModified() else 0L
+            if (current != stamp) {
+                stamp = current
+                raw = withContext(Dispatchers.IO) { readKernelLog(context) }
+                loading = false
+            }
+            delay(2_000)
+        }
     }
 
     val filtered = remember(raw, query) {
@@ -63,7 +74,8 @@ fun LogsWorkspace(onMessage: (String) -> Unit) {
                     it.level.contains(query, ignoreCase = true)
             }
         }
-        matched.takeLast(200)
+        // Newest first, like tailing the file: the newest line stays at the top.
+        matched.asReversed().take(200)
     }
 
     Column(Modifier.fillMaxSize().background(colors.surfaceBase)) {
@@ -92,7 +104,10 @@ fun LogsWorkspace(onMessage: (String) -> Unit) {
             }
             item(key = "meta") {
                 ManisMeta(
-                    if (loading) "正在读取日志…" else "${filtered.size} 条日志 · 敏感信息已隐藏",
+                    when {
+                        loading -> "正在读取日志…"
+                        else -> "${filtered.size} 条日志 · 最新在最上 · 敏感信息已隐藏"
+                    },
                 )
             }
             if (filtered.isEmpty()) {

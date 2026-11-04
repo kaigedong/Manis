@@ -54,10 +54,11 @@ fun ActivityWorkspace(onMessage: (String) -> Unit) {
 
     val allConnections = snapshot?.connections ?: emptyList()
     val connections = remember(allConnections, query) {
+        val newestFirst = allConnections.sortedByDescending { it.start }
         if (query.isBlank()) {
-            allConnections
+            newestFirst
         } else {
-            allConnections.filter { connection ->
+            newestFirst.filter { connection ->
                 connection.host.contains(query, ignoreCase = true) ||
                     connection.rule.contains(query, ignoreCase = true) ||
                     connection.chains.any { it.contains(query, ignoreCase = true) }
@@ -115,7 +116,7 @@ fun ActivityWorkspace(onMessage: (String) -> Unit) {
                 when {
                     !RuntimeState.active && query.isBlank() -> "0 个连接 · ↓ 0 B · ↑ 0 B"
                     snapshot == null -> "正在读取连接…"
-                    query.isBlank() -> "${allConnections.size} 个连接 · ↓ ${formatBytes(allConnections.sumOf { it.download })} · ↑ ${formatBytes(allConnections.sumOf { it.upload })}"
+                    query.isBlank() -> "${allConnections.size} 个连接 · 每 2 秒自动刷新 · ↓ ${formatBytes(allConnections.sumOf { it.download })} · ↑ ${formatBytes(allConnections.sumOf { it.upload })}"
                     else -> "${connections.size}/${allConnections.size} 个连接 · ↓ ${formatBytes(connections.sumOf { it.download })} · ↑ ${formatBytes(connections.sumOf { it.upload })}"
                 },
             )
