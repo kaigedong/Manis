@@ -216,7 +216,8 @@ private fun RuleGroupHeader(
 ) {
     val colors = LocalManisColors.current
     Surface(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onToggle),
+        onClick = onToggle,
+        modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
         color = colors.surfaceOverlay,
     ) {
@@ -259,12 +260,12 @@ private fun RuleRow(
     val drag by androidx.compose.runtime.rememberUpdatedState(onDrag)
     val dragEnd by androidx.compose.runtime.rememberUpdatedState(onDragEnd)
     Surface(
+        onClick = onEdit,
         modifier = modifier
             .fillMaxWidth()
             .height(RuleRowHeight)
             .zIndex(if (dragging) 1f else 0f)
-            .graphicsLayer { translationY = offset }
-            .clickable(onClick = onEdit),
+            .graphicsLayer { translationY = offset },
         shape = RoundedCornerShape(16.dp),
         color = if (dragging) colors.actionSoft else colors.surfaceOverlay,
         shadowElevation = if (dragging) 6.dp else 0.dp,

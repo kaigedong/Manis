@@ -379,6 +379,7 @@ private fun ExpandableCard(
         Row(
             Modifier
                 .fillMaxWidth()
+                .clip(RoundedCornerShape(ManisDimens.radiusRow))
                 .clickable(onClick = onToggle),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
@@ -464,7 +465,10 @@ private fun GroupCard(
     val colors = LocalManisColors.current
     ManisCard {
         Row(
-            Modifier.fillMaxWidth().clickable(onClick = onToggle),
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(ManisDimens.radiusRow))
+                .clickable(onClick = onToggle),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
         ) {
