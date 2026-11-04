@@ -56,7 +56,14 @@ data class RuleEntry(
     val value: String = "",
     val policy: String = "DIRECT",
     val enabled: Boolean = true,
+    /** Stable identity for list keys; assigned locally and kept in the workspace file. */
+    val id: Long = nextRuleId(),
 )
+
+private val ruleIds = java.util.concurrent.atomic.AtomicLong(System.currentTimeMillis())
+
+/** A locally unique rule identity, used only for animation and list keys. */
+internal fun nextRuleId(): Long = ruleIds.incrementAndGet()
 
 /** Encrypted DoH resolvers, matching the desktop build; the default. */
 const val PROXY_DNS_DOH = "doh"
@@ -263,6 +270,7 @@ private fun parseRuleEntries(json: JSONObject): List<RuleEntry> {
                 value = item.optString("value"),
                 policy = item.optString("policy").ifBlank { "DIRECT" },
                 enabled = item.optBoolean("enabled", true),
+                id = item.optLong("id", 0L).takeIf { it != 0L } ?: nextRuleId(),
             )
         }
     }

@@ -166,7 +166,7 @@ internal object SubscriptionCache {
         Regex("""(?:^|[,\s])${Regex.escape(field)}\s*:\s*"([^"]*)"""")
             .find(flow)?.groupValues?.get(1)
             ?: Regex("""(?:^|[,\s])${Regex.escape(field)}\s*:\s*([^,}]+)""")
-                .find(flow)?.groupValues?.get(1)?.trim()
+                .find(flow)?.groupValues?.get(1)?.trim()?.trim('"', '\'')
 
     private fun fileName(url: String): String = subscriptionCachePath(url).substringAfterLast('/')
 

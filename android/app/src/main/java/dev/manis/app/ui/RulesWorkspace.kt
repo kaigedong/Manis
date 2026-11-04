@@ -1,69 +1,77 @@
 package dev.manis.app.ui
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.res.painterResource
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Icon
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.ui.draw.rotate
-import androidx.compose.material3.MenuAnchorType
-import androidx.compose.material3.ExposedDropdownMenuDefaults
-import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
-import androidx.compose.ui.unit.dp
 import dev.manis.app.R
 import dev.manis.app.data.MobileConfig
 import dev.manis.app.data.RULE_KINDS
 import dev.manis.app.data.RuleEntry
 import dev.manis.app.data.Workspace
+import kotlin.math.roundToInt
 
 private data class RuleEditor(val index: Int?, val entry: RuleEntry)
 
-/** The GPUI routing-rules workspace, compact: the list drills into the rule editor. */
+/** The row height, and the distance between row tops once the list spacing is added. */
+private val RuleRowHeight = 56.dp
+private val RuleRowStep = 64.dp
+
+/**
+ * The routing-rules workspace: one collapsible list of the manual rules. Rows reorder by dragging
+ * the grip, which starts immediately instead of after a long press.
+ */
 @Composable
 fun RulesWorkspace(onMessage: (String) -> Unit) {
     val colors = LocalManisColors.current
     val context = LocalContext.current
-    val rowHeightPx = with(androidx.compose.ui.platform.LocalDensity.current) { 76.dp.toPx() }
-    var rulesExpanded by rememberSaveable { mutableStateOf(true) }
-    var draggingIndex by remember { mutableStateOf<Int?>(null) }
-    var dragDelta by remember { mutableFloatStateOf(0f) }
     val config = Workspace.config.value
     val pending = Workspace.pending.value
     var editor by remember { mutableStateOf<RuleEditor?>(null) }
+    var expanded by rememberSaveable { mutableStateOf(true) }
+    var draggingId by remember { mutableStateOf<Long?>(null) }
+    var dragOffset by remember { mutableFloatStateOf(0f) }
+    val rowHeightPx = with(LocalDensity.current) { RuleRowStep.toPx() }
 
     fun save(entries: List<RuleEntry>) {
         Workspace.update { it.copy(ruleEntries = entries) }
@@ -78,132 +86,101 @@ fun RulesWorkspace(onMessage: (String) -> Unit) {
     }
 
     Column(Modifier.fillMaxSize().background(colors.surfaceBase)) {
-        val state = editor
-        if (state != null) {
-            RuleEditorPane(
-                initial = state.entry,
-                editingIndex = state.index,
-                existing = config.ruleEntries,
-                policies = policyOptions(config),
-                onCancel = { editor = null },
-                onDelete = {
-                    if (state.index != null) {
-                        save(config.ruleEntries.filterIndexed { at, _ -> at != state.index })
-                        onMessage("规则已删除")
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = ManisDimens.spaceLg, vertical = ManisDimens.spaceLg),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("分流规则", style = ManisType.pageTitle, color = colors.textPrimary)
+                val enabledRules = config.ruleEntries.count { it.enabled }
+                val disabledRules = config.ruleEntries.size - enabledRules
+                ManisMeta(
+                    if (disabledRules == 0) {
+                        "${config.ruleEntries.size} 条规则"
+                    } else {
+                        "$enabledRules 条生效 · $disabledRules 条已禁用"
+                    },
+                )
+            }
+            if (pending) {
+                ManisButton("应用", primary = true, onClick = {
+                    applyWorkspace(context)
+                    onMessage("已应用工作区")
+                })
+            }
+            ManisButton("添加规则", onClick = { editor = RuleEditor(null, RuleEntry()) })
+        }
+        ManisDivider()
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(ManisDimens.spaceLg),
+            verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
+        ) {
+            item(key = "rules-header") {
+                RuleGroupHeader(
+                    count = config.ruleEntries.size,
+                    expanded = expanded,
+                    onToggle = { expanded = !expanded },
+                )
+            }
+            if (expanded) {
+                if (config.ruleEntries.isEmpty()) {
+                    item(key = "rules-empty") {
+                        ManisCard {
+                            Text("还没有规则", style = ManisType.label, color = colors.textPrimary)
+                            ManisMeta("添加一条 DOMAIN-SUFFIX 或 IP-CIDR 规则即可开始。")
+                        }
                     }
-                    editor = null
-                },
-                onConfirm = { entry ->
-                    val entries = config.ruleEntries.toMutableList()
-                    if (state.index == null) entries += entry else entries[state.index] = entry
-                    save(entries)
-                    editor = null
-                    onMessage("规则已保存，点「应用」生效")
-                },
-            )
-        } else {
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = ManisDimens.spaceLg, vertical = ManisDimens.spaceLg),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text("分流规则", style = ManisType.pageTitle, color = colors.textPrimary)
-                    val enabledRules = config.ruleEntries.count { it.enabled }
-                    val disabledRules = config.ruleEntries.size - enabledRules
-                    ManisMeta(
-                        if (disabledRules == 0) {
-                            "${config.ruleEntries.size} 条规则"
-                        } else {
-                            "$enabledRules 条生效 · $disabledRules 条已禁用"
+                }
+                itemsIndexed(
+                    items = config.ruleEntries,
+                    key = { _, rule -> rule.id },
+                ) { index, rule ->
+                    val dragging = draggingId == rule.id
+                    RuleRow(
+                        order = index + 1,
+                        rule = rule,
+                        dragging = dragging,
+                        offset = if (dragging) dragOffset else 0f,
+                        modifier = if (draggingId == rule.id) Modifier else Modifier.animateItem(),
+                        onToggle = { enabled ->
+                            save(
+                                config.ruleEntries.mapIndexed { at, item ->
+                                    if (at == index) item.copy(enabled = enabled) else item
+                                },
+                            )
+                        },
+                        onEdit = { editor = RuleEditor(index, rule) },
+                        onDragStart = {
+                            draggingId = rule.id
+                            dragOffset = 0f
+                        },
+                        onDrag = { delta ->
+                            val current = config.ruleEntries.indexOfFirst { it.id == rule.id }
+                            if (current < 0) return@RuleRow
+                            dragOffset += delta
+                            val target = (current + (dragOffset / rowHeightPx).roundToInt())
+                                .coerceIn(0, config.ruleEntries.lastIndex)
+                            if (target != current) {
+                                moveRule(current, target)
+                                dragOffset += (current - target) * rowHeightPx
+                            }
+                        },
+                        onDragEnd = {
+                            draggingId = null
+                            dragOffset = 0f
                         },
                     )
                 }
-                if (pending) {
-                    ManisButton("应用", primary = true, onClick = {
-                        applyWorkspace(context)
-                        onMessage("已应用工作区")
-                    })
-                }
-                ManisButton("添加规则", onClick = { editor = RuleEditor(null, RuleEntry()) })
             }
-            ManisDivider()
-            Column(
-                Modifier
-                    .fillMaxSize()
-                    .verticalScroll(rememberScrollState())
-                    .padding(ManisDimens.spaceMd),
-                verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceMd),
-            ) {
-                if (config.ruleEntries.isEmpty()) {
-                    ManisCard {
-                        Text("还没有规则", style = ManisType.label, color = colors.textPrimary)
-                        ManisMeta("添加一条 DOMAIN-SUFFIX 或 IP-CIDR 规则即可开始。")
-                    }
-                } else {
-                    ManisCard {
-                        Row(
-                            Modifier
-                                .fillMaxWidth()
-                                .clickable { rulesExpanded = !rulesExpanded },
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
-                        ) {
-                            Column(Modifier.weight(1f)) {
-                                Text("手动规则", style = ManisType.label, color = colors.textPrimary)
-                                ManisMeta("${config.ruleEntries.size} 条 · 从上到下匹配")
-                            }
-                            Icon(
-                                imageVector = Icons.Filled.KeyboardArrowDown,
-                                contentDescription = if (rulesExpanded) "收起" else "展开",
-                                modifier = Modifier.size(22.dp).rotate(if (rulesExpanded) 180f else 0f),
-                                tint = colors.textSecondary,
-                            )
-                        }
-                        if (rulesExpanded) ManisDivider()
-                        config.ruleEntries.forEachIndexed { index, rule ->
-                            RuleListRow(
-                                order = index + 1,
-                                rule = rule,
-                                onToggle = { enabled ->
-                                    save(
-                                        config.ruleEntries.mapIndexed { at, item ->
-                                            if (at == index) item.copy(enabled = enabled) else item
-                                        },
-                                    )
-                                },
-                                onEdit = { editor = RuleEditor(index, rule) },
-                                dragging = draggingIndex == index,
-                                onDragStart = {
-                                    draggingIndex = index
-                                    dragDelta = 0f
-                                },
-                                onDrag = { amount ->
-                                    val current = draggingIndex ?: return@RuleListRow
-                                    dragDelta += amount
-                                    if (dragDelta > rowHeightPx && current < config.ruleEntries.lastIndex) {
-                                        moveRule(current, current + 1)
-                                        draggingIndex = current + 1
-                                        dragDelta -= rowHeightPx
-                                    } else if (dragDelta < -rowHeightPx && current > 0) {
-                                        moveRule(current, current - 1)
-                                        draggingIndex = current - 1
-                                        dragDelta += rowHeightPx
-                                    }
-                                },
-                                onDragEnd = {
-                                    draggingIndex = null
-                                    dragDelta = 0f
-                                },
-                            )
-                            if (rulesExpanded && index != config.ruleEntries.lastIndex) ManisDivider()
-                        }
-                    }
-                }
+            item(key = "rules-help") {
                 ManisMeta("规则从上到下匹配；策略可以是 DIRECT、REJECT 或任意策略组。最终规则之后的规则不会再生效。")
-                if (RuntimeState.warnings.isNotEmpty()) {
+            }
+            if (RuntimeState.warnings.isNotEmpty()) {
+                item(key = "rules-warnings") {
                     ManisCard {
                         Text("解析提示", style = ManisType.label, color = colors.textPrimary)
                         RuntimeState.warnings.take(8).forEach { warning ->
@@ -214,13 +191,71 @@ fun RulesWorkspace(onMessage: (String) -> Unit) {
             }
         }
     }
+
+    val state = editor
+    if (state != null) {
+        RuleEditorPane(
+            initial = state.entry,
+            editingIndex = state.index,
+            existing = config.ruleEntries,
+            policies = policyOptions(config),
+            onCancel = { editor = null },
+            onDelete = {
+                if (state.index != null) {
+                    save(config.ruleEntries.filterIndexed { at, _ -> at != state.index })
+                    onMessage("规则已删除")
+                }
+                editor = null
+            },
+            onConfirm = { entry ->
+                val entries = config.ruleEntries.toMutableList()
+                if (state.index == null) {
+                    entries += entry
+                } else {
+                    entries[state.index] = entry.copy(id = state.entry.id)
+                }
+                save(entries)
+                editor = null
+                onMessage("规则已保存，点「应用」生效")
+            },
+        )
+    }
 }
 
 @Composable
-private fun RuleListRow(
+private fun RuleGroupHeader(count: Int, expanded: Boolean, onToggle: () -> Unit) {
+    val colors = LocalManisColors.current
+    Surface(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onToggle),
+        shape = RoundedCornerShape(16.dp),
+        color = colors.surfaceOverlay,
+    ) {
+        Row(
+            Modifier.padding(horizontal = ManisDimens.spaceLg, vertical = ManisDimens.spaceMd),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("手动规则", style = ManisType.label, color = colors.textPrimary)
+                ManisMeta("$count 条 · 从上到下匹配")
+            }
+            Icon(
+                imageVector = Icons.Filled.KeyboardArrowDown,
+                contentDescription = if (expanded) "收起" else "展开",
+                modifier = Modifier.size(22.dp).rotate(if (expanded) 180f else 0f),
+                tint = colors.textSecondary,
+            )
+        }
+    }
+}
+
+@Composable
+private fun RuleRow(
     order: Int,
     rule: RuleEntry,
     dragging: Boolean,
+    offset: Float,
+    modifier: Modifier = Modifier,
     onToggle: (Boolean) -> Unit,
     onEdit: () -> Unit,
     onDragStart: () -> Unit,
@@ -228,55 +263,62 @@ private fun RuleListRow(
     onDragEnd: () -> Unit,
 ) {
     val colors = LocalManisColors.current
-    // The row moves while it is dragged, so keep the latest callbacks instead of restarting
-    // the gesture detector when the position changes.
-    val dragStart by rememberUpdatedState(onDragStart)
-    val drag by rememberUpdatedState(onDrag)
-    val dragEnd by rememberUpdatedState(onDragEnd)
-    Row(
-        Modifier
+    val dragStart by androidx.compose.runtime.rememberUpdatedState(onDragStart)
+    val drag by androidx.compose.runtime.rememberUpdatedState(onDrag)
+    val dragEnd by androidx.compose.runtime.rememberUpdatedState(onDragEnd)
+    Surface(
+        modifier = modifier
             .fillMaxWidth()
-            .background(if (dragging) colors.actionSoft else Color.Transparent)
-            .pointerInput(Unit) {
-                detectDragGesturesAfterLongPress(
-                    onDragStart = { dragStart() },
-                    onDragEnd = { dragEnd() },
-                    onDragCancel = { dragEnd() },
-                    onDrag = { change, amount ->
-                        change.consume()
-                        drag(amount.y)
-                    },
-                )
-            }
-            .clickable(onClick = onEdit)
-            .height(76.dp)
-            .padding(start = ManisDimens.spaceMd, end = ManisDimens.spaceSm),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceMd),
+            .height(RuleRowHeight)
+            .zIndex(if (dragging) 1f else 0f)
+            .graphicsLayer { translationY = offset }
+            .clickable(onClick = onEdit),
+        shape = RoundedCornerShape(16.dp),
+        color = if (dragging) colors.actionSoft else colors.surfaceOverlay,
+        shadowElevation = if (dragging) 6.dp else 0.dp,
     ) {
-        Text(
-            "$order",
-            style = ManisType.metadata,
-            color = colors.textTertiary,
-            modifier = Modifier.width(20.dp),
-        )
-        Column(Modifier.weight(1f)) {
+        Row(
+            Modifier.fillMaxSize().padding(start = ManisDimens.spaceLg, end = ManisDimens.spaceSm),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceMd),
+        ) {
             Text(
-                if (rule.kind == "FINAL") "所有剩余流量" else rule.value,
-                style = ManisType.body,
-                color = if (rule.enabled) colors.textPrimary else colors.textTertiary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+                "$order",
+                style = ManisType.metadata,
+                color = colors.textTertiary,
+                modifier = Modifier.width(20.dp),
             )
-            ManisMeta("${rule.kind} → ${policyLabel(rule.policy)}")
+            Column(Modifier.weight(1f)) {
+                Text(
+                    if (rule.kind == "FINAL") "所有剩余流量" else rule.value,
+                    style = ManisType.body,
+                    color = if (rule.enabled) colors.textPrimary else colors.textTertiary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                ManisMeta("${rule.kind} → ${policyLabel(rule.policy)}")
+            }
+            ManisToggle(checked = rule.enabled, onCheckedChange = onToggle)
+            Icon(
+                painter = painterResource(R.drawable.ic_drag_handle),
+                contentDescription = "拖动排序",
+                modifier = Modifier
+                    .size(40.dp)
+                    .padding(ManisDimens.spaceSm)
+                    .pointerInput(rule.id) {
+                        detectDragGestures(
+                            onDragStart = { dragStart() },
+                            onDragEnd = { dragEnd() },
+                            onDragCancel = { dragEnd() },
+                            onDrag = { change, amount ->
+                                change.consume()
+                                drag(amount.y)
+                            },
+                        )
+                    },
+                tint = colors.textTertiary,
+            )
         }
-        ManisToggle(checked = rule.enabled, onCheckedChange = onToggle)
-        Icon(
-            painter = painterResource(R.drawable.ic_drag_handle),
-            contentDescription = "拖动排序",
-            modifier = Modifier.size(24.dp),
-            tint = colors.textTertiary,
-        )
     }
 }
 
