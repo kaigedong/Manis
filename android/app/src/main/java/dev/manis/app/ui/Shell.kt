@@ -23,6 +23,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -152,9 +153,27 @@ private fun Chrome(
             }
         }
         Spacer(Modifier.weight(1f))
-        ChromePill(if (darkTheme) "浅色" else "深色", onToggleTheme)
+        ThemeToggle(darkTheme, onToggleTheme)
         ChromePill(proxyLabel, onProxyToggle, emphasized = true)
         ChromePill(routingLabel, onRoutingCycle)
+    }
+}
+
+/** The theme control: a sun while dark (switch to light), a moon while light. */
+@Composable
+private fun ThemeToggle(darkTheme: Boolean, onToggle: () -> Unit) {
+    FilledTonalIconButton(
+        onClick = onToggle,
+        modifier = Modifier.size(ManisDimens.controlCompact),
+        shape = CircleShape,
+    ) {
+        Icon(
+            painter = painterResource(
+                if (darkTheme) R.drawable.ic_light_mode else R.drawable.ic_dark_mode,
+            ),
+            contentDescription = if (darkTheme) "浅色" else "深色",
+            modifier = Modifier.size(20.dp),
+        )
     }
 }
 

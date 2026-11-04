@@ -1,3 +1,5 @@
+use crate::components::style_action_button;
+
 use super::{
     ActionRole, AnyElement, Button, ButtonGroup, ButtonVariant, ButtonVariants, Context,
     ControlSize, Disableable, Div, FluentBuilder, IconName, InteractiveElement, IntoElement,
@@ -71,16 +73,16 @@ impl ManisApp {
 
     fn theme_toggle(&self, _theme: Theme, cx: &mut Context<Self>) -> Button {
         let language = self.language();
-        let label = if self.dark {
-            language.localized(copy::app::LIGHT)
+        // The icon shows the theme the click switches to: sun for light, moon for dark.
+        let (icon, label) = if self.dark {
+            (IconName::Sun, language.localized(copy::app::LIGHT))
         } else {
-            language.localized(copy::app::DARK)
+            (IconName::Moon, language.localized(copy::app::DARK))
         };
-        action_button(
-            "theme-toggle",
-            label,
+        style_action_button(
+            Button::new("theme-toggle").icon(icon),
             ActionRole::Secondary,
-            ControlSize::Compact,
+            ControlSize::Icon,
         )
         .accessibility_label(label)
         .on_click(cx.listener(|this, _, window, cx| {
