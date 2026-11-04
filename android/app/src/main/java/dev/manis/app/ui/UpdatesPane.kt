@@ -33,9 +33,12 @@ import java.io.File
 
 private const val RELEASE_PAGE = "https://github.com/kaigedong/Manis/releases/tag/latest"
 
-/** The GPUI app-update pane: check the rolling release, download and install its APK. */
+/**
+ * The about section: what this build is, the licences it ships under, and the app updater that
+ * checks the rolling release, downloads and installs its APK.
+ */
 @Composable
-fun UpdatesContent(onMessage: (String) -> Unit) {
+fun AboutContent(onMessage: (String) -> Unit) {
     val colors = LocalManisColors.current
     val context = LocalContext.current
     val currentVersion = remember { UpdateChecker.installedVersion(context).ifBlank { "未知" } }
@@ -75,6 +78,16 @@ fun UpdatesContent(onMessage: (String) -> Unit) {
         Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceMd),
     ) {
+        ManisCard {
+            Text("关于", style = ManisType.label, color = colors.textPrimary)
+            ManisInfoRow("版本", currentVersion)
+            ManisMeta("Manis Android 实验版")
+            ManisMeta(
+                "Mihomo 内核 v1.19.33 + Android 兼容补丁，随 APK 以 GPL-3.0 分发；" +
+                    "补丁与构建脚本见仓库 android/ 目录。",
+            )
+            ManisMeta("Manis 应用代码为 Apache-2.0。")
+        }
         ManisCard {
             Text("应用更新", style = ManisType.label, color = colors.textPrimary)
             ManisInfoRow("当前版本", currentVersion)

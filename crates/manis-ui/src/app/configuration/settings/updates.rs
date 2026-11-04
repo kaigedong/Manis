@@ -53,6 +53,21 @@ impl ManisApp {
             .child(
                 div()
                     .mt(Space::Sm.px())
+                    .text_size(TextRole::Metadata.size())
+                    .line_height(TextRole::Metadata.line_height())
+                    .text_color(theme.text_secondary)
+                    .child(language.localized(copy::app_update::APP_LICENSE)),
+            )
+            .child(
+                div()
+                    .text_size(TextRole::Metadata.size())
+                    .line_height(TextRole::Metadata.line_height())
+                    .text_color(theme.text_secondary)
+                    .child(language.localized(copy::app_update::CORE_LICENSE)),
+            )
+            .child(
+                div()
+                    .mt(Space::Sm.px())
                     .min_h(px(40.0))
                     .text_size(TextRole::Metadata.size())
                     .line_height(TextRole::Metadata.line_height())

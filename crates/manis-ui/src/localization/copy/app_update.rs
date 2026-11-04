@@ -5,6 +5,14 @@ use crate::{
 
 pub(crate) const CLOSE: LocalizedText = LocalizedText::new("Close", "关闭");
 pub(crate) const APP_UPDATES: LocalizedText = LocalizedText::new("App updates", "应用更新");
+pub(crate) const ABOUT_AND_UPDATES: LocalizedText =
+    LocalizedText::new("About and updates", "关于与更新");
+pub(crate) const ABOUT_AND_UPDATES_DETAIL: LocalizedText =
+    LocalizedText::new("Version, licence and app updates", "版本、许可与应用更新");
+pub(crate) const APP_LICENSE: LocalizedText =
+    LocalizedText::new("Application code: Apache-2.0", "应用代码：Apache-2.0");
+pub(crate) const CORE_LICENSE: LocalizedText =
+    LocalizedText::new("Bundled Mihomo core: GPL-3.0", "内置 Mihomo 内核：GPL-3.0");
 pub(crate) const CHECK_AUTOMATICALLY: LocalizedText =
     LocalizedText::new("Automatic checks", "自动检查更新");
 pub(crate) const CHECK_AUTOMATICALLY_DETAIL: LocalizedText = LocalizedText::new(

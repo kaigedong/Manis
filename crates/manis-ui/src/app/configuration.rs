@@ -528,7 +528,7 @@ fn configuration_section_label(section: ConfigurationSection, language: Language
         }
         ConfigurationSection::RuleSources => language.localized(copy::configuration::RULE_SOURCES),
         ConfigurationSection::Advanced => language.localized(copy::configuration::ADVANCED),
-        ConfigurationSection::Updates => language.localized(copy::app_update::APP_UPDATES),
+        ConfigurationSection::Updates => language.localized(copy::app_update::ABOUT_AND_UPDATES),
     }
 }
 
@@ -545,7 +545,9 @@ fn configuration_section_detail(section: ConfigurationSection, language: Languag
             language.localized(copy::configuration::REMOTE_RULE_SETS)
         }
         ConfigurationSection::Advanced => language.localized(copy::configuration::NETWORK_BEHAVIOR),
-        ConfigurationSection::Updates => language.localized(copy::app_update::CHECK_AUTOMATICALLY),
+        ConfigurationSection::Updates => {
+            language.localized(copy::app_update::ABOUT_AND_UPDATES_DETAIL)
+        }
     }
 }
 

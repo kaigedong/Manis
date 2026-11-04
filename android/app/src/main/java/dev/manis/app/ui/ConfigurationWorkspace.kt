@@ -50,7 +50,7 @@ private enum class ConfigSection(val key: String, val label: String, val detail:
     ProxySources("proxy", "订阅与节点", "订阅、手动节点与策略组"),
     RuleSources("rule_sources", "规则集", "远程规则集（暂不支持）"),
     Advanced("advanced", "高级", "网络行为与备份"),
-    Updates("updates", "更新", "自动检查应用更新"),
+    About("about", "关于", "版本、许可与应用更新"),
 }
 
 /**
@@ -69,7 +69,9 @@ fun ConfigurationWorkspace(onMessage: (String) -> Unit, onOpenLogs: () -> Unit) 
     val requested = Workspace.requestedSection.value
     LaunchedEffect(requested) {
         if (requested != null) {
-            ConfigSection.entries.firstOrNull { it.key == requested }?.let { pendingTarget = it }
+            ConfigSection.entries
+                .firstOrNull { it.key == requested || (requested == "updates" && it == ConfigSection.About) }
+                ?.let { pendingTarget = it }
             Workspace.requestedSection.value = null
         }
     }
@@ -155,7 +157,7 @@ private fun SectionFeed(
                     ConfigSection.ProxySources -> ProxySourcesContent(onMessage)
                     ConfigSection.RuleSources -> RuleSourcesSection()
                     ConfigSection.Advanced -> AdvancedSection(onMessage, onOpenLogs)
-                    ConfigSection.Updates -> UpdatesContent(onMessage)
+                    ConfigSection.About -> AboutContent(onMessage)
                 }
             }
         }
@@ -213,12 +215,6 @@ private fun PaneColumn(content: @Composable ColumnScope.() -> Unit) {
 @Composable
 private fun GeneralSection(onMessage: (String) -> Unit) {
     val colors = LocalManisColors.current
-    val context = LocalContext.current
-    val version = remember(context) {
-        runCatching {
-            context.packageManager.getPackageInfo(context.packageName, 0).versionName
-        }.getOrNull() ?: "—"
-    }
     PaneColumn {
         ManisCard {
             Text("外观", style = ManisType.label, color = colors.textPrimary)
@@ -249,16 +245,6 @@ private fun GeneralSection(onMessage: (String) -> Unit) {
                 },
             )
             ManisInfoRow("语言", "中文")
-        }
-        ManisCard {
-            Text("关于", style = ManisType.label, color = colors.textPrimary)
-            ManisInfoRow("版本", version)
-            ManisMeta("Manis Android 实验版")
-            ManisMeta(
-                "Mihomo 内核 v1.19.33 + Android 兼容补丁，随 APK 以 GPL-3.0 分发；" +
-                    "补丁与构建脚本见仓库 android/ 目录。",
-            )
-            ManisMeta("Manis 应用代码为 Apache-2.0。")
         }
     }
 }

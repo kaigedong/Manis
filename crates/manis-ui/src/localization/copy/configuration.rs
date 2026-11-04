@@ -93,7 +93,7 @@ pub(crate) const CHOOSE_TARGET_POLICY: LocalizedText =
     LocalizedText::new("Choose target policy", "选择目标策略");
 pub(crate) const CONDITION_1: LocalizedText = LocalizedText::new("Condition 1", "条件 1");
 pub(crate) const CORE_AND_UPDATES: LocalizedText =
-    LocalizedText::new("Core and updates", "内核与更新");
+    LocalizedText::new("Core version and runtime", "内核版本与运行状态");
 pub(crate) const COULD_NOT_DETERMINE_WHERE_TO_SAVE_RULES: LocalizedText = LocalizedText::new(
     "Could not determine where to save rules",
     "无法确定规则保存位置",
