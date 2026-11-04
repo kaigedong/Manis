@@ -269,6 +269,10 @@ pub(crate) const fn supports_self_install() -> bool {
 }
 
 /// The release asset this build installs, e.g. `Manis-0.1.104-macos-arm64-unsigned.zip`.
+///
+/// The `Option` is part of the cross-platform signature: macOS always ships a package, other
+/// platforms never do, so the macOS build would otherwise trip the `unnecessary_wraps` lint.
+#[cfg_attr(target_os = "macos", allow(clippy::unnecessary_wraps))]
 pub(crate) fn platform_asset_name(version: &str) -> Option<String> {
     #[cfg(target_os = "macos")]
     {
