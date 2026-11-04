@@ -87,10 +87,8 @@ fun AboutContent(onMessage: (String) -> Unit) {
                     "补丁与构建脚本见仓库 android/ 目录。",
             )
             ManisMeta("Manis 应用代码为 Apache-2.0。")
-        }
-        ManisCard {
+            ManisDivider()
             Text("应用更新", style = ManisType.label, color = colors.textPrimary)
-            ManisInfoRow("当前版本", currentVersion)
             when (val current = state) {
                 UpdateState.Idle -> ManisButton("检查更新", onClick = { UpdateManager.check(context) })
                 UpdateState.Checking -> ManisMeta("正在检查 GitHub Release…")
