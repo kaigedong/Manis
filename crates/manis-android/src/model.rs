@@ -573,6 +573,26 @@ mod tests {
     }
 
     #[test]
+    fn a_keyword_group_reaches_the_core_as_a_filter() {
+        let mut value: serde_json::Value = serde_json::from_str(&config()).expect("fixture parses");
+        value["groups"] = serde_json::json!([{
+            "name": "香港",
+            "strategy": "select",
+            "subscription_indexes": [0],
+            "node_indexes": [],
+            "filter": "^(HK 01|HK 02)$"
+        }]);
+        let envelope = compile(&value.to_string(), 3).expect("config compiles");
+        let result: serde_json::Value = serde_json::from_str(&envelope).expect("json");
+        let yaml = result["yaml"].as_str().expect("yaml");
+        assert!(
+            yaml.contains("filter:"),
+            "the group filter is missing from the rendered profile:\n{yaml}"
+        );
+        assert!(yaml.contains("HK 01"));
+    }
+
+    #[test]
     fn rejects_an_empty_workspace() {
         let error = compile("{}", 3).expect_err("empty workspace fails");
         assert!(error.contains("订阅或节点"));

@@ -36,7 +36,8 @@ internal fun displayProxyName(name: String?): String? = when (name) {
 
 /** What a saved policy group pulls in, in the same words the editor uses. */
 internal fun GroupEntry.scopeSummary(): String = when {
+    scope == "contains" -> "名称包含 ${keyword ?: filter.orEmpty()}"
     selectedNames.isNotEmpty() -> "${selectedNames.size} 个节点"
-    filter != null -> "名称包含 $filter"
+    filter != null -> "自定义过滤"
     else -> "全部节点"
 }

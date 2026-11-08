@@ -237,10 +237,6 @@ fun ManisApp() {
     ManisShell(
         workspace = workspace,
         onWorkspace = { workspace = it },
-        proxyLabel = proxyLabel,
-        onProxyToggle = ::toggleProxy,
-        routingLabel = routingLabel,
-        onRoutingCycle = ::cycleRouting,
         darkTheme = dark,
         onToggleTheme = { UiPrefs.setDark(!dark) },
         statusText = RuntimeState.summary.ifBlank { if (RuntimeState.active) "已连接" else "未连接" },
@@ -256,6 +252,11 @@ fun ManisApp() {
         Box(Modifier.fillMaxSize()) {
             when (workspace) {
                 PrimaryWorkspace.Nodes -> NodesWorkspace(
+                    proxyLabel = if (RuntimeState.active) "断开代理" else "开启代理",
+                    proxyActive = RuntimeState.active,
+                    onProxyToggle = ::toggleProxy,
+                    routingLabel = routingLabel,
+                    onRoutingCycle = ::cycleRouting,
                     onMessage = ::say,
                     onOpenConfiguration = { workspace = PrimaryWorkspace.Configuration },
                 )

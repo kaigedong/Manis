@@ -345,16 +345,39 @@ private fun SourceEditorPane(
                     .filter { it.value.enabled }
                     .map { it.index }
                 val manual = config.nodes.withIndex()
+                val keyword = contains.trim()
+                val matched = if (scope == "contains") {
+                    available.filter { it.first.contains(keyword, ignoreCase = true) }
+                } else {
+                    emptyList()
+                }
+                if (scope == "contains" && available.isNotEmpty() && matched.isEmpty()) {
+                    error = "没有节点的名称包含「$keyword」"
+                    return
+                }
                 val group = when (scope) {
-                    "contains" -> GroupEntry(
-                        name = name.trim(),
-                        strategy = strategy,
-                        subscriptionIndexes = subscriptions,
-                        nodeIndexes = manual
-                            .filter { it.value.displayName.contains(contains.trim(), ignoreCase = true) }
-                            .map { it.index },
-                        filter = contains.trim(),
-                    )
+                    "contains" -> {
+                        val fromProviders = matched.filter { !it.second }.map { it.first }
+                        val fromManual = matched.filter { it.second }.map { it.first }
+                        GroupEntry(
+                            name = name.trim(),
+                            strategy = strategy,
+                            subscriptionIndexes = subscriptions,
+                            nodeIndexes = manual
+                                .filter { fromManual.contains(it.value.displayName) }
+                                .map { it.index },
+                            filter = if (fromProviders.isEmpty()) {
+                                keyword
+                            } else {
+                                fromProviders.joinToString("|", prefix = "^(", postfix = ")$") {
+                                    escapeRegexLiteral(it)
+                                }
+                            },
+                            selectedNames = matched.map { it.first },
+                            scope = "contains",
+                            keyword = keyword,
+                        )
+                    }
                     "pick" -> GroupEntry(
                         name = name.trim(),
                         strategy = strategy,
@@ -366,9 +389,12 @@ private fun SourceEditorPane(
                             .filter { pickedName -> available.any { it.first == pickedName && !it.second } }
                             .takeIf { it.isNotEmpty() }
                             ?.let { names ->
-                                names.joinToString("|", prefix = "^(", postfix = ")$") { Regex.escape(it) }
+                                names.joinToString("|", prefix = "^(", postfix = ")$") {
+                                    escapeRegexLiteral(it)
+                                }
                             },
                         selectedNames = picked.sorted(),
+                        scope = "pick",
                     )
                     else -> GroupEntry(
                         name = name.trim(),
@@ -494,6 +520,17 @@ private fun SourceEditorPane(
                 }
             }
             error?.let { Text(it, style = ManisType.metadata, color = colors.statusError) }
+        }
+    }
+}
+
+/** Go (RE2) has no \Q...\E, so the anchor filter escapes metacharacters by hand. */
+private fun escapeRegexLiteral(value: String): String {
+    val specials = ".+*?()[]{}^$|\\"
+    return buildString {
+        for (character in value) {
+            if (specials.contains(character)) append('\\')
+            append(character)
         }
     }
 }

@@ -1,11 +1,13 @@
 package dev.manis.app.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -50,6 +52,11 @@ import kotlinx.coroutines.withContext
  */
 @Composable
 fun NodesWorkspace(
+    proxyLabel: String,
+    proxyActive: Boolean,
+    onProxyToggle: () -> Unit,
+    routingLabel: String,
+    onRoutingCycle: () -> Unit,
     onMessage: (String) -> Unit,
     onOpenConfiguration: () -> Unit,
 ) {
@@ -221,6 +228,39 @@ fun NodesWorkspace(
                 .padding(ManisDimens.spaceLg),
             verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceMd),
         ) {
+            ManisCard {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceMd),
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("VPN 代理", style = ManisType.label, color = colors.textPrimary)
+                        ManisMeta(if (proxyActive) "已连接，点右侧断开" else "未连接，点右侧开启")
+                    }
+                    if (proxyActive) {
+                        Box(
+                            Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(colors.statusSuccess),
+                        )
+                    }
+                    ManisButton(proxyLabel, primary = !proxyActive, onClick = onProxyToggle)
+                }
+                ManisDivider()
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceMd),
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("路由模式", style = ManisType.label, color = colors.textPrimary)
+                        ManisMeta("规则、全局、直连之间切换")
+                    }
+                    ManisTextAction(routingLabel, onClick = onRoutingCycle)
+                }
+            }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 ManisSectionTitle("来源")
                 Spacer(Modifier.weight(1f))
@@ -386,8 +426,10 @@ private fun ExpandableCard(
         Row(
             Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(ManisDimens.radiusRow))
-                .background(if (pressed) colors.surfaceLow else Color.Transparent)
+                .background(
+                    if (pressed) colors.surfaceLow else Color.Transparent,
+                    RoundedCornerShape(ManisDimens.radiusRow),
+                )
                 .clickable(
                     interactionSource = interaction,
                     indication = null,
@@ -481,8 +523,10 @@ private fun GroupCard(
         Row(
             Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(ManisDimens.radiusRow))
-                .background(if (pressed) colors.surfaceLow else Color.Transparent)
+                .background(
+                    if (pressed) colors.surfaceLow else Color.Transparent,
+                    RoundedCornerShape(ManisDimens.radiusRow),
+                )
                 .clickable(
                     interactionSource = interaction,
                     indication = null,
@@ -548,7 +592,7 @@ private fun sourceHost(url: String): String {
 
 /** The strategy labels for the controller's group types. */
 private fun strategyLabel(type: String): String = when (type.lowercase()) {
-    "selector" -> "手动选择"
+    "select", "selector" -> "手动选择"
     "urltest" -> "自动测速"
     "fallback" -> "故障转移"
     "loadbalance" -> "负载均衡"

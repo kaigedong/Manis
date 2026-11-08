@@ -222,8 +222,10 @@ private fun RuleGroupHeader(
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(if (pressed) colors.surfaceLow else colors.surfaceOverlay)
+            .background(
+                if (pressed) colors.surfaceLow else colors.surfaceOverlay,
+                RoundedCornerShape(16.dp),
+            )
             .clickable(interactionSource = interaction, indication = null, onClick = onToggle),
         shape = RoundedCornerShape(16.dp),
         color = Color.Transparent,

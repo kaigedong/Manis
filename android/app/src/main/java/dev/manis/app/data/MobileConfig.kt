@@ -40,6 +40,9 @@ data class GroupEntry(
      * receives them as an anchored filter because provider nodes cannot be listed one by one.
      */
     val selectedNames: List<String> = emptyList(),
+    /** How the group picks nodes: "all", "contains" (keyword) or "pick". */
+    val scope: String = "all",
+    val keyword: String? = null,
 )
 
 /** Rule kinds shared by the Android editor and the desktop rule model. */
@@ -125,7 +128,9 @@ data class MobileConfig(
                     .put("subscription_indexes", JSONArray(group.subscriptionIndexes))
                     .put("node_indexes", JSONArray(group.nodeIndexes))
                     .put("filter", group.filter ?: JSONObject.NULL)
-                    .put("selected_names", JSONArray(group.selectedNames)),
+                    .put("selected_names", JSONArray(group.selectedNames))
+                    .put("scope", group.scope)
+                    .put("keyword", group.keyword ?: JSONObject.NULL),
             )
         }
         val ruleEntriesJson = JSONArray()
@@ -193,6 +198,8 @@ data class MobileConfig(
                         nodeIndexes = item.optJSONArray("node_indexes").ints(),
                         filter = item.optString("filter").takeIf { it.isNotBlank() && it != "null" },
                         selectedNames = item.optJSONArray("selected_names").strings(),
+                        scope = item.optString("scope", "all"),
+                        keyword = item.optString("keyword").takeIf { it.isNotBlank() && it != "null" },
                     )
                 }
             }

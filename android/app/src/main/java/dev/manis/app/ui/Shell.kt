@@ -22,7 +22,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
@@ -63,10 +62,6 @@ enum class PrimaryWorkspace(val label: String, val iconRes: Int) {
 fun ManisShell(
     workspace: PrimaryWorkspace,
     onWorkspace: (PrimaryWorkspace) -> Unit,
-    proxyLabel: String,
-    onProxyToggle: () -> Unit,
-    routingLabel: String,
-    onRoutingCycle: () -> Unit,
     darkTheme: Boolean,
     onToggleTheme: () -> Unit,
     statusText: String,
@@ -92,10 +87,6 @@ fun ManisShell(
             ) {
                 if (sizeClass != SizeClass.Compact || showGlobalHeader) {
                     Chrome(
-                        proxyLabel = proxyLabel,
-                        onProxyToggle = onProxyToggle,
-                        routingLabel = routingLabel,
-                        onRoutingCycle = onRoutingCycle,
                         darkTheme = darkTheme,
                         onToggleTheme = onToggleTheme,
                         navWidth = navWidth(sizeClass),
@@ -125,10 +116,6 @@ private fun navWidth(sizeClass: SizeClass) = when (sizeClass) {
 
 @Composable
 private fun Chrome(
-    proxyLabel: String,
-    onProxyToggle: () -> Unit,
-    routingLabel: String,
-    onRoutingCycle: () -> Unit,
     darkTheme: Boolean,
     onToggleTheme: () -> Unit,
     navWidth: androidx.compose.ui.unit.Dp,
@@ -157,8 +144,6 @@ private fun Chrome(
         }
         Spacer(Modifier.weight(1f))
         ThemeToggle(darkTheme, onToggleTheme)
-        ChromePill(proxyLabel, onProxyToggle, emphasized = true)
-        ChromePill(routingLabel, onRoutingCycle)
     }
 }
 
@@ -180,30 +165,6 @@ private fun ThemeToggle(darkTheme: Boolean, onToggle: () -> Unit) {
     }
 }
 
-/** A tonal pill for the three chrome controls. */
-@Composable
-private fun ChromePill(label: String, onClick: () -> Unit, emphasized: Boolean = false) {
-    val colors = LocalManisColors.current
-    FilledTonalButton(
-        onClick = onClick,
-        modifier = Modifier.height(ManisDimens.controlCompact),
-        shape = CircleShape,
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(
-            horizontal = ManisDimens.spaceLg,
-        ),
-    ) {
-        if (emphasized) {
-            Box(
-                Modifier
-                    .size(8.dp)
-                    .clip(CircleShape)
-                    .background(colors.actionPrimary),
-            )
-            Spacer(Modifier.width(ManisDimens.spaceSm))
-        }
-        Text(label, style = ManisType.label, maxLines = 1)
-    }
-}
 
 @Composable
 private fun StatusStrip(
