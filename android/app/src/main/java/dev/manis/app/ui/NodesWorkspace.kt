@@ -91,6 +91,11 @@ fun NodesWorkspace(
             config.subscriptions.associate { it.url to SubscriptionCache.cachedNodes(context, it.url) }
         }
     }
+    // The source list marks the one node the all-node selector points at; a url-test group picks
+    // its own exit, and showing both read as two active nodes.
+    val activeNode = remember(snapshot) {
+        snapshot?.groups?.firstOrNull { it.name == "__MANIS_GLOBAL__" }?.now
+    }
     // Runtime groups come from the core; saved groups fill in while it is off.
     val groupNames = remember(groups, config.groups) {
         (groups.map { it.name } + config.groups.map { it.name }).distinct()
@@ -163,8 +168,12 @@ fun NodesWorkspace(
             // Use the cached snapshot when it has the group; otherwise ask the core once so a
             // slow first snapshot does not push the user into the offline path.
             val snap = snapshot ?: runCatching { ControllerApi.snapshot() }.getOrNull()
+            val global = snap?.groups?.firstOrNull {
+                it.name == "__MANIS_GLOBAL__" && name in it.all
+            }
             val group = snap?.groups
                 ?.firstOrNull { name in it.all && it.type.contains("select", ignoreCase = true) }
+                ?: global
                 ?: snap?.groups?.firstOrNull { name in it.all }
             if (group == null) {
                 Workspace.setPendingNode(name)
@@ -172,7 +181,12 @@ fun NodesWorkspace(
                 return@launch
             }
             Workspace.setPendingNode(null)
-            runCatching { ControllerApi.select(group.name, name) }
+            runCatching {
+                ControllerApi.select(group.name, name)
+                if (global != null && global.name != group.name && global.now != name) {
+                    runCatching { ControllerApi.select(global.name, name) }
+                }
+            }
                 .onSuccess { onMessage("已切换到 $name") }
                 .onFailure { onMessage("切换节点失败：${it.message ?: "内核没有响应"}") }
         }
@@ -302,7 +316,7 @@ fun NodesWorkspace(
                                 name = node.name,
                                 type = node.type,
                                 delay = delays[node.name] ?: snapshot?.nodes?.get(node.name)?.delay,
-                                selected = snapshot?.groups?.any { it.now == node.name } == true ||
+                                selected = activeNode == node.name ||
                                     config.pendingNode == node.name,
                                 onSelect = { switchTo(node.name) },
                                 onTest = if (snapshot != null) {
@@ -330,7 +344,7 @@ fun NodesWorkspace(
                             name = node.displayName,
                             type = "VLESS",
                             delay = delays[node.displayName] ?: snapshot?.nodes?.get(node.displayName)?.delay,
-                            selected = snapshot?.groups?.any { it.now == node.displayName } == true ||
+                            selected = activeNode == node.displayName ||
                                 config.pendingNode == node.displayName,
                             onSelect = { switchTo(node.displayName) },
                             onTest = if (snapshot != null) {
