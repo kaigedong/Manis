@@ -132,7 +132,15 @@ fun ManisApp() {
                     val snap = runCatching { ControllerApi.snapshot() }.getOrNull()
                     val group = snap?.groups?.firstOrNull { pendingNode in it.all }
                     if (group != null &&
-                        runCatching { ControllerApi.select(group.name, pendingNode) }.isSuccess
+                        runCatching {
+                            ControllerApi.select(group.name, pendingNode)
+                            val global = snap.groups.firstOrNull {
+                                it.name == "__MANIS_GLOBAL__" && pendingNode in it.all
+                            }
+                            if (global != null && global.name != group.name) {
+                                runCatching { ControllerApi.select(global.name, pendingNode) }
+                            }
+                        }.isSuccess
                     ) {
                         Workspace.setPendingNode(null)
                         pendingAttempt = null

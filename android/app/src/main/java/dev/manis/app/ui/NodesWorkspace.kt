@@ -119,7 +119,16 @@ fun NodesWorkspace(
 
     fun select(group: String, node: String) {
         scope.launch {
-            runCatching { ControllerApi.select(group, node) }
+            runCatching {
+                ControllerApi.select(group, node)
+                // The hidden selector keeps the global-mode exit; mirror the pick so the source
+                // list never shows two nodes as active at once.
+                val global = snapshot?.groups
+                    ?.firstOrNull { it.name == "__MANIS_GLOBAL__" && node in it.all }
+                if (global != null && global.name != group && global.now != node) {
+                    runCatching { ControllerApi.select(global.name, node) }
+                }
+            }
                 .onSuccess { onMessage("已切换到 $node") }
                 .onFailure { onMessage("切换节点失败：${it.message ?: "内核没有响应"}") }
         }
