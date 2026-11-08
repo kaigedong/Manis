@@ -80,7 +80,12 @@ fun NodesWorkspace(
     // a user policy group, so the phone never lists them.
     val groups = remember(snapshot) {
         snapshot?.groups
-            ?.filter { !it.hidden && it.name != "__MANIS_GLOBAL__" && it.name != "GLOBAL" }
+            ?.filter {
+                !it.hidden &&
+                    it.name != "__MANIS_GLOBAL__" &&
+                    it.name != "__MANIS_EXIT_IP_PROBE__" &&
+                    it.name != "GLOBAL"
+            }
             ?: emptyList()
     }
 
