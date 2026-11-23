@@ -13,6 +13,13 @@ once the public API and configuration formats stabilize.
   workspace model compiled by the same Rust profile code as the desktop: multiple subscriptions,
   VLESS imports, user policy groups, QX rules, rule/global/direct modes, node switching with
   latency tests, and kernel logs.
+- Desktop: routing rule groups can be created locally, without a URL. Each one carries a name, one
+  target policy and its own rules, sits in the same drag-ordered group list as the manual rules and
+  the remote QX sources, and pins its target on every rule it owns. The rules page, the group order
+  file, the compiled profile and the backup all cover the new kind.
+- Configuration export: an entry whose store repeats a field key once per line, such as the manual
+  rules and the local rule groups, previously kept only the last line after a JSONC export and
+  import. Repeated lines now round-trip.
 - Android: the rules page can create rule groups. Every group routes its rules to one target, and
   groups are matched in order before the manual list, so a set of domains can move to another proxy
   without editing each rule, and a group header's grip drags the group to another slot while a line
