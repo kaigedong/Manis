@@ -1,9 +1,14 @@
+use gpui_component::{Disableable, checkbox::Checkbox};
+
+use crate::components::{ActionRole, row_action_button};
+use crate::theme::ControlSize;
+
 use super::{
     AnyElement, Button, ButtonVariant, ButtonVariants, Collapsible, Context, Div, FluentBuilder,
     FontWeight, InteractiveElement, IntoElement, Language, MANUAL_RULES_EXPANSION_KEY, ManisApp,
-    ParentElement, QxRuleKind, QxRuleList, Radius, RuleGroupRenderContext, Space, Stateful, Styled,
-    TextRole, Theme, copy, div, empty_state, mihomo, px, rule_group_is_open,
-    rule_source_expansion_key, source_update_label,
+    Message, ParentElement, QxRuleKind, QxRuleList, Radius, RuleGroupRenderContext, RuleRowScope,
+    Space, Stateful, StatefulInteractiveElement, Styled, TextRole, Theme, copy, div, empty_state,
+    mihomo, px, rule_group_is_open, rule_source_expansion_key, source_update_label,
 };
 
 impl ManisApp {
@@ -28,8 +33,23 @@ impl ManisApp {
             .filter(|rule| rule.is_enabled())
             .count();
         let disabled_manual_count = self.manual_rules.len() - enabled_manual_count;
-        let active_count = enabled_manual_count + remote_count;
-        let disabled_count = disabled_manual_count + disabled_remote_count;
+        // A disabled group contributes nothing, so all of its rules count as disabled.
+        let (enabled_local_count, disabled_local_count) =
+            self.local_rule_groups
+                .iter()
+                .fold((0, 0), |(enabled, disabled), group| {
+                    let group_enabled = group.rules.iter().filter(|rule| rule.is_enabled()).count();
+                    if group.enabled {
+                        (
+                            enabled + group_enabled,
+                            disabled + group.rules.len() - group_enabled,
+                        )
+                    } else {
+                        (enabled, disabled + group.rules.len())
+                    }
+                });
+        let active_count = enabled_manual_count + remote_count + enabled_local_count;
+        let disabled_count = disabled_manual_count + disabled_remote_count + disabled_local_count;
         copy::configuration::active_rule_summary(language, active_count, disabled_count)
     }
     pub(in crate::app) fn active_rules_panel(
@@ -48,6 +68,7 @@ impl ManisApp {
             &self.rule_sources.group_order,
             !self.manual_rules.is_empty(),
             &self.rule_sources.sources,
+            &self.local_rule_groups,
         );
         let mut list = div()
             .id("active-routing-rules")
@@ -81,6 +102,25 @@ impl ManisApp {
                 list = list.child(self.remote_rule_group(
                     source_index,
                     source,
+                    &mut rule_order,
+                    RuleGroupRenderContext {
+                        position,
+                        group_count: group_order.len(),
+                        compact,
+                        language,
+                        theme,
+                    },
+                    cx,
+                ));
+            } else if let Some((group_index, group)) = self
+                .local_rule_groups
+                .iter()
+                .enumerate()
+                .find(|(_, group)| group.id == *group_id)
+            {
+                list = list.child(self.local_rule_group(
+                    group_index,
+                    group,
                     &mut rule_order,
                     RuleGroupRenderContext {
                         position,
@@ -140,6 +180,7 @@ impl ManisApp {
                 *rule_order,
                 index,
                 rule,
+                RuleRowScope::Manual,
                 theme,
                 language,
                 cx,
@@ -197,6 +238,126 @@ impl ManisApp {
         }
         let expansion_key = rule_source_expansion_key(&source.id);
         self.rule_group_card((&expansion_key, &name, &source.id), title, rules, view, cx)
+    }
+
+    /// A local group: a name, one target policy and its own rules, no URL anywhere.
+    fn local_rule_group(
+        &self,
+        group_index: usize,
+        group: &mihomo::LocalRoutingRuleGroup,
+        rule_order: &mut usize,
+        view: RuleGroupRenderContext,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let RuleGroupRenderContext {
+            compact,
+            language,
+            theme,
+            ..
+        } = view;
+        let disabled_count = group.rules.iter().filter(|rule| !rule.is_enabled()).count();
+        let target = self.effective_rule_target(group.target_policy.as_str(), language);
+        let detail = copy::configuration::local_group_detail(
+            language,
+            group.rules.len(),
+            disabled_count,
+            &target,
+            group.enabled,
+        );
+        let controls = self.local_rule_group_header_controls(group_index, group, cx);
+        let title = self.rule_group_title(&group.id, &group.name, detail, Some(controls), view, cx);
+        let mut rules = Self::rule_group_rows(compact, theme);
+        for (index, rule) in group.rules.iter().enumerate() {
+            rules = rules.child(self.manual_routing_rule_row(
+                *rule_order,
+                index,
+                rule,
+                RuleRowScope::Local(group_index),
+                theme,
+                language,
+                cx,
+            ));
+            *rule_order += 1;
+        }
+        let add_rule = self.local_rule_group_add_rule(group_index, language, cx);
+        let expansion_key = rule_source_expansion_key(&group.id);
+        self.rule_group_card(
+            (&expansion_key, &group.name, &group.id),
+            title,
+            rules.child(add_rule),
+            view,
+            cx,
+        )
+    }
+
+    fn local_rule_group_header_controls(
+        &self,
+        group_index: usize,
+        group: &mihomo::LocalRoutingRuleGroup,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let language = self.language();
+        let busy = self.routing_apply_state.is_busy() || self.configuration_transfer.active;
+        let controls_enabled = !busy;
+        let toggle_name = group.name.clone();
+        let enabled = group.enabled;
+        div()
+            .flex()
+            .flex_shrink_0()
+            .items_center()
+            .gap(Space::Sm.px())
+            .child(
+                Checkbox::new(format!("local-rule-group-enabled-{}", group.id))
+                    .debug_selector({
+                        let id = group.id.clone();
+                        move || format!("local-rule-group-enabled-{id}")
+                    })
+                    .block_mouse_except_scroll()
+                    .aria_label(toggle_name)
+                    .flex_shrink_0()
+                    .map(crate::components::primary_button_interaction)
+                    .checked(enabled)
+                    .disabled(!controls_enabled)
+                    .tab_stop(controls_enabled)
+                    .when(controls_enabled, gpui::Styled::cursor_pointer)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        if controls_enabled {
+                            this.set_local_rule_group_enabled(group_index, !enabled, cx);
+                        }
+                    })),
+            )
+            .child(
+                row_action_button(
+                    format!("local-rule-group-edit-{group_index}"),
+                    language.localized(copy::configuration::EDIT_LOCAL_RULE_GROUP),
+                    ActionRole::Secondary,
+                    ControlSize::Compact,
+                )
+                .debug_selector(move || format!("local-rule-group-edit-{group_index}"))
+                .disabled(!controls_enabled)
+                .when(!controls_enabled, gpui::Styled::cursor_default)
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    cx.stop_propagation();
+                    this.open_local_rule_group_editor_for_edit(group_index, window, cx);
+                })),
+            )
+            .child(
+                row_action_button(
+                    format!("local-rule-group-remove-{group_index}"),
+                    language.message(Message::Delete),
+                    ActionRole::Danger,
+                    ControlSize::Compact,
+                )
+                .debug_selector(move || format!("local-rule-group-remove-{group_index}"))
+                .disabled(!controls_enabled)
+                .when(!controls_enabled, gpui::Styled::cursor_default)
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    cx.stop_propagation();
+                    this.open_local_rule_group_delete(group_index, window, cx);
+                })),
+            )
+            .into_any_element()
     }
 
     fn rule_group_card(

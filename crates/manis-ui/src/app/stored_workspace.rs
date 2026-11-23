@@ -27,6 +27,7 @@ pub(super) struct StoredWorkspace {
     pub(super) imported_subscriptions: Vec<ImportedSubscription>,
     pub(super) saved_single_nodes: Vec<StoredSingleNode>,
     pub(super) qx_rule_sources: Vec<StoredQxRuleSource>,
+    pub(super) local_rule_groups: Vec<mihomo::LocalRoutingRuleGroup>,
     pub(super) routing_rule_group_order: Vec<String>,
     pub(super) collapsed_groups: Vec<String>,
     pub(super) managed_policy_groups: Vec<ManagedPolicyGroup>,
@@ -44,6 +45,7 @@ impl StoredWorkspace {
         let subscriptions = mihomo::load_subscription_sources_in(directory);
         let nodes = mihomo::load_single_node_sources_in(directory);
         let qx_rule_sources = mihomo::load_qx_rule_sources_in(directory);
+        let local_rule_groups = mihomo::load_local_routing_rule_groups_in(directory);
         let routing_rule_group_order = mihomo::load_routing_rule_group_order_in(directory);
         let collapsed = mihomo::load_collapsed_groups_in(directory);
         let policy_groups = mihomo::load_managed_policy_groups_in(directory);
@@ -62,6 +64,7 @@ impl StoredWorkspace {
             subscriptions.is_err(),
             nodes.is_err(),
             qx_rule_sources.is_err(),
+            local_rule_groups.is_err(),
             routing_rule_group_order.is_err(),
             collapsed.is_err(),
             policy_groups.is_err(),
@@ -79,6 +82,7 @@ impl StoredWorkspace {
                 .collect(),
             saved_single_nodes: nodes.unwrap_or_default(),
             qx_rule_sources: qx_rule_sources.unwrap_or_default(),
+            local_rule_groups: local_rule_groups.unwrap_or_default(),
             routing_rule_group_order: routing_rule_group_order.unwrap_or_default(),
             collapsed_groups: collapsed.unwrap_or_default(),
             managed_policy_groups: policy_groups.unwrap_or_default(),
@@ -94,6 +98,7 @@ impl StoredWorkspace {
             imported_subscriptions: Vec::new(),
             saved_single_nodes: Vec::new(),
             qx_rule_sources: Vec::new(),
+            local_rule_groups: Vec::new(),
             routing_rule_group_order: Vec::new(),
             collapsed_groups: Vec::new(),
             managed_policy_groups: Vec::new(),
@@ -173,6 +178,7 @@ impl ManisApp {
         let has_saved_configuration = !workspace.imported_subscriptions.is_empty()
             || !workspace.saved_single_nodes.is_empty()
             || !workspace.qx_rule_sources.is_empty()
+            || !workspace.local_rule_groups.is_empty()
             || !workspace.managed_policy_groups.is_empty()
             || workspace.routing_mode != RoutingMode::Rule;
         if !has_saved_configuration {

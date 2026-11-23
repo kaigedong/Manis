@@ -51,6 +51,7 @@ impl ManisApp {
             &self.rule_sources.group_order,
             !self.manual_rules.is_empty(),
             &self.rule_sources.sources,
+            &self.local_rule_groups,
         );
         let rule_matcher = ActivityRuleMatcher::new(
             &group_order,

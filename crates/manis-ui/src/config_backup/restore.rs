@@ -41,6 +41,7 @@ pub(super) fn validate_store(
     let subscriptions = mihomo::load_subscription_sources_in(directory)?.len();
     let single_nodes = mihomo::load_single_node_sources_in(directory)?.len();
     let rule_sources = mihomo::load_qx_rule_sources_in(directory)?.len();
+    let local_rule_groups = mihomo::load_local_routing_rule_groups_in(directory)?.len();
     let policies = mihomo::load_managed_policy_groups_in(directory)?;
     mihomo::validate_managed_policy_references(&policies)
         .map_err(|_| BackupError::InvalidConfiguration)?;
@@ -66,5 +67,6 @@ pub(super) fn validate_store(
         policy_groups: policies.len(),
         rule_sources,
         manual_rules,
+        local_rule_groups,
     })
 }

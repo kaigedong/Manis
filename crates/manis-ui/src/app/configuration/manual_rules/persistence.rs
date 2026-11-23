@@ -1,13 +1,30 @@
 use super::{Context, ManisApp, Message, SubscriptionStoreError, copy, mihomo};
 
 impl ManisApp {
-    pub(in crate::app) fn persist_manual_rules(
+    /// Everything one routing mutation can change, so a failed save restores all of it.
+    pub(in crate::app) fn routing_rollback_snapshot(&self) -> crate::app::RoutingApplyRollback {
+        crate::app::RoutingApplyRollback {
+            manual_rules: self.manual_rules.clone(),
+            local_rule_groups: self.local_rule_groups.clone(),
+            group_order: self.rule_sources.group_order.clone(),
+        }
+    }
+
+    fn restore_routing_rollback(&mut self, rollback: crate::app::RoutingApplyRollback) {
+        self.manual_rules = rollback.manual_rules;
+        self.local_rule_groups = rollback.local_rule_groups;
+        self.rule_sources.group_order = rollback.group_order;
+    }
+
+    /// Saves the whole routing rule set: the group order, local groups and manual rules.
+    pub(in crate::app) fn persist_routing_rules(
         &mut self,
         completion: String,
-        previous_rules: Vec<crate::manual_rule::ManualRule>,
+        previous: crate::app::RoutingApplyRollback,
         cx: &mut Context<Self>,
     ) -> bool {
         if self.configuration_transfer.active {
+            self.restore_routing_rollback(previous);
             return false;
         }
         let language = self.language();
@@ -15,6 +32,7 @@ impl ManisApp {
             language
                 .message(Message::RoutingApplyBusy)
                 .clone_into(&mut self.status);
+            self.restore_routing_rollback(previous);
             cx.notify();
             return false;
         }
@@ -22,20 +40,12 @@ impl ManisApp {
             language
                 .message(Message::ManualRulesLocationUnavailable)
                 .clone_into(&mut self.status);
+            self.restore_routing_rollback(previous);
             cx.notify();
             return false;
         };
-        let previous_order = self.rule_sources.group_order.clone();
         self.sync_routing_rule_group_order();
-        self.start_routing_runtime_apply(
-            store_dir,
-            completion,
-            crate::app::RoutingApplyRollback {
-                manual_rules: previous_rules,
-                group_order: previous_order,
-            },
-            cx,
-        );
+        self.start_routing_runtime_apply(store_dir, completion, previous, cx);
         true
     }
 
@@ -59,12 +69,14 @@ impl ManisApp {
         let runtime = self.runtime.clone();
         let executor = cx.background_executor().clone();
         let rules = self.manual_rules.clone();
+        let local_groups = self.local_rule_groups.clone();
         let order = self.rule_sources.group_order.clone();
         cx.spawn(async move |this, cx| {
             let result = executor
                 .spawn(async move {
                     crate::app::mutate_saved_sources(&runtime, &store_dir, |staged| {
                         mihomo::save_routing_rule_group_order_in(staged, &order)?;
+                        mihomo::save_local_routing_rule_groups_in(staged, &local_groups)?;
                         crate::manual_rule::save_manual_rules_in(staged, &rules)
                             .map_err(|_| SubscriptionStoreError::StoreUnavailable)
                     })
@@ -73,8 +85,7 @@ impl ManisApp {
             this.update(cx, |this, cx| {
                 this.routing_apply_state.finish();
                 if !matches!(&result, Ok(crate::app::SourceMutation::Committed { .. })) {
-                    this.manual_rules = rollback.manual_rules;
-                    this.rule_sources.group_order = rollback.group_order;
+                    this.restore_routing_rollback(rollback);
                 }
                 this.status = match result {
                     Ok(crate::app::SourceMutation::Committed { apply, .. }) => {
@@ -111,6 +122,7 @@ impl ManisApp {
             &self.rule_sources.group_order,
             !self.manual_rules.is_empty(),
             &self.rule_sources.sources,
+            &self.local_rule_groups,
         );
     }
 
@@ -125,7 +137,7 @@ impl ManisApp {
             return;
         }
         self.sync_routing_rule_group_order();
-        let previous = self.rule_sources.group_order.clone();
+        let previous = self.routing_rollback_snapshot();
         if !mihomo::place_routing_rule_group(
             &mut self.rule_sources.group_order,
             group_id,
@@ -135,7 +147,7 @@ impl ManisApp {
             return;
         }
         let Some(store_dir) = self.subscription_store_dir.clone() else {
-            self.rule_sources.group_order = previous;
+            self.rule_sources.group_order = previous.group_order;
             self.language()
                 .message(Message::ManualRulesLocationUnavailable)
                 .clone_into(&mut self.status);
@@ -147,10 +159,7 @@ impl ManisApp {
             self.language()
                 .localized(copy::configuration::RULE_GROUP_ORDER_UPDATED)
                 .to_owned(),
-            crate::app::RoutingApplyRollback {
-                manual_rules: self.manual_rules.clone(),
-                group_order: previous,
-            },
+            previous,
             cx,
         );
     }
@@ -172,13 +181,13 @@ impl ManisApp {
             return;
         }
         self.sync_routing_rule_group_order();
-        let previous = self.rule_sources.group_order.clone();
+        let previous = self.routing_rollback_snapshot();
         if !mihomo::move_routing_rule_group(&mut self.rule_sources.group_order, group_id, direction)
         {
             return;
         }
         let Some(store_dir) = self.subscription_store_dir.clone() else {
-            self.rule_sources.group_order = previous;
+            self.rule_sources.group_order = previous.group_order;
             return;
         };
         let language = self.language();
@@ -191,14 +200,6 @@ impl ManisApp {
             }
         }
         .to_owned();
-        self.start_routing_runtime_apply(
-            store_dir,
-            completion,
-            crate::app::RoutingApplyRollback {
-                manual_rules: self.manual_rules.clone(),
-                group_order: previous,
-            },
-            cx,
-        );
+        self.start_routing_runtime_apply(store_dir, completion, previous, cx);
     }
 }

@@ -6,11 +6,11 @@ use gpui_component::WindowExt as _;
 use super::{
     ActionRole, AnyElement, Button, Context, ControlSize, Dialog, Disableable, Div, FluentBuilder,
     Focusable, InteractiveElement, IntoElement, Language, LogLevel, MAX_MANUAL_RULE_INPUT_BYTES,
-    ManisApp, ManualRulePopover, Message, ParentElement, Radius, Role, Space, Stateful,
-    StatefulInteractiveElement, Styled, SubscriptionTextInput, TextInputSpec, TextRole, Theme,
-    Window, WindowSizeClass, copy, dialog_footer_surface, dialog_header_surface, div, field_label,
-    manual_rule_error_label, manual_rule_kind_detail, manual_rule_placeholder, px, record_event,
-    style_action_button, surface_dialog,
+    ManisApp, ManualRulePopover, Message, ParentElement, Radius, Role, RuleRowScope, Space,
+    Stateful, StatefulInteractiveElement, Styled, SubscriptionTextInput, TextInputSpec, TextRole,
+    Theme, Window, WindowSizeClass, copy, dialog_footer_surface, dialog_header_surface, div,
+    field_label, manual_rule_error_label, manual_rule_kind_detail, manual_rule_placeholder, px,
+    record_event, style_action_button, surface_dialog,
 };
 impl ManisApp {
     pub(in crate::app) fn open_manual_rule_editor(
@@ -32,6 +32,7 @@ impl ManisApp {
             return;
         }
         self.begin_manual_rule_creation(cx);
+        self.rule_editor_scope = RuleRowScope::Manual;
         self.open_manual_rule_dialog(window, cx);
     }
 
@@ -94,11 +95,38 @@ impl ManisApp {
             self.manual_rule_target = target;
         }
         self.manual_rule_insert = crate::app::ManualRuleInsert::Prepend;
+        self.rule_editor_scope = RuleRowScope::Manual;
         self.open_manual_rule_dialog(window, cx);
     }
 
-    pub(in crate::app) fn open_manual_rule_editor_for_edit(
+    /// Opens the editor for a new rule inside a local group.
+    pub(in crate::app) fn open_local_rule_editor_for_create(
         &mut self,
+        group_index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if crate::app::windows::activate(
+            cx.entity().entity_id(),
+            crate::app::windows::AuxiliaryKind::ManualRule,
+            cx,
+        ) {
+            return;
+        }
+        if self.manual_rule_editor_state.is_open()
+            || self.local_rule_groups.get(group_index).is_none()
+        {
+            return;
+        }
+        self.begin_manual_rule_creation(cx);
+        self.rule_editor_scope = RuleRowScope::Local(group_index);
+        self.manual_rule_insert = crate::app::ManualRuleInsert::Append;
+        self.open_manual_rule_dialog(window, cx);
+    }
+
+    pub(in crate::app) fn open_rule_editor_for_edit(
+        &mut self,
+        scope: RuleRowScope,
         index: usize,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -113,9 +141,10 @@ impl ManisApp {
         if self.manual_rule_editor_state.is_open() {
             return;
         }
-        let Some(rule) = self.manual_rules.get(index).cloned() else {
+        let Some(rule) = self.rule_list(scope).get(index).cloned() else {
             return;
         };
+        self.rule_editor_scope = scope;
         self.manual_rule_editor_state = crate::app::ManualRuleEditorState::Editing(index);
         self.manual_rule_popover = None;
         self.manual_rule_error = None;
@@ -143,21 +172,69 @@ impl ManisApp {
                     .update(cx, SubscriptionTextInput::clear_without_event);
             }
         }
-        let targets = self.manual_rule_targets();
-        self.manual_rule_target = if targets.iter().any(|target| target == rule.target()) {
-            rule.target().to_owned()
-        } else if rule.target() == "Proxy" {
-            self.managed_policies
-                .groups
-                .first()
-                .map_or_else(|| "DIRECT".to_owned(), |group| group.name.clone())
-        } else {
-            targets
-                .first()
-                .cloned()
-                .unwrap_or_else(|| "DIRECT".to_owned())
-        };
+        if scope == RuleRowScope::Manual {
+            let targets = self.manual_rule_targets();
+            self.manual_rule_target = if targets.iter().any(|target| target == rule.target()) {
+                rule.target().to_owned()
+            } else if rule.target() == "Proxy" {
+                self.managed_policies
+                    .groups
+                    .first()
+                    .map_or_else(|| "DIRECT".to_owned(), |group| group.name.clone())
+            } else {
+                targets
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "DIRECT".to_owned())
+            };
+        }
         self.open_manual_rule_dialog(window, cx);
+    }
+
+    /// The rule list a scope points at; a stale group index yields no rules.
+    pub(in crate::app) fn rule_list(
+        &self,
+        scope: RuleRowScope,
+    ) -> &[crate::manual_rule::ManualRule] {
+        const EMPTY: &[crate::manual_rule::ManualRule] = &[];
+        match scope {
+            RuleRowScope::Manual => &self.manual_rules,
+            RuleRowScope::Local(index) => self
+                .local_rule_groups
+                .get(index)
+                .map_or(EMPTY, |group| group.rules.as_slice()),
+        }
+    }
+
+    fn rule_list_mut(
+        &mut self,
+        scope: RuleRowScope,
+    ) -> Option<&mut Vec<crate::manual_rule::ManualRule>> {
+        match scope {
+            RuleRowScope::Manual => Some(&mut self.manual_rules),
+            RuleRowScope::Local(index) => self
+                .local_rule_groups
+                .get_mut(index)
+                .map(|group| &mut group.rules),
+        }
+    }
+
+    /// The policy a new rule in this scope will use; a local group pins its own target.
+    pub(in crate::app) fn rule_editor_target(&self) -> String {
+        match self.rule_editor_scope {
+            RuleRowScope::Manual => self.manual_rule_target.clone(),
+            RuleRowScope::Local(index) => self.local_rule_groups.get(index).map_or_else(
+                || "DIRECT".to_owned(),
+                |group| group.target_policy.as_str().to_owned(),
+            ),
+        }
+    }
+
+    pub(in crate::app) fn rule_editor_group_name(&self) -> Option<String> {
+        self.rule_editor_scope
+            .local_group()
+            .and_then(|index| self.local_rule_groups.get(index))
+            .map(|group| group.name.clone())
     }
 
     pub(in crate::app) fn open_manual_rule_dialog(
@@ -201,6 +278,7 @@ impl ManisApp {
         self.manual_rule_editor_state = crate::app::ManualRuleEditorState::Closed;
         self.manual_rule_popover = None;
         self.manual_rule_error = None;
+        self.rule_editor_scope = RuleRowScope::Manual;
     }
 
     pub(in crate::app) fn close_manual_rule_editor(&mut self, cx: &mut Context<Self>) {
@@ -297,6 +375,16 @@ impl ManisApp {
             cx.notify();
             return;
         }
+        // FINAL is manual-only: a local group never decides unmatched traffic.
+        if kind == crate::manual_rule::ManualRuleKind::Final
+            && self.rule_editor_scope != RuleRowScope::Manual
+        {
+            self.manual_rule_error =
+                Some(crate::manual_rule::ManualRuleError::FinalOnlyInManualList);
+            self.manual_rule_popover = None;
+            cx.notify();
+            return;
+        }
         let Some(condition) = self.manual_rule_conditions.get_mut(condition_index) else {
             return;
         };
@@ -376,33 +464,29 @@ impl ManisApp {
         cx.notify();
     }
 
-    pub(in crate::app) fn apply_manual_rule_edit(
+    pub(in crate::app) fn apply_rule_edit(
         &mut self,
+        scope: RuleRowScope,
         editing_index: Option<usize>,
         rule: crate::manual_rule::ManualRule,
     ) -> Result<(), crate::manual_rule::ManualRuleEditError> {
+        let insert = self.manual_rule_insert;
+        let Some(rules) = self.rule_list_mut(scope) else {
+            return Err(crate::manual_rule::ManualRuleEditError::Missing);
+        };
         if let Some(index) = editing_index {
-            crate::manual_rule::replace_manual_rule(&mut self.manual_rules, index, rule)?;
-        } else {
-            if rule.is_final()
-                && self
-                    .manual_rules
-                    .iter()
-                    .any(crate::manual_rule::ManualRule::is_final)
-            {
-                return Err(crate::manual_rule::ManualRuleEditError::FinalAlreadyExists);
-            }
-            if self
-                .manual_rules
-                .iter()
-                .any(|existing| existing.same_definition(&rule))
-            {
-                return Err(crate::manual_rule::ManualRuleEditError::Duplicate);
-            }
-            match self.manual_rule_insert {
-                crate::app::ManualRuleInsert::Prepend => self.manual_rules.insert(0, rule),
-                crate::app::ManualRuleInsert::Append => self.manual_rules.push(rule),
-            }
+            crate::manual_rule::replace_manual_rule(rules, index, rule)?;
+            return Ok(());
+        }
+        if rule.is_final() && rules.iter().any(crate::manual_rule::ManualRule::is_final) {
+            return Err(crate::manual_rule::ManualRuleEditError::FinalAlreadyExists);
+        }
+        if rules.iter().any(|existing| existing.same_definition(&rule)) {
+            return Err(crate::manual_rule::ManualRuleEditError::Duplicate);
+        }
+        match insert {
+            crate::app::ManualRuleInsert::Prepend => rules.insert(0, rule),
+            crate::app::ManualRuleInsert::Append => rules.push(rule),
         }
         Ok(())
     }
@@ -427,10 +511,9 @@ impl ManisApp {
             .map(|condition| (condition.kind, condition.input.read(cx).value().to_owned()))
             .collect::<Vec<_>>();
         let condition_count = conditions.len();
-        let rule = match crate::manual_rule::ManualRule::parse_conditions(
-            conditions,
-            &self.manual_rule_target,
-        ) {
+        let scope = self.rule_editor_scope;
+        let target = self.rule_editor_target();
+        let rule = match crate::manual_rule::ManualRule::parse_conditions(conditions, &target) {
             Ok(rule) => rule,
             Err(error) => {
                 self.manual_rule_error = Some(error);
@@ -438,9 +521,15 @@ impl ManisApp {
                 return false;
             }
         };
+        if rule.is_final() && scope != RuleRowScope::Manual {
+            self.manual_rule_error =
+                Some(crate::manual_rule::ManualRuleError::FinalOnlyInManualList);
+            cx.notify();
+            return false;
+        }
         let editing_index = self.manual_rule_editor_state.editing_index();
-        let previous_rules = self.manual_rules.clone();
-        match self.apply_manual_rule_edit(editing_index, rule) {
+        let previous = self.routing_rollback_snapshot();
+        match self.apply_rule_edit(scope, editing_index, rule) {
             Ok(()) => {}
             Err(crate::manual_rule::ManualRuleEditError::Duplicate) => {
                 self.manual_rule_error = Some(crate::manual_rule::ManualRuleError::Duplicate);
@@ -459,10 +548,11 @@ impl ManisApp {
                 return false;
             }
         }
-        if let Some(index) = self
-            .manual_rules
-            .iter()
-            .position(crate::manual_rule::ManualRule::is_final)
+        if scope == RuleRowScope::Manual
+            && let Some(index) = self
+                .manual_rules
+                .iter()
+                .position(crate::manual_rule::ManualRule::is_final)
         {
             let final_rule = self.manual_rules.remove(index);
             self.manual_rules.push(final_rule);
@@ -471,8 +561,7 @@ impl ManisApp {
             .language()
             .localized(copy::configuration::MANUAL_RULES_UPDATED)
             .to_owned();
-        if !self.persist_manual_rules(completion, previous_rules.clone(), cx) {
-            self.manual_rules = previous_rules;
+        if !self.persist_routing_rules(completion, previous, cx) {
             return false;
         }
         self.manual_rule_error = None;
@@ -485,16 +574,20 @@ impl ManisApp {
                 "routing.manual_rule.added"
             },
             format!(
-                "conditions={} target={} total={}",
+                "conditions={} target={target} total={}",
                 condition_count,
-                self.manual_rule_target,
-                self.manual_rules.len()
+                self.rule_list(scope).len()
             ),
         );
         true
     }
 
-    pub(in crate::app) fn remove_manual_rule(&mut self, index: usize, cx: &mut Context<Self>) {
+    pub(in crate::app) fn remove_rule(
+        &mut self,
+        scope: RuleRowScope,
+        index: usize,
+        cx: &mut Context<Self>,
+    ) {
         // A native editor leaves the list usable. Keep its index stable until
         // the draft is saved or cancelled; bring the draft back to the front.
         if self.manual_rule_editor_state.is_open() {
@@ -512,17 +605,18 @@ impl ManisApp {
         if self.configuration_transfer.active {
             return;
         }
-        if index >= self.manual_rules.len() {
+        if index >= self.rule_list(scope).len() {
             return;
         }
-        let previous_rules = self.manual_rules.clone();
-        let removed = self.manual_rules.remove(index);
+        let previous = self.routing_rollback_snapshot();
+        let Some(removed) = self.rule_list_mut(scope).map(|rules| rules.remove(index)) else {
+            return;
+        };
         let completion = self
             .language()
             .localized(copy::configuration::MANUAL_RULE_REMOVED)
             .to_owned();
-        if !self.persist_manual_rules(completion, previous_rules.clone(), cx) {
-            self.manual_rules = previous_rules;
+        if !self.persist_routing_rules(completion, previous, cx) {
             return;
         }
         self.manual_rule_error = None;
@@ -532,13 +626,14 @@ impl ManisApp {
             format!(
                 "conditions={} total={}",
                 removed.conditions().len(),
-                self.manual_rules.len()
+                self.rule_list(scope).len()
             ),
         );
     }
 
-    pub(in crate::app) fn set_manual_rule_enabled(
+    pub(in crate::app) fn set_rule_enabled(
         &mut self,
+        scope: RuleRowScope,
         index: usize,
         enabled: bool,
         cx: &mut Context<Self>,
@@ -546,8 +641,11 @@ impl ManisApp {
         if self.configuration_transfer.active {
             return;
         }
-        let previous_rules = self.manual_rules.clone();
-        let Some(rule) = self.manual_rules.get_mut(index) else {
+        let previous = self.routing_rollback_snapshot();
+        let Some(rule) = self
+            .rule_list_mut(scope)
+            .and_then(|rules| rules.get_mut(index))
+        else {
             return;
         };
         if rule.is_enabled() == enabled {
@@ -562,8 +660,7 @@ impl ManisApp {
                 copy::configuration::MANUAL_RULE_DISABLED
             })
             .to_owned();
-        if !self.persist_manual_rules(completion, previous_rules.clone(), cx) {
-            self.manual_rules = previous_rules;
+        if !self.persist_routing_rules(completion, previous, cx) {
             return;
         }
         record_event(
@@ -573,7 +670,7 @@ impl ManisApp {
             } else {
                 "routing.manual_rule.disabled"
             },
-            format!("index={index} total={}", self.manual_rules.len()),
+            format!("index={index} total={}", self.rule_list(scope).len()),
         );
         cx.notify();
     }

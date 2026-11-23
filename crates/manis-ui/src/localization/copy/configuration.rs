@@ -475,3 +475,35 @@ pub(crate) const VALIDATING_AND_SAVING_SINGLE_NODE_SOURCE: LocalizedText = Local
 );
 pub(crate) const WILDCARD_DOMAIN: LocalizedText =
     LocalizedText::new("Wildcard domain", "通配符域名");
+
+// Local rule groups: a name, one target policy and their own rules, saved without a URL.
+
+pub(crate) const ADD_LOCAL_RULE_GROUP: LocalizedText =
+    LocalizedText::new("Add group", "添加规则组");
+pub(crate) const ADD_RULE_TO_THIS_GROUP: LocalizedText =
+    LocalizedText::new("Add rule to this group", "为这个规则组添加规则");
+pub(crate) const DELETE_LOCAL_RULE_GROUP: LocalizedText =
+    LocalizedText::new("Delete rule group", "删除规则组");
+pub(crate) const EDIT_LOCAL_RULE_GROUP: LocalizedText =
+    LocalizedText::new("Edit rule group", "编辑规则组");
+pub(crate) const FINAL_IS_ONLY_AVAILABLE_IN_THE_MANUAL_RULE_LIST: LocalizedText =
+    LocalizedText::new(
+        "FINAL is only available in the manual rule list",
+        "FINAL 只能放在手动规则列表中",
+    );
+pub(crate) const LOCAL_RULE_GROUP: LocalizedText =
+    LocalizedText::new("Local rule group", "本地规则组");
+pub(crate) const LOCAL_RULE_GROUP_ENABLED: LocalizedText =
+    LocalizedText::new("Group enabled", "规则组启用");
+pub(crate) const LOCAL_RULE_GROUP_NAME: LocalizedText =
+    LocalizedText::new("Group name", "规则组名称");
+pub(crate) const LOCAL_RULE_GROUP_NAME_PLACEHOLDER: LocalizedText =
+    LocalizedText::new("For example: Streaming", "例如：流媒体");
+pub(crate) const LOCAL_RULE_GROUP_NAME_REQUIRED: LocalizedText =
+    LocalizedText::new("Enter a group name", "请输入规则组名称");
+pub(crate) const LOCAL_RULE_GROUP_SAVE_FAILED: LocalizedText =
+    LocalizedText::new("The rule group could not be saved", "无法保存规则组");
+pub(crate) const LOCAL_RULE_GROUP_TARGET_REQUIRED: LocalizedText = LocalizedText::new(
+    "Choose a target policy for this group",
+    "请为这个规则组选择目标策略",
+);

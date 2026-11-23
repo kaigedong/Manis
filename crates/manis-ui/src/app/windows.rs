@@ -23,6 +23,7 @@ pub enum AuxiliaryKind {
     ProxySource,
     RuleSource,
     ManualRule,
+    LocalRuleGroup,
     Policy,
 }
 
@@ -279,6 +280,9 @@ impl Render for AuxiliaryView {
                 AuxiliaryKind::ManualRule => app
                     .manual_rule_editor_sections(theme, app.language(), compact, cx)
                     .panel(),
+                AuxiliaryKind::LocalRuleGroup => app
+                    .local_rule_group_editor_sections(theme, app.language(), cx)
+                    .panel(),
                 AuxiliaryKind::Policy => {
                     app.set_policy_group_editor_enabled(
                         !app.managed_policies.mutation_state.is_busy(),
@@ -332,6 +336,9 @@ impl ManisApp {
                 self.language().localized(copy::configuration::RULE_SOURCES)
             }
             AuxiliaryKind::ManualRule => self.language().localized(copy::common::MANUAL_RULES),
+            AuxiliaryKind::LocalRuleGroup => self
+                .language()
+                .localized(copy::configuration::LOCAL_RULE_GROUP),
             AuxiliaryKind::Policy => self.language().localized(copy::common::EDIT_POLICY_GROUP),
         };
         format!("{label} · Manis")
@@ -347,6 +354,7 @@ impl ManisApp {
         self.sync_window_inputs(window, cx);
         match kind {
             AuxiliaryKind::ManualRule => self.ensure_manual_rule_input(theme, window, cx),
+            AuxiliaryKind::LocalRuleGroup => self.ensure_local_rule_group_input(theme, window, cx),
             AuxiliaryKind::Policy => self.ensure_policy_group_inputs(theme, window, cx),
             _ => {}
         }
@@ -359,6 +367,7 @@ impl ManisApp {
                 .manual_rule_conditions
                 .first()
                 .map(|condition| &condition.input),
+            AuxiliaryKind::LocalRuleGroup => self.local_rule_group_draft.name_input.as_ref(),
             AuxiliaryKind::Policy => self.inputs.policy_group_name.as_ref(),
         };
         if let Some(input) = input {
@@ -379,6 +388,7 @@ impl ManisApp {
             AuxiliaryKind::ProxySource => self.close_subscription_editor(cx),
             AuxiliaryKind::RuleSource => self.close_qx_rule_editor(cx),
             AuxiliaryKind::ManualRule => self.close_manual_rule_editor(cx),
+            AuxiliaryKind::LocalRuleGroup => self.close_local_rule_group_editor(cx),
             AuxiliaryKind::Policy => self.close_managed_policy_editor(cx),
         }
         true

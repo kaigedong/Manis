@@ -213,6 +213,7 @@ pub(crate) fn is_config_entry_name(name: &str) -> bool {
             | "routing.mode"
             | "node-selection.state"
             | "manual-routing-rules.state"
+            | "local-routing-rule-groups.state"
             | "direct-rules.state"
             | "kernel.kind"
             | "language.preference"

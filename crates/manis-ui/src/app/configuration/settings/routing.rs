@@ -36,16 +36,35 @@ impl ManisApp {
                         language.localized(copy::configuration::GROUPS_MATCH_FROM_TOP_TO_BOTTOM_DRAG_TO_REORDER),
                     ),
                     Some(
-                        action_button(
-                            "open-manual-rule-editor",
-                            language.message(Message::AddRule),
-                            ActionRole::Primary,
-                            ControlSize::Compact,
-                        )
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.open_manual_rule_editor(window, cx);
-                        }))
-                        .into_any_element(),
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(Space::Sm.px())
+                            .child(
+                                action_button(
+                                    "open-local-rule-group-editor",
+                                    language.localized(
+                                        copy::configuration::ADD_LOCAL_RULE_GROUP,
+                                    ),
+                                    ActionRole::Secondary,
+                                    ControlSize::Compact,
+                                )
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.open_local_rule_group_editor_new(window, cx);
+                                })),
+                            )
+                            .child(
+                                action_button(
+                                    "open-manual-rule-editor",
+                                    language.message(Message::AddRule),
+                                    ActionRole::Primary,
+                                    ControlSize::Compact,
+                                )
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.open_manual_rule_editor(window, cx);
+                                })),
+                            )
+                            .into_any_element(),
                     ),
                     theme,
                 )),

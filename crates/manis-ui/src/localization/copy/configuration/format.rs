@@ -432,3 +432,74 @@ pub(crate) fn qx_rules_removed(language: Language, suffix: &str) -> String {
         Language::SimplifiedChinese => format!("远程 QX 规则已移除{suffix}"),
     }
 }
+
+pub(crate) fn local_group_detail(
+    language: Language,
+    rules: usize,
+    disabled: usize,
+    target: &str,
+    enabled: bool,
+) -> String {
+    let count = language.count(CountNoun::Rule, rules);
+    match (language, enabled, disabled) {
+        (Language::English, false, _) => format!("{count} · Disabled · Saved locally"),
+        (Language::SimplifiedChinese, false, _) => format!("{count} · 已停用 · 本地保存"),
+        (Language::English, true, 0) => format!("{count} · Target {target} · Saved locally"),
+        (Language::English, true, _) => {
+            format!("{count} · {disabled} disabled · Target {target} · Saved locally")
+        }
+        (Language::SimplifiedChinese, true, 0) => {
+            format!("{count} · 目标 {target} · 本地保存")
+        }
+        (Language::SimplifiedChinese, true, _) => {
+            format!("{count} · {disabled} 条已禁用 · 目标 {target} · 本地保存")
+        }
+    }
+}
+
+pub(crate) fn local_group_decides_target(language: Language, group: &str) -> String {
+    match language {
+        Language::English => {
+            format!("“{group}” decides the target policy for every rule in this group.")
+        }
+        Language::SimplifiedChinese => {
+            format!("这个规则中的每条规则都使用规则组“{group}”的目标策略。")
+        }
+    }
+}
+
+pub(crate) fn local_rule_group_saved(language: Language, name: &str) -> String {
+    match language {
+        Language::English => format!("Rule group “{name}” saved"),
+        Language::SimplifiedChinese => format!("规则组“{name}”已保存"),
+    }
+}
+
+pub(crate) fn local_rule_group_enabled(language: Language, name: &str, enabled: bool) -> String {
+    match (language, enabled) {
+        (Language::English, true) => format!("Rule group “{name}” enabled"),
+        (Language::English, false) => format!("Rule group “{name}” disabled"),
+        (Language::SimplifiedChinese, true) => format!("规则组“{name}”已启用"),
+        (Language::SimplifiedChinese, false) => format!("规则组“{name}”已停用"),
+    }
+}
+
+pub(crate) fn local_rule_group_removed(language: Language, name: &str, rules: usize) -> String {
+    let count = language.count(CountNoun::Rule, rules);
+    match language {
+        Language::English => format!("Rule group “{name}” deleted · {count}"),
+        Language::SimplifiedChinese => format!("规则组“{name}”已删除 · {count}"),
+    }
+}
+
+pub(crate) fn local_rule_group_delete_notice(
+    language: Language,
+    name: &str,
+    rules: usize,
+) -> String {
+    let count = language.count(CountNoun::Rule, rules);
+    match language {
+        Language::English => format!("“{name}” and {count} in it will be deleted."),
+        Language::SimplifiedChinese => format!("将删除“{name}”以及其中的 {count}。"),
+    }
+}

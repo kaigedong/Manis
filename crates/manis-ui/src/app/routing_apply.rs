@@ -15,6 +15,7 @@ pub(super) enum SourceRuntimeApply {
 #[derive(Clone)]
 pub(super) struct RoutingApplyRollback {
     pub(super) manual_rules: Vec<crate::manual_rule::ManualRule>,
+    pub(super) local_rule_groups: Vec<mihomo::LocalRoutingRuleGroup>,
     pub(super) group_order: Vec<String>,
 }
 

@@ -1,10 +1,10 @@
 use super::{
-    HashMap, LoadError, MANUAL_ROUTING_RULE_GROUP_ID, MAX_SUBSCRIPTION_PROXY_DNS_SERVERS, Path,
-    Profile, ProxyDnsServer, Rule, SecretUrl, StoredSingleNode, VlessProxy, apply_qx_rule_sources,
-    compile_managed_policy_groups, configured_mixed_port, load_managed_policy_groups_in,
-    load_qx_rule_sources_in, load_routing_mode_in, load_routing_rule_group_order_in,
-    load_single_node_sources_in, load_subscription_sources_in, normalized_routing_rule_group_order,
-    profile_mode,
+    HashMap, LoadError, LogLevel, MANUAL_ROUTING_RULE_GROUP_ID, MAX_SUBSCRIPTION_PROXY_DNS_SERVERS,
+    Path, Profile, ProxyDnsServer, Rule, SecretUrl, StoredSingleNode, VlessProxy,
+    apply_qx_rule_sources, compile_managed_policy_groups, configured_mixed_port,
+    load_local_routing_rule_groups_in, load_managed_policy_groups_in, load_qx_rule_sources_in,
+    load_routing_mode_in, load_routing_rule_group_order_in, load_single_node_sources_in,
+    load_subscription_sources_in, normalized_routing_rule_group_order, profile_mode, record_event,
 };
 
 pub(super) fn compile_saved_profile(
@@ -151,6 +151,11 @@ fn apply_saved_routing(
     let sources = load_qx_rule_sources_in(store_dir).map_err(|error| {
         LoadError::Runtime(format!("QX rule sources could not be read: {error}"))
     })?;
+    let local_groups = load_local_routing_rule_groups_in(store_dir).map_err(|error| {
+        LoadError::Runtime(format!(
+            "local routing rule groups could not be read: {error}"
+        ))
+    })?;
     let manual_rules = crate::manual_rule::load_manual_rules_in(store_dir)
         .map_err(|error| LoadError::Runtime(error.to_string()))?;
     let stored_order = load_routing_rule_group_order_in(store_dir).map_err(|error| {
@@ -158,8 +163,12 @@ fn apply_saved_routing(
             "saved routing rule group order could not be read: {error}"
         ))
     })?;
-    let order =
-        normalized_routing_rule_group_order(&stored_order, !manual_rules.is_empty(), &sources);
+    let order = normalized_routing_rule_group_order(
+        &stored_order,
+        !manual_rules.is_empty(),
+        &sources,
+        &local_groups,
+    );
     for group_id in order {
         if group_id == MANUAL_ROUTING_RULE_GROUP_ID {
             crate::manual_rule::append_manual_rules(
@@ -170,6 +179,25 @@ fn apply_saved_routing(
             .map_err(|error| LoadError::Runtime(error.to_string()))?;
         } else if let Some(source) = sources.iter().find(|source| source.id == group_id) {
             apply_qx_rule_sources(profile, std::slice::from_ref(source))?;
+        } else if let Some(group) = local_groups
+            .iter()
+            .find(|group| group.id == group_id && group.enabled)
+        {
+            let skipped = crate::manual_rule::append_local_routing_group_rules(
+                profile,
+                &group.rules,
+                &group.target_policy,
+                manis_core::KernelKind::Mihomo,
+            )
+            .map_err(|error| LoadError::Runtime(error.to_string()))?;
+            // FINAL belongs to the manual list; a stored one cannot silently decide routing.
+            if skipped > 0 {
+                record_event(
+                    LogLevel::Warn,
+                    "routing.local_group.final_skipped",
+                    format!("group={} skipped={skipped}", group.id),
+                );
+            }
         }
     }
     if let Some(fallback) = bootstrap_fallback
@@ -180,5 +208,10 @@ fn apply_saved_routing(
     {
         profile.rules.push(fallback);
     }
+    // One gate for every arm: a local group's target can outlive the policy it names, exactly like
+    // a source's can, and a dangling policy must fail here instead of reaching the core.
+    profile
+        .validate()
+        .map_err(|error| LoadError::Runtime(error.to_string()))?;
     Ok(())
 }

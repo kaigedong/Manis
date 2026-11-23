@@ -387,20 +387,43 @@ fn render_rule_source(entry: &Entry) -> String {
 }
 
 /// Renders an entry without a dedicated shape: `format` plus every field as stored.
+///
+/// Rule stores repeat a field key once per line. JSON keeps one value per key, so repeated
+/// lines are written as an array of arrays; a single line keeps its flat shape.
 fn render_record(entry: &Entry, indent: usize) -> String {
     let pad = " ".repeat(indent);
     let inner = " ".repeat(indent + 2);
     let mut out = String::from("{\n");
     let _ = writeln!(out, "{inner}\"format\": {},", quoted(&entry.format));
+    let mut order: Vec<&str> = Vec::new();
+    let mut lines_by_key: BTreeMap<&str, Vec<&Vec<String>>> = BTreeMap::new();
     for (key, values) in &entry.fields {
-        let rendered: Vec<String> = values
-            .iter()
-            .map(|value| quoted(&decode_field_if(key, value)))
-            .collect();
-        let value = if rendered.len() == 1 {
-            rendered[0].clone()
+        if !lines_by_key.contains_key(key.as_str()) {
+            order.push(key.as_str());
+        }
+        lines_by_key.entry(key.as_str()).or_default().push(values);
+    }
+    for key in order {
+        let lines = &lines_by_key[key];
+        let render_line = |values: &Vec<String>| {
+            values
+                .iter()
+                .map(|value| quoted(&decode_field_if(key, value)))
+                .collect::<Vec<_>>()
+        };
+        let value = if lines.len() > 1 {
+            let rows: Vec<String> = lines
+                .iter()
+                .map(|values| format!("[{}]", render_line(values).join(", ")))
+                .collect();
+            format!("[{}]", rows.join(", "))
         } else {
-            format!("[{}]", rendered.join(", "))
+            let rendered = render_line(lines[0]);
+            if rendered.len() == 1 {
+                rendered[0].clone()
+            } else {
+                format!("[{}]", rendered.join(", "))
+            }
         };
         let _ = writeln!(out, "{inner}{}: {value},", quoted(key));
     }
@@ -759,7 +782,32 @@ fn record_entry(
         if key == "format" {
             continue;
         }
+        let encode = |values: Vec<String>| {
+            if is_hex_field(key) {
+                values.iter().map(|value| encode_field(value)).collect()
+            } else {
+                values
+            }
+        };
         let values: Vec<String> = match value {
+            // Repeated store lines arrive as one array of arrays; keep one field line each.
+            serde_json::Value::Array(items)
+                if !items.is_empty() && items.iter().all(serde_json::Value::is_array) =>
+            {
+                for item in items {
+                    let line = item
+                        .as_array()
+                        .map(|values| {
+                            values
+                                .iter()
+                                .filter_map(|value| value.as_str().map(str::to_owned))
+                                .collect::<Vec<_>>()
+                        })
+                        .ok_or(BackupError::InvalidFormat)?;
+                    fields.push((key.clone(), encode(line)));
+                }
+                continue;
+            }
             serde_json::Value::Array(items) => items
                 .iter()
                 .filter_map(|item| item.as_str().map(str::to_owned))
@@ -769,12 +817,7 @@ fn record_entry(
             serde_json::Value::Number(number) => vec![number.to_string()],
             _ => return Err(BackupError::InvalidFormat),
         };
-        let encoded = if is_hex_field(key) {
-            values.iter().map(|value| encode_field(value)).collect()
-        } else {
-            values
-        };
-        fields.push((key.clone(), encoded));
+        fields.push((key.clone(), encode(values)));
     }
     Ok(Entry {
         name,

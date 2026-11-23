@@ -19,7 +19,7 @@ use crate::{
         surface_dialog,
     },
     diagnostics::{LogLevel, record_event},
-    localization::{Language, Message, copy},
+    localization::{Language, LocalizedText, Message, copy},
     mihomo::{self, SubscriptionStoreError},
     subscription_input::{SubscriptionTextInput, TextInputSpec},
     theme::{ControlSize, Radius, Space, TextRole, Theme},
@@ -34,8 +34,10 @@ use super::{
 
 mod editor;
 mod list;
+mod local_groups;
 mod model;
 mod persistence;
 pub(in crate::app) use model::{
-    ManualRuleConditionEditor, ManualRuleEditorState, ManualRuleInsert, ManualRulePopover,
+    LocalRuleGroupDraft, LocalRuleGroupEditorState, ManualRuleConditionEditor,
+    ManualRuleEditorState, ManualRuleInsert, ManualRulePopover, RuleRowScope,
 };

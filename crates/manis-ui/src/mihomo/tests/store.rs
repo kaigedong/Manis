@@ -15,6 +15,8 @@ use manis_engine::ControllerEndpoint;
 
 #[path = "store/imported_subscription.rs"]
 mod imported_subscription;
+#[path = "store/local_routing_groups.rs"]
+mod local_routing_groups;
 #[path = "store/managed_policy.rs"]
 mod managed_policy;
 #[path = "store/node_selection.rs"]

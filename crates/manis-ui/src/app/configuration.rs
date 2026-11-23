@@ -33,7 +33,8 @@ mod rule_sources;
 mod settings;
 mod source_mutations;
 pub(in crate::app) use manual_rules::{
-    ManualRuleConditionEditor, ManualRuleEditorState, ManualRuleInsert, ManualRulePopover,
+    LocalRuleGroupDraft, LocalRuleGroupEditorState, ManualRuleConditionEditor,
+    ManualRuleEditorState, ManualRuleInsert, ManualRulePopover, RuleRowScope,
 };
 pub(in crate::app) use proxy_sources::ProxySourceEditorState;
 pub(in crate::app) use source_mutations::{
@@ -447,6 +448,9 @@ fn manual_rule_error_label(
         ManualRuleError::FinalAlreadyExists => {
             language.localized(copy::configuration::ONLY_ONE_FINAL_RULE_CAN_BE_CONFIGURED)
         }
+        ManualRuleError::FinalOnlyInManualList => {
+            language.localized(copy::configuration::FINAL_IS_ONLY_AVAILABLE_IN_THE_MANUAL_RULE_LIST)
+        }
     }
 }
 
@@ -742,6 +746,54 @@ mod tests {
             assert!(
                 !app.node_workspace
                     .is_group_collapsed(MANUAL_RULES_EXPANSION_KEY)
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn a_local_rule_group_renders_its_own_header_controls_and_rules(cx: &mut gpui::TestAppContext) {
+        use crate::manual_rule::{ManualRule, ManualRuleKind};
+        use gpui::AppContext as _;
+        cx.update(crate::init);
+        let mut app = None;
+        let group = crate::mihomo::LocalRoutingRuleGroup {
+            id: "local-rule-test".to_owned(),
+            name: "Streaming".to_owned(),
+            target_policy: manis_profile::Name::parse("DIRECT").expect("target"),
+            enabled: true,
+            rules: vec![
+                ManualRule::parse(ManualRuleKind::HostSuffix, "stream.example", "DIRECT")
+                    .expect("rule"),
+            ],
+        };
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            let entity = cx.new(|_| {
+                let mut app = super::ManisApp::with_fixture_controller("http://127.0.0.1:1");
+                app.primary_workspace = manis_core::PrimaryWorkspace::RoutingRules;
+                app.local_rule_groups = vec![group];
+                app
+            });
+            app = Some(entity.clone());
+            crate::root(entity, window, cx)
+        });
+        let app = app.unwrap();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+
+        for selector in [
+            "rule-group-toggle-routing-rule-source:local-rule-test",
+            "drag-rule-group-local-rule-test",
+            "local-rule-group-enabled-local-rule-test",
+            "local-rule-group-edit-0",
+            "local-rule-group-remove-0",
+            "local-routing-rule-0-0",
+            "local-rule-group-add-rule-0",
+        ] {
+            assert!(cx.debug_bounds(selector).is_some(), "{selector}");
+        }
+        app.read_with(cx, |app, _| {
+            assert!(
+                !app.node_workspace
+                    .is_group_collapsed("routing-rule-source:local-rule-test")
             );
         });
     }

@@ -50,9 +50,10 @@ mod workspace_inputs;
 #[cfg(not(test))]
 use crate::core_update;
 use configuration::{
-    ImportQxRuleError, ManualRuleConditionEditor, ManualRuleEditorState, ManualRuleInsert,
-    ManualRulePopover, ProxySourceEditorState, QxRuleEditorPopover, QxRuleImportFeedback,
-    QxRuleImportResult, QxRuleSourceRefreshState, RuleSourceState,
+    ImportQxRuleError, LocalRuleGroupDraft, LocalRuleGroupEditorState, ManualRuleConditionEditor,
+    ManualRuleEditorState, ManualRuleInsert, ManualRulePopover, ProxySourceEditorState,
+    QxRuleEditorPopover, QxRuleImportFeedback, QxRuleImportResult, QxRuleSourceRefreshState,
+    RuleRowScope, RuleSourceState,
 };
 use nodes::{
     GroupBenchmarkNodeState, GroupBenchmarkProgressQueue, GroupBenchmarkState,
@@ -211,6 +212,12 @@ pub struct ManisApp {
     manual_rule_editor_state: ManualRuleEditorState,
     manual_rule_popover: Option<ManualRulePopover>,
     manual_rule_error: Option<crate::manual_rule::ManualRuleError>,
+    /// The rule list the rule editor and its rows act on.
+    rule_editor_scope: RuleRowScope,
+    local_rule_groups: Vec<mihomo::LocalRoutingRuleGroup>,
+    local_rule_group_editor: LocalRuleGroupEditorState,
+    local_rule_group_draft: LocalRuleGroupDraft,
+    local_rule_group_delete: Option<usize>,
     lifecycle_subscriptions: LifecycleSubscriptions,
 }
 
@@ -304,6 +311,7 @@ impl ManisApp {
         )
     }
 
+    #[allow(clippy::too_many_lines)] // One place that assembles the whole application state.
     fn with_runtime_and_store(
         runtime: KernelRuntime,
         subscription_store_dir: Option<PathBuf>,
@@ -322,6 +330,7 @@ impl ManisApp {
             imported_subscriptions,
             saved_single_nodes,
             qx_rule_sources,
+            local_rule_groups,
             routing_rule_group_order,
             collapsed_groups,
             managed_policy_groups,
@@ -402,10 +411,15 @@ impl ManisApp {
             manual_rule_conditions: Vec::new(),
             manual_rule_condition_count: 1,
             manual_rule_insert: ManualRuleInsert::Append,
-            manual_rule_target: default_rule_target,
+            manual_rule_target: default_rule_target.clone(),
             manual_rule_editor_state: ManualRuleEditorState::Closed,
             manual_rule_popover: None,
             manual_rule_error: None,
+            rule_editor_scope: RuleRowScope::Manual,
+            local_rule_groups,
+            local_rule_group_editor: LocalRuleGroupEditorState::Closed,
+            local_rule_group_draft: LocalRuleGroupDraft::new(default_rule_target.clone()),
+            local_rule_group_delete: None,
             lifecycle_subscriptions: LifecycleSubscriptions::default(),
         }
     }

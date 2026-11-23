@@ -84,7 +84,7 @@ impl ManualRuleKind {
         }
     }
 
-    pub(super) fn from_storage_key(value: &str) -> Option<Self> {
+    pub(crate) fn from_storage_key(value: &str) -> Option<Self> {
         Some(match value {
             "host" => Self::Host,
             "host-suffix" => Self::HostSuffix,
@@ -222,6 +222,12 @@ impl ManualRule {
         self.enabled = enabled;
     }
 
+    /// Re-points the rule, used when its enclosing group changes target policy.
+    pub(crate) fn retarget(&mut self, target: &str) -> Result<(), ManualRuleError> {
+        self.target = Name::parse(target).map_err(|_error| ManualRuleError::InvalidPolicy)?;
+        Ok(())
+    }
+
     pub(crate) fn same_definition(&self, other: &Self) -> bool {
         self.matcher == other.matcher && self.target == other.target
     }
@@ -246,6 +252,7 @@ pub(crate) enum ManualRuleError {
     FinalMustStandAlone,
     FinalHasNoParameter,
     FinalAlreadyExists,
+    FinalOnlyInManualList,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

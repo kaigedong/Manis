@@ -27,6 +27,7 @@ pub(crate) struct BackupSummary {
     pub(crate) policy_groups: usize,
     pub(crate) rule_sources: usize,
     pub(crate) manual_rules: usize,
+    pub(crate) local_rule_groups: usize,
 }
 
 #[derive(Clone)]
@@ -275,6 +276,75 @@ mod tests {
             prepare_import(invalid),
             Err(BackupError::InvalidConfiguration)
         ));
+    }
+
+    #[test]
+    fn local_rule_groups_and_their_rules_survive_export_and_restore()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let source = store("local-group-source");
+        let mut group = crate::mihomo::LocalRoutingRuleGroup::new("Streaming", "DIRECT")?;
+        group.rules = vec![
+            crate::manual_rule::ManualRule::parse(
+                crate::manual_rule::ManualRuleKind::HostSuffix,
+                "stream.example",
+                "DIRECT",
+            )?,
+            crate::manual_rule::ManualRule::parse(
+                crate::manual_rule::ManualRuleKind::DstPort,
+                "443",
+                "DIRECT",
+            )?,
+        ];
+        crate::mihomo::save_local_routing_rule_groups_in(&source, std::slice::from_ref(&group))?;
+        crate::mihomo::save_routing_rule_group_order_in(&source, std::slice::from_ref(&group.id))?;
+
+        let text = export_backup(&source)?;
+        let prepared = prepare_import(&text)?;
+        assert_eq!(prepared.summary().local_rule_groups, 1);
+        assert_eq!(prepared.summary().rule_sources, 0);
+
+        let target = store("local-group-target");
+        restore(&target, &prepared)?;
+        assert_eq!(
+            crate::mihomo::load_local_routing_rule_groups_in(&target)?,
+            std::slice::from_ref(&group)
+        );
+        assert_eq!(
+            crate::mihomo::load_routing_rule_group_order_in(&target)?,
+            std::slice::from_ref(&group.id)
+        );
+        fs::remove_dir_all(source)?;
+        fs::remove_dir_all(target)?;
+        Ok(())
+    }
+
+    #[test]
+    fn repeated_rule_lines_survive_the_editor_round_trip() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let source = store("repeated-rules-source");
+        let rules = vec![
+            crate::manual_rule::ManualRule::parse(
+                crate::manual_rule::ManualRuleKind::HostSuffix,
+                "one.example",
+                "DIRECT",
+            )?,
+            crate::manual_rule::ManualRule::parse(
+                crate::manual_rule::ManualRuleKind::HostSuffix,
+                "two.example",
+                "DIRECT",
+            )?,
+            crate::manual_rule::ManualRule::final_rule("REJECT")?,
+        ];
+        crate::manual_rule::save_manual_rules_in(&source, &rules)?;
+
+        let prepared = prepare_import(&export_backup(&source)?)?;
+        assert_eq!(prepared.summary().manual_rules, 3);
+        let target = store("repeated-rules-target");
+        restore(&target, &prepared)?;
+        assert_eq!(crate::manual_rule::load_manual_rules_in(&target)?, rules);
+        fs::remove_dir_all(source)?;
+        fs::remove_dir_all(target)?;
+        Ok(())
     }
 
     #[test]

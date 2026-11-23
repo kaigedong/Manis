@@ -16,7 +16,7 @@ pub(crate) use model::{
     ManualRuleError, ManualRuleKind, ManualRuleStoreError, replace_manual_rule,
 };
 
-pub(crate) use compiler::append_manual_rules;
+pub(crate) use compiler::{append_local_routing_group_rules, append_manual_rules};
 #[cfg(all(not(windows), test))]
 pub(super) use store::decode_manual_rules;
 pub(crate) use store::{load_manual_rules_in, save_manual_rules_in};
@@ -33,7 +33,8 @@ mod tests {
 
     use super::{
         ManualRule, ManualRuleCompileError, ManualRuleEditError, ManualRuleError, ManualRuleKind,
-        append_manual_rules, load_manual_rules_in, replace_manual_rule, save_manual_rules_in,
+        append_local_routing_group_rules, append_manual_rules, load_manual_rules_in,
+        replace_manual_rule, save_manual_rules_in,
     };
 
     #[test]
@@ -249,6 +250,64 @@ mod tests {
         let yaml = manis_profile::render_mihomo_yaml(&profile).expect("rendered profile");
         assert!(yaml.contains("DOMAIN,enabled.example,DIRECT"));
         assert!(!yaml.contains("disabled.example"));
+    }
+
+    #[test]
+    fn a_local_group_pins_its_target_for_every_rule_it_holds() {
+        let mut profile = manis_profile::Profile::qx_default(
+            manis_profile::SecretUrl::parse_https("https://example.invalid/subscription")
+                .expect("fixture URL"),
+        )
+        .expect("fixture profile");
+        let mut disabled =
+            ManualRule::parse(ManualRuleKind::DstPort, "443", "REJECT").expect("rule");
+        disabled.set_enabled(false);
+        let rules = vec![
+            ManualRule::parse(ManualRuleKind::Host, "pinned.example", "REJECT").expect("rule"),
+            disabled,
+        ];
+        let target = manis_profile::Name::parse("DIRECT").expect("target policy");
+
+        let skipped = append_local_routing_group_rules(
+            &mut profile,
+            &rules,
+            &target,
+            manis_core::KernelKind::Mihomo,
+        )
+        .expect("supported rules");
+
+        assert_eq!(skipped, 0);
+        let yaml = manis_profile::render_mihomo_yaml(&profile).expect("rendered profile");
+        assert!(yaml.contains("DOMAIN,pinned.example,DIRECT"), "{yaml}");
+        assert!(!yaml.contains("REJECT"), "{yaml}");
+        assert!(!yaml.contains("DST-PORT,443"), "disabled rules stay out");
+    }
+
+    #[test]
+    fn a_final_rule_inside_a_local_group_is_skipped_instead_of_deciding_routing() {
+        let mut profile = manis_profile::Profile::qx_default(
+            manis_profile::SecretUrl::parse_https("https://example.invalid/subscription")
+                .expect("fixture URL"),
+        )
+        .expect("fixture profile");
+        let rules = vec![
+            ManualRule::final_rule("REJECT").expect("FINAL"),
+            ManualRule::parse(ManualRuleKind::HostSuffix, "example.com", "DIRECT").expect("rule"),
+        ];
+        let target = manis_profile::Name::parse("DIRECT").expect("target policy");
+
+        let skipped = append_local_routing_group_rules(
+            &mut profile,
+            &rules,
+            &target,
+            manis_core::KernelKind::Mihomo,
+        )
+        .expect("supported rules");
+
+        assert_eq!(skipped, 1);
+        let yaml = manis_profile::render_mihomo_yaml(&profile).expect("rendered profile");
+        assert!(yaml.contains("DOMAIN-SUFFIX,example.com,DIRECT"), "{yaml}");
+        assert!(!yaml.contains("MATCH,REJECT"), "{yaml}");
     }
 
     #[test]

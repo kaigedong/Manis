@@ -4,9 +4,10 @@ use std::path::Path;
 #[cfg(not(windows))]
 use super::require_clean_absolute_store;
 use super::{
-    MANUAL_ROUTING_RULE_GROUP_ID, MAX_ROUTING_RULE_GROUP_ORDER_FILE_BYTES, MAX_ROUTING_RULE_GROUPS,
-    QX_RULE_SOURCE_PREFIX, ROUTING_RULE_GROUP_ORDER_FILE, ROUTING_RULE_GROUP_ORDER_VERSION,
-    StoredQxRuleSource, SubscriptionStoreError, valid_stored_id,
+    LOCAL_ROUTING_RULE_GROUP_PREFIX, LocalRoutingRuleGroup, MANUAL_ROUTING_RULE_GROUP_ID,
+    MAX_ROUTING_RULE_GROUP_ORDER_FILE_BYTES, MAX_ROUTING_RULE_GROUPS, QX_RULE_SOURCE_PREFIX,
+    ROUTING_RULE_GROUP_ORDER_FILE, ROUTING_RULE_GROUP_ORDER_VERSION, StoredQxRuleSource,
+    SubscriptionStoreError, valid_stored_id,
 };
 
 #[cfg(not(windows))]
@@ -26,14 +27,17 @@ pub(crate) enum MoveDirection {
     Down,
 }
 
+/// One ordered list of rule groups: the manual group, remote sources and local groups.
 pub(crate) fn normalized_routing_rule_group_order(
     stored_order: &[String],
     has_manual_rules: bool,
     sources: &[StoredQxRuleSource],
+    local_groups: &[LocalRoutingRuleGroup],
 ) -> Vec<String> {
-    let source_ids = sources
+    let known = sources
         .iter()
         .map(|source| source.id.as_str())
+        .chain(local_groups.iter().map(|group| group.id.as_str()))
         .collect::<BTreeSet<_>>();
     let mut seen = BTreeSet::new();
     let mut order = stored_order
@@ -41,7 +45,7 @@ pub(crate) fn normalized_routing_rule_group_order(
         .filter_map(|id| {
             let id = id.as_str();
             let retained =
-                (has_manual_rules && id == MANUAL_ROUTING_RULE_GROUP_ID) || source_ids.contains(id);
+                (has_manual_rules && id == MANUAL_ROUTING_RULE_GROUP_ID) || known.contains(id);
             retained.then_some(id)
         })
         .filter(|id| seen.insert(*id))
@@ -50,9 +54,13 @@ pub(crate) fn normalized_routing_rule_group_order(
     if has_manual_rules && seen.insert(MANUAL_ROUTING_RULE_GROUP_ID) {
         order.insert(0, MANUAL_ROUTING_RULE_GROUP_ID.to_owned());
     }
-    for source in sources {
-        if seen.insert(source.id.as_str()) {
-            order.push(source.id.clone());
+    for id in sources
+        .iter()
+        .map(|source| source.id.as_str())
+        .chain(local_groups.iter().map(|group| group.id.as_str()))
+    {
+        if seen.insert(id) {
+            order.push(id.to_owned());
         }
     }
     order
@@ -104,7 +112,9 @@ pub(crate) fn place_routing_rule_group(
 }
 
 fn valid_routing_rule_group_id(id: &str) -> bool {
-    id == MANUAL_ROUTING_RULE_GROUP_ID || valid_stored_id(id, QX_RULE_SOURCE_PREFIX)
+    id == MANUAL_ROUTING_RULE_GROUP_ID
+        || valid_stored_id(id, QX_RULE_SOURCE_PREFIX)
+        || valid_stored_id(id, LOCAL_ROUTING_RULE_GROUP_PREFIX)
 }
 
 #[cfg(not(windows))]
@@ -212,5 +222,124 @@ mod reorder_tests {
             assert!(!place_routing_rule_group(&mut order, source, anchor, after));
             assert_eq!(order, ["a", "b", "c"]);
         }
+    }
+}
+
+#[cfg(all(test, not(windows)))]
+mod local_group_order_tests {
+    use super::{load_routing_rule_group_order_in, save_routing_rule_group_order_in};
+    use crate::mihomo::{
+        LocalRoutingRuleGroup, MANUAL_ROUTING_RULE_GROUP_ID, Name, SecretUrl, StoredQxRuleSource,
+        normalized_routing_rule_group_order,
+    };
+    use std::fs;
+
+    fn source(id: &str) -> StoredQxRuleSource {
+        StoredQxRuleSource {
+            id: id.to_owned(),
+            name: None,
+            source: SecretUrl::parse_https("https://example.invalid/rules").expect("source"),
+            enabled: true,
+            target_policy: Name::parse("DIRECT").expect("target"),
+            content: "DOMAIN-SUFFIX,example.invalid,DIRECT".to_owned(),
+            rule_count: 1,
+            diagnostic_count: 0,
+            refresh_interval: crate::mihomo::RemoteSourceRefreshInterval::Manual,
+            last_successful_update_unix_secs: 0,
+        }
+    }
+
+    fn local(id: &str) -> LocalRoutingRuleGroup {
+        LocalRoutingRuleGroup {
+            id: id.to_owned(),
+            name: "Local".to_owned(),
+            target_policy: Name::parse("DIRECT").expect("target"),
+            enabled: true,
+            rules: Vec::new(),
+        }
+    }
+
+    fn order_ids(order: &[String]) -> Vec<&str> {
+        order.iter().map(String::as_str).collect()
+    }
+
+    #[test]
+    fn a_local_group_joins_the_shared_order_without_disturbing_the_stored_one() {
+        let sources = [source("qx-rule-b")];
+        let locals = [local("local-rule-1")];
+
+        assert_eq!(
+            order_ids(&normalized_routing_rule_group_order(
+                &[
+                    "qx-rule-b".to_owned(),
+                    MANUAL_ROUTING_RULE_GROUP_ID.to_owned()
+                ],
+                true,
+                &sources,
+                &locals,
+            )),
+            ["qx-rule-b", MANUAL_ROUTING_RULE_GROUP_ID, "local-rule-1"]
+        );
+        assert_eq!(
+            order_ids(&normalized_routing_rule_group_order(
+                &["local-rule-1".to_owned()],
+                false,
+                &sources,
+                &locals,
+            )),
+            ["local-rule-1", "qx-rule-b"]
+        );
+    }
+
+    #[test]
+    fn the_manual_group_comes_first_by_default_and_dropped_groups_disappear() {
+        let sources = [source("qx-rule-b")];
+        let locals = [local("local-rule-1")];
+
+        assert_eq!(
+            order_ids(&normalized_routing_rule_group_order(
+                &[],
+                true,
+                &sources,
+                &locals
+            )),
+            [MANUAL_ROUTING_RULE_GROUP_ID, "qx-rule-b", "local-rule-1"]
+        );
+        assert_eq!(
+            order_ids(&normalized_routing_rule_group_order(
+                &["local-rule-9".to_owned(), "local-rule-1".to_owned()],
+                false,
+                &[],
+                &locals,
+            )),
+            ["local-rule-1"]
+        );
+    }
+
+    #[test]
+    fn the_group_order_file_stores_local_group_ids() {
+        let store = std::env::temp_dir().join(format!(
+            "manis-local-group-order-{}-{:x}",
+            std::process::id(),
+            crate::mihomo::current_unix_secs()
+        ));
+        fs::create_dir_all(&store).expect("create fixture");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            fs::set_permissions(&store, fs::Permissions::from_mode(0o700))
+                .expect("make fixture private");
+        }
+        let order = [
+            MANUAL_ROUTING_RULE_GROUP_ID.to_owned(),
+            "local-rule-1".to_owned(),
+            "qx-rule-b".to_owned(),
+        ];
+        save_routing_rule_group_order_in(&store, &order).expect("save order");
+        assert_eq!(
+            load_routing_rule_group_order_in(&store).expect("load order"),
+            order
+        );
+        fs::remove_dir_all(store).expect("remove fixture");
     }
 }

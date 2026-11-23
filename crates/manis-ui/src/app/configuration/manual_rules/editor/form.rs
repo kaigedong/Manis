@@ -15,11 +15,13 @@ impl ManisApp {
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let editing_index = self.manual_rule_editor_state.editing_index();
-        let final_available = !self
-            .manual_rules
-            .iter()
-            .enumerate()
-            .any(|(index, rule)| rule.is_final() && Some(index) != editing_index);
+        let scope = self.rule_editor_scope;
+        let final_available = scope == super::RuleRowScope::Manual
+            && !self
+                .rule_list(scope)
+                .iter()
+                .enumerate()
+                .any(|(index, rule)| rule.is_final() && Some(index) != editing_index);
         let mut choices = div().id("manual-rule-kind-choices");
         for kind in crate::manual_rule::ManualRuleKind::ALL {
             if kind == crate::manual_rule::ManualRuleKind::Final && condition_index > 0 {
@@ -28,7 +30,12 @@ impl ManisApp {
             let supported = kind.supported_by(manis_core::KernelKind::Mihomo)
                 && (kind != crate::manual_rule::ManualRuleKind::Final || final_available);
             let selected = selected_kind == kind;
-            let detail = if supported {
+            let detail = if kind == crate::manual_rule::ManualRuleKind::Final
+                && scope != super::RuleRowScope::Manual
+            {
+                language
+                    .localized(copy::configuration::FINAL_IS_ONLY_AVAILABLE_IN_THE_MANUAL_RULE_LIST)
+            } else if supported {
                 manual_rule_kind_detail(kind, language)
             } else if kind == crate::manual_rule::ManualRuleKind::Final {
                 language.localized(copy::configuration::ALREADY_CONFIGURED)

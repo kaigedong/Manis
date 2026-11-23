@@ -70,6 +70,7 @@ fn native_long_editors_render_and_close_with_keyboard(cx: &mut gpui::TestAppCont
     for kind in [
         AuxiliaryKind::RuleSource,
         AuxiliaryKind::ManualRule,
+        AuxiliaryKind::LocalRuleGroup,
         AuxiliaryKind::Policy,
     ] {
         app.update(cx, |app, cx| {
@@ -78,6 +79,9 @@ fn native_long_editors_render_and_close_with_keyboard(cx: &mut gpui::TestAppCont
             }
             if kind == AuxiliaryKind::ManualRule {
                 app.manual_rule_editor_state = super::super::ManualRuleEditorState::Creating;
+            }
+            if kind == AuxiliaryKind::LocalRuleGroup {
+                app.local_rule_group_editor = super::super::LocalRuleGroupEditorState::Creating;
             }
         });
         cx.update(|cx| open(app.clone(), kind, cx));
@@ -90,6 +94,7 @@ fn native_long_editors_render_and_close_with_keyboard(cx: &mut gpui::TestAppCont
             AuxiliaryKind::RuleSource => "save-qx-rule-source",
             AuxiliaryKind::ManualRule => "save-manual-rule",
             AuxiliaryKind::Policy => "save-managed-policy-dialog",
+            AuxiliaryKind::LocalRuleGroup => "save-local-rule-group",
             AuxiliaryKind::ProxySource => unreachable!(),
         };
         let bounds = window.debug_bounds(footer).expect(footer);

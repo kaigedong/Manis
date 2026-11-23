@@ -6,26 +6,42 @@ use super::{
     Entity, FluentBuilder, FontWeight, InteractiveElement, IntoElement, Language,
     MANUAL_RULES_EXPANSION_KEY, ManisApp, ManualRuleKeyboardAction, Message, ParentElement,
     PopupMenuItem, QxRuleImportFeedback, QxRuleKind, QxRuleList, Radius, Role,
-    RuleGroupRenderContext, Space, Stateful, StatefulInteractiveElement, Styled, TextRole, Theme,
-    copy, div, empty_state, manual_rule_keyboard_action, mihomo, px, rule_group_is_open,
-    rule_source_expansion_key, source_update_label,
+    RuleGroupRenderContext, RuleRowScope, Space, Stateful, StatefulInteractiveElement, Styled,
+    TextRole, Theme, copy, div, empty_state, manual_rule_keyboard_action, mihomo, px,
+    rule_group_is_open, rule_source_expansion_key, source_update_label,
 };
 impl ManisApp {
+    #[allow(clippy::too_many_arguments)] // One row needs its slot, rule, scope and render context.
     pub(in crate::app) fn manual_routing_rule_row(
         &self,
         order: usize,
         index: usize,
         rule: &crate::manual_rule::ManualRule,
+        scope: RuleRowScope,
         theme: Theme,
         language: Language,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let enabled = rule.is_enabled();
-        let target = self.effective_rule_target(rule.target(), language);
+        // A local group pins the target policy every rule in it uses.
+        let target = match scope {
+            RuleRowScope::Manual => self.effective_rule_target(rule.target(), language),
+            RuleRowScope::Local(group_index) => self.effective_rule_target(
+                self.local_rule_groups
+                    .get(group_index)
+                    .map_or("DIRECT", |group| group.target_policy.as_str()),
+                language,
+            ),
+        };
+        let row_id = match scope {
+            RuleRowScope::Manual => format!("manual-routing-rule-{index}"),
+            RuleRowScope::Local(group) => format!("local-routing-rule-{group}-{index}"),
+        };
         let matchers = Self::manual_rule_matchers(rule, enabled, theme, language);
         let edit_label = copy::configuration::manual_rule_accessibility(language, order);
         let row = div()
-            .id(format!("manual-routing-rule-{index}"))
+            .id(row_id.clone())
+            .debug_selector(move || row_id)
             .min_h(px(44.0))
             .px(Space::Md.px())
             .py(Space::Sm.px())
@@ -48,7 +64,7 @@ impl ManisApp {
             .map(crate::components::primary_button_interaction)
             .aria_label(edit_label)
             .on_click(cx.listener(move |this, _, window, cx| {
-                this.open_manual_rule_editor_for_edit(index, window, cx);
+                this.open_rule_editor_for_edit(scope, index, window, cx);
             }))
             .on_key_down(cx.listener(move |this, event, window, cx| {
                 let Some(action) = manual_rule_keyboard_action(event) else {
@@ -57,13 +73,13 @@ impl ManisApp {
                 cx.stop_propagation();
                 match action {
                     ManualRuleKeyboardAction::Edit => {
-                        this.open_manual_rule_editor_for_edit(index, window, cx);
+                        this.open_rule_editor_for_edit(scope, index, window, cx);
                     }
                     ManualRuleKeyboardAction::Toggle => {
-                        this.set_manual_rule_enabled(index, !enabled, cx);
+                        this.set_rule_enabled(scope, index, !enabled, cx);
                     }
                     ManualRuleKeyboardAction::Delete => {
-                        this.remove_manual_rule(index, cx);
+                        this.remove_rule(scope, index, cx);
                     }
                 }
             }))
@@ -105,11 +121,12 @@ impl ManisApp {
                         .child(language.localized(copy::configuration::DISABLED)),
                 )
             });
-        Self::manual_rule_context_menu(row, index, enabled, language, cx.entity())
+        Self::manual_rule_context_menu(row, scope, index, enabled, language, cx.entity())
     }
 
     pub(in crate::app) fn manual_rule_context_menu(
         row: Stateful<Div>,
+        scope: RuleRowScope,
         index: usize,
         enabled: bool,
         language: Language,
@@ -125,14 +142,14 @@ impl ManisApp {
             let delete_app = app.clone();
             menu.item(PopupMenuItem::new(toggle_label).on_click(move |_, _, cx| {
                 toggle_app.update(cx, |this, cx| {
-                    this.set_manual_rule_enabled(index, !enabled, cx);
+                    this.set_rule_enabled(scope, index, !enabled, cx);
                 });
             }))
             .separator()
             .item(
                 PopupMenuItem::new(language.message(Message::Delete)).on_click(move |_, _, cx| {
                     delete_app.update(cx, |this, cx| {
-                        this.remove_manual_rule(index, cx);
+                        this.remove_rule(scope, index, cx);
                     });
                 }),
             )

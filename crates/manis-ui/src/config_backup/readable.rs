@@ -289,6 +289,7 @@ fn entry_heading(name: &str) -> &'static str {
         "subscription.url" => "订阅来源",
         "node-selection.state" => "节点选择",
         "manual-routing-rules.state" => "手动路由规则",
+        "local-routing-rule-groups.state" => "本地规则组",
         "routing-rule-group-order.state" => "规则来源顺序",
         "routing.mode" => "路由模式",
         "language.preference" => "语言偏好",

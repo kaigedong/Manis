@@ -258,6 +258,7 @@ fn routing_rule_group_order_round_trips_and_appends_new_groups()
         &[second.id.clone(), "qx-rule-removed".to_owned()],
         true,
         &sources,
+        &[],
     );
     assert_eq!(normalized[0], super::MANUAL_ROUTING_RULE_GROUP_ID);
     assert_eq!(normalized[1], second.id);

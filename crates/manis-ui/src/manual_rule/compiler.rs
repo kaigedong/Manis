@@ -1,5 +1,5 @@
 use manis_core::KernelKind;
-use manis_profile::{PolicyRef, Profile, Rule};
+use manis_profile::{Name, PolicyRef, Profile, Rule};
 
 use super::{
     LEGACY_GENERATED_PROXY_GROUP_NAME, ManualRule, ManualRuleCompileError, ManualRuleCondition,
@@ -54,14 +54,11 @@ impl ManualRule {
         &self,
         legacy_proxy_target: Option<&PolicyRef>,
     ) -> Result<Rule, ManualRuleCompileError> {
-        let policy = match self.target.as_str() {
-            "DIRECT" => PolicyRef::Direct,
-            "REJECT" => PolicyRef::Reject,
-            LEGACY_GENERATED_PROXY_GROUP_NAME => legacy_proxy_target
-                .cloned()
-                .unwrap_or_else(|| PolicyRef::Group(self.target.clone())),
-            _ => PolicyRef::Group(self.target.clone()),
-        };
+        self.to_profile_rule_for(policy_ref(&self.target, legacy_proxy_target))
+    }
+
+    /// Compiles with a caller-chosen policy, so a local group decides where its rules go.
+    fn to_profile_rule_for(&self, policy: PolicyRef) -> Result<Rule, ManualRuleCompileError> {
         if self.is_final() {
             return Ok(Rule::Match { policy });
         }
@@ -110,8 +107,35 @@ impl ManualRule {
     }
 }
 
-pub(crate) fn append_manual_rules(
-    profile: &mut Profile,
+fn policy_ref(target: &Name, legacy_proxy_target: Option<&PolicyRef>) -> PolicyRef {
+    match target.as_str() {
+        "DIRECT" => PolicyRef::Direct,
+        "REJECT" => PolicyRef::Reject,
+        LEGACY_GENERATED_PROXY_GROUP_NAME => legacy_proxy_target
+            .cloned()
+            .unwrap_or_else(|| PolicyRef::Group(target.clone())),
+        _ => PolicyRef::Group(target.clone()),
+    }
+}
+
+fn legacy_proxy_target(profile: &Profile) -> Option<PolicyRef> {
+    let has_user_named_proxy = profile
+        .groups
+        .iter()
+        .any(|group| group.name.as_str() == LEGACY_GENERATED_PROXY_GROUP_NAME);
+    (!has_user_named_proxy)
+        .then(|| {
+            profile
+                .groups
+                .iter()
+                .find(|group| group.name.as_str() != manis_profile::MANIS_GLOBAL_GROUP_NAME)
+                .or_else(|| profile.groups.first())
+                .map(|group| PolicyRef::Group(group.name.clone()))
+        })
+        .flatten()
+}
+
+fn reject_unsupported_types(
     rules: &[ManualRule],
     kernel: KernelKind,
 ) -> Result<(), ManualRuleCompileError> {
@@ -124,20 +148,25 @@ pub(crate) fn append_manual_rules(
             return Err(ManualRuleCompileError::UnsupportedType(condition.kind));
         }
     }
-    let has_user_named_proxy = profile
-        .groups
+    Ok(())
+}
+
+fn insert_before_terminal(profile: &mut Profile, compiled: Vec<Rule>) {
+    let insert_at = profile
+        .rules
         .iter()
-        .any(|group| group.name.as_str() == LEGACY_GENERATED_PROXY_GROUP_NAME);
-    let legacy_proxy_target = (!has_user_named_proxy)
-        .then(|| {
-            profile
-                .groups
-                .iter()
-                .find(|group| group.name.as_str() != manis_profile::MANIS_GLOBAL_GROUP_NAME)
-                .or_else(|| profile.groups.first())
-                .map(|group| PolicyRef::Group(group.name.clone()))
-        })
-        .flatten();
+        .position(|rule| matches!(rule, Rule::Match { .. }))
+        .unwrap_or(profile.rules.len());
+    profile.rules.splice(insert_at..insert_at, compiled);
+}
+
+pub(crate) fn append_manual_rules(
+    profile: &mut Profile,
+    rules: &[ManualRule],
+    kernel: KernelKind,
+) -> Result<(), ManualRuleCompileError> {
+    reject_unsupported_types(rules, kernel)?;
+    let legacy_proxy_target = legacy_proxy_target(profile);
     let compiled = rules
         .iter()
         .filter(|rule| rule.enabled && !rule.is_final())
@@ -153,12 +182,7 @@ pub(crate) fn append_manual_rules(
         .map(|terminal| terminal.to_profile_rule(legacy_proxy_target.as_ref()))
         .transpose()?;
 
-    let insert_at = profile
-        .rules
-        .iter()
-        .position(|rule| matches!(rule, Rule::Match { .. }))
-        .unwrap_or(profile.rules.len());
-    profile.rules.splice(insert_at..insert_at, compiled);
+    insert_before_terminal(profile, compiled);
 
     if let Some(terminal) = terminal {
         profile
@@ -167,4 +191,32 @@ pub(crate) fn append_manual_rules(
         profile.rules.push(terminal);
     }
     Ok(())
+}
+
+/// Appends one local group's rules with the group's target policy pinned for every rule.
+///
+/// FINAL is manual-only, so a stored FINAL rule inside a local group is skipped instead of
+/// compiled. Returns how many rules were skipped that way.
+pub(crate) fn append_local_routing_group_rules(
+    profile: &mut Profile,
+    rules: &[ManualRule],
+    target_policy: &Name,
+    kernel: KernelKind,
+) -> Result<usize, ManualRuleCompileError> {
+    reject_unsupported_types(rules, kernel)?;
+    let policy = policy_ref(target_policy, legacy_proxy_target(profile).as_ref());
+    let mut skipped_final = 0;
+    let compiled = rules
+        .iter()
+        .filter(|rule| rule.enabled)
+        .filter_map(|rule| {
+            if rule.is_final() {
+                skipped_final += 1;
+                return None;
+            }
+            Some(rule.to_profile_rule_for(policy.clone()))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    insert_before_terminal(profile, compiled);
+    Ok(skipped_final)
 }

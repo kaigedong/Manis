@@ -41,24 +41,28 @@ impl ManisApp {
         compact: bool,
         cx: &mut Context<Self>,
     ) -> crate::app::windows::EditorSections {
-        let target_width = if compact { 260.0 } else { 240.0 };
-        let target_open = self.manual_rule_popover == Some(ManualRulePopover::Target);
-        let target_menu = self.manual_rule_target_menu(theme, cx);
-        let app = cx.entity();
-        let target = Self::manual_rule_select(
-            "manual-rule-target-select",
-            language.localized(copy::configuration::CHOOSE_TARGET_POLICY),
-            self.manual_rule_target.clone(),
-            target_menu,
-            target_open,
-            target_width,
-            move |open, _, cx| {
-                app.update(cx, |this, cx| {
-                    this.manual_rule_popover = open.then_some(ManualRulePopover::Target);
-                    cx.notify();
-                });
-            },
-        );
+        // A local group pins the target, so its rule editor names the group instead.
+        let local_group = self.rule_editor_group_name();
+        let target = local_group.is_none().then(|| {
+            let target_width = if compact { 260.0 } else { 240.0 };
+            let target_open = self.manual_rule_popover == Some(ManualRulePopover::Target);
+            let target_menu = self.manual_rule_target_menu(theme, cx);
+            let app = cx.entity();
+            Self::manual_rule_select(
+                "manual-rule-target-select",
+                language.localized(copy::configuration::CHOOSE_TARGET_POLICY),
+                self.manual_rule_target.clone(),
+                target_menu,
+                target_open,
+                target_width,
+                move |open, _, cx| {
+                    app.update(cx, |this, cx| {
+                        this.manual_rule_popover = open.then_some(ManualRulePopover::Target);
+                        cx.notify();
+                    });
+                },
+            )
+        });
         let editing = self.manual_rule_editor_state.editing_index().is_some();
         let final_selected = self
             .manual_rule_conditions
@@ -67,7 +71,7 @@ impl ManisApp {
             == Some(crate::manual_rule::ManualRuleKind::Final);
         let conditions =
             self.manual_rule_editor_conditions(final_selected, compact, theme, language, cx);
-        let body = self.manual_rule_editor_body(conditions, target, theme, language);
+        let body = self.manual_rule_editor_body(conditions, target, local_group, theme, language);
         let footer = self.manual_rule_editor_footer(editing, theme, language, cx);
 
         crate::app::windows::EditorSections::new(
@@ -118,7 +122,8 @@ impl ManisApp {
     pub(in crate::app) fn manual_rule_editor_body(
         &self,
         conditions: Div,
-        target: AnyElement,
+        target: Option<AnyElement>,
+        local_group: Option<String>,
         theme: Theme,
         language: Language,
     ) -> Stateful<Div> {
@@ -130,15 +135,36 @@ impl ManisApp {
             .px_5()
             .py_4()
             .child(conditions)
-            .child(
-                div()
-                    .mt_4()
-                    .child(field_label(
-                        language.localized(copy::configuration::POLICY_GROUP_AFTER_MATCH),
-                        theme,
-                    ))
-                    .child(target),
-            )
+            .when_some(local_group, |body, group| {
+                body.child(
+                    div()
+                        .mt_4()
+                        .child(field_label(
+                            language.localized(copy::configuration::TARGET_POLICY),
+                            theme,
+                        ))
+                        .child(
+                            div()
+                                .text_size(TextRole::Body.size())
+                                .line_height(TextRole::Body.line_height())
+                                .text_color(theme.text_secondary)
+                                .child(copy::configuration::local_group_decides_target(
+                                    language, &group,
+                                )),
+                        ),
+                )
+            })
+            .when_some(target, |body, target| {
+                body.child(
+                    div()
+                        .mt_4()
+                        .child(field_label(
+                            language.localized(copy::configuration::POLICY_GROUP_AFTER_MATCH),
+                            theme,
+                        ))
+                        .child(target),
+                )
+            })
             .when_some(self.manual_rule_error, |body, error| {
                 body.child(
                     div()

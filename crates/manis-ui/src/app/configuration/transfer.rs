@@ -435,6 +435,7 @@ impl ManisApp {
                         (copy::backup::GROUPS, summary.policy_groups),
                         (copy::backup::RULE_SOURCES, summary.rule_sources),
                         (copy::backup::MANUAL_RULES, summary.manual_rules),
+                        (copy::backup::LOCAL_RULE_GROUPS, summary.local_rule_groups),
                     ]
                     .into_iter()
                     .map(|(label, count)| {

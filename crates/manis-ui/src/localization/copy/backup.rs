@@ -106,3 +106,5 @@ pub(crate) const ROLLBACK_FAILED: LocalizedText = LocalizedText::new(
     "Applying and automatic rollback both failed. Keep the core stopped and open the automatic backup to recover your previous configuration.",
     "应用配置及自动回滚均失败。请保持内核停止，并打开自动备份恢复原配置。",
 );
+pub(crate) const LOCAL_RULE_GROUPS: LocalizedText =
+    LocalizedText::new("Local rule groups", "本地规则组");
