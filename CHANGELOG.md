@@ -13,6 +13,10 @@ once the public API and configuration formats stabilize.
   workspace model compiled by the same Rust profile code as the desktop: multiple subscriptions,
   VLESS imports, user policy groups, QX rules, rule/global/direct modes, node switching with
   latency tests, and kernel logs.
+- Android: the rules page can create rule groups. Every group routes its rules to one target, and
+  groups are matched in order before the manual list, so a set of domains can move to another proxy
+  without editing each rule. The workspace keeps one flat ordered rule list plus each rule's group
+  id, so workspaces written before groups load unchanged.
 - Android: subscription sources can name their own resolvers. `proxy-server-nameserver` entries
   found in a subscription document are read automatically, and Settings → 节点域名解析 → 自定义 DoH
   accepts a manual list. Airports that rotate node entry addresses only answer correctly through
