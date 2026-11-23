@@ -289,11 +289,9 @@ fun NodesWorkspace(
                     ManisTextAction(routingLabel, onClick = onRoutingCycle)
                 }
             }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                ManisSectionTitle("来源")
-                Spacer(Modifier.weight(1f))
-                ManisTextAction(if (refreshing) "刷新中…" else "刷新") { refresh() }
-                ManisTextAction("配置") { openSources() }
+            ManisSectionBar("来源") {
+                ManisSectionAction(if (refreshing) "刷新中…" else "刷新") { refresh() }
+                ManisSectionAction("配置") { openSources() }
             }
             if (subscriptions.isEmpty() && config.nodes.isEmpty()) {
                 ManisCard {
@@ -363,11 +361,9 @@ fun NodesWorkspace(
                 }
             }
 
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                ManisSectionTitle("策略组")
-                Spacer(Modifier.weight(1f))
-                ManisTextAction("测速") { testAll() }
-                ManisTextAction("添加") { addingGroup = true }
+            ManisSectionBar("策略组") {
+                ManisSectionAction("测速") { testAll() }
+                ManisSectionAction("添加") { addingGroup = true }
             }
             if (groups.isEmpty() && config.groups.isEmpty()) {
                 ManisCard {

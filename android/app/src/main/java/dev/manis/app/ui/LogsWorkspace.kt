@@ -88,15 +88,16 @@ fun LogsWorkspace(onMessage: (String) -> Unit) {
                 Row(
                     Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
                 ) {
                     Box(Modifier.weight(1f)) {
                         ManisSearchField(value = query, onValueChange = { query = it }, placeholder = "搜索日志")
                     }
-                    ManisTextAction("刷新") {
+                    ManisSectionAction("刷新") {
                         reloads += 1
                         onMessage("已刷新日志")
                     }
-                    ManisTextAction("复制") {
+                    ManisSectionAction("复制") {
                         clipboard.setText(AnnotatedString(raw.joinToString("\n")))
                         onMessage("日志已复制到剪贴板")
                     }

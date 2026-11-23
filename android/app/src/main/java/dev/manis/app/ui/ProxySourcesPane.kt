@@ -18,7 +18,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.res.painterResource
 import androidx.compose.material3.Icon
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -110,16 +109,16 @@ fun ProxySourcesContent(onMessage: (String) -> Unit) {
             }
         }
         ManisCard {
-            SourceHeader("订阅") {
-                ManisTextAction(if (refreshing) "刷新中…" else "刷新", onClick = {
-                    if (refreshing || config.subscriptions.none { it.enabled }) return@ManisTextAction
+            ManisSectionBar("订阅") {
+                ManisSectionAction(if (refreshing) "刷新中…" else "刷新", onClick = {
+                    if (refreshing || config.subscriptions.none { it.enabled }) return@ManisSectionAction
                     refreshing = true
                     scope.launch {
                         onMessage(refreshSubscriptions(context, Workspace.config.value))
                         refreshing = false
                     }
                 })
-                ManisTextAction("添加", onClick = { editor = SourceEditor.Subscription })
+                ManisSectionAction("添加", onClick = { editor = SourceEditor.Subscription })
             }
             if (config.subscriptions.isEmpty()) {
                 ManisMeta("粘贴 Clash 订阅地址，添加后立即下载。")
@@ -144,8 +143,8 @@ fun ProxySourcesContent(onMessage: (String) -> Unit) {
             }
         }
         ManisCard {
-            SourceHeader("手动节点") {
-                ManisTextAction("添加", onClick = { editor = SourceEditor.Node })
+            ManisSectionBar("手动节点") {
+                ManisSectionAction("添加", onClick = { editor = SourceEditor.Node })
             }
             if (config.nodes.isEmpty()) {
                 ManisMeta("粘贴 vless:// 分享链接，一行一个。")
@@ -170,8 +169,8 @@ fun ProxySourcesContent(onMessage: (String) -> Unit) {
             }
         }
         ManisCard {
-            SourceHeader("策略组") {
-                ManisTextAction("添加", onClick = { editor = SourceEditor.Group })
+            ManisSectionBar("策略组") {
+                ManisSectionAction("添加", onClick = { editor = SourceEditor.Group })
             }
             if (config.groups.isEmpty()) {
                 ManisMeta("没有策略组时，直接使用来源里选中的节点。")
@@ -193,24 +192,6 @@ fun ProxySourcesContent(onMessage: (String) -> Unit) {
             }
         }
         ManisMeta("修改会先保存；点「应用」后内核重载配置，VPN 不会断开。")
-    }
-}
-
-/** A section header inside a card: a label and its text actions on one line. */
-@Composable
-private fun SourceHeader(title: String, actions: @Composable RowScope.() -> Unit) {
-    val colors = LocalManisColors.current
-    Row(
-        Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            title,
-            style = ManisType.label,
-            color = colors.textPrimary,
-            modifier = Modifier.weight(1f),
-        )
-        actions()
     }
 }
 

@@ -8,6 +8,7 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -20,6 +21,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -31,6 +33,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -40,7 +43,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -72,12 +74,18 @@ private data class GroupEditor(val group: RuleGroupEntry, val saved: Boolean)
 private const val ManualSectionKey = "manual"
 private const val ManualSectionTitle = "手动规则"
 
-private const val RulesHelp =
-    "规则从上到下匹配：先按规则组顺序，再按手动规则；策略可以是 DIRECT、REJECT 或任意策略组。最终规则之后的规则不会再生效。"
+private const val RulesHelp = "从上到下匹配：先规则组，后手动规则。"
 
-/** The row height, and the distance between row tops once the list spacing is added. */
-private val RuleRowHeight = 56.dp
-private val RuleRowStep = 64.dp
+/** The distance between one rule row's top and the next, once the list spacing is added. */
+private val RuleRowStep = ManisDimens.rowHeight + ManisDimens.spaceSm
+
+/**
+ * Where a title, a rule's text and a section's placeholder all start, measured from the list's
+ * content edge: the header's own padding, the leading slot every section row shares, and the gap
+ * after it. One constant, so the whole page keeps one left edge for text.
+ */
+private val RulesTextColumnStart =
+    ManisDimens.spaceLg + ManisDimens.iconTarget + ManisDimens.spaceSm
 
 /**
  * The routing-rules workspace: rule groups that each route to one policy, then the manual rules,
@@ -104,7 +112,7 @@ fun RulesWorkspace(onMessage: (String) -> Unit) {
     var groupDropIndex by remember { mutableStateOf<Int?>(null) }
     var groupDropLineY by remember { mutableStateOf<Float?>(null) }
     val rowHeightPx = with(LocalDensity.current) { RuleRowStep.toPx() }
-    val pillHeightPx = with(LocalDensity.current) { 56.dp.toPx() }
+    val pillHeightPx = with(LocalDensity.current) { ManisDimens.rowHeight.toPx() }
     val listState = rememberLazyListState()
 
     fun saveEntries(entries: List<RuleEntry>) {
@@ -269,9 +277,6 @@ fun RulesWorkspace(onMessage: (String) -> Unit) {
                                 )
                             }
                         },
-                        onAdd = {
-                            ruleEditor = RuleEditor(null, RuleEntry(groupId = group.id))
-                        },
                         onDragStart = {
                             draggingGroupId = group.id
                             groupDragOffset = 0f
@@ -289,7 +294,7 @@ fun RulesWorkspace(onMessage: (String) -> Unit) {
                 if (expanded) {
                     if (rules.isEmpty()) {
                         item(key = "group-empty-${group.id}") {
-                            ManisMeta("这个组还没有规则，点「添加」新建一条。")
+                            SectionNote("这个组还没有规则。")
                         }
                     } else {
                         ruleRows(
@@ -313,10 +318,18 @@ fun RulesWorkspace(onMessage: (String) -> Unit) {
                             },
                         )
                     }
+                    item(key = "group-add-${group.id}") {
+                        SectionAddRow(
+                            onClick = {
+                                ruleEditor = RuleEditor(null, RuleEntry(groupId = group.id))
+                            },
+                        )
+                    }
                 }
             }
             val manualRules = config.ruleEntries.filter { it.groupId == null }
             val manualExpanded = ManualSectionKey !in collapsed
+            val pageEmpty = config.ruleGroups.isEmpty() && config.ruleEntries.isEmpty()
             item(key = "rules-manual-header") {
                 ManualRulesHeader(
                     count = manualRules.size,
@@ -324,20 +337,18 @@ fun RulesWorkspace(onMessage: (String) -> Unit) {
                     onToggleExpanded = {
                         collapsed = if (manualExpanded) collapsed + ManualSectionKey else collapsed - ManualSectionKey
                     },
-                    onAdd = { ruleEditor = RuleEditor(null, RuleEntry()) },
                 )
             }
             if (manualExpanded) {
                 if (manualRules.isEmpty()) {
-                    if (config.ruleGroups.isEmpty() && config.ruleEntries.isEmpty()) {
+                    if (pageEmpty) {
                         item(key = "rules-empty") {
-                            ManisCard {
-                                Text("还没有规则", style = ManisType.label, color = colors.textPrimary)
-                                ManisMeta("添加一条 DOMAIN-SUFFIX 或 IP-CIDR 规则即可开始。")
-                            }
+                            EmptyRules(
+                                onAdd = { ruleEditor = RuleEditor(null, RuleEntry()) },
+                            )
                         }
                     } else {
-                        item(key = "rules-manual-empty") { ManisMeta("还没有手动规则。") }
+                        item(key = "rules-manual-empty") { SectionNote("还没有手动规则。") }
                     }
                 } else {
                     ruleRows(
@@ -360,9 +371,15 @@ fun RulesWorkspace(onMessage: (String) -> Unit) {
                         },
                     )
                 }
+                // The empty page already offers one filled call to action, so it gets no second.
+                if (!pageEmpty) {
+                    item(key = "rules-manual-add") {
+                        SectionAddRow(onClick = { ruleEditor = RuleEditor(null, RuleEntry()) })
+                    }
+                }
             }
             item(key = "rules-help") {
-                ManisMeta(RulesHelp)
+                ManisMeta(RulesHelp, maxLines = 2)
             }
             if (RuntimeState.warnings.isNotEmpty()) {
                 item(key = "rules-warnings") {
@@ -408,21 +425,25 @@ fun RulesWorkspace(onMessage: (String) -> Unit) {
                 shadowElevation = 8.dp,
             ) {
                 Row(
-                    Modifier.padding(
-                        horizontal = ManisDimens.spaceLg,
-                        vertical = ManisDimens.spaceMd,
-                    ),
+                    Modifier
+                        .height(ManisDimens.rowHeight)
+                        .padding(horizontal = ManisDimens.spaceLg),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
                 ) {
-                    Text(
-                        draggedGroup.name,
-                        style = ManisType.label,
-                        color = colors.textPrimary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    ManisMeta("→ ${policyLabel(draggedGroup.policy)}", maxLines = 1)
+                    // A lifted header keeps the grip slot the real one reserves, so the name under
+                    // the finger sits where the name in the list sits.
+                    Spacer(Modifier.width(ManisDimens.iconTarget))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            draggedGroup.name,
+                            style = ManisType.label,
+                            color = colors.textPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        ManisMeta("→ ${policyLabel(draggedGroup.policy)}", maxLines = 1)
+                    }
                 }
             }
         }
@@ -525,14 +546,28 @@ private fun LazyListScope.ruleRows(
     }
 }
 
-/** The tonal, rounded bar every section header sits in; [onClick] makes the whole bar tappable. */
+/**
+ * The one section header, and the grid every rule row under it repeats: a 44dp leading slot, the
+ * text column, the 52x32 switch and one 44dp trailing control. The leading slot is reserved even
+ * where it holds nothing and the height is fixed, so a header cannot move a title when a control
+ * appears, and the switch lands on the same x in a header as in the rows below it.
+ */
 @Composable
-private fun HeaderBar(
-    onClick: (() -> Unit)?,
+private fun RulesSectionHeader(
+    title: String,
+    meta: String,
     modifier: Modifier = Modifier,
+    titleColor: Color? = null,
+    /** A group's grip reorders the groups; the page and manual headers leave the slot empty. */
+    leading: (@Composable BoxScope.() -> Unit)? = null,
+    onClick: (() -> Unit)? = null,
     /** A dragged bar lifts off the list, the same way a dragged rule row does. */
     dragging: Boolean = false,
-    content: @Composable RowScope.() -> Unit,
+    /** The section's switch, or null where it has none: the slot is kept either way. */
+    switch: (@Composable () -> Unit)? = null,
+    /** The page header has no chevron, so it spends the switch slot on its two buttons instead. */
+    reserveSwitchSlot: Boolean = true,
+    trailing: @Composable RowScope.() -> Unit = {},
 ) {
     val colors = LocalManisColors.current
     val interaction = remember { MutableInteractionSource() }
@@ -542,7 +577,7 @@ private fun HeaderBar(
             .fillMaxWidth()
             .background(
                 if (pressed && onClick != null) colors.surfaceLow else colors.surfaceOverlay,
-                RoundedCornerShape(16.dp),
+                RoundedCornerShape(ManisDimens.radiusPane),
             )
             .then(
                 if (onClick != null) {
@@ -551,16 +586,52 @@ private fun HeaderBar(
                     Modifier
                 },
             ),
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(ManisDimens.radiusPane),
         color = if (dragging) colors.actionSoft else Color.Transparent,
         shadowElevation = if (dragging) 6.dp else 0.dp,
     ) {
         Row(
-            Modifier.padding(horizontal = ManisDimens.spaceLg, vertical = ManisDimens.spaceMd),
+            Modifier
+                .fillMaxWidth()
+                // One height with the children centred. The title and meta are 20dp and 16dp of
+                // type, so vertical padding here would only choose which of the two gets clipped.
+                .height(ManisDimens.rowHeight)
+                .padding(horizontal = ManisDimens.spaceLg),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
-            content = content,
-        )
+        ) {
+            Box(Modifier.size(ManisDimens.iconTarget), contentAlignment = Alignment.Center) {
+                leading?.invoke(this)
+            }
+            Column(Modifier.weight(1f)) {
+                Text(
+                    title,
+                    style = ManisType.label,
+                    color = titleColor ?: colors.textPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    meta,
+                    style = ManisType.metadata,
+                    color = colors.textTertiary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (reserveSwitchSlot) {
+                // 52dp wide, 48dp tall: the track is 32dp, the rest is Material's touch target.
+                Box(
+                    Modifier
+                        .width(ManisDimens.switchWidth)
+                        .height(ManisDimens.controlStandard),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    switch?.invoke()
+                }
+            }
+            trailing()
+        }
     }
 }
 
@@ -572,15 +643,24 @@ private fun RulesHeader(
     onApply: () -> Unit,
     onCreateGroup: () -> Unit,
 ) {
-    val colors = LocalManisColors.current
-    HeaderBar(onClick = null) {
-        Column(Modifier.weight(1f)) {
-            Text("分流规则", style = ManisType.label, color = colors.textPrimary)
-            ManisMeta("$groupCount 个规则组 · $ruleCount 条规则")
-        }
-        if (pending) ManisTextAction("应用", onClick = onApply)
-        ManisTextAction("新建组", onClick = onCreateGroup)
-    }
+    RulesSectionHeader(
+        title = "分流规则",
+        // Short enough to survive a 320 dp page header, where the title column is narrow.
+        meta = "$groupCount 组 · $ruleCount 条",
+        reserveSwitchSlot = false,
+        trailing = {
+            // Both actions are always here. 应用 only dims when nothing is pending, so the header
+            // cannot re-flow under the user in the middle of an edit.
+            CompositionLocalProvider(LocalManisTightActions provides true) {
+                ManisButton(
+                    "新建组",
+                    modifier = Modifier.widthIn(min = 64.dp),
+                    onClick = onCreateGroup,
+                )
+                ManisButton("应用", primary = true, enabled = pending, onClick = onApply)
+            }
+        },
+    )
 }
 
 @Composable
@@ -595,7 +675,6 @@ private fun RuleGroupHeader(
     onOpenEditor: () -> Unit,
     onToggleExpanded: () -> Unit,
     onToggleEnabled: (Boolean) -> Unit,
-    onAdd: () -> Unit,
     onDragStart: () -> Unit,
     onDrag: (Float) -> Unit,
     onDragEnd: () -> Unit,
@@ -606,51 +685,51 @@ private fun RuleGroupHeader(
     val drag by androidx.compose.runtime.rememberUpdatedState(onDrag)
     val dragEnd by androidx.compose.runtime.rememberUpdatedState(onDragEnd)
     val dragCancel by androidx.compose.runtime.rememberUpdatedState(onDragCancel)
-    HeaderBar(
-        onClick = onOpenEditor,
+    RulesSectionHeader(
+        title = name,
+        meta = meta,
         modifier = modifier,
+        titleColor = if (enabled) colors.textPrimary else colors.textTertiary,
+        onClick = onOpenEditor,
         dragging = dragging,
-    ) {
-        // The grip drags the whole group. It swallows the touch down as well, so neither a tap nor a
-        // drag on it can reach the bar's click and open the editor.
-        Box(
-            modifier = Modifier
-                .size(24.dp)
-                .pointerInput(groupId) {
-                    detectDragGestures(
-                        onDragStart = { dragStart() },
-                        onDragEnd = { dragEnd() },
-                        onDragCancel = { dragCancel() },
-                        onDrag = { change, amount ->
-                            change.consume()
-                            drag(amount.y)
-                        },
-                    )
-                }
-                .pointerInput(groupId) { detectTapGestures { } },
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                painter = painterResource(R.drawable.ic_drag_handle),
-                contentDescription = "拖动排序",
-                modifier = Modifier.size(24.dp),
-                tint = colors.textTertiary,
+        leading = {
+            // The grip drags the whole group. It swallows the touch down as well, so neither a tap
+            // nor a drag on it can reach the bar's click and open the editor.
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInput(groupId) {
+                        detectDragGestures(
+                            onDragStart = { dragStart() },
+                            onDragEnd = { dragEnd() },
+                            onDragCancel = { dragCancel() },
+                            onDrag = { change, amount ->
+                                change.consume()
+                                drag(amount.y)
+                            },
+                        )
+                    }
+                    .pointerInput(groupId) { detectTapGestures { } },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_drag_handle),
+                    contentDescription = "拖动排序",
+                    modifier = Modifier.size(24.dp),
+                    tint = colors.textTertiary,
+                )
+            }
+        },
+        switch = { ManisToggle(checked = enabled, onCheckedChange = onToggleEnabled) },
+        trailing = {
+            ManisIconButton(
+                icon = Icons.Filled.KeyboardArrowDown,
+                contentDescription = if (expanded) "收起" else "展开",
+                onClick = onToggleExpanded,
+                rotationDegrees = if (expanded) 180f else 0f,
             )
-        }
-        Column(Modifier.weight(1f)) {
-            Text(
-                name,
-                style = ManisType.label,
-                color = if (enabled) colors.textPrimary else colors.textTertiary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            ManisMeta(meta, maxLines = 1)
-        }
-        ManisToggle(checked = enabled, onCheckedChange = onToggleEnabled)
-        ManisTextAction("添加", onClick = onAdd)
-        ExpandChevron(expanded = expanded, onToggle = onToggleExpanded)
-    }
+        },
+    )
 }
 
 @Composable
@@ -658,35 +737,69 @@ private fun ManualRulesHeader(
     count: Int,
     expanded: Boolean,
     onToggleExpanded: () -> Unit,
-    onAdd: () -> Unit,
 ) {
-    val colors = LocalManisColors.current
-    HeaderBar(onClick = onToggleExpanded) {
-        Column(Modifier.weight(1f)) {
-            Text(ManualSectionTitle, style = ManisType.label, color = colors.textPrimary)
-            ManisMeta("$count 条 · 最后匹配")
-        }
-        ManisTextAction("添加", onClick = onAdd)
-        ExpandChevron(expanded = expanded, onToggle = onToggleExpanded)
+    RulesSectionHeader(
+        title = ManualSectionTitle,
+        meta = "$count 条 · 最后匹配",
+        onClick = onToggleExpanded,
+        // No section-level switch, so the slot stays empty and the chevron keeps the group x.
+        switch = null,
+        trailing = {
+            ManisIconButton(
+                icon = Icons.Filled.KeyboardArrowDown,
+                contentDescription = if (expanded) "收起" else "展开",
+                onClick = onToggleExpanded,
+                rotationDegrees = if (expanded) 180f else 0f,
+            )
+        },
+    )
+}
+
+/** A section's placeholder, indented to the text column so it reads as part of that section. */
+@Composable
+private fun SectionNote(text: String) {
+    Text(
+        text,
+        style = ManisType.metadata,
+        color = LocalManisColors.current.textTertiary,
+        maxLines = 2,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = RulesTextColumnStart),
+    )
+}
+
+/**
+ * The one way to add a rule to a section. It sits under the section's last row instead of in its
+ * header, so every header keeps two trailing slots and one fixed height.
+ */
+@Composable
+private fun SectionAddRow(onClick: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(ManisDimens.controlCompact)
+            .clip(RoundedCornerShape(ManisDimens.radiusControl))
+            .clickable(onClick = onClick)
+            .padding(start = RulesTextColumnStart),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            "＋ 添加规则",
+            style = ManisType.metadata,
+            color = LocalManisColors.current.textSecondary,
+            maxLines = 1,
+        )
     }
 }
 
+/** The page with nothing in it: one sentence and one filled way to start. */
 @Composable
-private fun ExpandChevron(expanded: Boolean, onToggle: () -> Unit) {
-    val colors = LocalManisColors.current
-    Box(
-        modifier = Modifier
-            .size(32.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .clickable(onClick = onToggle),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(
-            imageVector = Icons.Filled.KeyboardArrowDown,
-            contentDescription = if (expanded) "收起" else "展开",
-            modifier = Modifier.size(22.dp).rotate(if (expanded) 180f else 0f),
-            tint = colors.textSecondary,
-        )
+private fun EmptyRules(onAdd: () -> Unit) {
+    ManisCard {
+        ManisMeta("还没有规则。添加一条 DOMAIN-SUFFIX 或 IP-CIDR 规则即可开始。")
+        ManisButton("添加规则", primary = true, onClick = onAdd)
     }
 }
 
@@ -713,7 +826,7 @@ private fun RuleRow(
         onClick = onEdit,
         modifier = modifier
             .fillMaxWidth()
-            .height(RuleRowHeight)
+            .height(ManisDimens.rowHeight)
             .zIndex(if (dragging) 1f else 0f)
             .graphicsLayer { translationY = offset },
         shape = RoundedCornerShape(16.dp),
@@ -723,7 +836,9 @@ private fun RuleRow(
         Row(
             Modifier
                 .fillMaxSize()
-                .padding(start = ManisDimens.spaceLg, end = ManisDimens.spaceSm)
+                // The same insets as a section header, so the switch and the grip below a header
+                // share its columns instead of drifting a few dp to the right.
+                .padding(horizontal = ManisDimens.spaceLg)
                 .pointerInput(rule.id) {
                     detectDragGestures(
                         onDragStart = { dragStart() },
@@ -736,14 +851,12 @@ private fun RuleRow(
                     )
                 },
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceMd),
+            horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
         ) {
-            Text(
-                "$order",
-                style = ManisType.metadata,
-                color = colors.textTertiary,
-                modifier = Modifier.width(20.dp),
-            )
+            // The header's grip slot, holding the order instead: one left edge for the whole page.
+            Box(Modifier.size(ManisDimens.iconTarget), contentAlignment = Alignment.Center) {
+                Text("$order", style = ManisType.metadata, color = colors.textTertiary)
+            }
             Column(Modifier.weight(1f)) {
                 Text(
                     if (rule.kind == "FINAL") "所有剩余流量" else rule.value,
@@ -761,13 +874,23 @@ private fun RuleRow(
                     maxLines = 1,
                 )
             }
-            ManisToggle(checked = rule.enabled, onCheckedChange = onToggle)
-            Icon(
-                painter = painterResource(R.drawable.ic_drag_handle),
-                contentDescription = "拖动排序",
-                modifier = Modifier.size(24.dp),
-                tint = colors.textTertiary,
-            )
+            Box(
+                Modifier
+                    .width(ManisDimens.switchWidth)
+                    .height(ManisDimens.controlStandard),
+                contentAlignment = Alignment.Center,
+            ) {
+                ManisToggle(checked = rule.enabled, onCheckedChange = onToggle)
+            }
+            // The drag gesture covers the whole row; this slot is the grip that says so.
+            Box(Modifier.size(ManisDimens.iconTarget), contentAlignment = Alignment.Center) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_drag_handle),
+                    contentDescription = "拖动排序",
+                    modifier = Modifier.size(24.dp),
+                    tint = colors.textTertiary,
+                )
+            }
         }
     }
 }

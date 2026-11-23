@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -44,18 +45,30 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import dev.manis.app.R
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+
+/**
+ * Set where several actions must share one row on a 320dp screen: a dialog footer, or the rules
+ * page header. Those buttons trade half their side padding for width; a card's button keeps the
+ * roomier default.
+ */
+internal val LocalManisTightActions = staticCompositionLocalOf { false }
 
 /** A Material 3 filled card: tonal surface, 16dp corners, no hairline border. */
 @Composable
@@ -84,9 +97,79 @@ fun ManisCard(
 }
 
 @Composable
-fun ManisSectionTitle(text: String) {
-    Text(text, style = ManisType.sectionTitle, color = LocalManisColors.current.textPrimary)
+fun ManisSectionTitle(text: String, modifier: Modifier = Modifier) {
+    Text(
+        text,
+        modifier = modifier,
+        style = ManisType.sectionTitle,
+        color = LocalManisColors.current.textPrimary,
+        // One line: a section bar owns a fixed band, so a long title ellipsizes instead of growing it.
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+    )
 }
+
+/**
+ * The band every page puts a section title on: title left, actions right, one 56dp row. It owns that
+ * height, so a section lands on the same line whether its page offers one action or three, and the
+ * actions keep their 40dp step instead of growing with the word they carry.
+ */
+@Composable
+fun ManisSectionBar(
+    title: String,
+    modifier: Modifier = Modifier,
+    actions: @Composable RowScope.() -> Unit,
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(ManisDimens.rowHeight),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
+    ) {
+        // The title gives way to the actions: a long section name shortens rather than pushing a
+        // button past the row's edge.
+        ManisSectionTitle(title, Modifier.weight(1f))
+        actions()
+    }
+}
+
+/**
+ * One action inside a [ManisSectionBar]. It is text, not a filled button: section actions are
+ * secondary next to the page's own primary, and a wall of tonal pills reads heavier than the list
+ * they sit above. The 40dp height and the 56dp label floor still stop 刷新中… from resizing the row.
+ */
+@Composable
+fun ManisSectionAction(
+    label: String,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
+    TextButton(
+        onClick = onClick,
+        modifier = modifier.height(ManisDimens.controlCompact),
+        enabled = enabled,
+        shape = RoundedCornerShape(ManisDimens.radiusControl),
+        contentPadding = PaddingValues(horizontal = ManisDimens.spaceMd),
+    ) {
+        Text(
+            label,
+            modifier = Modifier.widthIn(min = 56.dp),
+            style = ManisType.label,
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/** The tonal treatment a plain button and a section action share. */
+@Composable
+private fun manisTonalButtonColors() = ButtonDefaults.filledTonalButtonColors(
+    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+    contentColor = MaterialTheme.colorScheme.onSurface,
+)
 
 @Composable
 fun ManisMeta(text: String, color: Color? = null, maxLines: Int = Int.MAX_VALUE) {
@@ -109,15 +192,18 @@ fun ManisButton(
     onClick: () -> Unit,
 ) {
     val shape = CircleShape
-    val contentPadding = PaddingValues(horizontal = ManisDimens.spaceXl)
+    val contentPadding = PaddingValues(
+        horizontal = if (LocalManisTightActions.current) {
+            ManisDimens.spaceMd
+        } else {
+            ManisDimens.spaceXl
+        },
+    )
     val colors = ButtonDefaults.buttonColors(
         containerColor = MaterialTheme.colorScheme.primary,
         contentColor = MaterialTheme.colorScheme.onPrimary,
     )
-    val tonalColors = ButtonDefaults.filledTonalButtonColors(
-        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-        contentColor = MaterialTheme.colorScheme.onSurface,
-    )
+    val tonalColors = manisTonalButtonColors()
     if (primary) {
         Button(
             onClick = onClick,
@@ -355,6 +441,36 @@ fun ManisTextAction(label: String, tone: Color? = null, onClick: () -> Unit) {
     }
 }
 
+/**
+ * A square icon control. Section headers and rule rows use it in place of a labelled button, so one
+ * action keeps the same target and the same position whatever word it would have needed.
+ */
+@Composable
+fun ManisIconButton(
+    icon: ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    /** The collapse chevron is this one glyph turned over, so the app needs no second vector. */
+    rotationDegrees: Float = 0f,
+) {
+    val colors = LocalManisColors.current
+    Box(
+        modifier = modifier
+            .size(ManisDimens.iconTarget)
+            .clip(RoundedCornerShape(ManisDimens.radiusControl))
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            modifier = Modifier.size(ManisDimens.iconGlyph).rotate(rotationDegrees),
+            tint = colors.textSecondary,
+        )
+    }
+}
+
 /** A Material 3 progress bar. */
 @Composable
 fun ManisProgress(fraction: Float) {
@@ -437,13 +553,24 @@ fun ManisDialog(
                     verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceMd),
                     content = content,
                 )
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(ManisDimens.spaceLg),
-                    horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm, Alignment.End),
-                    content = actions,
-                )
+                // 40dp actions on one glued row: a destructive text action, then cancel and save.
+                // The tight padding is what keeps three of them from clipping at 320dp wide.
+                CompositionLocalProvider(LocalManisTightActions provides true) {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(
+                                horizontal = ManisDimens.spaceLg,
+                                vertical = ManisDimens.spaceSm,
+                            ),
+                        horizontalArrangement = Arrangement.spacedBy(
+                            ManisDimens.spaceSm,
+                            Alignment.End,
+                        ),
+                        verticalAlignment = Alignment.CenterVertically,
+                        content = actions,
+                    )
+                }
             }
         }
     }

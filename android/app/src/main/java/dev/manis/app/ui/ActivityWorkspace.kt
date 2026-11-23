@@ -92,11 +92,15 @@ fun ActivityWorkspace(onMessage: (String) -> Unit) {
                 .padding(ManisDimens.spaceMd),
             verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
         ) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
+            ) {
                 Box(Modifier.weight(1f)) {
                     ManisSearchField(value = query, onValueChange = { query = it }, placeholder = "搜索连接")
                 }
-                ManisTextAction(if (refreshing) "刷新中…" else "刷新") {
+                ManisSectionAction(if (refreshing) "刷新中…" else "刷新") {
                     if (!RuntimeState.active) {
                         onMessage("先连接 VPN")
                     } else {

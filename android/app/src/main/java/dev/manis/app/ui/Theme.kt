@@ -132,6 +132,15 @@ object ManisDimens {
     val controlStandard = 48.dp
     val controlIcon = 40.dp
 
+    /** Section headers and rule rows share one height, so the list keeps a steady step. */
+    val rowHeight = 56.dp
+    /** The square that holds one icon control, a grip or an order number. */
+    val iconTarget = 44.dp
+    /** The glyph inside [iconTarget]; the target carries the rest as touch room. */
+    val iconGlyph = 20.dp
+    /** The switch column: one width for headers and rows, so the two line up. */
+    val switchWidth = 52.dp
+
     val chromeHeight = 60.dp
     val statusBarHeight = 32.dp
     val bottomNavigationHeight = 72.dp
