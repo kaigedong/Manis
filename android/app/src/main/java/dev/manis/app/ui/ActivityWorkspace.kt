@@ -73,6 +73,7 @@ fun ActivityWorkspace(onMessage: (String) -> Unit) {
             editingIndex = null,
             existing = config.ruleEntries,
             policies = policyOptions(config),
+            groups = config.ruleGroups,
             onCancel = { draft = null },
             onDelete = { draft = null },
             onConfirm = { entry ->

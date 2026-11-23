@@ -89,11 +89,13 @@ fun ManisSectionTitle(text: String) {
 }
 
 @Composable
-fun ManisMeta(text: String, color: Color? = null) {
+fun ManisMeta(text: String, color: Color? = null, maxLines: Int = Int.MAX_VALUE) {
     Text(
         text,
         style = ManisType.metadata,
         color = color ?: LocalManisColors.current.textTertiary,
+        maxLines = maxLines,
+        overflow = TextOverflow.Ellipsis,
     )
 }
 
