@@ -5,6 +5,7 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,12 +16,14 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -45,6 +48,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.window.Popup
@@ -78,7 +82,8 @@ private val RuleRowStep = 64.dp
 /**
  * The routing-rules workspace: rule groups that each route to one policy, then the manual rules,
  * matched in that order. Rows reorder by dragging the grip, which starts immediately instead of
- * after a long press, and only inside their own section.
+ * after a long press, and only inside their own section. A group header's grip reorders the groups
+ * themselves, which always stay above the manual section.
  */
 @Composable
 fun RulesWorkspace(onMessage: (String) -> Unit) {
@@ -93,7 +98,14 @@ fun RulesWorkspace(onMessage: (String) -> Unit) {
     var draggingId by remember { mutableStateOf<Long?>(null) }
     var draggingIndex by remember { mutableStateOf(-1) }
     var dragOffset by remember { mutableFloatStateOf(0f) }
+    // A dragged group header floats alone; the list keeps its order until the drop.
+    var draggingGroupId by remember { mutableStateOf<String?>(null) }
+    var groupDragOffset by remember { mutableFloatStateOf(0f) }
+    var groupDropIndex by remember { mutableStateOf<Int?>(null) }
+    var groupDropLineY by remember { mutableStateOf<Float?>(null) }
     val rowHeightPx = with(LocalDensity.current) { RuleRowStep.toPx() }
+    val pillHeightPx = with(LocalDensity.current) { 56.dp.toPx() }
+    val listState = rememberLazyListState()
 
     fun saveEntries(entries: List<RuleEntry>) {
         Workspace.update { it.copy(ruleEntries = entries) }
@@ -136,13 +148,70 @@ fun RulesWorkspace(onMessage: (String) -> Unit) {
         }
     }
 
+    /** A group header as currently laid out, or null when that group is scrolled out of view. */
+    fun groupHeader(groupId: String) =
+        listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == "group-$groupId" }
+
+    /**
+     * The slot and the line the dragged header would land in. The header follows the finger, so its
+     * centre is where it was laid out plus the drag offset; it goes before the first other header
+     * whose centre is still below that, and last when none is. Headers off screen keep their order,
+     * which is what the finger is passing anyway.
+     */
+    fun trackGroupDrop() {
+        val id = draggingGroupId ?: return
+        val header = groupHeader(id) ?: return
+        val others = Workspace.config.value.ruleGroups.filterNot { it.id == id }
+        val centre = header.offset + header.size / 2f + groupDragOffset
+        var slot = others.size
+        var line: Float? = null
+        for ((index, group) in others.withIndex()) {
+            val info = groupHeader(group.id) ?: continue
+            if (centre < info.offset + info.size / 2f) {
+                slot = index
+                line = info.offset.toFloat()
+                break
+            }
+            slot = index + 1
+            line = (info.offset + info.size).toFloat()
+        }
+        // Item offsets are measured from the content, which starts below the top content padding.
+        val padding = listState.layoutInfo.beforeContentPadding
+        groupDropIndex = slot
+        groupDropLineY = line?.let { it + padding }
+    }
+
+    /** Drops the drag without touching the order, which nothing has changed yet. */
+    fun cancelGroupDrag() {
+        draggingGroupId = null
+        groupDragOffset = 0f
+        groupDropIndex = null
+        groupDropLineY = null
+    }
+
+    /** One move, and only when the header actually left its slot. */
+    fun dropGroup() {
+        val id = draggingGroupId
+        val slot = groupDropIndex
+        cancelGroupDrag()
+        if (id == null || slot == null) return
+        Workspace.update { current ->
+            val from = current.ruleGroups.indexOfFirst { it.id == id }
+            if (from < 0 || from == slot) return@update current
+            val groups = current.ruleGroups.toMutableList()
+            groups.add(slot, groups.removeAt(from))
+            current.copy(ruleGroups = groups)
+        }
+    }
+
     fun editRule(rule: RuleEntry) {
         val index = Workspace.config.value.ruleEntries.indexOfFirst { it.id == rule.id }
         ruleEditor = RuleEditor(index.takeIf { it >= 0 }, rule)
     }
 
-    Column(Modifier.fillMaxSize().background(colors.surfaceBase)) {
+    Box(Modifier.fillMaxSize().background(colors.surfaceBase)) {
         LazyColumn(
+            state = listState,
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(ManisDimens.spaceLg),
             verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
@@ -174,10 +243,19 @@ fun RulesWorkspace(onMessage: (String) -> Unit) {
                 val expanded = group.id !in collapsed
                 item(key = "group-${group.id}") {
                     RuleGroupHeader(
+                        groupId = group.id,
                         name = group.name,
-                        meta = "→ ${policyLabel(group.policy)} · ${rules.size} 条",
+                        // The count only earns its room when the rows are hidden.
+                        meta = if (expanded) {
+                            "→ ${policyLabel(group.policy)}"
+                        } else {
+                            "→ ${policyLabel(group.policy)} · ${rules.size} 条"
+                        },
                         enabled = group.enabled,
                         expanded = expanded,
+                        dragging = draggingGroupId == group.id,
+                        // After a drop the section settles into its new slot instead of jumping.
+                        modifier = if (draggingGroupId == null) Modifier.animateItem() else Modifier,
                         onOpenEditor = { groupEditor = GroupEditor(group, saved = true) },
                         onToggleExpanded = {
                             collapsed = if (expanded) collapsed + group.id else collapsed - group.id
@@ -194,6 +272,18 @@ fun RulesWorkspace(onMessage: (String) -> Unit) {
                         onAdd = {
                             ruleEditor = RuleEditor(null, RuleEntry(groupId = group.id))
                         },
+                        onDragStart = {
+                            draggingGroupId = group.id
+                            groupDragOffset = 0f
+                            groupDropIndex = null
+                            groupDropLineY = null
+                        },
+                        onDrag = { delta ->
+                            groupDragOffset += delta
+                            trackGroupDrop()
+                        },
+                        onDragEnd = ::dropGroup,
+                        onDragCancel = ::cancelGroupDrag,
                     )
                 }
                 if (expanded) {
@@ -282,6 +372,57 @@ fun RulesWorkspace(onMessage: (String) -> Unit) {
                             ManisMeta(warning, color = colors.statusWarning)
                         }
                     }
+                }
+            }
+        }
+
+        // Where the dragged group header will land. The padding shift is what turns an item offset
+        // into a position in this Box, since the list measures items from its content, not its edge.
+        val dropLineY = groupDropLineY
+        if (dropLineY != null) {
+            Spacer(
+                Modifier
+                    .fillMaxWidth()
+                    .height(2.dp)
+                    .offset { IntOffset(0, dropLineY.roundToInt()) }
+                    .background(colors.actionPrimary),
+            )
+        }
+        // The header itself stays in place, so the list keeps showing what is being passed; a pill
+        // under the finger says which group is moving, even when the finger reaches the footer.
+        val draggedGroup = config.ruleGroups.firstOrNull { it.id == draggingGroupId }
+        val draggedHeader = draggingGroupId?.let(::groupHeader)
+        if (draggedGroup != null && draggedHeader != null) {
+            val padding = listState.layoutInfo.beforeContentPadding
+            // The pill follows the finger, but stays inside the list: an unclamped one would leave
+            // the page bounds whenever the finger reaches the footer.
+            val maxY = (listState.layoutInfo.viewportEndOffset + padding - pillHeightPx).coerceAtLeast(0f)
+            val pillY = (draggedHeader.offset + padding + groupDragOffset).coerceIn(0f, maxY)
+            Surface(
+                modifier = Modifier
+                    .padding(horizontal = ManisDimens.spaceLg)
+                    .fillMaxWidth()
+                    .offset { IntOffset(0, pillY.roundToInt()) },
+                shape = RoundedCornerShape(16.dp),
+                color = colors.actionSoft,
+                shadowElevation = 8.dp,
+            ) {
+                Row(
+                    Modifier.padding(
+                        horizontal = ManisDimens.spaceLg,
+                        vertical = ManisDimens.spaceMd,
+                    ),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
+                ) {
+                    Text(
+                        draggedGroup.name,
+                        style = ManisType.label,
+                        color = colors.textPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    ManisMeta("→ ${policyLabel(draggedGroup.policy)}", maxLines = 1)
                 }
             }
         }
@@ -386,12 +527,18 @@ private fun LazyListScope.ruleRows(
 
 /** The tonal, rounded bar every section header sits in; [onClick] makes the whole bar tappable. */
 @Composable
-private fun HeaderBar(onClick: (() -> Unit)?, content: @Composable RowScope.() -> Unit) {
+private fun HeaderBar(
+    onClick: (() -> Unit)?,
+    modifier: Modifier = Modifier,
+    /** A dragged bar lifts off the list, the same way a dragged rule row does. */
+    dragging: Boolean = false,
+    content: @Composable RowScope.() -> Unit,
+) {
     val colors = LocalManisColors.current
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     Surface(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .background(
                 if (pressed && onClick != null) colors.surfaceLow else colors.surfaceOverlay,
@@ -405,7 +552,8 @@ private fun HeaderBar(onClick: (() -> Unit)?, content: @Composable RowScope.() -
                 },
             ),
         shape = RoundedCornerShape(16.dp),
-        color = Color.Transparent,
+        color = if (dragging) colors.actionSoft else Color.Transparent,
+        shadowElevation = if (dragging) 6.dp else 0.dp,
     ) {
         Row(
             Modifier.padding(horizontal = ManisDimens.spaceLg, vertical = ManisDimens.spaceMd),
@@ -437,17 +585,58 @@ private fun RulesHeader(
 
 @Composable
 private fun RuleGroupHeader(
+    groupId: String,
     name: String,
     meta: String,
     enabled: Boolean,
     expanded: Boolean,
+    dragging: Boolean,
+    modifier: Modifier = Modifier,
     onOpenEditor: () -> Unit,
     onToggleExpanded: () -> Unit,
     onToggleEnabled: (Boolean) -> Unit,
     onAdd: () -> Unit,
+    onDragStart: () -> Unit,
+    onDrag: (Float) -> Unit,
+    onDragEnd: () -> Unit,
+    onDragCancel: () -> Unit,
 ) {
     val colors = LocalManisColors.current
-    HeaderBar(onClick = onOpenEditor) {
+    val dragStart by androidx.compose.runtime.rememberUpdatedState(onDragStart)
+    val drag by androidx.compose.runtime.rememberUpdatedState(onDrag)
+    val dragEnd by androidx.compose.runtime.rememberUpdatedState(onDragEnd)
+    val dragCancel by androidx.compose.runtime.rememberUpdatedState(onDragCancel)
+    HeaderBar(
+        onClick = onOpenEditor,
+        modifier = modifier,
+        dragging = dragging,
+    ) {
+        // The grip drags the whole group. It swallows the touch down as well, so neither a tap nor a
+        // drag on it can reach the bar's click and open the editor.
+        Box(
+            modifier = Modifier
+                .size(24.dp)
+                .pointerInput(groupId) {
+                    detectDragGestures(
+                        onDragStart = { dragStart() },
+                        onDragEnd = { dragEnd() },
+                        onDragCancel = { dragCancel() },
+                        onDrag = { change, amount ->
+                            change.consume()
+                            drag(amount.y)
+                        },
+                    )
+                }
+                .pointerInput(groupId) { detectTapGestures { } },
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_drag_handle),
+                contentDescription = "拖动排序",
+                modifier = Modifier.size(24.dp),
+                tint = colors.textTertiary,
+            )
+        }
         Column(Modifier.weight(1f)) {
             Text(
                 name,
