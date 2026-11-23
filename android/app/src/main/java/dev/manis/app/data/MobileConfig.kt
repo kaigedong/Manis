@@ -66,12 +66,30 @@ data class RuleEntry(
     val enabled: Boolean = true,
     /** Stable identity for list keys; assigned locally and kept in the workspace file. */
     val id: Long = nextRuleId(),
+    /** The rule group that owns this rule; null means the manual group. */
+    val groupId: String? = null,
+)
+
+/**
+ * A named block of rules that all route to one [policy]. Rules in a group are matched before the
+ * manual rules, so a user can move a whole set of domains to another proxy without editing each one.
+ */
+data class RuleGroupEntry(
+    val id: String,
+    val name: String,
+    val policy: String = "__MANIS_GLOBAL__",
+    val enabled: Boolean = true,
 )
 
 private val ruleIds = java.util.concurrent.atomic.AtomicLong(System.currentTimeMillis())
 
 /** A locally unique rule identity, used only for animation and list keys. */
 internal fun nextRuleId(): Long = ruleIds.incrementAndGet()
+
+private val ruleGroupIds = java.util.concurrent.atomic.AtomicLong(System.currentTimeMillis())
+
+/** A locally unique rule group identity, kept in the workspace file and referenced by its rules. */
+internal fun nextRuleGroupId(): String = "rg-" + ruleGroupIds.incrementAndGet()
 
 /** Encrypted DoH resolvers, matching the desktop build; the default. */
 const val PROXY_DNS_DOH = "doh"
@@ -84,6 +102,8 @@ data class MobileConfig(
     val subscriptions: List<SubscriptionEntry> = emptyList(),
     val nodes: List<NodeEntry> = emptyList(),
     val groups: List<GroupEntry> = emptyList(),
+    /** Ordered rule groups, matched before the manual rules; empty means one manual list. */
+    val ruleGroups: List<RuleGroupEntry> = emptyList(),
     val ruleEntries: List<RuleEntry> = emptyList(),
     /**
      * How proxy server hostnames are resolved: [PROXY_DNS_DOH] (encrypted, same as desktop) or
@@ -133,6 +153,16 @@ data class MobileConfig(
                     .put("keyword", group.keyword ?: JSONObject.NULL),
             )
         }
+        val ruleGroupsJson = JSONArray()
+        for (group in ruleGroups) {
+            ruleGroupsJson.put(
+                JSONObject()
+                    .put("id", group.id)
+                    .put("name", group.name)
+                    .put("policy", group.policy)
+                    .put("enabled", group.enabled),
+            )
+        }
         val ruleEntriesJson = JSONArray()
         for (rule in ruleEntries) {
             ruleEntriesJson.put(
@@ -141,7 +171,8 @@ data class MobileConfig(
                     .put("value", rule.value)
                     .put("policy", rule.policy)
                     .put("enabled", rule.enabled)
-                    .put("id", rule.id),
+                    .put("id", rule.id)
+                    .put("group_id", rule.groupId ?: JSONObject.NULL),
             )
         }
         return JSONObject()
@@ -154,9 +185,11 @@ data class MobileConfig(
             .put("subscriptions", subscriptionsJson)
             .put("nodes", nodesJson)
             .put("groups", groupsJson)
+            .put("rule_groups", ruleGroupsJson)
             .put("rule_entries", ruleEntriesJson)
-            // Older builds only understand the QX text, so keep a compatible projection.
-            .put("rules", rulesText(ruleEntries))
+            // Older builds only understand the QX text, so keep a compatible projection of the
+            // manual rules. Group rules belong to a group-only concept those builds cannot see.
+            .put("rules", rulesText(ruleEntries.filter { it.groupId == null }))
             .toString()
     }
 
@@ -203,6 +236,22 @@ data class MobileConfig(
                     )
                 }
             }
+            val ruleGroups = mutableListOf<RuleGroupEntry>()
+            json.optJSONArray("rule_groups")?.let { array ->
+                for (index in 0 until array.length()) {
+                    val item = array.optJSONObject(index) ?: continue
+                    val name = item.optString("name").trim()
+                    if (name.isEmpty()) continue
+                    val id = item.optString("id").takeIf { it.isNotBlank() } ?: nextRuleGroupId()
+                    if (ruleGroups.any { it.id == id }) continue
+                    ruleGroups += RuleGroupEntry(
+                        id = id,
+                        name = name,
+                        policy = item.optString("policy").ifBlank { "__MANIS_GLOBAL__" },
+                        enabled = item.optBoolean("enabled", true),
+                    )
+                }
+            }
             val servers = mutableListOf<String>()
             json.optJSONArray("proxy_dns_servers")?.let { array ->
                 for (index in 0 until array.length()) {
@@ -223,7 +272,8 @@ data class MobileConfig(
                 subscriptions = subscriptions,
                 nodes = nodes,
                 groups = groups,
-                ruleEntries = parseRuleEntries(json),
+                ruleGroups = ruleGroups,
+                ruleEntries = parseRuleEntries(json, ruleGroups.map { it.id }.toSet()),
                 proxyDns = when (json.optString("proxy_dns")) {
                     PROXY_DNS_SYSTEM -> PROXY_DNS_SYSTEM
                     else -> PROXY_DNS_DOH
@@ -278,7 +328,7 @@ internal fun rulesText(entries: List<RuleEntry>): String =
         if (entry.kind == "FINAL") "FINAL,${entry.policy}" else "${entry.kind},${entry.value},${entry.policy}"
     }
 
-private fun parseRuleEntries(json: JSONObject): List<RuleEntry> {
+private fun parseRuleEntries(json: JSONObject, groupIds: Set<String>): List<RuleEntry> {
     val entries = mutableListOf<RuleEntry>()
     json.optJSONArray("rule_entries")?.let { array ->
         for (index in 0 until array.length()) {
@@ -290,6 +340,9 @@ private fun parseRuleEntries(json: JSONObject): List<RuleEntry> {
                 policy = item.optString("policy").ifBlank { "DIRECT" },
                 enabled = item.optBoolean("enabled", true),
                 id = item.optLong("id", 0L).takeIf { it != 0L } ?: nextRuleId(),
+                // An unknown group means the manual group, normalized here so the UI and the core
+                // only ever see a rule grouped by an existing group.
+                groupId = item.optString("group_id").takeIf { it in groupIds },
             )
         }
     }
