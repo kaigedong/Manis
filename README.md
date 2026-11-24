@@ -211,9 +211,9 @@ macOS TUN 使用固定用途的特权 helper。GitHub ad-hoc 包通过管理员�
 
 相关文档：
 
-- [产品原则](PRODUCT.md)
-- [设计系统](DESIGN.md)
-- [GPUI 实现说明](GPUI_IMPLEMENTATION.md)
+- [产品原则](docs/PRODUCT.md)
+- [设计系统](docs/DESIGN.md)
+- [GPUI 实现说明](docs/GPUI_IMPLEMENTATION.md)
 - [开发指南（英文）](docs/development.md)
 - [直连与组合规则](docs/architecture/direct-rules.md)
 - [macOS 打包](packaging/macos/README.md)

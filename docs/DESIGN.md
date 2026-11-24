@@ -138,7 +138,7 @@ Manis 是安静的原生网络工作台。清晰的标题、说明和当前内�
 
 品牌延续 [PRODUCT.md](PRODUCT.md) 已确认的 Manis 名称与青绿、铜色语义。`assets/brand/manis-mark.svg` 用于小尺寸标识；高细节 `manis-shanshui.svg` 留给大尺寸文档和发布物料。小于 64px 的场景使用抽象标识；macOS 菜单栏仍使用单色透明模板。
 
-本文合并现有方向与实际 GPUI 实现。规范 token 来自 `crates/manis-ui/src/theme.rs`；共享控件来自 `components.rs`。前置信息中的 CSS 字体名称是原生系统字体的可移植表达，GPUI 和系统提供实际字体。原生窗口行为与截图范围见 [interface-design.md](docs/interface-design.md)。
+本文合并现有方向与实际 GPUI 实现。规范 token 来自 `crates/manis-ui/src/theme.rs`；共享控件来自 `components.rs`。前置信息中的 CSS 字体名称是原生系统字体的可移植表达，GPUI 和系统提供实际字体。原生窗口行为与截图范围见 [interface-design.md](interface-design.md)。
 
 **Key Characteristics:**
 

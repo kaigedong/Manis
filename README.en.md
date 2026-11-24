@@ -212,9 +212,9 @@ vulnerabilities through GitHub private vulnerability reporting.
 
 Additional reading:
 
-- [Product principles](PRODUCT.md)
-- [Design system](DESIGN.md)
-- [GPUI implementation notes](GPUI_IMPLEMENTATION.md)
+- [Product principles](docs/PRODUCT.md)
+- [Design system](docs/DESIGN.md)
+- [GPUI implementation notes](docs/GPUI_IMPLEMENTATION.md)
 - [Development guide](docs/development.md)
 - [Direct and compound routing rules](docs/architecture/direct-rules.md)
 - [macOS packaging](packaging/macos/README.md)

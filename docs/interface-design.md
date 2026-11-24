@@ -51,7 +51,7 @@ rendering; gpui-component still owns buttons, inputs, dialogs, popovers, focus, 
 
 `crates/manis-ui/src/theme.rs` is the source of truth. Do not add per-page palettes or reduce text
 alpha to create secondary labels. `components.rs` contains the shared heading and dialog treatment.
-[DESIGN.md](../DESIGN.md) captures the extracted palette, type, spacing and component rules.
+[DESIGN.md](DESIGN.md) captures the extracted palette, type, spacing and component rules.
 Page titles use 24 px / 32 px semibold; section titles use 16 px / 22 px semibold; body uses
 13 px / 20 px. Editors retain their existing compact title treatment.
 
