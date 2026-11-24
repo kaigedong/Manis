@@ -53,6 +53,9 @@ pub(crate) fn render_rule(rule: &Rule) -> String {
         Rule::ProcessName { value, policy } => {
             format!("PROCESS-NAME,{value},{}", policy_name(policy))
         }
+        Rule::ProcessPath { value, policy } => {
+            format!("PROCESS-PATH,{value},{}", policy_name(policy))
+        }
         Rule::All { conditions, policy } => {
             let conditions = conditions
                 .iter()
@@ -94,5 +97,6 @@ fn render_rule_condition(condition: &RuleCondition) -> String {
         }
         RuleCondition::DstPort(port) => format!("DST-PORT,{port}"),
         RuleCondition::ProcessName(value) => format!("PROCESS-NAME,{value}"),
+        RuleCondition::ProcessPath(value) => format!("PROCESS-PATH,{value}"),
     }
 }

@@ -20,6 +20,14 @@ pub(in crate::app) enum ManualRuleInsert {
     Prepend,
 }
 
+/// One value a connection already knows, offered as a chip so the rule editor never asks the user
+/// to retype a process name or a process path.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::app) struct ManualRulePrefill {
+    pub(in crate::app) kind: crate::manual_rule::ManualRuleKind,
+    pub(in crate::app) value: String,
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(in crate::app) enum ManualRuleEditorState {
     #[default]

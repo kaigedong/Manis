@@ -11,6 +11,7 @@ pub enum RuleCondition {
     GeoIp { country: String, no_resolve: bool },
     DstPort(u16),
     ProcessName(String),
+    ProcessPath(String),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -53,6 +54,12 @@ pub enum Rule {
     },
     /// Matches the client process name the kernel resolved for the connection.
     ProcessName {
+        value: String,
+        policy: PolicyRef,
+    },
+    /// Matches the executable path the kernel resolved for the connection, whole-string and
+    /// case-insensitive, so a versioned path stops matching when the app updates.
+    ProcessPath {
         value: String,
         policy: PolicyRef,
     },

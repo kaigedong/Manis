@@ -34,7 +34,7 @@ mod settings;
 mod source_mutations;
 pub(in crate::app) use manual_rules::{
     LocalRuleGroupDraft, LocalRuleGroupEditorState, ManualRuleConditionEditor,
-    ManualRuleEditorState, ManualRuleInsert, ManualRulePopover, RuleRowScope,
+    ManualRuleEditorState, ManualRuleInsert, ManualRulePopover, ManualRulePrefill, RuleRowScope,
 };
 pub(in crate::app) use proxy_sources::ProxySourceEditorState;
 pub(in crate::app) use source_mutations::{
@@ -366,6 +366,7 @@ fn manual_rule_placeholder(
         ManualRuleKind::IpAsn => "6185",
         ManualRuleKind::DstPort => "22",
         ManualRuleKind::ProcessName => "agy",
+        ManualRuleKind::ProcessPath => "/Applications/Example.app/Contents/MacOS/Example",
         ManualRuleKind::Final => "",
     }
 }
@@ -389,6 +390,7 @@ fn manual_rule_kind_detail(
         ManualRuleKind::IpAsn => language.localized(copy::configuration::AUTONOMOUS_SYSTEM),
         ManualRuleKind::DstPort => language.localized(copy::configuration::DESTINATION_PORT),
         ManualRuleKind::ProcessName => language.localized(copy::configuration::PROCESS_NAME),
+        ManualRuleKind::ProcessPath => language.localized(copy::configuration::PROCESS_PATH),
         ManualRuleKind::Final => {
             language.localized(copy::configuration::FALLBACK_FOR_TRAFFIC_NOT_MATCHED_ABOVE)
         }
@@ -429,6 +431,9 @@ fn manual_rule_error_label(
         ManualRuleError::InvalidProcessName => {
             language.localized(copy::configuration::ENTER_A_PROCESS_NAME_SUCH_AS_AGY)
         }
+        ManualRuleError::InvalidProcessPath => language.localized(
+            copy::configuration::ENTER_A_FULL_PROCESS_PATH_SUCH_AS_APPLICATIONS_EXAMPLE_APP,
+        ),
         ManualRuleError::InvalidPolicy => {
             language.localized(copy::configuration::CHOOSE_AN_EXISTING_POLICY_GROUP)
         }

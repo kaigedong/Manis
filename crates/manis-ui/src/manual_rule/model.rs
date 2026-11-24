@@ -19,11 +19,12 @@ pub(crate) enum ManualRuleKind {
     IpAsn,
     DstPort,
     ProcessName,
+    ProcessPath,
     Final,
 }
 
 impl ManualRuleKind {
-    pub(crate) const ALL: [Self; 12] = [
+    pub(crate) const ALL: [Self; 13] = [
         Self::Host,
         Self::HostSuffix,
         Self::HostWildcard,
@@ -35,6 +36,7 @@ impl ManualRuleKind {
         Self::IpAsn,
         Self::DstPort,
         Self::ProcessName,
+        Self::ProcessPath,
         Self::Final,
     ];
 
@@ -51,6 +53,7 @@ impl ManualRuleKind {
             Self::IpAsn => "IP-ASN",
             Self::DstPort => "DST-PORT",
             Self::ProcessName => "PROCESS-NAME",
+            Self::ProcessPath => "PROCESS-PATH",
             Self::Final => "FINAL",
         }
     }
@@ -68,6 +71,7 @@ impl ManualRuleKind {
             Self::IpAsn => "IP-ASN",
             Self::DstPort => "DST-PORT",
             Self::ProcessName => "PROCESS-NAME",
+            Self::ProcessPath => "PROCESS-PATH",
             Self::Final => "FINAL",
         }
     }
@@ -85,6 +89,7 @@ impl ManualRuleKind {
             Self::IpAsn => "ip-asn",
             Self::DstPort => "dst-port",
             Self::ProcessName => "process-name",
+            Self::ProcessPath => "process-path",
             Self::Final => "final",
         }
     }
@@ -102,6 +107,7 @@ impl ManualRuleKind {
             "ip-asn" => Self::IpAsn,
             "dst-port" => Self::DstPort,
             "process-name" => Self::ProcessName,
+            "process-path" => Self::ProcessPath,
             "final" => Self::Final,
             _ => return None,
         })
@@ -110,7 +116,9 @@ impl ManualRuleKind {
     pub(crate) const fn supported_by(self, kernel: KernelKind) -> bool {
         match self {
             Self::UserAgent => false,
-            Self::IpAsn | Self::ProcessName => matches!(kernel, KernelKind::Mihomo),
+            Self::IpAsn | Self::ProcessName | Self::ProcessPath => {
+                matches!(kernel, KernelKind::Mihomo)
+            }
             _ => true,
         }
     }
@@ -251,6 +259,7 @@ pub(crate) enum ManualRuleError {
     InvalidAsn,
     InvalidDestinationPort,
     InvalidProcessName,
+    InvalidProcessPath,
     InvalidPolicy,
     UnsupportedByKernel,
     Duplicate,
@@ -358,6 +367,7 @@ fn normalize_parameter(kind: ManualRuleKind, parameter: &str) -> Result<String, 
             ManualRuleKind::IpAsn => ManualRuleError::InvalidAsn,
             ManualRuleKind::DstPort => ManualRuleError::InvalidDestinationPort,
             ManualRuleKind::ProcessName => ManualRuleError::InvalidProcessName,
+            ManualRuleKind::ProcessPath => ManualRuleError::InvalidProcessPath,
             _ => ManualRuleError::InvalidKeyword,
         });
     }
@@ -377,6 +387,11 @@ fn normalize_parameter(kind: ManualRuleKind, parameter: &str) -> Result<String, 
         ManualRuleKind::HostKeyword | ManualRuleKind::UserAgent | ManualRuleKind::ProcessName => {
             Ok(value.to_owned())
         }
+        // A path is matched whole and case-insensitively, so a bare name typed here would
+        // silently become a rule that can never match.
+        ManualRuleKind::ProcessPath => (value.contains('/') || value.contains('\\'))
+            .then(|| value.to_owned())
+            .ok_or(ManualRuleError::InvalidProcessPath),
         ManualRuleKind::IpCidr => normalize_cidr(value, false),
         ManualRuleKind::Ip6Cidr => normalize_cidr(value, true),
         ManualRuleKind::GeoIp => {

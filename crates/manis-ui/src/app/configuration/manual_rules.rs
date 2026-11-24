@@ -39,5 +39,5 @@ mod model;
 mod persistence;
 pub(in crate::app) use model::{
     LocalRuleGroupDraft, LocalRuleGroupEditorState, ManualRuleConditionEditor,
-    ManualRuleEditorState, ManualRuleInsert, ManualRulePopover, RuleRowScope,
+    ManualRuleEditorState, ManualRuleInsert, ManualRulePopover, ManualRulePrefill, RuleRowScope,
 };

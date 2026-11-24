@@ -64,6 +64,16 @@ mod tests {
                 "  Google Chrome Helper (Aperitif) ",
                 "Google Chrome Helper (Aperitif)",
             ),
+            (
+                ManualRuleKind::ProcessPath,
+                "/Applications/magpie.app/Contents/MacOS/magpie",
+                "/Applications/magpie.app/Contents/MacOS/magpie",
+            ),
+            (
+                ManualRuleKind::ProcessPath,
+                "  /Applications/Google Chrome.app/Contents/MacOS/Google Chrome ",
+                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            ),
         ];
         for (kind, input, expected) in cases {
             let rule = ManualRule::parse(kind, input, "Proxy").expect("valid QX parameter");
@@ -84,6 +94,7 @@ mod tests {
             "DOMAIN-KEYWORD"
         );
         assert_eq!(ManualRuleKind::ProcessName.display_label(), "PROCESS-NAME");
+        assert_eq!(ManualRuleKind::ProcessPath.display_label(), "PROCESS-PATH");
         assert_eq!(ManualRuleKind::Final.display_label(), "FINAL");
     }
 
@@ -137,6 +148,19 @@ mod tests {
             ManualRule::parse(ManualRuleKind::ProcessName, "agy,DIRECT", "Proxy"),
             Err(ManualRuleError::InvalidProcessName)
         );
+        assert_eq!(
+            ManualRule::parse(ManualRuleKind::ProcessPath, "magpie", "Proxy"),
+            Err(ManualRuleError::InvalidProcessPath),
+            "a bare name belongs to PROCESS-NAME, not a rule that can never match"
+        );
+        assert_eq!(
+            ManualRule::parse(
+                ManualRuleKind::ProcessPath,
+                "/Applications/magpie.app/Contents/MacOS/magpie,DIRECT",
+                "Proxy"
+            ),
+            Err(ManualRuleError::InvalidProcessPath)
+        );
     }
 
     #[test]
@@ -174,6 +198,32 @@ mod tests {
         let yaml = manis_profile::render_mihomo_yaml(&profile).expect("rendered profile");
 
         assert!(yaml.contains("PROCESS-NAME,agy,__MANIS_GLOBAL__"), "{yaml}");
+    }
+
+    #[test]
+    fn a_process_path_rule_pins_one_executable_to_its_policy() {
+        let mut profile = manis_profile::Profile::qx_default(
+            manis_profile::SecretUrl::parse_https("https://example.invalid/subscription")
+                .expect("fixture URL"),
+        )
+        .expect("fixture profile");
+        let rule = ManualRule::parse(
+            ManualRuleKind::ProcessPath,
+            "/Applications/magpie.app/Contents/MacOS/magpie",
+            "Proxy",
+        )
+        .expect("rule");
+
+        append_manual_rules(&mut profile, &[rule], manis_core::KernelKind::Mihomo)
+            .expect("supported rule");
+        let yaml = manis_profile::render_mihomo_yaml(&profile).expect("rendered profile");
+
+        assert!(
+            yaml.contains(
+                "PROCESS-PATH,/Applications/magpie.app/Contents/MacOS/magpie,__MANIS_GLOBAL__"
+            ),
+            "{yaml}"
+        );
     }
 
     #[test]
@@ -377,13 +427,26 @@ mod tests {
                 "Proxy",
             )?,
             ManualRule::parse(ManualRuleKind::GeoIp, "US", "DIRECT")?,
+            ManualRule::parse(
+                ManualRuleKind::ProcessPath,
+                "/Applications/magpie.app/Contents/MacOS/magpie",
+                "DIRECT",
+            )?,
         ];
         rules[2].set_enabled(false);
         save_manual_rules_in(&root, &rules)?;
         let loaded = load_manual_rules_in(&root)?;
-        assert_eq!(loaded.len(), 3);
+        assert_eq!(loaded.len(), 4);
         assert!(loaded.last().is_some_and(ManualRule::is_final));
         assert!(!loaded[1].is_enabled());
+        assert_eq!(
+            loaded[2].conditions()[0].kind(),
+            ManualRuleKind::ProcessPath
+        );
+        assert_eq!(
+            loaded[2].conditions()[0].parameter(),
+            "/Applications/magpie.app/Contents/MacOS/magpie"
+        );
         let stored = crate::config_toml::read_entry(
             &root,
             super::MANUAL_RULES_FILE,

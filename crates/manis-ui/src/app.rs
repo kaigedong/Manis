@@ -51,9 +51,9 @@ mod workspace_inputs;
 use crate::core_update;
 use configuration::{
     ImportQxRuleError, LocalRuleGroupDraft, LocalRuleGroupEditorState, ManualRuleConditionEditor,
-    ManualRuleEditorState, ManualRuleInsert, ManualRulePopover, ProxySourceEditorState,
-    QxRuleEditorPopover, QxRuleImportFeedback, QxRuleImportResult, QxRuleSourceRefreshState,
-    RuleRowScope, RuleSourceState,
+    ManualRuleEditorState, ManualRuleInsert, ManualRulePopover, ManualRulePrefill,
+    ProxySourceEditorState, QxRuleEditorPopover, QxRuleImportFeedback, QxRuleImportResult,
+    QxRuleSourceRefreshState, RuleRowScope, RuleSourceState,
 };
 use nodes::{
     GroupBenchmarkNodeState, GroupBenchmarkProgressQueue, GroupBenchmarkState,
@@ -205,6 +205,8 @@ pub struct ManisApp {
     inputs: WorkspaceInputs,
     manual_rules: Vec<crate::manual_rule::ManualRule>,
     manual_rule_conditions: Vec<ManualRuleConditionEditor>,
+    /// Values a connection offers for the first condition, cleared whenever the editor resets.
+    manual_rule_prefills: Vec<ManualRulePrefill>,
     manual_rule_condition_count: usize,
     /// Where a new rule is inserted; rules created from the activity list must win.
     manual_rule_insert: ManualRuleInsert,
@@ -409,6 +411,7 @@ impl ManisApp {
             inputs: WorkspaceInputs::default(),
             manual_rules: Vec::new(),
             manual_rule_conditions: Vec::new(),
+            manual_rule_prefills: Vec::new(),
             manual_rule_condition_count: 1,
             manual_rule_insert: ManualRuleInsert::Append,
             manual_rule_target: default_rule_target.clone(),

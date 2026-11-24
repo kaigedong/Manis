@@ -6,11 +6,11 @@ use gpui_component::WindowExt as _;
 use super::{
     ActionRole, AnyElement, Button, Context, ControlSize, Dialog, Disableable, Div, FluentBuilder,
     Focusable, InteractiveElement, IntoElement, Language, LogLevel, MAX_MANUAL_RULE_INPUT_BYTES,
-    ManisApp, ManualRulePopover, Message, ParentElement, Radius, Role, RuleRowScope, Space,
-    Stateful, StatefulInteractiveElement, Styled, SubscriptionTextInput, TextInputSpec, TextRole,
-    Theme, Window, WindowSizeClass, copy, dialog_footer_surface, dialog_header_surface, div,
-    field_label, manual_rule_error_label, manual_rule_kind_detail, manual_rule_placeholder, px,
-    record_event, style_action_button, surface_dialog,
+    ManisApp, ManualRulePopover, ManualRulePrefill, Message, ParentElement, Radius, Role,
+    RuleRowScope, Space, Stateful, StatefulInteractiveElement, Styled, SubscriptionTextInput,
+    TextInputSpec, TextRole, Theme, Window, WindowSizeClass, copy, dialog_footer_surface,
+    dialog_header_surface, div, field_label, manual_rule_error_label, manual_rule_kind_detail,
+    manual_rule_placeholder, px, record_event, style_action_button, surface_dialog,
 };
 impl ManisApp {
     pub(in crate::app) fn open_manual_rule_editor(
@@ -42,6 +42,7 @@ impl ManisApp {
         self.manual_rule_editor_state = crate::app::ManualRuleEditorState::Creating;
         self.manual_rule_popover = None;
         self.manual_rule_error = None;
+        self.manual_rule_prefills.clear();
         self.manual_rule_insert = crate::app::ManualRuleInsert::Append;
         self.manual_rule_condition_count = 1;
         for condition in &self.manual_rule_conditions {
@@ -62,12 +63,14 @@ impl ManisApp {
     }
 
     /// Opens the rule editor with a connection's host and current policy already filled in, so a
-    /// row in the activity list can be routed somewhere else without retyping the domain.
+    /// row in the activity list can be routed somewhere else without retyping the domain. The
+    /// prefills are the process name and path the same connection carries, offered as chips.
     pub(in crate::app) fn open_manual_rule_editor_for_connection(
         &mut self,
         kind: crate::manual_rule::ManualRuleKind,
         value: String,
         target: Option<String>,
+        prefills: Vec<ManualRulePrefill>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -82,6 +85,7 @@ impl ManisApp {
             return;
         }
         self.begin_manual_rule_creation(cx);
+        self.manual_rule_prefills = prefills;
         let theme = self.theme();
         self.ensure_manual_rule_input(theme, window, cx);
         if let Some(condition) = self.manual_rule_conditions.first_mut() {
@@ -278,6 +282,7 @@ impl ManisApp {
         self.manual_rule_editor_state = crate::app::ManualRuleEditorState::Closed;
         self.manual_rule_popover = None;
         self.manual_rule_error = None;
+        self.manual_rule_prefills.clear();
         self.rule_editor_scope = RuleRowScope::Manual;
     }
 
@@ -405,6 +410,30 @@ impl ManisApp {
                 .input
                 .update(cx, |input, cx| input.set_placeholder(placeholder, cx));
         }
+        cx.notify();
+    }
+
+    /// Applies one offered value to the first condition. The kind goes first so the input keeps
+    /// the placeholder and validation of the type it now holds; other conditions and the target
+    /// stay as the user left them.
+    pub(in crate::app) fn apply_manual_rule_prefill(
+        &mut self,
+        index: usize,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(prefill) = self.manual_rule_prefills.get(index).cloned() else {
+            return;
+        };
+        self.set_manual_rule_kind(0, prefill.kind, cx);
+        let Some(condition) = self.manual_rule_conditions.first() else {
+            return;
+        };
+        if condition.kind != prefill.kind {
+            return;
+        }
+        condition.input.update(cx, |input, cx| {
+            input.set_value_without_event(prefill.value, cx);
+        });
         cx.notify();
     }
 
@@ -673,5 +702,122 @@ impl ManisApp {
             format!("index={index} total={}", self.rule_list(scope).len()),
         );
         cx.notify();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::AppContext as _;
+
+    use super::{ManisApp, ManualRulePrefill};
+    use crate::manual_rule::ManualRuleKind;
+
+    fn with_fixture_app(
+        cx: &mut gpui::TestAppContext,
+        check: impl FnOnce(gpui::Entity<ManisApp>, &mut gpui::VisualTestContext),
+    ) {
+        cx.update(crate::init);
+        cx.update(|cx| cx.set_reduce_motion(true));
+        let mut app = None;
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            let entity = cx.new(|_| ManisApp::with_fixture_controller("http://127.0.0.1:9090"));
+            app = Some(entity.clone());
+            crate::root(entity, window, cx)
+        });
+        check(app.expect("fixture app"), cx);
+    }
+
+    fn process_prefills() -> Vec<ManualRulePrefill> {
+        vec![
+            ManualRulePrefill {
+                kind: ManualRuleKind::ProcessName,
+                value: "magpie".to_owned(),
+            },
+            ManualRulePrefill {
+                kind: ManualRuleKind::ProcessPath,
+                value: "/Applications/magpie.app/Contents/MacOS/magpie".to_owned(),
+            },
+        ]
+    }
+
+    fn open_for_connection(
+        app: &mut ManisApp,
+        prefills: Vec<ManualRulePrefill>,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<ManisApp>,
+    ) {
+        app.open_manual_rule_editor_for_connection(
+            ManualRuleKind::HostSuffix,
+            "cache11-lax2.steamcontent.com".to_owned(),
+            Some("DIRECT".to_owned()),
+            prefills,
+            window,
+            cx,
+        );
+    }
+
+    /// Clicking the process path chip must reach the first condition and nothing else.
+    #[gpui::test]
+    fn a_prefill_fills_the_first_condition_and_leaves_the_rest_alone(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        with_fixture_app(cx, |app, cx| {
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    open_for_connection(app, process_prefills(), window, cx);
+                    assert_eq!(app.manual_rule_prefills.len(), 2);
+                    app.apply_manual_rule_prefill(1, cx);
+                    let first = app.manual_rule_conditions.first().expect("first condition");
+                    assert_eq!(first.kind, ManualRuleKind::ProcessPath);
+                    let second = app.manual_rule_conditions.get(1).expect("second condition");
+                    assert_eq!(second.kind, ManualRuleKind::DstPort);
+                    assert_eq!(second.input.read(cx).value(), "");
+                    assert_eq!(app.manual_rule_editor_state.editing_index(), None);
+                    assert_eq!(app.manual_rule_target, "DIRECT");
+                });
+                window.draw(cx).clear(cx);
+            });
+            app.read_with(cx, |app, cx| {
+                assert_eq!(
+                    app.manual_rule_conditions[0].input.read(cx).value(),
+                    "/Applications/magpie.app/Contents/MacOS/magpie"
+                );
+            });
+        });
+    }
+
+    /// Chips belong to the connection the editor was opened from; a plain new rule starts clean.
+    #[gpui::test]
+    fn opening_from_a_connection_offers_chips_and_plain_creation_clears_them(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        with_fixture_app(cx, |app, cx| {
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    open_for_connection(app, process_prefills(), window, cx);
+                    assert_eq!(app.manual_rule_prefills, process_prefills());
+                });
+                window.draw(cx).clear(cx);
+            });
+            for selector in ["manual-rule-prefill-0", "manual-rule-prefill-1"] {
+                assert!(cx.debug_bounds(selector).is_some(), "{selector} renders");
+            }
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    app.close_manual_rule_editor(cx);
+                    assert!(app.manual_rule_prefills.is_empty());
+                    app.open_manual_rule_editor(window, cx);
+                    assert!(app.manual_rule_prefills.is_empty());
+                });
+                window.draw(cx).clear(cx);
+            });
+            assert!(cx.debug_bounds("manual-rule-prefill-0").is_none());
+            app.read_with(cx, |app, _| {
+                assert_eq!(
+                    app.manual_rule_editor_state,
+                    crate::app::ManualRuleEditorState::Creating
+                );
+            });
+        });
     }
 }

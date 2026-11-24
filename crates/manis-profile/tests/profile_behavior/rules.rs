@@ -70,6 +70,41 @@ fn a_process_name_and_port_rule_renders_as_one_and_match_for_mihomo() {
 }
 
 #[test]
+fn process_path_rules_render_to_mihomo_yaml() {
+    let mut profile = Profile::qx_default(fixture_secret()).expect("default profile is valid");
+    profile.rules.insert(
+        0,
+        Rule::ProcessPath {
+            value: "/Users/bobo/.local/bin/agy".to_owned(),
+            policy: global_exit_policy(),
+        },
+    );
+
+    let yaml = render_mihomo_yaml(&profile).expect("profile should render");
+
+    assert!(yaml.contains("- \"PROCESS-PATH,/Users/bobo/.local/bin/agy,__MANIS_GLOBAL__\""));
+}
+
+#[test]
+fn a_process_path_and_port_rule_renders_as_one_and_match_for_mihomo() {
+    let mut profile = Profile::qx_default(fixture_secret()).expect("default profile is valid");
+    profile.rules.insert(
+        0,
+        Rule::All {
+            conditions: vec![
+                manis_profile::RuleCondition::ProcessPath("/usr/bin/ssh".to_owned()),
+                manis_profile::RuleCondition::DstPort(22),
+            ],
+            policy: PolicyRef::Direct,
+        },
+    );
+
+    let yaml = render_mihomo_yaml(&profile).expect("compound rule should render");
+
+    assert!(yaml.contains("AND,((PROCESS-PATH,/usr/bin/ssh),(DST-PORT,22)),DIRECT"));
+}
+
+#[test]
 fn domain_and_port_rules_render_exactly_for_mihomo() {
     let mut mihomo_profile =
         Profile::qx_default(fixture_secret()).expect("default profile is valid");

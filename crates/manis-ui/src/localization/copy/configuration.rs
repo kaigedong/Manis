@@ -168,6 +168,11 @@ pub(crate) const ENTER_A_DOMAIN_PATTERN_SUCH_AS_EXAMPLE_COM: LocalizedText = Loc
     "Enter a domain pattern such as *.example.com",
     "请输入域名模式，例如 *.example.com",
 );
+pub(crate) const ENTER_A_FULL_PROCESS_PATH_SUCH_AS_APPLICATIONS_EXAMPLE_APP: LocalizedText =
+    LocalizedText::new(
+        "Enter a full process path, such as /Applications/Example.app/Contents/MacOS/Example",
+        "请输入进程的完整路径，例如 /Applications/Example.app/Contents/MacOS/Example",
+    );
 pub(crate) const ENTER_A_MATCH_PARAMETER: LocalizedText =
     LocalizedText::new("Enter a match parameter", "请输入匹配参数");
 pub(crate) const ENTER_A_PLAIN_DOMAIN_SUCH_AS_EXAMPLE_COM: LocalizedText = LocalizedText::new(
@@ -330,6 +335,7 @@ pub(crate) const PROCESSING: LocalizedText = LocalizedText::new("Processing…",
 pub(crate) const PROCESS_IDENTIFICATION: LocalizedText =
     LocalizedText::new("Process identification", "进程识别");
 pub(crate) const PROCESS_NAME: LocalizedText = LocalizedText::new("Process name", "进程名");
+pub(crate) const PROCESS_PATH: LocalizedText = LocalizedText::new("Process path", "进程路径");
 pub(crate) const PROXY_MODE: LocalizedText = LocalizedText::new("Proxy mode", "代理模式");
 pub(crate) const PROXY_SOURCES: LocalizedText = LocalizedText::new("Proxy sources", "代理来源");
 pub(crate) const QX_RULES_NOT_IMPORTED_NO_RECOGNIZABLE_DOMAIN_RULES: LocalizedText =

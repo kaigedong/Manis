@@ -12,7 +12,7 @@ mod search;
 use matching::ActivityRuleMatcher;
 use search::{ConnectionSearchText, user_route_stages};
 
-use super::{ManisApp, format_bytes};
+use super::{ManisApp, ManualRulePrefill, format_bytes};
 use crate::{
     components::{ActionRole, action_button, empty_state, page_heading},
     localization::{CountNoun, Language, Message, copy},
@@ -23,6 +23,8 @@ use crate::{
 struct RuleDraft {
     kind: ManualRuleKind,
     value: String,
+    /// The process name and executable path this connection reported, offered as chips.
+    prefills: Vec<ManualRulePrefill>,
 }
 
 struct ActivityConnectionView<'connection, 'matcher> {
@@ -338,14 +340,20 @@ fn activity_row(
         })
         .child(traffic_cell(connection, theme));
     if let Some(draft) = draft {
+        let RuleDraft {
+            kind,
+            value,
+            prefills,
+        } = draft;
         row = row
             .cursor_pointer()
             .hover(move |style| style.bg(theme.button_hover));
         row = row.on_click(cx.listener(move |this, _, window, cx| {
             this.open_manual_rule_editor_for_connection(
-                draft.kind,
-                draft.value.clone(),
+                kind,
+                value.clone(),
                 policy_hint.clone(),
+                prefills.clone(),
                 window,
                 cx,
             );
@@ -381,30 +389,57 @@ fn rule_draft_from_connection(connection: &Connection) -> Option<RuleDraft> {
     .flatten()
     .map(str::trim)
     .find(|value| !value.is_empty());
-    if let Some(host) = host {
-        return Some(ip_or_suffix_draft(host));
+    let mut draft = if let Some(host) = host {
+        ip_or_suffix_draft(host)
+    } else {
+        let destination = connection.metadata.destination_ip.as_deref()?.trim();
+        if destination.parse::<IpAddr>().is_err() {
+            return None;
+        }
+        ip_or_suffix_draft(destination)
+    };
+    draft.prefills = process_prefills(connection, &draft.value);
+    Some(draft)
+}
+
+/// The process name first and the executable path second, both trimmed, without repeats and
+/// without a value the draft already holds.
+fn process_prefills(connection: &Connection, draft_value: &str) -> Vec<ManualRulePrefill> {
+    let mut prefills: Vec<ManualRulePrefill> = Vec::new();
+    for (kind, observed) in [
+        (
+            ManualRuleKind::ProcessName,
+            connection.metadata.process.as_deref(),
+        ),
+        (
+            ManualRuleKind::ProcessPath,
+            connection.metadata.process_path.as_deref(),
+        ),
+    ] {
+        let Some(value) = observed.map(str::trim).filter(|value| !value.is_empty()) else {
+            continue;
+        };
+        if value == draft_value || prefills.iter().any(|prefill| prefill.value == value) {
+            continue;
+        }
+        prefills.push(ManualRulePrefill {
+            kind,
+            value: value.to_owned(),
+        });
     }
-    let destination = connection.metadata.destination_ip.as_deref()?.trim();
-    if destination.parse::<IpAddr>().is_err() {
-        return None;
-    }
-    Some(ip_or_suffix_draft(destination))
+    prefills
 }
 
 fn ip_or_suffix_draft(value: &str) -> RuleDraft {
-    match value.parse::<IpAddr>() {
-        Ok(IpAddr::V4(address)) => RuleDraft {
-            kind: ManualRuleKind::IpCidr,
-            value: format!("{address}/32"),
-        },
-        Ok(IpAddr::V6(address)) => RuleDraft {
-            kind: ManualRuleKind::Ip6Cidr,
-            value: format!("{address}/128"),
-        },
-        Err(_) => RuleDraft {
-            kind: ManualRuleKind::HostSuffix,
-            value: value.to_owned(),
-        },
+    let (kind, value) = match value.parse::<IpAddr>() {
+        Ok(IpAddr::V4(address)) => (ManualRuleKind::IpCidr, format!("{address}/32")),
+        Ok(IpAddr::V6(address)) => (ManualRuleKind::Ip6Cidr, format!("{address}/128")),
+        Err(_) => (ManualRuleKind::HostSuffix, value.to_owned()),
+    };
+    RuleDraft {
+        kind,
+        value,
+        prefills: Vec::new(),
     }
 }
 
@@ -552,6 +587,7 @@ mod tests {
                     crate::manual_rule::ManualRuleKind::HostSuffix,
                     "cache11-lax2.steamcontent.com".to_owned(),
                     Some("DIRECT".to_owned()),
+                    Vec::new(),
                     window,
                     cx,
                 );
@@ -583,6 +619,77 @@ mod tests {
             window.draw(cx).clear(cx);
             assert!(window.has_active_dialog(cx), "the rule dialog stays open");
         });
+    }
+
+    #[test]
+    fn rule_draft_offers_the_process_name_then_the_process_path() {
+        let connection = connection(serde_json::json!({
+            "metadata": {
+                "sniffHost": "cache11-lax2.steamcontent.com",
+                "process": " magpie ",
+                "processPath": "/Applications/magpie.app/Contents/MacOS/magpie"
+            }
+        }));
+
+        let draft = super::rule_draft_from_connection(&connection).expect("draft");
+
+        assert_eq!(
+            draft
+                .prefills
+                .iter()
+                .map(|prefill| (prefill.kind, prefill.value.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                (crate::manual_rule::ManualRuleKind::ProcessName, "magpie"),
+                (
+                    crate::manual_rule::ManualRuleKind::ProcessPath,
+                    "/Applications/magpie.app/Contents/MacOS/magpie"
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn rule_draft_skips_prefills_that_repeat_its_own_value_or_each_other() {
+        let repeated = connection(serde_json::json!({
+            "metadata": { "sniffHost": "magpie", "process": "magpie" }
+        }));
+        assert!(
+            super::rule_draft_from_connection(&repeated)
+                .expect("draft")
+                .prefills
+                .is_empty()
+        );
+
+        let duplicated = connection(serde_json::json!({
+            "metadata": {
+                "destinationIP": "203.0.113.7",
+                "process": "magpie",
+                "processPath": "magpie"
+            }
+        }));
+        let draft = super::rule_draft_from_connection(&duplicated).expect("draft");
+        assert_eq!(
+            draft
+                .prefills
+                .iter()
+                .map(|prefill| (prefill.kind, prefill.value.as_str()))
+                .collect::<Vec<_>>(),
+            vec![(crate::manual_rule::ManualRuleKind::ProcessName, "magpie")]
+        );
+    }
+
+    #[test]
+    fn rule_draft_has_no_prefills_without_process_metadata() {
+        let connection =
+            connection(serde_json::json!({"metadata": {"destinationIP": "203.0.113.7"}}));
+
+        assert!(
+            super::rule_draft_from_connection(&connection)
+                .expect("draft")
+                .prefills
+                .is_empty()
+        );
     }
 
     #[test]

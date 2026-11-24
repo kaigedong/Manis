@@ -242,6 +242,12 @@ pub(crate) fn validate_rule(
             }
             policy
         }
+        Rule::ProcessPath { value, policy } => {
+            if !is_process_path(value) {
+                return Err(ProfileError::InvalidValue("process path rule"));
+            }
+            policy
+        }
         Rule::All { conditions, policy } => {
             if conditions.len() < 2 {
                 return Err(ProfileError::InvalidValue("compound rule"));
@@ -282,6 +288,12 @@ pub(crate) fn is_rule_value(value: &str) -> bool {
     is_plain_value(value, 1024) && !value.contains(',')
 }
 
+/// A whole executable path. A bare name is rejected here, so the type cannot hold a rule that
+/// only ever matches a process whose path equals its name.
+fn is_process_path(value: &str) -> bool {
+    is_rule_value(value) && (value.contains('/') || value.contains('\\'))
+}
+
 fn validate_rule_condition(condition: &RuleCondition) -> Result<(), ProfileError> {
     match condition {
         RuleCondition::Domain(value)
@@ -315,6 +327,11 @@ fn validate_rule_condition(condition: &RuleCondition) -> Result<(), ProfileError
         RuleCondition::ProcessName(value) => {
             if !is_rule_value(value) {
                 return Err(ProfileError::InvalidValue("compound process name rule"));
+            }
+        }
+        RuleCondition::ProcessPath(value) => {
+            if !is_process_path(value) {
+                return Err(ProfileError::InvalidValue("compound process path rule"));
             }
         }
     }

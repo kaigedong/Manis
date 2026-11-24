@@ -47,6 +47,9 @@ impl ManualRuleCondition {
             ManualRuleKind::ProcessName => {
                 manis_profile::RuleCondition::ProcessName(self.parameter.clone())
             }
+            ManualRuleKind::ProcessPath => {
+                manis_profile::RuleCondition::ProcessPath(self.parameter.clone())
+            }
             ManualRuleKind::Final => return Err(ManualRuleCompileError::CorruptValue),
         })
     }
@@ -107,6 +110,7 @@ impl ManualRule {
             },
             manis_profile::RuleCondition::DstPort(port) => Rule::DstPort { port, policy },
             manis_profile::RuleCondition::ProcessName(value) => Rule::ProcessName { value, policy },
+            manis_profile::RuleCondition::ProcessPath(value) => Rule::ProcessPath { value, policy },
         })
     }
 }

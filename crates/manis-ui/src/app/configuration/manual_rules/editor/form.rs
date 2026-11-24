@@ -272,6 +272,9 @@ impl ManisApp {
                         }),
                 ),
         );
+        if condition_index == 0 && !is_final && !self.manual_rule_prefills.is_empty() {
+            row = row.child(self.manual_rule_prefill_chips(language, cx));
+        }
         if condition_index > 0 {
             row = row.child(
                 style_action_button(
@@ -290,5 +293,39 @@ impl ManisApp {
             );
         }
         row
+    }
+
+    /// The process name and path the connection reported, as one-click chips. Each chip holds the
+    /// localized type it fills in, so clicking the second one turns CONDITION 1 into that type.
+    fn manual_rule_prefill_chips(&self, language: Language, cx: &mut Context<Self>) -> Div {
+        let mut chips = div().flex().flex_wrap().items_center().gap_2();
+        for (index, prefill) in self.manual_rule_prefills.iter().enumerate() {
+            let label = format!(
+                "{} {}",
+                manual_rule_kind_detail(prefill.kind, language),
+                prefill.value
+            );
+            chips = chips.child(
+                style_action_button(
+                    Button::new(format!("manual-rule-prefill-{index}"))
+                        .debug_selector(move || format!("manual-rule-prefill-{index}"))
+                        .accessibility_label(label.clone())
+                        .child(
+                            div()
+                                .max_w(px(240.0))
+                                .overflow_hidden()
+                                .whitespace_nowrap()
+                                .text_ellipsis()
+                                .child(label),
+                        ),
+                    ActionRole::Secondary,
+                    ControlSize::Compact,
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.apply_manual_rule_prefill(index, cx);
+                })),
+            );
+        }
+        chips.mt(Space::Sm.px())
     }
 }

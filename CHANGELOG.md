@@ -40,6 +40,10 @@ once the public API and configuration formats stabilize.
 - Desktop: a manual rule can match by process name (`PROCESS-NAME`), so one process such as `agy`
   can be pinned to a policy group or a node. The rule editor offers the type, stores it with the
   other manual rules, and the compiled profile renders it for Mihomo.
+- Desktop: a manual rule can match by full executable path (`PROCESS-PATH`), for a binary whose
+  process name it shares with other processes. The kernel matches the path whole and
+  case-insensitively, so an app update that moves a versioned path stops matching and the rule has
+  to be pointed at the new one.
 - Mihomo management with a private, managed runtime.
 - Subscription and VLESS import, policy groups, ordered routing rules, latency testing, network
   activity, logs, system proxy control, and macOS TUN integration.
@@ -49,6 +53,8 @@ once the public API and configuration formats stabilize.
   starting a second copy.
 - Clicking a connection in Network activity opens the routing-rule editor with its domain (or
   destination address) and current policy filled in, so one row can be routed elsewhere quickly.
+  The same row now offers the process name and process path it observed as one-click chips, so a
+  `PROCESS-NAME` or `PROCESS-PATH` value never has to be typed.
 - Opening Manis starts the managed kernel automatically (Configuration → Startup → "Start
   connected", on by default). A missing core is installed first; one failed start is retried once
   before the error stays on screen with the manual retry button.
