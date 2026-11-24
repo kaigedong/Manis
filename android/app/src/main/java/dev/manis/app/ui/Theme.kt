@@ -141,6 +141,9 @@ object ManisDimens {
     /** The switch column: one width for headers and rows, so the two line up. */
     val switchWidth = 52.dp
 
+    /** The fixed connection bar at the bottom of the home page, and the space the toast must clear. */
+    val connectionBar = 140.dp
+
     val chromeHeight = 60.dp
     val statusBarHeight = 32.dp
     val bottomNavigationHeight = 72.dp

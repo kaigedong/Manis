@@ -69,6 +69,8 @@ fun ManisShell(
     downloadText: String,
     uploadText: String,
     showGlobalHeader: Boolean = false,
+    /** A page that carries the state in its own fixed band drops the strip instead of printing it twice. */
+    showStatusStrip: Boolean = true,
     content: @Composable () -> Unit,
 ) {
     val colors = LocalManisColors.current
@@ -94,14 +96,18 @@ fun ManisShell(
                 }
                 if (sizeClass == SizeClass.Compact) {
                     Box(Modifier.fillMaxWidth().weight(1f)) { content() }
-                    StatusStrip(statusText, statusTone, downloadText, uploadText)
+                    if (showStatusStrip) {
+                        StatusStrip(statusText, statusTone, downloadText, uploadText)
+                    }
                     BottomNavigation(workspace, onWorkspace)
                 } else {
                     Row(Modifier.fillMaxWidth().weight(1f)) {
                         Navigation(workspace, onWorkspace, sizeClass)
                         Box(Modifier.weight(1f).fillMaxHeight()) { content() }
                     }
-                    StatusStrip(statusText, statusTone, downloadText, uploadText)
+                    if (showStatusStrip) {
+                        StatusStrip(statusText, statusTone, downloadText, uploadText)
+                    }
                 }
             }
         }

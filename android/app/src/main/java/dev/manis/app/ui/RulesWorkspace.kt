@@ -264,7 +264,6 @@ fun RulesWorkspace(onMessage: (String) -> Unit) {
                         dragging = draggingGroupId == group.id,
                         // After a drop the section settles into its new slot instead of jumping.
                         modifier = if (draggingGroupId == null) Modifier.animateItem() else Modifier,
-                        onOpenEditor = { groupEditor = GroupEditor(group, saved = true) },
                         onToggleExpanded = {
                             collapsed = if (expanded) collapsed + group.id else collapsed - group.id
                         },
@@ -323,6 +322,7 @@ fun RulesWorkspace(onMessage: (String) -> Unit) {
                             onClick = {
                                 ruleEditor = RuleEditor(null, RuleEntry(groupId = group.id))
                             },
+                            onSettings = { groupEditor = GroupEditor(group, saved = true) },
                         )
                     }
                 }
@@ -672,7 +672,6 @@ private fun RuleGroupHeader(
     expanded: Boolean,
     dragging: Boolean,
     modifier: Modifier = Modifier,
-    onOpenEditor: () -> Unit,
     onToggleExpanded: () -> Unit,
     onToggleEnabled: (Boolean) -> Unit,
     onDragStart: () -> Unit,
@@ -690,11 +689,11 @@ private fun RuleGroupHeader(
         meta = meta,
         modifier = modifier,
         titleColor = if (enabled) colors.textPrimary else colors.textTertiary,
-        onClick = onOpenEditor,
+        onClick = onToggleExpanded,
         dragging = dragging,
         leading = {
             // The grip drags the whole group. It swallows the touch down as well, so neither a tap
-            // nor a drag on it can reach the bar's click and open the editor.
+            // nor a drag on it can collapse the section under the finger.
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -775,22 +774,29 @@ private fun SectionNote(text: String) {
  * header, so every header keeps two trailing slots and one fixed height.
  */
 @Composable
-private fun SectionAddRow(onClick: () -> Unit) {
+private fun SectionAddRow(onClick: () -> Unit, onSettings: (() -> Unit)? = null) {
+    val colors = LocalManisColors.current
     Row(
         Modifier
             .fillMaxWidth()
             .height(ManisDimens.controlCompact)
             .clip(RoundedCornerShape(ManisDimens.radiusControl))
             .clickable(onClick = onClick)
-            .padding(start = RulesTextColumnStart),
+            .padding(start = RulesTextColumnStart, end = ManisDimens.spaceLg),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             "＋ 添加规则",
             style = ManisType.metadata,
-            color = LocalManisColors.current.textSecondary,
+            color = colors.textSecondary,
             maxLines = 1,
         )
+        if (onSettings != null) {
+            Spacer(Modifier.weight(1f))
+            // The group's own settings sit with its content, so a header tap can mean one thing:
+            // collapse or expand, exactly as it does for the manual section.
+            ManisTextAction("组设置", onClick = onSettings)
+        }
     }
 }
 

@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -48,9 +49,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * The connection screen: the connection itself first, then the policy groups that pick its exit,
- * then the sources those groups draw from. Subscriptions and manual nodes expand into their nodes,
- * and every policy group expands into its members with their latency, the active node and a test.
+ * The connection screen read top to bottom: what carries the traffic, then the groups that pick
+ * among it, then one band with the state and the controls that start and shape the session.
+ * Subscriptions and manual nodes expand into their nodes, and every policy group expands into its
+ * members with their latency, the active node and a test. The band sits below the list rather than
+ * scrolling with it: starting or stopping the tunnel never depends on where the list was left.
  */
 @Composable
 fun NodesWorkspace(
@@ -70,11 +73,20 @@ fun NodesWorkspace(
     val scope = rememberCoroutineScope()
     val snapshot = RuntimeState.snapshot
     val config = Workspace.config.value
-    var refreshing by remember { mutableStateOf(false) }
     var delays by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
     var addingGroup by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf<GroupEntry?>(null) }
-    var expandedSources by remember { mutableStateOf(emptySet<String>()) }
+    // The sources open on arrival, so the page is a node list and not a wall of collapsed rows.
+    // Groups stay closed: their rows already name the current pick, and an open group would print
+    // the same nodes a second time.
+    var expandedSources by remember {
+        mutableStateOf(
+            buildSet {
+                if (config.subscriptions.isNotEmpty()) add("subscription-0")
+                if (config.nodes.any { it.enabled }) add("manual")
+            },
+        )
+    }
     var expandedGroups by remember { mutableStateOf(emptySet<String>()) }
 
     // The core keeps an internal selector for global-mode exits and the exit-IP probe; neither is
@@ -120,14 +132,6 @@ fun NodesWorkspace(
             .distinct()
     }
 
-    fun reloadNodes() {
-        scope.launch {
-            cachedNodes = withContext(Dispatchers.IO) {
-                config.subscriptions.associate { it.url to SubscriptionCache.cachedNodes(context, it.url) }
-            }
-        }
-    }
-
     fun select(group: String, node: String) {
         scope.launch {
             runCatching {
@@ -142,30 +146,6 @@ fun NodesWorkspace(
             }
                 .onSuccess { onMessage("已切换到 $node") }
                 .onFailure { onMessage("切换节点失败：${it.message ?: "内核没有响应"}") }
-        }
-    }
-
-    fun refresh() {
-        if (refreshing) return
-        refreshing = true
-        scope.launch {
-            val result = withContext(Dispatchers.IO) {
-                runCatching { SubscriptionCache.refresh(context, config) }.getOrNull()
-            }
-            refreshing = false
-            if (result == null) {
-                onMessage("下载订阅失败")
-                return@launch
-            }
-            reloadNodes()
-            val parts = mutableListOf<String>()
-            if (result.downloaded > 0) parts += "已下载 ${result.downloaded} 个订阅"
-            if (result.nodes > 0) parts += "${result.nodes} 个节点"
-            if (result.failures.isNotEmpty()) {
-                parts += "失败：${result.failures.first()}"
-                if (result.failures.size > 1) parts += "另有 ${result.failures.size - 1} 个失败"
-            }
-            onMessage(parts.joinToString(" · ").ifBlank { "没有启用的订阅" })
         }
     }
 
@@ -198,32 +178,6 @@ fun NodesWorkspace(
         }
     }
 
-    fun testAll() {
-        if (snapshot == null) {
-            onMessage("连接 VPN 后才能测速")
-            return
-        }
-        scope.launch {
-            var tested = 0
-            var failure: String? = null
-            for (group in groups) {
-                runCatching { ControllerApi.testGroup(group.name) }
-                    .onSuccess {
-                        delays = delays + it
-                        tested += it.size
-                    }
-                    .onFailure { failure = failure ?: it.message }
-            }
-            onMessage(
-                when {
-                    tested > 0 -> "已测速 $tested 个节点"
-                    failure != null -> "测速失败：$failure"
-                    else -> "没有可测速的节点"
-                },
-            )
-        }
-    }
-
     fun testNode(node: String) {
         scope.launch {
             runCatching { ControllerApi.testNode(node) }
@@ -252,60 +206,20 @@ fun NodesWorkspace(
     Column(Modifier.fillMaxSize()) {
         Column(
             Modifier
-                .fillMaxSize()
+                .fillMaxWidth()
+                .weight(1f)
                 .verticalScroll(rememberScrollState())
                 .padding(ManisDimens.spaceLg),
             verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceMd),
         ) {
-            ConnectionCard(
-                connected = connected,
-                mode = mode,
-                exit = activeNode,
-                exitDelay = activeNode?.let { node ->
-                    delays[node] ?: snapshot?.nodes?.get(node)?.delay
-                },
-                // The group whose current pick is the exit, so the card can name where it came from.
-                exitGroup = activeNode?.let { node ->
-                    groups.firstOrNull { it.now == node }?.name
-                },
-                onToggle = onToggleConnection,
-                onModeSelect = onModeSelect,
-            )
-            ManisSectionBar("策略组") {
-                ManisSectionAction("测速") { testAll() }
-                ManisSectionAction("添加") { addingGroup = true }
-            }
-            if (groups.isEmpty() && config.groups.isEmpty()) {
-                ManisCard {
-                    Text("还没有策略组", style = ManisType.label, color = colors.textPrimary)
-                    ManisMeta("没有策略组时，直接用「来源」里选中的节点；建组后可以在组内切换。")
-                    ManisButton("添加策略组", primary = true, onClick = { addingGroup = true })
-                }
-            }
-            for (name in groupNames) {
-                val runtime = groups.firstOrNull { it.name == name }
-                val saved = config.groups.firstOrNull { it.name == name }
-                GroupCard(
-                    title = displayProxyName(name) ?: name,
-                    type = runtime?.type ?: saved?.strategy ?: "select",
-                    current = runtime?.now,
-                    members = runtime?.all ?: savedMembers(saved),
-                    delays = delays,
-                    expanded = name in expandedGroups,
-                    canTest = runtime != null,
-                    onToggle = { expandedGroups = toggle(expandedGroups, name) },
-                    onTest = { testGroup(name) },
-                    onSelect = { node -> select(name, node) },
-                    onDelete = saved?.let { entry -> { deleting = entry } },
-                )
-            }
-            ManisSectionBar("来源") {
-                ManisSectionAction(if (refreshing) "刷新中…" else "刷新") { refresh() }
-                ManisSectionAction("配置") { openSources() }
-            }
+            // The list is the choosing surface: what carries the traffic first, then the groups
+            // that pick among it. Its section bars carry no actions, because refreshing a
+            // subscription, adding a node and adding a group all happen where the source is
+            // edited, and testing one group stays inside that group's card.
+            ManisSectionBar("订阅与节点") {}
             if (subscriptions.isEmpty() && config.nodes.isEmpty()) {
                 ManisCard {
-                    Text("还没有来源", style = ManisType.label, color = colors.textPrimary)
+                    Text("还没有订阅或手动节点", style = ManisType.label, color = colors.textPrimary)
                     ManisMeta("订阅和手动节点都在配置里管理。")
                     ManisButton("打开配置", primary = true, onClick = openSources)
                 }
@@ -322,7 +236,7 @@ fun NodesWorkspace(
                     onToggle = { expandedSources = toggle(expandedSources, key) },
                 ) {
                     if (nodes.isEmpty()) {
-                        ManisMeta("还没有缓存节点，点「刷新」下载订阅。")
+                        ManisMeta("还没有缓存节点，在「配置」里刷新订阅。")
                     } else {
                         for ((position, node) in nodes.withIndex()) {
                             NodeRow(
@@ -370,6 +284,31 @@ fun NodesWorkspace(
                     }
                 }
             }
+            ManisSectionBar("策略组") {}
+            if (groups.isEmpty() && config.groups.isEmpty()) {
+                ManisCard {
+                    Text("还没有策略组", style = ManisType.label, color = colors.textPrimary)
+                    ManisMeta("没有策略组时，直接用「订阅与节点」里选中的节点；建组后可以在组内切换。")
+                    ManisButton("添加策略组", primary = true, onClick = { addingGroup = true })
+                }
+            }
+            for (name in groupNames) {
+                val runtime = groups.firstOrNull { it.name == name }
+                val saved = config.groups.firstOrNull { it.name == name }
+                GroupCard(
+                    title = displayProxyName(name) ?: name,
+                    type = runtime?.type ?: saved?.strategy ?: "select",
+                    current = runtime?.now,
+                    members = runtime?.all ?: savedMembers(saved),
+                    delays = delays,
+                    expanded = name in expandedGroups,
+                    canTest = runtime != null,
+                    onToggle = { expandedGroups = toggle(expandedGroups, name) },
+                    onTest = { testGroup(name) },
+                    onSelect = { node -> select(name, node) },
+                    onDelete = saved?.let { entry -> { deleting = entry } },
+                )
+            }
             ManisMeta(
                 when {
                     snapshot != null -> "点节点即可切换；「测速」会检测组内全部成员。"
@@ -378,6 +317,13 @@ fun NodesWorkspace(
                 },
             )
         }
+        ConnectionBar(
+            connected = connected,
+            mode = mode,
+            exit = activeNode,
+            onToggle = onToggleConnection,
+            onModeSelect = onModeSelect,
+        )
     }
 
     val pendingDelete = deleting
@@ -416,38 +362,42 @@ fun NodesWorkspace(
 }
 
 /**
- * The connection itself, read as three questions in the order they are asked: are we connected,
- * which exit carries the traffic, and what does that connection do. Everything else on the page
- * answers the second question, so it starts right under this card.
+ * The page's one control band, in two lines: the state with its exit, then the route mode beside
+ * the button that starts and ends a session. It sits under the list instead of scrolling with it,
+ * so those controls never move, and the list above stays a surface for choosing a node.
  */
 @Composable
-private fun ConnectionCard(
+private fun ConnectionBar(
     connected: Boolean,
     mode: String,
     exit: String?,
-    exitDelay: Int?,
-    exitGroup: String?,
     onToggle: () -> Unit,
     onModeSelect: (String) -> Unit,
 ) {
     val colors = LocalManisColors.current
     val unreachable = RuntimeState.unreachable
-    val exitLine = when {
-        connected && unreachable -> "所有节点都不可达"
-        !connected || exit == null -> "出口 未选择"
-        else -> "出口 ${displayProxyName(exit) ?: exit}"
+    // The exit is the useful half of a connected state, so it shares the state's line. Nothing is
+    // reachable in the failure case, so there is no exit worth naming and the line turns warning.
+    val stateText = when {
+        !connected -> "未连接"
+        unreachable -> "已连接 · 所有节点都不可达"
+        exit == null -> "已连接"
+        else -> "已连接 · 出口 ${displayProxyName(exit) ?: exit}"
     }
-    val exitMeta = when {
-        !connected -> "连接后在策略组里选择出口"
-        exit == null -> "在策略组里选择出口"
-        exitGroup != null -> "来自 ${displayProxyName(exitGroup) ?: exitGroup}" +
-            (exitDelay?.let { " · $it ms" } ?: "")
-        // The node was picked in 来源 and no policy group holds it.
-        else -> "直接使用「来源」里选中的节点"
-    }
-
-    ManisCard {
-        Column(verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceXs)) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .height(ManisDimens.connectionBar)
+            .background(colors.surfaceOverlay),
+    ) {
+        // A hairline is what tells a bar that stays put apart from a list that scrolls under it.
+        ManisDivider()
+        Column(
+            Modifier
+                .weight(1f)
+                .padding(horizontal = ManisDimens.spaceLg, vertical = ManisDimens.spaceMd),
+            verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
+        ) {
             Row(
                 Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -462,62 +412,51 @@ private fun ConnectionCard(
                         .background(if (connected) colors.statusSuccess else colors.textTertiary),
                 )
                 Text(
-                    if (connected) "已连接" else "未连接",
+                    stateText,
                     modifier = Modifier.weight(1f),
-                    style = ManisType.sectionTitle,
-                    color = colors.textPrimary,
+                    style = ManisType.label,
+                    color = if (connected && unreachable) {
+                        colors.statusWarning
+                    } else {
+                        colors.textPrimary
+                    },
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                if (exit != null && exitDelay != null) {
+                // The session totals this page used to print twice, once here and once in the
+                // status strip below the navigation. While the tunnel is down there is no session.
+                if (connected) {
                     Text(
-                        "$exitDelay ms",
+                        "↓ ${formatTraffic(RuntimeState.downloadTotal)} " +
+                            "↑ ${formatTraffic(RuntimeState.uploadTotal)}",
                         style = ManisType.metadata,
-                        color = latencyColor(exitDelay, colors),
+                        color = colors.textSecondary,
                         maxLines = 1,
                     )
                 }
             }
-            Text(
-                exitLine,
-                style = ManisType.body,
-                color = if (connected && unreachable) colors.statusWarning else colors.textPrimary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            ManisMeta(exitMeta, maxLines = 1)
-        }
-        ManisButton(
-            if (connected) "断开代理" else "开启代理",
-            modifier = Modifier.fillMaxWidth().height(ManisDimens.controlStandard),
-            primary = !connected,
-            onClick = onToggle,
-        )
-        // Three modes side by side, so the page can say which one is on instead of the user
-        // tapping through the other two to find out. The label sits above them: on a 320dp phone
-        // one line cannot hold a 56dp label plus three chips, and squeezing them clips 全局 to 全.
-        Text("路由模式", style = ManisType.metadata, color = colors.textSecondary, maxLines = 1)
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            for (value in routeModes) {
-                ManisChip(
-                    label = routeModeLabel(value),
-                    selected = mode == value,
-                    modifier = Modifier.weight(1f),
-                    onClick = { onModeSelect(value) },
-                )
+            // The modes take the full width rather than sharing a row with the button: at 320dp a
+            // shared row squeezes each chip below its label, and 全局 clips to 全.
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                for (value in routeModes) {
+                    ManisChip(
+                        label = routeModeLabel(value),
+                        selected = mode == value,
+                        modifier = Modifier.weight(1f),
+                        onClick = { onModeSelect(value) },
+                    )
+                }
             }
-        }
-        // The status strip carries the same totals; here they belong to the session the card is
-        // about, so the line only exists while that session does.
-        if (connected) {
-            ManisMeta(
-                "↓ ${formatTraffic(RuntimeState.downloadTotal)} " +
-                    "↑ ${formatTraffic(RuntimeState.uploadTotal)}",
-                maxLines = 1,
+            // The one action of this page, full width and under the thumb.
+            ManisButton(
+                if (connected) "断开代理" else "开启代理",
+                modifier = Modifier.fillMaxWidth().height(ManisDimens.controlStandard),
+                primary = !connected,
+                onClick = onToggle,
             )
         }
     }

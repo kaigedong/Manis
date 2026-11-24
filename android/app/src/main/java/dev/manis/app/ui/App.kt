@@ -261,6 +261,9 @@ fun ManisApp() {
         downloadText = formatTraffic(RuntimeState.downloadTotal),
         uploadText = formatTraffic(RuntimeState.uploadTotal),
         showGlobalHeader = workspace == PrimaryWorkspace.Nodes,
+        // The home page carries the state, the mode and the button in one band of its own, so the
+        // strip below the navigation would be the second copy of the same line.
+        showStatusStrip = workspace != PrimaryWorkspace.Nodes,
     ) {
         Box(Modifier.fillMaxSize()) {
             when (workspace) {
@@ -281,11 +284,21 @@ fun ManisApp() {
                 )
             }
             toast?.let { message ->
+                // The home page's connection bar stays at the bottom, so its toast sits above it
+                // instead of covering the mode chips it is about.
                 ManisToast(
                     message,
                     Modifier
                         .align(Alignment.BottomCenter)
-                        .padding(ManisDimens.spaceLg),
+                        .padding(
+                            start = ManisDimens.spaceLg,
+                            end = ManisDimens.spaceLg,
+                            bottom = if (workspace == PrimaryWorkspace.Nodes) {
+                                ManisDimens.connectionBar + ManisDimens.spaceSm
+                            } else {
+                                ManisDimens.spaceLg
+                            },
+                        ),
                 )
             }
         }
