@@ -174,6 +174,8 @@ pub(crate) const ENTER_A_PLAIN_DOMAIN_SUCH_AS_EXAMPLE_COM: LocalizedText = Local
     "Enter a plain domain such as example.com",
     "请输入纯域名，例如 example.com",
 );
+pub(crate) const ENTER_A_PROCESS_NAME_SUCH_AS_AGY: LocalizedText =
+    LocalizedText::new("Enter a process name such as agy", "请输入进程名，例如 agy");
 pub(crate) const ENTER_A_SOURCE_NAME: LocalizedText =
     LocalizedText::new("Enter a source name", "请输入来源名称");
 pub(crate) const ENTER_A_TWO_LETTER_COUNTRY_CODE_SUCH_AS_US: LocalizedText = LocalizedText::new(
@@ -327,6 +329,7 @@ pub(crate) const POLICY_GROUP_AFTER_MATCH: LocalizedText =
 pub(crate) const PROCESSING: LocalizedText = LocalizedText::new("Processing…", "正在处理…");
 pub(crate) const PROCESS_IDENTIFICATION: LocalizedText =
     LocalizedText::new("Process identification", "进程识别");
+pub(crate) const PROCESS_NAME: LocalizedText = LocalizedText::new("Process name", "进程名");
 pub(crate) const PROXY_MODE: LocalizedText = LocalizedText::new("Proxy mode", "代理模式");
 pub(crate) const PROXY_SOURCES: LocalizedText = LocalizedText::new("Proxy sources", "代理来源");
 pub(crate) const QX_RULES_NOT_IMPORTED_NO_RECOGNIZABLE_DOMAIN_RULES: LocalizedText =

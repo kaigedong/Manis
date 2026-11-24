@@ -58,6 +58,12 @@ mod tests {
             (ManualRuleKind::GeoIp, "us", "US"),
             (ManualRuleKind::IpAsn, "06185", "6185"),
             (ManualRuleKind::DstPort, "022", "22"),
+            (ManualRuleKind::ProcessName, "agy", "agy"),
+            (
+                ManualRuleKind::ProcessName,
+                "  Google Chrome Helper (Aperitif) ",
+                "Google Chrome Helper (Aperitif)",
+            ),
         ];
         for (kind, input, expected) in cases {
             let rule = ManualRule::parse(kind, input, "Proxy").expect("valid QX parameter");
@@ -77,6 +83,7 @@ mod tests {
             ManualRuleKind::HostKeyword.display_label(),
             "DOMAIN-KEYWORD"
         );
+        assert_eq!(ManualRuleKind::ProcessName.display_label(), "PROCESS-NAME");
         assert_eq!(ManualRuleKind::Final.display_label(), "FINAL");
     }
 
@@ -126,6 +133,10 @@ mod tests {
             ManualRule::parse(ManualRuleKind::DstPort, "0", "DIRECT"),
             Err(ManualRuleError::InvalidDestinationPort)
         );
+        assert_eq!(
+            ManualRule::parse(ManualRuleKind::ProcessName, "agy,DIRECT", "Proxy"),
+            Err(ManualRuleError::InvalidProcessName)
+        );
     }
 
     #[test]
@@ -147,6 +158,22 @@ mod tests {
         );
         assert!(!yaml.contains("GEOIP,CN,DIRECT"));
         assert!(!yaml.contains("MATCH,__MANIS_GLOBAL__"));
+    }
+
+    #[test]
+    fn a_process_name_rule_pins_one_process_to_its_policy() {
+        let mut profile = manis_profile::Profile::qx_default(
+            manis_profile::SecretUrl::parse_https("https://example.invalid/subscription")
+                .expect("fixture URL"),
+        )
+        .expect("fixture profile");
+        let rule = ManualRule::parse(ManualRuleKind::ProcessName, "agy", "Proxy").expect("rule");
+
+        append_manual_rules(&mut profile, &[rule], manis_core::KernelKind::Mihomo)
+            .expect("supported rule");
+        let yaml = manis_profile::render_mihomo_yaml(&profile).expect("rendered profile");
+
+        assert!(yaml.contains("PROCESS-NAME,agy,__MANIS_GLOBAL__"), "{yaml}");
     }
 
     #[test]

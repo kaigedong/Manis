@@ -50,6 +50,9 @@ pub(crate) fn render_rule(rule: &Rule) -> String {
             format!("GEOIP,{country},{}{suffix}", policy_name(policy))
         }
         Rule::DstPort { port, policy } => format!("DST-PORT,{port},{}", policy_name(policy)),
+        Rule::ProcessName { value, policy } => {
+            format!("PROCESS-NAME,{value},{}", policy_name(policy))
+        }
         Rule::All { conditions, policy } => {
             let conditions = conditions
                 .iter()
@@ -90,5 +93,6 @@ fn render_rule_condition(condition: &RuleCondition) -> String {
             format!("GEOIP,{country}{suffix}")
         }
         RuleCondition::DstPort(port) => format!("DST-PORT,{port}"),
+        RuleCondition::ProcessName(value) => format!("PROCESS-NAME,{value}"),
     }
 }

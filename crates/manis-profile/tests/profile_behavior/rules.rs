@@ -35,6 +35,41 @@ fn destination_port_rules_render_to_mihomo_yaml_without_a_generated_fallback() {
 }
 
 #[test]
+fn process_name_rules_render_to_mihomo_yaml() {
+    let mut profile = Profile::qx_default(fixture_secret()).expect("default profile is valid");
+    profile.rules.insert(
+        0,
+        Rule::ProcessName {
+            value: "agy".to_owned(),
+            policy: global_exit_policy(),
+        },
+    );
+
+    let yaml = render_mihomo_yaml(&profile).expect("profile should render");
+
+    assert!(yaml.contains("- \"PROCESS-NAME,agy,__MANIS_GLOBAL__\""));
+}
+
+#[test]
+fn a_process_name_and_port_rule_renders_as_one_and_match_for_mihomo() {
+    let mut profile = Profile::qx_default(fixture_secret()).expect("default profile is valid");
+    profile.rules.insert(
+        0,
+        Rule::All {
+            conditions: vec![
+                manis_profile::RuleCondition::ProcessName("agy".to_owned()),
+                manis_profile::RuleCondition::DstPort(443),
+            ],
+            policy: PolicyRef::Direct,
+        },
+    );
+
+    let yaml = render_mihomo_yaml(&profile).expect("compound rule should render");
+
+    assert!(yaml.contains("AND,((PROCESS-NAME,agy),(DST-PORT,443)),DIRECT"));
+}
+
+#[test]
 fn domain_and_port_rules_render_exactly_for_mihomo() {
     let mut mihomo_profile =
         Profile::qx_default(fixture_secret()).expect("default profile is valid");

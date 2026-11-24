@@ -236,6 +236,12 @@ pub(crate) fn validate_rule(
             }
             policy
         }
+        Rule::ProcessName { value, policy } => {
+            if !is_rule_value(value) {
+                return Err(ProfileError::InvalidValue("process name rule"));
+            }
+            policy
+        }
         Rule::All { conditions, policy } => {
             if conditions.len() < 2 {
                 return Err(ProfileError::InvalidValue("compound rule"));
@@ -304,6 +310,11 @@ fn validate_rule_condition(condition: &RuleCondition) -> Result<(), ProfileError
         RuleCondition::DstPort(port) => {
             if *port == 0 {
                 return Err(ProfileError::InvalidValue("compound destination port rule"));
+            }
+        }
+        RuleCondition::ProcessName(value) => {
+            if !is_rule_value(value) {
+                return Err(ProfileError::InvalidValue("compound process name rule"));
             }
         }
     }

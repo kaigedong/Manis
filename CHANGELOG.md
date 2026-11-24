@@ -37,6 +37,9 @@ once the public API and configuration formats stabilize.
 - The configuration editor shows a flat JSONC document instead of the per-entry readable text,
   and the importer accepts both. Hand-written comments in `config.toml` are no longer preserved
   through an edit, because JSONC is a projection of the stored entries.
+- Desktop: a manual rule can match by process name (`PROCESS-NAME`), so one process such as `agy`
+  can be pinned to a policy group or a node. The rule editor offers the type, stores it with the
+  other manual rules, and the compiled profile renders it for Mihomo.
 - Mihomo management with a private, managed runtime.
 - Subscription and VLESS import, policy groups, ordered routing rules, latency testing, network
   activity, logs, system proxy control, and macOS TUN integration.

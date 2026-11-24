@@ -10,6 +10,7 @@ pub enum RuleCondition {
     IpAsn { asn: u32, no_resolve: bool },
     GeoIp { country: String, no_resolve: bool },
     DstPort(u16),
+    ProcessName(String),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -48,6 +49,11 @@ pub enum Rule {
     /// Matches by destination port, which is how traffic bypasses the proxy per protocol.
     DstPort {
         port: u16,
+        policy: PolicyRef,
+    },
+    /// Matches the client process name the kernel resolved for the connection.
+    ProcessName {
+        value: String,
         policy: PolicyRef,
     },
     All {
