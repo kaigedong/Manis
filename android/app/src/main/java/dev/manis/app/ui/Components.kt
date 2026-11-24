@@ -284,11 +284,17 @@ fun ManisToggle(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
 
 /** A Material 3 filter chip. */
 @Composable
-fun ManisChip(label: String, selected: Boolean, onClick: () -> Unit) {
+fun ManisChip(
+    label: String,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
     val colors = LocalManisColors.current
     FilterChip(
         selected = selected,
         onClick = onClick,
+        modifier = modifier,
         label = { Text(label, style = ManisType.data, maxLines = 1) },
         shape = RoundedCornerShape(ManisDimens.radiusControl),
         colors = FilterChipDefaults.filterChipColors(

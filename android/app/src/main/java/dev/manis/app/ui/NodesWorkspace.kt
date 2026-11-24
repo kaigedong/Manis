@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -47,16 +48,16 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * The policy workspace: subscriptions and manual nodes expand into their nodes, and every policy
- * group expands into its members with their latency, the active node and a speed test.
+ * The connection screen: the connection itself first, then the policy groups that pick its exit,
+ * then the sources those groups draw from. Subscriptions and manual nodes expand into their nodes,
+ * and every policy group expands into its members with their latency, the active node and a test.
  */
 @Composable
 fun NodesWorkspace(
-    proxyLabel: String,
-    proxyActive: Boolean,
-    onProxyToggle: () -> Unit,
-    routingLabel: String,
-    onRoutingCycle: () -> Unit,
+    connected: Boolean,
+    mode: String,
+    onToggleConnection: () -> Unit,
+    onModeSelect: (String) -> Unit,
     onMessage: (String) -> Unit,
     onOpenConfiguration: () -> Unit,
 ) {
@@ -256,38 +257,47 @@ fun NodesWorkspace(
                 .padding(ManisDimens.spaceLg),
             verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceMd),
         ) {
-            ManisCard {
-                Row(
-                    Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceMd),
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text("VPN 代理", style = ManisType.label, color = colors.textPrimary)
-                        ManisMeta(if (proxyActive) "已连接，点右侧断开" else "未连接，点右侧开启")
-                    }
-                    if (proxyActive) {
-                        Box(
-                            Modifier
-                                .size(8.dp)
-                                .clip(CircleShape)
-                                .background(colors.statusSuccess),
-                        )
-                    }
-                    ManisButton(proxyLabel, primary = !proxyActive, onClick = onProxyToggle)
+            ConnectionCard(
+                connected = connected,
+                mode = mode,
+                exit = activeNode,
+                exitDelay = activeNode?.let { node ->
+                    delays[node] ?: snapshot?.nodes?.get(node)?.delay
+                },
+                // The group whose current pick is the exit, so the card can name where it came from.
+                exitGroup = activeNode?.let { node ->
+                    groups.firstOrNull { it.now == node }?.name
+                },
+                onToggle = onToggleConnection,
+                onModeSelect = onModeSelect,
+            )
+            ManisSectionBar("策略组") {
+                ManisSectionAction("测速") { testAll() }
+                ManisSectionAction("添加") { addingGroup = true }
+            }
+            if (groups.isEmpty() && config.groups.isEmpty()) {
+                ManisCard {
+                    Text("还没有策略组", style = ManisType.label, color = colors.textPrimary)
+                    ManisMeta("没有策略组时，直接用「来源」里选中的节点；建组后可以在组内切换。")
+                    ManisButton("添加策略组", primary = true, onClick = { addingGroup = true })
                 }
-                ManisDivider()
-                Row(
-                    Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceMd),
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text("路由模式", style = ManisType.label, color = colors.textPrimary)
-                        ManisMeta("规则、全局、直连之间切换")
-                    }
-                    ManisTextAction(routingLabel, onClick = onRoutingCycle)
-                }
+            }
+            for (name in groupNames) {
+                val runtime = groups.firstOrNull { it.name == name }
+                val saved = config.groups.firstOrNull { it.name == name }
+                GroupCard(
+                    title = displayProxyName(name) ?: name,
+                    type = runtime?.type ?: saved?.strategy ?: "select",
+                    current = runtime?.now,
+                    members = runtime?.all ?: savedMembers(saved),
+                    delays = delays,
+                    expanded = name in expandedGroups,
+                    canTest = runtime != null,
+                    onToggle = { expandedGroups = toggle(expandedGroups, name) },
+                    onTest = { testGroup(name) },
+                    onSelect = { node -> select(name, node) },
+                    onDelete = saved?.let { entry -> { deleting = entry } },
+                )
             }
             ManisSectionBar("来源") {
                 ManisSectionAction(if (refreshing) "刷新中…" else "刷新") { refresh() }
@@ -360,35 +370,6 @@ fun NodesWorkspace(
                     }
                 }
             }
-
-            ManisSectionBar("策略组") {
-                ManisSectionAction("测速") { testAll() }
-                ManisSectionAction("添加") { addingGroup = true }
-            }
-            if (groups.isEmpty() && config.groups.isEmpty()) {
-                ManisCard {
-                    Text("还没有策略组", style = ManisType.label, color = colors.textPrimary)
-                    ManisMeta("没有策略组时，直接用「来源」里选中的节点；建组后可以在组内切换。")
-                    ManisButton("添加策略组", primary = true, onClick = { addingGroup = true })
-                }
-            }
-            for (name in groupNames) {
-                val runtime = groups.firstOrNull { it.name == name }
-                val saved = config.groups.firstOrNull { it.name == name }
-                GroupCard(
-                    title = displayProxyName(name) ?: name,
-                    type = runtime?.type ?: saved?.strategy ?: "select",
-                    current = runtime?.now,
-                    members = runtime?.all ?: savedMembers(saved),
-                    delays = delays,
-                    expanded = name in expandedGroups,
-                    canTest = runtime != null,
-                    onToggle = { expandedGroups = toggle(expandedGroups, name) },
-                    onTest = { testGroup(name) },
-                    onSelect = { node -> select(name, node) },
-                    onDelete = saved?.let { entry -> { deleting = entry } },
-                )
-            }
             ManisMeta(
                 when {
                     snapshot != null -> "点节点即可切换；「测速」会检测组内全部成员。"
@@ -431,6 +412,114 @@ fun NodesWorkspace(
                 onMessage("已添加策略组 ${group.name}")
             },
         )
+    }
+}
+
+/**
+ * The connection itself, read as three questions in the order they are asked: are we connected,
+ * which exit carries the traffic, and what does that connection do. Everything else on the page
+ * answers the second question, so it starts right under this card.
+ */
+@Composable
+private fun ConnectionCard(
+    connected: Boolean,
+    mode: String,
+    exit: String?,
+    exitDelay: Int?,
+    exitGroup: String?,
+    onToggle: () -> Unit,
+    onModeSelect: (String) -> Unit,
+) {
+    val colors = LocalManisColors.current
+    val unreachable = RuntimeState.unreachable
+    val exitLine = when {
+        connected && unreachable -> "所有节点都不可达"
+        !connected || exit == null -> "出口 未选择"
+        else -> "出口 ${displayProxyName(exit) ?: exit}"
+    }
+    val exitMeta = when {
+        !connected -> "连接后在策略组里选择出口"
+        exit == null -> "在策略组里选择出口"
+        exitGroup != null -> "来自 ${displayProxyName(exitGroup) ?: exitGroup}" +
+            (exitDelay?.let { " · $it ms" } ?: "")
+        // The node was picked in 来源 and no policy group holds it.
+        else -> "直接使用「来源」里选中的节点"
+    }
+
+    ManisCard {
+        Column(verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceXs)) {
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
+            ) {
+                // The dot is the state at a glance; the word beside it is what a colourblind user
+                // reads, and what tells the two states apart in a screenshot.
+                Box(
+                    Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(if (connected) colors.statusSuccess else colors.textTertiary),
+                )
+                Text(
+                    if (connected) "已连接" else "未连接",
+                    modifier = Modifier.weight(1f),
+                    style = ManisType.sectionTitle,
+                    color = colors.textPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (exit != null && exitDelay != null) {
+                    Text(
+                        "$exitDelay ms",
+                        style = ManisType.metadata,
+                        color = latencyColor(exitDelay, colors),
+                        maxLines = 1,
+                    )
+                }
+            }
+            Text(
+                exitLine,
+                style = ManisType.body,
+                color = if (connected && unreachable) colors.statusWarning else colors.textPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            ManisMeta(exitMeta, maxLines = 1)
+        }
+        ManisButton(
+            if (connected) "断开代理" else "开启代理",
+            modifier = Modifier.fillMaxWidth().height(ManisDimens.controlStandard),
+            primary = !connected,
+            onClick = onToggle,
+        )
+        // Three modes side by side, so the page can say which one is on instead of the user
+        // tapping through the other two to find out. The label sits above them: on a 320dp phone
+        // one line cannot hold a 56dp label plus three chips, and squeezing them clips 全局 to 全.
+        Text("路由模式", style = ManisType.metadata, color = colors.textSecondary, maxLines = 1)
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            for (value in routeModes) {
+                ManisChip(
+                    label = routeModeLabel(value),
+                    selected = mode == value,
+                    modifier = Modifier.weight(1f),
+                    onClick = { onModeSelect(value) },
+                )
+            }
+        }
+        // The status strip carries the same totals; here they belong to the session the card is
+        // about, so the line only exists while that session does.
+        if (connected) {
+            ManisMeta(
+                "↓ ${formatTraffic(RuntimeState.downloadTotal)} " +
+                    "↑ ${formatTraffic(RuntimeState.uploadTotal)}",
+                maxLines = 1,
+            )
+        }
     }
 }
 
@@ -513,12 +602,7 @@ private fun NodeRow(
         Text(
             if (delay == null) "—" else "$delay ms",
             style = ManisType.data,
-            color = when {
-                delay == null -> colors.textTertiary
-                delay < 200 -> colors.statusSuccess
-                delay < 500 -> colors.statusWarning
-                else -> colors.statusError
-            },
+            color = latencyColor(delay, colors),
         )
         if (onTest != null) {
             ManisTextAction("测速", onClick = onTest)
@@ -606,6 +690,17 @@ private fun GroupCard(
             }
         }
     }
+}
+
+/** The routing modes in the order the chips read them: cut out, filter, send everything. */
+private val routeModes = listOf("direct", "rule", "global")
+
+/** The latency thresholds every node reading shares, so the header and the rows agree. */
+private fun latencyColor(delay: Int?, colors: ManisColors): Color = when {
+    delay == null -> colors.textTertiary
+    delay < 200 -> colors.statusSuccess
+    delay < 500 -> colors.statusWarning
+    else -> colors.statusError
 }
 
 /** The host of a subscription URL, as the desktop shows the transport target. */

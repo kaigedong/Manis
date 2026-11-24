@@ -30,11 +30,18 @@ import dev.manis.app.data.Workspace
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-private fun formatTraffic(bytes: Long): String = when {
+internal fun formatTraffic(bytes: Long): String = when {
     bytes >= 1024L * 1024L * 1024L -> "%.1f GB".format(bytes / (1024.0 * 1024.0 * 1024.0))
     bytes >= 1024L * 1024L -> "%.1f MB".format(bytes / (1024.0 * 1024.0))
     bytes >= 1024L -> "%.1f KB".format(bytes / 1024.0)
     else -> "$bytes B"
+}
+
+/** The word for a routing mode, shared by the connection page and the toast it reports with. */
+internal fun routeModeLabel(mode: String): String = when (mode) {
+    "global" -> "全局"
+    "direct" -> "直连"
+    else -> "规则"
 }
 
 /** Runtime state polled from the service and the controller. */
@@ -192,13 +199,9 @@ fun ManisApp() {
     val systemDark = isSystemInDarkTheme()
     val dark = UiPrefs.dark.value ?: systemDark
     val config = Workspace.config.value
-    val mode = RuntimeState.snapshot?.mode ?: config.mode
-    val routingLabel = when (mode) {
-        "global" -> "全局"
-        "direct" -> "直连"
-        else -> "规则"
-    }
-    val proxyLabel = if (RuntimeState.active) "VPN 代理" else "关闭代理"
+    // The saved choice is what the page shows. The core's own mode can lag it, and a control that
+    // disagrees with the file the next connect reads is how a mode chip ends up looking dead.
+    val mode = config.mode
 
     val permission = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
@@ -206,7 +209,7 @@ fun ManisApp() {
         if (result.resultCode == Activity.RESULT_OK) startVpn(context) else say("已取消 VPN 授权")
     }
 
-    fun toggleProxy() {
+    fun toggleConnection() {
         if (RuntimeState.active) {
             stopVpn(context)
             return
@@ -220,25 +223,27 @@ fun ManisApp() {
         if (prepare != null) permission.launch(prepare) else startVpn(context)
     }
 
-    fun cycleRouting() {
-        if (!RuntimeState.active) {
-            say("连接后才能切换路由模式")
-            return
-        }
-        val next = when (mode) {
-            "rule" -> "global"
-            "global" -> "direct"
-            else -> "rule"
-        }
-        val label = when (next) {
-            "global" -> "全局"
-            "direct" -> "直连"
-            else -> "规则"
-        }
+    fun selectMode(next: String) {
+        if (next == mode) return
+        // Saved first so the next connect starts in this mode; the core only takes it live while
+        // it is running.
+        Workspace.setMode(next)
+        if (!RuntimeState.active) return
         scope.launch {
             runCatching { ControllerApi.setMode(next) }
-                .onSuccess { say("路由模式：$label") }
-                .onFailure { say("切换路由模式失败") }
+                .onSuccess {
+                    say("路由模式：${routeModeLabel(next)}")
+                    // A failed refresh must not undo a mode the core already accepted.
+                    runCatching { ControllerApi.snapshot() }
+                        .onSuccess { RuntimeState.snapshot = it }
+                }
+                .onFailure { error ->
+                    android.util.Log.w("Manis", "mode switch to $next failed", error)
+                    // The core kept its old mode, so the file goes back with it; otherwise the chip
+                    // would claim a routing the next connection would not use.
+                    Workspace.setMode(mode)
+                    say("切换路由模式失败")
+                }
         }
     }
 
@@ -260,11 +265,10 @@ fun ManisApp() {
         Box(Modifier.fillMaxSize()) {
             when (workspace) {
                 PrimaryWorkspace.Nodes -> NodesWorkspace(
-                    proxyLabel = if (RuntimeState.active) "断开代理" else "开启代理",
-                    proxyActive = RuntimeState.active,
-                    onProxyToggle = ::toggleProxy,
-                    routingLabel = routingLabel,
-                    onRoutingCycle = ::cycleRouting,
+                    connected = RuntimeState.active,
+                    mode = mode,
+                    onToggleConnection = ::toggleConnection,
+                    onModeSelect = ::selectMode,
                     onMessage = ::say,
                     onOpenConfiguration = { workspace = PrimaryWorkspace.Configuration },
                 )
