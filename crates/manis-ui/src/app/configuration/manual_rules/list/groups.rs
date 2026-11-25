@@ -829,6 +829,7 @@ mod tests {
             let entity = cx.new(|_| {
                 let mut app = super::ManisApp::with_fixture_controller("http://127.0.0.1:1");
                 app.primary_workspace = manis_core::PrimaryWorkspace::RoutingRules;
+                app.topology.rules_view = crate::app::WorkspaceViewMode::List;
                 app.manual_rules = vec![
                     ManualRule::parse(ManualRuleKind::HostSuffix, "example.com", "DIRECT")
                         .expect("rule"),

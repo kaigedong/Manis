@@ -242,6 +242,7 @@ mod tests {
                 store.clone(),
             );
             app.primary_workspace = manis_core::PrimaryWorkspace::RoutingRules;
+            app.topology.rules_view = crate::app::WorkspaceViewMode::List;
             app
         });
         let retained = app.clone();

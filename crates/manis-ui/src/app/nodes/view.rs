@@ -18,6 +18,7 @@ impl ManisApp {
             return;
         }
         self.primary_workspace = PrimaryWorkspace::Nodes;
+        self.topology.nodes_view = crate::app::WorkspaceViewMode::List;
         self.source_providers = vec![LoadedProvider {
             name: "测试订阅".to_owned(),
             vehicle_type: Some("HTTP".to_owned()),
@@ -94,6 +95,16 @@ impl ManisApp {
         size_class: WindowSizeClass,
         cx: &mut Context<Self>,
     ) -> Div {
+        if self.topology.nodes_view == crate::app::WorkspaceViewMode::Tree {
+            return div()
+                .flex_1()
+                .min_w(px(0.0))
+                .h_full()
+                .flex()
+                .flex_col()
+                .bg(theme.surface_base)
+                .child(self.nodes_tree_workspace(theme, size_class, cx));
+        }
         let compact = size_class == WindowSizeClass::Compact;
         let has_local_sources = self
             .imported_subscriptions
@@ -152,7 +163,7 @@ impl ManisApp {
             )
     }
 
-    pub(super) fn node_source_groups(
+    pub(in crate::app) fn node_source_groups(
         &self,
         has_local_sources: bool,
         language: Language,

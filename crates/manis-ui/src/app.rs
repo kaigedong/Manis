@@ -44,6 +44,7 @@ mod routing_controls;
 mod runtime_lifecycle;
 mod stored_workspace;
 mod subscription_workflow;
+mod topology;
 pub(crate) mod windows;
 mod workspace_inputs;
 
@@ -82,6 +83,7 @@ use subscription_workflow::{
 };
 #[cfg(all(test, not(windows)))]
 use subscription_workflow::{ImportSubscriptionError, next_due_remote_source};
+use topology::{TopologyState, WorkspaceViewMode};
 use workspace_inputs::WorkspaceInputs;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -162,6 +164,7 @@ pub struct ManisApp {
     configuration_transfer: configuration::ConfigurationTransfer,
     node_workspace: NodeWorkspaceState,
     workspace: PolicyWorkspaceState,
+    topology: TopologyState,
     expanded_policy_group: Option<PolicyGroupId>,
     catalog: Option<PolicyCatalog>,
     runtime: KernelRuntime,
@@ -357,6 +360,7 @@ impl ManisApp {
             configuration_transfer: configuration::ConfigurationTransfer::default(),
             node_workspace,
             workspace: PolicyWorkspaceState::default(),
+            topology: TopologyState::default(),
             expanded_policy_group: None,
             catalog: None,
             runtime,
@@ -745,6 +749,28 @@ const fn proxy_mode_block(
 }
 
 impl ManisApp {
+    pub(crate) fn toggle_active_workspace_view(&mut self, cx: &mut Context<Self>) -> bool {
+        if self
+            .topology
+            .toggle_view_for(self.primary_workspace)
+            .is_some()
+        {
+            cx.notify();
+            true
+        } else {
+            false
+        }
+    }
+
+    pub(crate) fn clear_topology_pins(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.topology.clear_pins() {
+            cx.notify();
+            true
+        } else {
+            false
+        }
+    }
+
     fn workspace_content(
         &mut self,
         size_class: WindowSizeClass,

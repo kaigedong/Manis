@@ -217,7 +217,7 @@ impl ManisApp {
             .child(language.localized(copy::app::THIS_POLICY_HAS_NO_CANDIDATE_NODES))
     }
 
-    pub(super) fn managed_policy_add_button(
+    pub(in crate::app) fn managed_policy_add_button(
         id: &'static str,
         language: Language,
         _theme: Theme,

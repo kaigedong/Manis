@@ -2,7 +2,7 @@ use super::super::*;
 use super::card::{self, PolicyCardContent};
 
 impl ManisApp {
-    pub(super) fn empty_policy_content(&self, language: Language, theme: Theme) -> Div {
+    pub(in crate::app) fn empty_policy_content(&self, language: Language, theme: Theme) -> Div {
         let (title, description) = match &self.controller {
             ControllerState::Disconnected => (
                 language.message(Message::NoPolicyGroups),
@@ -207,7 +207,10 @@ impl ManisApp {
         })
     }
 
-    fn offline_policy_strategy(language: Language, strategy: ManagedPolicyStrategy) -> String {
+    pub(in crate::app) fn offline_policy_strategy(
+        language: Language,
+        strategy: ManagedPolicyStrategy,
+    ) -> String {
         match strategy {
             ManagedPolicyStrategy::Manual => language.localized(copy::app::MANUAL_SELECTION),
             ManagedPolicyStrategy::LowestLatency => {

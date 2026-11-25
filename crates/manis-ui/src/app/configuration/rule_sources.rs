@@ -654,7 +654,7 @@ impl ManisApp {
         }
     }
 
-    pub(super) fn qx_rule_source_name(
+    pub(in crate::app) fn qx_rule_source_name(
         source: &mihomo::StoredQxRuleSource,
         index: usize,
         language: Language,

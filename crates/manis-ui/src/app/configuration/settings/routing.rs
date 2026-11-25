@@ -18,6 +18,16 @@ impl ManisApp {
         let compact = size_class == WindowSizeClass::Compact;
         let language = self.language();
         self.ensure_manual_rule_input(theme, window, cx);
+        if self.topology.rules_view == crate::app::WorkspaceViewMode::Tree {
+            return div()
+                .flex_1()
+                .min_w(px(0.0))
+                .h_full()
+                .flex()
+                .flex_col()
+                .bg(theme.surface_base)
+                .child(self.rules_tree_workspace(theme, size_class, cx));
+        }
         // The pipeline header names the ordering model and owns both creation actions; the
         // command bar above already carries the workspace title and the rule counts.
         let actions = div()

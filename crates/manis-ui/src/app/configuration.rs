@@ -719,6 +719,7 @@ mod tests {
             let entity = cx.new(|_| {
                 let mut app = super::ManisApp::with_fixture_controller("http://127.0.0.1:1");
                 app.primary_workspace = manis_core::PrimaryWorkspace::RoutingRules;
+                app.topology.rules_view = crate::app::WorkspaceViewMode::List;
                 app.manual_rules =
                     vec![ManualRule::parse(ManualRuleKind::Host, "example.com", "DIRECT").unwrap()];
                 app.node_workspace.toggle_group(MANUAL_RULES_EXPANSION_KEY);
@@ -782,6 +783,7 @@ mod tests {
             let entity = cx.new(|_| {
                 let mut app = super::ManisApp::with_fixture_controller("http://127.0.0.1:1");
                 app.primary_workspace = manis_core::PrimaryWorkspace::RoutingRules;
+                app.topology.rules_view = crate::app::WorkspaceViewMode::List;
                 app.local_rule_groups = vec![group];
                 app
             });

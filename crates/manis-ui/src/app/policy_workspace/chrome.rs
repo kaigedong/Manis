@@ -441,6 +441,7 @@ impl ManisApp {
     ) -> Stateful<Div> {
         let compact = size_class == WindowSizeClass::Compact;
         let (title, meta) = self.command_bar_identity();
+        let view_switcher = self.workspace_view_switcher(theme, cx);
         div()
             .id("command-bar")
             .debug_selector(|| "command-bar".to_owned())
@@ -457,7 +458,7 @@ impl ManisApp {
             .child(
                 div()
                     .flex()
-                    .items_baseline()
+                    .items_center()
                     .gap(px(10.0))
                     .min_w_0()
                     .child(
@@ -469,6 +470,7 @@ impl ManisApp {
                             .font_weight(TextRole::PageTitle.weight())
                             .child(title),
                     )
+                    .when_some(view_switcher, ParentElement::child)
                     .when(!meta.is_empty(), |left| {
                         // The count pill: a compact, quiet badge next to the page title.
                         left.child(
@@ -498,6 +500,107 @@ impl ManisApp {
                     .child(self.proxy_control(theme, compact, cx))
                     .child(self.routing_control(theme, compact, cx)),
             )
+    }
+
+    fn workspace_view_switcher(&self, theme: Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
+        use crate::app::WorkspaceViewMode;
+        use gpui_component::Icon;
+
+        let workspace = self.primary_workspace;
+        let current = self.topology.view_for(workspace)?;
+        let language = self.language();
+
+        let (tree_icon, tree_tip, list_tip) = match workspace {
+            PrimaryWorkspace::Nodes => (
+                gpui_component_assets::IconName::Network,
+                match language {
+                    super::Language::English => "Tree view (V)",
+                    super::Language::SimplifiedChinese => "策略树视图 (V)",
+                },
+                match language {
+                    super::Language::English => "Card & list view (V)",
+                    super::Language::SimplifiedChinese => "列表卡片视图 (V)",
+                },
+            ),
+            PrimaryWorkspace::RoutingRules => (
+                gpui_component_assets::IconName::Workflow,
+                match language {
+                    super::Language::English => "Routing topology view (V)",
+                    super::Language::SimplifiedChinese => "路由拓扑视图 (V)",
+                },
+                match language {
+                    super::Language::English => "Priority pipeline view (V)",
+                    super::Language::SimplifiedChinese => "优先级管道视图 (V)",
+                },
+            ),
+            PrimaryWorkspace::Activity
+            | PrimaryWorkspace::Logs
+            | PrimaryWorkspace::Configuration => return None,
+        };
+
+        let active_bg = if theme.surface_elevated == theme.surface_base {
+            theme.surface_high
+        } else {
+            theme.surface_elevated
+        };
+
+        let make_button = |id: &'static str,
+                           mode: WorkspaceViewMode,
+                           icon: gpui_component_assets::IconName,
+                           label: &'static str| {
+            let selected = current == mode;
+            Button::new(id)
+                .map(crate::components::primary_button_interaction)
+                .debug_selector(move || id.to_owned())
+                .tooltip(label)
+                .accessibility_label(label)
+                .selected(selected)
+                .with_variant(ButtonVariant::Ghost)
+                .with_size(gpui_component::Size::Small)
+                .w(px(28.0))
+                .h_full()
+                .px_0()
+                .rounded(px(6.0))
+                .when(selected, |button| {
+                    button.bg(active_bg).text_color(theme.action_primary)
+                })
+                .when(!selected, |button| button.text_color(theme.text_tertiary))
+                .child(Icon::new(icon).size(px(14.0)))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if this.topology.set_view_for(workspace, mode) {
+                        cx.notify();
+                    }
+                }))
+        };
+
+        Some(
+            div()
+                .id("workspace-view-switch")
+                .debug_selector(|| "workspace-view-switch".to_owned())
+                .h(px(28.0))
+                .flex_shrink_0()
+                .p(px(2.0))
+                .rounded(px(8.0))
+                .border_1()
+                .border_color(theme.outline_subtle)
+                .bg(theme.surface_low)
+                .flex()
+                .items_center()
+                .gap(px(2.0))
+                .child(make_button(
+                    "view-mode-tree",
+                    WorkspaceViewMode::Tree,
+                    tree_icon,
+                    tree_tip,
+                ))
+                .child(make_button(
+                    "view-mode-list",
+                    WorkspaceViewMode::List,
+                    gpui_component_assets::IconName::LayoutList,
+                    list_tip,
+                ))
+                .into_any_element(),
+        )
     }
 
     fn command_bar_identity(&self) -> (String, String) {

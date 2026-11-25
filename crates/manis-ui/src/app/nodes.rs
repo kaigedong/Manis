@@ -33,21 +33,21 @@ use crate::{
     theme::{ControlSize, Radius, Space, TextRole, Theme},
 };
 
-struct NodeSourceGroup<'a> {
-    id: String,
-    name: String,
+pub(in crate::app) struct NodeSourceGroup<'a> {
+    pub(in crate::app) id: String,
+    pub(in crate::app) name: String,
     /// The protocol or vehicle shown as a pill beside the source name.
-    vehicle: Option<String>,
+    pub(in crate::app) vehicle: Option<String>,
     /// The source state line: restored, refreshing, unavailable, locally stored.
-    detail: String,
+    pub(in crate::app) detail: String,
     /// Traffic quota when the source reports one; the meter never renders a guess.
     quota: Option<SourceQuota>,
-    providers: Vec<&'a LoadedProvider>,
-    runtime_provider_names: Vec<String>,
-    saved_nodes: Vec<&'a SourceNodePreview>,
-    saved_nodes_use_runtime_providers: bool,
+    pub(in crate::app) providers: Vec<&'a LoadedProvider>,
+    pub(in crate::app) runtime_provider_names: Vec<String>,
+    pub(in crate::app) saved_nodes: Vec<&'a SourceNodePreview>,
+    pub(in crate::app) saved_nodes_use_runtime_providers: bool,
     /// The remote subscription this source can be re-fetched from, if any.
-    subscription_id: Option<String>,
+    pub(in crate::app) subscription_id: Option<String>,
 }
 
 /// A remote source's traffic quota. Neither the mihomo provider snapshot nor the stored
@@ -228,13 +228,13 @@ pub(in crate::app) use benchmark_state::{
 pub(in crate::app) use policy_editor::{
     ManagedPolicyRuntimeState, ManagedPolicyState, PolicyEditorPopover,
 };
-pub(super) use region::region_code;
+pub(in crate::app) use region::region_code;
 
 /// The latency a node reports before this source has been re-tested, as whole milliseconds.
 ///
 /// Kernel snapshots arrive as labels such as `42 ms`; unparseable or absent labels stay unknown so
 /// the row renders the neutral `—` instead of a fabricated number.
-fn parse_latency_ms(label: &str) -> Option<u64> {
+pub(in crate::app) fn parse_latency_ms(label: &str) -> Option<u64> {
     let number = label.split_whitespace().next()?;
     let integer = number.split('.').next()?;
     integer.parse::<u64>().ok()
@@ -255,6 +255,7 @@ mod tests {
         use crate::app::ManisApp;
         use manis_core::ManagedPolicyGroup;
         let mut app = ManisApp::with_fixture_controller("http://127.0.0.1:1");
+        app.topology.nodes_view = crate::app::WorkspaceViewMode::List;
         app.source_providers = vec![LoadedProvider {
             name: "Fixture source".to_owned(),
             vehicle_type: None,
@@ -429,6 +430,7 @@ mod tests {
         let (_, cx) = cx.add_window_view(|window, cx| {
             let entity = cx.new(|_| {
                 let mut app = ManisApp::with_fixture_controller("http://127.0.0.1:1");
+                app.topology.nodes_view = crate::app::WorkspaceViewMode::List;
                 app.managed_policies.groups =
                     vec![ManagedPolicyGroup::new("policy-1", "Saved group").unwrap()];
                 app

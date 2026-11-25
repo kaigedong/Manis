@@ -9,15 +9,18 @@ const BRAND_MARK: &[u8] = include_bytes!("../../../assets/brand/manis-mark.svg")
 /// Serves Manis-owned assets alongside the icons bundled by gpui-component.
 pub struct Assets;
 
-// The default component bundle omits the full catalog. Embed this one extra icon.
-gpui_component_assets::icon_assets!(DragAssets, [GripVertical]);
+// The default component bundle omits the full catalog. Embed these extra Lucide icons.
+gpui_component_assets::icon_assets!(
+    ExtraIcons,
+    [GripVertical, LayoutList, Network, Pin, Workflow]
+);
 
 impl AssetSource for Assets {
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
         if path == BRAND_MARK_PATH {
             return Ok(Some(Cow::Borrowed(BRAND_MARK)));
         }
-        if let Some(bytes) = DragAssets.load(path)? {
+        if let Some(bytes) = ExtraIcons.load(path)? {
             return Ok(Some(bytes));
         }
         gpui_component_assets::Assets.load(path)
@@ -25,7 +28,7 @@ impl AssetSource for Assets {
 
     fn list(&self, path: &str) -> Result<Vec<SharedString>> {
         let mut assets = gpui_component_assets::Assets.list(path)?;
-        assets.extend(DragAssets.list(path)?);
+        assets.extend(ExtraIcons.list(path)?);
         if BRAND_MARK_PATH.starts_with(path) {
             assets.push(BRAND_MARK_PATH.into());
         }
@@ -41,9 +44,20 @@ mod tests {
 
     #[test]
     fn rule_drag_handle_is_embedded_alongside_the_component_icons() {
-        let path = gpui_component_assets::IconName::GripVertical.path();
-        assert!(Assets.load(&path).unwrap().is_some());
-        assert!(Assets.list("icons/").unwrap().contains(&path));
+        for icon in [
+            gpui_component_assets::IconName::GripVertical,
+            gpui_component_assets::IconName::LayoutList,
+            gpui_component_assets::IconName::Network,
+            gpui_component_assets::IconName::Pin,
+            gpui_component_assets::IconName::Workflow,
+        ] {
+            let path = icon.path();
+            assert!(Assets.load(&path).unwrap().is_some(), "missing {path}");
+            assert!(
+                Assets.list("icons/").unwrap().contains(&path),
+                "unlisted {path}"
+            );
+        }
     }
 
     #[test]

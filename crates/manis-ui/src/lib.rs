@@ -66,8 +66,22 @@ impl gpui::Render for ManisRootView {
             .id("manis-main-window")
             .key_context("ManisWindow")
             .track_focus(&self.focus)
-            .on_key_down(cx.listener(|_, event: &gpui::KeyDownEvent, window, cx| {
-                if event.keystroke.key == "escape" && cx.stop_active_drag(window) {
+            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
+                if event.keystroke.key == "escape" {
+                    if cx.stop_active_drag(window) {
+                        cx.stop_propagation();
+                        return;
+                    }
+                    if this.app.update(cx, app::ManisApp::clear_topology_pins) {
+                        cx.stop_propagation();
+                    }
+                } else if event.keystroke.key == "v"
+                    && !event.keystroke.modifiers.modified()
+                    && this.focus.is_focused(window)
+                    && this
+                        .app
+                        .update(cx, app::ManisApp::toggle_active_workspace_view)
+                {
                     cx.stop_propagation();
                 }
             }))
