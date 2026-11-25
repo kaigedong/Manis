@@ -3955,13 +3955,13 @@ dependencies = [
 name = "manis-ui"
 version = "0.1.0"
 dependencies = [
- "chrono",
  "flate2",
  "gpui-component",
  "gpui-kit-assets",
  "gpui-pre",
  "gpui-pre-platform",
  "hex",
+ "jiff",
  "ksni",
  "manis-core",
  "manis-engine",

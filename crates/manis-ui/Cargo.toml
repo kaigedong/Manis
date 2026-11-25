@@ -25,8 +25,8 @@ manis-core = { path = "../manis-core" }
 manis-engine = { path = "../manis-engine" }
 manis-mihomo = { path = "../manis-mihomo" }
 manis-profile = { path = "../manis-profile" }
-# Already in the dependency graph via gpui; declaring it here adds no build cost.
-chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
+# Already in the dependency graph via gpui-component; declaring it here adds no build cost.
+jiff = "1.0.3"
 flate2 = "1.1.11"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"

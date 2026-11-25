@@ -550,12 +550,11 @@ fn logs_copy_label(language: Language) -> &'static str {
 }
 
 fn format_log_time(timestamp_ms: u128) -> String {
-    // `Local` silently falls back to UTC when the system zone is unreadable, so there is no
-    // failure to report here — only an offset, which is zero in that case.
-    format_local_time(
-        timestamp_ms,
-        chrono::Local::now().offset().local_minus_utc(),
-    )
+    // `ZonedDateTime` falls back to an unknown UTC zone when the system zone is unreadable,
+    // and `try_from` avoids panicking if the system clock is out of range.
+    let offset_seconds = jiff::ZonedDateTime::try_from(std::time::SystemTime::now())
+        .map_or(0, |zdt| zdt.offset().seconds());
+    format_local_time(timestamp_ms, offset_seconds)
 }
 
 /// Renders a timestamp on the viewer's own wall clock.
