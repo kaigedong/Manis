@@ -4,7 +4,6 @@ use crate::{
 };
 
 pub(crate) const CLOSE: LocalizedText = LocalizedText::new("Close", "关闭");
-pub(crate) const APP_UPDATES: LocalizedText = LocalizedText::new("App updates", "应用更新");
 pub(crate) const ABOUT_AND_UPDATES: LocalizedText =
     LocalizedText::new("About and updates", "关于与更新");
 pub(crate) const ABOUT_AND_UPDATES_DETAIL: LocalizedText =
@@ -13,19 +12,12 @@ pub(crate) const APP_LICENSE: LocalizedText =
     LocalizedText::new("Application code: Apache-2.0", "应用代码：Apache-2.0");
 pub(crate) const CORE_LICENSE: LocalizedText =
     LocalizedText::new("Bundled Mihomo core: GPL-3.0", "内置 Mihomo 内核：GPL-3.0");
-pub(crate) const CHECK_AUTOMATICALLY_DETAIL: LocalizedText = LocalizedText::new(
-    "Check at startup and every hour. Download and install updates right here.",
-    "启动时及每小时自动检查版本，可直接在应用内下载并安装。",
-);
-pub(crate) const CHECK_NOW: LocalizedText = LocalizedText::new("Check for updates", "检查更新");
 pub(crate) const DOWNLOAD: LocalizedText = LocalizedText::new("Download", "下载");
 pub(crate) const DOWNLOADING: LocalizedText =
     LocalizedText::new("Downloading update…", "正在下载更新…");
 pub(crate) const INSTALL_AND_RESTART: LocalizedText =
     LocalizedText::new("Install and restart", "安装并重启");
 pub(crate) const OPEN_GITHUB: LocalizedText = LocalizedText::new("View on GitHub", "前往 GitHub");
-pub(crate) const CHECK_PENDING: LocalizedText =
-    LocalizedText::new("Waiting to check for updates", "等待自动检查更新");
 pub(crate) const CHECKING: LocalizedText =
     LocalizedText::new("Checking for updates…", "正在检查新版本…");
 pub(crate) const UP_TO_DATE: LocalizedText =

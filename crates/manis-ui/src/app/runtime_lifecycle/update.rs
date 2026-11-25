@@ -1,6 +1,6 @@
 use super::{
-    AppUpdateError, AvailableUpdate, Context, Duration, Language, LogLevel, ManisApp, app_update,
-    copy, core_update, mihomo, record_event,
+    AppUpdateError, AvailableUpdate, Context, Language, LogLevel, ManisApp, app_update, copy,
+    core_update, mihomo, record_event,
 };
 use crate::kernel::KernelRuntime;
 
@@ -109,17 +109,14 @@ impl ManisApp {
         }
     }
 
-    pub(in crate::app) fn start_app_update_polling(cx: &mut Context<Self>) {
-        let timer = cx.background_executor().clone();
-        cx.spawn(async move |this, cx| {
-            loop {
-                if this.update(cx, Self::check_for_app_update).is_err() {
-                    break;
-                }
-                timer.timer(Duration::from_hours(1)).await;
-            }
-        })
-        .detach();
+    /// Triggers an update check automatically when the user enters the About & Updates view.
+    pub(in crate::app) fn maybe_auto_check_app_update(&mut self, cx: &mut Context<Self>) {
+        if matches!(
+            self.app_update_state,
+            AppUpdateState::Idle | AppUpdateState::Current | AppUpdateState::Failed(_)
+        ) {
+            self.check_for_app_update(cx);
+        }
     }
 
     pub(in crate::app) fn check_for_app_update(&mut self, cx: &mut Context<Self>) {

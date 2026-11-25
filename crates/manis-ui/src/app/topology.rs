@@ -53,6 +53,8 @@ pub(in crate::app) struct TopologyState {
     pub(in crate::app) pinned_nodes: Option<NodesTreeFocus>,
     pub(in crate::app) hovered_rules: Option<RulesTreeFocus>,
     pub(in crate::app) pinned_rules: Option<RulesTreeFocus>,
+    pub(in crate::app) nodes_scroll: gpui::ScrollHandle,
+    pub(in crate::app) rules_scroll: gpui::ScrollHandle,
 }
 
 impl TopologyState {
@@ -148,10 +150,14 @@ pub(super) fn port_tracker(registry: PortRegistry, key: String) -> AnyElement {
 
 #[derive(Clone, Copy)]
 pub(super) enum EdgeOrientation {
-    /// Connects bottom-center of `from` to top-center of `to` (Policy -> Node tree).
+    /// Connects bottom-center of `from` to top-center of `to` (downward tier-to-tier).
     Vertical,
     /// Connects right-center of `from` to left-center of `to` (Rule -> Policy -> Exit flow).
     Horizontal,
+    /// Connects peers in the same row with a smooth arch above (left->right) or below (right->left).
+    SameRowArc,
+    /// Connects a lower policy back up to an upper policy along the outer edge (cyclic mesh link).
+    UpwardLoop,
 }
 
 pub(super) struct BezierEdge {
@@ -209,7 +215,7 @@ fn bezier_anchors(
         EdgeOrientation::Vertical => {
             let p1 = point(from.center().x, from.bottom());
             let p2 = point(to.center().x, to.top());
-            let dy = px(((p2.y - p1.y).as_f32() * 0.54).max(44.0));
+            let dy = px(((p2.y - p1.y).as_f32() * 0.54).max(34.0));
             (p1, p2, point(p1.x, p1.y + dy), point(p2.x, p2.y - dy))
         }
         EdgeOrientation::Horizontal => {
@@ -217,6 +223,35 @@ fn bezier_anchors(
             let p2 = point(to.left(), to.center().y);
             let dx = px(((p2.x - p1.x).as_f32() * 0.48).max(36.0));
             (p1, p2, point(p1.x + dx, p1.y), point(p2.x - dx, p2.y))
+        }
+        EdgeOrientation::SameRowArc => {
+            let left_to_right = from.center().x <= to.center().x;
+            let span = (to.center().x - from.center().x).as_f32().abs();
+            let lift = px((26.0 + span * 0.08).min(58.0));
+            if left_to_right {
+                let p1 = point(from.center().x, from.top());
+                let p2 = point(to.center().x, to.top());
+                (p1, p2, point(p1.x, p1.y - lift), point(p2.x, p2.y - lift))
+            } else {
+                let p1 = point(from.center().x, from.bottom());
+                let p2 = point(to.center().x, to.bottom());
+                (p1, p2, point(p1.x, p1.y + lift), point(p2.x, p2.y + lift))
+            }
+        }
+        EdgeOrientation::UpwardLoop => {
+            let go_right = from.center().x <= to.center().x;
+            let p1 = if go_right {
+                point(from.right(), from.center().y)
+            } else {
+                point(from.left(), from.center().y)
+            };
+            let p2 = if go_right {
+                point(to.right(), to.center().y)
+            } else {
+                point(to.left(), to.center().y)
+            };
+            let bulge = px(if go_right { 48.0 } else { -48.0 });
+            (p1, p2, point(p1.x + bulge, p1.y), point(p2.x + bulge, p2.y))
         }
     }
 }
@@ -472,6 +507,10 @@ mod tests {
     }
 
     #[gpui::test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Verifies horizontal fit, canvas containment, and vertical scrolling for both dense nodes and tall rules trees"
+    )]
     fn dense_54_nodes_and_15_manual_rules_fit_without_horizontal_overflow(
         cx: &mut gpui::TestAppContext,
     ) {
@@ -539,6 +578,20 @@ mod tests {
             last_node.right() <= canvas.right(),
             "all 54 dense node chips wrap inside the canvas width"
         );
+        assert!(
+            last_node.bottom() <= canvas.bottom(),
+            "nodes-tree-canvas must expand to enclose all 54 nodes instead of clipping early"
+        );
+        let nodes_max_scroll = app.read_with(cx, |app, _| app.topology.nodes_scroll.max_offset());
+        let nodes_scroll_bounds = cx
+            .debug_bounds("nodes-tree-scroll")
+            .expect("nodes tree scroll viewport");
+        if canvas.size.height > nodes_scroll_bounds.size.height {
+            assert!(
+                nodes_max_scroll.y > gpui::px(0.0),
+                "nodes-tree-scroll must be scrollable when canvas exceeds viewport height"
+            );
+        }
 
         // Switch to RoutingRules: 15 manual rules cluster into 3 target groups + FINAL = 4 cards.
         cx.update(|window, cx| {
@@ -549,10 +602,190 @@ mod tests {
             window.draw(cx).clear(cx);
         });
         assert!(cx.debug_bounds("tree-rule-0").is_some());
-        assert!(cx.debug_bounds("tree-rule-3").is_some());
+        let final_rule = cx.debug_bounds("tree-rule-3").expect("FINAL rule visible");
+        let rules_canvas = cx
+            .debug_bounds("rules-tree-canvas")
+            .expect("rules tree canvas");
+        assert!(
+            final_rule.bottom() <= rules_canvas.bottom(),
+            "rules-tree-canvas must enclose FINAL without overflowing"
+        );
         assert!(
             cx.debug_bounds("tree-rule-4").is_none(),
             "15 manual rules across 3 targets cluster into 3 cards plus FINAL"
+        );
+
+        // Add 12 local rule groups so the rules tree exceeds a standard desktop window height and
+        // verify rules-tree-canvas still encloses FINAL while rules-tree-scroll scrolls vertically.
+        cx.update(|window, cx| {
+            app.update(cx, |app, cx| {
+                app.local_rule_groups = (0..12)
+                    .map(|idx| LocalRoutingRuleGroup {
+                        id: format!("local-{idx}"),
+                        name: format!("Rule Group {idx:02}"),
+                        target_policy: manis_profile::Name::parse("香港").expect("target"),
+                        enabled: true,
+                        rules: vec![
+                            ManualRule::parse(
+                                ManualRuleKind::HostSuffix,
+                                &format!("group-{idx}.example.com"),
+                                "香港",
+                            )
+                            .expect("local group rule"),
+                        ],
+                    })
+                    .collect();
+                cx.notify();
+            });
+            window.draw(cx).clear(cx);
+        });
+        let tall_rules_canvas = cx
+            .debug_bounds("rules-tree-canvas")
+            .expect("tall rules tree canvas");
+        let tall_final_rule = cx
+            .debug_bounds("tree-rule-15")
+            .expect("FINAL card after 12 local groups + 3 manual clusters");
+        assert!(
+            tall_final_rule.bottom() <= tall_rules_canvas.bottom(),
+            "tall rules-tree-canvas must wrap every rule card down to FINAL"
+        );
+        let rules_max_scroll = app.read_with(cx, |app, _| app.topology.rules_scroll.max_offset());
+        let rules_scroll_bounds = cx
+            .debug_bounds("rules-tree-scroll")
+            .expect("rules tree scroll viewport");
+        if tall_rules_canvas.size.height > rules_scroll_bounds.size.height {
+            assert!(
+                rules_max_scroll.y > gpui::px(0.0),
+                "rules-tree-scroll must be scrollable when rules exceed viewport height"
+            );
+        }
+    }
+
+    #[gpui::test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Constructs a realistic nested and cyclic policy catalog fixture"
+    )]
+    fn nested_and_mesh_policy_groups_layer_without_duplicating_into_nodes_tier(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use manis_core::{
+            PolicyCandidateKind, PolicyCatalog, PolicyGroup, PolicyGroupId, PolicyGroupKind,
+            PolicyNode, ProxyId,
+        };
+
+        cx.update(crate::init);
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            let entity = cx.new(|_| {
+                let mut fixture = ManisApp::with_fixture_controller("http://127.0.0.1:1");
+                fixture.source_providers = vec![LoadedProvider {
+                    name: "CloudEdge".to_owned(),
+                    vehicle_type: Some("HTTP".to_owned()),
+                    nodes: vec![
+                        LoadedProviderNode {
+                            name: "HK 01".to_owned(),
+                            protocol: "Trojan".to_owned(),
+                            latency_label: Some("42 ms".to_owned()),
+                            alive: Some(true),
+                        },
+                        LoadedProviderNode {
+                            name: "JP 01".to_owned(),
+                            protocol: "Trojan".to_owned(),
+                            latency_label: Some("68 ms".to_owned()),
+                            alive: Some(true),
+                        },
+                    ],
+                }];
+                let make_node =
+                    |id: &str, name: &str, kind: PolicyCandidateKind, detail: &str, ms: u16| {
+                        PolicyNode {
+                            id: ProxyId::new(id),
+                            name: name.to_owned(),
+                            kind,
+                            provider: None,
+                            detail: detail.to_owned(),
+                            latency_ms: Some(ms),
+                            alive: Some(true),
+                        }
+                    };
+                let groups = vec![
+                    PolicyGroup {
+                        id: PolicyGroupId::new("airport"),
+                        name: "机场专线".to_owned(),
+                        kind: PolicyGroupKind::Selector,
+                        target: Some("香港".to_owned()),
+                        nodes: vec![
+                            make_node(
+                                "hk",
+                                "香港",
+                                PolicyCandidateKind::PolicyGroup,
+                                "Selector",
+                                42,
+                            ),
+                            make_node("jp", "JP", PolicyCandidateKind::PolicyGroup, "URLTest", 68),
+                            make_node("DIRECT", "DIRECT", PolicyCandidateKind::Node, "Direct", 0),
+                        ],
+                        rules: Vec::new(),
+                        rules_total: 0,
+                    },
+                    PolicyGroup {
+                        id: PolicyGroupId::new("hk"),
+                        name: "香港".to_owned(),
+                        kind: PolicyGroupKind::Selector,
+                        target: Some("HK 01".to_owned()),
+                        nodes: vec![
+                            make_node("HK 01", "HK 01", PolicyCandidateKind::Node, "Trojan", 42),
+                            make_node("jp", "JP", PolicyCandidateKind::PolicyGroup, "URLTest", 68),
+                        ],
+                        rules: Vec::new(),
+                        rules_total: 0,
+                    },
+                    PolicyGroup {
+                        id: PolicyGroupId::new("jp"),
+                        name: "JP".to_owned(),
+                        kind: PolicyGroupKind::UrlTest,
+                        target: Some("JP 01".to_owned()),
+                        nodes: vec![
+                            make_node("JP 01", "JP 01", PolicyCandidateKind::Node, "Trojan", 68),
+                            make_node(
+                                "hk",
+                                "香港",
+                                PolicyCandidateKind::PolicyGroup,
+                                "Selector",
+                                42,
+                            ),
+                        ],
+                        rules: Vec::new(),
+                        rules_total: 0,
+                    },
+                ];
+                fixture.catalog = Some(PolicyCatalog::try_new(groups).expect("nested catalog"));
+                fixture
+            });
+            crate::root(entity, window, cx)
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+
+        let airport = cx
+            .debug_bounds("tree-policy-0")
+            .expect("composite policy 机场专线 renders");
+        let hk_policy = cx
+            .debug_bounds("tree-policy-1")
+            .expect("child policy 香港 renders");
+        let jp_policy = cx
+            .debug_bounds("tree-policy-2")
+            .expect("child policy JP renders");
+        assert!(
+            airport.bottom() < hk_policy.top() && airport.bottom() < jp_policy.top(),
+            "composite policy group layers above its child policy groups"
+        );
+        // Only physical/leaf exits (HK 01, JP 01, DIRECT) appear in the nodes tier — never 香港 or JP.
+        assert!(cx.debug_bounds("tree-node-0").is_some());
+        assert!(cx.debug_bounds("tree-node-1").is_some());
+        assert!(cx.debug_bounds("tree-node-2").is_some());
+        assert!(
+            cx.debug_bounds("tree-node-3").is_none(),
+            "referenced policy groups must not be duplicated into the nodes tier"
         );
     }
 }

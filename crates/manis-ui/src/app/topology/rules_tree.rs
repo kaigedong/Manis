@@ -4,7 +4,9 @@ use gpui::{
     AnyElement, Context, Div, FontWeight, InteractiveElement, IntoElement, ParentElement, Stateful,
     StatefulInteractiveElement, Styled, div, prelude::FluentBuilder as _, px,
 };
-use gpui_component::{Disableable as _, IconName, Sizable as _, switch::Switch};
+use gpui_component::{
+    Disableable as _, IconName, Sizable as _, scroll::ScrollableElement as _, switch::Switch,
+};
 use manis_core::WindowSizeClass;
 use manis_profile::QxRuleList;
 
@@ -165,6 +167,7 @@ impl ManisApp {
             })
             .collect::<Vec<_>>();
 
+        let bay_width = if compact { px(44.0) } else { px(64.0) };
         let flow_inner = div()
             .relative()
             .w_full()
@@ -176,10 +179,10 @@ impl ManisApp {
                 div()
                     .relative()
                     .flex_1()
-                    .min_w(px(230.0))
+                    .min_w_0()
                     .flex()
                     .flex_col()
-                    .gap(px(6.0))
+                    .gap(px(5.0))
                     .child(col_tag(
                         match language {
                             Language::English => "01 · ROUTING RULES (TOP TO BOTTOM)",
@@ -191,16 +194,16 @@ impl ManisApp {
                     .children(col1_cards),
             )
             // Unobstructed Bézier bay 1 -> 2
-            .child(div().w(px(72.0)).flex_shrink_0())
+            .child(div().w(bay_width).flex_shrink_0())
             // Column 2: Policy Groups
             .child(
                 div()
                     .relative()
                     .flex_1()
-                    .min_w(px(195.0))
+                    .min_w_0()
                     .flex()
                     .flex_col()
-                    .gap(px(6.0))
+                    .gap(px(5.0))
                     .child(col_tag(
                         match language {
                             Language::English => "02 · POLICY GROUPS",
@@ -212,16 +215,16 @@ impl ManisApp {
                     .children(col2_cards),
             )
             // Unobstructed Bézier bay 2 -> 3
-            .child(div().w(px(72.0)).flex_shrink_0())
+            .child(div().w(bay_width).flex_shrink_0())
             // Column 3: Active Exit Nodes
             .child(
                 div()
                     .relative()
                     .flex_1()
-                    .min_w(px(190.0))
+                    .min_w_0()
                     .flex()
                     .flex_col()
-                    .gap(px(6.0))
+                    .gap(px(5.0))
                     .child(col_tag(
                         match language {
                             Language::English => "03 · ACTIVE EXITS",
@@ -236,8 +239,9 @@ impl ManisApp {
         let canvas_card = card_surface(theme)
             .id("rules-tree-canvas")
             .debug_selector(|| "rules-tree-canvas".to_owned())
-            .flex_1()
-            .min_h(px(380.0))
+            .w_full()
+            .flex_shrink_0()
+            .min_h(px(360.0))
             .p(px(16.0))
             .on_click(cx.listener(|this, _, _, cx| {
                 if this.topology.pinned_rules.take().is_some() {
@@ -246,23 +250,46 @@ impl ManisApp {
             }))
             .child(flow_inner);
 
+        let horizontal_pad = if compact {
+            Space::Md.px()
+        } else {
+            Space::Xl.px()
+        };
         div()
-            .id("rules-tree-scroll")
-            .debug_selector(|| "rules-tree-scroll".to_owned())
+            .id("rules-tree-workspace")
             .flex_1()
             .min_h_0()
-            .overflow_y_scroll()
-            .px(if compact {
-                Space::Md.px()
-            } else {
-                Space::Xl.px()
-            })
-            .py(Space::Lg.px())
+            .w_full()
             .flex()
             .flex_col()
+            .pt(Space::Lg.px())
             .gap(Space::Md.px())
-            .child(inspector)
-            .child(canvas_card)
+            .child(div().flex_shrink_0().px(horizontal_pad).child(inspector))
+            .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .w_full()
+                    .child(
+                        div()
+                            .id("rules-tree-scroll")
+                            .debug_selector(|| "rules-tree-scroll".to_owned())
+                            .size_full()
+                            .overflow_y_scroll()
+                            .track_scroll(&self.topology.rules_scroll)
+                            .child(
+                                div()
+                                    .w_full()
+                                    .px(horizontal_pad)
+                                    .pb(Space::Lg.px())
+                                    .flex()
+                                    .flex_col()
+                                    .child(canvas_card),
+                            ),
+                    )
+                    .vertical_scrollbar(&self.topology.rules_scroll),
+            )
     }
 
     #[allow(clippy::too_many_lines)] // Gathers live rules, target policy groups, and deduplicated exits.

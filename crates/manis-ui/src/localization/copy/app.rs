@@ -163,7 +163,7 @@ pub(crate) const NO_POLICY_GROUPS_YET: LocalizedText =
     LocalizedText::new("No policy groups yet", "还没有策略组");
 pub(crate) const NO_EXIT_SELECTED: LocalizedText =
     LocalizedText::new("No exit selected", "未选择出口");
-pub(crate) const OFF: LocalizedText = LocalizedText::new("Paused", "已暂停");
+pub(crate) const OFF: LocalizedText = LocalizedText::new("Pause", "暂停");
 pub(crate) const ONLY_A_CANDIDATE_INSIDE_A_MANUAL_POLICY_CAN_BE_SELECTED: LocalizedText =
     LocalizedText::new(
         "Only a candidate inside a manual policy can be selected",

@@ -893,6 +893,11 @@ impl ManisApp {
         };
         trace_ui(event);
         status.clone_into(&mut self.status);
+        if workspace == PrimaryWorkspace::Configuration
+            && self.configuration_section == crate::app::ConfigurationSection::Updates
+        {
+            self.maybe_auto_check_app_update(cx);
+        }
         cx.notify();
     }
 }

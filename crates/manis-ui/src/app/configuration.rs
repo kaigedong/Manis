@@ -1098,6 +1098,10 @@ mod tests {
                 *expected_height.get_or_insert(panel.size.height),
                 panel.size.height
             );
+            assert!(
+                window_cx.debug_bounds("app-update-check").is_some(),
+                "inline refresh button renders next to version"
+            );
             let button = window_cx
                 .debug_bounds("app-update-github")
                 .expect("GitHub action renders");
@@ -1105,7 +1109,7 @@ mod tests {
             window_cx.simulate_click(button.center(), Modifiers::none());
             assert_eq!(
                 window_cx.opened_url().as_deref(),
-                Some(app_update::RELEASES_URL)
+                Some(app_update::REPOSITORY_URL)
             );
             window_cx.update(|_, cx| {
                 app.read_with(cx, |app, _| assert_eq!(app.app_update_state, state));

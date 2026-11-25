@@ -49,6 +49,9 @@ impl ManisApp {
         self.configuration_section = section;
         self.configuration_scroll.scroll_to_top_of_item(index);
         self.configuration_navigation_scroll.scroll_to_item(index);
+        if section == ConfigurationSection::Updates {
+            self.maybe_auto_check_app_update(cx);
+        }
         cx.notify();
     }
 
@@ -71,6 +74,9 @@ impl ManisApp {
             self.configuration_section = section;
             self.configuration_navigation_scroll
                 .scroll_to_item(configuration_section_index(section));
+            if section == ConfigurationSection::Updates {
+                self.maybe_auto_check_app_update(cx);
+            }
             cx.notify();
         }
     }

@@ -8,7 +8,6 @@ use ureq::{Agent, ResponseExt as _};
 
 const RELEASE_API: &str = "https://api.github.com/repos/kaigedong/Manis/releases/tags/latest";
 pub(crate) const REPOSITORY_URL: &str = "https://github.com/kaigedong/Manis";
-pub(crate) const RELEASES_URL: &str = "https://github.com/kaigedong/Manis/releases/tag/latest";
 const MANIFEST_NAME: &str = "manis-update.json";
 const MANIFEST_SCHEMA_VERSION: u32 = 1;
 const MAX_RELEASE_METADATA_BYTES: u64 = 1024 * 1024;

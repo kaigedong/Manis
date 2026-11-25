@@ -277,7 +277,6 @@ impl ManisApp {
         let mut app = Self::new();
         app.lifecycle_subscriptions.app_lifecycle = Some(cx.on_app_quit(Self::shutdown_for_quit));
         app.restore_imported_subscriptions(cx);
-        Self::start_app_update_polling(cx);
         #[cfg(not(test))]
         app.sync_launch_at_login();
         if matches!(app.mihomo_core_update_state, MihomoCoreUpdateState::Missing) {
@@ -784,6 +783,7 @@ impl ManisApp {
             .relative()
             .flex_1()
             .min_w(px(0.0))
+            .min_h(px(0.0))
             .overflow_hidden()
             .flex()
             .justify_center()
@@ -793,6 +793,7 @@ impl ManisApp {
                     .max_w(crate::theme::LayoutMetric::ContentMaxWidth.px())
                     .h_full()
                     .min_w(px(0.0))
+                    .min_h(px(0.0))
                     .flex()
                     .flex_col()
                     .when(self.primary_workspace == PrimaryWorkspace::Nodes, |main| {
