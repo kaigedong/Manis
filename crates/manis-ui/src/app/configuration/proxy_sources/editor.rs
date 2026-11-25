@@ -2,13 +2,13 @@ use gpui_component::WindowExt as _;
 
 use super::{
     ActionRole, AnyElement, Button, Checkbox, Context, ControlSize, Dialog, Disableable, Div,
-    Entity, FluentBuilder, Focusable, FontWeight, InteractiveElement, IntoElement, Language,
-    ManisApp, Message, ParentElement, ProxySourceEditorActivity, ProxySourceEditorInputs,
-    ProxySourceEditorKind, ProxySourceEditorTarget, ProxySourceEditorView, Radius,
-    RemoteSourceRefreshInterval, Role, Selectable, Stateful, StatefulInteractiveElement, Styled,
-    SubscriptionFeedback, SubscriptionTextInput, TextRole, Theme, Window, action_button, copy,
-    dialog_footer_surface, dialog_header_surface, div, field_label, footer_feedback, px,
-    refresh_interval_label, style_action_button, surface_dialog,
+    Entity, FluentBuilder, Focusable, InteractiveElement, IntoElement, Language, ManisApp, Message,
+    ParentElement, ProxySourceEditorActivity, ProxySourceEditorInputs, ProxySourceEditorKind,
+    ProxySourceEditorTarget, ProxySourceEditorView, Radius, RemoteSourceRefreshInterval,
+    Selectable, Stateful, StatefulInteractiveElement, Styled, SubscriptionFeedback,
+    SubscriptionTextInput, TextRole, Theme, Window, action_button, copy, dialog_footer_surface,
+    dialog_header_surface, div, field_label, footer_feedback, px, refresh_interval_label,
+    style_action_button, surface_dialog,
 };
 
 impl ManisApp {
@@ -241,7 +241,7 @@ impl ManisApp {
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let mut menu = div().p_1();
+        let mut menu = crate::components::popover_menu_list("subscription-refresh-menu");
         for interval in [
             RemoteSourceRefreshInterval::Manual,
             RemoteSourceRefreshInterval::Hourly,
@@ -250,54 +250,19 @@ impl ManisApp {
             RemoteSourceRefreshInterval::Daily,
         ] {
             let selected = interval == self.proxy_source_editor.refresh_interval;
-            menu = menu.child(
-                div()
-                    .id(format!("subscription-refresh-option-{interval:?}"))
-                    .role(Role::Button)
-                    .aria_label(refresh_interval_label(interval, language))
-                    .tab_stop(true)
-                    .focusable()
-                    .map(crate::components::primary_button_interaction)
-                    .cursor_pointer()
-                    .px_3()
-                    .py_2()
-                    .rounded(Radius::Control.px())
-                    .bg(if selected {
-                        theme.action_soft
-                    } else {
-                        theme.surface_high
-                    })
-                    .hover(move |style| {
-                        if selected {
-                            style.bg(theme.action_soft)
-                        } else {
-                            style.bg(theme.button_hover)
-                        }
-                    })
-                    .active(move |style| {
-                        if selected {
-                            style.bg(theme.action_soft)
-                        } else {
-                            style.bg(theme.button_active)
-                        }
-                    })
-                    .font_weight(if selected {
-                        FontWeight::SEMIBOLD
-                    } else {
-                        FontWeight::NORMAL
-                    })
-                    .text_color(if selected {
-                        theme.action_primary
-                    } else {
-                        theme.text_primary
-                    })
-                    .child(refresh_interval_label(interval, language))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.proxy_source_editor.refresh_interval = interval;
-                        this.proxy_source_editor.interval_popover = false;
-                        cx.notify();
-                    })),
-            );
+            menu = menu.child(crate::components::popover_menu_option(
+                format!("subscription-refresh-option-{interval:?}"),
+                refresh_interval_label(interval, language),
+                None,
+                selected,
+                true,
+                theme,
+                cx.listener(move |this, _, _, cx| {
+                    this.proxy_source_editor.refresh_interval = interval;
+                    this.proxy_source_editor.interval_popover = false;
+                    cx.notify();
+                }),
+            ));
         }
         let trigger = Button::new("subscription-editor-refresh-interval")
             .accessibility_label(
@@ -310,7 +275,7 @@ impl ManisApp {
                 language,
             ))
             .disabled(view.busy());
-        let trigger = style_action_button(trigger, ActionRole::Secondary, ControlSize::Standard)
+        let trigger = crate::components::style_select_trigger(trigger, ControlSize::Standard)
             .when(view.busy(), gpui::Styled::cursor_default);
         let app = cx.entity();
         crate::components::anchored_popover(

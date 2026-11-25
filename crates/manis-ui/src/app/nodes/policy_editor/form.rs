@@ -1,10 +1,9 @@
 use super::{
-    ActionRole, AnyElement, Button, Context, ControlSize, Disableable, Div, FluentBuilder,
-    FontWeight, InteractiveElement, IntoElement, Language, ManagedPolicyDraft, ManagedPolicyIcon,
+    AnyElement, Button, Context, ControlSize, Disableable, Div, FluentBuilder, FontWeight,
+    InteractiveElement, IntoElement, Language, ManagedPolicyDraft, ManagedPolicyIcon,
     ManagedPolicyStrategy, ManisApp, ParentElement, PolicyCandidateMatcherKind,
-    PolicyEditorPopover, PolicyEditorPopup, Radio, Radius, Role, Stateful,
-    StatefulInteractiveElement, Styled, TextRole, Theme, Toggled, copy, div, px,
-    style_action_button,
+    PolicyEditorPopover, PolicyEditorPopup, Radius, Role, Stateful, StatefulInteractiveElement,
+    Styled, TextRole, Theme, Toggled, copy, div, px,
 };
 
 impl ManisApp {
@@ -343,12 +342,11 @@ impl ManisApp {
             disabled,
         } = popup;
         let app = cx.entity();
-        let trigger = style_action_button(
+        let trigger = crate::components::style_select_trigger(
             Button::new(id)
                 .accessibility_label(format!("{label}: {value}"))
                 .disabled(disabled)
                 .dropdown_caret(true),
-            ActionRole::Secondary,
             ControlSize::Standard,
         )
         .when(disabled, gpui::Styled::cursor_default)
@@ -370,7 +368,11 @@ impl ManisApp {
                         .text_size(TextRole::Label.size())
                         .line_height(TextRole::Label.line_height())
                         .font_weight(TextRole::Label.weight())
-                        .text_color(theme.text_secondary)
+                        .text_color(if disabled {
+                            theme.text_tertiary
+                        } else {
+                            theme.text_primary
+                        })
                         .child(value),
                 ),
         );
@@ -395,7 +397,7 @@ impl ManisApp {
         });
 
         div()
-            .min_h(px(64.0))
+            .min_h(px(52.0))
             .px_4()
             .border_color(theme.outline_subtle)
             .when(show_divider, gpui::Styled::border_b_1)
@@ -405,10 +407,11 @@ impl ManisApp {
             .child(
                 div()
                     .flex_1()
-                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_size(TextRole::Label.size())
+                    .font_weight(FontWeight::MEDIUM)
                     .child(label),
             )
-            .child(div().w(px(300.0)).max_w(px(300.0)).child(popover))
+            .child(div().w(px(280.0)).max_w(px(280.0)).child(popover))
             .into_any_element()
     }
 
@@ -444,24 +447,9 @@ impl ManisApp {
         title: impl Into<gpui::SharedString>,
         selected: bool,
         theme: Theme,
-        listener: impl Fn(&bool, &mut gpui::Window, &mut gpui::App) + 'static,
-    ) -> Radio {
-        let title = title.into();
-        Radio::new(id)
-            .label(title)
-            .map(crate::components::primary_button_interaction)
-            .checked(selected)
-            .tab_stop(true)
-            .cursor_pointer()
-            .min_h(px(44.0))
-            .px_3()
-            .flex()
-            .items_center()
-            .border_b_1()
-            .border_color(theme.outline_subtle)
-            .hover(|style| style.bg(theme.button_hover))
-            .active(|style| style.bg(theme.button_active))
-            .on_click(listener)
+        listener: impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
+    ) -> Stateful<Div> {
+        crate::components::popover_menu_option(id, title, None, selected, true, theme, listener)
     }
 
     pub(in crate::app) fn policy_icon_choice_row(
@@ -472,6 +460,7 @@ impl ManisApp {
         theme: Theme,
         listener: impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
     ) -> Stateful<Div> {
+        use gpui_component::{Icon, IconName, Sizable as _};
         let title = title.into();
         div()
             .id(id)
@@ -485,29 +474,48 @@ impl ManisApp {
             .focusable()
             .map(crate::components::primary_button_interaction)
             .cursor_pointer()
-            .min_h(px(50.0))
-            .px_3()
-            .border_b_1()
-            .border_color(theme.outline_subtle)
-            .hover(|style| style.bg(theme.button_hover))
-            .active(|style| style.bg(theme.button_active))
+            .min_h(px(34.0))
+            .px(px(8.0))
+            .py(px(4.0))
+            .rounded(px(6.0))
+            .bg(if selected {
+                theme.action_soft
+            } else {
+                gpui::rgba(0x0000_0000)
+            })
+            .when(!selected, |row| {
+                row.hover(move |style| style.bg(theme.button_hover))
+                    .active(move |style| style.bg(theme.button_active))
+            })
             .flex()
             .items_center()
-            .gap_3()
-            .child(Self::policy_icon_visual(icon, "A", 30.0, theme))
-            .child(div().flex_1().font_weight(FontWeight::MEDIUM).child(title))
+            .gap(px(8.0))
+            .child(Self::policy_icon_visual(icon, "A", 22.0, theme))
             .child(
                 div()
-                    .size(px(16.0))
-                    .rounded_full()
-                    .border_2()
-                    .border_color(if selected {
+                    .flex_1()
+                    .text_size(px(12.5))
+                    .line_height(px(18.0))
+                    .font_weight(if selected {
+                        FontWeight::MEDIUM
+                    } else {
+                        FontWeight::NORMAL
+                    })
+                    .text_color(if selected {
                         theme.action_primary
                     } else {
-                        theme.outline_strong
+                        theme.text_primary
                     })
-                    .when(selected, |radio| radio.bg(theme.action_primary)),
+                    .child(title),
             )
+            .when(selected, |row| {
+                row.child(
+                    Icon::new(IconName::Check)
+                        .xsmall()
+                        .flex_shrink_0()
+                        .text_color(theme.action_primary),
+                )
+            })
             .on_click(listener)
     }
 }

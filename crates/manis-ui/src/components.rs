@@ -1,12 +1,13 @@
 use gpui::{
-    AnyElement, Div, ElementId, IntoElement, ParentElement, Rgba, SharedString, Styled, Window,
-    div, prelude::*, px,
+    AnyElement, Div, ElementId, FontWeight, IntoElement, ParentElement, Rgba, Role, SharedString,
+    Stateful, Styled, Window, div, prelude::*, px,
 };
 use gpui_component::{
-    Icon, IconName, Sizable as _,
+    Disableable as _, Icon, IconName, Sizable as _,
     button::{Button, ButtonVariant, ButtonVariants as _},
     dialog::Dialog,
     popover::Popover,
+    switch::Switch,
 };
 
 use crate::theme::{ControlSize, MONO_FAMILY, Radius, Space, TextRole, Theme};
@@ -36,6 +37,8 @@ pub(crate) enum ActionRole {
     Primary,
     Secondary,
     Danger,
+    /// Restrained outlined destructive action for inline rows and cards.
+    SubtleDanger,
 }
 
 impl ActionRole {
@@ -43,7 +46,7 @@ impl ActionRole {
         match self {
             Self::Primary => ButtonVariant::Primary,
             Self::Secondary => ButtonVariant::Secondary,
-            Self::Danger => ButtonVariant::Danger,
+            Self::Danger | Self::SubtleDanger => ButtonVariant::Danger,
         }
     }
 }
@@ -69,25 +72,67 @@ pub(crate) fn row_action_button(
 }
 
 pub(crate) fn style_action_button(button: Button, role: ActionRole, size: ControlSize) -> Button {
+    let is_compact = size == ControlSize::Compact;
+    let is_icon = size == ControlSize::Icon;
     primary_button_interaction(button)
         .cursor_pointer()
         .with_variant(role.variant())
+        .when(role == ActionRole::SubtleDanger, Button::outline)
         .with_size(gpui_component::Size::Small)
         .h(size.height())
         .min_w(size.min_pointer_target())
-        .px(Space::Md.px())
+        .px(if is_compact { px(10.0) } else { px(12.0) })
         .py_0()
         .border_1()
         .rounded(Radius::Control.px())
-        .line_height(gpui::relative(1.0))
-        .font_weight(if role == ActionRole::Primary {
-            gpui::FontWeight::SEMIBOLD
+        .text_size(if is_compact {
+            px(12.5)
         } else {
-            TextRole::Label.weight()
+            TextRole::Label.size()
         })
-        .when(size == ControlSize::Icon, |button| {
-            button.px_0().w(size.height())
+        .line_height(gpui::relative(1.0))
+        .font_weight(FontWeight::MEDIUM)
+        .when(is_icon, |button| button.px_0().w(size.height()))
+}
+
+/// Styles a dropdown/select trigger as a crisp desktop field rather than a solid push button.
+pub(crate) fn style_select_trigger(button: Button, size: ControlSize) -> Button {
+    let is_compact = size == ControlSize::Compact;
+    primary_button_interaction(button)
+        .cursor_pointer()
+        .with_variant(ButtonVariant::Secondary)
+        .outline()
+        .with_size(gpui_component::Size::Small)
+        .h(size.height())
+        .min_w(size.min_pointer_target())
+        .px(if is_compact { px(9.0) } else { px(10.0) })
+        .py_0()
+        .border_1()
+        .rounded(Radius::Control.px())
+        .text_size(if is_compact {
+            px(12.5)
+        } else {
+            TextRole::Label.size()
         })
+        .line_height(gpui::relative(1.0))
+        .font_weight(TextRole::Label.weight())
+}
+
+/// Unified desktop toggle switch (`28x16px` spring-animated track).
+pub(crate) fn toggle_switch(
+    id: impl Into<ElementId>,
+    checked: bool,
+    disabled: bool,
+    label: impl Into<SharedString>,
+    on_change: impl Fn(&bool, &mut Window, &mut gpui::App) + 'static,
+) -> Switch {
+    Switch::new(id)
+        .small()
+        .checked(checked)
+        .disabled(disabled)
+        .accessibility_label(label)
+        .when(!disabled, Styled::cursor_pointer)
+        .on_change(on_change)
 }
 
 /// Secondary presses must not focus or depress ordinary controls. Do not stop
@@ -514,14 +559,113 @@ pub(crate) fn anchored_popover(
     width: f32,
     max_height: f32,
 ) -> Popover {
-    Popover::new(id).trigger(trigger).w(px(width)).p_0().child(
-        gpui::div()
-            .id("component-popover-scroll")
-            .w_full()
-            .max_h(px(max_height))
-            .overflow_y_scroll()
-            .child(content),
-    )
+    Popover::new(id)
+        .trigger(trigger)
+        .w(px(width))
+        .p_0()
+        .rounded(px(10.0))
+        .shadow_md()
+        .overflow_hidden()
+        .child(
+            gpui::div()
+                .id("component-popover-scroll")
+                .w_full()
+                .max_h(px(max_height))
+                .overflow_y_scroll()
+                .child(content),
+        )
+}
+
+/// Padded list container for dropdown popover menus.
+pub(crate) fn popover_menu_list(id: impl Into<ElementId>) -> Stateful<Div> {
+    div()
+        .id(id)
+        .w_full()
+        .p(px(4.0))
+        .flex()
+        .flex_col()
+        .gap(px(2.0))
+}
+
+/// One selectable option inside a dropdown popover menu.
+pub(crate) fn popover_menu_option(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    detail: Option<SharedString>,
+    selected: bool,
+    enabled: bool,
+    theme: Theme,
+    on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
+) -> Stateful<Div> {
+    let label = label.into();
+    let aria_label = label.clone();
+    div()
+        .id(id)
+        .role(Role::Button)
+        .aria_label(aria_label)
+        .tab_stop(enabled)
+        .focusable()
+        .map(primary_button_interaction)
+        .when(enabled, Styled::cursor_pointer)
+        .min_h(px(28.0))
+        .px(px(8.0))
+        .py(px(4.0))
+        .rounded(px(6.0))
+        .bg(if selected {
+            theme.action_soft
+        } else {
+            gpui::rgba(0x0000_0000)
+        })
+        .when(enabled && !selected, |row| {
+            row.hover(move |style| style.bg(theme.button_hover))
+                .active(move |style| style.bg(theme.button_active))
+        })
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap(Space::Sm.px())
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(0.0))
+                .overflow_x_hidden()
+                .whitespace_nowrap()
+                .text_ellipsis()
+                .text_size(px(12.5))
+                .line_height(px(18.0))
+                .font_weight(if selected {
+                    FontWeight::MEDIUM
+                } else {
+                    FontWeight::NORMAL
+                })
+                .text_color(if !enabled {
+                    theme.text_tertiary
+                } else if selected {
+                    theme.action_primary
+                } else {
+                    theme.text_primary
+                })
+                .child(label),
+        )
+        .when_some(detail, |row, detail| {
+            row.child(
+                div()
+                    .flex_shrink_0()
+                    .text_size(TextRole::Metadata.size())
+                    .line_height(TextRole::Metadata.line_height())
+                    .text_color(theme.text_tertiary)
+                    .child(detail),
+            )
+        })
+        .when(selected, |row| {
+            row.child(
+                Icon::new(IconName::Check)
+                    .xsmall()
+                    .flex_shrink_0()
+                    .text_color(theme.action_primary),
+            )
+        })
+        .on_click(on_click)
 }
 
 /// Synthetic controls for native state screenshots; never reads application data.
@@ -678,6 +822,7 @@ mod tests {
         assert_eq!(ActionRole::Primary.variant(), ButtonVariant::Primary);
         assert_eq!(ActionRole::Secondary.variant(), ButtonVariant::Secondary);
         assert_eq!(ActionRole::Danger.variant(), ButtonVariant::Danger);
+        assert_eq!(ActionRole::SubtleDanger.variant(), ButtonVariant::Danger);
     }
 
     #[test]
@@ -686,6 +831,7 @@ mod tests {
             ActionRole::Primary,
             ActionRole::Secondary,
             ActionRole::Danger,
+            ActionRole::SubtleDanger,
         ] {
             let mut button = action_button("cursor", "Action", role, ControlSize::Standard);
             assert_eq!(
@@ -693,6 +839,14 @@ mod tests {
                 Some(gpui::CursorStyle::PointingHand)
             );
         }
+        let mut select = super::style_select_trigger(
+            Button::new("select-cursor").dropdown_caret(true),
+            ControlSize::Compact,
+        );
+        assert_eq!(
+            select.style().mouse_cursor,
+            Some(gpui::CursorStyle::PointingHand)
+        );
     }
 
     struct PopoverHarness;

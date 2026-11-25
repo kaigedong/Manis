@@ -30,9 +30,9 @@
   --focus-ring: #2B4EFF;
 
   /* Secondary Controls */
-  --control-bg: #ECEAE4;
-  --control-hover: #E2DFD7;
-  --control-active: #D7D3C9;
+  --control-bg: #F4F3EF;
+  --control-hover: #EAE7E0;
+  --control-active: #DFDCD3;
 
   /* Route Truth Semantic: Royal Violet */
   --route-trace: #6D28D9;
@@ -73,11 +73,11 @@
   --space-2xl: 32px;
 
   /* Radii */
-  --radius-badge: 6px;
-  --radius-control: 10px;
-  --radius-row: 10px;
-  --radius-card: 14px;
-  --radius-sheet: 20px;
+  --radius-badge: 5px;
+  --radius-control: 7px;
+  --radius-row: 8px;
+  --radius-card: 12px;
+  --radius-sheet: 16px;
   --radius-pill: 9999px;
 
   /* Motion */
@@ -107,9 +107,9 @@
   --accent-soft: #1B2342;
   --focus-ring: #859FFF;
 
-  --control-bg: #26262E;
-  --control-hover: #31313B;
-  --control-active: #3D3D4A;
+  --control-bg: #24242C;
+  --control-hover: #2E2E38;
+  --control-active: #383844;
 
   --route-trace: #C4B5FD;
   --route-soft: #271F3D;

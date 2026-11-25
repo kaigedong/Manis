@@ -1,8 +1,8 @@
 use super::{
     ActionRole, AnyElement, Button, Context, ControlSize, Div, FluentBuilder, InteractiveElement,
-    IntoElement, Language, ManisApp, ManualRulePopover, ParentElement, Radius, Role, Space,
-    Stateful, StatefulInteractiveElement, Styled, TextRole, Theme, copy, div, field_label,
-    manual_rule_kind_detail, px, style_action_button,
+    IntoElement, Language, ManisApp, ManualRulePopover, ParentElement, Radius, Space, Stateful,
+    Styled, TextRole, Theme, copy, div, field_label, manual_rule_kind_detail, px,
+    style_action_button,
 };
 
 impl ManisApp {
@@ -22,7 +22,7 @@ impl ManisApp {
                 .iter()
                 .enumerate()
                 .any(|(index, rule)| rule.is_final() && Some(index) != editing_index);
-        let mut choices = div().id("manual-rule-kind-choices");
+        let mut choices = crate::components::popover_menu_list("manual-rule-kind-choices");
         for kind in crate::manual_rule::ManualRuleKind::ALL {
             if kind == crate::manual_rule::ManualRuleKind::Final && condition_index > 0 {
                 continue;
@@ -42,61 +42,19 @@ impl ManisApp {
             } else {
                 language.localized(copy::configuration::NO_EXACT_KERNEL_EQUIVALENT)
             };
-            choices = choices.child(
-                div()
-                    .id(format!(
-                        "manual-rule-kind-{condition_index}-{}",
-                        kind.storage_key()
-                    ))
-                    .role(Role::Button)
-                    .aria_label(kind.display_label())
-                    .tab_stop(supported)
-                    .focusable()
-                    .map(crate::components::primary_button_interaction)
-                    .when(supported, gpui::Styled::cursor_pointer)
-                    .min_h(px(36.0))
-                    .px(Space::Md.px())
-                    .py(Space::Xs.px())
-                    .border_b_1()
-                    .border_color(theme.outline_subtle)
-                    .bg(if selected {
-                        theme.action_soft
-                    } else {
-                        theme.surface_high
-                    })
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap_3()
-                    .child(
-                        div()
-                            .text_size(TextRole::Label.size())
-                            .line_height(TextRole::Label.line_height())
-                            .font_weight(TextRole::Label.weight())
-                            .text_color(if supported {
-                                theme.text_primary
-                            } else {
-                                theme.text_tertiary
-                            })
-                            .child(kind.display_label()),
-                    )
-                    .child(
-                        div()
-                            .text_size(TextRole::Metadata.size())
-                            .line_height(TextRole::Metadata.line_height())
-                            .text_color(theme.text_tertiary)
-                            .child(detail),
-                    )
-                    .when(supported && !selected, |row| {
-                        row.hover(move |style| style.bg(theme.button_hover))
-                            .active(move |style| style.bg(theme.button_active))
-                    })
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if supported {
-                            this.set_manual_rule_kind(condition_index, kind, cx);
-                        }
-                    })),
-            );
+            choices = choices.child(crate::components::popover_menu_option(
+                format!("manual-rule-kind-{condition_index}-{}", kind.storage_key()),
+                kind.display_label(),
+                Some(detail.into()),
+                selected,
+                supported,
+                theme,
+                cx.listener(move |this, _, _, cx| {
+                    if supported {
+                        this.set_manual_rule_kind(condition_index, kind, cx);
+                    }
+                }),
+            ));
         }
         choices
     }
@@ -105,49 +63,24 @@ impl ManisApp {
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let mut choices = div().id("manual-rule-target-choices");
+        let mut choices = crate::components::popover_menu_list("manual-rule-target-choices");
         for target in self.manual_rule_targets() {
             let selected = self.manual_rule_target == target;
             let row_target = target.clone();
-            choices = choices.child(
-                div()
-                    .id(format!("manual-rule-target-{target}"))
-                    .role(Role::Button)
-                    .aria_label(format!("Target {target}"))
-                    .tab_stop(true)
-                    .focusable()
-                    .map(crate::components::primary_button_interaction)
-                    .cursor_pointer()
-                    .min_h(ControlSize::Standard.min_pointer_target())
-                    .px(Space::Md.px())
-                    .py(Space::Sm.px())
-                    .border_b_1()
-                    .border_color(theme.outline_subtle)
-                    .bg(if selected {
-                        theme.action_soft
-                    } else {
-                        theme.surface_high
-                    })
-                    .text_size(TextRole::Label.size())
-                    .line_height(TextRole::Label.line_height())
-                    .font_weight(TextRole::Label.weight())
-                    .text_color(if selected {
-                        theme.action_primary
-                    } else {
-                        theme.text_primary
-                    })
-                    .when(!selected, |row| {
-                        row.hover(move |style| style.bg(theme.button_hover))
-                            .active(move |style| style.bg(theme.button_active))
-                    })
-                    .child(target)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.manual_rule_target.clone_from(&row_target);
-                        this.manual_rule_error = None;
-                        this.manual_rule_popover = None;
-                        cx.notify();
-                    })),
-            );
+            choices = choices.child(crate::components::popover_menu_option(
+                format!("manual-rule-target-{target}"),
+                target,
+                None,
+                selected,
+                true,
+                theme,
+                cx.listener(move |this, _, _, cx| {
+                    this.manual_rule_target.clone_from(&row_target);
+                    this.manual_rule_error = None;
+                    this.manual_rule_popover = None;
+                    cx.notify();
+                }),
+            ));
         }
         choices
     }
@@ -180,7 +113,7 @@ impl ManisApp {
 
         crate::components::anchored_popover(
             format!("{id}-popover"),
-            style_action_button(trigger, ActionRole::Secondary, ControlSize::Standard),
+            crate::components::style_select_trigger(trigger, ControlSize::Standard),
             menu,
             width,
             360.0,
@@ -284,7 +217,7 @@ impl ManisApp {
                         )
                         .label(language.localized(copy::configuration::REMOVE_CONDITION))
                         .mt(Space::Sm.px()),
-                    ActionRole::Danger,
+                    ActionRole::SubtleDanger,
                     ControlSize::Compact,
                 )
                 .on_click(cx.listener(move |this, _, _, cx| {

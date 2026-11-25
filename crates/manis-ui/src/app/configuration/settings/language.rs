@@ -1,9 +1,8 @@
 use super::{
     Context, Div, FluentBuilder, FontWeight, InteractiveElement, IntoElement, Language,
     LanguagePreference, ManisApp, ParentElement, Radius, Role, Space, Stateful,
-    StatefulInteractiveElement, StatusTone, Styled, TextRole, Theme, copy, div,
-    language_preference_label, panel_surface, px, save_language_preference_in, section_header,
-    status_badge,
+    StatefulInteractiveElement, StatusTone, Styled, Theme, copy, div, language_preference_label,
+    panel_surface, px, save_language_preference_in, section_header, status_badge,
 };
 
 impl ManisApp {
@@ -86,9 +85,9 @@ impl ManisApp {
             .focusable()
             .map(crate::components::primary_button_interaction)
             .cursor_pointer()
-            .min_h(px(52.0))
+            .min_h(px(36.0))
             .px(Space::Md.px())
-            .py(Space::Sm.px())
+            .py(px(6.0))
             .rounded(Radius::Row.px())
             .border_1()
             .border_color(if selected {
@@ -101,17 +100,24 @@ impl ManisApp {
             } else {
                 theme.surface_low
             })
+            .flex()
+            .items_center()
             .child(
                 div()
+                    .w_full()
                     .flex()
                     .items_center()
                     .justify_between()
                     .gap_2()
                     .child(
                         div()
-                            .text_size(TextRole::Label.size())
-                            .line_height(TextRole::Label.line_height())
-                            .font_weight(TextRole::Label.weight())
+                            .text_size(px(12.5))
+                            .line_height(px(18.0))
+                            .font_weight(if selected {
+                                FontWeight::MEDIUM
+                            } else {
+                                FontWeight::NORMAL
+                            })
                             .text_color(if selected {
                                 theme.action_primary
                             } else {
@@ -120,13 +126,12 @@ impl ManisApp {
                             .child(label),
                     )
                     .when(selected, |row| {
+                        use gpui_component::{Icon, IconName, Sizable as _};
                         row.child(
-                            div()
-                                .text_size(TextRole::Metadata.size())
-                                .line_height(TextRole::Metadata.line_height())
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(theme.action_primary)
-                                .child(language.localized(copy::configuration::SELECTED)),
+                            Icon::new(IconName::Check)
+                                .xsmall()
+                                .flex_shrink_0()
+                                .text_color(theme.action_primary),
                         )
                     }),
             )

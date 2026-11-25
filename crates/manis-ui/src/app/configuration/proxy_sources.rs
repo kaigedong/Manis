@@ -1,6 +1,6 @@
 use gpui::{
-    AnyElement, Context, Div, Entity, Focusable, FontWeight, ParentElement, Role, Stateful, Styled,
-    Window, div, prelude::*, px,
+    AnyElement, Context, Div, Entity, Focusable, ParentElement, Role, Stateful, Styled, Window,
+    div, prelude::*, px,
 };
 use gpui_component::{Disableable, Selectable, button::Button, checkbox::Checkbox, dialog::Dialog};
 

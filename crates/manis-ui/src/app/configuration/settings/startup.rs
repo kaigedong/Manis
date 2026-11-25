@@ -1,13 +1,11 @@
-use gpui::{
-    Context, Div, InteractiveElement, KeyDownEvent, ParentElement, Role, Stateful,
-    StatefulInteractiveElement, Styled, Toggled, div, prelude::*, px,
-};
+use gpui::{AnyElement, Context, Div, IntoElement, ParentElement, Stateful, Styled, div, px};
 
 use super::{
     ManisApp, MihomoCoreUpdateState, Space, TextRole, Theme, copy, panel_surface, section_header,
 };
 use crate::auto_connect;
 use crate::autostart;
+use crate::components::toggle_switch;
 use crate::diagnostics::{LogLevel, record_event};
 
 impl ManisApp {
@@ -67,67 +65,22 @@ impl ManisApp {
         enabled: bool,
         available: bool,
         label: &'static str,
-        theme: Theme,
+        _theme: Theme,
         cx: &mut Context<Self>,
         toggle: fn(&mut Self, &mut Context<Self>),
-    ) -> Stateful<Div> {
-        div()
-            .id(id)
-            .role(Role::Switch)
-            .aria_label(label)
-            .aria_toggled(if enabled {
-                Toggled::True
-            } else {
-                Toggled::False
-            })
-            .tab_stop(available)
-            .focusable()
-            .map(crate::components::primary_button_interaction)
-            .cursor_pointer()
-            .w(px(44.0))
-            .h(px(24.0))
-            .flex_shrink_0()
-            .p(px(2.0))
-            .rounded_full()
-            .border_1()
-            .border_color(if enabled {
-                theme.action_primary
-            } else {
-                theme.outline_strong
-            })
-            .bg(if enabled {
-                theme.action_primary
-            } else {
-                theme.surface_low
-            })
-            .focus_visible(move |switch| switch.border_color(theme.focus_ring))
-            .when(!available, |switch| switch.cursor_default().opacity(0.5))
-            .child(
-                div()
-                    .flex()
-                    .w_full()
-                    .h_full()
-                    .when(enabled, Styled::justify_end)
-                    .child(div().size(px(18.0)).rounded_full().bg(if enabled {
-                        theme.surface_base
-                    } else {
-                        theme.outline_strong
-                    })),
-            )
-            .on_click(cx.listener(move |this, _, _, cx| {
+    ) -> AnyElement {
+        toggle_switch(
+            id,
+            enabled,
+            !available,
+            label,
+            cx.listener(move |this, _, _, cx| {
                 if available {
                     toggle(this, cx);
                 }
-            }))
-            .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
-                if available
-                    && !event.is_held
-                    && matches!(event.keystroke.key.as_str(), "enter" | "space")
-                {
-                    toggle(this, cx);
-                    cx.stop_propagation();
-                }
-            }))
+            }),
+        )
+        .into_any_element()
     }
 
     pub(in crate::app) fn set_auto_connect(&mut self, enabled: bool, cx: &mut Context<Self>) {
@@ -241,7 +194,7 @@ impl ManisApp {
 fn startup_row(
     label: &'static str,
     detail: &'static str,
-    switch: Stateful<Div>,
+    switch: AnyElement,
     theme: Theme,
     first: bool,
 ) -> Div {
@@ -254,7 +207,7 @@ fn startup_row(
         .pt(Space::Md.px())
         .border_t_1()
         .border_color(theme.outline_subtle)
-        .min_h(px(52.0))
+        .min_h(px(44.0))
         .flex()
         .items_center()
         .justify_between()

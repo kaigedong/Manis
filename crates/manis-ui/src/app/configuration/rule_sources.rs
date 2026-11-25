@@ -3,17 +3,15 @@ use gpui::{
     Window, div, prelude::*, px,
 };
 use gpui_component::{
-    Disableable, Selectable, Sizable, WindowExt as _,
-    button::{Button, ButtonVariant, ButtonVariants},
-    checkbox::Checkbox,
-    dialog::Dialog,
+    Disableable, WindowExt as _, button::Button, checkbox::Checkbox, dialog::Dialog,
 };
 
 use crate::app::{ManisApp, QxRuleImportFeedback, QxRuleSourceRefreshState};
 use crate::{
     components::{
         ActionRole, action_button, dialog_footer_surface, dialog_header_surface, empty_state,
-        row_action_button, section_heading, style_action_button, surface_dialog,
+        popover_menu_list, popover_menu_option, row_action_button, section_heading,
+        style_action_button, style_select_trigger, surface_dialog,
     },
     localization::{CountNoun, Language, Message, copy},
     mihomo::{self, RemoteSourceRefreshInterval},
@@ -294,13 +292,15 @@ impl ManisApp {
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let mut menu = div().p_1();
+        let mut menu = popover_menu_list("qx-rule-editor-target-menu");
         for target in self.qx_rule_targets() {
             let selected = target == self.rule_sources.target_policy;
-            menu = menu.child(Self::qx_rule_editor_option(
+            menu = menu.child(popover_menu_option(
                 format!("qx-rule-editor-target-{target}"),
                 target.clone(),
+                None,
                 selected,
+                true,
                 theme,
                 cx.listener(move |this, _, _, cx| {
                     this.rule_sources.target_policy.clone_from(&target);
@@ -316,7 +316,7 @@ impl ManisApp {
             .w_full()
             .child(self.rule_sources.target_policy.clone())
             .disabled(view.busy);
-        let trigger = style_action_button(trigger, ActionRole::Secondary, ControlSize::Standard)
+        let trigger = style_select_trigger(trigger, ControlSize::Standard)
             .when(view.busy, gpui::Styled::cursor_default);
         let app = cx.entity();
         crate::components::anchored_popover(
@@ -347,7 +347,7 @@ impl ManisApp {
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let mut menu = div().p_1();
+        let mut menu = popover_menu_list("qx-rule-editor-interval-menu");
         for interval in [
             RemoteSourceRefreshInterval::Manual,
             RemoteSourceRefreshInterval::Hourly,
@@ -356,10 +356,12 @@ impl ManisApp {
             RemoteSourceRefreshInterval::Daily,
         ] {
             let label = refresh_interval_label(interval, language);
-            menu = menu.child(Self::qx_rule_editor_option(
+            menu = menu.child(popover_menu_option(
                 format!("qx-rule-editor-interval-{interval:?}"),
                 label.to_owned(),
+                None,
                 interval == self.rule_sources.editor_refresh_interval,
+                true,
                 theme,
                 cx.listener(move |this, _, _, cx| {
                     this.rule_sources.editor_refresh_interval = interval;
@@ -379,7 +381,7 @@ impl ManisApp {
                 language,
             ))
             .disabled(view.busy);
-        let trigger = style_action_button(trigger, ActionRole::Secondary, ControlSize::Standard)
+        let trigger = style_select_trigger(trigger, ControlSize::Standard)
             .when(view.busy, gpui::Styled::cursor_default);
         let app = cx.entity();
         crate::components::anchored_popover(
@@ -401,57 +403,6 @@ impl ManisApp {
             });
         })
         .into_any_element()
-    }
-
-    fn qx_rule_editor_option(
-        id: impl Into<gpui::ElementId>,
-        label: String,
-        selected: bool,
-        theme: Theme,
-        listener: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
-    ) -> Stateful<Div> {
-        div()
-            .id(id)
-            .role(Role::Button)
-            .aria_label(label.clone())
-            .tab_stop(true)
-            .focusable()
-            .map(crate::components::primary_button_interaction)
-            .cursor_pointer()
-            .px_3()
-            .py_2()
-            .rounded(Radius::Control.px())
-            .bg(if selected {
-                theme.action_soft
-            } else {
-                gpui::rgba(0x0000_0000)
-            })
-            .hover(move |style| {
-                if selected {
-                    style.bg(theme.action_soft)
-                } else {
-                    style.bg(theme.button_hover)
-                }
-            })
-            .active(move |style| {
-                if selected {
-                    style.bg(theme.action_soft)
-                } else {
-                    style.bg(theme.button_active)
-                }
-            })
-            .font_weight(if selected {
-                FontWeight::SEMIBOLD
-            } else {
-                FontWeight::NORMAL
-            })
-            .text_color(if selected {
-                theme.action_primary
-            } else {
-                theme.text_primary
-            })
-            .child(label)
-            .on_click(listener)
     }
 
     fn qx_rule_editor_footer(
@@ -788,7 +739,7 @@ impl ManisApp {
                 row_action_button(
                     format!("qx-rule-remove-{index}"),
                     language.localized(copy::configuration::REMOVE),
-                    ActionRole::Danger,
+                    ActionRole::SubtleDanger,
                     ControlSize::Compact,
                 )
                 .disabled(!controls_enabled)
@@ -836,48 +787,24 @@ impl ManisApp {
         selected_target: &str,
         theme: Theme,
         cx: &mut Context<Self>,
-    ) -> Div {
-        let mut choices = div();
+    ) -> Stateful<Div> {
+        let mut choices = popover_menu_list(format!("qx-rule-source-target-menu-{source_id}"));
         for target in self.qx_rule_targets() {
             let selected = target == selected_target;
             let target_id = target.clone();
             let source_id = source_id.to_owned();
-            choices = choices.child(
-                Button::new(format!("qx-rule-source-target-{source_id}-{target_id}"))
-                    .map(crate::components::primary_button_interaction)
-                    .accessibility_label(format!("Target {target}"))
-                    .selected(selected)
-                    .with_variant(ButtonVariant::Text)
-                    .with_size(gpui_component::Size::Small)
-                    .w_full()
-                    .min_h(ControlSize::Standard.min_pointer_target())
-                    .px(Space::Md.px())
-                    .py(Space::Sm.px())
-                    .border_b_1()
-                    .border_color(theme.outline_subtle)
-                    .bg(if selected {
-                        theme.action_soft
-                    } else {
-                        theme.surface_high
-                    })
-                    .text_color(if selected {
-                        theme.action_primary
-                    } else {
-                        theme.text_primary
-                    })
-                    .child(
-                        div()
-                            .w_full()
-                            .text_size(TextRole::Label.size())
-                            .line_height(TextRole::Label.line_height())
-                            .font_weight(TextRole::Label.weight())
-                            .child(target),
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        cx.stop_propagation();
-                        this.update_qx_rule_source_target(source_id.clone(), target_id.clone(), cx);
-                    })),
-            );
+            choices = choices.child(popover_menu_option(
+                format!("qx-rule-source-target-{source_id}-{target_id}"),
+                target,
+                None,
+                selected,
+                true,
+                theme,
+                cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.update_qx_rule_source_target(source_id.clone(), target_id.clone(), cx);
+                }),
+            ));
         }
         choices
     }
@@ -895,15 +822,42 @@ impl ManisApp {
         let open = self.rule_sources.target_popover.as_deref() == Some(source.id.as_str());
         let updating = self.rule_sources.target_updates.contains_key(&source.id);
         let menu = self.qx_rule_source_target_menu(&source.id, &selected_target, theme, cx);
-        let display_value = if updating {
-            language.localized(copy::configuration::SAVING).to_owned()
+        let label_content: AnyElement = if updating {
+            div()
+                .text_size(px(12.5))
+                .line_height(px(16.0))
+                .text_color(theme.text_tertiary)
+                .child(language.localized(copy::configuration::SAVING))
+                .into_any_element()
         } else {
-            format!(
-                "{} · {selected_target}",
-                language.message(Message::PolicyGroup)
-            )
+            div()
+                .flex()
+                .items_center()
+                .gap(px(5.0))
+                .min_w(px(0.0))
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .text_size(TextRole::Metadata.size())
+                        .line_height(px(16.0))
+                        .text_color(theme.text_tertiary)
+                        .child(language.message(Message::PolicyGroup)),
+                )
+                .child(
+                    div()
+                        .min_w(px(0.0))
+                        .overflow_x_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .text_size(px(12.5))
+                        .line_height(px(16.0))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(theme.text_primary)
+                        .child(selected_target),
+                )
+                .into_any_element()
         };
-        let trigger = style_action_button(
+        let trigger = style_select_trigger(
             Button::new(format!("qx-rule-target-select-{}", source.id))
                 .accessibility_label(
                     language
@@ -912,18 +866,7 @@ impl ManisApp {
                 .dropdown_caret(true)
                 .w_full()
                 .disabled(!enabled)
-                .child(
-                    div()
-                        .min_w(px(0.0))
-                        .overflow_x_hidden()
-                        .whitespace_nowrap()
-                        .text_ellipsis()
-                        .text_size(TextRole::Label.size())
-                        .line_height(TextRole::Label.line_height())
-                        .font_weight(TextRole::Label.weight())
-                        .child(display_value),
-                ),
-            ActionRole::Secondary,
+                .child(label_content),
             ControlSize::Compact,
         )
         .when(!enabled, gpui::Styled::cursor_default);
@@ -932,8 +875,8 @@ impl ManisApp {
             format!("qx-rule-target-popover-{}", source.id),
             trigger,
             menu,
-            240.0,
-            320.0,
+            224.0,
+            300.0,
         )
         .open(open)
         .on_open_change(move |open, _, cx| {

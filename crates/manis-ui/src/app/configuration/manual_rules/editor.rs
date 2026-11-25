@@ -6,11 +6,11 @@ use gpui_component::WindowExt as _;
 use super::{
     ActionRole, AnyElement, Button, Context, ControlSize, Dialog, Disableable, Div, FluentBuilder,
     Focusable, InteractiveElement, IntoElement, Language, LogLevel, MAX_MANUAL_RULE_INPUT_BYTES,
-    ManisApp, ManualRulePopover, ManualRulePrefill, Message, ParentElement, Radius, Role,
-    RuleRowScope, Space, Stateful, StatefulInteractiveElement, Styled, SubscriptionTextInput,
-    TextInputSpec, TextRole, Theme, Window, WindowSizeClass, copy, dialog_footer_surface,
-    dialog_header_surface, div, field_label, manual_rule_error_label, manual_rule_kind_detail,
-    manual_rule_placeholder, px, record_event, style_action_button, surface_dialog,
+    ManisApp, ManualRulePopover, ManualRulePrefill, Message, ParentElement, Radius, RuleRowScope,
+    Space, Stateful, StatefulInteractiveElement, Styled, SubscriptionTextInput, TextInputSpec,
+    TextRole, Theme, Window, WindowSizeClass, copy, dialog_footer_surface, dialog_header_surface,
+    div, field_label, manual_rule_error_label, manual_rule_kind_detail, manual_rule_placeholder,
+    px, record_event, style_action_button, surface_dialog,
 };
 impl ManisApp {
     pub(in crate::app) fn open_manual_rule_editor(

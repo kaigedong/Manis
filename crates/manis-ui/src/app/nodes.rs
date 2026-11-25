@@ -12,7 +12,6 @@ use gpui_component::{
     checkbox::Checkbox,
     collapsible::Collapsible,
     dialog::Dialog,
-    radio::Radio,
 };
 use manis_core::{
     KernelKind, ManagedPolicyGroup, ManagedPolicyIcon, ManagedPolicyStrategy, NodeIdentity,

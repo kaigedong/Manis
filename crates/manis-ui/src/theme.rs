@@ -79,9 +79,9 @@ impl Theme {
             action_primary_active: rgb(0x1732bd),
             action_on_primary: rgb(0xffffff),
             action_soft: rgb(0xeef2ff),
-            button_bg: rgb(0xeceae4),
-            button_hover: rgb(0xe2dfd7),
-            button_active: rgb(0xd7d3c9),
+            button_bg: rgb(0xf4f3ef),
+            button_hover: rgb(0xeae7e0),
+            button_active: rgb(0xdfdcd3),
             focus_ring: rgb(0x2b4eff),
             modal_scrim: rgba(0x14141359),
             route_trace: rgb(0x6d28d9),
@@ -122,9 +122,9 @@ impl Theme {
             action_primary_active: rgb(0xa1b5ff),
             action_on_primary: rgb(0x0a0d18),
             action_soft: rgb(0x1b2342),
-            button_bg: rgb(0x26262e),
-            button_hover: rgb(0x31313b),
-            button_active: rgb(0x3d3d4a),
+            button_bg: rgb(0x24242c),
+            button_hover: rgb(0x2e2e38),
+            button_active: rgb(0x383844),
             focus_ring: rgb(0x859fff),
             modal_scrim: rgba(0x00000080),
             route_trace: rgb(0xc4b5fd),
@@ -246,10 +246,11 @@ pub(crate) enum Radius {
 impl Radius {
     pub(crate) fn px(self) -> Pixels {
         match self {
-            Self::Badge => px(6.0),
-            Self::Control | Self::Row => px(10.0),
-            Self::Card | Self::Pane => px(14.0),
-            Self::Sheet => px(20.0),
+            Self::Badge => px(5.0),
+            Self::Control => px(7.0),
+            Self::Row => px(8.0),
+            Self::Card | Self::Pane => px(12.0),
+            Self::Sheet => px(16.0),
         }
     }
 }
@@ -264,8 +265,8 @@ pub(crate) enum ControlSize {
 impl ControlSize {
     pub(crate) fn height(self) -> Pixels {
         match self {
-            Self::Compact | Self::Icon => px(32.0),
-            Self::Standard => px(36.0),
+            Self::Compact | Self::Icon => px(28.0),
+            Self::Standard => px(32.0),
         }
     }
 
@@ -324,6 +325,8 @@ pub(crate) fn sync_component_theme(
 }
 
 fn project_component_palette(component: &mut ComponentTheme, theme: Theme) {
+    component.radius = Radius::Control.px();
+    component.radius_lg = Radius::Card.px();
     component.background = theme.surface_base.into();
     component.foreground = theme.text_primary.into();
     component.border = theme.outline_subtle.into();
@@ -414,7 +417,12 @@ fn project_component_chrome(component: &mut ComponentTheme, theme: Theme) {
     component.progress_bar = theme.action_primary.into();
     component.slider_bar = theme.action_primary.into();
     component.slider_thumb = theme.action_primary.into();
-    component.switch = theme.outline_strong.into();
+    component.switch = if theme.surface_base == rgb(0xf7f6f3) {
+        rgb(0xd0cdc6)
+    } else {
+        rgb(0x3a3a45)
+    }
+    .into();
     component.switch_thumb = theme.surface_elevated.into();
     component.scrollbar = rgba(0x00000000).into();
     component.scrollbar_thumb = theme.outline_strong.into();
@@ -458,16 +466,16 @@ mod tests {
         assert_px(Space::Xl.px(), 24.0);
         assert_px(Space::Xxl.px(), 32.0);
 
-        assert_px(Radius::Badge.px(), 6.0);
-        assert_px(Radius::Control.px(), 10.0);
-        assert_px(Radius::Row.px(), 10.0);
-        assert_px(Radius::Card.px(), 14.0);
-        assert_px(Radius::Pane.px(), 14.0);
-        assert_px(Radius::Sheet.px(), 20.0);
+        assert_px(Radius::Badge.px(), 5.0);
+        assert_px(Radius::Control.px(), 7.0);
+        assert_px(Radius::Row.px(), 8.0);
+        assert_px(Radius::Card.px(), 12.0);
+        assert_px(Radius::Pane.px(), 12.0);
+        assert_px(Radius::Sheet.px(), 16.0);
 
-        assert_px(ControlSize::Compact.height(), 32.0);
-        assert_px(ControlSize::Standard.height(), 36.0);
-        assert_px(ControlSize::Icon.min_pointer_target(), 32.0);
+        assert_px(ControlSize::Compact.height(), 28.0);
+        assert_px(ControlSize::Standard.height(), 32.0);
+        assert_px(ControlSize::Icon.min_pointer_target(), 28.0);
     }
 
     fn surfaces(theme: Theme) -> [gpui::Rgba; 8] {

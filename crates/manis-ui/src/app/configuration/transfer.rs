@@ -244,37 +244,32 @@ impl ManisApp {
     ) -> Stateful<Div> {
         let language = self.language();
         let disabled = self.configuration_transfer.active || self.subscription_store_dir.is_none();
+        let edit_action = style_action_button(
+            Button::new("configuration-edit")
+                .label(language.localized(copy::backup::EDIT))
+                .disabled(disabled),
+            ActionRole::Primary,
+            ControlSize::Compact,
+        )
+        .when(disabled, gpui::Styled::cursor_default)
+        .on_click(cx.listener(|this, _, window, cx| {
+            this.edit_configuration(window, cx);
+        }))
+        .debug_selector(|| "configuration-edit".into())
+        .into_any_element();
         panel_surface("configuration-transfer", compact, theme)
             .child(section_header(
                 language.localized(copy::backup::TITLE),
                 language.localized(copy::backup::DETAIL),
-                None,
+                Some(edit_action),
                 theme,
             ))
             .child(
                 div()
                     .mt(Space::Md.px())
-                    .flex()
-                    .flex_wrap()
-                    .gap(Space::Sm.px())
-                    .child(
-                        style_action_button(
-                            Button::new("configuration-edit")
-                                .label(language.localized(copy::backup::EDIT))
-                                .disabled(disabled),
-                            ActionRole::Primary,
-                            ControlSize::Standard,
-                        )
-                        .when(disabled, gpui::Styled::cursor_default)
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.edit_configuration(window, cx);
-                        }))
-                        .debug_selector(|| "configuration-edit".into()),
-                    ),
-            )
-            .child(
-                div()
-                    .mt(Space::Md.px())
+                    .pt(Space::Md.px())
+                    .border_t_1()
+                    .border_color(theme.outline_subtle)
                     .text_size(TextRole::Metadata.size())
                     .line_height(TextRole::Metadata.line_height())
                     .text_color(theme.text_secondary)

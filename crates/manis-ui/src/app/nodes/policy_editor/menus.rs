@@ -12,7 +12,7 @@ impl ManisApp {
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let mut choices = div().id("policy-strategy-choices");
+        let mut choices = crate::components::popover_menu_list("policy-strategy-choices");
         for (strategy, technical) in [
             (ManagedPolicyStrategy::Manual, "static"),
             (
@@ -44,7 +44,7 @@ impl ManisApp {
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let mut choices = div().id("policy-icon-choices");
+        let mut choices = crate::components::popover_menu_list("policy-icon-choices");
         for icon in [
             ManagedPolicyIcon::None,
             ManagedPolicyIcon::Bolt,
@@ -77,7 +77,7 @@ impl ManisApp {
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let mut choices = div().id("policy-candidate-mode-choices");
+        let mut choices = crate::components::popover_menu_list("policy-candidate-mode-choices");
         for (matcher, title) in [
             (
                 PolicyCandidateMatcherKind::All,
@@ -241,7 +241,7 @@ impl ManisApp {
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let mut choices = div().id("policy-tolerance-choices");
+        let mut choices = crate::components::popover_menu_list("policy-tolerance-choices");
         let mut values = vec![0, 50, 100, 150, 200, 300, 500];
         if !values.contains(&draft.switch_tolerance_ms) {
             values.push(draft.switch_tolerance_ms);
@@ -271,7 +271,7 @@ impl ManisApp {
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let mut choices = div().id("policy-interval-choices");
+        let mut choices = crate::components::popover_menu_list("policy-interval-choices");
         for (seconds, label) in [
             (60, copy::nodes::INTERVAL_1_MINUTE),
             (300, copy::nodes::INTERVAL_5_MINUTES),

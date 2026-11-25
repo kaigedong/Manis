@@ -397,7 +397,6 @@ pub(crate) const SECURELY_DOWNLOADING_PARSING_AND_WRITING_LOCALLY: LocalizedText
         "Securely downloading, parsing, and writing locally…",
         "正在安全下载、解析并写入本机…",
     );
-pub(crate) const SELECTED: LocalizedText = LocalizedText::new("Selected", "已选择");
 pub(crate) const SELECT_LANGUAGE: LocalizedText =
     LocalizedText::new("Select language", "选择界面语言");
 pub(crate) const SINGLE_NODE: LocalizedText = LocalizedText::new("Single node", "单节点");

@@ -703,7 +703,7 @@ impl ManisApp {
             .with_size(gpui_component::Size::Small)
             .h_full()
             .px(px(9.0))
-            .rounded(px(7.0))
+            .rounded(px(5.0))
             .text_size(TextRole::Metadata.size())
             .line_height(TextRole::Metadata.line_height())
             .font_weight(if pending || selected {
@@ -757,7 +757,7 @@ impl ManisApp {
         // The grouped track marks the two commands apart from ordinary page actions.
         div()
             .id("proxy-modes")
-            .h(px(32.0))
+            .h(ControlSize::Compact.height())
             .flex_shrink_0()
             .p(px(2.0))
             .rounded(Radius::Control.px())
@@ -822,7 +822,7 @@ impl ManisApp {
                     .with_size(gpui_component::Size::Small)
                     .h_full()
                     .px(px(9.0))
-                    .rounded(px(7.0))
+                    .rounded(px(5.0))
                     .text_size(TextRole::Metadata.size())
                     .line_height(TextRole::Metadata.line_height())
                     .font_weight(if selected {
@@ -848,7 +848,7 @@ impl ManisApp {
         }
         div()
             .id("routing-modes")
-            .h(px(32.0))
+            .h(ControlSize::Compact.height())
             .flex_shrink_0()
             .p(px(2.0))
             .rounded(Radius::Control.px())

@@ -1,7 +1,9 @@
 use gpui::{MouseButton, SharedString};
-use gpui_component::{Disableable, switch::Switch};
+use gpui_component::Disableable;
 
-use crate::components::{ActionRole, StatusTone, card_surface, row_action_button, status_badge};
+use crate::components::{
+    ActionRole, StatusTone, card_surface, row_action_button, status_badge, toggle_switch,
+};
 use crate::theme::{ControlSize, MONO_FAMILY};
 
 use super::{
@@ -386,7 +388,7 @@ impl ManisApp {
                 row_action_button(
                     format!("local-rule-group-remove-{group_index}"),
                     language.message(Message::Delete),
-                    ActionRole::Danger,
+                    ActionRole::SubtleDanger,
                     ControlSize::Compact,
                 )
                 .debug_selector(move || format!("local-rule-group-remove-{group_index}"))
@@ -780,19 +782,19 @@ fn rule_group_enable_switch(
         .flex()
         .items_center()
         .debug_selector(move || debug_id.clone())
-        .child(
-            Switch::new(id)
-                .checked(checked)
-                .disabled(!interactive)
-                .accessibility_label(label)
-                .on_change(move |checked, _, cx| {
-                    cx.stop_propagation();
-                    if interactive {
-                        let checked = *checked;
-                        app.update(cx, |this, cx| on_toggle(this, checked, cx));
-                    }
-                }),
-        )
+        .child(toggle_switch(
+            id,
+            checked,
+            !interactive,
+            label,
+            move |checked, _, cx| {
+                cx.stop_propagation();
+                if interactive {
+                    let checked = *checked;
+                    app.update(cx, |this, cx| on_toggle(this, checked, cx));
+                }
+            },
+        ))
         .into_any_element()
 }
 

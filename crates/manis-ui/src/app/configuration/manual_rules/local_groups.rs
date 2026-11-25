@@ -575,40 +575,24 @@ impl ManisApp {
         language: Language,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let mut menu = div().id("local-rule-group-target-choices");
+        let mut menu = crate::components::popover_menu_list("local-rule-group-target-choices");
         for target in self.local_rule_group_targets() {
             let selected = self.local_rule_group_draft.target == target;
             let row_target = target.clone();
             let row_id = format!("local-rule-group-target-{target}");
-            menu = menu.child(
-                div()
-                    .id(row_id)
-                    .role(gpui::Role::Button)
-                    .aria_label(format!("Target {target}"))
-                    .tab_stop(true)
-                    .focusable()
-                    .map(crate::components::primary_button_interaction)
-                    .cursor_pointer()
-                    .px_3()
-                    .py_2()
-                    .rounded(crate::theme::Radius::Control.px())
-                    .bg(if selected {
-                        theme.action_soft
-                    } else {
-                        gpui::rgba(0x0000_0000)
-                    })
-                    .text_color(if selected {
-                        theme.action_primary
-                    } else {
-                        theme.text_primary
-                    })
-                    .child(target)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.set_local_rule_group_target(row_target.clone(), cx);
-                    })),
-            );
+            menu = menu.child(crate::components::popover_menu_option(
+                row_id,
+                target,
+                None,
+                selected,
+                true,
+                theme,
+                cx.listener(move |this, _, _, cx| {
+                    this.set_local_rule_group_target(row_target.clone(), cx);
+                }),
+            ));
         }
-        let trigger = style_action_button(
+        let trigger = crate::components::style_select_trigger(
             Button::new("local-rule-group-target-select")
                 .accessibility_label(language.localized(copy::configuration::CHOOSE_TARGET_POLICY))
                 .dropdown_caret(true)
@@ -624,7 +608,6 @@ impl ManisApp {
                         .font_weight(TextRole::Label.weight())
                         .child(self.local_rule_group_draft.target.clone()),
                 ),
-            ActionRole::Secondary,
             ControlSize::Standard,
         );
         let app = cx.entity();

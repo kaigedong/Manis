@@ -270,7 +270,7 @@ impl ManisApp {
                     row_action_button(
                         format!("remove-{remove_id}"),
                         language.localized(copy::configuration::REMOVE),
-                        ActionRole::Danger,
+                        ActionRole::SubtleDanger,
                         ControlSize::Compact,
                     )
                     .accessibility_label(
@@ -445,7 +445,7 @@ impl ManisApp {
                     row_action_button(
                         format!("remove-single-node-{remove_id}"),
                         language.localized(copy::configuration::REMOVE),
-                        ActionRole::Danger,
+                        ActionRole::SubtleDanger,
                         ControlSize::Compact,
                     )
                     .accessibility_label(
