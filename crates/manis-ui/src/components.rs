@@ -1,6 +1,6 @@
 use gpui::{
-    AnyElement, Div, ElementId, IntoElement, ParentElement, SharedString, Styled, Window, div,
-    prelude::*, px,
+    AnyElement, Div, ElementId, IntoElement, ParentElement, Rgba, SharedString, Styled, Window,
+    div, prelude::*, px,
 };
 use gpui_component::{
     Icon, IconName, Sizable as _,
@@ -9,7 +9,27 @@ use gpui_component::{
     popover::Popover,
 };
 
-use crate::theme::{ControlSize, Radius, Space, TextRole, Theme};
+use crate::theme::{ControlSize, MONO_FAMILY, Radius, Space, TextRole, Theme};
+
+/// The one opaque content card treatment: elevated fill, 1px warm hairline, card radius.
+pub(crate) fn card_surface(theme: Theme) -> Div {
+    div()
+        .rounded(Radius::Card.px())
+        .border_1()
+        .border_color(theme.outline_subtle)
+        .bg(theme.surface_elevated)
+}
+
+/// A mono data run: latency, traffic, IPs, rule numbers and timestamps never jitter.
+pub(crate) fn mono_text(value: impl Into<SharedString>, color: Rgba) -> Div {
+    div()
+        .font_family(MONO_FAMILY)
+        .text_size(TextRole::Data.size())
+        .line_height(TextRole::Data.line_height())
+        .font_weight(TextRole::Data.weight())
+        .text_color(color)
+        .child(value.into())
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ActionRole {
@@ -95,7 +115,7 @@ pub(crate) fn surface_dialog(dialog: Dialog, theme: Theme, window: &Window) -> D
     dialog
         .p_0()
         .max_h(px((window.viewport_size().height.as_f32() - 32.0).max(1.0)))
-        .rounded(Radius::Pane.px())
+        .rounded(Radius::Sheet.px())
         .border_1()
         .border_color(theme.outline_subtle)
         .bg(theme.surface_overlay)
@@ -130,8 +150,6 @@ pub(crate) fn dialog_footer_surface(theme: Theme) -> Div {
 pub(crate) enum StatusTone {
     Neutral,
     Success,
-    Warning,
-    Error,
     Route,
 }
 
@@ -139,30 +157,241 @@ impl StatusTone {
     fn colors(self, theme: Theme) -> (gpui::Rgba, gpui::Rgba) {
         match self {
             Self::Neutral => (theme.text_secondary, theme.surface_low),
-            Self::Success => (theme.status_success, theme.surface_low),
-            Self::Warning => (theme.status_warning, theme.surface_low),
-            Self::Error => (theme.status_error, theme.surface_low),
+            Self::Success => (theme.status_success, theme.status_success_soft),
             Self::Route => (theme.route_trace, theme.route_soft),
         }
     }
 }
 
+/// A badge: 11px medium label, 6px radius, soft tone fill. Never a raw surface for status.
 pub(crate) fn status_badge(label: impl Into<SharedString>, tone: StatusTone, theme: Theme) -> Div {
     let (foreground, background) = tone.colors(theme);
     div()
         .flex()
         .items_center()
-        .h(TextRole::Label.line_height() + Space::Sm.px())
+        .flex_shrink_0()
+        .h(px(20.0))
         .px(Space::Sm.px())
-        .rounded(Radius::Control.px())
+        .rounded(Radius::Badge.px())
         .bg(background)
         .text_color(foreground)
-        .text_size(TextRole::Label.size())
-        .line_height(TextRole::Label.line_height())
+        .text_size(TextRole::Metadata.size())
+        .line_height(TextRole::Metadata.line_height())
         .font_weight(TextRole::Label.weight())
         .child(label.into())
 }
 
+/// The crisp 2-letter ISO region square used beside every node name.
+pub(crate) fn region_code_badge(code: impl Into<SharedString>, theme: Theme) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .justify_center()
+        .flex_shrink_0()
+        .w(px(26.0))
+        .h(px(20.0))
+        .rounded(Radius::Badge.px() - px(1.0))
+        .border_1()
+        .border_color(theme.outline_subtle)
+        .bg(theme.surface_low)
+        .font_family(MONO_FAMILY)
+        .text_size(px(10.5))
+        .line_height(px(14.0))
+        .font_weight(gpui::FontWeight::SEMIBOLD)
+        .text_color(theme.text_secondary)
+        .child(code.into())
+}
+
+/// A measured latency: mono number plus three signal bars, coloured by the design bands.
+pub(crate) fn latency_pill(milliseconds: Option<u64>, theme: Theme) -> Div {
+    let color = theme.latency_color(milliseconds);
+    let label = milliseconds.map_or_else(|| "—".to_owned(), |value| format!("{value} ms"));
+    let active_bars = match milliseconds {
+        Some(value) if value < 120 => 3,
+        Some(value) if value <= 350 => 2,
+        Some(_) => 1,
+        None => 0,
+    };
+    div()
+        .flex()
+        .items_center()
+        .justify_end()
+        .gap(px(6.0))
+        .flex_shrink_0()
+        .text_color(color)
+        .child(
+            div()
+                .flex()
+                .items_end()
+                .gap(px(2.0))
+                .h(px(11.0))
+                .children((0..3).map(|index| {
+                    let height = [4.0, 7.0, 11.0][index];
+                    div()
+                        .w(px(2.5))
+                        .h(px(height))
+                        .rounded(px(1.0))
+                        .bg(if index < active_bars {
+                            color
+                        } else {
+                            color.opacity(0.22)
+                        })
+                })),
+        )
+        .child(
+            div()
+                .font_family(MONO_FAMILY)
+                .text_size(TextRole::Data.size())
+                .line_height(TextRole::Data.line_height())
+                .font_weight(TextRole::Data.weight())
+                .child(label),
+        )
+}
+
+/// A subscription quota meter. The fill is the primary accent; the track is a recessed well.
+pub(crate) fn usage_meter(fraction: f32, width: f32, theme: Theme) -> Div {
+    let fraction = fraction.clamp(0.0, 1.0);
+    div()
+        .w(px(width))
+        .h(px(5.0))
+        .flex_shrink_0()
+        .rounded(px(9999.0))
+        .bg(theme.surface_high)
+        .overflow_hidden()
+        .child(
+            div()
+                .h_full()
+                .w(px(width * fraction))
+                .rounded(px(9999.0))
+                .bg(theme.action_primary),
+        )
+}
+
+/// One segment of the Route Truth Chain.
+#[derive(Clone, Copy)]
+pub(crate) enum RouteSegmentKind {
+    Rule,
+    Group,
+    Exit,
+    Direct,
+    Reject,
+}
+
+/// The signature Manis visual grammar: observed `rule -> policy group -> exit`.
+///
+/// Royal Violet is reserved for the rule segment; a neutral raised surface carries the policy
+/// group; the exit segment takes the measured status colour, or neutral `DIRECT` / red `REJECT`.
+pub(crate) fn route_segment(
+    label: impl Into<SharedString>,
+    kind: RouteSegmentKind,
+    latency: Option<u64>,
+    theme: Theme,
+) -> Div {
+    let (foreground, background) = match kind {
+        RouteSegmentKind::Rule => (theme.route_trace, theme.route_soft),
+        RouteSegmentKind::Group => (theme.text_primary, theme.surface_low),
+        RouteSegmentKind::Exit => {
+            let color = theme.latency_color(latency);
+            (color, theme.status_success_soft)
+        }
+        RouteSegmentKind::Direct => (theme.text_secondary, theme.surface_low),
+        RouteSegmentKind::Reject => (theme.status_error, theme.status_error_soft),
+    };
+    let mono = matches!(
+        kind,
+        RouteSegmentKind::Rule | RouteSegmentKind::Direct | RouteSegmentKind::Reject
+    );
+    div()
+        .flex()
+        .items_center()
+        .gap(px(5.0))
+        .flex_shrink_0()
+        .h(px(22.0))
+        .px(px(8.0))
+        .rounded(Radius::Badge.px())
+        .border_1()
+        .border_color(if matches!(kind, RouteSegmentKind::Group) {
+            theme.outline_subtle
+        } else {
+            gpui::rgba(0x0000_0000)
+        })
+        .bg(background)
+        .text_color(foreground)
+        .text_size(if mono {
+            px(11.0)
+        } else {
+            TextRole::Metadata.size()
+        })
+        .line_height(px(16.0))
+        .font_weight(TextRole::Label.weight())
+        .when(mono, |segment| segment.font_family(MONO_FAMILY))
+        .when(matches!(kind, RouteSegmentKind::Exit), |segment| {
+            segment.child(div().size(px(6.0)).rounded_full().bg(foreground))
+        })
+        .child(label.into())
+}
+
+/// The arrow between two Route Truth Chain segments.
+pub(crate) fn route_arrow(theme: Theme) -> Div {
+    div()
+        .flex_shrink_0()
+        .text_size(px(11.0))
+        .line_height(px(22.0))
+        .text_color(theme.text_tertiary)
+        .child("→")
+}
+
+/// A section header: 15px title, tertiary sub-line, trailing actions.
+pub(crate) fn section_header(
+    title: impl Into<SharedString>,
+    detail: impl Into<SharedString>,
+    action: Option<AnyElement>,
+    theme: Theme,
+) -> Div {
+    let detail = detail.into();
+    div()
+        .flex()
+        .flex_wrap()
+        .w_full()
+        .items_center()
+        .justify_between()
+        .gap(Space::Md.px())
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(180.0))
+                .child(
+                    div()
+                        .text_color(theme.text_primary)
+                        .text_size(TextRole::SectionTitle.size())
+                        .line_height(TextRole::SectionTitle.line_height())
+                        .font_weight(TextRole::SectionTitle.weight())
+                        .child(title.into()),
+                )
+                .when(!detail.as_ref().is_empty(), |this| {
+                    this.child(
+                        div()
+                            .mt(px(1.0))
+                            .text_color(theme.text_tertiary)
+                            .text_size(TextRole::Data.size())
+                            .line_height(TextRole::Data.line_height())
+                            .child(detail),
+                    )
+                }),
+        )
+        .when_some(action, |this, action| {
+            this.child(
+                div()
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    .gap(Space::Sm.px())
+                    .child(action),
+            )
+        })
+}
+
+#[cfg(test)]
 pub(crate) fn page_heading(
     title: impl Into<SharedString>,
     detail: impl Into<SharedString>,

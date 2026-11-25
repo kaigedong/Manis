@@ -1,7 +1,7 @@
 use super::super::{
     driver::{
         SnapshotWorkspace, close_window, open_workspace, refresh, save_screenshot, scroll_window,
-        settle_ui_animation, theme_toggle_x,
+        settle_ui_animation, toggle_theme,
     },
     fixtures::write_managed_policy_fixture,
 };
@@ -11,7 +11,7 @@ use super::common::manis_root;
 pub(crate) fn capture_app_updates(
     cx: &mut gpui::VisualTestAppContext,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use gpui::{AnyWindowHandle, AppContext as _, Modifiers, point, px, size};
+    use gpui::{AnyWindowHandle, AppContext as _, px, size};
     let root = std::env::temp_dir().join(format!("manis-update-snapshot-{}", std::process::id()));
     let store = root.join("subscriptions");
     manis_profile::write_private_atomic(&store, "language.preference", b"zh-CN")?;
@@ -40,9 +40,7 @@ pub(crate) fn capture_app_updates(
             refresh(cx, window)?;
             save_screenshot(cx, window, &format!("app-updates-{label}-{suffix}.png"))?;
         }
-        let toggle_x = theme_toggle_x(width);
-        cx.simulate_click(window, point(px(toggle_x), px(24.0)), Modifiers::none());
-        refresh(cx, window)?;
+        toggle_theme(cx, window, width)?;
         save_screenshot(cx, window, &format!("app-updates-{label}-dark.png"))?;
         cx.update_window(window, |_, window, cx| {
             app.update(cx, |app, cx| app.show_about_fixture(window, cx));
@@ -51,7 +49,7 @@ pub(crate) fn capture_app_updates(
         save_screenshot(cx, window, &format!("about-{label}-dark.png"))?;
         cx.simulate_keystrokes(window, "escape");
         settle_ui_animation(cx, window)?;
-        cx.simulate_click(window, point(px(toggle_x), px(24.0)), Modifiers::none());
+        toggle_theme(cx, window, width)?;
         refresh(cx, window)?;
         cx.update_window(window, |_, window, cx| {
             app.update(cx, |app, cx| app.show_about_fixture(window, cx));
@@ -68,7 +66,7 @@ pub(crate) fn capture_app_updates(
 pub(crate) fn capture_configuration_transfer(
     cx: &mut gpui::VisualTestAppContext,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use gpui::{AnyWindowHandle, AppContext as _, Modifiers, point, px, size};
+    use gpui::{AnyWindowHandle, AppContext as _, px, size};
     let root = std::env::temp_dir().join(format!("manis-transfer-snapshot-{}", std::process::id()));
     let store = root.join("subscriptions");
     write_managed_policy_fixture(&store)?;
@@ -112,9 +110,7 @@ pub(crate) fn capture_configuration_transfer(
         )?;
         cx.simulate_keystrokes(window, "escape");
         settle_ui_animation(cx, window)?;
-        let toggle_x = theme_toggle_x(width);
-        cx.simulate_click(window, point(px(toggle_x), px(24.0)), Modifiers::none());
-        refresh(cx, window)?;
+        toggle_theme(cx, window, width)?;
         cx.update_window(window, |_, window, cx| {
             app.update(cx, |app, cx| {
                 app.show_configuration_backup_fixture(&backup, window, cx);
@@ -156,13 +152,7 @@ fn capture_configuration_editor(
     cx.simulate_keystrokes(window, "escape");
     settle_ui_animation(cx, window)?;
     let width = if label == "wide" { 1420.0 } else { 640.0 };
-    let toggle_x = theme_toggle_x(width);
-    cx.simulate_click(
-        window,
-        gpui::point(gpui::px(toggle_x), gpui::px(24.0)),
-        gpui::Modifiers::none(),
-    );
-    refresh(cx, window)?;
+    toggle_theme(cx, window, width)?;
     cx.update_window(window, |_, window, cx| {
         app.update(cx, |app, cx| {
             app.show_configuration_editor_fixture(window, cx);
@@ -225,6 +215,17 @@ pub(crate) fn capture_configuration(
     close_window(cx, window)
 }
 
+/// Section directory rows inside the settings card, measured on a 1420x900 window.
+#[cfg(target_os = "macos")]
+const SECTION_ROWS: [f32; 6] = [107.0, 145.0, 183.0, 221.0, 259.0, 297.0];
+#[cfg(target_os = "macos")]
+const SECTION_ROW_X: f32 = 340.0;
+/// The section card's trailing primary action, in the same rows as its title.
+#[cfg(target_os = "macos")]
+const SECTION_ACTION_X: f32 = 1_338.0;
+#[cfg(target_os = "macos")]
+const SECTION_ACTION_Y: f32 = 113.0;
+
 #[cfg(target_os = "macos")]
 pub(crate) fn capture_configuration_sections(
     cx: &mut gpui::VisualTestAppContext,
@@ -244,27 +245,51 @@ pub(crate) fn capture_configuration_sections(
     open_workspace(cx, window, width, SnapshotWorkspace::Configuration)?;
 
     save_screenshot(cx, window, "configuration-section-general.png")?;
-    cx.simulate_click(window, point(px(340.0), px(295.0)), Modifiers::none());
+    cx.simulate_click(
+        window,
+        point(px(SECTION_ROW_X), px(SECTION_ROWS[2])),
+        Modifiers::none(),
+    );
     refresh(cx, window)?;
     save_screenshot(cx, window, "configuration-section-proxy-sources.png")?;
-    cx.simulate_click(window, point(px(1_330.0), px(180.0)), Modifiers::none());
+    // The section card's own primary action opens the source editor.
+    cx.simulate_click(
+        window,
+        point(px(SECTION_ACTION_X), px(SECTION_ACTION_Y)),
+        Modifiers::none(),
+    );
     settle_ui_animation(cx, window)?;
+    if !cx.update_window(window, |_, window, cx| window.has_active_dialog(cx))? {
+        return Err("proxy source fixture did not open the editor dialog".into());
+    }
     save_screenshot(cx, window, "configuration-proxy-source-modal.png")?;
     cx.simulate_keystrokes(window, "escape");
     settle_ui_animation(cx, window)?;
 
-    for (y, file_name) in [
-        (177.0, "configuration-section-general.png"),
-        (235.0, "configuration-section-runtime.png"),
+    for (index, file_name) in [
+        (0, "configuration-section-general.png"),
+        (1, "configuration-section-runtime.png"),
     ] {
-        cx.simulate_click(window, point(px(340.0), px(y)), Modifiers::none());
+        cx.simulate_click(
+            window,
+            point(px(SECTION_ROW_X), px(SECTION_ROWS[index])),
+            Modifiers::none(),
+        );
         refresh(cx, window)?;
         save_screenshot(cx, window, file_name)?;
     }
-    cx.simulate_click(window, point(px(340.0), px(350.0)), Modifiers::none());
+    cx.simulate_click(
+        window,
+        point(px(SECTION_ROW_X), px(SECTION_ROWS[3])),
+        Modifiers::none(),
+    );
     refresh(cx, window)?;
     save_screenshot(cx, window, "configuration-section-rule-sources.png")?;
-    cx.simulate_click(window, point(px(1_330.0), px(220.0)), Modifiers::none());
+    cx.simulate_click(
+        window,
+        point(px(SECTION_ACTION_X), px(SECTION_ACTION_Y)),
+        Modifiers::none(),
+    );
     settle_ui_animation(cx, window)?;
     if !cx.update_window(window, |_, window, cx| window.has_active_dialog(cx))? {
         return Err("rule source fixture did not open the editor dialog".into());
@@ -273,7 +298,11 @@ pub(crate) fn capture_configuration_sections(
     cx.simulate_keystrokes(window, "escape");
     settle_ui_animation(cx, window)?;
 
-    cx.simulate_click(window, point(px(340.0), px(410.0)), Modifiers::none());
+    cx.simulate_click(
+        window,
+        point(px(SECTION_ROW_X), px(SECTION_ROWS[4])),
+        Modifiers::none(),
+    );
     refresh(cx, window)?;
     save_screenshot(cx, window, "configuration-section-advanced.png")?;
     close_window(cx, window)?;
@@ -333,16 +362,25 @@ pub(crate) fn capture_localization(
     let window: AnyWindowHandle = window.into();
     refresh(cx, window)?;
     open_workspace(cx, window, width, SnapshotWorkspace::Configuration)?;
+    // Wide windows lay the three language options out in one row; compact stacks them, so the
+    // third option sits near the bottom of the first card.
     let language_option = if width >= 1_280.0 {
-        point(px(820.0), px(270.0))
+        point(px(935.0), px(157.0))
     } else {
-        point(px(400.0), px(380.0))
+        point(px(387.0), px(354.0))
     };
     cx.simulate_click(window, language_option, Modifiers::none());
     refresh(cx, window)?;
-    let saved_preference = std::fs::read_to_string(&preference_file)?;
-    if saved_preference.trim() != preference {
-        return Err("language selector did not persist the requested preference".into());
+    // The store migrates the loose fixture file into config.toml, so the saved value is read
+    // back from the configuration table rather than from the original path.
+    let saved = std::fs::read_to_string(fixture_root.join("config.toml"))?;
+    let persisted = saved.lines().any(|line| line.trim() == preference)
+        || saved.contains(&format!("= \"{preference}\""));
+    if !persisted {
+        return Err(format!(
+            "language selector did not persist {preference}; config.toml is:\n{saved}"
+        )
+        .into());
     }
     save_screenshot(cx, window, file_name)?;
     close_window(cx, window)?;

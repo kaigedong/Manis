@@ -7,8 +7,8 @@ use super::{
     ProxySourceEditorKind, ProxySourceEditorTarget, ProxySourceEditorView, Radius,
     RemoteSourceRefreshInterval, Role, Selectable, Stateful, StatefulInteractiveElement, Styled,
     SubscriptionFeedback, SubscriptionTextInput, TextRole, Theme, Window, action_button, copy,
-    dialog_footer_surface, dialog_header_surface, div, field_label, px, refresh_interval_label,
-    style_action_button, surface_dialog,
+    dialog_footer_surface, dialog_header_surface, div, field_label, footer_feedback, px,
+    refresh_interval_label, style_action_button, surface_dialog,
 };
 
 impl ManisApp {
@@ -226,7 +226,7 @@ impl ManisApp {
             theme,
             cx,
         );
-        let footer = Self::proxy_source_editor_footer(input, view, language, theme, cx);
+        let footer = self.proxy_source_editor_footer(input, view, language, theme, cx);
         crate::app::windows::EditorSections::new(
             Self::proxy_source_editor_title(view, language, theme),
             body,
@@ -456,13 +456,31 @@ impl ManisApp {
     }
 
     fn proxy_source_editor_footer(
+        &self,
         input: Entity<SubscriptionTextInput>,
         view: ProxySourceEditorView,
         language: Language,
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Div {
+        // Feedback stays beside the submit button, so an error is never off-screen.
+        let (feedback, feedback_color) = match self.proxy_source_editor.error.as_ref() {
+            Some(error) => (error.clone(), theme.status_error),
+            None if view.busy() => (
+                language
+                    .localized(copy::configuration::PROCESSING)
+                    .to_owned(),
+                theme.text_secondary,
+            ),
+            None => (
+                language
+                    .localized(copy::configuration::CHANGES_ARE_STORED_LOCALLY)
+                    .to_owned(),
+                theme.text_tertiary,
+            ),
+        };
         dialog_footer_surface(theme)
+            .child(footer_feedback(feedback, feedback_color))
             .child(
                 style_action_button(
                     Button::new("cancel-proxy-source")
@@ -511,8 +529,10 @@ impl ManisApp {
         dialog_header_surface(theme)
         .child(
             div()
-                .text_size(px(17.0))
+                .text_size(TextRole::SectionTitle.size())
+                .line_height(TextRole::SectionTitle.line_height())
                 .font_weight(TextRole::SectionTitle.weight())
+                .text_color(theme.text_primary)
                 .child(if view.editing {
                     language.localized(copy::configuration::EDIT_PROXY_SOURCE)
                 } else {

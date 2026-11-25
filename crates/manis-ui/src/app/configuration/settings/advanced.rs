@@ -1,6 +1,6 @@
 use super::{
     Div, IntoElement, ManisApp, ParentElement, Space, Stateful, StatusTone, Styled, TextRole,
-    Theme, copy, div, panel_surface, proxy_mode_label, px, routing_mode_label, section_heading,
+    Theme, copy, div, panel_surface, proxy_mode_label, px, routing_mode_label, section_header,
     status_badge,
 };
 impl ManisApp {
@@ -13,7 +13,7 @@ impl ManisApp {
         let profile_source = self.runtime.profile_source();
         let profile_detail = copy::configuration::profile_source_detail(language, profile_source);
         panel_surface("configuration-advanced", compact, theme)
-            .child(section_heading(
+            .child(section_header(
                 language.localized(copy::configuration::ADVANCED_SETTINGS),
                 language.localized(copy::configuration::CURRENT_MANAGED_NETWORK_BEHAVIOR),
                 Some(
@@ -63,6 +63,7 @@ impl ManisApp {
             .pt(Space::Md.px())
             .border_t_1()
             .border_color(theme.outline_subtle)
+            .min_h(px(52.0))
             .flex()
             .items_center()
             .justify_between()

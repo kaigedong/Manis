@@ -1,7 +1,7 @@
 use super::super::super::{
     driver::{
         SnapshotWorkspace, close_window, open_workspace, refresh, save_screenshot,
-        settle_ui_animation, settle_ui_for, theme_toggle_x,
+        settle_ui_animation, settle_ui_for, theme_toggle_point, toggle_theme,
     },
     fixtures::spawn_mihomo_fixture,
 };
@@ -29,7 +29,7 @@ fn capture_appearance_at_size(
     height: f32,
     label: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use gpui::{AnyWindowHandle, AppContext as _, Modifiers, point, px, size};
+    use gpui::{AnyWindowHandle, AppContext as _, Modifiers, px, size};
     use gpui_component::WindowExt as _;
 
     let (endpoint, server) = spawn_mihomo_fixture()?;
@@ -42,12 +42,13 @@ fn capture_appearance_at_size(
     let app = app.ok_or("missing appearance app")?;
     let window: AnyWindowHandle = window.into();
     refresh(cx, window)?;
-    cx.simulate_click(window, point(px(width - 80.0), px(90.0)), Modifiers::none());
+    // The connected shell is proven by the connected capture set; this fixture only needs a
+    // rendered rail, so it stays disconnected instead of guessing at page-internal buttons.
     settle_ui_for(cx, window, std::time::Duration::from_millis(600))?;
-    let toggle_x = theme_toggle_x(width);
+    let toggle = theme_toggle_point(width, height);
     for (dark, mode) in [(false, "light"), (true, "dark")] {
         if dark {
-            cx.simulate_click(window, point(px(toggle_x), px(24.0)), Modifiers::none());
+            cx.simulate_click(window, toggle, Modifiers::none());
             refresh(cx, window)?;
         }
         for (workspace, name) in [
@@ -93,7 +94,7 @@ fn capture_appearance_at_size(
         }
     }
     // Exercise the reverse transition too, including component token synchronization.
-    cx.simulate_click(window, point(px(toggle_x), px(24.0)), Modifiers::none());
+    cx.simulate_click(window, toggle, Modifiers::none());
     refresh(cx, window)?;
     assert_appearance_mode(cx, window, false)?;
     close_window(cx, window)?;
@@ -109,12 +110,19 @@ pub(super) fn assert_appearance_mode(
     let screenshot = cx.capture_screenshot(window)?;
     // This unobstructed chrome pixel also catches stale coordinate-based theme clicks.
     let expected = if dark {
-        [0x1c, 0x22, 0x29, 255]
+        [0x14, 0x14, 0x17, 255]
     } else {
-        [0xe9, 0xee, 0xf2, 255]
+        [0xef, 0xec, 0xe6, 255]
     };
-    if screenshot.get_pixel(4, 4).0 != expected {
-        return Err(format!("appearance fixture is not in the expected dark={dark} mode").into());
+
+    let observed = screenshot.get_pixel(4, 4).0;
+    if observed != expected {
+        return Err(format!(
+            "appearance fixture is not in the expected dark={dark} mode: rail corner is \
+             rgb({:02x},{:02x},{:02x}), expected rgb({:02x},{:02x},{:02x})",
+            observed[0], observed[1], observed[2], expected[0], expected[1], expected[2]
+        )
+        .into());
     }
     Ok(())
 }
@@ -123,7 +131,7 @@ pub(super) fn assert_appearance_mode(
 pub(super) fn capture_configuration_dark(
     cx: &mut gpui::VisualTestAppContext,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use gpui::{AnyWindowHandle, Modifiers, point, px, size};
+    use gpui::{AnyWindowHandle, px, size};
     use manis_ui::ManisApp;
 
     let window = cx.open_offscreen_window(size(px(1420.0), px(900.0)), |window, cx| {
@@ -134,7 +142,7 @@ pub(super) fn capture_configuration_dark(
     let window: AnyWindowHandle = window.into();
 
     refresh(cx, window)?;
-    cx.simulate_click(window, point(px(850.0), px(24.0)), Modifiers::none());
+    toggle_theme(cx, window, 1_420.0)?;
     refresh(cx, window)?;
     open_workspace(cx, window, 1_420.0, SnapshotWorkspace::Configuration)?;
     settle_ui_animation(cx, window)?;

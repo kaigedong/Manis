@@ -6,6 +6,21 @@ once the public API and configuration formats stabilize.
 
 ## [Unreleased]
 
+### Changed
+
+- Both clients now use **Manis UI 2.0 — Obsidian & Alabaster (Swiss Precision Routing)**, a single
+  cross-platform design system sourced from `design-system/manis/tokens.json`: warm alabaster and
+  true-obsidian surfaces, electric cobalt actions, a royal-violet accent reserved for the
+  `rule → policy group → exit` chain, monospaced tabular data, 6/10/14/20px radius steps and no emoji.
+  Desktop replaces the top bar and bottom status strip with a left status rail (navigation, live
+  telemetry card, settings and theme tools) plus a 56px command bar; the nodes page leads with
+  policy-group bento cards above subscription sources, activity shows an observed Route Truth Chain
+  per connection, rules render as a numbered drag pipeline ending in FINAL, and logs gain level
+  filter pills. Android drops the global top chrome and the 140dp fixed connection band for a
+  hero connection cockpit, a 64dp five-tab bar (节点/规则/活动/日志/设置), route-chain cards, a
+  priority pipeline and grouped settings. Documentation now points at the design system as the
+  source of truth.
+
 ### Added
 
 - Rust and GPUI desktop application for policy-based proxy routing.

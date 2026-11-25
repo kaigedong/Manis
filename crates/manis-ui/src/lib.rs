@@ -1,3 +1,7 @@
+// A rendering token set is intentionally a small `Copy` value threaded through every view
+// builder. Passing it by value keeps those builders readable and matches gpui's own style.
+#![allow(clippy::trivially_copy_pass_by_ref)]
+
 mod app;
 mod app_update;
 mod assets;

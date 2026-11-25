@@ -1,5 +1,7 @@
 # Interface materials and hierarchy
 
+> **Manis UI 2.0 supersedes the visuals described below.** Palette, type scale and component anatomy live in [design-system/manis/MASTER.md](../design-system/manis/MASTER.md) and [tokens.json](../design-system/manis/tokens.json). This page still documents the interaction and information-architecture rules the redesign keeps.
+
 Manis keeps GPUI and gpui-component. Its interface uses opaque, subtly tinted surfaces, compact native
 typography, and restrained semantic accents. This replaces the previous whole-window blur and
 stacked translucent green surfaces; readability must not depend on the user's wallpaper.

@@ -1,7 +1,7 @@
 use super::super::super::{
     driver::{
-        close_window, refresh, save_screenshot, scroll_window, settle_ui_animation, settle_ui_for,
-        theme_toggle_x,
+        close_window, connect_proxy, refresh, save_screenshot, scroll_window, settle_ui_animation,
+        settle_ui_for, toggle_theme,
     },
     fixtures::spawn_mihomo_fixture,
 };
@@ -12,7 +12,7 @@ use super::appearance::assert_appearance_mode;
 pub(crate) fn capture_nodes_toolbar(
     cx: &mut gpui::VisualTestAppContext,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use gpui::{AnyWindowHandle, Modifiers, point, px, size};
+    use gpui::{AnyWindowHandle, px, size};
 
     for (width, height, label) in [
         (1420.0, 900.0, "wide"),
@@ -31,13 +31,11 @@ pub(crate) fn capture_nodes_toolbar(
         if label == "minimum" {
             save_screenshot(cx, window, "nodes-toolbar-minimum-empty.png")?;
         }
-        cx.simulate_click(window, point(px(width - 80.0), px(90.0)), Modifiers::none());
+        connect_proxy(cx, window, width)?;
         settle_ui_for(cx, window, std::time::Duration::from_millis(600))?;
         for (dark, mode) in [(false, "light"), (true, "dark")] {
             if dark {
-                let toggle_x = theme_toggle_x(width);
-                cx.simulate_click(window, point(px(toggle_x), px(24.0)), Modifiers::none());
-                refresh(cx, window)?;
+                toggle_theme(cx, window, width)?;
             }
             assert_appearance_mode(cx, window, dark)?;
             save_screenshot(cx, window, &format!("nodes-toolbar-{label}-{mode}.png"))?;
@@ -52,7 +50,7 @@ pub(crate) fn capture_nodes_toolbar(
 pub(crate) fn capture_merged_nodes(
     cx: &mut gpui::VisualTestAppContext,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use gpui::{AnyWindowHandle, AppContext as _, Modifiers, point, px, size};
+    use gpui::{AnyWindowHandle, AppContext as _, point, px, size};
     let store = std::env::temp_dir().join(format!("manis-merged-nodes-{}", std::process::id()));
     manis_profile::write_private_atomic(&store, "language.preference", b"zh-CN")?;
     for (width, height, label) in [(1420.0, 900.0, "wide"), (640.0, 560.0, "compact")] {
@@ -75,8 +73,7 @@ pub(crate) fn capture_merged_nodes(
         save_screenshot(cx, window, &format!("merged-nodes-{label}-empty.png"))?;
         for (dark, mode) in [(false, "light"), (true, "dark")] {
             if dark {
-                let toggle_x = theme_toggle_x(width);
-                cx.simulate_click(window, point(px(toggle_x), px(24.0)), Modifiers::none());
+                toggle_theme(cx, window, width)?;
             }
             cx.update_window(window, |_, _, cx| {
                 app.update(cx, |app, cx| app.show_merged_nodes_fixture(false, cx));

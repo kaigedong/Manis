@@ -2,7 +2,7 @@ use super::{
     Context, Div, FluentBuilder, FontWeight, InteractiveElement, IntoElement, Language,
     LanguagePreference, ManisApp, ParentElement, Radius, Role, Space, Stateful,
     StatefulInteractiveElement, StatusTone, Styled, TextRole, Theme, copy, div,
-    language_preference_label, panel_surface, px, save_language_preference_in, section_heading,
+    language_preference_label, panel_surface, px, save_language_preference_in, section_header,
     status_badge,
 };
 
@@ -17,7 +17,7 @@ impl ManisApp {
         let current_preference = self.language_preference();
         let current_language = language.display_name();
         panel_surface("configuration-language", compact, theme)
-            .child(section_heading(
+            .child(section_header(
                 language.localized(copy::configuration::INTERFACE_LANGUAGE),
                 "",
                 Some(

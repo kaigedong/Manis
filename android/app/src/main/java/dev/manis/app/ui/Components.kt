@@ -1,7 +1,14 @@
 package dev.manis.app.ui
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -57,6 +64,7 @@ import dev.manis.app.R
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
@@ -75,18 +83,20 @@ internal val LocalManisTightActions = staticCompositionLocalOf { false }
 fun ManisCard(
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
+    borderColor: Color? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val colors = LocalManisColors.current
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(ManisDimens.radiusPane))
+            .clip(RoundedCornerShape(ManisDimens.radiusCard))
             .then(
                 if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier,
             ),
-        shape = RoundedCornerShape(ManisDimens.radiusPane),
-        color = colors.surfaceOverlay,
+        shape = RoundedCornerShape(ManisDimens.radiusCard),
+        color = colors.surfaceElevated,
+        border = BorderStroke(1.dp, borderColor ?: colors.outlineSubtle),
     ) {
         Column(
             Modifier.padding(ManisDimens.spaceLg),
@@ -709,3 +719,335 @@ fun ManisMultiSelect(
         }
     }
 }
+
+
+// ===== Manis UI 2.0 signature components =====
+
+/** The semantic tones a pill can carry. Route is reserved for the rule -> group -> exit chain. */
+enum class ManisTone { Neutral, Accent, Route, Success, Warning, Error }
+
+private data class ToneColors(val foreground: Color, val background: Color)
+
+@Composable
+private fun toneColors(tone: ManisTone): ToneColors {
+    val colors = LocalManisColors.current
+    return when (tone) {
+        ManisTone.Neutral -> ToneColors(colors.textSecondary, colors.surfaceLow)
+        ManisTone.Accent -> ToneColors(colors.actionPrimary, colors.actionSoft)
+        ManisTone.Route -> ToneColors(colors.routeTrace, colors.routeSoft)
+        ManisTone.Success -> ToneColors(colors.statusSuccess, colors.statusSuccessSoft)
+        ManisTone.Warning -> ToneColors(colors.statusWarning, colors.statusWarningSoft)
+        ManisTone.Error -> ToneColors(colors.statusError, colors.statusErrorSoft)
+    }
+}
+
+/** A compact property pill: 11sp medium, 6dp corners, soft tone fill. No emoji, ever. */
+@Composable
+fun ManisPill(label: String, tone: ManisTone = ManisTone.Neutral, modifier: Modifier = Modifier) {
+    val toneColors = toneColors(tone)
+    Row(
+        modifier = modifier
+            .height(20.dp)
+            .clip(RoundedCornerShape(ManisDimens.radiusBadge))
+            .background(toneColors.background)
+            .padding(horizontal = ManisDimens.spaceSm),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
+        Text(
+            label,
+            style = ManisType.metadata.copy(fontSize = 11.sp, fontWeight = FontWeight.Medium),
+            color = toneColors.foreground,
+            maxLines = 1,
+        )
+    }
+}
+
+/** The crisp 2-letter ISO region square that replaces flag emoji. */
+@Composable
+fun ManisRegionBadge(code: String, modifier: Modifier = Modifier) {
+    val colors = LocalManisColors.current
+    Box(
+        modifier = modifier
+            .size(width = 26.dp, height = 20.dp)
+            .clip(RoundedCornerShape(5.dp))
+            .background(colors.surfaceLow)
+            .then(
+                Modifier.border(1.dp, colors.outlineSubtle, RoundedCornerShape(5.dp)),
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            code,
+            style = ManisType.data.copy(fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold),
+            color = colors.textSecondary,
+            maxLines = 1,
+        )
+    }
+}
+
+/** The status colour a measured latency earns, following the documented bands. */
+fun latitudeTone(milliseconds: Int?, colors: ManisColors): Color = when {
+    milliseconds == null -> colors.textTertiary
+    milliseconds < 120 -> colors.statusSuccess
+    milliseconds <= 350 -> colors.statusWarning
+    else -> colors.statusError
+}
+
+private fun latencyBars(milliseconds: Int?): Int = when {
+    milliseconds == null -> 0
+    milliseconds < 120 -> 3
+    milliseconds <= 350 -> 2
+    else -> 1
+}
+
+/** Mono latency plus three signal bars; unknown latency renders a neutral dash. */
+@Composable
+fun ManisLatency(milliseconds: Int?, modifier: Modifier = Modifier) {
+    val colors = LocalManisColors.current
+    val color = latitudeTone(milliseconds, colors)
+    val bars = latencyBars(milliseconds)
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Row(
+            modifier = Modifier.height(11.dp),
+            verticalAlignment = Alignment.Bottom,
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            listOf(4.dp, 7.dp, 11.dp).forEachIndexed { index, height ->
+                Box(
+                    Modifier
+                        .width(2.5.dp)
+                        .height(height)
+                        .clip(RoundedCornerShape(1.dp))
+                        .background(if (index < bars) color else color.copy(alpha = 0.22f)),
+                )
+            }
+        }
+        Text(
+            milliseconds?.let { "$it ms" } ?: "—",
+            style = ManisType.data,
+            color = color,
+            maxLines = 1,
+        )
+    }
+}
+
+/** One segment of the Route Truth Chain. */
+@Composable
+private fun RouteSegment(label: String, tone: ManisTone, mono: Boolean, dot: Boolean = false) {
+    val toneColors = toneColors(tone)
+    Row(
+        modifier = Modifier
+            .height(22.dp)
+            .clip(RoundedCornerShape(ManisDimens.radiusBadge))
+            .background(toneColors.background)
+            .then(
+                if (tone == ManisTone.Neutral) {
+                    Modifier.border(1.dp, LocalManisColors.current.outlineSubtle, RoundedCornerShape(ManisDimens.radiusBadge))
+                } else {
+                    Modifier
+                },
+            )
+            .padding(horizontal = ManisDimens.spaceSm),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
+        if (dot) {
+            Box(Modifier.size(6.dp).clip(CircleShape).background(toneColors.foreground))
+        }
+        Text(
+            label,
+            style = if (mono) ManisType.data.copy(fontSize = 11.sp) else ManisType.metadata,
+            color = toneColors.foreground,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+        )
+    }
+}
+
+/**
+ * The signature observed route: `[rule] -> [policy group] -> [exit · latency]`.
+ *
+ * Royal Violet marks the matched rule only. A direct exit renders neutral `DIRECT`; a rejected
+ * route renders the error tone, so the eye can tell evidence from prediction.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun ManisRouteChain(
+    rule: String,
+    group: String,
+    exit: String,
+    latency: Int?,
+    modifier: Modifier = Modifier,
+    direct: Boolean = false,
+    rejected: Boolean = false,
+) {
+    val colors = LocalManisColors.current
+    FlowRow(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        RouteSegment(rule, ManisTone.Route, mono = true)
+        Text("→", style = ManisType.metadata, color = colors.textTertiary)
+        RouteSegment(group, ManisTone.Neutral, mono = false)
+        Text("→", style = ManisType.metadata, color = colors.textTertiary)
+        when {
+            rejected -> RouteSegment("REJECT", ManisTone.Error, mono = true)
+            direct -> RouteSegment("DIRECT", ManisTone.Neutral, mono = true)
+            else -> Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                RouteSegment(exit, ManisTone.Success, mono = false, dot = true)
+                if (latency != null) {
+                    ManisLatency(latency, Modifier)
+                }
+            }
+        }
+    }
+}
+
+/** A subscription quota meter, always paired with its mono usage text by the caller. */
+@Composable
+fun ManisUsageMeter(fraction: Float, modifier: Modifier = Modifier) {
+    val colors = LocalManisColors.current
+    Box(
+        modifier = modifier
+            .height(5.dp)
+            .clip(RoundedCornerShape(9999.dp))
+            .background(colors.surfaceHigh),
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth(fraction.coerceIn(0f, 1f))
+                .fillMaxSize()
+                .clip(RoundedCornerShape(9999.dp))
+                .background(colors.actionPrimary),
+        )
+    }
+}
+
+/** A page header: 48dp band, optional brand mark, one title, trailing controls. */
+@Composable
+fun ManisPageHeader(
+    title: String,
+    modifier: Modifier = Modifier,
+    brand: Boolean = false,
+    trailing: @Composable RowScope.() -> Unit = {},
+) {
+    val colors = LocalManisColors.current
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(ManisDimens.chromeHeight)
+            .padding(horizontal = ManisDimens.spaceLg),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(9.dp),
+    ) {
+        if (brand) {
+            Box(
+                Modifier
+                    .size(26.dp)
+                    .clip(RoundedCornerShape(7.dp))
+                    .background(colors.textPrimary),
+                contentAlignment = Alignment.Center,
+            ) {
+                Image(
+                    painter = painterResource(R.drawable.ic_brand),
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        }
+        Text(
+            title,
+            modifier = Modifier.weight(1f),
+            style = ManisType.pageTitle.copy(fontSize = 19.sp, fontWeight = FontWeight.Bold),
+            color = colors.textPrimary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        trailing()
+    }
+}
+
+/** The theme control: a sun while dark (switch to light), a moon while light. 48dp target. */
+@Composable
+fun ManisThemeToggle(darkTheme: Boolean, onToggle: () -> Unit, modifier: Modifier = Modifier) {
+    val colors = LocalManisColors.current
+    Box(
+        modifier = modifier
+            .size(ManisDimens.minTouch)
+            .clip(CircleShape)
+            .clickable(onClick = onToggle),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            painter = painterResource(
+                if (darkTheme) R.drawable.ic_light_mode else R.drawable.ic_dark_mode,
+            ),
+            contentDescription = if (darkTheme) "浅色" else "深色",
+            modifier = Modifier.size(20.dp),
+            tint = colors.textSecondary,
+        )
+    }
+}
+
+/**
+ * The precision segmented control used for route mode and filters: a recessed track, an elevated
+ * selected thumb, equal widths, one 40dp row.
+ */
+@Composable
+fun ManisSegmented(
+    options: List<String>,
+    selectedIndex: Int,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    onSelect: (Int) -> Unit,
+) {
+    val colors = LocalManisColors.current
+    val dark = colors.surfaceBase.luminance() < 0.5f
+    Row(
+        modifier = modifier
+            .height(40.dp)
+            .clip(RoundedCornerShape(ManisDimens.radiusControl))
+            .background(colors.surfaceLow)
+            .border(1.dp, colors.outlineSubtle, RoundedCornerShape(ManisDimens.radiusControl))
+            .padding(3.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        options.forEachIndexed { index, option ->
+            val selected = index == selectedIndex
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxSize()
+                    .clip(RoundedCornerShape(7.dp))
+                    .background(
+                        if (selected) {
+                            if (dark) colors.surfaceHigh else colors.surfaceElevated
+                        } else {
+                            Color.Transparent
+                        },
+                    )
+                    .clickable(enabled = enabled) { onSelect(index) },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    option,
+                    style = ManisType.label,
+                    color = if (selected) colors.textPrimary else colors.textSecondary,
+                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+

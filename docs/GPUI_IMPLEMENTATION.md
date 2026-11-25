@@ -1,5 +1,7 @@
 # Manis UI → GPUI 实现规范
 
+> **Manis UI 2.0 supersedes the visuals described below.** Palette, type scale and component anatomy live in [design-system/manis/MASTER.md](../design-system/manis/MASTER.md) and [tokens.json](../design-system/manis/tokens.json). This page still documents the interaction and information-architecture rules the redesign keeps.
+
 状态：设计基线 v0.1；产品与仓库名已确认为 `Manis`。
 
 ## 1. 体验原则

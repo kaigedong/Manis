@@ -54,6 +54,8 @@ object RuntimeState {
     var warnings by mutableStateOf(listOf<String>())
     var downloadTotal by mutableStateOf(0L)
     var uploadTotal by mutableStateOf(0L)
+    /** How many connections the core is carrying right now; the hero telemetry strip prints it. */
+    var connectionCount by mutableStateOf(0)
     var unreachable by mutableStateOf(false)
     var networkEpoch by mutableStateOf(0)
 }
@@ -119,12 +121,14 @@ fun ManisApp() {
                 RuntimeState.unreachable = false
                 RuntimeState.downloadTotal = 0
                 RuntimeState.uploadTotal = 0
+                RuntimeState.connectionCount = 0
                 autoFixDone = false
             }
             if (RuntimeState.active && ticks % 2 == 0) {
                 runCatching { ControllerApi.connections() }.onSuccess { traffic ->
                     RuntimeState.downloadTotal = traffic.downloadTotal
                     RuntimeState.uploadTotal = traffic.uploadTotal
+                    RuntimeState.connectionCount = traffic.connections.size
                 }
             }
             if (epoch != RuntimeState.networkEpoch) {
@@ -252,24 +256,14 @@ fun ManisApp() {
         onWorkspace = { workspace = it },
         darkTheme = dark,
         onToggleTheme = { UiPrefs.setDark(!dark) },
-        statusText = RuntimeState.summary.ifBlank { if (RuntimeState.active) "已连接" else "未连接" },
-        statusTone = when {
-            !RuntimeState.active -> StatusTone.Route
-            RuntimeState.unreachable -> StatusTone.Error
-            else -> StatusTone.Ok
-        },
-        downloadText = formatTraffic(RuntimeState.downloadTotal),
-        uploadText = formatTraffic(RuntimeState.uploadTotal),
-        showGlobalHeader = workspace == PrimaryWorkspace.Nodes,
-        // The home page carries the state, the mode and the button in one band of its own, so the
-        // strip below the navigation would be the second copy of the same line.
-        showStatusStrip = workspace != PrimaryWorkspace.Nodes,
     ) {
         Box(Modifier.fillMaxSize()) {
             when (workspace) {
                 PrimaryWorkspace.Nodes -> NodesWorkspace(
                     connected = RuntimeState.active,
                     mode = mode,
+                    darkTheme = dark,
+                    onToggleTheme = { UiPrefs.setDark(!dark) },
                     onToggleConnection = ::toggleConnection,
                     onModeSelect = ::selectMode,
                     onMessage = ::say,
@@ -284,8 +278,13 @@ fun ManisApp() {
                 )
             }
             toast?.let { message ->
-                // The home page's connection bar stays at the bottom, so its toast sits above it
-                // instead of covering the mode chips it is about.
+                // The phone bar is 64dp of chrome under the content, so the toast clears it. The
+                // rail layouts have no bottom bar and only need the standard margin.
+                val bottom = if (LocalSizeClass.current == SizeClass.Compact) {
+                    ManisDimens.bottomNavigationHeight + ManisDimens.spaceSm
+                } else {
+                    ManisDimens.spaceLg
+                }
                 ManisToast(
                     message,
                     Modifier
@@ -293,11 +292,7 @@ fun ManisApp() {
                         .padding(
                             start = ManisDimens.spaceLg,
                             end = ManisDimens.spaceLg,
-                            bottom = if (workspace == PrimaryWorkspace.Nodes) {
-                                ManisDimens.connectionBar + ManisDimens.spaceSm
-                            } else {
-                                ManisDimens.spaceLg
-                            },
+                            bottom = bottom,
                         ),
                 )
             }

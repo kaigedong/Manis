@@ -11,7 +11,7 @@ use crate::app::{
 use crate::{
     components::{
         ActionRole, action_button, dialog_footer_surface, dialog_header_surface, empty_state,
-        row_action_button, section_heading, style_action_button, surface_dialog,
+        row_action_button, section_header, style_action_button, surface_dialog,
     },
     diagnostics::{UiEvent, trace_ui},
     localization::{CountNoun, Language, Message, copy},
@@ -23,8 +23,8 @@ use crate::{
 
 use super::{
     ProxySourceEditorActivity, ProxySourceEditorInputs, ProxySourceEditorView,
-    SubscriptionCardActivity, SubscriptionCardPresentation, field_label, panel_surface,
-    refresh_interval_label, source_kind_label, source_update_label,
+    SubscriptionCardActivity, SubscriptionCardPresentation, field_label, footer_feedback,
+    panel_surface, refresh_interval_label, source_kind_label, source_update_label,
 };
 
 mod cards;
@@ -54,7 +54,7 @@ impl ManisApp {
         }));
 
         let panel = panel_surface("configuration-source", compact, theme)
-            .child(section_heading(
+            .child(section_header(
                 language.localized(copy::configuration::PROXY_SOURCES),
                 language.count(CountNoun::Source, saved_source_count),
                 Some(add_action.into_any_element()),

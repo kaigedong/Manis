@@ -8,7 +8,7 @@ use manis_core::ProxyMode;
 use crate::app::{ManisApp, SubscriptionFeedback};
 use crate::{
     components::{
-        ActionRole, dialog_footer_surface, dialog_header_surface, section_heading,
+        ActionRole, dialog_footer_surface, dialog_header_surface, section_header,
         style_action_button, surface_dialog,
     },
     localization::{Language, Message, copy},
@@ -245,7 +245,7 @@ impl ManisApp {
         let language = self.language();
         let disabled = self.configuration_transfer.active || self.subscription_store_dir.is_none();
         panel_surface("configuration-transfer", compact, theme)
-            .child(section_heading(
+            .child(section_header(
                 language.localized(copy::backup::TITLE),
                 language.localized(copy::backup::DETAIL),
                 None,

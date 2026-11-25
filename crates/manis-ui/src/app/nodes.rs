@@ -24,7 +24,7 @@ use super::{ImportedSubscriptionState, ManisApp};
 use crate::{
     components::{
         ActionRole, action_button, dialog_footer_surface, dialog_header_surface, empty_state,
-        status_badge, style_action_button, surface_dialog,
+        section_header, status_badge, style_action_button, surface_dialog,
     },
     diagnostics::{UiEvent, trace_ui},
     localization::{CountNoun, Language, Message, copy},
@@ -36,11 +36,25 @@ use crate::{
 struct NodeSourceGroup<'a> {
     id: String,
     name: String,
+    /// The protocol or vehicle shown as a pill beside the source name.
+    vehicle: Option<String>,
+    /// The source state line: restored, refreshing, unavailable, locally stored.
     detail: String,
+    /// Traffic quota when the source reports one; the meter never renders a guess.
+    quota: Option<SourceQuota>,
     providers: Vec<&'a LoadedProvider>,
     runtime_provider_names: Vec<String>,
     saved_nodes: Vec<&'a SourceNodePreview>,
     saved_nodes_use_runtime_providers: bool,
+    /// The remote subscription this source can be re-fetched from, if any.
+    subscription_id: Option<String>,
+}
+
+/// A remote source's traffic quota. Neither the mihomo provider snapshot nor the stored
+/// subscription carries quota today, so the header renders no meter rather than a made-up one.
+struct SourceQuota {
+    used_fraction: f32,
+    label: String,
 }
 
 #[derive(Clone, Copy)]
@@ -53,9 +67,7 @@ struct NodeWorkspaceView {
 struct WorkspaceNodeRowContext {
     row_id: String,
     source_id: String,
-    compact: bool,
-    language: Language,
-    theme: Theme,
+    view: NodeWorkspaceView,
 }
 
 struct SourceGroupPresentation<'a> {
@@ -164,6 +176,14 @@ fn subscription_provider_refs<'a>(
 }
 
 impl NodeSourceGroup<'_> {
+    fn node_count(&self) -> usize {
+        self.providers
+            .iter()
+            .map(|provider| provider.nodes.len())
+            .sum::<usize>()
+            + self.saved_nodes.len()
+    }
+
     fn delay_targets(&self) -> Vec<ProxyDelayTarget> {
         self.providers
             .iter()
@@ -198,6 +218,7 @@ const MAX_GROUP_BENCHMARK_NODES: usize = 512;
 mod benchmark;
 mod benchmark_state;
 mod policy_editor;
+mod region;
 mod source_groups;
 mod view;
 pub(in crate::app) use benchmark_state::{
@@ -207,6 +228,17 @@ pub(in crate::app) use benchmark_state::{
 pub(in crate::app) use policy_editor::{
     ManagedPolicyRuntimeState, ManagedPolicyState, PolicyEditorPopover,
 };
+pub(super) use region::region_code;
+
+/// The latency a node reports before this source has been re-tested, as whole milliseconds.
+///
+/// Kernel snapshots arrive as labels such as `42 ms`; unparseable or absent labels stay unknown so
+/// the row renders the neutral `—` instead of a fabricated number.
+fn parse_latency_ms(label: &str) -> Option<u64> {
+    let number = label.split_whitespace().next()?;
+    let integer = number.split('.').next()?;
+    integer.parse::<u64>().ok()
+}
 
 #[cfg(test)]
 mod tests {
@@ -310,10 +342,8 @@ mod tests {
     }
 
     #[gpui::test]
-    fn nodes_page_keeps_sources_and_expanding_policies_in_one_document(
-        cx: &mut gpui::TestAppContext,
-    ) {
-        use gpui::{AppContext as _, ScrollDelta, ScrollEvent, point, px};
+    fn nodes_page_stacks_policy_groups_above_their_sources(cx: &mut gpui::TestAppContext) {
+        use gpui::AppContext as _;
         use manis_core::PolicyGroupId;
 
         cx.update(crate::init);
@@ -325,15 +355,17 @@ mod tests {
         });
         let app = app.unwrap();
         cx.update(|window, cx| window.draw(cx).clear(cx));
-        let sources = cx
-            .debug_bounds("node-sources-section")
-            .expect("sources on homepage");
         let policies = cx
             .debug_bounds("node-policies-section")
-            .expect("policies on homepage");
-        assert!(policies.origin.y >= sources.bottom());
-        let first = cx.debug_bounds("saved-policy-card-policy-1").unwrap();
-        let third = cx.debug_bounds("saved-policy-card-policy-3").unwrap();
+            .expect("policy groups on the nodes page");
+        let sources = cx
+            .debug_bounds("node-sources-section")
+            .expect("sources on the nodes page");
+        assert!(
+            policies.bottom() <= sources.origin.y,
+            "policy groups render above the sources they draw from"
+        );
+        let collapsed = cx.debug_bounds("saved-policy-card-policy-2").unwrap();
         cx.update(|window, cx| {
             app.update(cx, |app, cx| {
                 app.expanded_policy_group = Some(PolicyGroupId::new("policy-2"));
@@ -341,43 +373,27 @@ mod tests {
             });
             window.draw(cx).clear(cx);
         });
-        assert_eq!(
-            cx.debug_bounds("saved-policy-card-policy-1").unwrap(),
-            first
-        );
         let expanded = cx.debug_bounds("saved-policy-card-policy-2").unwrap();
-        let after = cx.debug_bounds("saved-policy-card-policy-3").unwrap();
         assert!(
-            expanded.size.height > px(2500.0),
-            "all 50 candidates retain row height"
+            expanded.size.height > collapsed.size.height,
+            "an expanded card adds its member grid"
         );
-        assert!(
-            after.origin.y >= expanded.bottom(),
-            "following card must move down"
-        );
+        let sibling = cx.debug_bounds("saved-policy-card-policy-1").unwrap();
         assert_eq!(
-            after.size.height, third.size.height,
-            "following card must not shrink"
+            sibling.size.height, expanded.size.height,
+            "a bento row shares one card height"
         );
-        let viewport = cx.debug_bounds("nodes-scroll").unwrap();
-        cx.simulate_event(ScrollEvent {
-            position: viewport.center(),
-            delta: ScrollDelta::Pixels(point(px(0.0), px(-10_000.0))),
-            ..Default::default()
-        });
-        cx.update(|window, cx| window.draw(cx).clear(cx));
-        let last = cx.debug_bounds("saved-policy-card-policy-3").unwrap();
+        let third = cx.debug_bounds("saved-policy-card-policy-3").unwrap();
         assert!(
-            last.bottom() <= viewport.bottom(),
-            "last group is reachable by scrolling"
+            third.origin.y >= expanded.bottom(),
+            "the next grid row starts below the expanded card"
         );
-        assert!(last.origin.y >= viewport.origin.y);
-        cx.simulate_event(ScrollEvent {
-            position: viewport.center(),
-            delta: ScrollDelta::Pixels(point(px(0.0), px(10_000.0))),
-            ..Default::default()
-        });
-        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let sources_after = cx.debug_bounds("node-sources-section").unwrap();
+        assert!(
+            sources_after.origin.y >= third.bottom(),
+            "the sources section follows the policy grid"
+        );
+        assert!(sources_after.origin.y > sources.origin.y);
         assert!(cx.debug_bounds("navigation-Nodes").is_some());
         assert!(cx.debug_bounds("navigation-Policies").is_none());
         cx.update(|window, cx| {
@@ -667,11 +683,14 @@ mod tests {
         let group = NodeSourceGroup {
             id: "subscription:fixture".to_owned(),
             name: "Fixture".to_owned(),
+            vehicle: Some("HTTPS".to_owned()),
             detail: String::new(),
+            quota: None,
             providers: vec![&provider],
             runtime_provider_names: vec!["Subscription 1".to_owned()],
             saved_nodes: Vec::new(),
             saved_nodes_use_runtime_providers: false,
+            subscription_id: Some("fixture".to_owned()),
         };
 
         assert_eq!(
@@ -698,6 +717,11 @@ mod tests {
 
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].detail, "单独添加的节点 · 私有本机存储");
+        assert_eq!(groups[0].vehicle.as_deref(), Some("URI"));
+        assert_eq!(
+            groups[0].subscription_id, None,
+            "a local node has no remote refresh"
+        );
         assert_eq!(groups[0].saved_nodes[0].protocol, "Trojan");
         assert_eq!(
             groups[0].delay_targets(),

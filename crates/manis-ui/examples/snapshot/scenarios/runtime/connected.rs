@@ -1,7 +1,7 @@
 use super::super::super::{
     driver::{
-        SnapshotWorkspace, close_window, open_policy_section, open_workspace, refresh,
-        save_screenshot, settle_ui_animation, settle_ui_for, theme_toggle_x,
+        SnapshotWorkspace, close_window, connect_proxy, open_policy_section, open_workspace,
+        refresh, save_screenshot, settle_ui_animation, settle_ui_for, toggle_theme,
     },
     fixtures::{
         spawn_empty_mihomo_fixture, spawn_mihomo_fixture, spawn_mihomo_fixture_with_stream_failure,
@@ -16,7 +16,7 @@ use super::{
 pub(crate) fn capture_stream_status(
     cx: &mut gpui::VisualTestAppContext,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use gpui::{AnyWindowHandle, Modifiers, point, px, size};
+    use gpui::{AnyWindowHandle, px, size};
     for (width, height, label) in [(1420.0, 900.0, "wide"), (640.0, 560.0, "compact")] {
         cx.update(manis_ui::init);
         let (endpoint, server) = spawn_mihomo_fixture_with_stream_failure(true)?;
@@ -27,14 +27,13 @@ pub(crate) fn capture_stream_status(
         })?;
         let window: AnyWindowHandle = window.into();
         refresh(cx, window)?;
-        cx.simulate_click(window, point(px(width - 80.0), px(90.0)), Modifiers::none());
+        connect_proxy(cx, window, width)?;
         settle_ui_for(cx, window, std::time::Duration::from_millis(800))?;
         open_workspace(cx, window, width, SnapshotWorkspace::Activity)?;
         save_screenshot(cx, window, &format!("stream-status-{label}-activity.png"))?;
         open_workspace(cx, window, width, SnapshotWorkspace::Nodes)?;
         save_screenshot(cx, window, &format!("stream-status-{label}-nodes.png"))?;
-        let toggle_x = theme_toggle_x(width);
-        cx.simulate_click(window, point(px(toggle_x), px(24.0)), Modifiers::none());
+        toggle_theme(cx, window, width)?;
         open_workspace(cx, window, width, SnapshotWorkspace::Logs)?;
         save_screenshot(cx, window, &format!("stream-status-{label}-logs-dark.png"))?;
         close_window(cx, window)?;
@@ -57,7 +56,7 @@ pub(crate) fn capture_connected(
     let window: AnyWindowHandle = window.into();
 
     refresh(cx, window)?;
-    cx.simulate_click(window, point(px(1_340.0), px(126.0)), Modifiers::none());
+    connect_proxy(cx, window, 1_420.0)?;
     settle_ui_for(cx, window, std::time::Duration::from_millis(600))?;
     refresh(cx, window)?;
     save_screenshot(cx, window, "native-wide-connected.png")?;
@@ -104,7 +103,7 @@ pub(crate) fn capture_data_page_coverage(
 fn capture_activity_wide_dark_connected(
     cx: &mut gpui::VisualTestAppContext,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use gpui::{AnyWindowHandle, Modifiers, point, px, size};
+    use gpui::{AnyWindowHandle, px, size};
     use manis_ui::ManisApp;
 
     let (endpoint, server) = spawn_mihomo_fixture()?;
@@ -114,9 +113,9 @@ fn capture_activity_wide_dark_connected(
     let window: AnyWindowHandle = window.into();
 
     refresh(cx, window)?;
-    cx.simulate_click(window, point(px(1_340.0), px(126.0)), Modifiers::none());
+    connect_proxy(cx, window, 1_420.0)?;
     settle_ui_animation(cx, window)?;
-    cx.simulate_click(window, point(px(850.0), px(24.0)), Modifiers::none());
+    toggle_theme(cx, window, 1_420.0)?;
     settle_ui_animation(cx, window)?;
     open_workspace(cx, window, 1_420.0, SnapshotWorkspace::Activity)?;
     settle_ui_animation(cx, window)?;
@@ -130,7 +129,7 @@ fn capture_activity_wide_dark_connected(
 fn capture_activity_compact_connected(
     cx: &mut gpui::VisualTestAppContext,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use gpui::{AnyWindowHandle, Modifiers, point, px, size};
+    use gpui::{AnyWindowHandle, px, size};
     use manis_ui::ManisApp;
 
     let (endpoint, server) = spawn_mihomo_fixture()?;
@@ -140,7 +139,7 @@ fn capture_activity_compact_connected(
     let window: AnyWindowHandle = window.into();
 
     refresh(cx, window)?;
-    cx.simulate_click(window, point(px(520.0), px(76.0)), Modifiers::none());
+    connect_proxy(cx, window, 720.0)?;
     settle_ui_animation(cx, window)?;
     open_workspace(cx, window, 720.0, SnapshotWorkspace::Activity)?;
     settle_ui_animation(cx, window)?;
@@ -154,7 +153,7 @@ fn capture_activity_compact_connected(
 fn capture_activity_compact_empty(
     cx: &mut gpui::VisualTestAppContext,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use gpui::{AnyWindowHandle, Modifiers, point, px, size};
+    use gpui::{AnyWindowHandle, px, size};
     use manis_ui::ManisApp;
 
     let (endpoint, server) = spawn_empty_mihomo_fixture()?;
@@ -164,7 +163,7 @@ fn capture_activity_compact_empty(
     let window: AnyWindowHandle = window.into();
 
     refresh(cx, window)?;
-    cx.simulate_click(window, point(px(520.0), px(76.0)), Modifiers::none());
+    connect_proxy(cx, window, 720.0)?;
     settle_ui_animation(cx, window)?;
     open_workspace(cx, window, 720.0, SnapshotWorkspace::Activity)?;
     settle_ui_animation(cx, window)?;

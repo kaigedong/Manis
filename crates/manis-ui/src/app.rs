@@ -62,9 +62,8 @@ use nodes::{
 };
 use policy_workspace::PolicySelectionRequest;
 use presentation::{
-    compact_proxy_mode_label, controller_state_label, controller_status_label, format_bytes,
-    policy_kind_label, policy_target_is_selectable, proxy_mode_label, routing_mode_label,
-    status_bar_values,
+    compact_proxy_mode_label, controller_state_label, format_bytes, policy_kind_label,
+    policy_target_is_selectable, proxy_mode_label, routing_mode_label,
 };
 use proxy_transition::apply_proxy_mode_transition;
 #[cfg(all(test, not(windows)))]
@@ -753,29 +752,43 @@ impl ManisApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
+        // Every workspace shares one centred reading column, so a very wide window never
+        // stretches a rule row or a latency value across the whole screen.
         div()
             .relative()
             .flex_1()
+            .min_w(px(0.0))
             .overflow_hidden()
             .flex()
-            .child(self.navigation(theme, size_class, cx))
-            .when(self.primary_workspace == PrimaryWorkspace::Nodes, |main| {
-                main.child(self.node_workspace(theme, size_class, cx))
-            })
-            .when(
-                self.primary_workspace == PrimaryWorkspace::RoutingRules,
-                |main| main.child(self.routing_rules_workspace(theme, size_class, window, cx)),
-            )
-            .when(
-                self.primary_workspace == PrimaryWorkspace::Activity,
-                |main| main.child(self.activity_workspace(theme, size_class, cx)),
-            )
-            .when(self.primary_workspace == PrimaryWorkspace::Logs, |main| {
-                main.child(self.logs_workspace(theme, size_class, cx))
-            })
-            .when(
-                self.primary_workspace == PrimaryWorkspace::Configuration,
-                |main| main.child(self.configuration_workspace(theme, size_class, cx)),
+            .justify_center()
+            .child(
+                div()
+                    .w_full()
+                    .max_w(crate::theme::LayoutMetric::ContentMaxWidth.px())
+                    .h_full()
+                    .min_w(px(0.0))
+                    .flex()
+                    .flex_col()
+                    .when(self.primary_workspace == PrimaryWorkspace::Nodes, |main| {
+                        main.child(self.node_workspace(theme, size_class, cx))
+                    })
+                    .when(
+                        self.primary_workspace == PrimaryWorkspace::RoutingRules,
+                        |main| {
+                            main.child(self.routing_rules_workspace(theme, size_class, window, cx))
+                        },
+                    )
+                    .when(
+                        self.primary_workspace == PrimaryWorkspace::Activity,
+                        |main| main.child(self.activity_workspace(theme, size_class, cx)),
+                    )
+                    .when(self.primary_workspace == PrimaryWorkspace::Logs, |main| {
+                        main.child(self.logs_workspace(theme, size_class, cx))
+                    })
+                    .when(
+                        self.primary_workspace == PrimaryWorkspace::Configuration,
+                        |main| main.child(self.configuration_workspace(theme, size_class, cx)),
+                    ),
             )
     }
 }
@@ -791,17 +804,27 @@ impl Render for ManisApp {
         let size_class = WindowSizeClass::for_width(window.viewport_size().width.as_f32());
         let theme = self.theme();
 
+        // Manis UI 2.0 shell: a full-height status rail beside one content column. The rail owns
+        // navigation and telemetry; the command bar owns page identity and the two traffic
+        // commands. No bottom status strip competes with content for height.
         div()
             .relative()
             .size_full()
             .flex()
-            .flex_col()
             .bg(theme.window_backdrop)
             .text_color(theme.text_primary)
             .text_size(px(13.0))
-            .child(self.chrome(theme, size_class, cx))
-            .child(self.workspace_content(size_class, theme, window, cx))
-            .child(self.status_bar(theme, size_class))
+            .child(self.navigation(theme, size_class, cx))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .h_full()
+                    .flex()
+                    .flex_col()
+                    .child(self.command_bar(theme, size_class, cx))
+                    .child(self.workspace_content(size_class, theme, window, cx)),
+            )
     }
 }
 

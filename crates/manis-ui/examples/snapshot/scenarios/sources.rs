@@ -1,7 +1,7 @@
 use super::super::{
     driver::{
         SnapshotWorkspace, close_window, open_workspace, refresh, save_screenshot, scroll_window,
-        settle_ui_for, theme_toggle_x,
+        settle_ui_for, toggle_theme,
     },
     fixtures::{
         SubscriptionFixtureServer, write_managed_policy_fixture, write_source_cards_fixture,
@@ -37,9 +37,7 @@ pub(crate) fn capture_source_cards(
         open_workspace(cx, window, width, SnapshotWorkspace::Configuration)?;
         for (dark, mode) in [(false, "light"), (true, "dark")] {
             if dark {
-                let toggle_x = theme_toggle_x(width);
-                cx.simulate_click(window, point(px(toggle_x), px(24.0)), Modifiers::none());
-                refresh(cx, window)?;
+                toggle_theme(cx, window, width)?;
             }
             for (rules, section) in [(false, "proxy"), (true, "rules")] {
                 cx.update_window(window, |_, _, cx| {
@@ -54,7 +52,7 @@ pub(crate) fn capture_source_cards(
                     window,
                     &format!("source-cards-{label}-{mode}-{section}.png"),
                 )?;
-                let hover_y = 295.0;
+                let hover_y = if label == "compact" { 300.0 } else { 220.0 };
                 let before_hover = cx.capture_screenshot(window)?;
                 cx.simulate_mouse_move(
                     window,
@@ -115,13 +113,18 @@ fn verify_source_control_hover(
     refresh(cx, window)?;
     let normal = cx.capture_screenshot(window)?;
     let wide = width > 1000;
-    let offset: u16 = if second_row { 106 } else { 0 };
+    let row_y: u16 = if wide { 220 } else { 300 };
+    let offset: u16 = if second_row {
+        if wide { 106 } else { 60 }
+    } else {
+        0
+    };
     let scale = normal.width() / u32::from(width);
     let sample_x = u32::from(width - 180) * scale;
-    let sample_y = u32::from(295 + offset) * scale;
+    let sample_y = u32::from(row_y + offset) * scale;
     let offset = f32::from(offset);
     let width = f32::from(width);
-    let sample = point(px(width - 180.0), px(295.0 + offset));
+    let sample = point(px(width - 180.0), px(f32::from(row_y) + f32::from(offset)));
     cx.simulate_mouse_move(window, sample, None, Modifiers::none());
     refresh(cx, window)?;
     assert_ne!(
@@ -129,7 +132,7 @@ fn verify_source_control_hover(
         cx.capture_screenshot(window)?.get_pixel(sample_x, sample_y),
         "{name}: row body must keep its edit hover"
     );
-    let button_y = if wide { 335.0 } else { 343.0 } + offset;
+    let button_y = if wide { 260.0 } else { 268.0 } + offset;
     let mut controls = vec![
         (
             "remove",
@@ -138,8 +141,8 @@ fn verify_source_control_hover(
         (
             "checkbox",
             point(
-                px(if wide { 522.0 } else { 102.0 }),
-                px(if wide { 312.0 } else { 320.0 } + offset),
+                px(if wide { 510.0 } else { 102.0 }),
+                px(if wide { 345.0 } else { 260.0 } + offset),
             ),
         ),
     ];

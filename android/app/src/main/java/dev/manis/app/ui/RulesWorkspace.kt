@@ -1,60 +1,77 @@
 package dev.manis.app.ui
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.interaction.collectIsPressedAsState
-import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
-import androidx.compose.ui.window.Popup
-import androidx.compose.ui.window.PopupProperties
 import dev.manis.app.R
 import dev.manis.app.data.MobileConfig
 import dev.manis.app.data.RULE_KINDS
@@ -70,28 +87,29 @@ internal data class RuleEditor(val index: Int?, val entry: RuleEntry)
 /** An open group editor. [saved] separates a group already in the workspace from a new draft. */
 private data class GroupEditor(val group: RuleGroupEntry, val saved: Boolean)
 
-/** The manual section is one more collapsible section, under a key no generated group id can take. */
+/** The manual section is one more pipeline step, under a key no generated group id can take. */
 private const val ManualSectionKey = "manual"
 private const val ManualSectionTitle = "手动规则"
 
-private const val RulesHelp = "从上到下匹配：先规则组，后手动规则。"
+private const val RulesHelp = "从上到下匹配：先规则组，后手动规则，最后落到兜底。"
+
+/** One pipeline header, and the 8dp list gap under every row. */
+private val PipelineHeaderHeight = ManisDimens.rowHeight
+private val PipelineRuleHeight = 52.dp
+private val PipelineGap = ManisDimens.spaceSm
 
 /** The distance between one rule row's top and the next, once the list spacing is added. */
-private val RuleRowStep = ManisDimens.rowHeight + ManisDimens.spaceSm
+private val RuleRowStep = PipelineRuleHeight + PipelineGap
 
 /**
- * Where a title, a rule's text and a section's placeholder all start, measured from the list's
- * content edge: the header's own padding, the leading slot every section row shares, and the gap
- * after it. One constant, so the whole page keeps one left edge for text.
- */
-private val RulesTextColumnStart =
-    ManisDimens.spaceLg + ManisDimens.iconTarget + ManisDimens.spaceSm
-
-/**
- * The routing-rules workspace: rule groups that each route to one policy, then the manual rules,
- * matched in that order. Rows reorder by dragging the grip, which starts immediately instead of
- * after a long press, and only inside their own section. A group header's grip reorders the groups
- * themselves, which always stay above the manual section.
+ * The routing-rules workspace: a priority pipeline of rule groups, then the manual rules, then the
+ * FINAL fallback every unmatched connection lands on.
+ *
+ * Each header carries its 2-digit order, an immediate drag grip, the royal-violet target pill, an
+ * enable switch and the expand arrow. Dragging the grip reorders the groups themselves; tapping it
+ * opens the same reorder as two plain buttons, which is the single-pointer alternative WCAG 2.2
+ * asks for. Rule rows reorder by dragging anywhere on the row, only inside their own section.
+ * Both editors are 20dp bottom sheets, so the list stays visible behind the form.
  */
 @Composable
 fun RulesWorkspace(onMessage: (String) -> Unit) {
@@ -106,13 +124,13 @@ fun RulesWorkspace(onMessage: (String) -> Unit) {
     var draggingId by remember { mutableStateOf<Long?>(null) }
     var draggingIndex by remember { mutableStateOf(-1) }
     var dragOffset by remember { mutableFloatStateOf(0f) }
-    // A dragged group header floats alone; the list keeps its order until the drop.
+    // A dragged header floats alone; the list keeps its order until the drop.
     var draggingGroupId by remember { mutableStateOf<String?>(null) }
     var groupDragOffset by remember { mutableFloatStateOf(0f) }
     var groupDropIndex by remember { mutableStateOf<Int?>(null) }
     var groupDropLineY by remember { mutableStateOf<Float?>(null) }
     val rowHeightPx = with(LocalDensity.current) { RuleRowStep.toPx() }
-    val pillHeightPx = with(LocalDensity.current) { ManisDimens.rowHeight.toPx() }
+    val pillHeightPx = with(LocalDensity.current) { PipelineHeaderHeight.toPx() }
     val listState = rememberLazyListState()
 
     fun saveEntries(entries: List<RuleEntry>) {
@@ -142,6 +160,20 @@ fun RulesWorkspace(onMessage: (String) -> Unit) {
                 if (it.groupId == groupId) ordered.next() else it
             },
         )
+    }
+
+    /** One group swapped with its neighbour: the menu path to the same order a drag produces. */
+    fun moveGroup(index: Int, delta: Int) {
+        val to = index + delta
+        Workspace.update { current ->
+            if (index !in current.ruleGroups.indices || to !in current.ruleGroups.indices) {
+                current
+            } else {
+                val groups = current.ruleGroups.toMutableList()
+                groups.add(to, groups.removeAt(index))
+                current.copy(ruleGroups = groups)
+            }
+        }
     }
 
     fun dragRule(groupId: String?, delta: Float) {
@@ -217,99 +249,203 @@ fun RulesWorkspace(onMessage: (String) -> Unit) {
         ruleEditor = RuleEditor(index.takeIf { it >= 0 }, rule)
     }
 
-    Box(Modifier.fillMaxSize().background(colors.surfaceBase)) {
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(ManisDimens.spaceLg),
-            verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
-        ) {
-            item(key = "rules-header") {
-                RulesHeader(
-                    groupCount = config.ruleGroups.size,
-                    ruleCount = config.ruleEntries.size,
-                    pending = pending,
-                    onApply = {
-                        applyWorkspace(context)
-                        onMessage("已应用工作区")
-                    },
-                    onCreateGroup = {
-                        groupEditor = GroupEditor(
-                            group = RuleGroupEntry(
-                                id = nextRuleGroupId(),
-                                name = "",
-                                // A new group routes to the first policy group when there is one.
-                                policy = config.groups.firstOrNull()?.name ?: "__MANIS_GLOBAL__",
-                            ),
-                            saved = false,
-                        )
-                    },
-                )
-            }
-            for (group in config.ruleGroups) {
-                val rules = config.ruleEntries.filter { it.groupId == group.id }
-                val expanded = group.id !in collapsed
-                item(key = "group-${group.id}") {
-                    RuleGroupHeader(
-                        groupId = group.id,
-                        name = group.name,
-                        // The count only earns its room when the rows are hidden.
-                        meta = if (expanded) {
-                            "→ ${policyLabel(group.policy)}"
-                        } else {
-                            "→ ${policyLabel(group.policy)} · ${rules.size} 条"
+    Column(Modifier.fillMaxSize().background(colors.surfaceBase)) {
+        ManisPageHeader(
+            title = "分流规则",
+            trailing = {
+                CompositionLocalProvider(LocalManisTightActions provides true) {
+                    ManisButton(
+                        "新建组",
+                        modifier = Modifier.widthIn(min = 64.dp),
+                        onClick = {
+                            groupEditor = GroupEditor(
+                                group = RuleGroupEntry(
+                                    id = nextRuleGroupId(),
+                                    name = "",
+                                    // A new group routes to the first policy group when there is one.
+                                    policy = config.groups.firstOrNull()?.name ?: "__MANIS_GLOBAL__",
+                                ),
+                                saved = false,
+                            )
                         },
-                        enabled = group.enabled,
-                        expanded = expanded,
-                        dragging = draggingGroupId == group.id,
-                        // After a drop the section settles into its new slot instead of jumping.
-                        modifier = if (draggingGroupId == null) Modifier.animateItem() else Modifier,
-                        onToggleExpanded = {
-                            collapsed = if (expanded) collapsed + group.id else collapsed - group.id
+                    )
+                    Spacer(Modifier.width(ManisDimens.spaceXs))
+                    RulesApplyAction(
+                        pending = pending,
+                        onApply = {
+                            applyWorkspace(context)
+                            onMessage("已应用工作区")
                         },
-                        onToggleEnabled = { enabled ->
-                            Workspace.update { current ->
-                                current.copy(
-                                    ruleGroups = current.ruleGroups.map {
-                                        if (it.id == group.id) it.copy(enabled = enabled) else it
-                                    },
-                                )
-                            }
-                        },
-                        onDragStart = {
-                            draggingGroupId = group.id
-                            groupDragOffset = 0f
-                            groupDropIndex = null
-                            groupDropLineY = null
-                        },
-                        onDrag = { delta ->
-                            groupDragOffset += delta
-                            trackGroupDrop()
-                        },
-                        onDragEnd = ::dropGroup,
-                        onDragCancel = ::cancelGroupDrag,
                     )
                 }
-                if (expanded) {
-                    if (rules.isEmpty()) {
-                        item(key = "group-empty-${group.id}") {
-                            SectionNote("这个组还没有规则。")
+            },
+        )
+
+        Box(Modifier.fillMaxSize()) {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(
+                    start = ManisDimens.spaceLg,
+                    end = ManisDimens.spaceLg,
+                    top = 0.dp,
+                    bottom = ManisDimens.spaceXl,
+                ),
+                verticalArrangement = Arrangement.spacedBy(PipelineGap),
+            ) {
+                item(key = "rules-meta") {
+                    PipelineMeta(
+                        meta = "${config.ruleGroups.size} 组 · ${config.ruleEntries.size} 条",
+                        hint = "自上而下依次匹配",
+                    )
+                }
+                for ((index, group) in config.ruleGroups.withIndex()) {
+                    val rules = config.ruleEntries.filter { it.groupId == group.id }
+                    val expanded = group.id !in collapsed
+                    item(key = "group-${group.id}") {
+                        PipelineCard(
+                            order = orderLabel(index + 1),
+                            title = group.name,
+                            target = policyLabel(group.policy),
+                            count = rules.size,
+                            titleColor = if (group.enabled) colors.textPrimary else colors.textTertiary,
+                            expanded = expanded,
+                            dragging = draggingGroupId == group.id,
+                            // After a drop the section settles into its new slot instead of jumping.
+                            modifier = if (draggingGroupId == null) Modifier.animateItem() else Modifier,
+                            onToggleExpanded = {
+                                collapsed = if (expanded) collapsed + group.id else collapsed - group.id
+                            },
+                            grip = {
+                                PipelineGrip(
+                                    key = group.id,
+                                    onDragStart = {
+                                        draggingGroupId = group.id
+                                        groupDragOffset = 0f
+                                        groupDropIndex = null
+                                        groupDropLineY = null
+                                    },
+                                    onDrag = { delta ->
+                                        groupDragOffset += delta
+                                        trackGroupDrop()
+                                    },
+                                    onDragEnd = ::dropGroup,
+                                    onDragCancel = ::cancelGroupDrag,
+                                    menu = { dismiss ->
+                                        ReorderMenu(
+                                            canMoveUp = index > 0,
+                                            canMoveDown = index < config.ruleGroups.lastIndex,
+                                            onMoveUp = {
+                                                dismiss()
+                                                moveGroup(index, -1)
+                                            },
+                                            onMoveDown = {
+                                                dismiss()
+                                                moveGroup(index, 1)
+                                            },
+                                            onSettings = {
+                                                dismiss()
+                                                groupEditor = GroupEditor(group, saved = true)
+                                            },
+                                        )
+                                    },
+                                )
+                            },
+                            switch = {
+                                ManisToggle(checked = group.enabled, onCheckedChange = { enabled ->
+                                    Workspace.update { current ->
+                                        current.copy(
+                                            ruleGroups = current.ruleGroups.map {
+                                                if (it.id == group.id) it.copy(enabled = enabled) else it
+                                            },
+                                        )
+                                    }
+                                })
+                            },
+                        )
+                    }
+                    if (expanded) {
+                        if (rules.isEmpty()) {
+                            item(key = "group-empty-${group.id}") {
+                                PipelineNote("这个组还没有规则。")
+                            }
+                        } else {
+                            ruleRows(
+                                rules = rules,
+                                // The group header states the target once, so rows only name the kind.
+                                target = group.policy,
+                                draggingId = draggingId,
+                                dragOffset = dragOffset,
+                                onToggle = ::toggleRule,
+                                onEdit = ::editRule,
+                                onDragStart = { at ->
+                                    draggingId = rules[at].id
+                                    draggingIndex = at
+                                    dragOffset = 0f
+                                },
+                                onDrag = { delta -> dragRule(group.id, delta) },
+                                onDragEnd = {
+                                    draggingId = null
+                                    draggingIndex = -1
+                                    dragOffset = 0f
+                                },
+                            )
+                        }
+                        item(key = "group-add-${group.id}") {
+                            PipelineAddRow(
+                                onClick = {
+                                    ruleEditor = RuleEditor(null, RuleEntry(groupId = group.id))
+                                },
+                                extraLabel = "组设置",
+                                onExtra = { groupEditor = GroupEditor(group, saved = true) },
+                            )
+                        }
+                    }
+                }
+
+                val manualRules = config.ruleEntries.filter { it.groupId == null }
+                val manualExpanded = ManualSectionKey !in collapsed
+                val pageEmpty = config.ruleGroups.isEmpty() && config.ruleEntries.isEmpty()
+                item(key = "rules-manual-header") {
+                    PipelineCard(
+                        order = orderLabel(config.ruleGroups.size + 1),
+                        title = ManualSectionTitle,
+                        target = null,
+                        meta = "${manualRules.size} 条 · 最后匹配",
+                        expanded = manualExpanded,
+                        dragging = false,
+                        onToggleExpanded = {
+                            collapsed = if (manualExpanded) {
+                                collapsed + ManualSectionKey
+                            } else {
+                                collapsed - ManualSectionKey
+                            }
+                        },
+                    )
+                }
+                if (manualExpanded) {
+                    if (manualRules.isEmpty()) {
+                        if (pageEmpty) {
+                            item(key = "rules-empty") {
+                                EmptyRules(onAdd = { ruleEditor = RuleEditor(null, RuleEntry()) })
+                            }
+                        } else {
+                            item(key = "rules-manual-empty") { PipelineNote("还没有手动规则。") }
                         }
                     } else {
                         ruleRows(
-                            rules = rules,
-                            // The group header states the target once, so rows only name the kind.
-                            target = group.policy,
+                            rules = manualRules,
+                            target = null,
                             draggingId = draggingId,
                             dragOffset = dragOffset,
                             onToggle = ::toggleRule,
                             onEdit = ::editRule,
-                            onDragStart = { index ->
-                                draggingId = rules[index].id
-                                draggingIndex = index
+                            onDragStart = { at ->
+                                draggingId = manualRules[at].id
+                                draggingIndex = at
                                 dragOffset = 0f
                             },
-                            onDrag = { delta -> dragRule(group.id, delta) },
+                            onDrag = { delta -> dragRule(null, delta) },
                             onDragEnd = {
                                 draggingId = null
                                 draggingIndex = -1
@@ -317,132 +453,78 @@ fun RulesWorkspace(onMessage: (String) -> Unit) {
                             },
                         )
                     }
-                    item(key = "group-add-${group.id}") {
-                        SectionAddRow(
-                            onClick = {
-                                ruleEditor = RuleEditor(null, RuleEntry(groupId = group.id))
-                            },
-                            onSettings = { groupEditor = GroupEditor(group, saved = true) },
-                        )
+                    // The empty page already offers one filled call to action, so it gets no second.
+                    if (!pageEmpty) {
+                        item(key = "rules-manual-add") {
+                            PipelineAddRow(onClick = { ruleEditor = RuleEditor(null, RuleEntry()) })
+                        }
+                    }
+                }
+
+                item(key = "rules-fallback") { FallbackCard() }
+                item(key = "rules-help") { ManisMeta(RulesHelp, maxLines = 2) }
+                if (RuntimeState.warnings.isNotEmpty()) {
+                    item(key = "rules-warnings") {
+                        ManisCard {
+                            Text("解析提示", style = ManisType.label, color = colors.textPrimary)
+                            RuntimeState.warnings.take(8).forEach { warning ->
+                                ManisMeta(warning, color = colors.statusWarning)
+                            }
+                        }
                     }
                 }
             }
-            val manualRules = config.ruleEntries.filter { it.groupId == null }
-            val manualExpanded = ManualSectionKey !in collapsed
-            val pageEmpty = config.ruleGroups.isEmpty() && config.ruleEntries.isEmpty()
-            item(key = "rules-manual-header") {
-                ManualRulesHeader(
-                    count = manualRules.size,
-                    expanded = manualExpanded,
-                    onToggleExpanded = {
-                        collapsed = if (manualExpanded) collapsed + ManualSectionKey else collapsed - ManualSectionKey
-                    },
+
+            // Where the dragged group header will land. The padding shift is what turns an item
+            // offset into a position in this Box, since the list measures items from its content.
+            val dropLineY = groupDropLineY
+            if (dropLineY != null) {
+                Spacer(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(2.dp)
+                        .offset { IntOffset(0, dropLineY.roundToInt()) }
+                        .background(colors.actionPrimary),
                 )
             }
-            if (manualExpanded) {
-                if (manualRules.isEmpty()) {
-                    if (pageEmpty) {
-                        item(key = "rules-empty") {
-                            EmptyRules(
-                                onAdd = { ruleEditor = RuleEditor(null, RuleEntry()) },
-                            )
-                        }
-                    } else {
-                        item(key = "rules-manual-empty") { SectionNote("还没有手动规则。") }
-                    }
-                } else {
-                    ruleRows(
-                        rules = manualRules,
-                        target = null,
-                        draggingId = draggingId,
-                        dragOffset = dragOffset,
-                        onToggle = ::toggleRule,
-                        onEdit = ::editRule,
-                        onDragStart = { index ->
-                            draggingId = manualRules[index].id
-                            draggingIndex = index
-                            dragOffset = 0f
-                        },
-                        onDrag = { delta -> dragRule(null, delta) },
-                        onDragEnd = {
-                            draggingId = null
-                            draggingIndex = -1
-                            dragOffset = 0f
-                        },
-                    )
-                }
-                // The empty page already offers one filled call to action, so it gets no second.
-                if (!pageEmpty) {
-                    item(key = "rules-manual-add") {
-                        SectionAddRow(onClick = { ruleEditor = RuleEditor(null, RuleEntry()) })
-                    }
-                }
-            }
-            item(key = "rules-help") {
-                ManisMeta(RulesHelp, maxLines = 2)
-            }
-            if (RuntimeState.warnings.isNotEmpty()) {
-                item(key = "rules-warnings") {
-                    ManisCard {
-                        Text("解析提示", style = ManisType.label, color = colors.textPrimary)
-                        RuntimeState.warnings.take(8).forEach { warning ->
-                            ManisMeta(warning, color = colors.statusWarning)
-                        }
-                    }
-                }
-            }
-        }
-
-        // Where the dragged group header will land. The padding shift is what turns an item offset
-        // into a position in this Box, since the list measures items from its content, not its edge.
-        val dropLineY = groupDropLineY
-        if (dropLineY != null) {
-            Spacer(
-                Modifier
-                    .fillMaxWidth()
-                    .height(2.dp)
-                    .offset { IntOffset(0, dropLineY.roundToInt()) }
-                    .background(colors.actionPrimary),
-            )
-        }
-        // The header itself stays in place, so the list keeps showing what is being passed; a pill
-        // under the finger says which group is moving, even when the finger reaches the footer.
-        val draggedGroup = config.ruleGroups.firstOrNull { it.id == draggingGroupId }
-        val draggedHeader = draggingGroupId?.let(::groupHeader)
-        if (draggedGroup != null && draggedHeader != null) {
-            val padding = listState.layoutInfo.beforeContentPadding
-            // The pill follows the finger, but stays inside the list: an unclamped one would leave
-            // the page bounds whenever the finger reaches the footer.
-            val maxY = (listState.layoutInfo.viewportEndOffset + padding - pillHeightPx).coerceAtLeast(0f)
-            val pillY = (draggedHeader.offset + padding + groupDragOffset).coerceIn(0f, maxY)
-            Surface(
-                modifier = Modifier
-                    .padding(horizontal = ManisDimens.spaceLg)
-                    .fillMaxWidth()
-                    .offset { IntOffset(0, pillY.roundToInt()) },
-                shape = RoundedCornerShape(16.dp),
-                color = colors.actionSoft,
-                shadowElevation = 8.dp,
-            ) {
-                Row(
-                    Modifier
-                        .height(ManisDimens.rowHeight)
-                        .padding(horizontal = ManisDimens.spaceLg),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
+            // The header itself stays in place, so the list keeps showing what is being passed; a
+            // pill under the finger says which group is moving, even when the finger reaches the end.
+            val draggedGroup = config.ruleGroups.firstOrNull { it.id == draggingGroupId }
+            val draggedHeader = draggingGroupId?.let(::groupHeader)
+            if (draggedGroup != null && draggedHeader != null) {
+                val padding = listState.layoutInfo.beforeContentPadding
+                // The pill follows the finger, but stays inside the list: an unclamped one would
+                // leave the page bounds whenever the finger reaches the fallback card.
+                val maxY = (listState.layoutInfo.viewportEndOffset + padding - pillHeightPx)
+                    .coerceAtLeast(0f)
+                val pillY = (draggedHeader.offset + padding + groupDragOffset).coerceIn(0f, maxY)
+                Surface(
+                    modifier = Modifier
+                        .padding(horizontal = ManisDimens.spaceLg)
+                        .fillMaxWidth()
+                        .offset { IntOffset(0, pillY.roundToInt()) },
+                    shape = RoundedCornerShape(ManisDimens.radiusCard),
+                    color = colors.surfaceOverlay,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, colors.outlineSubtle),
+                    shadowElevation = 8.dp,
                 ) {
-                    // A lifted header keeps the grip slot the real one reserves, so the name under
-                    // the finger sits where the name in the list sits.
-                    Spacer(Modifier.width(ManisDimens.iconTarget))
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            draggedGroup.name,
-                            style = ManisType.label,
-                            color = colors.textPrimary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        ManisMeta("→ ${policyLabel(draggedGroup.policy)}", maxLines = 1)
+                    Row(
+                        Modifier
+                            .height(PipelineHeaderHeight)
+                            .padding(horizontal = ManisDimens.spaceLg),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                draggedGroup.name,
+                                style = ManisType.label,
+                                color = colors.textPrimary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            ManisPill("→ ${policyLabel(draggedGroup.policy)}", ManisTone.Route)
+                        }
                     }
                 }
             }
@@ -515,7 +597,10 @@ fun RulesWorkspace(onMessage: (String) -> Unit) {
     }
 }
 
-/** The rows of one section, numbered within it, with drag targets clamped to it. */
+/** `01`, `02`, …: the priority position that reads as a pipeline step. */
+private fun orderLabel(position: Int): String = position.toString().padStart(2, '0')
+
+/** The rows of one section, with drag targets clamped to it. */
 private fun LazyListScope.ruleRows(
     rules: List<RuleEntry>,
     /** The group's policy, or null in the manual section where rows state their own. */
@@ -530,8 +615,7 @@ private fun LazyListScope.ruleRows(
 ) {
     itemsIndexed(items = rules, key = { _, rule -> rule.id }) { index, rule ->
         val dragging = draggingId == rule.id
-        RuleRow(
-            order = index + 1,
+        PipelineRuleRow(
             rule = rule,
             groupTarget = target,
             dragging = dragging,
@@ -546,64 +630,109 @@ private fun LazyListScope.ruleRows(
     }
 }
 
+/** The page's own meta line: how many steps there are, and which way they run. */
+@Composable
+private fun PipelineMeta(meta: String, hint: String) {
+    val colors = LocalManisColors.current
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(top = ManisDimens.spaceXs, bottom = ManisDimens.spaceXs),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
+    ) {
+        Text(meta, style = ManisType.data, color = colors.textSecondary, maxLines = 1)
+        Spacer(Modifier.weight(1f))
+        Text(
+            hint,
+            style = ManisType.metadata,
+            color = colors.textTertiary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/** The 2-digit mono order badge that opens every pipeline step. */
+@Composable
+private fun OrderBadge(text: String) {
+    val colors = LocalManisColors.current
+    Box(
+        Modifier
+            .widthIn(min = 26.dp)
+            .height(24.dp)
+            .clip(RoundedCornerShape(ManisDimens.radiusBadge))
+            .background(colors.surfaceLow)
+            .padding(horizontal = ManisDimens.spaceXs),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text,
+            style = ManisType.data.copy(fontSize = 11.sp, fontWeight = FontWeight.SemiBold),
+            color = colors.textSecondary,
+            maxLines = 1,
+        )
+    }
+}
+
 /**
- * The one section header, and the grid every rule row under it repeats: a 44dp leading slot, the
- * text column, the 52x32 switch and one 44dp trailing control. The leading slot is reserved even
- * where it holds nothing and the height is fixed, so a header cannot move a title when a control
- * appears, and the switch lands on the same x in a header as in the rows below it.
+ * One pipeline step: order badge, grip, name over its route pill, enable switch and expand arrow.
+ * The grip slot is held open even where there is nothing to drag, so every step keeps one x grid.
  */
 @Composable
-private fun RulesSectionHeader(
+private fun PipelineCard(
+    order: String,
     title: String,
-    meta: String,
     modifier: Modifier = Modifier,
+    /** The royal-violet route target; null in the manual section, which routes per rule. */
+    target: String? = null,
+    count: Int = 0,
+    meta: String? = null,
     titleColor: Color? = null,
-    /** A group's grip reorders the groups; the page and manual headers leave the slot empty. */
-    leading: (@Composable BoxScope.() -> Unit)? = null,
-    onClick: (() -> Unit)? = null,
-    /** A dragged bar lifts off the list, the same way a dragged rule row does. */
+    expanded: Boolean = true,
     dragging: Boolean = false,
-    /** The section's switch, or null where it has none: the slot is kept either way. */
+    grip: (@Composable () -> Unit)? = null,
     switch: (@Composable () -> Unit)? = null,
-    /** The page header has no chevron, so it spends the switch slot on its two buttons instead. */
-    reserveSwitchSlot: Boolean = true,
-    trailing: @Composable RowScope.() -> Unit = {},
+    onToggleExpanded: (() -> Unit)? = null,
 ) {
     val colors = LocalManisColors.current
-    val interaction = remember { MutableInteractionSource() }
-    val pressed by interaction.collectIsPressedAsState()
     Surface(
-        modifier = modifier
-            .fillMaxWidth()
-            .background(
-                if (pressed && onClick != null) colors.surfaceLow else colors.surfaceOverlay,
-                RoundedCornerShape(ManisDimens.radiusPane),
-            )
-            .then(
-                if (onClick != null) {
-                    Modifier.clickable(interactionSource = interaction, indication = null, onClick = onClick)
-                } else {
-                    Modifier
-                },
-            ),
-        shape = RoundedCornerShape(ManisDimens.radiusPane),
-        color = if (dragging) colors.actionSoft else Color.Transparent,
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(ManisDimens.radiusCard),
+        color = if (dragging) colors.actionSoft else colors.surfaceElevated,
+        border = androidx.compose.foundation.BorderStroke(1.dp, colors.outlineSubtle),
         shadowElevation = if (dragging) 6.dp else 0.dp,
     ) {
         Row(
             Modifier
                 .fillMaxWidth()
-                // One height with the children centred. The title and meta are 20dp and 16dp of
-                // type, so vertical padding here would only choose which of the two gets clipped.
-                .height(ManisDimens.rowHeight)
-                .padding(horizontal = ManisDimens.spaceLg),
+                .height(PipelineHeaderHeight)
+                .padding(start = ManisDimens.spaceSm, end = ManisDimens.spaceXs),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
+            horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceXs),
         ) {
-            Box(Modifier.size(ManisDimens.iconTarget), contentAlignment = Alignment.Center) {
-                leading?.invoke(this)
+            OrderBadge(order)
+            if (grip != null) {
+                Box(Modifier.size(ManisDimens.minTouch), contentAlignment = Alignment.Center) {
+                    grip()
+                }
+            } else {
+                // The manual step cannot be dragged, so its slot stays empty rather than collapsing.
+                Spacer(Modifier.width(ManisDimens.minTouch))
             }
-            Column(Modifier.weight(1f)) {
+            Column(
+                Modifier
+                    .weight(1f)
+                    .then(
+                        if (onToggleExpanded != null) {
+                            Modifier.clickable(onClick = onToggleExpanded)
+                        } else {
+                            Modifier
+                        },
+                    )
+                    .padding(vertical = ManisDimens.spaceXs),
+                verticalArrangement = Arrangement.spacedBy(3.dp),
+            ) {
                 Text(
                     title,
                     style = ManisType.label,
@@ -611,207 +740,179 @@ private fun RulesSectionHeader(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                Text(
-                    meta,
-                    style = ManisType.metadata,
-                    color = colors.textTertiary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            if (reserveSwitchSlot) {
-                // 52dp wide, 48dp tall: the track is 32dp, the rest is Material's touch target.
-                Box(
-                    Modifier
-                        .width(ManisDimens.switchWidth)
-                        .height(ManisDimens.controlStandard),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    switch?.invoke()
+                when {
+                    target != null -> ManisPill(
+                        if (count > 0) "→ $target · $count 条" else "→ $target",
+                        ManisTone.Route,
+                    )
+                    meta != null -> Text(
+                        meta,
+                        style = ManisType.metadata,
+                        color = colors.textTertiary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
             }
-            trailing()
+            Box(
+                Modifier
+                    .width(ManisDimens.switchWidth)
+                    .height(ManisDimens.minTouch),
+                contentAlignment = Alignment.Center,
+            ) {
+                switch?.invoke()
+            }
+            if (onToggleExpanded != null) {
+                ManisIconButton(
+                    icon = Icons.Filled.KeyboardArrowDown,
+                    contentDescription = if (expanded) "收起" else "展开",
+                    onClick = onToggleExpanded,
+                    rotationDegrees = if (expanded) 180f else 0f,
+                )
+            } else {
+                Spacer(Modifier.width(ManisDimens.iconTarget))
+            }
         }
     }
 }
 
+/**
+ * The grip: drag it to reorder, or tap it for the 上移 / 下移 menu. Both paths end in the same
+ * order state, and the menu is what makes the reorder reachable with a single pointer.
+ */
 @Composable
-private fun RulesHeader(
-    groupCount: Int,
-    ruleCount: Int,
-    pending: Boolean,
-    onApply: () -> Unit,
-    onCreateGroup: () -> Unit,
-) {
-    RulesSectionHeader(
-        title = "分流规则",
-        // Short enough to survive a 320 dp page header, where the title column is narrow.
-        meta = "$groupCount 组 · $ruleCount 条",
-        reserveSwitchSlot = false,
-        trailing = {
-            // Both actions are always here. 应用 only dims when nothing is pending, so the header
-            // cannot re-flow under the user in the middle of an edit.
-            CompositionLocalProvider(LocalManisTightActions provides true) {
-                ManisButton(
-                    "新建组",
-                    modifier = Modifier.widthIn(min = 64.dp),
-                    onClick = onCreateGroup,
-                )
-                ManisButton("应用", primary = true, enabled = pending, onClick = onApply)
-            }
-        },
-    )
-}
-
-@Composable
-private fun RuleGroupHeader(
-    groupId: String,
-    name: String,
-    meta: String,
-    enabled: Boolean,
-    expanded: Boolean,
-    dragging: Boolean,
-    modifier: Modifier = Modifier,
-    onToggleExpanded: () -> Unit,
-    onToggleEnabled: (Boolean) -> Unit,
+private fun PipelineGrip(
+    key: String,
     onDragStart: () -> Unit,
     onDrag: (Float) -> Unit,
     onDragEnd: () -> Unit,
     onDragCancel: () -> Unit,
+    menu: @Composable (dismiss: () -> Unit) -> Unit,
 ) {
     val colors = LocalManisColors.current
-    val dragStart by androidx.compose.runtime.rememberUpdatedState(onDragStart)
-    val drag by androidx.compose.runtime.rememberUpdatedState(onDrag)
-    val dragEnd by androidx.compose.runtime.rememberUpdatedState(onDragEnd)
-    val dragCancel by androidx.compose.runtime.rememberUpdatedState(onDragCancel)
-    RulesSectionHeader(
-        title = name,
-        meta = meta,
-        modifier = modifier,
-        titleColor = if (enabled) colors.textPrimary else colors.textTertiary,
-        onClick = onToggleExpanded,
-        dragging = dragging,
-        leading = {
-            // The grip drags the whole group. It swallows the touch down as well, so neither a tap
-            // nor a drag on it can collapse the section under the finger.
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .pointerInput(groupId) {
-                        detectDragGestures(
-                            onDragStart = { dragStart() },
-                            onDragEnd = { dragEnd() },
-                            onDragCancel = { dragCancel() },
-                            onDrag = { change, amount ->
-                                change.consume()
-                                drag(amount.y)
-                            },
-                        )
-                    }
-                    .pointerInput(groupId) { detectTapGestures { } },
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_drag_handle),
-                    contentDescription = "拖动排序",
-                    modifier = Modifier.size(24.dp),
-                    tint = colors.textTertiary,
-                )
-            }
-        },
-        switch = { ManisToggle(checked = enabled, onCheckedChange = onToggleEnabled) },
-        trailing = {
-            ManisIconButton(
-                icon = Icons.Filled.KeyboardArrowDown,
-                contentDescription = if (expanded) "收起" else "展开",
-                onClick = onToggleExpanded,
-                rotationDegrees = if (expanded) 180f else 0f,
+    var menuOpen by remember { mutableStateOf(false) }
+    val dragStart by rememberUpdatedState(onDragStart)
+    val drag by rememberUpdatedState(onDrag)
+    val dragEnd by rememberUpdatedState(onDragEnd)
+    val dragCancel by rememberUpdatedState(onDragCancel)
+
+    Box {
+        Box(
+            Modifier
+                .size(ManisDimens.minTouch)
+                .clip(RoundedCornerShape(ManisDimens.radiusControl))
+                .pointerInput(key) {
+                    detectDragGestures(
+                        onDragStart = { dragStart() },
+                        onDragEnd = { dragEnd() },
+                        onDragCancel = { dragCancel() },
+                        onDrag = { change, amount ->
+                            change.consume()
+                            drag(amount.y)
+                        },
+                    )
+                }
+                .pointerInput(key) { detectTapGestures { menuOpen = true } },
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_drag_handle),
+                contentDescription = "拖动排序，或点按打开排序菜单",
+                modifier = Modifier.size(24.dp),
+                tint = colors.textTertiary,
             )
-        },
-    )
-}
-
-@Composable
-private fun ManualRulesHeader(
-    count: Int,
-    expanded: Boolean,
-    onToggleExpanded: () -> Unit,
-) {
-    RulesSectionHeader(
-        title = ManualSectionTitle,
-        meta = "$count 条 · 最后匹配",
-        onClick = onToggleExpanded,
-        // No section-level switch, so the slot stays empty and the chevron keeps the group x.
-        switch = null,
-        trailing = {
-            ManisIconButton(
-                icon = Icons.Filled.KeyboardArrowDown,
-                contentDescription = if (expanded) "收起" else "展开",
-                onClick = onToggleExpanded,
-                rotationDegrees = if (expanded) 180f else 0f,
-            )
-        },
-    )
-}
-
-/** A section's placeholder, indented to the text column so it reads as part of that section. */
-@Composable
-private fun SectionNote(text: String) {
-    Text(
-        text,
-        style = ManisType.metadata,
-        color = LocalManisColors.current.textTertiary,
-        maxLines = 2,
-        overflow = TextOverflow.Ellipsis,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = RulesTextColumnStart),
-    )
-}
-
-/**
- * The one way to add a rule to a section. It sits under the section's last row instead of in its
- * header, so every header keeps two trailing slots and one fixed height.
- */
-@Composable
-private fun SectionAddRow(onClick: () -> Unit, onSettings: (() -> Unit)? = null) {
-    val colors = LocalManisColors.current
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .height(ManisDimens.controlCompact)
-            .clip(RoundedCornerShape(ManisDimens.radiusControl))
-            .clickable(onClick = onClick)
-            .padding(start = RulesTextColumnStart, end = ManisDimens.spaceLg),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            "＋ 添加规则",
-            style = ManisType.metadata,
-            color = colors.textSecondary,
-            maxLines = 1,
-        )
-        if (onSettings != null) {
-            Spacer(Modifier.weight(1f))
-            // The group's own settings sit with its content, so a header tap can mean one thing:
-            // collapse or expand, exactly as it does for the manual section.
-            ManisTextAction("组设置", onClick = onSettings)
+        }
+        DropdownMenu(
+            expanded = menuOpen,
+            onDismissRequest = { menuOpen = false },
+            containerColor = colors.surfaceOverlay,
+            shape = RoundedCornerShape(ManisDimens.radiusCard),
+        ) {
+            menu { menuOpen = false }
         }
     }
 }
 
-/** The page with nothing in it: one sentence and one filled way to start. */
+/** The single-pointer reorder: the same two moves the drag produces, plus the group's own settings. */
 @Composable
-private fun EmptyRules(onAdd: () -> Unit) {
-    ManisCard {
-        ManisMeta("还没有规则。添加一条 DOMAIN-SUFFIX 或 IP-CIDR 规则即可开始。")
-        ManisButton("添加规则", primary = true, onClick = onAdd)
+private fun ReorderMenu(
+    canMoveUp: Boolean,
+    canMoveDown: Boolean,
+    onMoveUp: () -> Unit,
+    onMoveDown: () -> Unit,
+    onSettings: () -> Unit,
+) {
+    val colors = LocalManisColors.current
+    DropdownMenuItem(
+        text = {
+            Text(
+                "上移优先级",
+                style = ManisType.body,
+                color = if (canMoveUp) colors.textPrimary else colors.textTertiary,
+            )
+        },
+        enabled = canMoveUp,
+        onClick = onMoveUp,
+    )
+    DropdownMenuItem(
+        text = {
+            Text(
+                "下移优先级",
+                style = ManisType.body,
+                color = if (canMoveDown) colors.textPrimary else colors.textTertiary,
+            )
+        },
+        enabled = canMoveDown,
+        onClick = onMoveDown,
+    )
+    DropdownMenuItem(
+        text = { Text("组设置", style = ManisType.body, color = colors.textPrimary) },
+        onClick = onSettings,
+    )
+}
+
+/** The last step: everything the rules above did not match. Dashed, so it reads as the floor. */
+@Composable
+private fun FallbackCard() {
+    val colors = LocalManisColors.current
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(ManisDimens.radiusCard))
+            .background(colors.surfaceLow)
+            .drawBehind {
+                drawRoundRect(
+                    color = colors.outlineStrong,
+                    cornerRadius = CornerRadius(ManisDimens.radiusCard.toPx()),
+                    style = Stroke(
+                        width = 1.dp.toPx(),
+                        pathEffect = PathEffect.dashPathEffect(
+                            floatArrayOf(6.dp.toPx(), 4.dp.toPx()),
+                        ),
+                    ),
+                )
+            }
+            .padding(horizontal = ManisDimens.spaceLg, vertical = ManisDimens.spaceMd),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceMd),
+    ) {
+        OrderBadge("END")
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text("FINAL · 默认兜底", style = ManisType.label, color = colors.textPrimary, maxLines = 1)
+            Text(
+                "未命中以上任何规则的流量",
+                style = ManisType.metadata,
+                color = colors.textTertiary,
+                maxLines = 2,
+            )
+        }
+        ManisPill("→ 全局", ManisTone.Route)
     }
 }
 
+/** A rule row: its kind, what it matches, and the switch that keeps it in force. */
 @Composable
-private fun RuleRow(
-    order: Int,
+private fun PipelineRuleRow(
     rule: RuleEntry,
     /** The group's policy, or null in the manual section where the rule's own policy applies. */
     groupTarget: String?,
@@ -825,26 +926,26 @@ private fun RuleRow(
     onDragEnd: () -> Unit,
 ) {
     val colors = LocalManisColors.current
-    val dragStart by androidx.compose.runtime.rememberUpdatedState(onDragStart)
-    val drag by androidx.compose.runtime.rememberUpdatedState(onDrag)
-    val dragEnd by androidx.compose.runtime.rememberUpdatedState(onDragEnd)
+    val dragStart by rememberUpdatedState(onDragStart)
+    val drag by rememberUpdatedState(onDrag)
+    val dragEnd by rememberUpdatedState(onDragEnd)
     Surface(
         onClick = onEdit,
         modifier = modifier
             .fillMaxWidth()
-            .height(ManisDimens.rowHeight)
+            // One step in from the header so the rows read as the body of the step above them.
+            .padding(start = ManisDimens.spaceLg)
+            .height(PipelineRuleHeight)
             .zIndex(if (dragging) 1f else 0f)
             .graphicsLayer { translationY = offset },
-        shape = RoundedCornerShape(16.dp),
-        color = if (dragging) colors.actionSoft else colors.surfaceOverlay,
+        shape = RoundedCornerShape(ManisDimens.radiusControl),
+        color = if (dragging) colors.actionSoft else colors.surfaceElevated,
+        border = androidx.compose.foundation.BorderStroke(1.dp, colors.outlineSubtle),
         shadowElevation = if (dragging) 6.dp else 0.dp,
     ) {
         Row(
             Modifier
                 .fillMaxSize()
-                // The same insets as a section header, so the switch and the grip below a header
-                // share its columns instead of drifting a few dp to the right.
-                .padding(horizontal = ManisDimens.spaceLg)
                 .pointerInput(rule.id) {
                     detectDragGestures(
                         onDragStart = { dragStart() },
@@ -855,48 +956,203 @@ private fun RuleRow(
                             drag(amount.y)
                         },
                     )
-                },
+                }
+                .padding(start = ManisDimens.spaceMd, end = ManisDimens.spaceXs),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
         ) {
-            // The header's grip slot, holding the order instead: one left edge for the whole page.
-            Box(Modifier.size(ManisDimens.iconTarget), contentAlignment = Alignment.Center) {
-                Text("$order", style = ManisType.metadata, color = colors.textTertiary)
-            }
-            Column(Modifier.weight(1f)) {
+            ManisPill(rule.kind, ManisTone.Neutral)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
                 Text(
                     if (rule.kind == "FINAL") "所有剩余流量" else rule.value,
-                    style = ManisType.body,
+                    style = ManisType.data,
                     color = if (rule.enabled) colors.textPrimary else colors.textTertiary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                ManisMeta(
-                    if (groupTarget == null) {
-                        "${rule.kind} → ${policyLabel(rule.policy)}"
-                    } else {
-                        rule.kind
-                    },
-                    maxLines = 1,
-                )
+                // A group header states the target for all its rows; a manual rule states its own.
+                if (groupTarget == null) {
+                    Text(
+                        "→ ${policyLabel(rule.policy)}",
+                        style = ManisType.metadata,
+                        color = colors.textTertiary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
             Box(
                 Modifier
                     .width(ManisDimens.switchWidth)
-                    .height(ManisDimens.controlStandard),
+                    .height(ManisDimens.minTouch),
                 contentAlignment = Alignment.Center,
             ) {
                 ManisToggle(checked = rule.enabled, onCheckedChange = onToggle)
             }
-            // The drag gesture covers the whole row; this slot is the grip that says so.
-            Box(Modifier.size(ManisDimens.iconTarget), contentAlignment = Alignment.Center) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_drag_handle),
-                    contentDescription = "拖动排序",
-                    modifier = Modifier.size(24.dp),
-                    tint = colors.textTertiary,
-                )
+        }
+    }
+}
+
+/** A section's placeholder, indented to the rows so it reads as part of that step. */
+@Composable
+private fun PipelineNote(text: String) {
+    Text(
+        text,
+        style = ManisType.metadata,
+        color = LocalManisColors.current.textTertiary,
+        maxLines = 2,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = ManisDimens.spaceLg + ManisDimens.spaceMd),
+    )
+}
+
+/** The one way to add a rule to a section, under its last row. */
+@Composable
+private fun PipelineAddRow(
+    onClick: () -> Unit,
+    extraLabel: String? = null,
+    onExtra: (() -> Unit)? = null,
+) {
+    val colors = LocalManisColors.current
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(ManisDimens.minTouch)
+            .clip(RoundedCornerShape(ManisDimens.radiusControl))
+            .clickable(onClick = onClick)
+            .padding(start = ManisDimens.spaceLg + ManisDimens.spaceMd, end = ManisDimens.spaceSm),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("＋ 添加规则", style = ManisType.metadata, color = colors.textSecondary, maxLines = 1)
+        if (extraLabel != null && onExtra != null) {
+            Spacer(Modifier.weight(1f))
+            // The group's own settings sit with its content, so a header tap means one thing.
+            ManisTextAction(extraLabel, onClick = onExtra)
+        }
+    }
+}
+
+/** The page with nothing in it: one sentence and one filled way to start. */
+@Composable
+private fun EmptyRules(onAdd: () -> Unit) {
+    ManisCard {
+        ManisMeta("还没有规则。添加一条 DOMAIN-SUFFIX 或 IP-CIDR 规则即可开始。")
+        ManisButton("添加规则", primary = true, onClick = onAdd)
+    }
+}
+
+/** The cobalt apply action: filled only while the workspace has changes waiting. */
+@Composable
+private fun RulesApplyAction(pending: Boolean, onApply: () -> Unit) {
+    val colors = LocalManisColors.current
+    Row(
+        Modifier
+            .height(ManisDimens.controlCompact)
+            .clip(CircleShape)
+            .background(if (pending) colors.actionPrimary else colors.buttonBg)
+            .clickable(enabled = pending, onClick = onApply)
+            .padding(horizontal = ManisDimens.spaceLg),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        // The amber dot is the pending-change mark: colour alone never carries the state.
+        if (pending) {
+            Box(Modifier.size(6.dp).clip(CircleShape).background(colors.statusWarning))
+        }
+        Text(
+            "应用",
+            style = ManisType.label,
+            color = if (pending) colors.actionOnPrimary else colors.textTertiary,
+            maxLines = 1,
+        )
+    }
+}
+
+/**
+ * The 20dp editor sheet: drag handle, scrolling body and a 48dp submit bar that rides the keyboard
+ * via `imePadding`. Shared by the rule and rule-group editors.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun EditorSheet(
+    title: String,
+    onDismiss: () -> Unit,
+    footer: @Composable RowScope.() -> Unit,
+    subtitle: String? = null,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val colors = LocalManisColors.current
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        shape = RoundedCornerShape(
+            topStart = ManisDimens.radiusSheet,
+            topEnd = ManisDimens.radiusSheet,
+        ),
+        containerColor = colors.surfaceOverlay,
+        scrimColor = colors.scrim,
+        dragHandle = {
+            Box(
+                Modifier
+                    .padding(top = ManisDimens.spaceMd, bottom = ManisDimens.spaceXs)
+                    .size(width = 36.dp, height = 4.dp)
+                    .clip(RoundedCornerShape(9999.dp))
+                    .background(colors.outlineStrong.copy(alpha = 0.45f)),
+            )
+        },
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars)),
+        ) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(start = ManisDimens.spaceXl, end = ManisDimens.spaceSm),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(title, style = ManisType.dialogTitle, color = colors.textPrimary)
+                    if (subtitle != null) ManisMeta(subtitle, maxLines = 2)
+                }
+                Box(
+                    Modifier
+                        .size(ManisDimens.minTouch)
+                        .clip(CircleShape)
+                        .clickable(onClick = onDismiss),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_close),
+                        contentDescription = "关闭",
+                        modifier = Modifier.size(20.dp),
+                        tint = colors.textSecondary,
+                    )
+                }
             }
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .weight(1f, fill = false)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = ManisDimens.spaceXl, vertical = ManisDimens.spaceMd),
+                verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceMd),
+                content = content,
+            )
+            ManisDivider()
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .height(ManisDimens.minTouch)
+                    .padding(horizontal = ManisDimens.spaceLg),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
+                content = footer,
+            )
         }
     }
 }
@@ -947,59 +1203,62 @@ internal fun RuleEditorPane(
         )
     }
 
-    Popup(onDismissRequest = onCancel, properties = PopupProperties(focusable = true)) {
-        ManisDialog(
-            title = if (editingIndex == null) "添加规则" else "编辑规则",
-            subtitle = "规则按顺序匹配",
-            onDismiss = onCancel,
-            actions = {
-                if (editingIndex != null) {
-                    ManisTextAction("删除", tone = colors.statusError, onClick = onDelete)
-                }
-                Spacer(Modifier.weight(1f))
-                ManisButton("取消", onClick = onCancel)
-                ManisButton("保存", primary = true, onClick = ::submit)
-            },
-        ) {
-            if (groups.isNotEmpty()) {
-                ManisSelect(
-                    label = "规则组",
-                    options = groupChoices.map { it.second },
-                    selected = groupChoices.firstOrNull { it.first == groupId }?.second ?: ManualSectionTitle,
-                    onSelect = { label ->
-                        groupId = groupChoices.firstOrNull { it.second == label }?.first
-                        // FINAL is manual-only, so moving such a rule into a group needs a real kind.
-                        if (groupId != null && kind == "FINAL") kind = "DOMAIN-SUFFIX"
-                    },
-                )
+    EditorSheet(
+        title = if (editingIndex == null) "添加规则" else "编辑规则",
+        subtitle = "规则按顺序匹配",
+        onDismiss = onCancel,
+        footer = {
+            if (editingIndex != null) {
+                ManisTextAction("删除", tone = colors.statusError, onClick = onDelete)
             }
+            Spacer(Modifier.weight(1f))
+            ManisButton("取消", onClick = onCancel)
+            ManisButton("保存", primary = true, onClick = ::submit)
+        },
+    ) {
+        if (groups.isNotEmpty()) {
             ManisSelect(
-                label = "类型",
-                options = if (groupId == null) RULE_KINDS.toList() else RULE_KINDS - "FINAL",
-                selected = kind,
-                onSelect = {
-                    kind = it
-                    if (it == "FINAL") value = ""
+                label = "规则组",
+                options = groupChoices.map { it.second },
+                selected = groupChoices.firstOrNull { it.first == groupId }?.second
+                    ?: ManualSectionTitle,
+                onSelect = { label ->
+                    groupId = groupChoices.firstOrNull { it.second == label }?.first
+                    // FINAL is manual-only, so moving such a rule into a group needs a real kind.
+                    if (groupId != null && kind == "FINAL") kind = "DOMAIN-SUFFIX"
                 },
             )
-            if (kind != "FINAL") {
-                Text("匹配", style = ManisType.label, color = colors.textPrimary)
-                ManisTextField(value = value, onValueChange = { value = it }, placeholder = kindPlaceholder(kind))
-            }
-            if (group != null) {
-                ManisMeta("由规则组「${group.name}」决定：${policyLabel(group.policy)}")
-            } else {
-                ManisSelect(
-                    label = "策略",
-                    options = policies,
-                    selected = policy,
-                    display = ::policyLabel,
-                    onSelect = { policy = it },
-                )
-            }
-            ManisMeta(kindHelp(kind))
-            error?.let { Text(it, style = ManisType.metadata, color = colors.statusError) }
         }
+        ManisSelect(
+            label = "类型",
+            options = if (groupId == null) RULE_KINDS.toList() else RULE_KINDS - "FINAL",
+            selected = kind,
+            onSelect = {
+                kind = it
+                if (it == "FINAL") value = ""
+            },
+        )
+        if (kind != "FINAL") {
+            Text("匹配", style = ManisType.label, color = colors.textPrimary)
+            ManisTextField(
+                value = value,
+                onValueChange = { value = it },
+                placeholder = kindPlaceholder(kind),
+            )
+        }
+        if (group != null) {
+            ManisMeta("由规则组「${group.name}」决定：${policyLabel(group.policy)}")
+        } else {
+            ManisSelect(
+                label = "策略",
+                options = policies,
+                selected = policy,
+                display = ::policyLabel,
+                onSelect = { policy = it },
+            )
+        }
+        ManisMeta(kindHelp(kind))
+        error?.let { Text(it, style = ManisType.metadata, color = colors.statusError) }
     }
 }
 
@@ -1036,62 +1295,60 @@ private fun RuleGroupEditorPane(
         onConfirm(initial.copy(name = trimmed, policy = policy, enabled = enabled))
     }
 
-    Popup(onDismissRequest = onCancel, properties = PopupProperties(focusable = true)) {
-        ManisDialog(
-            title = if (saved) "编辑规则组" else "新建规则组",
-            subtitle = if (saved) null else "组内规则统一走同一个目标",
-            onDismiss = onCancel,
-            actions = {
-                if (saved && confirmingDelete) {
-                    ManisButton("取消删除", onClick = { confirmingDelete = false })
-                    Spacer(Modifier.weight(1f))
-                    ManisButton("确认删除", primary = true, onClick = onDelete)
-                } else {
-                    if (saved) {
-                        ManisTextAction(
-                            "删除",
-                            tone = colors.statusError,
-                            onClick = { confirmingDelete = true },
-                        )
-                    }
-                    Spacer(Modifier.weight(1f))
-                    ManisButton("取消", onClick = onCancel)
-                    ManisButton("保存", primary = true, onClick = ::submit)
-                }
-            },
-        ) {
-            if (confirmingDelete) {
-                Text(
-                    "删除规则组「${initial.name}」后，组内 $ruleCount 条规则也会一起删除。",
-                    style = ManisType.body,
-                    color = colors.statusError,
-                )
+    EditorSheet(
+        title = if (saved) "编辑规则组" else "新建规则组",
+        subtitle = if (saved) null else "组内规则统一走同一个目标",
+        onDismiss = onCancel,
+        footer = {
+            if (saved && confirmingDelete) {
+                ManisButton("取消删除", onClick = { confirmingDelete = false })
+                Spacer(Modifier.weight(1f))
+                ManisButton("确认删除", primary = true, onClick = onDelete)
             } else {
-                Text("名称", style = ManisType.label, color = colors.textPrimary)
-                ManisTextField(value = name, onValueChange = { name = it }, placeholder = "例如：工作")
-                ManisSelect(
-                    label = "目标",
-                    options = policies,
-                    selected = policy,
-                    display = ::policyLabel,
-                    onSelect = { policy = it },
-                )
-                Row(
-                    Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
-                ) {
-                    Text(
-                        "启用",
-                        style = ManisType.label,
-                        color = colors.textPrimary,
-                        modifier = Modifier.weight(1f),
+                if (saved) {
+                    ManisTextAction(
+                        "删除",
+                        tone = colors.statusError,
+                        onClick = { confirmingDelete = true },
                     )
-                    ManisToggle(checked = enabled, onCheckedChange = { enabled = it })
                 }
-                ManisMeta("组内每条规则都走「${policyLabel(policy)}」，规则自己的策略不参与匹配。")
-                error?.let { Text(it, style = ManisType.metadata, color = colors.statusError) }
+                Spacer(Modifier.weight(1f))
+                ManisButton("取消", onClick = onCancel)
+                ManisButton("保存", primary = true, onClick = ::submit)
             }
+        },
+    ) {
+        if (confirmingDelete) {
+            Text(
+                "删除规则组「${initial.name}」后，组内 $ruleCount 条规则也会一起删除。",
+                style = ManisType.body,
+                color = colors.statusError,
+            )
+        } else {
+            Text("名称", style = ManisType.label, color = colors.textPrimary)
+            ManisTextField(value = name, onValueChange = { name = it }, placeholder = "例如：工作")
+            ManisSelect(
+                label = "目标",
+                options = policies,
+                selected = policy,
+                display = ::policyLabel,
+                onSelect = { policy = it },
+            )
+            Row(
+                Modifier.fillMaxWidth().height(ManisDimens.minTouch),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
+            ) {
+                Text(
+                    "启用",
+                    style = ManisType.label,
+                    color = colors.textPrimary,
+                    modifier = Modifier.weight(1f),
+                )
+                ManisToggle(checked = enabled, onCheckedChange = { enabled = it })
+            }
+            ManisMeta("组内每条规则都走「${policyLabel(policy)}」，规则自己的策略不参与匹配。")
+            error?.let { Text(it, style = ManisType.metadata, color = colors.statusError) }
         }
     }
 }

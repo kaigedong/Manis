@@ -303,7 +303,9 @@ impl Render for AuxiliaryView {
             .size_full()
             .flex()
             .flex_col()
-            .bg(theme.surface_base)
+            // A utility window is one sheet: the editor's own header and footer bands share
+            // this surface, so the hairlines read as dividers instead of colour steps.
+            .bg(theme.surface_overlay)
             .text_color(theme.text_primary)
             .text_size(TextRole::Body.size())
             .line_height(TextRole::Body.line_height())

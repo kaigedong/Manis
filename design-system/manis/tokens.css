@@ -1,0 +1,135 @@
+/* Manis UI 2.0 — Obsidian & Alabaster Design Tokens
+ * Source of truth: design-system/manis/tokens.json
+ */
+
+:root,
+[data-theme="light"] {
+  /* Surfaces */
+  --surface-canvas: #F7F6F3;
+  --surface-chrome: #EFECE6;
+  --surface-low: #F1EFEA;
+  --surface-elevated: #FFFFFF;
+  --surface-high: #E6E3DC;
+  --surface-overlay: #FFFFFF;
+
+  /* Text */
+  --text-primary: #141413;
+  --text-secondary: #4E4D49;
+  --text-tertiary: #5E5C57;
+
+  /* Borders */
+  --border-subtle: #E5E2DC;
+  --border-strong: #8B8881;
+
+  /* Primary Accent: Electric Indigo-Cobalt */
+  --accent-primary: #2B4EFF;
+  --accent-primary-hover: #1F3EE0;
+  --accent-primary-active: #1732BD;
+  --accent-on-primary: #FFFFFF;
+  --accent-soft: #EEF2FF;
+  --focus-ring: #2B4EFF;
+
+  /* Secondary Controls */
+  --control-bg: #ECEAE4;
+  --control-hover: #E2DFD7;
+  --control-active: #D7D3C9;
+
+  /* Route Truth Semantic: Royal Violet */
+  --route-trace: #6D28D9;
+  --route-soft: #F3EEFF;
+
+  /* Status Semantics */
+  --status-success: #0E7A4B;
+  --status-success-soft: #E8F7F0;
+  --status-warning: #9A5504;
+  --status-warning-soft: #FEF5E7;
+  --status-error: #C81E1E;
+  --status-error-soft: #FEF2F2;
+  --danger-fill: #C81E1E;
+  --danger-hover: #A61717;
+  --danger-active: #861212;
+  --danger-on: #FFFFFF;
+
+  /* Logs */
+  --log-info: #1D4ED8;
+  --log-debug: #6D28D9;
+  --log-trace: #0F766E;
+
+  /* Scrim & Elevation */
+  --scrim: rgba(20, 20, 19, 0.35);
+  --shadow-card: 0 1px 2px rgba(20, 20, 19, 0.04), 0 0 0 1px var(--border-subtle);
+  --shadow-popover: 0 12px 32px rgba(20, 20, 19, 0.12), 0 0 0 1px var(--border-subtle);
+
+  /* Typography */
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Noto Sans SC', 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', 'Roboto Mono', ui-monospace, monospace;
+
+  /* Spacing */
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-lg: 16px;
+  --space-xl: 24px;
+  --space-2xl: 32px;
+
+  /* Radii */
+  --radius-badge: 6px;
+  --radius-control: 10px;
+  --radius-row: 10px;
+  --radius-card: 14px;
+  --radius-sheet: 20px;
+  --radius-pill: 9999px;
+
+  /* Motion */
+  --ease-fast: 140ms cubic-bezier(0.2, 0, 0, 1);
+  --ease-standard: 220ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+[data-theme="dark"] {
+  --surface-canvas: #0D0D0F;
+  --surface-chrome: #141417;
+  --surface-low: #17171B;
+  --surface-elevated: #1C1C21;
+  --surface-high: #25252C;
+  --surface-overlay: #212127;
+
+  --text-primary: #F4F4F6;
+  --text-secondary: #B4B4BE;
+  --text-tertiary: #9A9AA6;
+
+  --border-subtle: #2B2B33;
+  --border-strong: #787886;
+
+  --accent-primary: #6B8AFF;
+  --accent-primary-hover: #859FFF;
+  --accent-primary-active: #A1B5FF;
+  --accent-on-primary: #0A0D18;
+  --accent-soft: #1B2342;
+  --focus-ring: #859FFF;
+
+  --control-bg: #26262E;
+  --control-hover: #31313B;
+  --control-active: #3D3D4A;
+
+  --route-trace: #C4B5FD;
+  --route-soft: #271F3D;
+
+  --status-success: #4ADE80;
+  --status-success-soft: #122B20;
+  --status-warning: #FBBF24;
+  --status-warning-soft: #2E2312;
+  --status-error: #F87171;
+  --status-error-soft: #331719;
+  --danger-fill: #C81E1E;
+  --danger-hover: #A61717;
+  --danger-active: #861212;
+  --danger-on: #FFFFFF;
+
+  --log-info: #93C5FD;
+  --log-debug: #D8B4FE;
+  --log-trace: #5EEAD4;
+
+  --scrim: rgba(0, 0, 0, 0.55);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.35), 0 0 0 1px var(--border-subtle);
+  --shadow-popover: 0 16px 40px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--border-subtle);
+}

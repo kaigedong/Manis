@@ -20,8 +20,6 @@ pub(crate) const AUTOMATIC_SYSTEM_PROXY_RECOVERY_FAILED: LocalizedText = Localiz
     " · 系统代理自动恢复失败：",
 );
 pub(crate) const AUTO_SELECT: LocalizedText = LocalizedText::new("Auto select", "自动选择");
-pub(crate) const CANDIDATE_GROUP: LocalizedText =
-    LocalizedText::new("Candidate / group", "候选节点 / 分组");
 pub(crate) const CHANGE_PROXY_MODE: LocalizedText =
     LocalizedText::new("Change proxy mode", "切换代理模式");
 pub(crate) const CHANGE_ROUTING_MODE: LocalizedText =
@@ -163,9 +161,9 @@ pub(crate) const NO_IMPORTED_NODES_CURRENTLY_MATCH_THIS_POLICY: LocalizedText = 
 );
 pub(crate) const NO_POLICY_GROUPS_YET: LocalizedText =
     LocalizedText::new("No policy groups yet", "还没有策略组");
-pub(crate) const NO_RUNTIME_DATA: LocalizedText =
-    LocalizedText::new("No runtime data", "无运行数据");
-pub(crate) const OFF: LocalizedText = LocalizedText::new("Off", "关闭");
+pub(crate) const NO_EXIT_SELECTED: LocalizedText =
+    LocalizedText::new("No exit selected", "未选择出口");
+pub(crate) const OFF: LocalizedText = LocalizedText::new("Paused", "已暂停");
 pub(crate) const ONLY_A_CANDIDATE_INSIDE_A_MANUAL_POLICY_CAN_BE_SELECTED: LocalizedText =
     LocalizedText::new(
         "Only a candidate inside a manual policy can be selected",
@@ -180,7 +178,6 @@ pub(crate) const PREPARING_TUN_AND_TRAFFIC_ROUTE: LocalizedText = LocalizedText:
     "正在准备 TUN 与流量接管…",
 );
 pub(crate) const PREPARING_TUN: LocalizedText = LocalizedText::new("Preparing TUN…", "准备 TUN…");
-pub(crate) const PROXY: LocalizedText = LocalizedText::new("Proxy", "代理");
 pub(crate) const READ_ONLY: LocalizedText = LocalizedText::new("Read-only", "只读");
 pub(crate) const RECONNECT_TO_RESTART_THE_KERNEL: LocalizedText = LocalizedText::new(
     " · reconnect to restart the kernel",
@@ -192,7 +189,6 @@ pub(crate) const RESTART_PREFERENCE_COULD_NOT_BE_SAVED: LocalizedText = Localize
     " · restart preference could not be saved",
     " · 但未能保存重启偏好",
 );
-pub(crate) const ROUTING: LocalizedText = LocalizedText::new("Routing", "路由");
 pub(crate) const ROUTING_RULES_CHOOSE_POLICY_GROUPS_POLICIES_CHOOSE_EXITS: LocalizedText =
     LocalizedText::new(
         "Routing rules choose policy groups; policies choose exits.",
@@ -217,7 +213,6 @@ pub(crate) const SEARCH_OPERATIONS_ERRORS_OR_LOG_LEVELS: LocalizedText = Localiz
     "Search operations, errors, or log levels",
     "搜索操作、错误或日志级别",
 );
-pub(crate) const SOURCE: LocalizedText = LocalizedText::new("Source", "来源");
 pub(crate) const START_MIHOMO_BEFORE_SELECTING_A_NODE_FOR_THIS_POLICY_GROUP: LocalizedText =
     LocalizedText::new(
         "Start Mihomo before selecting a node for this policy group.",
@@ -306,7 +301,6 @@ pub(crate) const THIS_RUNTIME_POLICY_IS_READ_ONLY_IN_MANIS: LocalizedText = Loca
     "This runtime policy is read-only in Manis",
     "这个运行时策略组在 Manis 中为只读",
 );
-pub(crate) const TOTAL: LocalizedText = LocalizedText::new("Total ", "累计");
 #[cfg(not(test))]
 pub(crate) const TUN_DNS_RECOVERY_NEEDS_ATTENTION: LocalizedText = LocalizedText::new(
     "TUN DNS recovery needs attention: ",

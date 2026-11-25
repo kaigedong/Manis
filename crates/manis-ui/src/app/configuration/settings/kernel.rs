@@ -1,10 +1,10 @@
-use gpui::{IntoElement, ParentElement, Stateful, Styled, div, prelude::*};
+use gpui::{IntoElement, ParentElement, Stateful, Styled, div, prelude::*, px};
 use gpui_component::{Disableable, IconName, button::Button};
 use manis_core::ProxyMode;
 
 use super::{
     ActionRole, Context, ControlSize, Div, Language, ManisApp, MihomoCoreUpdateState, Space,
-    TextRole, Theme, copy, panel_surface, section_heading, status_badge, style_action_button,
+    TextRole, Theme, copy, panel_surface, section_header, status_badge, style_action_button,
 };
 
 impl ManisApp {
@@ -16,7 +16,7 @@ impl ManisApp {
     ) -> Stateful<Div> {
         let language = self.language();
         panel_surface("configuration-kernel", compact, theme)
-            .child(section_heading(
+            .child(section_header(
                 language.localized(copy::configuration::RUNTIME_KERNEL),
                 "",
                 Some(
@@ -59,6 +59,7 @@ impl ManisApp {
         div()
             .mt(Space::Sm.px())
             .ml(Space::Md.px())
+            .min_h(px(52.0))
             .flex()
             .items_center()
             .justify_between()

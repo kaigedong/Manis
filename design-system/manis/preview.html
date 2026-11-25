@@ -1,0 +1,2467 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Manis UI 2.0 — Obsidian &amp; Alabaster 跨端 UX 设计原型</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./tokens.css" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      font-family: var(--font-sans);
+      background: var(--surface-canvas);
+      color: var(--text-primary);
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      line-height: 1.5;
+      min-height: 100vh;
+    }
+    button, input, select {
+      font-family: inherit;
+      color: inherit;
+    }
+    button {
+      cursor: pointer;
+      border: none;
+      background: none;
+      padding: 0;
+    }
+    button:focus-visible, input:focus-visible, [tabindex]:focus-visible {
+      outline: 2px solid var(--focus-ring);
+      outline-offset: 2px;
+    }
+    .mono {
+      font-family: var(--font-mono);
+      font-variant-numeric: tabular-nums;
+    }
+    svg.ic {
+      width: 16px;
+      height: 16px;
+      stroke: currentColor;
+      stroke-width: 1.75;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      fill: none;
+      flex-shrink: 0;
+    }
+    svg.ic-sm { width: 14px; height: 14px; }
+    svg.ic-lg { width: 18px; height: 18px; }
+
+    /* ===== Studio Top Shell ===== */
+    .studio-bar {
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 12px 24px;
+      background: var(--surface-chrome);
+      border-bottom: 1px solid var(--border-subtle);
+      flex-wrap: wrap;
+    }
+    .studio-brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .brand-mark {
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      background: #141413;
+      display: grid;
+      place-items: center;
+      flex-shrink: 0;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.12);
+    }
+    .studio-title {
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: -0.015em;
+    }
+    .studio-sub {
+      font-size: 12px;
+      color: var(--text-tertiary);
+    }
+    .studio-controls {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    /* Segmented control (shared across studio + apps) */
+    .seg {
+      display: inline-flex;
+      align-items: center;
+      padding: 3px;
+      background: var(--surface-low);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-control);
+      gap: 2px;
+    }
+    .seg-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      height: 30px;
+      padding: 0 11px;
+      font-size: 12.5px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      border-radius: 7px;
+      transition: background var(--ease-fast), color var(--ease-fast), box-shadow var(--ease-fast);
+      white-space: nowrap;
+    }
+    .seg-btn:hover { color: var(--text-primary); }
+    .seg-btn.active {
+      background: var(--surface-elevated);
+      color: var(--text-primary);
+      font-weight: 600;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.08), 0 0 0 1px var(--border-subtle);
+    }
+    [data-theme="dark"] .seg-btn.active {
+      background: var(--surface-high);
+      box-shadow: 0 1px 2px rgba(0,0,0,0.35), 0 0 0 1px rgba(255,255,255,0.06);
+    }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      height: 34px;
+      padding: 0 13px;
+      font-size: 13px;
+      font-weight: 500;
+      border-radius: var(--radius-control);
+      transition: background var(--ease-fast), color var(--ease-fast), border-color var(--ease-fast);
+      white-space: nowrap;
+    }
+    .btn-primary {
+      background: var(--accent-primary);
+      color: var(--accent-on-primary);
+      font-weight: 600;
+    }
+    .btn-primary:hover { background: var(--accent-primary-hover); }
+    .btn-primary:active { background: var(--accent-primary-active); }
+    .btn-secondary {
+      background: var(--control-bg);
+      color: var(--text-primary);
+      border: 1px solid var(--border-subtle);
+    }
+    .btn-secondary:hover { background: var(--control-hover); }
+    .btn-ghost {
+      color: var(--text-secondary);
+      padding: 0 10px;
+    }
+    .btn-ghost:hover {
+      background: var(--surface-high);
+      color: var(--text-primary);
+    }
+    .btn-icon {
+      width: 34px;
+      height: 34px;
+      padding: 0;
+      border-radius: var(--radius-control);
+      color: var(--text-secondary);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .btn-icon:hover {
+      background: var(--surface-high);
+      color: var(--text-primary);
+    }
+
+    /* ===== Stage Layout ===== */
+    .stage {
+      padding: 24px;
+      max-width: 1640px;
+      margin: 0 auto;
+    }
+    .parity-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 396px;
+      gap: 24px;
+      align-items: start;
+    }
+    @media (max-width: 1220px) {
+      .parity-grid {
+        grid-template-columns: 1fr;
+        justify-items: center;
+      }
+      .parity-grid > .desktop-wrap { width: 100%; }
+    }
+    .stage-caption {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
+      padding: 0 4px;
+    }
+    .stage-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-tertiary);
+    }
+    .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .dot-ok { background: var(--status-success); }
+    .dot-warn { background: var(--status-warning); }
+    .dot-err { background: var(--status-error); }
+    .dot-muted { background: var(--text-tertiary); }
+    .dot-route { background: var(--route-trace); }
+
+    @keyframes pulse-ring {
+      0% { box-shadow: 0 0 0 0 rgba(14, 122, 75, 0.45); }
+      70% { box-shadow: 0 0 0 6px rgba(14, 122, 75, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(14, 122, 75, 0); }
+    }
+    .dot-live {
+      background: var(--status-success);
+      animation: pulse-ring 2.2s infinite;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .dot-live { animation: none; }
+    }
+
+    /* ===== DESKTOP APP WINDOW (GPUI) ===== */
+    .desktop-window {
+      background: var(--surface-canvas);
+      border: 1px solid var(--border-subtle);
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 18px 48px rgba(20, 20, 19, 0.10), 0 2px 6px rgba(20, 20, 19, 0.05);
+      display: grid;
+      grid-template-columns: 224px minmax(0, 1fr);
+      height: 780px;
+      transition: max-width var(--ease-standard), grid-template-columns var(--ease-standard);
+    }
+    [data-theme="dark"] .desktop-window {
+      box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--border-subtle);
+    }
+    .desktop-window.compact {
+      max-width: 740px;
+      margin: 0 auto;
+      grid-template-columns: 64px minmax(0, 1fr);
+    }
+
+    /* Desktop Left Rail */
+    .d-rail {
+      background: var(--surface-chrome);
+      border-right: 1px solid var(--border-subtle);
+      display: flex;
+      flex-direction: column;
+      padding: 14px 10px;
+      gap: 14px;
+      user-select: none;
+    }
+    .d-traffic {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 2px 6px 6px;
+    }
+    .mac-dots {
+      display: flex;
+      gap: 6px;
+    }
+    .mac-dots span {
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+      background: var(--border-subtle);
+      border: 1px solid rgba(0,0,0,0.06);
+    }
+    .d-brand-row {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 4px 8px;
+    }
+    .desktop-window.compact .d-brand-text,
+    .desktop-window.compact .d-nav-label,
+    .desktop-window.compact .d-telemetry,
+    .desktop-window.compact .d-util-label {
+      display: none;
+    }
+    .desktop-window.compact .d-brand-row { justify-content: center; padding: 4px 0; }
+    .desktop-window.compact .d-nav-item { justify-content: center; padding: 0; }
+    .desktop-window.compact .d-traffic { justify-content: center; }
+
+    .d-nav {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      flex: 1;
+    }
+    .d-nav-item {
+      position: relative;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      height: 38px;
+      padding: 0 11px;
+      border-radius: var(--radius-control);
+      font-size: 13.5px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      transition: background var(--ease-fast), color var(--ease-fast);
+    }
+    .d-nav-item:hover {
+      background: var(--surface-high);
+      color: var(--text-primary);
+    }
+    .d-nav-item.active {
+      background: var(--accent-soft);
+      color: var(--accent-primary);
+      font-weight: 600;
+    }
+    .d-nav-item.active::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 9px;
+      bottom: 9px;
+      width: 3px;
+      border-radius: 0 3px 3px 0;
+      background: var(--accent-primary);
+    }
+    .d-nav-badge {
+      margin-left: auto;
+      font-size: 11px;
+      font-family: var(--font-mono);
+      padding: 1px 6px;
+      border-radius: 6px;
+      background: var(--surface-elevated);
+      color: var(--text-tertiary);
+      border: 1px solid var(--border-subtle);
+    }
+    .desktop-window.compact .d-nav-badge { display: none; }
+
+    /* Desktop Mini Telemetry Card */
+    .d-telemetry {
+      background: var(--surface-elevated);
+      border: 1px solid var(--border-subtle);
+      border-radius: 12px;
+      padding: 11px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+    }
+    .d-tele-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 11.5px;
+      color: var(--text-tertiary);
+    }
+    .d-tele-node {
+      font-size: 12.5px;
+      font-weight: 600;
+      color: var(--text-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .d-tele-traffic {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 11.5px;
+      color: var(--text-secondary);
+      padding-top: 6px;
+      border-top: 1px solid var(--border-subtle);
+    }
+
+    .d-rail-foot {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding-top: 6px;
+      border-top: 1px solid var(--border-subtle);
+    }
+    .desktop-window.compact .d-rail-foot {
+      flex-direction: column;
+    }
+
+    /* Desktop Main Pane */
+    .d-main {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      min-height: 0;
+      background: var(--surface-canvas);
+    }
+    .d-topbar {
+      height: 58px;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 0 24px;
+      border-bottom: 1px solid var(--border-subtle);
+      background: var(--surface-canvas);
+    }
+    .d-top-left {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      min-width: 0;
+    }
+    .d-page-title {
+      font-size: 19px;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      white-space: nowrap;
+    }
+    .d-page-meta {
+      font-size: 12px;
+      color: var(--text-tertiary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .d-top-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+    .d-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px 24px 28px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    /* ===== Shared UI Atoms (Desktop + Mobile) ===== */
+    .sec-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+    .sec-title {
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      color: var(--text-primary);
+    }
+    .sec-sub {
+      font-size: 12px;
+      color: var(--text-tertiary);
+      margin-top: 1px;
+    }
+
+    .card {
+      background: var(--surface-elevated);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-card);
+      transition: border-color var(--ease-fast), background var(--ease-fast);
+    }
+    .card-pad { padding: 14px 16px; }
+
+    /* Policy Group Bento Grid */
+    .bento-2 {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .desktop-window.compact .bento-2 {
+      grid-template-columns: 1fr;
+    }
+    .policy-card {
+      padding: 14px 16px;
+      cursor: pointer;
+    }
+    .policy-card:hover {
+      border-color: var(--border-strong);
+    }
+    .policy-card.expanded {
+      border-color: var(--accent-primary);
+    }
+    .policy-top {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .policy-name {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-primary);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 11px;
+      font-weight: 500;
+      padding: 2px 8px;
+      border-radius: var(--radius-badge);
+      background: var(--surface-low);
+      color: var(--text-secondary);
+      white-space: nowrap;
+    }
+    .pill-accent {
+      background: var(--accent-soft);
+      color: var(--accent-primary);
+    }
+    .pill-route {
+      background: var(--route-soft);
+      color: var(--route-trace);
+      font-weight: 600;
+    }
+    .pill-ok {
+      background: var(--status-success-soft);
+      color: var(--status-success);
+    }
+    .pill-warn {
+      background: var(--status-warning-soft);
+      color: var(--status-warning);
+    }
+    .pill-err {
+      background: var(--status-error-soft);
+      color: var(--status-error);
+    }
+    .region-code {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 26px;
+      height: 20px;
+      font-family: var(--font-mono);
+      font-size: 10.5px;
+      font-weight: 600;
+      border-radius: 5px;
+      background: var(--surface-low);
+      color: var(--text-secondary);
+      border: 1px solid var(--border-subtle);
+      flex-shrink: 0;
+    }
+
+    .policy-exit {
+      margin-top: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 10px;
+      border-radius: 9px;
+      background: var(--surface-low);
+      gap: 8px;
+    }
+    .policy-members {
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid var(--border-subtle);
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px;
+    }
+    .member-chip {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      padding: 7px 10px;
+      border-radius: 9px;
+      border: 1px solid var(--border-subtle);
+      background: var(--surface-canvas);
+      font-size: 12px;
+      text-align: left;
+      transition: background var(--ease-fast), border-color var(--ease-fast);
+    }
+    .member-chip:hover { background: var(--surface-high); }
+    .member-chip.selected {
+      background: var(--accent-soft);
+      border-color: var(--accent-primary);
+      color: var(--accent-primary);
+      font-weight: 600;
+    }
+
+    /* Latency Indicator */
+    .lat {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      font-weight: 500;
+      white-space: nowrap;
+    }
+    .lat-fast { color: var(--status-success); }
+    .lat-mid { color: var(--status-warning); }
+    .lat-slow { color: var(--status-error); }
+    .lat-none { color: var(--text-tertiary); }
+    .sig-bars {
+      display: inline-flex;
+      align-items: flex-end;
+      gap: 2px;
+      height: 11px;
+    }
+    .sig-bars i {
+      display: block;
+      width: 2.5px;
+      border-radius: 1px;
+      background: currentColor;
+    }
+    .sig-bars i:nth-child(1) { height: 4px; }
+    .sig-bars i:nth-child(2) { height: 7px; }
+    .sig-bars i:nth-child(3) { height: 11px; }
+    .sig-bars i.off { opacity: 0.22; }
+
+    /* Provider Source Card */
+    .source-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 13px 16px;
+      cursor: pointer;
+    }
+    .source-head:hover { background: var(--surface-low); border-radius: var(--radius-card) var(--radius-card) 0 0; }
+    .usage-wrap {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 5px;
+    }
+    .usage-track {
+      width: 110px;
+      height: 5px;
+      border-radius: 99px;
+      background: var(--surface-high);
+      overflow: hidden;
+    }
+    .usage-fill {
+      height: 100%;
+      border-radius: 99px;
+      background: var(--accent-primary);
+    }
+
+    .node-list {
+      border-top: 1px solid var(--border-subtle);
+    }
+    .node-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1.8fr) 96px 124px 86px;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border-subtle);
+      cursor: pointer;
+      transition: background var(--ease-fast);
+    }
+    .node-row:last-child { border-bottom: none; }
+    .node-row:hover { background: var(--surface-low); }
+    .node-row.selected {
+      background: var(--accent-soft);
+    }
+    .desktop-window.compact .node-row {
+      grid-template-columns: minmax(0, 1fr) 82px 76px;
+    }
+    .desktop-window.compact .node-ip-col { display: none; }
+
+    /* ===== Route Truth Chain (Signature Component) ===== */
+    .route-chain {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 6px;
+      font-size: 11.5px;
+    }
+    .rc-step {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 8px;
+      border-radius: 6px;
+      font-weight: 500;
+    }
+    .rc-rule {
+      background: var(--route-soft);
+      color: var(--route-trace);
+      font-family: var(--font-mono);
+      font-size: 11px;
+    }
+    .rc-group {
+      background: var(--surface-low);
+      color: var(--text-primary);
+      border: 1px solid var(--border-subtle);
+    }
+    .rc-exit {
+      background: var(--status-success-soft);
+      color: var(--status-success);
+      font-weight: 600;
+    }
+    .rc-direct {
+      background: var(--surface-low);
+      color: var(--text-secondary);
+      font-family: var(--font-mono);
+    }
+    .rc-arrow {
+      color: var(--text-tertiary);
+      font-size: 11px;
+    }
+
+    /* ===== Rules Priority Pipeline ===== */
+    .pipeline {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .rule-group-card {
+      position: relative;
+      overflow: hidden;
+    }
+    .rg-head {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 14px;
+    }
+    .order-num {
+      font-family: var(--font-mono);
+      font-size: 11.5px;
+      font-weight: 600;
+      width: 26px;
+      height: 24px;
+      display: grid;
+      place-items: center;
+      border-radius: 6px;
+      background: var(--surface-low);
+      color: var(--text-secondary);
+      flex-shrink: 0;
+    }
+    .grip-btn {
+      width: 30px;
+      height: 30px;
+      display: grid;
+      place-items: center;
+      border-radius: 7px;
+      color: var(--text-tertiary);
+      cursor: grab;
+      flex-shrink: 0;
+    }
+    .grip-btn:hover { background: var(--surface-low); color: var(--text-primary); }
+
+    /* Custom Switch */
+    .switch {
+      width: 38px;
+      height: 22px;
+      border-radius: 99px;
+      background: var(--surface-high);
+      border: 1px solid var(--border-subtle);
+      position: relative;
+      flex-shrink: 0;
+      transition: background var(--ease-fast), border-color var(--ease-fast);
+    }
+    .switch::after {
+      content: "";
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: var(--surface-elevated);
+      box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+      transition: transform var(--ease-fast);
+    }
+    .switch.on {
+      background: var(--accent-primary);
+      border-color: var(--accent-primary);
+    }
+    .switch.on::after {
+      transform: translateX(16px);
+      background: #FFFFFF;
+    }
+
+    .rg-rules {
+      border-top: 1px solid var(--border-subtle);
+      background: var(--surface-canvas);
+      padding: 6px 14px 10px 52px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .rg-rule-line {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 6px 10px;
+      border-radius: 8px;
+      background: var(--surface-elevated);
+      border: 1px solid var(--border-subtle);
+      font-size: 12.5px;
+    }
+    .fallback-card {
+      border-style: dashed;
+      background: var(--surface-low);
+      padding: 11px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      border-radius: var(--radius-card);
+      border: 1px dashed var(--border-strong);
+    }
+
+    /* ===== Search Field ===== */
+    .search-box {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      height: 36px;
+      padding: 0 12px;
+      background: var(--surface-elevated);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-control);
+      flex: 1;
+      min-width: 160px;
+    }
+    .search-box:focus-within {
+      border-color: var(--accent-primary);
+      box-shadow: 0 0 0 2px var(--accent-soft);
+    }
+    .search-box input {
+      border: none;
+      background: none;
+      outline: none;
+      font-size: 13px;
+      width: 100%;
+    }
+    .search-box input::placeholder { color: var(--text-tertiary); }
+
+    /* ===== Activity & Logs ===== */
+    .conn-row {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+      cursor: pointer;
+      transition: background var(--ease-fast);
+    }
+    .conn-row:last-child { border-bottom: none; }
+    .conn-row:hover { background: var(--surface-low); }
+    .conn-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .log-row {
+      display: grid;
+      grid-template-columns: 74px 56px minmax(0, 1fr);
+      gap: 10px;
+      align-items: baseline;
+      padding: 8px 14px;
+      border-bottom: 1px solid var(--border-subtle);
+      font-family: var(--font-mono);
+      font-size: 12px;
+    }
+    .log-row:last-child { border-bottom: none; }
+    .lvl-tag {
+      display: inline-flex;
+      justify-content: center;
+      font-size: 10.5px;
+      font-weight: 600;
+      padding: 1px 6px;
+      border-radius: 5px;
+    }
+    .lvl-info { color: var(--log-info); background: rgba(29, 78, 216, 0.12); }
+    .lvl-warn { color: var(--status-warning); background: var(--status-warning-soft); }
+    .lvl-error { color: var(--status-error); background: var(--status-error-soft); }
+    .lvl-debug { color: var(--log-debug); background: var(--route-soft); }
+
+    /* ===== MOBILE PHONE FRAME (Android Jetpack Compose) ===== */
+    .phone-frame {
+      width: 390px;
+      height: 780px;
+      border-radius: 40px;
+      background: #141413;
+      padding: 10px;
+      box-shadow: 0 24px 60px rgba(20, 20, 19, 0.22), 0 0 0 1px rgba(255,255,255,0.08);
+      margin: 0 auto;
+    }
+    [data-theme="dark"] .phone-frame {
+      background: #232329;
+      box-shadow: 0 28px 68px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255,255,255,0.1);
+    }
+    .phone-screen {
+      width: 100%;
+      height: 100%;
+      border-radius: 31px;
+      background: var(--surface-canvas);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+    }
+    .m-statusbar {
+      height: 36px;
+      padding: 0 22px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-primary);
+      flex-shrink: 0;
+    }
+    .m-notch {
+      width: 72px;
+      height: 18px;
+      border-radius: 99px;
+      background: #141413;
+    }
+    .m-header {
+      height: 48px;
+      padding: 0 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-shrink: 0;
+    }
+    .m-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 4px 16px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    /* Mobile Hero Connection Cockpit */
+    .m-hero {
+      background: var(--surface-elevated);
+      border: 1px solid var(--border-subtle);
+      border-radius: 16px;
+      padding: 15px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .m-hero.connected {
+      border-color: rgba(14, 122, 75, 0.35);
+    }
+    [data-theme="dark"] .m-hero.connected {
+      border-color: rgba(74, 222, 128, 0.28);
+    }
+    .m-hero-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .m-power-btn {
+      height: 44px;
+      padding: 0 16px;
+      border-radius: 99px;
+      font-size: 13.5px;
+      font-weight: 600;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      transition: background var(--ease-fast), transform var(--ease-fast);
+      flex-shrink: 0;
+    }
+    .m-power-btn:active { transform: scale(0.97); }
+    .m-power-btn.off {
+      background: var(--accent-primary);
+      color: var(--accent-on-primary);
+    }
+    .m-power-btn.on {
+      background: var(--status-success-soft);
+      color: var(--status-success);
+      border: 1px solid rgba(14, 122, 75, 0.25);
+    }
+    .m-tele-strip {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 11px;
+      border-radius: 10px;
+      background: var(--surface-low);
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+    .m-seg {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      width: 100%;
+    }
+    .m-seg .seg-btn { height: 38px; font-size: 13px; }
+
+    /* Mobile Bottom Tab Bar (64dp + gesture home indicator) */
+    .m-bottom-nav {
+      background: var(--surface-chrome);
+      border-top: 1px solid var(--border-subtle);
+      padding: 6px 8px 10px;
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 2px;
+      flex-shrink: 0;
+    }
+    .m-tab {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 3px;
+      height: 48px;
+      border-radius: 12px;
+      color: var(--text-tertiary);
+      font-size: 11px;
+      font-weight: 500;
+      transition: color var(--ease-fast);
+    }
+    .m-tab-pill {
+      width: 44px;
+      height: 26px;
+      border-radius: 99px;
+      display: grid;
+      place-items: center;
+      transition: background var(--ease-fast);
+    }
+    .m-tab.active {
+      color: var(--accent-primary);
+      font-weight: 600;
+    }
+    .m-tab.active .m-tab-pill {
+      background: var(--accent-soft);
+    }
+    .m-home-bar {
+      height: 12px;
+      background: var(--surface-chrome);
+      display: grid;
+      place-items: center;
+      flex-shrink: 0;
+    }
+    .m-home-bar span {
+      width: 116px;
+      height: 4px;
+      border-radius: 99px;
+      background: var(--border-strong);
+      opacity: 0.45;
+    }
+
+    /* Mobile Bottom Sheet Overlay */
+    .m-sheet-scrim {
+      position: absolute;
+      inset: 0;
+      background: var(--scrim);
+      display: flex;
+      align-items: flex-end;
+      z-index: 30;
+    }
+    .m-sheet {
+      width: 100%;
+      background: var(--surface-overlay);
+      border-radius: 22px 22px 0 0;
+      border-top: 1px solid var(--border-subtle);
+      padding: 10px 18px 22px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .m-sheet-handle {
+      width: 36px;
+      height: 4px;
+      border-radius: 99px;
+      background: var(--border-strong);
+      opacity: 0.45;
+      margin: 0 auto 2px;
+    }
+
+    /* Desktop Modal */
+    .d-modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: var(--scrim);
+      display: grid;
+      place-items: center;
+      z-index: 80;
+      padding: 20px;
+    }
+    .d-modal {
+      width: 100%;
+      max-width: 480px;
+      background: var(--surface-overlay);
+      border: 1px solid var(--border-subtle);
+      border-radius: 16px;
+      box-shadow: var(--shadow-popover);
+      overflow: hidden;
+    }
+    .d-modal-head {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .d-modal-body {
+      padding: 18px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .d-modal-foot {
+      padding: 12px 20px;
+      border-top: 1px solid var(--border-subtle);
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      background: var(--surface-low);
+    }
+    .field-label {
+      display: block;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      margin-bottom: 5px;
+    }
+    .field-input {
+      width: 100%;
+      height: 38px;
+      padding: 0 12px;
+      border-radius: var(--radius-control);
+      background: var(--surface-elevated);
+      border: 1px solid var(--border-strong);
+      font-size: 13px;
+      color: var(--text-primary);
+    }
+
+    /* ===== Design System Specimen View ===== */
+    .ds-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 16px;
+    }
+    .swatch-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      gap: 10px;
+    }
+    .swatch {
+      border-radius: 11px;
+      border: 1px solid var(--border-subtle);
+      overflow: hidden;
+      background: var(--surface-elevated);
+    }
+    .swatch-chip {
+      height: 52px;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .swatch-meta {
+      padding: 8px 10px;
+    }
+    .swatch-name { font-size: 12px; font-weight: 600; }
+    .swatch-hex { font-size: 11px; color: var(--text-tertiary); font-family: var(--font-mono); }
+
+    /* Settings layout */
+    .settings-split {
+      display: grid;
+      grid-template-columns: 180px minmax(0, 1fr);
+      gap: 16px;
+    }
+    .desktop-window.compact .settings-split { grid-template-columns: 1fr; }
+    .kv-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--border-subtle);
+      font-size: 13px;
+    }
+    .kv-row:last-child { border-bottom: none; padding-bottom: 0; }
+
+    /* Toast */
+    .toast {
+      position: fixed;
+      bottom: 22px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #141413;
+      color: #F4F4F6;
+      padding: 9px 16px;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 500;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+      z-index: 100;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 180ms ease;
+    }
+    [data-theme="dark"] .toast {
+      background: #F4F4F6;
+      color: #141413;
+    }
+    .toast.show { opacity: 1; }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+
+  <!-- Studio Header -->
+  <header class="studio-bar">
+    <div class="studio-brand">
+      <div class="brand-mark" aria-hidden="true">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+          <path d="M5 17.5C6.8 11.2 10.2 6.8 15.8 5.2C14.8 9.2 16.4 13.4 19.5 16.5C15.5 18.8 9.5 19.2 5 17.5Z" fill="#E7D8C3"/>
+          <path d="M8.5 14.5C10.5 11.8 13.1 10.6 16.4 10.8" stroke="#141413" stroke-width="1.6" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <div>
+        <div class="studio-title">Manis UI 2.0 · Obsidian &amp; Alabaster</div>
+        <div class="studio-sub">全新跨端 UX 设计系统 · 桌面 (GPUI) 与 移动 (Android Compose) 同源原型</div>
+      </div>
+    </div>
+
+    <div class="studio-controls">
+      <div class="seg" role="tablist" aria-label="预览模式">
+        <button class="seg-btn active" data-view="parity">双端同屏对比</button>
+        <button class="seg-btn" data-view="desktop">桌面端 (GPUI)</button>
+        <button class="seg-btn" data-view="mobile">移动端 (Android)</button>
+        <button class="seg-btn" data-view="system">设计系统规范</button>
+      </div>
+
+      <div class="seg" role="group" aria-label="主题切换">
+        <button class="seg-btn active" data-set-theme="light">
+          <svg class="ic ic-sm" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32l1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41m11.32-11.32l1.41-1.41"/></svg>
+          暖霜浅色
+        </button>
+        <button class="seg-btn" data-set-theme="dark">
+          <svg class="ic ic-sm" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+          曜石深色
+        </button>
+      </div>
+
+      <button class="btn btn-primary" id="approveBtn">确认此方案，开始实施</button>
+    </div>
+  </header>
+
+  <main class="stage">
+    <!-- Unified Parity / Desktop / Mobile Stage -->
+    <div id="appStage" class="parity-grid">
+      <!-- DESKTOP COLUMN -->
+      <section class="desktop-wrap" id="desktopWrap">
+        <div class="stage-caption">
+          <div class="stage-label">
+            <span class="dot dot-ok"></span>
+            Desktop · Rust GPUI (macOS / Linux / Windows)
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <div class="seg" role="group" aria-label="桌面宽度">
+              <button class="seg-btn active" data-dsize="wide">宽窗 1280+</button>
+              <button class="seg-btn" data-dsize="compact">窄窗 Compact</button>
+            </div>
+          </div>
+        </div>
+        <div class="desktop-window" id="desktopWindow">
+          <!-- Left Navigation Rail -->
+          <aside class="d-rail">
+            <div class="d-traffic">
+              <div class="mac-dots"><span></span><span></span><span></span></div>
+            </div>
+            <div class="d-brand-row">
+              <div class="brand-mark" aria-hidden="true">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                  <path d="M5 17.5C6.8 11.2 10.2 6.8 15.8 5.2C14.8 9.2 16.4 13.4 19.5 16.5C15.5 18.8 9.5 19.2 5 17.5Z" fill="#E7D8C3"/>
+                </svg>
+              </div>
+              <div class="d-brand-text">
+                <div style="font-size:14px;font-weight:700;letter-spacing:-0.02em;line-height:1.1;">Manis</div>
+                <div class="mono" style="font-size:10.5px;color:var(--text-tertiary);">Mihomo 1.19</div>
+              </div>
+            </div>
+
+            <nav class="d-nav" id="dNav"></nav>
+
+            <!-- Live Mini Telemetry -->
+            <div class="d-telemetry" id="dTelemetry"></div>
+
+            <!-- Rail Footer Actions -->
+            <div class="d-rail-foot">
+              <button class="d-nav-item" id="dSettingsBtn" style="flex:1;height:34px;">
+                <svg class="ic" viewBox="0 0 24 24"><line x1="4" x2="20" y1="6" y2="6"/><line x1="4" x2="20" y1="12" y2="12"/><line x1="4" x2="20" y1="18" y2="18"/><circle cx="9" cy="6" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="11" cy="18" r="2"/></svg>
+                <span class="d-util-label" style="font-size:13px;">设置</span>
+              </button>
+              <button class="btn-icon" id="dThemeBtn" title="切换浅色/深色">
+                <svg class="ic" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+              </button>
+            </div>
+          </aside>
+
+          <!-- Desktop Main Area -->
+          <div class="d-main">
+            <header class="d-topbar" id="dTopbar"></header>
+            <div class="d-content" id="dContent"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- MOBILE COLUMN -->
+      <section class="mobile-wrap" id="mobileWrap">
+        <div class="stage-caption">
+          <div class="stage-label">
+            <span class="dot dot-ok"></span>
+            Mobile · Android Compose (390×844)
+          </div>
+          <span class="mono" style="font-size:11px;color:var(--text-tertiary);">48dp Targets</span>
+        </div>
+
+        <div class="phone-frame">
+          <div class="phone-screen" id="phoneScreen">
+            <div class="m-statusbar">
+              <span class="mono">14:21</span>
+              <div class="m-notch"></div>
+              <span class="mono" style="font-size:11px;">5G · 92%</span>
+            </div>
+            <div class="m-header" id="mHeader"></div>
+            <div class="m-body" id="mBody"></div>
+            <nav class="m-bottom-nav" id="mBottomNav"></nav>
+            <div class="m-home-bar"><span></span></div>
+            <div id="mSheetHost"></div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- Design System Specimen View -->
+    <section id="systemStage" class="hidden" style="display:flex;flex-direction:column;gap:20px;">
+      <div class="card card-pad">
+        <div class="sec-head">
+          <div>
+            <div class="sec-title" style="font-size:17px;">色彩体系 · Obsidian &amp; Alabaster（全表面 WCAG AA ≥ 4.5:1 校验）</div>
+            <div class="sec-sub">彻底摒弃旧版青绿+铜色+冷灰语言。使用暖霜纸感/曜石中性表面 + 电钴蓝主交互 + 皇家紫路由专属语义色。</div>
+          </div>
+        </div>
+        <div class="swatch-grid" id="swatchGrid"></div>
+      </div>
+
+      <div class="ds-grid">
+        <div class="card card-pad">
+          <div class="sec-title" style="margin-bottom:12px;">签名组件 · Route Truth Chain（路由真值链路）</div>
+          <p style="font-size:12.5px;color:var(--text-secondary);margin:0 0 14px;">
+            Manis 核心差异化价值 `规则 → 策略组 → 出口节点` 的统一跨端表达；皇家紫专属标识命中规则，绝不与普通操作混用。
+          </p>
+          <div style="display:flex;flex-direction:column;gap:10px;">
+            <div style="padding:10px 12px;border-radius:10px;background:var(--surface-canvas);border:1px solid var(--border-subtle);">
+              <div style="font-size:11px;color:var(--text-tertiary);margin-bottom:6px;">内核实测链路 (Observed · /connections)</div>
+              <div class="route-chain">
+                <span class="rc-step rc-rule">DOMAIN-SUFFIX openai.com</span>
+                <span class="rc-arrow">→</span>
+                <span class="rc-step rc-group">AI 自动选择</span>
+                <span class="rc-arrow">→</span>
+                <span class="rc-step rc-exit"><span class="dot dot-ok"></span>新加坡 SG-02 · 54 ms</span>
+              </div>
+            </div>
+            <div style="padding:10px 12px;border-radius:10px;background:var(--surface-canvas);border:1px solid var(--border-subtle);">
+              <div style="font-size:11px;color:var(--text-tertiary);margin-bottom:6px;">国内直连命中 (Direct)</div>
+              <div class="route-chain">
+                <span class="rc-step rc-rule">GEOIP CN</span>
+                <span class="rc-arrow">→</span>
+                <span class="rc-step rc-direct">DIRECT 直连</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card card-pad">
+          <div class="sec-title" style="margin-bottom:12px;">字体阶梯 · Inter + JetBrains Mono (Tabular Nums)</div>
+          <div style="display:flex;flex-direction:column;gap:8px;">
+            <div style="display:flex;justify-content:space-between;align-items:baseline;">
+              <span style="font-size:22px;font-weight:600;letter-spacing:-0.02em;">分流规则</span>
+              <span class="mono" style="font-size:11px;color:var(--text-tertiary);">Page Title · 22/30 · 600</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:baseline;">
+              <span style="font-size:15px;font-weight:600;">策略组与出口</span>
+              <span class="mono" style="font-size:11px;color:var(--text-tertiary);">Section · 15/22 · 600</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:baseline;">
+              <span style="font-size:13.5px;">规则从上到下依次匹配，未命中走兜底策略。</span>
+              <span class="mono" style="font-size:11px;color:var(--text-tertiary);">Body · 13.5/20 · 400</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:baseline;">
+              <span class="mono" style="font-size:12.5px;font-weight:500;">HK-01 · 38 ms · 203.0.113.42 · ↓ 14.2 MB</span>
+              <span class="mono" style="font-size:11px;color:var(--text-tertiary);">Mono Data · tabular-nums</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card card-pad">
+          <div class="sec-title" style="margin-bottom:12px;">按钮、状态与地区代码（零 Emoji 规范）</div>
+          <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;">
+            <button class="btn btn-primary">主要提交</button>
+            <button class="btn btn-secondary">次级操作</button>
+            <button class="btn" style="background:var(--danger-fill);color:#fff;font-weight:600;">删除规则组</button>
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
+            <span class="region-code">HK</span>
+            <span class="region-code">SG</span>
+            <span class="region-code">JP</span>
+            <span class="region-code">US</span>
+            <span class="pill pill-ok"><span class="dot dot-ok"></span>已保护</span>
+            <span class="pill pill-route">→ AI 自动选择</span>
+            <span class="pill pill-warn">待应用 2 项</span>
+            <span class="pill pill-err">超时</span>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Desktop Rule Modal Host -->
+  <div id="dModalHost"></div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script>
+    // ===== Icons (Uniform 1.75px Lucide-style SVG, Zero Emojis) =====
+    const ICONS = {
+      nodes: '<svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3.6 9h16.8M3.6 15h16.8M12 3a14 14 0 0 0 0 18M12 3a14 14 0 0 1 0 18"/></svg>',
+      rules: '<svg class="ic" viewBox="0 0 24 24"><path d="M16 3h5v5M8 3H3v5M12 22v-8.3a4 4 0 0 0-1.17-2.83L3 3M21 3l-7.83 7.83A4 4 0 0 0 12 13.7"/></svg>',
+      activity: '<svg class="ic" viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>',
+      logs: '<svg class="ic" viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg>',
+      settings: '<svg class="ic" viewBox="0 0 24 24"><line x1="4" x2="20" y1="6" y2="6"/><line x1="4" x2="20" y1="12" y2="12"/><line x1="4" x2="20" y1="18" y2="18"/><circle cx="9" cy="6" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="11" cy="18" r="2"/></svg>',
+      power: '<svg class="ic" viewBox="0 0 24 24"><path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.77.04"/></svg>',
+      zap: '<svg class="ic ic-sm" viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>',
+      chevronDown: '<svg class="ic ic-sm" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>',
+      chevronRight: '<svg class="ic ic-sm" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>',
+      grip: '<svg class="ic ic-sm" viewBox="0 0 24 24"><circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/></svg>',
+      search: '<svg class="ic ic-sm" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" x2="16.65" y1="21" y2="16.65"/></svg>',
+      plus: '<svg class="ic ic-sm" viewBox="0 0 24 24"><line x1="12" x2="12" y1="5" y2="19"/><line x1="5" x2="19" y1="12" y2="12"/></svg>',
+      refresh: '<svg class="ic ic-sm" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/><polyline points="21 3 21 8 16 8"/></svg>',
+      sun: '<svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32l1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41m11.32-11.32l1.41-1.41"/></svg>',
+      moon: '<svg class="ic" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>',
+      up: '<svg class="ic ic-sm" viewBox="0 0 24 24"><polyline points="18 15 12 9 6 15"/></svg>',
+      down: '<svg class="ic ic-sm" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>',
+      check: '<svg class="ic ic-sm" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>',
+      close: '<svg class="ic ic-sm" viewBox="0 0 24 24"><line x1="18" x2="6" y1="6" y2="18"/><line x1="6" x2="18" y1="6" y2="18"/></svg>',
+    };
+
+    // ===== Shared Prototype State =====
+    const state = {
+      view: 'parity',
+      theme: 'light',
+      dSize: 'wide',
+      dTab: 'nodes',
+      mTab: 'nodes',
+      proxyMode: 'tun',      // off | system | tun
+      routeMode: 'rule',     // direct | rule | global
+      activeNode: '香港 HK-01',
+      testing: false,
+      expandedPolicy: 'ai',
+      expandedSources: { subA: true, subB: false },
+      expandedRuleGroups: { g1: true, g2: false, manual: false },
+      settingsSection: 'general',
+      activityQuery: '',
+      logQuery: '',
+      logLevel: 'ALL',
+      dohEnabled: true,
+      pendingChanges: false,
+      ruleModal: null, // { host, target, source: 'desktop'|'mobile' }
+
+      policies: [
+        { id: 'ai', name: 'AI 自动选择', strategy: '延迟优选', current: '新加坡 SG-02', members: ['新加坡 SG-02', '日本 JP-03', '美国 US-01'] },
+        { id: 'media', name: '流媒体与研发', strategy: '手动选择', current: '香港 HK-01', members: ['香港 HK-01', '新加坡 SG-02', '日本 JP-03'] },
+      ],
+      sources: [
+        {
+          id: 'subA', name: 'CloudEdge 专线', proto: 'HTTPS 订阅', usedGb: 23.1, totalGb: 120, daysLeft: 28,
+          nodes: [
+            { name: '香港 HK-01', region: 'HK', protocol: 'Hysteria2', ip: '203.0.113.18', ms: 38 },
+            { name: '新加坡 SG-02', region: 'SG', protocol: 'VLESS', ip: '198.51.100.44', ms: 54 },
+            { name: '美国 US-01', region: 'US', protocol: 'VLESS', ip: '192.0.2.88', ms: 146 },
+          ]
+        },
+        {
+          id: 'subB', name: 'Tokyo Direct', proto: 'HTTPS 订阅', usedGb: 8.4, totalGb: 60, daysLeft: 19,
+          nodes: [
+            { name: '日本 JP-03', region: 'JP', protocol: 'Trojan', ip: '198.51.100.91', ms: 67 },
+            { name: '日本 JP-04 备用', region: 'JP', protocol: 'Hysteria2', ip: '198.51.100.95', ms: 382 },
+          ]
+        }
+      ],
+      ruleGroups: [
+        {
+          id: 'g1', name: 'AI 与模型接口', source: '远程规则源 · 24 条', target: 'AI 自动选择', enabled: true,
+          rules: [
+            { kind: 'DOMAIN-SUFFIX', value: 'openai.com' },
+            { kind: 'DOMAIN-SUFFIX', value: 'anthropic.com' },
+            { kind: 'DOMAIN-SUFFIX', value: 'googleapis.com' },
+          ]
+        },
+        {
+          id: 'g2', name: '直连白名单', source: '本地规则组 · 12 条', target: 'DIRECT', enabled: true,
+          rules: [
+            { kind: 'GEOIP', value: 'CN' },
+            { kind: 'DOMAIN-SUFFIX', value: 'local' },
+          ]
+        },
+        {
+          id: 'manual', name: '手动规则', source: '本地保存 · 3 条', target: '逐条指定', enabled: true,
+          rules: [
+            { kind: 'DOMAIN-SUFFIX', value: 'github.com', target: '流媒体与研发' },
+            { kind: 'PROCESS-NAME', value: 'Cursor', target: 'AI 自动选择' },
+          ]
+        }
+      ],
+      connections: [
+        { host: 'api.openai.com:443', app: 'Cursor', net: 'TCP', rule: 'DOMAIN-SUFFIX openai.com', group: 'AI 自动选择', exit: '新加坡 SG-02', ms: 54, down: '6.8 MB', up: '1.2 MB' },
+        { host: 'github.com:443', app: 'git', net: 'TCP', rule: 'DOMAIN-SUFFIX github.com', group: '流媒体与研发', exit: '香港 HK-01', ms: 38, down: '4.1 MB', up: '840 KB' },
+        { host: 'generativelanguage.googleapis.com:443', app: 'manis', net: 'TCP', rule: 'DOMAIN-SUFFIX googleapis.com', group: 'AI 自动选择', exit: '新加坡 SG-02', ms: 54, down: '2.9 MB', up: '610 KB' },
+        { host: 'mirrors.tuna.tsinghua.edu.cn:443', app: 'cargo', net: 'TCP', rule: 'GEOIP CN', group: null, exit: 'DIRECT', ms: null, down: '18.4 MB', up: '120 KB' },
+      ],
+      logs: [
+        { time: '14:21:08', level: 'INFO', msg: '[TCP] 127.0.0.1:54312 --> api.openai.com:443 match DomainSuffix(openai.com) using AI 自动选择[新加坡 SG-02]' },
+        { time: '14:21:04', level: 'INFO', msg: '[TUN] utun4 interface active · mixed-port 127.0.0.1:7890' },
+        { time: '14:20:51', level: 'WARN', msg: '[Health] 日本 JP-04 备用 latency elevated (382 ms), keeping 新加坡 SG-02' },
+        { time: '14:20:32', level: 'DEBUG', msg: '[DNS] DoH resolved api.openai.com via https://1.1.1.1/dns-query in 18ms' },
+        { time: '14:19:47', level: 'ERROR', msg: '[Dial] 美国 US-01 handshake retry #1 (context deadline exceeded)' },
+      ]
+    };
+
+    // Helpers
+    const isConnected = () => state.proxyMode !== 'off';
+    const allNodes = () => state.sources.flatMap(s => s.nodes);
+    const getNode = (name) => allNodes().find(n => n.name === name);
+    const routeLabel = (m) => m === 'direct' ? '直连' : m === 'global' ? '全局' : '规则';
+
+    function showToast(msg) {
+      const el = document.getElementById('toast');
+      el.textContent = msg;
+      el.classList.add('show');
+      clearTimeout(showToast._t);
+      showToast._t = setTimeout(() => el.classList.remove('show'), 2200);
+    }
+
+    function renderLatency(ms) {
+      if (state.testing) return '<span class="lat lat-none">测速中…</span>';
+      if (ms == null) return '<span class="lat lat-none">—</span>';
+      const cls = ms < 120 ? 'lat-fast' : ms < 300 ? 'lat-mid' : 'lat-slow';
+      const bars = ms < 120 ? 3 : ms < 300 ? 2 : 1;
+      return `<span class="lat ${cls}">
+        <span class="sig-bars" aria-hidden="true">
+          <i class="${bars >= 1 ? '' : 'off'}"></i>
+          <i class="${bars >= 2 ? '' : 'off'}"></i>
+          <i class="${bars >= 3 ? '' : 'off'}"></i>
+        </span>
+        ${ms} ms
+      </span>`;
+    }
+
+    function renderRouteChain(conn) {
+      const exitHtml = conn.exit === 'DIRECT'
+        ? `<span class="rc-step rc-direct">DIRECT 直连</span>`
+        : `<span class="rc-step rc-exit"><span class="dot dot-ok"></span>${conn.exit}${conn.ms ? ` · ${conn.ms} ms` : ''}</span>`;
+      return `<div class="route-chain">
+        <span class="rc-step rc-rule">${conn.rule}</span>
+        <span class="rc-arrow">→</span>
+        ${conn.group ? `<span class="rc-step rc-group">${conn.group}</span><span class="rc-arrow">→</span>` : ''}
+        ${exitHtml}
+      </div>`;
+    }
+
+    // ===== Render Desktop =====
+    const NAV_ITEMS = [
+      { id: 'nodes', label: '节点', icon: ICONS.nodes },
+      { id: 'rules', label: '分流规则', icon: ICONS.rules, badge: () => '39' },
+      { id: 'activity', label: '网络活动', icon: ICONS.activity, badge: () => isConnected() ? String(state.connections.length) : '0' },
+      { id: 'logs', label: '日志', icon: ICONS.logs },
+    ];
+
+    function renderDesktop() {
+      const dWin = document.getElementById('desktopWindow');
+      dWin.classList.toggle('compact', state.dSize === 'compact');
+
+      // Nav
+      document.getElementById('dNav').innerHTML = NAV_ITEMS.map(item => `
+        <button class="d-nav-item ${state.dTab === item.id ? 'active' : ''}" data-dtab="${item.id}">
+          ${item.icon}
+          <span class="d-nav-label">${item.label}</span>
+          ${item.badge ? `<span class="d-nav-badge">${item.badge()}</span>` : ''}
+        </button>
+      `).join('');
+
+      document.getElementById('dSettingsBtn').classList.toggle('active', state.dTab === 'settings');
+      document.getElementById('dThemeBtn').innerHTML = state.theme === 'dark' ? ICONS.sun : ICONS.moon;
+
+      // Telemetry card
+      const activeObj = getNode(state.activeNode);
+      document.getElementById('dTelemetry').innerHTML = `
+        <div class="d-tele-head">
+          <span style="display:inline-flex;align-items:center;gap:6px;">
+            <span class="dot ${isConnected() ? 'dot-live' : 'dot-muted'}"></span>
+            ${isConnected() ? (state.proxyMode === 'tun' ? 'TUN 接管中' : '系统代理中') : '代理已暂停'}
+          </span>
+          <span class="mono">${routeLabel(state.routeMode)}</span>
+        </div>
+        <div class="d-tele-node">${isConnected() ? state.activeNode : '未接管流量'}</div>
+        <div class="d-tele-traffic mono">
+          <span>↓ ${isConnected() ? '32.2 MB' : '0 B'}</span>
+          <span>↑ ${isConnected() ? '2.8 MB' : '0 B'}</span>
+        </div>
+      `;
+
+      // Topbar
+      const titles = {
+        nodes: ['节点与策略', `${state.policies.length} 策略组 · ${allNodes().length} 节点`],
+        rules: ['分流规则', `${state.ruleGroups.length} 优先级分组 · 匹配从上到下`],
+        activity: ['网络活动', isConnected() ? `${state.connections.length} 条实测连接` : '代理已暂停'],
+        logs: ['内核日志', `${state.logs.length} 条记录 · 敏感信息已脱敏`],
+        settings: ['设置与数据来源', '独立原生设置窗预览'],
+      };
+      const [t, meta] = titles[state.dTab];
+      document.getElementById('dTopbar').innerHTML = `
+        <div class="d-top-left">
+          <span class="d-page-title">${t}</span>
+          <span class="d-page-meta">${meta}</span>
+        </div>
+        <div class="d-top-right">
+          <div class="seg" role="group" aria-label="代理模式">
+            <button class="seg-btn ${state.proxyMode === 'off' ? 'active' : ''}" data-proxy="off">已暂停</button>
+            <button class="seg-btn ${state.proxyMode === 'system' ? 'active' : ''}" data-proxy="system">
+              ${state.proxyMode === 'system' ? '<span class="dot dot-ok"></span>' : ''}系统代理
+            </button>
+            <button class="seg-btn ${state.proxyMode === 'tun' ? 'active' : ''}" data-proxy="tun">
+              ${state.proxyMode === 'tun' ? '<span class="dot dot-ok"></span>' : ''}TUN 代理
+            </button>
+          </div>
+          <div class="seg" role="group" aria-label="路由模式">
+            <button class="seg-btn ${state.routeMode === 'direct' ? 'active' : ''}" data-route="direct">直连</button>
+            <button class="seg-btn ${state.routeMode === 'rule' ? 'active' : ''}" data-route="rule">规则</button>
+            <button class="seg-btn ${state.routeMode === 'global' ? 'active' : ''}" data-route="global">全局</button>
+          </div>
+        </div>
+      `;
+
+      const content = document.getElementById('dContent');
+      if (state.dTab === 'nodes') content.innerHTML = renderDesktopNodes();
+      else if (state.dTab === 'rules') content.innerHTML = renderRulesView('desktop');
+      else if (state.dTab === 'activity') content.innerHTML = renderActivityView('desktop');
+      else if (state.dTab === 'logs') content.innerHTML = renderLogsView('desktop');
+      else content.innerHTML = renderSettingsView('desktop');
+    }
+
+    function renderDesktopNodes() {
+      const policiesHtml = state.policies.map(p => {
+        const curNode = getNode(p.current);
+        const expanded = state.expandedPolicy === p.id;
+        return `
+          <div class="card policy-card ${expanded ? 'expanded' : ''}" data-toggle-policy="${p.id}">
+            <div class="policy-top">
+              <div>
+                <div class="policy-name">
+                  ${p.name}
+                  <span class="pill">${p.strategy}</span>
+                </div>
+                <div style="font-size:11.5px;color:var(--text-tertiary);margin-top:2px;">${p.members.length} 个候选出口 · 点击切换</div>
+              </div>
+              <button class="btn btn-ghost" style="height:28px;font-size:12px;" data-test-latency="${p.id}">
+                ${ICONS.zap} 测速
+              </button>
+            </div>
+            <div class="policy-exit">
+              <span style="display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:600;min-width:0;">
+                <span class="dot dot-ok"></span>
+                <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${p.current}</span>
+              </span>
+              ${renderLatency(curNode?.ms)}
+            </div>
+            ${expanded ? `
+              <div class="policy-members">
+                ${p.members.map(m => {
+                  const n = getNode(m);
+                  const sel = p.current === m;
+                  return `<button class="member-chip ${sel ? 'selected' : ''}" data-pick-member="${p.id}|${m}">
+                    <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${m}</span>
+                    <span class="mono" style="font-size:11px;">${n ? n.ms + 'ms' : '—'}</span>
+                  </button>`;
+                }).join('')}
+              </div>
+            ` : ''}
+          </div>
+        `;
+      }).join('');
+
+      const sourcesHtml = state.sources.map(src => {
+        const exp = !!state.expandedSources[src.id];
+        const pct = Math.round((src.usedGb / src.totalGb) * 100);
+        return `
+          <div class="card" style="overflow:hidden;">
+            <div class="source-head" data-toggle-source="${src.id}">
+              <div>
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <span style="font-size:14px;font-weight:600;">${src.name}</span>
+                  <span class="pill">${src.proto}</span>
+                  <span class="pill mono">${src.nodes.length} 节点</span>
+                </div>
+                <div class="usage-wrap">
+                  <div class="usage-track"><div class="usage-fill" style="width:${pct}%"></div></div>
+                  <span class="mono" style="font-size:11.5px;color:var(--text-tertiary);">已用 ${src.usedGb} / ${src.totalGb} GB · 剩 ${src.daysLeft} 天</span>
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;gap:6px;">
+                <button class="btn-icon" data-refresh-src="${src.id}" title="刷新订阅">${ICONS.refresh}</button>
+                <span style="color:var(--text-tertiary);">${exp ? ICONS.chevronDown : ICONS.chevronRight}</span>
+              </div>
+            </div>
+            ${exp ? `
+              <div class="node-list">
+                ${src.nodes.map(n => {
+                  const sel = state.activeNode === n.name;
+                  return `<div class="node-row ${sel ? 'selected' : ''}" data-select-node="${n.name}">
+                    <div style="display:flex;align-items:center;gap:10px;min-width:0;">
+                      <span class="region-code">${n.region}</span>
+                      <span style="font-size:13.5px;font-weight:${sel ? 600 : 500};color:${sel ? 'var(--accent-primary)' : 'var(--text-primary)'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${n.name}</span>
+                      ${sel ? '<span class="pill pill-accent">当前出口</span>' : ''}
+                    </div>
+                    <div><span class="pill mono">${n.protocol}</span></div>
+                    <div class="mono node-ip-col" style="font-size:11.5px;color:var(--text-tertiary);">${n.ip}</div>
+                    <div style="text-align:right;">${renderLatency(n.ms)}</div>
+                  </div>`;
+                }).join('')}
+              </div>
+            ` : ''}
+          </div>
+        `;
+      }).join('');
+
+      return `
+        <div>
+          <div class="sec-head">
+            <div>
+              <div class="sec-title">策略组</div>
+              <div class="sec-sub">分流规则先命中策略组，再由策略组决定最终出口节点</div>
+            </div>
+            <div style="display:flex;gap:8px;">
+              <button class="btn btn-secondary" data-test-latency="all">${ICONS.zap} 全部测速</button>
+              <button class="btn btn-primary" data-toast="打开「新建策略组」独立编辑窗">${ICONS.plus} 添加策略组</button>
+            </div>
+          </div>
+          <div class="bento-2">${policiesHtml}</div>
+        </div>
+
+        <div>
+          <div class="sec-head">
+            <div>
+              <div class="sec-title">订阅来源与全部节点</div>
+              <div class="sec-sub">流量配额直接展示在源头卡片，点选节点即时切换全局出口</div>
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:12px;">${sourcesHtml}</div>
+        </div>
+      `;
+    }
+
+    // ===== Shared Rules View (Desktop + Mobile) =====
+    function renderRulesView(platform) {
+      const mobile = platform === 'mobile';
+      return `
+        <div class="sec-head" style="margin-bottom:${mobile ? '2px' : '8px'};">
+          <div>
+            <div class="sec-title">${mobile ? '匹配优先级管道' : '优先级管道（自上而下匹配）'}</div>
+            <div class="sec-sub">${mobile ? '拖动把手或点击箭头调整顺序' : '支持鼠标拖动把手与键盘 Alt+↑/↓ 无障碍重排'}</div>
+          </div>
+          <div style="display:flex;gap:6px;">
+            ${state.pendingChanges ? `<button class="btn btn-primary" data-apply-rules="1">应用变更</button>` : ''}
+            ${!mobile ? `<button class="btn btn-primary" data-open-rule-modal="desktop">${ICONS.plus} 新建规则</button>` : `<button class="btn btn-secondary" style="height:32px;padding:0 10px;font-size:12px;" data-open-rule-modal="mobile">${ICONS.plus} 新建</button>`}
+          </div>
+        </div>
+        <div class="pipeline">
+          ${state.ruleGroups.map((g, idx) => {
+            const exp = !!state.expandedRuleGroups[g.id];
+            const orderStr = String(idx + 1).padStart(2, '0');
+            return `
+              <div class="card rule-group-card">
+                <div class="rg-head">
+                  <span class="order-num">${orderStr}</span>
+                  <button class="grip-btn" title="拖动或 Alt+上下键排序" data-move-group="${idx}|-1">${ICONS.grip}</button>
+                  <div style="flex:1;min-width:0;cursor:pointer;" data-toggle-rg="${g.id}">
+                    <div style="font-size:13.5px;font-weight:600;color:${g.enabled ? 'var(--text-primary)' : 'var(--text-tertiary)'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${g.name}</div>
+                    <div style="font-size:11.5px;color:var(--text-tertiary);display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:2px;">
+                      <span>${g.source}</span>
+                      <span class="pill pill-route">→ ${g.target}</span>
+                    </div>
+                  </div>
+                  ${!mobile ? `
+                    <button class="btn-icon" style="width:28px;height:28px;" title="上移优先级" data-move-group="${idx}|-1" ${idx === 0 ? 'disabled style="opacity:0.35;width:28px;height:28px;"' : ''}>${ICONS.up}</button>
+                    <button class="btn-icon" style="width:28px;height:28px;" title="下移优先级" data-move-group="${idx}|1" ${idx === state.ruleGroups.length - 1 ? 'disabled style="opacity:0.35;width:28px;height:28px;"' : ''}>${ICONS.down}</button>
+                  ` : ''}
+                  <button class="switch ${g.enabled ? 'on' : ''}" role="switch" aria-checked="${g.enabled}" aria-label="启用 ${g.name}" data-toggle-rg-enable="${g.id}"></button>
+                </div>
+                ${exp ? `
+                  <div class="rg-rules" style="${mobile ? 'padding-left:14px;' : ''}">
+                    ${g.rules.map(r => `
+                      <div class="rg-rule-line">
+                        <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+                          <span class="pill mono">${r.kind}</span>
+                          <span class="mono" style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${r.value}</span>
+                        </div>
+                        ${r.target ? `<span class="pill pill-route">→ ${r.target}</span>` : ''}
+                      </div>
+                    `).join('')}
+                  </div>
+                ` : ''}
+              </div>
+            `;
+          }).join('')}
+
+          <div class="fallback-card">
+            <div style="display:flex;align-items:center;gap:10px;">
+              <span class="order-num">END</span>
+              <div>
+                <div style="font-size:13px;font-weight:600;">FINAL · 默认兜底</div>
+                <div style="font-size:11.5px;color:var(--text-tertiary);">未命中以上任何规则的流量</div>
+              </div>
+            </div>
+            <span class="pill pill-route">→ 全局出口</span>
+          </div>
+        </div>
+      `;
+    }
+
+    // ===== Shared Activity View =====
+    function renderActivityView(platform) {
+      const mobile = platform === 'mobile';
+      const q = state.activityQuery.trim().toLowerCase();
+      const rows = state.connections.filter(c =>
+        !q || c.host.toLowerCase().includes(q) || c.rule.toLowerCase().includes(q) || (c.exit || '').toLowerCase().includes(q)
+      );
+      return `
+        <div style="display:flex;align-items:center;gap:8px;">
+          <label class="search-box">
+            ${ICONS.search}
+            <input type="text" placeholder="搜索域名、命中规则或出口节点…" value="${state.activityQuery}" data-act-search="1" />
+          </label>
+          <button class="btn btn-secondary" data-toast="已刷新内核实测连接">${ICONS.refresh}${mobile ? '' : ' 刷新'}</button>
+        </div>
+        ${!isConnected() ? `
+          <div class="card card-pad" style="text-align:center;padding:32px 16px;">
+            <div style="font-size:14px;font-weight:600;margin-bottom:4px;">代理当前已暂停</div>
+            <div style="font-size:12.5px;color:var(--text-tertiary);margin-bottom:14px;">开启代理后，将在此展示每条真实连接的「规则 → 策略组 → 出口」链路证据。</div>
+            <button class="btn btn-primary" data-proxy="tun">立即开启代理</button>
+          </div>
+        ` : `
+          <div class="card" style="overflow:hidden;">
+            ${rows.map(c => `
+              <div class="conn-row" data-rule-from-conn="${c.host.split(':')[0]}|${platform}">
+                <div class="conn-top">
+                  <div style="display:flex;align-items:center;gap:7px;min-width:0;">
+                    <span class="mono" style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${c.host}</span>
+                    <span class="pill">${c.app}</span>
+                  </div>
+                  <div class="mono" style="font-size:11.5px;color:var(--text-secondary);white-space:nowrap;">↓ ${c.down} · ↑ ${c.up}</div>
+                </div>
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+                  ${renderRouteChain(c)}
+                  ${!mobile ? `<span style="font-size:11.5px;color:var(--accent-primary);font-weight:500;">点击建规则 →</span>` : ''}
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        `}
+      `;
+    }
+
+    // ===== Shared Logs View =====
+    function renderLogsView(platform) {
+      const mobile = platform === 'mobile';
+      const levels = ['ALL', 'ERROR', 'WARN', 'INFO', 'DEBUG'];
+      const q = state.logQuery.trim().toLowerCase();
+      const list = state.logs.filter(l =>
+        (state.logLevel === 'ALL' || l.level === state.logLevel) &&
+        (!q || l.msg.toLowerCase().includes(q))
+      );
+      return `
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <label class="search-box">
+            ${ICONS.search}
+            <input type="text" placeholder="筛选内核日志…" value="${state.logQuery}" data-log-search="1" />
+          </label>
+          <div class="seg" style="overflow-x:auto;max-width:100%;">
+            ${levels.map(lv => `<button class="seg-btn ${state.logLevel === lv ? 'active' : ''}" style="height:28px;padding:0 9px;font-size:11.5px;" data-log-lvl="${lv}">${lv === 'ALL' ? '全部' : lv}</button>`).join('')}
+          </div>
+        </div>
+        <div class="card" style="overflow:hidden;">
+          ${list.map(l => `
+            <div class="log-row" style="${mobile ? 'grid-template-columns:1fr;gap:4px;' : ''}">
+              <div style="display:flex;align-items:center;gap:8px;">
+                <span style="color:var(--text-tertiary);">${l.time}</span>
+                ${mobile ? `<span class="lvl-tag lvl-${l.level.toLowerCase()}">${l.level}</span>` : ''}
+              </div>
+              ${!mobile ? `<div><span class="lvl-tag lvl-${l.level.toLowerCase()}">${l.level}</span></div>` : ''}
+              <div style="color:var(--text-primary);word-break:break-word;">${l.msg}</div>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    // ===== Shared Settings View =====
+    function renderSettingsView(platform) {
+      const mobile = platform === 'mobile';
+      const sections = [
+        ['general', '通用与外观'],
+        ['kernel', '运行内核'],
+        ['sources', '代理与规则源'],
+        ['advanced', 'DNS 与备份'],
+      ];
+      const body = `
+        <div style="display:flex;flex-direction:column;gap:12px;">
+          <div class="card card-pad">
+            <div class="sec-title" style="margin-bottom:8px;">外观与语言</div>
+            <div class="kv-row">
+              <span>主题外观</span>
+              <div class="seg">
+                <button class="seg-btn ${state.theme === 'light' ? 'active' : ''}" data-set-theme="light">暖霜浅色</button>
+                <button class="seg-btn ${state.theme === 'dark' ? 'active' : ''}" data-set-theme="dark">曜石深色</button>
+              </div>
+            </div>
+            <div class="kv-row">
+              <span>界面语言</span>
+              <span class="pill">简体中文</span>
+            </div>
+          </div>
+
+          <div class="card card-pad">
+            <div class="sec-title" style="margin-bottom:8px;">节点域名解析与内核</div>
+            <div class="kv-row">
+              <div>
+                <div>加密节点解析 (DoH)</div>
+                <div style="font-size:11.5px;color:var(--text-tertiary);">自动发现机场 DNS，防止本地解析污染</div>
+              </div>
+              <button class="switch ${state.dohEnabled ? 'on' : ''}" role="switch" aria-checked="${state.dohEnabled}" data-toggle-doh="1"></button>
+            </div>
+            <div class="kv-row">
+              <span>托管内核版本</span>
+              <span class="mono" style="font-size:12px;">Mihomo v1.19.12</span>
+            </div>
+          </div>
+
+          <div class="card card-pad">
+            <div class="sec-title" style="margin-bottom:8px;">配置快照与迁移</div>
+            <div style="font-size:12px;color:var(--text-tertiary);margin-bottom:12px;">双端通用结构化备份格式（含订阅、策略组与分流规则），支持一键导入。</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <button class="btn btn-secondary" data-toast="已导出 Manis 配置快照">导出备份</button>
+              <button class="btn btn-secondary" data-toast="已打开配置导入选择器">导入恢复</button>
+            </div>
+          </div>
+        </div>
+      `;
+      if (mobile) return body;
+      return `
+        <div class="settings-split">
+          <div class="card" style="padding:8px;align-self:start;display:flex;flex-direction:column;gap:2px;">
+            ${sections.map(([id, label]) => `
+              <button class="d-nav-item ${state.settingsSection === id ? 'active' : ''}" style="height:36px;" data-ssec="${id}">${label}</button>
+            `).join('')}
+          </div>
+          ${body}
+        </div>
+      `;
+    }
+
+    // ===== Render Mobile =====
+    function renderMobile() {
+      const mHeader = document.getElementById('mHeader');
+      const tabTitles = { nodes: 'Manis', rules: '分流规则', activity: '网络活动', logs: '内核日志', settings: '设置' };
+      mHeader.innerHTML = `
+        <div style="display:flex;align-items:center;gap:9px;">
+          ${state.mTab === 'nodes' ? `
+            <div class="brand-mark" style="width:26px;height:26px;border-radius:7px;" aria-hidden="true">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
+                <path d="M5 17.5C6.8 11.2 10.2 6.8 15.8 5.2C14.8 9.2 16.4 13.4 19.5 16.5C15.5 18.8 9.5 19.2 5 17.5Z" fill="#E7D8C3"/>
+              </svg>
+            </div>` : ''}
+          <span style="font-size:19px;font-weight:700;letter-spacing:-0.02em;">${tabTitles[state.mTab]}</span>
+        </div>
+        <button class="btn-icon" style="width:40px;height:40px;" id="mThemeBtn" aria-label="切换浅色深色">
+          ${state.theme === 'dark' ? ICONS.sun : ICONS.moon}
+        </button>
+      `;
+
+      const mBody = document.getElementById('mBody');
+      if (state.mTab === 'nodes') {
+        const activeObj = getNode(state.activeNode);
+        mBody.innerHTML = `
+          <!-- Hero Connection Cockpit (Replaces cramped 140dp fixed bottom bar!) -->
+          <div class="m-hero ${isConnected() ? 'connected' : ''}">
+            <div class="m-hero-top">
+              <div style="min-width:0;">
+                <div style="display:flex;align-items:center;gap:7px;">
+                  <span class="dot ${isConnected() ? 'dot-live' : 'dot-muted'}"></span>
+                  <span style="font-size:15px;font-weight:700;letter-spacing:-0.015em;">${isConnected() ? '已保护' : '未连接'}</span>
+                </div>
+                <div style="font-size:12.5px;color:var(--text-secondary);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                  ${isConnected() ? `${state.activeNode} · ${activeObj ? activeObj.ms + ' ms' : ''}` : `待命出口：${state.activeNode}`}
+                </div>
+              </div>
+              <button class="m-power-btn ${isConnected() ? 'on' : 'off'}" data-toggle-vpn="1">
+                ${ICONS.power}
+                ${isConnected() ? '断开' : '连接'}
+              </button>
+            </div>
+            ${isConnected() ? `
+              <div class="m-tele-strip mono">
+                <span>↓ 32.2 MB · ↑ 2.8 MB</span>
+                <span>${state.connections.length} 活动连接</span>
+              </div>
+            ` : ''}
+            <div class="seg m-seg" role="group" aria-label="路由模式">
+              <button class="seg-btn ${state.routeMode === 'direct' ? 'active' : ''}" data-route="direct">直连</button>
+              <button class="seg-btn ${state.routeMode === 'rule' ? 'active' : ''}" data-route="rule">规则</button>
+              <button class="seg-btn ${state.routeMode === 'global' ? 'active' : ''}" data-route="global">全局</button>
+            </div>
+          </div>
+
+          <!-- Policy Groups -->
+          <div>
+            <div class="sec-head">
+              <span class="sec-title">策略组</span>
+              <button class="btn btn-ghost" style="height:30px;font-size:12px;" data-test-latency="all">${ICONS.zap} 测速</button>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:10px;">
+              ${state.policies.map(p => {
+                const curNode = getNode(p.current);
+                const exp = state.expandedPolicy === p.id;
+                return `
+                  <div class="card policy-card ${exp ? 'expanded' : ''}" data-toggle-policy="${p.id}">
+                    <div class="policy-top">
+                      <div class="policy-name">${p.name} <span class="pill">${p.strategy}</span></div>
+                      <span style="color:var(--text-tertiary);">${exp ? ICONS.chevronDown : ICONS.chevronRight}</span>
+                    </div>
+                    <div class="policy-exit">
+                      <span style="display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;">
+                        <span class="dot dot-ok"></span>${p.current}
+                      </span>
+                      ${renderLatency(curNode?.ms)}
+                    </div>
+                    ${exp ? `
+                      <div class="policy-members" style="grid-template-columns:1fr;">
+                        ${p.members.map(m => {
+                          const n = getNode(m);
+                          const sel = p.current === m;
+                          return `<button class="member-chip ${sel ? 'selected' : ''}" style="height:44px;" data-pick-member="${p.id}|${m}">
+                            <span>${m}</span>
+                            <span class="mono" style="font-size:11.5px;">${n ? n.ms + ' ms' : '—'}</span>
+                          </button>`;
+                        }).join('')}
+                      </div>
+                    ` : ''}
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          </div>
+
+          <!-- Sources -->
+          <div>
+            <div class="sec-head"><span class="sec-title">订阅节点</span></div>
+            <div style="display:flex;flex-direction:column;gap:10px;">
+              ${state.sources.map(src => {
+                const exp = !!state.expandedSources[src.id];
+                return `
+                  <div class="card" style="overflow:hidden;">
+                    <div class="source-head" data-toggle-source="${src.id}">
+                      <div>
+                        <div style="font-size:13.5px;font-weight:600;">${src.name}</div>
+                        <div class="mono" style="font-size:11px;color:var(--text-tertiary);margin-top:2px;">${src.nodes.length} 节点 · 剩 ${src.totalGb - src.usedGb} GB</div>
+                      </div>
+                      <span style="color:var(--text-tertiary);">${exp ? ICONS.chevronDown : ICONS.chevronRight}</span>
+                    </div>
+                    ${exp ? `
+                      <div class="node-list">
+                        ${src.nodes.map(n => {
+                          const sel = state.activeNode === n.name;
+                          return `<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid var(--border-subtle);cursor:pointer;background:${sel ? 'var(--accent-soft)' : 'transparent'};" data-select-node="${n.name}">
+                            <div style="display:flex;align-items:center;gap:9px;min-width:0;">
+                              <span class="region-code">${n.region}</span>
+                              <div style="min-width:0;">
+                                <div style="font-size:13.5px;font-weight:${sel ? 600 : 500};color:${sel ? 'var(--accent-primary)' : 'var(--text-primary)'};">${n.name}</div>
+                                <div class="mono" style="font-size:11px;color:var(--text-tertiary);">${n.protocol}</div>
+                              </div>
+                            </div>
+                            ${renderLatency(n.ms)}
+                          </div>`;
+                        }).join('')}
+                      </div>
+                    ` : ''}
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          </div>
+        `;
+      } else if (state.mTab === 'rules') mBody.innerHTML = renderRulesView('mobile');
+      else if (state.mTab === 'activity') mBody.innerHTML = renderActivityView('mobile');
+      else if (state.mTab === 'logs') mBody.innerHTML = renderLogsView('mobile');
+      else mBody.innerHTML = renderSettingsView('mobile');
+
+      // Mobile Bottom Nav (5 unified tabs)
+      const mTabs = [
+        { id: 'nodes', label: '节点', icon: ICONS.nodes },
+        { id: 'rules', label: '规则', icon: ICONS.rules },
+        { id: 'activity', label: '活动', icon: ICONS.activity },
+        { id: 'logs', label: '日志', icon: ICONS.logs },
+        { id: 'settings', label: '设置', icon: ICONS.settings },
+      ];
+      document.getElementById('mBottomNav').innerHTML = mTabs.map(t => `
+        <button class="m-tab ${state.mTab === t.id ? 'active' : ''}" data-mtab="${t.id}">
+          <span class="m-tab-pill">${t.icon}</span>
+          <span>${t.label}</span>
+        </button>
+      `).join('');
+
+      // Mobile Bottom Sheet
+      const sheetHost = document.getElementById('mSheetHost');
+      if (state.ruleModal && state.ruleModal.source === 'mobile') {
+        sheetHost.innerHTML = `
+          <div class="m-sheet-scrim" data-close-modal="1">
+            <div class="m-sheet" onclick="event.stopPropagation()">
+              <div class="m-sheet-handle"></div>
+              <div style="display:flex;align-items:center;justify-content:space-between;">
+                <span style="font-size:16px;font-weight:700;">新建分流规则</span>
+                <button class="btn-icon" data-close-modal="1">${ICONS.close}</button>
+              </div>
+              <div>
+                <label class="field-label">匹配域名 (DOMAIN-SUFFIX)</label>
+                <input class="field-input mono" id="mRuleInput" value="${state.ruleModal.host}" />
+              </div>
+              <div>
+                <label class="field-label">路由目标</label>
+                <div class="seg" style="width:100%;display:grid;grid-template-columns:repeat(3,1fr);">
+                  <button class="seg-btn active">AI 自动选择</button>
+                  <button class="seg-btn">流媒体</button>
+                  <button class="seg-btn">DIRECT</button>
+                </div>
+              </div>
+              <button class="btn btn-primary" style="height:46px;width:100%;font-size:14px;" data-save-rule="1">保存规则</button>
+            </div>
+          </div>
+        `;
+      } else {
+        sheetHost.innerHTML = '';
+      }
+    }
+
+    // ===== Render Desktop Modal =====
+    function renderDesktopModal() {
+      const host = document.getElementById('dModalHost');
+      if (state.ruleModal && state.ruleModal.source === 'desktop') {
+        host.innerHTML = `
+          <div class="d-modal-backdrop" data-close-modal="1">
+            <div class="d-modal" onclick="event.stopPropagation()">
+              <div class="d-modal-head">
+                <div>
+                  <div style="font-size:15px;font-weight:600;">新建分流规则（独立编辑窗）</div>
+                  <div style="font-size:12px;color:var(--text-tertiary);">保留草稿 · Cmd+W / Esc 关闭</div>
+                </div>
+                <button class="btn-icon" data-close-modal="1">${ICONS.close}</button>
+              </div>
+              <div class="d-modal-body">
+                <div>
+                  <label class="field-label">匹配类型</label>
+                  <input class="field-input mono" value="DOMAIN-SUFFIX" readonly />
+                </div>
+                <div>
+                  <label class="field-label">域名或 CIDR</label>
+                  <input class="field-input mono" id="dRuleInput" value="${state.ruleModal.host}" />
+                </div>
+                <div>
+                  <label class="field-label">目标策略组</label>
+                  <div class="route-chain" style="padding:8px 10px;background:var(--surface-low);border-radius:10px;">
+                    <span class="rc-step rc-rule">${state.ruleModal.host || 'example.com'}</span>
+                    <span class="rc-arrow">→</span>
+                    <span class="rc-step rc-group">AI 自动选择</span>
+                    <span class="rc-arrow">→</span>
+                    <span class="rc-step rc-exit">新加坡 SG-02</span>
+                  </div>
+                </div>
+              </div>
+              <div class="d-modal-foot">
+                <button class="btn btn-secondary" data-close-modal="1">取消</button>
+                <button class="btn btn-primary" data-save-rule="1">保存并生效</button>
+              </div>
+            </div>
+          </div>
+        `;
+      } else {
+        host.innerHTML = '';
+      }
+    }
+
+    // ===== Render Design System Swatches =====
+    function renderSwatches() {
+      const swatches = state.theme === 'light' ? [
+        ['surface.canvas', '#F7F6F3', '暖霜画布'],
+        ['surface.chrome', '#EFECE6', '导航/底栏'],
+        ['surface.elevated', '#FFFFFF', '卡片表面'],
+        ['text.primary', '#141413', '主碳墨 16:1'],
+        ['text.secondary', '#4E4D49', '次级 7.4:1'],
+        ['accent.primary', '#2B4EFF', '电钴蓝主交互'],
+        ['route.trace', '#6D28D9', '皇家紫路由链'],
+        ['status.success', '#0E7A4B', '通路翠绿'],
+        ['status.warning', '#9A5504', '暖珀警告'],
+        ['status.error', '#C81E1E', '朱砂警示红'],
+      ] : [
+        ['surface.canvas', '#0D0D0F', '曜石 OLED 底'],
+        ['surface.chrome', '#141417', '导航/底栏'],
+        ['surface.elevated', '#1C1C21', '卡片表面'],
+        ['text.primary', '#F4F4F6', '粉笔白 15.8:1'],
+        ['text.secondary', '#B4B4BE', '次级 7.9:1'],
+        ['accent.primary', '#6B8AFF', '流光钴蓝'],
+        ['route.trace', '#C4B5FD', '薰衣紫路由链'],
+        ['status.success', '#4ADE80', '通路翠绿'],
+        ['status.warning', '#FBBF24', '暖珀警告'],
+        ['status.error', '#F87171', '朱砂警示红'],
+      ];
+      document.getElementById('swatchGrid').innerHTML = swatches.map(([name, hex, desc]) => `
+        <div class="swatch">
+          <div class="swatch-chip" style="background:${hex};"></div>
+          <div class="swatch-meta">
+            <div class="swatch-name">${name}</div>
+            <div class="swatch-hex">${hex} · ${desc}</div>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    // ===== View Visibility & Render Loop =====
+    function renderAll() {
+      document.documentElement.setAttribute('data-theme', state.theme);
+      document.querySelectorAll('[data-set-theme]').forEach(b => b.classList.toggle('active', b.dataset.setTheme === state.theme));
+      document.querySelectorAll('[data-view]').forEach(b => b.classList.toggle('active', b.dataset.view === state.view));
+      document.querySelectorAll('[data-dsize]').forEach(b => b.classList.toggle('active', b.dataset.dsize === state.dSize));
+
+      const appStage = document.getElementById('appStage');
+      const sysStage = document.getElementById('systemStage');
+      const dWrap = document.getElementById('desktopWrap');
+      const mWrap = document.getElementById('mobileWrap');
+
+      if (state.view === 'system') {
+        appStage.classList.add('hidden');
+        sysStage.classList.remove('hidden');
+      } else {
+        sysStage.classList.add('hidden');
+        appStage.classList.remove('hidden');
+        if (state.view === 'parity') {
+          appStage.style.gridTemplateColumns = '';
+          dWrap.classList.remove('hidden');
+          mWrap.classList.remove('hidden');
+        } else if (state.view === 'desktop') {
+          appStage.style.gridTemplateColumns = '1fr';
+          dWrap.classList.remove('hidden');
+          mWrap.classList.add('hidden');
+        } else {
+          appStage.style.gridTemplateColumns = '1fr';
+          dWrap.classList.add('hidden');
+          mWrap.classList.remove('hidden');
+        }
+      }
+
+      renderDesktop();
+      renderMobile();
+      renderDesktopModal();
+      renderSwatches();
+    }
+
+    // ===== Event Delegation =====
+    document.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-view],[data-set-theme],[data-dsize],[data-dtab],[data-mtab],[data-proxy],[data-route],[data-toggle-vpn],[data-toggle-policy],[data-pick-member],[data-toggle-source],[data-select-node],[data-test-latency],[data-toggle-rg],[data-toggle-rg-enable],[data-move-group],[data-apply-rules],[data-open-rule-modal],[data-rule-from-conn],[data-close-modal],[data-save-rule],[data-log-lvl],[data-toggle-doh],[data-ssec],[data-toast],[data-refresh-src],#dSettingsBtn,#dThemeBtn,#mThemeBtn,#approveBtn');
+      if (!btn) return;
+
+      if (btn.id === 'approveBtn') {
+        if (window.herdr && typeof window.herdr.send === 'function') {
+          window.herdr.send('确认采用 Manis UI 2.0 (Obsidian & Alabaster) 跨端设计方案，请开始分阶段实施代码改造。', { approved: true, theme: state.theme });
+          showToast('已将确认结果发送到面板，点「Send to agent」即可开始实施');
+        } else {
+          showToast('设计方案已就绪，请在对话中告知需要调整的细节或确认开始实施');
+        }
+        return;
+      }
+      if (btn.id === 'dSettingsBtn') { state.dTab = 'settings'; renderAll(); return; }
+      if (btn.id === 'dThemeBtn' || btn.id === 'mThemeBtn') {
+        state.theme = state.theme === 'light' ? 'dark' : 'light';
+        renderAll();
+        return;
+      }
+      if (btn.dataset.view) { state.view = btn.dataset.view; renderAll(); return; }
+      if (btn.dataset.setTheme) { state.theme = btn.dataset.setTheme; renderAll(); return; }
+      if (btn.dataset.dsize) { state.dSize = btn.dataset.dsize; renderAll(); return; }
+      if (btn.dataset.dtab) { state.dTab = btn.dataset.dtab; renderAll(); return; }
+      if (btn.dataset.mtab) { state.mTab = btn.dataset.mtab; renderAll(); return; }
+      if (btn.dataset.proxy) {
+        state.proxyMode = btn.dataset.proxy;
+        showToast(state.proxyMode === 'off' ? '已暂停代理' : state.proxyMode === 'tun' ? '已切换为 TUN 接管' : '已切换为系统代理');
+        renderAll();
+        return;
+      }
+      if (btn.dataset.toggleVpn) {
+        state.proxyMode = isConnected() ? 'off' : 'tun';
+        showToast(isConnected() ? 'VPN 已连接 · 规则分流' : '已断开 VPN');
+        renderAll();
+        return;
+      }
+      if (btn.dataset.route) {
+        state.routeMode = btn.dataset.route;
+        showToast('路由模式：' + routeLabel(state.routeMode));
+        renderAll();
+        return;
+      }
+      if (btn.dataset.testLatency) {
+        e.stopPropagation();
+        state.testing = true;
+        renderAll();
+        setTimeout(() => {
+          allNodes().forEach(n => { n.ms = Math.max(22, n.ms + Math.round((Math.random() - 0.5) * 14)); });
+          state.testing = false;
+          showToast('延迟测速已完成');
+          renderAll();
+        }, 650);
+        return;
+      }
+      if (btn.dataset.pickMember) {
+        e.stopPropagation();
+        const [pid, member] = btn.dataset.pickMember.split('|');
+        const p = state.policies.find(x => x.id === pid);
+        if (p) { p.current = member; showToast(`${p.name} 已切换出口至 ${member}`); }
+        renderAll();
+        return;
+      }
+      if (btn.dataset.togglePolicy) {
+        state.expandedPolicy = state.expandedPolicy === btn.dataset.togglePolicy ? null : btn.dataset.togglePolicy;
+        renderAll();
+        return;
+      }
+      if (btn.dataset.refreshSrc) {
+        e.stopPropagation();
+        showToast('已刷新订阅节点与配额');
+        return;
+      }
+      if (btn.dataset.toggleSource) {
+        const id = btn.dataset.toggleSource;
+        state.expandedSources[id] = !state.expandedSources[id];
+        renderAll();
+        return;
+      }
+      if (btn.dataset.selectNode) {
+        state.activeNode = btn.dataset.selectNode;
+        showToast('已切换全局出口：' + state.activeNode);
+        renderAll();
+        return;
+      }
+      if (btn.dataset.toggleRg) {
+        const id = btn.dataset.toggleRg;
+        state.expandedRuleGroups[id] = !state.expandedRuleGroups[id];
+        renderAll();
+        return;
+      }
+      if (btn.dataset.toggleRgEnable) {
+        const g = state.ruleGroups.find(x => x.id === btn.dataset.toggleRgEnable);
+        if (g) { g.enabled = !g.enabled; state.pendingChanges = true; }
+        renderAll();
+        return;
+      }
+      if (btn.dataset.moveGroup) {
+        const [idxStr, dirStr] = btn.dataset.moveGroup.split('|');
+        const idx = Number(idxStr), next = idx + Number(dirStr);
+        if (next >= 0 && next < state.ruleGroups.length) {
+          const [moved] = state.ruleGroups.splice(idx, 1);
+          state.ruleGroups.splice(next, 0, moved);
+          state.pendingChanges = true;
+          showToast(`已将「${moved.name}」移至第 ${next + 1} 优先级`);
+          renderAll();
+        }
+        return;
+      }
+      if (btn.dataset.applyRules) {
+        state.pendingChanges = false;
+        showToast('分流规则已应用至内核');
+        renderAll();
+        return;
+      }
+      if (btn.dataset.openRuleModal) {
+        state.ruleModal = { host: 'api.github.com', source: btn.dataset.openRuleModal };
+        renderAll();
+        return;
+      }
+      if (btn.dataset.ruleFromConn) {
+        const [host, source] = btn.dataset.ruleFromConn.split('|');
+        state.ruleModal = { host, source };
+        renderAll();
+        return;
+      }
+      if (btn.dataset.closeModal) {
+        state.ruleModal = null;
+        renderAll();
+        return;
+      }
+      if (btn.dataset.saveRule) {
+        const input = document.getElementById('dRuleInput') || document.getElementById('mRuleInput');
+        const val = input ? input.value.trim() : 'example.com';
+        if (val) {
+          const manual = state.ruleGroups.find(g => g.id === 'manual');
+          if (manual) manual.rules.unshift({ kind: 'DOMAIN-SUFFIX', value: val, target: 'AI 自动选择' });
+          state.expandedRuleGroups.manual = true;
+        }
+        state.ruleModal = null;
+        showToast(`已添加规则：${val}`);
+        renderAll();
+        return;
+      }
+      if (btn.dataset.logLvl) { state.logLevel = btn.dataset.logLvl; renderAll(); return; }
+      if (btn.dataset.toggleDoh) { state.dohEnabled = !state.dohEnabled; showToast(state.dohEnabled ? '已开启加密 DNS (DoH)' : '已切换为系统 DNS'); renderAll(); return; }
+      if (btn.dataset.ssec) { state.settingsSection = btn.dataset.ssec; renderAll(); return; }
+      if (btn.dataset.toast) { showToast(btn.dataset.toast); return; }
+    });
+
+    document.addEventListener('input', (e) => {
+      if (e.target.dataset.actSearch) { state.activityQuery = e.target.value; renderAll(); }
+      if (e.target.dataset.logSearch) { state.logQuery = e.target.value; renderAll(); }
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && state.ruleModal) {
+        state.ruleModal = null;
+        renderAll();
+      }
+    });
+
+    renderAll();
+  </script>
+</body>
+</html>

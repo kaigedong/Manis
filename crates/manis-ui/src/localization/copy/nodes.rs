@@ -1,8 +1,5 @@
 use crate::localization::LocalizedText;
 
-pub(crate) const LATENCY_AND_EXIT_IP: LocalizedText =
-    LocalizedText::new("Latency / Exit IP", "延迟 / 出口 IP");
-
 mod format;
 pub(crate) use format::*;
 
@@ -91,7 +88,6 @@ pub(crate) const MIHOMO_SOURCE: LocalizedText = LocalizedText::new("Mihomo sourc
 pub(crate) const NAME_CONTAINS: LocalizedText = LocalizedText::new("Name contains", "名称包含");
 pub(crate) const NEW_POLICY_GROUP: LocalizedText =
     LocalizedText::new("New policy group", "新建策略组");
-pub(crate) const NODE: LocalizedText = LocalizedText::new("Node", "节点");
 pub(crate) const NODES_ARE_TEMPORARILY_UNAVAILABLE: LocalizedText =
     LocalizedText::new("Nodes are temporarily unavailable", "暂时无法读取节点");
 pub(crate) const NODE_NAME_CONTAINS: LocalizedText =
@@ -109,7 +105,6 @@ pub(crate) const POLICY_EDITING_CANCELLED: LocalizedText =
     LocalizedText::new("Policy editing cancelled", "已取消编辑策略");
 pub(crate) const POLICY_GROUP_NAME: LocalizedText =
     LocalizedText::new("Policy group name", "策略组名称");
-pub(crate) const PROTOCOL: LocalizedText = LocalizedText::new("Protocol", "协议");
 pub(crate) const REMOVING: LocalizedText = LocalizedText::new("Removing", "正在移除");
 pub(crate) const RESTORES_AFTER_RESTART: LocalizedText =
     LocalizedText::new("Restores after restart", "重启后自动恢复");

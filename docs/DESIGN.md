@@ -2,86 +2,95 @@
 name: Manis
 description: Quiet native network workspace with clear reading and action hierarchy
 colors:
-  surface-base-light: "#fafbfc"
-  surface-low-light: "#f0f3f5"
-  surface-high-light: "#e9eef2"
+  # Manis UI 2.0 — Obsidian & Alabaster. design-system/manis/tokens.json is the source of truth.
+  surface-canvas-light: "#f7f6f3"
+  surface-chrome-light: "#efece6"
+  surface-low-light: "#f1efea"
+  surface-elevated-light: "#ffffff"
+  surface-high-light: "#e6e3dc"
   surface-overlay-light: "#ffffff"
-  surface-chrome-light: "#e9eef2"
-  text-primary-light: "#0d0d0d"
-  text-secondary-light: "#5d5d5d"
-  text-tertiary-light: "#666666"
-  outline-subtle-light: "#dde3e8"
-  outline-strong-light: "#78828c"
-  action-primary-light: "#176c62"
-  action-primary-hover-light: "#125d54"
-  action-primary-active-light: "#0e4e46"
+  text-primary-light: "#141413"
+  text-secondary-light: "#4e4d49"
+  text-tertiary-light: "#5e5c57"
+  outline-subtle-light: "#e5e2dc"
+  outline-strong-light: "#8b8881"
+  action-primary-light: "#2b4eff"
+  action-primary-hover-light: "#1f3ee0"
+  action-primary-active-light: "#1732bd"
   action-on-primary-light: "#ffffff"
-  action-soft-light: "#e3f0ed"
-  button-bg-light: "#edf1f4"
-  button-hover-light: "#e2e8ed"
-  button-active-light: "#d5dfe6"
-  focus-ring-light: "#2563eb"
-  route-trace-light: "#923b0f"
-  route-soft-light: "#fff5f0"
-  status-success-light: "#00692a"
-  status-warning-light: "#875500"
-  status-error-light: "#b42318"
-  surface-base-dark: "#15191e"
-  surface-low-dark: "#1c2229"
-  surface-high-dark: "#242c35"
-  surface-overlay-dark: "#242c35"
-  surface-chrome-dark: "#1c2229"
-  text-primary-dark: "#f3f3f3"
-  text-secondary-dark: "#b9b9b9"
-  text-tertiary-dark: "#ababab"
-  outline-subtle-dark: "#35404c"
-  outline-strong-dark: "#858f9b"
-  action-primary-dark: "#79d7c6"
-  action-primary-hover-dark: "#95e3d4"
-  action-primary-active-dark: "#afece0"
-  action-on-primary-dark: "#0d0d0d"
-  action-soft-dark: "#203b35"
-  button-bg-dark: "#29333e"
-  button-hover-dark: "#354251"
-  button-active-dark: "#415165"
-  focus-ring-dark: "#8cb4ff"
-  route-trace-dark: "#ffb790"
-  route-soft-dark: "#362820"
-  status-success-dark: "#73d499"
-  status-warning-dark: "#f0c36a"
-  status-error-dark: "#ff9a96"
-  danger-fill: "#ba2623"
-  danger-hover: "#911e1b"
-  danger-active: "#6e1615"
+  action-soft-light: "#eef2ff"
+  focus-ring-light: "#2b4eff"
+  button-bg-light: "#eceae4"
+  button-hover-light: "#e2dfd7"
+  button-active-light: "#d7d3c9"
+  route-trace-light: "#6d28d9"
+  route-soft-light: "#f3eeff"
+  status-success-light: "#0e7a4b"
+  status-success-soft-light: "#e8f7f0"
+  status-warning-light: "#9a5504"
+  status-warning-soft-light: "#fef5e7"
+  status-error-light: "#c81e1e"
+  status-error-soft-light: "#fef2f2"
+  surface-canvas-dark: "#0d0d0f"
+  surface-chrome-dark: "#141417"
+  surface-low-dark: "#17171b"
+  surface-elevated-dark: "#1c1c21"
+  surface-high-dark: "#25252c"
+  surface-overlay-dark: "#212127"
+  text-primary-dark: "#f4f4f6"
+  text-secondary-dark: "#b4b4be"
+  text-tertiary-dark: "#9a9aa6"
+  outline-subtle-dark: "#2b2b33"
+  outline-strong-dark: "#787886"
+  action-primary-dark: "#6b8aff"
+  action-primary-hover-dark: "#859fff"
+  action-primary-active-dark: "#a1b5ff"
+  action-on-primary-dark: "#0a0d18"
+  action-soft-dark: "#1b2342"
+  focus-ring-dark: "#859fff"
+  button-bg-dark: "#26262e"
+  button-hover-dark: "#31313b"
+  button-active-dark: "#3d3d4a"
+  route-trace-dark: "#c4b5fd"
+  route-soft-dark: "#271f3d"
+  status-success-dark: "#4ade80"
+  status-success-soft-dark: "#122b20"
+  status-warning-dark: "#fbbf24"
+  status-warning-soft-dark: "#2e2312"
+  status-error-dark: "#f87171"
+  status-error-soft-dark: "#331719"
+  danger-fill: "#c81e1e"
+  danger-hover: "#a61717"
+  danger-active: "#861212"
   danger-label: "#ffffff"
 typography:
   page-title:
     fontFamily: "system-ui, sans-serif"
-    fontSize: "24px"
+    fontSize: "22px"
     fontWeight: 600
-    lineHeight: "32px"
+    lineHeight: "30px"
   section-title:
     fontFamily: "system-ui, sans-serif"
-    fontSize: "16px"
+    fontSize: "15px"
     fontWeight: 600
     lineHeight: "22px"
   body:
     fontFamily: "system-ui, sans-serif"
-    fontSize: "13px"
+    fontSize: "13.5px"
     fontWeight: 400
     lineHeight: "20px"
   label:
     fontFamily: "system-ui, sans-serif"
-    fontSize: "12px"
+    fontSize: "13px"
     fontWeight: 500
-    lineHeight: "16px"
+    lineHeight: "18px"
   metadata:
     fontFamily: "system-ui, sans-serif"
     fontSize: "11px"
     fontWeight: 400
     lineHeight: "16px"
   data:
-    fontFamily: "system-ui, sans-serif"
+    fontFamily: "monospace"
     fontSize: "12px"
     fontWeight: 500
     lineHeight: "18px"
@@ -96,9 +105,11 @@ typography:
     fontWeight: 600
     lineHeight: "14px"
 rounded:
-  control: "8px"
-  row: "8px"
-  pane: "12px"
+  badge: "6px"
+  control: "10px"
+  row: "10px"
+  card: "14px"
+  sheet: "20px"
 spacing:
   xs: "4px"
   sm: "8px"
@@ -110,33 +121,39 @@ components:
     backgroundColor: "{colors.action-primary-light}"
     textColor: "{colors.action-on-primary-light}"
     rounded: "{rounded.control}"
-    height: "38px"
+    height: "36px"
     padding: "0 12px"
     typography: "{typography.button-primary-label}"
   button-secondary:
     backgroundColor: "{colors.button-bg-light}"
     textColor: "{colors.text-primary-light}"
     rounded: "{rounded.control}"
-    height: "38px"
+    height: "36px"
     padding: "0 12px"
     typography: "{typography.button-label}"
   button-danger:
     backgroundColor: "{colors.danger-fill}"
     textColor: "{colors.danger-label}"
     rounded: "{rounded.control}"
-    height: "38px"
+    height: "36px"
     padding: "0 12px"
     typography: "{typography.button-label}"
 ---
 # Design System: Manis
 
+> **Manis UI 2.0 supersedes this document's palette.** The live source of truth is
+> [design-system/manis/MASTER.md](../design-system/manis/MASTER.md) with
+> [tokens.json](../design-system/manis/tokens.json), projected into `crates/manis-ui/src/theme.rs`
+> and Android `Theme.kt`. The machine-readable tokens above were updated to 2.0; the prose below
+> keeps the interaction rules and still explains why the route chain owns its own accent.
+
 ## Overview
 
-**Creative North Star: "Signal Patch Bay"**
+**Creative North Star: "Obsidian & Alabaster — Swiss Precision Routing"**
 
-Manis 是安静的原生网络工作台。清晰的标题、说明和当前内容形成阅读顺序，青绿色标出选中状态与提交动作；浅色使用轻微冷色调，深色使用石板色表面。保留紧凑的运行列表，让用户检查主窗口、独立设置或编辑，再通过拖动调整规则优先级。
+Manis 是安静的原生网络工作台。清晰的标题、说明和当前内容形成阅读顺序，电钴靛蓝标出选中状态与提交动作，皇家紫只解释路由链路；浅色使用暖霜纸感，深色使用纯中性曜石表面。保留紧凑的运行列表，让用户检查主窗口、独立设置或编辑，再通过拖动调整规则优先级。
 
-品牌延续 [PRODUCT.md](PRODUCT.md) 已确认的 Manis 名称与青绿、铜色语义。`assets/brand/manis-mark.svg` 用于小尺寸标识；高细节 `manis-shanshui.svg` 留给大尺寸文档和发布物料。小于 64px 的场景使用抽象标识；macOS 菜单栏仍使用单色透明模板。
+品牌延续 [PRODUCT.md](PRODUCT.md) 已确认的 Manis 名称与电钴靛蓝、皇家紫语义。`assets/brand/manis-mark.svg` 用于小尺寸标识；高细节 `manis-shanshui.svg` 留给大尺寸文档和发布物料。小于 64px 的场景使用抽象标识；macOS 菜单栏仍使用单色透明模板。
 
 本文合并现有方向与实际 GPUI 实现。规范 token 来自 `crates/manis-ui/src/theme.rs`；共享控件来自 `components.rs`。前置信息中的 CSS 字体名称是原生系统字体的可移植表达，GPUI 和系统提供实际字体。原生窗口行为与截图范围见 [interface-design.md](interface-design.md)。
 

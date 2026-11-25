@@ -97,6 +97,30 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
     capture_default(&mut cx)
 }
 
+/// Starts the managed kernel from the nodes page's own connect action.
+///
+/// The command bar's 系统代理 segment cannot complete inside the visual-test sandbox, so the
+/// captures connect the controller the same way a user does: the trailing action beside the
+/// policy-group header, measured per breakpoint.
+#[cfg(target_os = "macos")]
+pub(super) fn connect_proxy(
+    cx: &mut gpui::VisualTestAppContext,
+    window: gpui::AnyWindowHandle,
+    width: f32,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use gpui::{Modifiers, point, px};
+
+    let x = if wide_rail(width) {
+        1_237.0
+    } else if width >= 900.0 {
+        877.0
+    } else {
+        469.0
+    };
+    cx.simulate_click(window, point(px(x), px(100.0)), Modifiers::none());
+    refresh(cx, window)
+}
+
 #[cfg(target_os = "macos")]
 fn capture_default(cx: &mut gpui::VisualTestAppContext) -> Result<(), Box<dyn std::error::Error>> {
     capture(cx, 1420.0, 900.0, "native-wide.png")?;
@@ -126,20 +150,58 @@ fn capture_default(cx: &mut gpui::VisualTestAppContext) -> Result<(), Box<dyn st
     Ok(())
 }
 
+/// True when the shell renders the expanded 232px rail.
 #[cfg(target_os = "macos")]
-pub(super) fn theme_toggle_x(width: f32) -> f32 {
-    let trailing_controls = if width >= 1280.0 {
-        550.0
+pub(super) const fn wide_rail(width: f32) -> bool {
+    width >= 1_280.0
+}
+
+/// The rail's theme button, centred in the pinned bottom tool block of the Manis 2.0 shell.
+///
+/// Wide windows put the settings row and the theme button on one row; narrower rails stack
+/// them, which is why the button keeps its y while the settings row moves up.
+#[cfg(target_os = "macos")]
+pub(super) fn theme_toggle_point(width: f32, height: f32) -> gpui::Point<gpui::Pixels> {
+    let x = if wide_rail(width) {
+        208.0
     } else if width >= 900.0 {
-        430.0
+        44.0
     } else {
-        205.0
+        32.0
     };
-    width - trailing_controls
+    gpui::point(gpui::px(x), gpui::px(height - 24.0))
+}
+
+/// The settings row sits beside the theme button when the rail is wide, above it otherwise.
+#[cfg(target_os = "macos")]
+pub(super) fn settings_row_point(width: f32, height: f32) -> gpui::Point<gpui::Pixels> {
+    let x = if wide_rail(width) { 110.0 } else { 30.0 };
+    let y = if wide_rail(width) {
+        height - 25.0
+    } else {
+        height - 62.0
+    };
+    gpui::point(gpui::px(x), gpui::px(y))
+}
+
+/// Clicks the rail theme button for the window's own size and settles the repaint.
+#[cfg(target_os = "macos")]
+pub(super) fn toggle_theme(
+    cx: &mut gpui::VisualTestAppContext,
+    window: gpui::AnyWindowHandle,
+    width: f32,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use gpui::Modifiers;
+
+    let height = cx.update_window(window, |_, window, _| {
+        window.viewport_size().height.as_f32()
+    })?;
+    cx.simulate_click(window, theme_toggle_point(width, height), Modifiers::none());
+    refresh(cx, window)
 }
 
 #[cfg(target_os = "macos")]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub(super) enum SnapshotWorkspace {
     Nodes,
     RoutingRules,
@@ -155,18 +217,43 @@ pub(super) fn open_workspace(
     width: f32,
     workspace: SnapshotWorkspace,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use gpui::{Modifiers, point, px};
+    use gpui::Modifiers;
 
-    let x = if width >= 1_280.0 { 110.0 } else { 30.0 };
-    let y = match workspace {
-        SnapshotWorkspace::Nodes => 76.0,
-        SnapshotWorkspace::RoutingRules => 117.0,
-        SnapshotWorkspace::Activity => 158.0,
-        SnapshotWorkspace::Logs => 199.0,
-        SnapshotWorkspace::Configuration => 240.0,
+    let height = cx.update_window(window, |_, window, _| {
+        window.viewport_size().height.as_f32()
+    })?;
+    let point = if workspace == SnapshotWorkspace::Configuration {
+        settings_row_point(width, height)
+    } else {
+        workspace_row_point(width, workspace)
     };
-    cx.simulate_click(window, point(px(x), px(y)), Modifiers::none());
+    cx.simulate_click(window, point, Modifiers::none());
     refresh(cx, window)
+}
+
+/// A workspace row's centre inside the rail.
+///
+/// A wide rail starts its list directly under the 56px brand row; narrower rails reserve the
+/// macOS traffic-light inset above it, so the same row lands 38px lower.
+#[cfg(target_os = "macos")]
+pub(super) fn workspace_row_point(
+    width: f32,
+    workspace: SnapshotWorkspace,
+) -> gpui::Point<gpui::Pixels> {
+    let x = if wide_rail(width) { 110.0 } else { 30.0 };
+    let (first_row, row_step) = if wide_rail(width) {
+        (82.0, 39.0)
+    } else {
+        (120.0, 39.0)
+    };
+    let row = match workspace {
+        SnapshotWorkspace::Nodes => 0,
+        SnapshotWorkspace::RoutingRules => 1,
+        SnapshotWorkspace::Activity => 2,
+        SnapshotWorkspace::Logs => 3,
+        SnapshotWorkspace::Configuration => 0,
+    };
+    gpui::point(gpui::px(x), gpui::px(first_row + row_step * row as f32))
 }
 
 #[cfg(target_os = "macos")]
@@ -221,11 +308,11 @@ pub(super) fn scroll_window(
     y: f32,
     delta_y: f32,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use gpui::{Modifiers, ScrollDelta, ScrollWheelEvent, point, px};
+    use gpui::{Modifiers, ScrollDelta, ScrollEvent, point, px};
 
     cx.simulate_event(
         window,
-        ScrollWheelEvent {
+        ScrollEvent {
             position: point(px(x), px(y)),
             delta: ScrollDelta::Pixels(point(px(0.0), px(delta_y))),
             modifiers: Modifiers::none(),

@@ -1,7 +1,7 @@
 use super::super::super::{
     driver::{
-        SnapshotWorkspace, close_window, open_workspace, refresh, save_screenshot,
-        settle_ui_animation, settle_ui_for, theme_toggle_x,
+        SnapshotWorkspace, close_window, connect_proxy, open_workspace, refresh, save_screenshot,
+        settle_ui_animation, settle_ui_for, toggle_theme,
     },
     fixtures::spawn_mihomo_fixture,
 };
@@ -35,9 +35,7 @@ pub(crate) fn capture_log_colors(
         settle_ui_for(cx, window, std::time::Duration::from_millis(600))?;
         for (dark, mode) in [(false, "light"), (true, "dark")] {
             if dark {
-                let toggle_x = theme_toggle_x(width);
-                cx.simulate_click(window, point(px(toggle_x), px(24.0)), Modifiers::none());
-                refresh(cx, window)?;
+                toggle_theme(cx, window, width)?;
             }
             assert_appearance_mode(cx, window, dark)?;
             save_screenshot(cx, window, &format!("log-colors-{label}-{mode}.png"))?;
@@ -62,7 +60,7 @@ pub(super) fn capture_logs_compact_connected_and_filtered(
     let window: AnyWindowHandle = window.into();
 
     refresh(cx, window)?;
-    cx.simulate_click(window, point(px(520.0), px(76.0)), Modifiers::none());
+    connect_proxy(cx, window, 720.0)?;
     settle_ui_animation(cx, window)?;
     open_workspace(cx, window, 720.0, SnapshotWorkspace::Logs)?;
     settle_ui_animation(cx, window)?;

@@ -1,23 +1,32 @@
 package dev.manis.app.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.interaction.collectIsPressedAsState
-import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -25,6 +34,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -32,15 +42,19 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import dev.manis.app.R
 import dev.manis.app.core.ControllerApi
-import dev.manis.app.core.GroupInfo
 import dev.manis.app.data.GroupEntry
 import dev.manis.app.data.SubscriptionCache
 import dev.manis.app.data.Workspace
@@ -49,16 +63,17 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * The connection screen read top to bottom: what carries the traffic, then the groups that pick
- * among it, then one band with the state and the controls that start and shape the session.
- * Subscriptions and manual nodes expand into their nodes, and every policy group expands into its
- * members with their latency, the active node and a test. The band sits below the list rather than
- * scrolling with it: starting or stopping the tunnel never depends on where the list was left.
+ * The home page read top to bottom: the hero connection cockpit, the groups that pick an exit, then
+ * the sources that carry the nodes. The state, the exit, the route mode and the one action that
+ * starts or ends the session all live in the hero card, so nothing is pinned over the list; once the
+ * hero scrolls away a 52dp mini bar keeps the same state and the same button within thumb reach.
  */
 @Composable
 fun NodesWorkspace(
     connected: Boolean,
     mode: String,
+    darkTheme: Boolean,
+    onToggleTheme: () -> Unit,
     onToggleConnection: () -> Unit,
     onModeSelect: (String) -> Unit,
     onMessage: (String) -> Unit,
@@ -77,8 +92,7 @@ fun NodesWorkspace(
     var addingGroup by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf<GroupEntry?>(null) }
     // The sources open on arrival, so the page is a node list and not a wall of collapsed rows.
-    // Groups stay closed: their rows already name the current pick, and an open group would print
-    // the same nodes a second time.
+    // Groups stay closed: their rows already name the current pick.
     var expandedSources by remember {
         mutableStateOf(
             buildSet {
@@ -118,6 +132,7 @@ fun NodesWorkspace(
     val groupNames = remember(groups, config.groups) {
         (groups.map { it.name } + config.groups.map { it.name }).distinct()
     }
+    val exitDelay = activeNode?.let { delays[it] ?: snapshot?.nodes?.get(it)?.delay }
 
     fun savedMembers(group: GroupEntry?): List<String> {
         if (group == null) return emptyList()
@@ -203,127 +218,151 @@ fun NodesWorkspace(
     fun toggle(set: Set<String>, key: String): Set<String> =
         if (key in set) set - key else set + key
 
+    val scroll = rememberScrollState()
+    var heroHeight by remember { mutableStateOf(0) }
+    // The mini bar is the hero's own state and button once the hero has slid under the header, so
+    // it appears exactly when the card stops being visible and never twice at the same time.
+    val showMiniBar by remember { derivedStateOf { heroHeight > 0 && scroll.value > heroHeight } }
+
     Column(Modifier.fillMaxSize()) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .weight(1f)
-                .verticalScroll(rememberScrollState())
-                .padding(ManisDimens.spaceLg),
-            verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceMd),
-        ) {
-            // The list is the choosing surface: what carries the traffic first, then the groups
-            // that pick among it. Its section bars carry no actions, because refreshing a
-            // subscription, adding a node and adding a group all happen where the source is
-            // edited, and testing one group stays inside that group's card.
-            ManisSectionBar("订阅与节点") {}
-            if (subscriptions.isEmpty() && config.nodes.isEmpty()) {
-                ManisCard {
-                    Text("还没有订阅或手动节点", style = ManisType.label, color = colors.textPrimary)
-                    ManisMeta("订阅和手动节点都在配置里管理。")
-                    ManisButton("打开配置", primary = true, onClick = openSources)
+        ManisPageHeader(
+            title = "Manis",
+            brand = true,
+            trailing = { ManisThemeToggle(darkTheme, onToggleTheme) },
+        )
+        Box(Modifier.fillMaxWidth().weight(1f)) {
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .verticalScroll(scroll)
+                    .padding(horizontal = ManisDimens.spaceLg)
+                    .padding(top = ManisDimens.spaceXs, bottom = ManisDimens.spaceXl),
+                verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceMd),
+            ) {
+                HeroCockpit(
+                    connected = connected,
+                    mode = mode,
+                    exit = activeNode,
+                    delay = exitDelay,
+                    unreachable = RuntimeState.unreachable,
+                    onToggle = onToggleConnection,
+                    onModeSelect = onModeSelect,
+                    modifier = Modifier.onSizeChanged { heroHeight = it.height },
+                )
+                // Groups first: they decide which node carries the traffic, and the sources below
+                // are the pool they choose from.
+                ManisSectionBar("策略组") {}
+                if (groups.isEmpty() && config.groups.isEmpty()) {
+                    ManisCard {
+                        Text("还没有策略组", style = ManisType.label, color = colors.textPrimary)
+                        ManisMeta("没有策略组时，直接选下面的节点；建组后可以在组内切换。")
+                        ManisButton("添加策略组", primary = true, onClick = { addingGroup = true })
+                    }
                 }
-            }
-            subscriptions.forEachIndexed { index, subscription ->
-                val key = "subscription-${index}"
-                val nodes = cachedNodes[subscription.url].orEmpty()
-                val expanded = key in expandedSources
-                ExpandableCard(
-                    title = subscription.name.ifBlank { "订阅 ${index + 1}" },
-                    meta = "${if (subscription.url.startsWith("https")) "HTTPS" else "HTTP"} 订阅 · " +
-                        "${nodes.size} 个节点 · ${sourceHost(subscription.url)}",
-                    expanded = expanded,
-                    onToggle = { expandedSources = toggle(expandedSources, key) },
-                ) {
-                    if (nodes.isEmpty()) {
-                        ManisMeta("还没有缓存节点，在「配置」里刷新订阅。")
-                    } else {
-                        for ((position, node) in nodes.withIndex()) {
+                for (name in groupNames) {
+                    val runtime = groups.firstOrNull { it.name == name }
+                    val saved = config.groups.firstOrNull { it.name == name }
+                    PolicyGroupCard(
+                        title = displayProxyName(name) ?: name,
+                        strategy = runtime?.type ?: saved?.strategy ?: "select",
+                        current = runtime?.now,
+                        members = runtime?.all ?: savedMembers(saved),
+                        delays = delays,
+                        expanded = name in expandedGroups,
+                        canTest = runtime != null,
+                        onToggle = { expandedGroups = toggle(expandedGroups, name) },
+                        onTest = { testGroup(name) },
+                        onSelect = { node -> select(name, node) },
+                        onDelete = saved?.let { entry -> { deleting = entry } },
+                    )
+                }
+                ManisSectionBar("订阅节点") {}
+                if (subscriptions.isEmpty() && config.nodes.isEmpty()) {
+                    ManisCard {
+                        Text("还没有订阅或手动节点", style = ManisType.label, color = colors.textPrimary)
+                        ManisMeta("订阅和手动节点都在设置里管理。")
+                        ManisButton("打开设置", primary = true, onClick = openSources)
+                    }
+                }
+                subscriptions.forEachIndexed { index, subscription ->
+                    val key = "subscription-${index}"
+                    val nodes = cachedNodes[subscription.url].orEmpty()
+                    val expanded = key in expandedSources
+                    SourceCard(
+                        title = subscription.name.ifBlank { "订阅 ${index + 1}" },
+                        meta = "${nodes.size} 节点 · " +
+                            "${if (subscription.url.startsWith("https")) "HTTPS" else "HTTP"} · " +
+                            sourceHost(subscription.url),
+                        expanded = expanded,
+                        onToggle = { expandedSources = toggle(expandedSources, key) },
+                    ) {
+                        if (nodes.isEmpty()) {
+                            ManisMeta("还没有缓存节点，在「设置」里刷新订阅。")
+                        } else {
+                            for ((position, node) in nodes.withIndex()) {
+                                NodeRow(
+                                    name = node.name,
+                                    protocol = node.type,
+                                    delay = delays[node.name] ?: snapshot?.nodes?.get(node.name)?.delay,
+                                    selected = activeNode == node.name ||
+                                        config.pendingNode == node.name,
+                                    onSelect = { switchTo(node.name) },
+                                    onTest = if (snapshot != null) {
+                                        { testNode(node.name) }
+                                    } else {
+                                        null
+                                    },
+                                )
+                                if (position != nodes.lastIndex) ManisDivider()
+                            }
+                        }
+                    }
+                }
+                if (config.nodes.isNotEmpty()) {
+                    val key = "manual"
+                    val expanded = key in expandedSources
+                    SourceCard(
+                        title = "手动节点",
+                        meta = "${config.nodes.count { it.enabled }} 个已启用的手动节点",
+                        expanded = expanded,
+                        onToggle = { expandedSources = toggle(expandedSources, key) },
+                    ) {
+                        for ((position, node) in config.nodes.withIndex()) {
                             NodeRow(
-                                name = node.name,
-                                type = node.type,
-                                delay = delays[node.name] ?: snapshot?.nodes?.get(node.name)?.delay,
-                                selected = activeNode == node.name ||
-                                    config.pendingNode == node.name,
-                                onSelect = { switchTo(node.name) },
+                                name = node.displayName,
+                                protocol = "VLESS",
+                                delay = delays[node.displayName]
+                                    ?: snapshot?.nodes?.get(node.displayName)?.delay,
+                                selected = activeNode == node.displayName ||
+                                    config.pendingNode == node.displayName,
+                                onSelect = { switchTo(node.displayName) },
                                 onTest = if (snapshot != null) {
-                                    { testNode(node.name) }
+                                    { testNode(node.displayName) }
                                 } else {
                                     null
                                 },
                             )
-                            if (position != nodes.lastIndex) ManisDivider()
+                            if (position != config.nodes.lastIndex) ManisDivider()
                         }
                     }
                 }
-            }
-            if (config.nodes.isNotEmpty()) {
-                val key = "manual"
-                val expanded = key in expandedSources
-                ExpandableCard(
-                    title = "手动节点",
-                    meta = "${config.nodes.count { it.enabled }} 个已启用的手动节点",
-                    expanded = expanded,
-                    onToggle = { expandedSources = toggle(expandedSources, key) },
-                ) {
-                    for ((position, node) in config.nodes.withIndex()) {
-                        NodeRow(
-                            name = node.displayName,
-                            type = "VLESS",
-                            delay = delays[node.displayName] ?: snapshot?.nodes?.get(node.displayName)?.delay,
-                            selected = activeNode == node.displayName ||
-                                config.pendingNode == node.displayName,
-                            onSelect = { switchTo(node.displayName) },
-                            onTest = if (snapshot != null) {
-                                { testNode(node.displayName) }
-                            } else {
-                                null
-                            },
-                        )
-                        if (position != config.nodes.lastIndex) ManisDivider()
-                    }
-                }
-            }
-            ManisSectionBar("策略组") {}
-            if (groups.isEmpty() && config.groups.isEmpty()) {
-                ManisCard {
-                    Text("还没有策略组", style = ManisType.label, color = colors.textPrimary)
-                    ManisMeta("没有策略组时，直接用「订阅与节点」里选中的节点；建组后可以在组内切换。")
-                    ManisButton("添加策略组", primary = true, onClick = { addingGroup = true })
-                }
-            }
-            for (name in groupNames) {
-                val runtime = groups.firstOrNull { it.name == name }
-                val saved = config.groups.firstOrNull { it.name == name }
-                GroupCard(
-                    title = displayProxyName(name) ?: name,
-                    type = runtime?.type ?: saved?.strategy ?: "select",
-                    current = runtime?.now,
-                    members = runtime?.all ?: savedMembers(saved),
-                    delays = delays,
-                    expanded = name in expandedGroups,
-                    canTest = runtime != null,
-                    onToggle = { expandedGroups = toggle(expandedGroups, name) },
-                    onTest = { testGroup(name) },
-                    onSelect = { node -> select(name, node) },
-                    onDelete = saved?.let { entry -> { deleting = entry } },
+                ManisMeta(
+                    when {
+                        snapshot != null -> "点节点即可切换；「测速」会检测组内全部成员。"
+                        RuntimeState.active -> "正在读取内核状态，稍后即可切换节点和测速。"
+                        else -> "未连接时也可以先选节点，连接后会自动切换。"
+                    },
                 )
             }
-            ManisMeta(
-                when {
-                    snapshot != null -> "点节点即可切换；「测速」会检测组内全部成员。"
-                    RuntimeState.active -> "正在读取内核状态，稍后即可切换节点和测速。"
-                    else -> "未连接时也可以先选节点，连接后会自动切换。"
-                },
+            MiniBarOverlay(
+                visible = showMiniBar,
+                connected = connected,
+                exit = activeNode,
+                unreachable = RuntimeState.unreachable,
+                onToggle = onToggleConnection,
+                modifier = Modifier.align(Alignment.TopCenter),
             )
         }
-        ConnectionBar(
-            connected = connected,
-            mode = mode,
-            exit = activeNode,
-            onToggle = onToggleConnection,
-            onModeSelect = onModeSelect,
-        )
     }
 
     val pendingDelete = deleting
@@ -362,40 +401,326 @@ fun NodesWorkspace(
 }
 
 /**
- * The page's one control band, in two lines: the state with its exit, then the route mode beside
- * the button that starts and ends a session. It sits under the list instead of scrolling with it,
- * so those controls never move, and the list above stays a surface for choosing a node.
+ * The hero connection cockpit: the state and its exit on the left, the power pill on the right, the
+ * session telemetry under them, and the route mode across the full width of the card.
  */
 @Composable
-private fun ConnectionBar(
+private fun HeroCockpit(
     connected: Boolean,
     mode: String,
     exit: String?,
+    delay: Int?,
+    unreachable: Boolean,
     onToggle: () -> Unit,
     onModeSelect: (String) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val colors = LocalManisColors.current
-    val unreachable = RuntimeState.unreachable
-    // The exit is the useful half of a connected state, so it shares the state's line. Nothing is
-    // reachable in the failure case, so there is no exit worth naming and the line turns warning.
-    val stateText = when {
+    val degraded = connected && unreachable
+    val title = when {
         !connected -> "未连接"
-        unreachable -> "已连接 · 所有节点都不可达"
-        exit == null -> "已连接"
-        else -> "已连接 · 出口 ${displayProxyName(exit) ?: exit}"
+        degraded -> "已保护 · 节点不可达"
+        else -> "已保护 · ${modeWord(mode)}"
     }
-    Column(
+    val dot = when {
+        !connected -> colors.textTertiary
+        degraded -> colors.statusWarning
+        else -> colors.statusSuccess
+    }
+    ManisCard(
+        modifier = modifier,
+        borderColor = if (connected) colors.statusSuccess.copy(alpha = 0.35f) else null,
+    ) {
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceMd),
+        ) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                ) {
+                    Box(Modifier.size(8.dp).clip(CircleShape).background(dot))
+                    Text(
+                        title,
+                        style = ManisType.sectionTitle,
+                        color = if (degraded) colors.statusWarning else colors.textPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceXs),
+                ) {
+                    Text(
+                        if (connected) {
+                            displayProxyName(exit) ?: "未选择出口"
+                        } else {
+                            "待命出口：${displayProxyName(exit) ?: "未选择"}"
+                        },
+                        modifier = Modifier.weight(1f, fill = false),
+                        style = ManisType.body,
+                        color = colors.textSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (connected) ManisLatency(delay)
+                }
+            }
+            PowerPill(connected = connected, onToggle = onToggle)
+        }
+        if (connected) TelemetryStrip()
+        RouteModeControl(mode = mode, onSelect = onModeSelect)
+    }
+}
+
+/**
+ * The page's one action: a cobalt pill while the tunnel is down, a success-soft pill with the power
+ * glyph while it is up. The pill is 44dp as drawn; the touch target around it is the 48dp minimum.
+ */
+@Composable
+private fun PowerPill(connected: Boolean, onToggle: () -> Unit, compact: Boolean = false) {
+    val colors = LocalManisColors.current
+    val container = if (connected) colors.statusSuccessSoft else colors.actionPrimary
+    val content = if (connected) colors.statusSuccess else colors.actionOnPrimary
+    Box(
+        Modifier
+            .height(ManisDimens.minTouch)
+            .clip(CircleShape)
+            .clickable(onClick = onToggle),
+        contentAlignment = Alignment.Center,
+    ) {
+        Row(
+            Modifier
+                .height(if (compact) 34.dp else 44.dp)
+                .clip(CircleShape)
+                .background(container)
+                .then(
+                    if (connected) {
+                        Modifier.border(
+                            1.dp,
+                            colors.statusSuccess.copy(alpha = 0.35f),
+                            CircleShape,
+                        )
+                    } else {
+                        Modifier
+                    },
+                )
+                .padding(
+                    horizontal = if (compact) ManisDimens.spaceMd else ManisDimens.spaceLg,
+                ),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_power),
+                contentDescription = null,
+                modifier = Modifier.size(if (compact) 14.dp else 16.dp),
+                tint = content,
+            )
+            Text(
+                if (connected) "断开" else "连接",
+                style = if (compact) {
+                    ManisType.metadata.copy(fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                } else {
+                    ManisType.label.copy(fontWeight = FontWeight.SemiBold)
+                },
+                color = content,
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+/** The session line under the hero's state: what has moved, and over how many connections. */
+@Composable
+private fun TelemetryStrip() {
+    val colors = LocalManisColors.current
+    Row(
         Modifier
             .fillMaxWidth()
-            .height(ManisDimens.connectionBar)
-            .background(colors.surfaceOverlay),
+            .clip(RoundedCornerShape(ManisDimens.radiusControl))
+            .background(colors.surfaceLow)
+            .padding(horizontal = ManisDimens.spaceMd, vertical = ManisDimens.spaceSm),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        // A hairline is what tells a bar that stays put apart from a list that scrolls under it.
+        Text(
+            "↓ ${formatTraffic(RuntimeState.downloadTotal)} · " +
+                "↑ ${formatTraffic(RuntimeState.uploadTotal)}",
+            style = ManisType.data,
+            color = colors.textSecondary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            "${RuntimeState.connectionCount} 活动连接",
+            style = ManisType.data,
+            color = colors.textSecondary,
+            maxLines = 1,
+        )
+    }
+}
+
+/**
+ * The route mode as three equal segments across the card, 44dp tall: a recessed track, an elevated
+ * thumb on the active segment, and one tap per mode. [ManisSegmented] owns a fixed 40dp height, so
+ * the hero carries this 44dp variant instead of squeezing the shared control.
+ */
+@Composable
+private fun RouteModeControl(mode: String, onSelect: (String) -> Unit) {
+    val colors = LocalManisColors.current
+    val dark = colors.surfaceBase.luminance() < 0.5f
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(44.dp)
+            .clip(RoundedCornerShape(ManisDimens.radiusControl))
+            .background(colors.surfaceLow)
+            .border(1.dp, colors.outlineSubtle, RoundedCornerShape(ManisDimens.radiusControl))
+            .padding(3.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        for (value in routeModes) {
+            val selected = mode == value
+            Box(
+                Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(7.dp))
+                    .background(
+                        if (selected) {
+                            if (dark) colors.surfaceHigh else colors.surfaceElevated
+                        } else {
+                            Color.Transparent
+                        },
+                    )
+                    .clickable { onSelect(value) },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    routeModeLabel(value),
+                    style = ManisType.label,
+                    color = if (selected) colors.textPrimary else colors.textSecondary,
+                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                    maxLines = 1,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * The bar that takes over once the hero is out of sight: the same state dot, the same exit and the
+ * same button, at 52dp. It sits over the top of the scrolling list, so the bottom bar never moves.
+ */
+@Composable
+private fun MiniBarOverlay(
+    visible: Boolean,
+    connected: Boolean,
+    exit: String?,
+    unreachable: Boolean,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    AnimatedVisibility(
+        visible = visible,
+        modifier = modifier,
+        enter = fadeIn(tween(220)) + slideInVertically(tween(220)) { -it / 2 },
+        exit = fadeOut(tween(140)) + slideOutVertically(tween(140)) { -it / 2 },
+    ) {
+        MiniConnectionBar(
+            connected = connected,
+            exit = exit,
+            unreachable = unreachable,
+            onToggle = onToggle,
+        )
+    }
+}
+
+@Composable
+private fun MiniConnectionBar(
+    connected: Boolean,
+    exit: String?,
+    unreachable: Boolean,
+    onToggle: () -> Unit,
+) {
+    val colors = LocalManisColors.current
+    val degraded = connected && unreachable
+    Column(Modifier.fillMaxWidth().background(colors.surfaceChrome)) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .height(52.dp)
+                .padding(horizontal = ManisDimens.spaceLg),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
+        ) {
+            Box(
+                Modifier
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(
+                        when {
+                            !connected -> colors.textTertiary
+                            degraded -> colors.statusWarning
+                            else -> colors.statusSuccess
+                        },
+                    ),
+            )
+            Text(
+                when {
+                    !connected -> "未连接 · ${displayProxyName(exit) ?: "未选择出口"}"
+                    degraded -> "已保护 · 节点不可达"
+                    else -> "已保护 · ${displayProxyName(exit) ?: "未选择出口"}"
+                },
+                modifier = Modifier.weight(1f),
+                style = ManisType.label,
+                color = if (degraded) colors.statusWarning else colors.textPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            PowerPill(connected = connected, onToggle = onToggle, compact = true)
+        }
         ManisDivider()
+    }
+}
+
+/**
+ * One policy group: its name, strategy and current exit, a per-group test, and the members it picks
+ * from once expanded. Every member row clears the 48dp touch minimum.
+ */
+@Composable
+private fun PolicyGroupCard(
+    title: String,
+    strategy: String,
+    current: String?,
+    members: List<String>,
+    delays: Map<String, Int>,
+    expanded: Boolean,
+    canTest: Boolean,
+    onToggle: () -> Unit,
+    onTest: () -> Unit,
+    onSelect: (String) -> Unit,
+    onDelete: (() -> Unit)?,
+) {
+    val colors = LocalManisColors.current
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val currentDelay = current?.let { delays[it] ?: RuntimeState.snapshot?.nodes?.get(it)?.delay }
+    ManisCard {
         Column(
             Modifier
-                .weight(1f)
-                .padding(horizontal = ManisDimens.spaceLg, vertical = ManisDimens.spaceMd),
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(ManisDimens.radiusRow))
+                .background(if (pressed) colors.surfaceLow else Color.Transparent)
+                .clickable(
+                    interactionSource = interaction,
+                    indication = null,
+                    onClick = onToggle,
+                ),
             verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
         ) {
             Row(
@@ -403,68 +728,168 @@ private fun ConnectionBar(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
             ) {
-                // The dot is the state at a glance; the word beside it is what a colourblind user
-                // reads, and what tells the two states apart in a screenshot.
+                Row(
+                    Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
+                ) {
+                    Text(
+                        title,
+                        modifier = Modifier.weight(1f, fill = false),
+                        style = ManisType.label.copy(fontWeight = FontWeight.SemiBold),
+                        color = colors.textPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    ManisPill(strategyLabel(strategy), ManisTone.Neutral)
+                }
+                Icon(
+                    imageVector = Icons.Filled.KeyboardArrowDown,
+                    contentDescription = if (expanded) "收起" else "展开",
+                    modifier = Modifier.size(22.dp).rotate(if (expanded) 180f else 0f),
+                    tint = colors.textSecondary,
+                )
+            }
+            // The current exit sits on its own recessed strip, the way the prototype separates a
+            // group's choice from its name.
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = ManisDimens.minTouch)
+                    .clip(RoundedCornerShape(ManisDimens.radiusControl))
+                    .background(colors.surfaceLow)
+                    .padding(start = ManisDimens.spaceMd, end = ManisDimens.spaceXs),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
                 Box(
                     Modifier
-                        .size(8.dp)
+                        .size(6.dp)
                         .clip(CircleShape)
-                        .background(if (connected) colors.statusSuccess else colors.textTertiary),
+                        .background(
+                            if (current == null) colors.textTertiary else colors.statusSuccess,
+                        ),
                 )
                 Text(
-                    stateText,
-                    modifier = Modifier.weight(1f),
-                    style = ManisType.label,
-                    color = if (connected && unreachable) {
-                        colors.statusWarning
-                    } else {
-                        colors.textPrimary
-                    },
+                    displayProxyName(current) ?: "未选择",
+                    modifier = Modifier.weight(1f, fill = false),
+                    style = ManisType.body,
+                    color = colors.textPrimary,
+                    fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                // The session totals this page used to print twice, once here and once in the
-                // status strip below the navigation. While the tunnel is down there is no session.
-                if (connected) {
-                    Text(
-                        "↓ ${formatTraffic(RuntimeState.downloadTotal)} " +
-                            "↑ ${formatTraffic(RuntimeState.uploadTotal)}",
-                        style = ManisType.metadata,
-                        color = colors.textSecondary,
-                        maxLines = 1,
-                    )
+                ManisLatency(currentDelay)
+                Spacer(Modifier.weight(1f))
+                if (canTest) ManisTextAction("测速", onClick = onTest)
+            }
+        }
+        if (expanded) {
+            ManisDivider()
+            if (members.isEmpty()) {
+                ManisMeta("这个策略组还没有成员。")
+            }
+            for (node in members) {
+                MemberRow(
+                    name = displayProxyName(node) ?: node,
+                    delay = delays[node] ?: RuntimeState.snapshot?.nodes?.get(node)?.delay,
+                    selected = node == current,
+                    onSelect = { onSelect(node) },
+                )
+            }
+            if (onDelete != null) {
+                ManisDivider()
+                Row(
+                    Modifier.fillMaxWidth().padding(vertical = ManisDimens.spaceXs),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    ManisTextAction("删除策略组", tone = colors.statusError, onClick = onDelete)
                 }
             }
-            // The modes take the full width rather than sharing a row with the button: at 320dp a
-            // shared row squeezes each chip below its label, and 全局 clips to 全.
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                for (value in routeModes) {
-                    ManisChip(
-                        label = routeModeLabel(value),
-                        selected = mode == value,
-                        modifier = Modifier.weight(1f),
-                        onClick = { onModeSelect(value) },
-                    )
-                }
-            }
-            // The one action of this page, full width and under the thumb.
-            ManisButton(
-                if (connected) "断开代理" else "开启代理",
-                modifier = Modifier.fillMaxWidth().height(ManisDimens.controlStandard),
-                primary = !connected,
-                onClick = onToggle,
-            )
         }
     }
 }
 
-/** A card that expands to show its content. */
+/** One member of a policy group: a 48dp chip with the node's name and its measured latency. */
 @Composable
-private fun ExpandableCard(
+private fun MemberRow(name: String, delay: Int?, selected: Boolean, onSelect: () -> Unit) {
+    val colors = LocalManisColors.current
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(min = ManisDimens.minTouch)
+            .clip(RoundedCornerShape(ManisDimens.radiusControl))
+            .background(if (selected) colors.actionSoft else colors.surfaceBase)
+            .border(
+                1.dp,
+                if (selected) colors.actionPrimary else colors.outlineSubtle,
+                RoundedCornerShape(ManisDimens.radiusControl),
+            )
+            .clickable(onClick = onSelect)
+            .padding(horizontal = ManisDimens.spaceMd),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
+    ) {
+        Text(
+            name,
+            modifier = Modifier.weight(1f),
+            style = ManisType.body,
+            color = if (selected) colors.actionPrimary else colors.textPrimary,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        ManisLatency(delay)
+    }
+}
+
+/** One node inside a source: region code, name, protocol, latency and its own test. */
+@Composable
+private fun NodeRow(
+    name: String,
+    protocol: String,
+    delay: Int?,
+    selected: Boolean,
+    onSelect: () -> Unit,
+    onTest: (() -> Unit)?,
+) {
+    val colors = LocalManisColors.current
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(min = ManisDimens.rowHeight)
+            .clip(RoundedCornerShape(ManisDimens.radiusRow))
+            .background(if (selected) colors.actionSoft else Color.Transparent)
+            .clickable(onClick = onSelect)
+            .padding(horizontal = ManisDimens.spaceSm, vertical = ManisDimens.spaceXs),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
+    ) {
+        ManisRegionBadge(regionCode(name))
+        Column(Modifier.weight(1f)) {
+            Text(
+                name,
+                style = ManisType.body,
+                color = if (selected) colors.actionPrimary else colors.textPrimary,
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                protocol.uppercase(),
+                style = ManisType.metadata,
+                color = colors.textTertiary,
+                maxLines = 1,
+            )
+        }
+        ManisLatency(delay)
+        if (onTest != null) ManisTextAction("测速", onClick = onTest)
+    }
+}
+
+/** A source card: its node count, its vehicle and the nodes it carries. */
+@Composable
+private fun SourceCard(
     title: String,
     meta: String,
     expanded: Boolean,
@@ -472,27 +897,33 @@ private fun ExpandableCard(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val colors = LocalManisColors.current
-    val interaction = remember { MutableInteractionSource() }
-    val pressed by interaction.collectIsPressedAsState()
+    // No usage meter here: the Android subscription model carries no quota or traffic allowance, and
+    // a bar drawn from a number the app does not have would be a guess.
     ManisCard {
         Row(
             Modifier
                 .fillMaxWidth()
-                .background(
-                    if (pressed) colors.surfaceLow else Color.Transparent,
-                    RoundedCornerShape(ManisDimens.radiusRow),
-                )
-                .clickable(
-                    interactionSource = interaction,
-                    indication = null,
-                    onClick = onToggle,
-                ),
+                .heightIn(min = ManisDimens.minTouch)
+                .clip(RoundedCornerShape(ManisDimens.radiusRow))
+                .clickable(onClick = onToggle),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
         ) {
             Column(Modifier.weight(1f)) {
-                Text(title, style = ManisType.label, color = colors.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                ManisMeta(meta)
+                Text(
+                    title,
+                    style = ManisType.label.copy(fontWeight = FontWeight.SemiBold),
+                    color = colors.textPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    meta,
+                    style = ManisType.metadata,
+                    color = colors.textTertiary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
             Icon(
                 imageVector = Icons.Filled.KeyboardArrowDown,
@@ -508,139 +939,52 @@ private fun ExpandableCard(
     }
 }
 
-@Composable
-private fun NodeRow(
-    name: String,
-    type: String,
-    delay: Int?,
-    selected: Boolean,
-    onSelect: () -> Unit,
-    onTest: (() -> Unit)?,
-) {
-    val colors = LocalManisColors.current
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(ManisDimens.radiusRow))
-            .background(if (selected) colors.actionSoft else Color.Transparent)
-            .clickable(onClick = onSelect)
-            .padding(horizontal = ManisDimens.spaceSm, vertical = ManisDimens.spaceXs),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text(
-                (if (selected) "✓ " else "") + name,
-                style = ManisType.body,
-                color = if (selected) colors.actionPrimary else colors.textPrimary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            ManisMeta(type.uppercase())
-        }
-        Text(
-            if (delay == null) "—" else "$delay ms",
-            style = ManisType.data,
-            color = latencyColor(delay, colors),
-        )
-        if (onTest != null) {
-            ManisTextAction("测速", onClick = onTest)
-        }
-    }
-}
-
-@Composable
-private fun GroupCard(
-    title: String,
-    type: String,
-    current: String?,
-    members: List<String>,
-    delays: Map<String, Int>,
-    expanded: Boolean,
-    canTest: Boolean,
-    onToggle: () -> Unit,
-    onTest: () -> Unit,
-    onSelect: (String) -> Unit,
-    onDelete: (() -> Unit)?,
-) {
-    val colors = LocalManisColors.current
-    val interaction = remember { MutableInteractionSource() }
-    val pressed by interaction.collectIsPressedAsState()
-    ManisCard {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .background(
-                    if (pressed) colors.surfaceLow else Color.Transparent,
-                    RoundedCornerShape(ManisDimens.radiusRow),
-                )
-                .clickable(
-                    interactionSource = interaction,
-                    indication = null,
-                    onClick = onToggle,
-                ),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    title,
-                    style = ManisType.label,
-                    color = colors.textPrimary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                ManisMeta(
-                    "${strategyLabel(type)} · 当前 ${displayProxyName(current) ?: "未选择"} · " +
-                        "${members.size} 个节点",
-                )
-            }
-            if (canTest) ManisTextAction("测速", onClick = onTest)
-            Icon(
-                imageVector = Icons.Filled.KeyboardArrowDown,
-                contentDescription = if (expanded) "收起" else "展开",
-                modifier = Modifier.size(22.dp).rotate(if (expanded) 180f else 0f),
-                tint = colors.textSecondary,
-            )
-        }
-        if (expanded) {
-            ManisDivider()
-            if (members.isEmpty()) {
-                ManisMeta("这个策略组还没有成员。")
-            }
-            for ((index, node) in members.withIndex()) {
-                val delay = delays[node] ?: RuntimeState.snapshot?.nodes?.get(node)?.delay
-                ManisListRow(
-                    title = displayProxyName(node) ?: node,
-                    trailing = if (delay == null) "—" else "$delay ms",
-                    selected = node == current,
-                    onClick = { onSelect(node) },
-                )
-                if (index != members.lastIndex) ManisDivider()
-            }
-            if (onDelete != null) {
-                ManisDivider()
-                Row(
-                    Modifier.fillMaxWidth().padding(vertical = ManisDimens.spaceXs),
-                    horizontalArrangement = Arrangement.End,
-                ) {
-                    ManisTextAction("删除策略组", tone = colors.statusError, onClick = onDelete)
-                }
-            }
-        }
-    }
-}
-
-/** The routing modes in the order the chips read them: cut out, filter, send everything. */
+/** The routing modes in the order the segments read them: cut out, filter, send everything. */
 private val routeModes = listOf("direct", "rule", "global")
 
-/** The latency thresholds every node reading shares, so the header and the rows agree. */
-private fun latencyColor(delay: Int?, colors: ManisColors): Color = when {
-    delay == null -> colors.textTertiary
-    delay < 200 -> colors.statusSuccess
-    delay < 500 -> colors.statusWarning
-    else -> colors.statusError
+/** What the hero calls the active mode once the tunnel is up. */
+private fun modeWord(mode: String): String = when (mode) {
+    "direct" -> "直连模式"
+    "global" -> "全局模式"
+    else -> "规则分流"
 }
+
+/**
+ * The 2-letter region code the design uses in place of flag emoji: the first hint a node name
+ * carries, otherwise its first two ASCII letters.
+ */
+internal fun regionCode(name: String): String {
+    val upper = name.uppercase()
+    for ((code, hints) in regionHints) {
+        if (hints.any { upper.contains(it) }) return code
+    }
+    return upper.filter { it in 'A'..'Z' }.take(2).ifEmpty { "--" }
+}
+
+private val regionHints = listOf(
+    "HK" to listOf("香港", "HK", "HONG KONG", "HONGKONG"),
+    "TW" to listOf("台湾", "臺灣", "TW", "TAIWAN"),
+    "SG" to listOf("新加坡", "狮城", "SG", "SINGAPORE"),
+    "JP" to listOf("日本", "东京", "大阪", "JP", "JAPAN", "TOKYO"),
+    "KR" to listOf("韩国", "首尔", "KR", "KOREA", "SEOUL"),
+    "US" to listOf("美国", "洛杉矶", "圣何塞", "西雅图", "US", "USA", "UNITED STATES"),
+    "CA" to listOf("加拿大", "CA", "CANADA"),
+    "GB" to listOf("英国", "伦敦", "GB", "UK", "UNITED KINGDOM", "LONDON"),
+    "DE" to listOf("德国", "法兰克福", "DE", "GERMANY", "FRANKFURT"),
+    "NL" to listOf("荷兰", "阿姆斯特丹", "NL", "NETHERLANDS"),
+    "FR" to listOf("法国", "巴黎", "FR", "FRANCE", "PARIS"),
+    "RU" to listOf("俄罗斯", "RU", "RUSSIA"),
+    "TR" to listOf("土耳其", "TR", "TURKEY"),
+    "IN" to listOf("印度", "IN", "INDIA"),
+    "AU" to listOf("澳大利亚", "悉尼", "AU", "AUSTRALIA", "SYDNEY"),
+    "BR" to listOf("巴西", "BR", "BRAZIL"),
+    "AR" to listOf("阿根廷", "AR", "ARGENTINA"),
+    "MY" to listOf("马来西亚", "MY", "MALAYSIA"),
+    "TH" to listOf("泰国", "TH", "THAILAND"),
+    "VN" to listOf("越南", "VN", "VIETNAM"),
+    "PH" to listOf("菲律宾", "PH", "PHILIPPINES"),
+    "ID" to listOf("印尼", "印度尼西亚", "ID", "INDONESIA"),
+)
 
 /** The host of a subscription URL, as the desktop shows the transport target. */
 private fun sourceHost(url: String): String {

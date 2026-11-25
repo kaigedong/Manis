@@ -292,10 +292,6 @@ pub(crate) const LAST_UPDATE_FAILED: LocalizedText =
     LocalizedText::new("Last update failed", "上次更新失败");
 pub(crate) const MANAGED: LocalizedText = LocalizedText::new("Managed", "Manis 托管");
 pub(crate) const MANAGED_SECTION_SUMMARY: LocalizedText = LocalizedText::new("Managed", "托管");
-pub(crate) const MANAGE_MANIS_PREFERENCES_AND_DATA_SOURCES: LocalizedText = LocalizedText::new(
-    "Manage Manis preferences and data sources",
-    "管理 Manis 偏好与数据来源",
-);
 pub(crate) const MANUAL: LocalizedText = LocalizedText::new("Manual", "手动");
 pub(crate) const MANUAL_RULES_UPDATED: LocalizedText =
     LocalizedText::new("Manual rules updated", "手动分流规则已更新");
@@ -404,7 +400,6 @@ pub(crate) const SECURELY_DOWNLOADING_PARSING_AND_WRITING_LOCALLY: LocalizedText
 pub(crate) const SELECTED: LocalizedText = LocalizedText::new("Selected", "已选择");
 pub(crate) const SELECT_LANGUAGE: LocalizedText =
     LocalizedText::new("Select language", "选择界面语言");
-pub(crate) const SETTINGS: LocalizedText = LocalizedText::new("SETTINGS", "设置");
 pub(crate) const SINGLE_NODE: LocalizedText = LocalizedText::new("Single node", "单节点");
 pub(crate) const SINGLE_NODE_SOURCE: LocalizedText =
     LocalizedText::new("Single node", "单节点来源");

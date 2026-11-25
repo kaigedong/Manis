@@ -1,16 +1,20 @@
 package dev.manis.app.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -26,9 +30,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -37,7 +41,16 @@ import java.io.File
 /** One parsed kernel log line. */
 private data class LogEntry(val time: String, val level: String, val message: String)
 
-/** The logs workspace: the kernel log with search, refresh and copy. */
+/** The level filter, in the order the pills are laid out. */
+private val LogLevels = listOf("全部", "ERROR", "WARN", "INFO", "DEBUG")
+
+/** The width every level tag holds, so a stack of log lines keeps one text column. */
+private val LevelTagWidth = 48.dp
+
+/**
+ * The logs workspace: the kernel log as a monospace stream, with a search field, a scrollable row
+ * of level pills and a copy action.
+ */
 @Composable
 fun LogsWorkspace(onMessage: (String) -> Unit) {
     val colors = LocalManisColors.current
@@ -45,6 +58,7 @@ fun LogsWorkspace(onMessage: (String) -> Unit) {
     val clipboard = LocalClipboardManager.current
     var raw by remember { mutableStateOf(emptyList<String>()) }
     var query by remember { mutableStateOf("") }
+    var level by remember { mutableStateOf(LogLevels.first()) }
     var loading by remember { mutableStateOf(true) }
     var reloads by remember { mutableStateOf(0) }
 
@@ -64,46 +78,62 @@ fun LogsWorkspace(onMessage: (String) -> Unit) {
         }
     }
 
-    val filtered = remember(raw, query) {
+    val filtered = remember(raw, query, level) {
         val entries = raw.map(::parseLogLine)
-        val matched = if (query.isBlank()) {
-            entries
-        } else {
-            entries.filter {
-                it.message.contains(query, ignoreCase = true) ||
-                    it.level.contains(query, ignoreCase = true)
-            }
+        val matched = entries.filter { entry ->
+            matchesLevel(entry.level, level) &&
+                (query.isBlank() || entry.message.contains(query, ignoreCase = true) ||
+                    entry.level.contains(query, ignoreCase = true))
         }
         // Newest first, like tailing the file: the newest line stays at the top.
         matched.asReversed().take(200)
     }
 
     Column(Modifier.fillMaxSize().background(colors.surfaceBase)) {
+        ManisPageHeader(
+            title = "内核日志",
+            trailing = {
+                ManisSectionAction("复制") {
+                    clipboard.setText(AnnotatedString(raw.joinToString("\n")))
+                    onMessage("日志已复制到剪贴板")
+                }
+            },
+        )
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(ManisDimens.spaceLg),
+            contentPadding = PaddingValues(
+                start = ManisDimens.spaceLg,
+                end = ManisDimens.spaceLg,
+                bottom = ManisDimens.spaceXl,
+            ),
             verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
         ) {
-            item(key = "search") {
+            item(key = "logs-search") {
+                ManisSearchField(
+                    value = query,
+                    onValueChange = { query = it },
+                    placeholder = "筛选内核日志",
+                )
+            }
+            item(key = "logs-levels") {
+                // Horizontal: five levels never fit a 320dp phone, and wrapping would hide one.
                 Row(
-                    Modifier.fillMaxWidth(),
+                    Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceXs),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
                 ) {
-                    Box(Modifier.weight(1f)) {
-                        ManisSearchField(value = query, onValueChange = { query = it }, placeholder = "搜索日志")
-                    }
-                    ManisSectionAction("刷新") {
-                        reloads += 1
-                        onMessage("已刷新日志")
-                    }
-                    ManisSectionAction("复制") {
-                        clipboard.setText(AnnotatedString(raw.joinToString("\n")))
-                        onMessage("日志已复制到剪贴板")
+                    for (option in LogLevels) {
+                        ManisChip(
+                            label = option,
+                            selected = option == level,
+                            onClick = { level = option },
+                        )
                     }
                 }
             }
-            item(key = "meta") {
+            item(key = "logs-meta") {
                 ManisMeta(
                     when {
                         loading -> "正在读取日志…"
@@ -112,7 +142,7 @@ fun LogsWorkspace(onMessage: (String) -> Unit) {
                 )
             }
             if (filtered.isEmpty()) {
-                item(key = "empty") {
+                item(key = "logs-empty") {
                     ManisCard {
                         ManisMeta(
                             when {
@@ -124,73 +154,91 @@ fun LogsWorkspace(onMessage: (String) -> Unit) {
                     }
                 }
             } else {
-                itemsIndexed(filtered, key = { index, _ -> index }) { index, entry ->
-                    LogLine(entry, showDivider = index != filtered.lastIndex)
+                itemsIndexed(filtered, key = { index, _ -> index }) { _, entry ->
+                    LogLine(entry)
                 }
             }
         }
     }
 }
 
+/** One log line: clock and level on the first line, the body wrapping under them in mono. */
 @Composable
-private fun LogLine(entry: LogEntry, showDivider: Boolean) {
+private fun LogLine(entry: LogEntry) {
     val colors = LocalManisColors.current
     Column(
         Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(ManisDimens.radiusRow))
-            .background(colors.surfaceOverlay)
-            .padding(horizontal = ManisDimens.spaceLg, vertical = ManisDimens.spaceMd),
+            .background(colors.surfaceElevated)
+            .padding(horizontal = ManisDimens.spaceMd, vertical = ManisDimens.spaceSm),
+        verticalArrangement = Arrangement.spacedBy(3.dp),
     ) {
         Row(
+            Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
         ) {
             Text(
                 entry.time,
-                style = ManisType.metadata.copy(fontFamily = FontFamily.Monospace),
+                style = ManisType.data.copy(fontSize = 11.5.sp),
                 color = colors.textTertiary,
+                maxLines = 1,
             )
-            LevelBadge(entry.level)
+            LevelTag(entry.level)
         }
         Text(
             entry.message,
-            style = ManisType.metadata.copy(fontFamily = FontFamily.Monospace),
+            style = ManisType.data.copy(fontSize = 12.5.sp),
             color = colors.textSecondary,
-            modifier = Modifier.padding(top = 2.dp),
         )
-        if (showDivider) {
-            // Spacing comes from the list arrangement; nothing to draw between rows.
-        }
     }
 }
 
+/** The 48dp level tag: soft fill plus its word, so colour is never the only signal. */
 @Composable
-private fun LevelBadge(level: String) {
+private fun LevelTag(level: String) {
     val colors = LocalManisColors.current
-    val tone: Color = when (level.lowercase()) {
-        "error", "fatal" -> colors.statusError
-        "warning", "warn" -> colors.statusWarning
-        "debug" -> colors.logDebug
-        "trace" -> colors.logTrace
-        else -> colors.logInfo
+    val foreground = levelColor(level, colors)
+    val background = when (level.lowercase()) {
+        "error", "fatal" -> colors.statusErrorSoft
+        "warning", "warn" -> colors.statusWarningSoft
+        "debug" -> colors.routeSoft
+        "trace" -> colors.surfaceLow
+        else -> colors.logInfo.copy(alpha = 0.12f)
     }
     Box(
         Modifier
-            .width(52.dp)
-            .clip(RoundedCornerShape(6.dp))
-            .background(tone.copy(alpha = 0.14f))
-            .padding(vertical = 1.dp),
+            .width(LevelTagWidth)
+            .height(20.dp)
+            .clip(RoundedCornerShape(ManisDimens.radiusBadge))
+            .background(background),
         contentAlignment = Alignment.Center,
     ) {
         Text(
-            level.uppercase(),
-            style = ManisType.metadata.copy(fontFamily = FontFamily.Monospace),
-            color = tone,
+            level.uppercase().take(5),
+            style = ManisType.data.copy(fontSize = 10.5.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold),
+            color = foreground,
             maxLines = 1,
             overflow = TextOverflow.Clip,
         )
     }
+}
+
+/** Does one parsed level belong to the pill the user picked? */
+private fun matchesLevel(level: String, filter: String): Boolean = when (filter) {
+    LogLevels.first() -> true
+    "ERROR" -> level.lowercase() in setOf("error", "fatal")
+    "WARN" -> level.lowercase() in setOf("warn", "warning")
+    else -> level.equals(filter, ignoreCase = true)
+}
+
+private fun levelColor(level: String, colors: ManisColors): Color = when (level.lowercase()) {
+    "error", "fatal" -> colors.statusError
+    "warning", "warn" -> colors.statusWarning
+    "debug" -> colors.logDebug
+    "trace" -> colors.logTrace
+    else -> colors.logInfo
 }
 
 private val LOG_TIME = Regex("time=\"([^\"]*)\"")

@@ -357,20 +357,19 @@ pub(crate) fn manual_group_detail(language: Language, total: usize, disabled: us
     }
 }
 
+/// The remote group's supporting line. The target is already the header's route pill, so this
+/// line never repeats it.
 pub(crate) fn remote_group_detail(
     language: Language,
     rules: usize,
     enabled: bool,
-    target: &str,
     update: &str,
 ) -> String {
     match (language, enabled) {
         (Language::English, false) => format!("{rules} rules · Disabled"),
         (Language::SimplifiedChinese, false) => format!("{rules} 条规则 · 已停用"),
-        (Language::English, true) => format!("{rules} rules · Target {target} · {update}"),
-        (Language::SimplifiedChinese, true) => {
-            format!("{rules} 条规则 · 目标 {target} · {update}")
-        }
+        (Language::English, true) => format!("{rules} rules · {update}"),
+        (Language::SimplifiedChinese, true) => format!("{rules} 条规则 · {update}"),
     }
 }
 
@@ -433,26 +432,24 @@ pub(crate) fn qx_rules_removed(language: Language, suffix: &str) -> String {
     }
 }
 
+/// The local group's supporting line. The target is the header's route pill, not repeated here.
 pub(crate) fn local_group_detail(
     language: Language,
     rules: usize,
     disabled: usize,
-    target: &str,
     enabled: bool,
 ) -> String {
     let count = language.count(CountNoun::Rule, rules);
     match (language, enabled, disabled) {
         (Language::English, false, _) => format!("{count} · Disabled · Saved locally"),
         (Language::SimplifiedChinese, false, _) => format!("{count} · 已停用 · 本地保存"),
-        (Language::English, true, 0) => format!("{count} · Target {target} · Saved locally"),
+        (Language::English, true, 0) => format!("{count} · Saved locally"),
         (Language::English, true, _) => {
-            format!("{count} · {disabled} disabled · Target {target} · Saved locally")
+            format!("{count} · {disabled} disabled · Saved locally")
         }
-        (Language::SimplifiedChinese, true, 0) => {
-            format!("{count} · 目标 {target} · 本地保存")
-        }
+        (Language::SimplifiedChinese, true, 0) => format!("{count} · 本地保存"),
         (Language::SimplifiedChinese, true, _) => {
-            format!("{count} · {disabled} 条已禁用 · 目标 {target} · 本地保存")
+            format!("{count} · {disabled} 条已禁用 · 本地保存")
         }
     }
 }

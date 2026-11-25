@@ -1,6 +1,9 @@
 mod feedback;
 mod groups;
 mod reorder;
+use crate::components::{StatusTone, status_badge};
+use crate::theme::MONO_FAMILY;
+
 use super::{
     AnyElement, Button, ButtonVariant, ButtonVariants, Collapsible, Context, ContextMenuExt, Div,
     Entity, FluentBuilder, FontWeight, InteractiveElement, IntoElement, Language,
@@ -87,25 +90,18 @@ impl ManisApp {
                 div()
                     .w(px(42.0))
                     .flex_shrink_0()
+                    .font_family(MONO_FAMILY)
                     .text_size(TextRole::Metadata.size())
                     .line_height(TextRole::Metadata.line_height())
                     .text_color(theme.text_tertiary)
                     .child(format!("#{order:03}")),
             )
             .child(matchers)
-            .child(
-                div()
-                    .flex_shrink_0()
-                    .text_size(TextRole::Data.size())
-                    .line_height(TextRole::Data.line_height())
-                    .font_weight(TextRole::Data.weight())
-                    .text_color(if enabled {
-                        theme.action_primary
-                    } else {
-                        theme.text_tertiary
-                    })
-                    .child(target),
-            )
+            .child(div().flex_shrink_0().child(status_badge(
+                format!("→ {target}"),
+                StatusTone::Route,
+                theme,
+            )))
             .when(!enabled, |row| {
                 row.child(
                     div()
@@ -238,6 +234,7 @@ impl ManisApp {
                     )
                     .child(
                         div()
+                            .font_family(MONO_FAMILY)
                             .text_size(TextRole::Data.size())
                             .line_height(TextRole::Data.line_height())
                             .text_color(primary_text)

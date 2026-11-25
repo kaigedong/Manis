@@ -17,13 +17,12 @@ use super::{
     ConfigurationSection, ImportedSubscriptionState, ManisApp, QxRuleList, SourceRuntimeApply,
 };
 use crate::{
-    components::StatusTone,
-    localization::{Language, LanguagePreference, Message, copy},
+    localization::{Language, LanguagePreference, copy},
     mihomo::{self, RemoteSourceRefreshInterval},
     rule_source::download_qx_rule_document,
     subscription::SourceKind,
     subscription_input::SubscriptionTextInput,
-    theme::{Radius, Space, TextRole, Theme},
+    theme::{LayoutMetric, Space, TextRole, Theme},
 };
 
 mod editor;
@@ -324,8 +323,9 @@ fn rule_group_is_open(workspace: &manis_core::NodeWorkspaceState, key: &str) -> 
     !workspace.is_group_collapsed(key)
 }
 
+/// One opaque settings card: elevated fill, 1px warm hairline, card radius.
 fn panel_surface(id: &'static str, compact: bool, theme: Theme) -> Stateful<Div> {
-    div()
+    crate::components::card_surface(theme)
         .id(id)
         .w_full()
         .p(if compact {
@@ -333,9 +333,6 @@ fn panel_surface(id: &'static str, compact: bool, theme: Theme) -> Stateful<Div>
         } else {
             Space::Lg.px()
         })
-        .rounded(Radius::Pane.px())
-        .border_1()
-        .border_color(theme.outline_subtle)
 }
 
 fn field_label(label: impl Into<gpui::SharedString>, theme: Theme) -> Div {
@@ -347,6 +344,19 @@ fn field_label(label: impl Into<gpui::SharedString>, theme: Theme) -> Div {
         .font_weight(TextRole::Label.weight())
         .text_color(theme.text_secondary)
         .child(label)
+}
+
+/// Editor footers keep their live feedback on the left and their actions on the right.
+fn footer_feedback(text: impl Into<gpui::SharedString>, color: gpui::Rgba) -> Div {
+    div()
+        .mr_auto()
+        .min_w(px(0.0))
+        .overflow_hidden()
+        .text_ellipsis()
+        .text_size(TextRole::Metadata.size())
+        .line_height(TextRole::Metadata.line_height())
+        .text_color(color)
+        .child(text.into())
 }
 
 fn manual_rule_placeholder(
@@ -573,10 +583,8 @@ impl ManisApp {
         cx: &mut Context<Self>,
     ) -> Div {
         let compact = size_class == WindowSizeClass::Compact;
-        let language = self.language();
         let rule_busy = self.rule_sources.feedback == QxRuleImportFeedback::Importing
             || self.source_refresh_busy();
-        let selected_section = self.configuration_section;
         let sections = [
             div()
                 .flex()
@@ -609,7 +617,7 @@ impl ManisApp {
                     div()
                         .id(format!("configuration-section-{}", section.key()))
                         .w_full()
-                        .max_w(px(900.0))
+                        .max_w(LayoutMetric::ContentMaxWidth.px())
                         .mx_auto()
                         .pt(if compact { px(12.0) } else { px(24.0) })
                         .child(detail)
@@ -621,6 +629,8 @@ impl ManisApp {
                     this.sync_configuration_directory(cx);
                 });
             }));
+        // The command bar already names this page, so the workspace opens straight on the
+        // directory card and the section document.
         div()
             .flex_1()
             .min_w(px(0.0))
@@ -628,14 +638,6 @@ impl ManisApp {
             .flex()
             .flex_col()
             .bg(theme.surface_base)
-            .child(Self::workspace_header(
-                language.message(Message::Configuration),
-                language.localized(copy::configuration::MANAGE_MANIS_PREFERENCES_AND_DATA_SOURCES),
-                configuration_section_label(selected_section, language),
-                StatusTone::Neutral,
-                theme,
-                compact,
-            ))
             .child(
                 div()
                     .flex_1()

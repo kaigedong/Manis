@@ -1,6 +1,7 @@
 package dev.manis.app.ui
 
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.Typography
@@ -12,13 +13,18 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 /**
- * The semantic palette, mapped onto Material 3 roles from a teal seed. The names are kept from
- * the desktop port so the workspaces stay untouched, but every value follows the M3 tonal scale.
+ * Manis UI 2.0 — "Obsidian & Alabaster · Swiss Precision Routing".
+ *
+ * These values are the Android projection of `design-system/manis/tokens.json`, the single source
+ * of truth shared with the desktop GPUI application. The old mint Material 3 palette and the icy
+ * blue route colour are gone: the warm alabaster / obsidian neutral ladder, the electric cobalt
+ * action accent and the royal violet route accent replace them everywhere.
  */
 data class ManisColors(
     val windowBackdrop: Color,
@@ -27,95 +33,136 @@ data class ManisColors(
     val surfaceHigh: Color,
     val surfaceOverlay: Color,
     val surfaceChrome: Color,
+    /** Opaque content cards: policy groups, subscriptions, settings groups. */
+    val surfaceElevated: Color,
     val textPrimary: Color,
     val textSecondary: Color,
     val textTertiary: Color,
     val outlineSubtle: Color,
     val outlineStrong: Color,
     val actionPrimary: Color,
+    val actionPrimaryHover: Color,
+    val actionPrimaryActive: Color,
     val actionOnPrimary: Color,
     val actionSoft: Color,
     val buttonBg: Color,
     val buttonHover: Color,
+    val buttonActive: Color,
     val focusRing: Color,
     val routeTrace: Color,
     val routeSoft: Color,
     val statusSuccess: Color,
+    val statusSuccessSoft: Color,
     val statusWarning: Color,
+    val statusWarningSoft: Color,
     val statusError: Color,
+    val statusErrorSoft: Color,
+    val dangerFill: Color,
+    val dangerHover: Color,
+    val dangerOn: Color,
     val logInfo: Color,
     val logDebug: Color,
     val logTrace: Color,
+    val scrim: Color,
 )
 
 private val LightManisColors = ManisColors(
-    windowBackdrop = Color(0xFFF5FBF8),
-    surfaceBase = Color(0xFFF5FBF8),
-    surfaceLow = Color(0xFFEFF5F2),
-    surfaceHigh = Color(0xFFE3EAE7),
+    windowBackdrop = Color(0xFFF7F6F3),
+    surfaceBase = Color(0xFFF7F6F3),
+    surfaceLow = Color(0xFFF1EFEA),
+    surfaceHigh = Color(0xFFE6E3DC),
     surfaceOverlay = Color(0xFFFFFFFF),
-    surfaceChrome = Color(0xFFE9EFEC),
-    textPrimary = Color(0xFF171D1B),
-    textSecondary = Color(0xFF3F4946),
-    textTertiary = Color(0xFF6F7976),
-    outlineSubtle = Color(0xFFBEC9C4),
-    outlineStrong = Color(0xFF6F7976),
-    actionPrimary = Color(0xFF006A60),
+    surfaceChrome = Color(0xFFEFECE6),
+    surfaceElevated = Color(0xFFFFFFFF),
+    textPrimary = Color(0xFF141413),
+    textSecondary = Color(0xFF4E4D49),
+    textTertiary = Color(0xFF5E5C57),
+    outlineSubtle = Color(0xFFE5E2DC),
+    outlineStrong = Color(0xFF8B8881),
+    actionPrimary = Color(0xFF2B4EFF),
+    actionPrimaryHover = Color(0xFF1F3EE0),
+    actionPrimaryActive = Color(0xFF1732BD),
     actionOnPrimary = Color(0xFFFFFFFF),
-    actionSoft = Color(0xFFCCE8E2),
-    buttonBg = Color(0xFFE3EAE7),
-    buttonHover = Color(0xFFDDE4E1),
-    focusRing = Color(0xFF006A60),
-    routeTrace = Color(0xFF3E6374),
-    routeSoft = Color(0xFFC1E8FB),
-    statusSuccess = Color(0xFF2F6E4F),
-    statusWarning = Color(0xFF8A5300),
-    statusError = Color(0xFFBA1A1A),
+    actionSoft = Color(0xFFEEF2FF),
+    buttonBg = Color(0xFFECEAE4),
+    buttonHover = Color(0xFFE2DFD7),
+    buttonActive = Color(0xFFD7D3C9),
+    focusRing = Color(0xFF2B4EFF),
+    routeTrace = Color(0xFF6D28D9),
+    routeSoft = Color(0xFFF3EEFF),
+    statusSuccess = Color(0xFF0E7A4B),
+    statusSuccessSoft = Color(0xFFE8F7F0),
+    statusWarning = Color(0xFF9A5504),
+    statusWarningSoft = Color(0xFFFEF5E7),
+    statusError = Color(0xFFC81E1E),
+    statusErrorSoft = Color(0xFFFEF2F2),
+    dangerFill = Color(0xFFC81E1E),
+    dangerHover = Color(0xFFA61717),
+    dangerOn = Color(0xFFFFFFFF),
     logInfo = Color(0xFF1D4ED8),
-    logDebug = Color(0xFF7E22CE),
-    logTrace = Color(0xFF0E7490),
+    logDebug = Color(0xFF6D28D9),
+    logTrace = Color(0xFF0F766E),
+    scrim = Color(0x59141413),
 )
 
 private val DarkManisColors = ManisColors(
-    windowBackdrop = Color(0xFF0E1513),
-    surfaceBase = Color(0xFF0E1513),
-    surfaceLow = Color(0xFF171D1B),
-    surfaceHigh = Color(0xFF252B29),
-    surfaceOverlay = Color(0xFF171D1B),
-    surfaceChrome = Color(0xFF1B211F),
-    textPrimary = Color(0xFFDDE4E0),
-    textSecondary = Color(0xFFBEC9C4),
-    textTertiary = Color(0xFF88938F),
-    outlineSubtle = Color(0xFF3F4946),
-    outlineStrong = Color(0xFF88938F),
-    actionPrimary = Color(0xFF83D5C8),
-    actionOnPrimary = Color(0xFF003731),
-    actionSoft = Color(0xFF324B46),
-    buttonBg = Color(0xFF252B29),
-    buttonHover = Color(0xFF303634),
-    focusRing = Color(0xFF83D5C8),
-    routeTrace = Color(0xFFA5CCDF),
-    routeSoft = Color(0xFF264C5C),
-    statusSuccess = Color(0xFF8FD8B0),
-    statusWarning = Color(0xFFF2C36B),
-    statusError = Color(0xFFFFB4AB),
-    logInfo = Color(0xFFA8C7FA),
+    windowBackdrop = Color(0xFF0D0D0F),
+    surfaceBase = Color(0xFF0D0D0F),
+    surfaceLow = Color(0xFF17171B),
+    surfaceHigh = Color(0xFF25252C),
+    surfaceOverlay = Color(0xFF212127),
+    surfaceChrome = Color(0xFF141417),
+    surfaceElevated = Color(0xFF1C1C21),
+    textPrimary = Color(0xFFF4F4F6),
+    textSecondary = Color(0xFFB4B4BE),
+    textTertiary = Color(0xFF9A9AA6),
+    outlineSubtle = Color(0xFF2B2B33),
+    outlineStrong = Color(0xFF787886),
+    actionPrimary = Color(0xFF6B8AFF),
+    actionPrimaryHover = Color(0xFF859FFF),
+    actionPrimaryActive = Color(0xFFA1B5FF),
+    actionOnPrimary = Color(0xFF0A0D18),
+    actionSoft = Color(0xFF1B2342),
+    buttonBg = Color(0xFF26262E),
+    buttonHover = Color(0xFF31313B),
+    buttonActive = Color(0xFF3D3D4A),
+    focusRing = Color(0xFF859FFF),
+    routeTrace = Color(0xFFC4B5FD),
+    routeSoft = Color(0xFF271F3D),
+    statusSuccess = Color(0xFF4ADE80),
+    statusSuccessSoft = Color(0xFF122B20),
+    statusWarning = Color(0xFFFBBF24),
+    statusWarningSoft = Color(0xFF2E2312),
+    statusError = Color(0xFFF87171),
+    statusErrorSoft = Color(0xFF331719),
+    dangerFill = Color(0xFFC81E1E),
+    dangerHover = Color(0xFFA61717),
+    dangerOn = Color(0xFFFFFFFF),
+    logInfo = Color(0xFF93C5FD),
     logDebug = Color(0xFFD8B4FE),
-    logTrace = Color(0xFF67E8F9),
+    logTrace = Color(0xFF5EEAD4),
+    scrim = Color(0x80000000),
 )
 
-/** The Material 3 type scale, expressed with the app's role names. */
+/** The mobile type scale. All measured data uses [ManisType.data], which is monospaced. */
 object ManisType {
-    val pageTitle = TextStyle(fontSize = 26.sp, lineHeight = 32.sp, fontWeight = FontWeight.SemiBold)
+    val pageTitle = TextStyle(fontSize = 24.sp, lineHeight = 32.sp, fontWeight = FontWeight.SemiBold)
+    val displayMetric = TextStyle(fontSize = 26.sp, lineHeight = 32.sp, fontWeight = FontWeight.SemiBold)
     val dialogTitle = TextStyle(fontSize = 20.sp, lineHeight = 26.sp, fontWeight = FontWeight.SemiBold)
-    val sectionTitle = TextStyle(fontSize = 16.sp, lineHeight = 24.sp, fontWeight = FontWeight.SemiBold)
-    val body = TextStyle(fontSize = 14.sp, lineHeight = 20.sp)
+    val sectionTitle = TextStyle(fontSize = 16.sp, lineHeight = 22.sp, fontWeight = FontWeight.SemiBold)
+    val body = TextStyle(fontSize = 14.5.sp, lineHeight = 21.sp)
     val label = TextStyle(fontSize = 14.sp, lineHeight = 20.sp, fontWeight = FontWeight.Medium)
-    val data = TextStyle(fontSize = 13.sp, lineHeight = 18.sp, fontWeight = FontWeight.Medium)
+    val data = TextStyle(
+        fontSize = 13.sp,
+        lineHeight = 18.sp,
+        fontWeight = FontWeight.Medium,
+        fontFamily = FontFamily.Monospace,
+        fontFeatureSettings = "tnum",
+    )
     val metadata = TextStyle(fontSize = 12.sp, lineHeight = 16.sp)
 }
 
-/** Spacing, shape and control metrics on a 4dp grid. */
+/** Spacing, shapes and control metrics on the 4dp grid. */
 object ManisDimens {
     val spaceXs = 4.dp
     val spaceSm = 8.dp
@@ -124,13 +171,19 @@ object ManisDimens {
     val spaceXl = 24.dp
     val space2xl = 32.dp
 
-    val radiusControl = 12.dp
-    val radiusRow = 12.dp
-    val radiusPane = 16.dp
+    val radiusBadge = 6.dp
+    val radiusControl = 10.dp
+    val radiusRow = 10.dp
+    val radiusCard = 14.dp
+    /** Kept as the historical name used by shared components: same 14dp card step. */
+    val radiusPane = radiusCard
+    val radiusSheet = 20.dp
 
     val controlCompact = 40.dp
     val controlStandard = 48.dp
     val controlIcon = 40.dp
+    /** WCAG minimum touch target; every interactive row and icon clears it. */
+    val minTouch = 48.dp
 
     /** Section headers and rule rows share one height, so the list keeps a steady step. */
     val rowHeight = 56.dp
@@ -141,16 +194,13 @@ object ManisDimens {
     /** The switch column: one width for headers and rows, so the two line up. */
     val switchWidth = 52.dp
 
-    /** The fixed connection bar at the bottom of the home page, and the space the toast must clear. */
-    val connectionBar = 140.dp
-
-    val chromeHeight = 60.dp
+    val chromeHeight = 48.dp
     val statusBarHeight = 32.dp
-    val bottomNavigationHeight = 72.dp
+    val bottomNavigationHeight = 64.dp
 
     val navCompact = 56.dp
-    val navMedium = 66.dp
-    val navWide = 220.dp
+    val navMedium = 68.dp
+    val navWide = 232.dp
 }
 
 val LocalManisColors = staticCompositionLocalOf { LightManisColors }
@@ -160,81 +210,81 @@ private fun ManisColors.toScheme(dark: Boolean) = if (dark) {
         primary = actionPrimary,
         onPrimary = actionOnPrimary,
         primaryContainer = actionSoft,
-        onPrimaryContainer = Color(0xFF9EF2E4),
-        secondary = Color(0xFFB0CCC6),
-        onSecondary = Color(0xFF1B3530),
-        secondaryContainer = actionSoft,
+        onPrimaryContainer = textPrimary,
+        secondary = textSecondary,
+        onSecondary = surfaceBase,
+        secondaryContainer = surfaceHigh,
         onSecondaryContainer = textPrimary,
         tertiary = routeTrace,
-        onTertiary = Color(0xFF093543),
+        onTertiary = Color(0xFF1A1226),
         tertiaryContainer = routeSoft,
-        onTertiaryContainer = Color(0xFFC1E8FB),
+        onTertiaryContainer = routeTrace,
         error = statusError,
-        onError = Color(0xFF690005),
-        errorContainer = Color(0xFF93000A),
-        onErrorContainer = Color(0xFFFFDAD6),
+        onError = Color(0xFF1A0B0B),
+        errorContainer = statusErrorSoft,
+        onErrorContainer = statusError,
         background = surfaceBase,
         onBackground = textPrimary,
         surface = surfaceBase,
         onSurface = textPrimary,
-        surfaceVariant = Color(0xFF3F4946),
+        surfaceVariant = surfaceHigh,
         onSurfaceVariant = textSecondary,
-        surfaceContainerLowest = Color(0xFF090F0D),
-        surfaceContainerLow = Color(0xFF171D1B),
-        surfaceContainer = Color(0xFF1B211F),
-        surfaceContainerHigh = Color(0xFF252B29),
-        surfaceContainerHighest = Color(0xFF303634),
+        surfaceContainerLowest = surfaceBase,
+        surfaceContainerLow = surfaceLow,
+        surfaceContainer = surfaceChrome,
+        surfaceContainerHigh = surfaceElevated,
+        surfaceContainerHighest = surfaceHigh,
         outline = outlineStrong,
         outlineVariant = outlineSubtle,
-        inverseSurface = Color(0xFFDDE4E0),
-        inverseOnSurface = Color(0xFF2B3230),
-        inversePrimary = Color(0xFF006A60),
-        scrim = Color(0xFF000000),
+        inverseSurface = textPrimary,
+        inverseOnSurface = surfaceBase,
+        inversePrimary = Color(0xFF2B4EFF),
+        scrim = scrim,
     )
 } else {
     lightColorScheme(
         primary = actionPrimary,
         onPrimary = actionOnPrimary,
-        primaryContainer = Color(0xFF9EF2E4),
-        onPrimaryContainer = Color(0xFF00201C),
-        secondary = Color(0xFF4A635E),
-        onSecondary = Color(0xFFFFFFFF),
-        secondaryContainer = actionSoft,
-        onSecondaryContainer = Color(0xFF05201C),
+        primaryContainer = actionSoft,
+        onPrimaryContainer = textPrimary,
+        secondary = textSecondary,
+        onSecondary = surfaceElevated,
+        secondaryContainer = surfaceLow,
+        onSecondaryContainer = textPrimary,
         tertiary = routeTrace,
         onTertiary = Color(0xFFFFFFFF),
         tertiaryContainer = routeSoft,
-        onTertiaryContainer = Color(0xFF001F2A),
+        onTertiaryContainer = routeTrace,
         error = statusError,
         onError = Color(0xFFFFFFFF),
-        errorContainer = Color(0xFFFFDAD6),
-        onErrorContainer = Color(0xFF410002),
+        errorContainer = statusErrorSoft,
+        onErrorContainer = statusError,
         background = surfaceBase,
         onBackground = textPrimary,
         surface = surfaceBase,
         onSurface = textPrimary,
-        surfaceVariant = Color(0xFFDAE5E0),
+        surfaceVariant = surfaceLow,
         onSurfaceVariant = textSecondary,
-        surfaceContainerLowest = Color(0xFFFFFFFF),
-        surfaceContainerLow = Color(0xFFEFF5F2),
-        surfaceContainer = Color(0xFFE9EFEC),
-        surfaceContainerHigh = Color(0xFFE3EAE7),
-        surfaceContainerHighest = Color(0xFFDDE4E1),
+        surfaceContainerLowest = surfaceElevated,
+        surfaceContainerLow = surfaceLow,
+        surfaceContainer = surfaceChrome,
+        surfaceContainerHigh = surfaceHigh,
+        surfaceContainerHighest = surfaceHigh,
         outline = outlineStrong,
         outlineVariant = outlineSubtle,
-        inverseSurface = Color(0xFF2B3230),
-        inverseOnSurface = Color(0xFFECF2EF),
-        inversePrimary = Color(0xFF83D5C8),
-        scrim = Color(0xFF000000),
+        inverseSurface = textPrimary,
+        inverseOnSurface = surfaceBase,
+        inversePrimary = Color(0xFF6B8AFF),
+        scrim = scrim,
     )
 }
 
 private val ManisShapes = Shapes(
-    extraSmall = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
-    small = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
-    medium = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
-    large = androidx.compose.foundation.shape.RoundedCornerShape(24.dp),
-    extraLarge = androidx.compose.foundation.shape.RoundedCornerShape(28.dp),
+    extraSmall = RoundedCornerShape(ManisDimens.radiusBadge),
+    small = RoundedCornerShape(ManisDimens.radiusControl),
+    medium = RoundedCornerShape(ManisDimens.radiusCard),
+    large = RoundedCornerShape(ManisDimens.radiusSheet),
+    extraLarge = RoundedCornerShape(ManisDimens.radiusSheet),
 )
 
 private val ManisTypography = Typography(
@@ -273,7 +323,7 @@ object UiPrefs {
     }
 }
 
-/** Applies the Material 3 palette, type scale and shapes to the whole application. */
+/** Applies the Manis palette, type scale and shapes to the whole application. */
 @Composable
 fun ManisTheme(
     darkTheme: Boolean = UiPrefs.dark.value ?: isSystemInDarkTheme(),

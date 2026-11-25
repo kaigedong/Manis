@@ -1,8 +1,8 @@
 use super::{
     Context, CountNoun, Div, FluentBuilder, ImportedSubscriptionState, InteractiveElement,
-    KernelKind, Language, ManagedPolicyIcon, ManisApp, Message, NodeSourceGroup, NodeWorkspaceView,
-    ParentElement, Space, Stateful, StatefulInteractiveElement, Styled, TextRole, Theme,
-    WindowSizeClass, copy, div, px, subscription_provider_refs,
+    KernelKind, Language, ManagedPolicyIcon, ManisApp, NodeSourceGroup, NodeWorkspaceView,
+    ParentElement, Space, Stateful, StatefulInteractiveElement, Styled, Theme, WindowSizeClass,
+    copy, div, px, section_header, subscription_provider_refs,
 };
 
 #[cfg(feature = "snapshot-fixtures")]
@@ -84,6 +84,10 @@ impl ManisApp {
         copy::nodes::single_test_limit(language, limit)
     }
 
+    /// The nodes workspace: policy groups first, then the sources they draw exits from.
+    ///
+    /// Page identity (title, counts, proxy and routing commands) belongs to the shell's command
+    /// bar, so this page renders content only.
     pub(in crate::app) fn node_workspace(
         &self,
         theme: Theme,
@@ -134,7 +138,6 @@ impl ManisApp {
             .flex()
             .flex_col()
             .bg(theme.surface_base)
-            .child(self.node_workspace_header(view, cx))
             .child(
                 div()
                     .id("nodes-scroll")
@@ -144,8 +147,8 @@ impl ManisApp {
                     .overflow_y_scroll()
                     .flex()
                     .flex_col()
-                    .child(self.node_workspace_body(&groups, loading, unavailable, view, cx))
-                    .child(self.policy_section(theme, compact, cx)),
+                    .child(self.policy_section(theme, compact, cx))
+                    .child(self.node_workspace_body(&groups, loading, unavailable, view, cx)),
             )
     }
 
@@ -155,68 +158,16 @@ impl ManisApp {
         language: Language,
     ) -> Vec<NodeSourceGroup<'_>> {
         if has_local_sources {
-            let mut groups: Vec<_> = self
-                .imported_subscriptions
-                .iter()
-                .filter(|subscription| subscription.enabled)
-                .enumerate()
-                .map(|(index, subscription)| {
-                    let name = subscription.name.clone();
-                    let runtime_provider_name = format!("Subscription {}", index + 1);
-                    let providers = subscription_provider_refs(
-                        &subscription.providers,
-                        &self.source_providers,
-                        &runtime_provider_name,
-                    );
-                    let using_runtime_cache =
-                        subscription.providers.is_empty() && !providers.is_empty();
-                    let provider_count = providers.len();
-                    let transport = if subscription.source.is_https() {
-                        language.localized(copy::common::HTTPS_SUBSCRIPTION)
-                    } else {
-                        language.localized(copy::common::HTTP_SUBSCRIPTION)
-                    };
-                    let state = if using_runtime_cache {
-                        language.localized(copy::nodes::USING_MIHOMO_CACHE)
-                    } else {
-                        match subscription.state {
-                            ImportedSubscriptionState::Pending(_)
-                            | ImportedSubscriptionState::Refreshing(_) => {
-                                language.localized(copy::nodes::RESTORING)
-                            }
-                            ImportedSubscriptionState::Ready(_) => {
-                                language.localized(copy::nodes::RESTORES_AFTER_RESTART)
-                            }
-                            ImportedSubscriptionState::Unavailable(_, _)
-                            | ImportedSubscriptionState::StoreError(_) => {
-                                language.localized(copy::nodes::SOURCE_UNAVAILABLE)
-                            }
-                            ImportedSubscriptionState::Removing(_) => {
-                                language.localized(copy::nodes::REMOVING)
-                            }
-                            ImportedSubscriptionState::None => {
-                                language.localized(copy::nodes::NOT_LOADED)
-                            }
-                        }
-                    };
-                    NodeSourceGroup {
-                        id: format!("subscription:{}", subscription.id),
-                        name,
-                        detail: format!("{transport} · {state}"),
-                        providers,
-                        runtime_provider_names: vec![runtime_provider_name; provider_count],
-                        saved_nodes: Vec::new(),
-                        saved_nodes_use_runtime_providers: false,
-                    }
-                })
-                .collect();
+            let mut groups = self.imported_subscription_groups(language);
             if self.saved_single_nodes.iter().any(|saved| saved.enabled) {
                 groups.push(NodeSourceGroup {
                     id: "saved".to_owned(),
                     name: language.localized(copy::common::SAVED).to_owned(),
+                    vehicle: Some("URI".to_owned()),
                     detail: language
                         .localized(copy::nodes::INDIVIDUALLY_ADDED_NODES_PRIVATE_LOCAL_STORAGE)
                         .to_owned(),
+                    quota: None,
                     providers: Vec::new(),
                     runtime_provider_names: Vec::new(),
                     saved_nodes: self
@@ -226,72 +177,96 @@ impl ManisApp {
                         .map(|saved| saved.source.preview())
                         .collect(),
                     saved_nodes_use_runtime_providers: self.runtime.kind() == KernelKind::Mihomo,
+                    subscription_id: None,
                 });
             }
             return groups;
         }
-
         self.source_providers
             .iter()
             .enumerate()
             .map(|(index, provider)| NodeSourceGroup {
                 id: format!("mihomo:{index}"),
                 name: provider.name.clone(),
-                detail: provider.vehicle_type.as_ref().map_or_else(
-                    || language.localized(copy::nodes::MIHOMO_SOURCE).to_owned(),
-                    |vehicle| {
-                        format!(
-                            "{} · {vehicle}",
-                            language.localized(copy::nodes::MIHOMO_SOURCE)
-                        )
-                    },
+                vehicle: Some(
+                    provider.vehicle_type.clone().unwrap_or_else(|| {
+                        language.localized(copy::nodes::MIHOMO_SOURCE).to_owned()
+                    }),
                 ),
+                detail: language.localized(copy::nodes::MIHOMO_SOURCE).to_owned(),
+                quota: None,
                 providers: vec![provider],
                 runtime_provider_names: vec![provider.name.clone()],
                 saved_nodes: Vec::new(),
                 saved_nodes_use_runtime_providers: false,
+                subscription_id: None,
             })
             .collect()
     }
 
-    pub(super) fn node_workspace_header(
-        &self,
-        view: NodeWorkspaceView,
-        cx: &mut Context<Self>,
-    ) -> Div {
-        let NodeWorkspaceView {
-            compact,
-            language,
-            theme,
-        } = view;
-        div()
-            .flex_shrink_0()
-            .px(if compact { px(12.0) } else { px(24.0) })
-            .py(Space::Lg.px())
-            .border_b_1()
-            .border_color(theme.outline_subtle)
-            .flex()
-            .flex_wrap()
-            .items_center()
-            .justify_between()
-            .gap(Space::Md.px())
-            .child(
-                div()
-                    .text_size(TextRole::PageTitle.size())
-                    .line_height(TextRole::PageTitle.line_height())
-                    .font_weight(TextRole::PageTitle.weight())
-                    .text_color(theme.text_primary)
-                    .child(language.message(Message::Nodes)),
-            )
-            .when(
-                !matches!(
-                    self.controller,
-                    crate::mihomo::ControllerState::Connected { .. }
-                ),
-                |header| header.child(self.connection_button(theme, cx)),
-            )
+    /// One card group per enabled subscription, with the transport shown as a pill.
+    fn imported_subscription_groups(&self, language: Language) -> Vec<NodeSourceGroup<'_>> {
+        self.imported_subscriptions
+            .iter()
+            .filter(|subscription| subscription.enabled)
+            .enumerate()
+            .map(|(index, subscription)| {
+                let name = subscription.name.clone();
+                let runtime_provider_name = format!("Subscription {}", index + 1);
+                let providers = subscription_provider_refs(
+                    &subscription.providers,
+                    &self.source_providers,
+                    &runtime_provider_name,
+                );
+                let using_runtime_cache =
+                    subscription.providers.is_empty() && !providers.is_empty();
+                let provider_count = providers.len();
+                let vehicle = if subscription.source.is_https() {
+                    "HTTPS".to_owned()
+                } else {
+                    "HTTP".to_owned()
+                };
+                let state = if using_runtime_cache {
+                    language.localized(copy::nodes::USING_MIHOMO_CACHE)
+                } else {
+                    match subscription.state {
+                        ImportedSubscriptionState::Pending(_)
+                        | ImportedSubscriptionState::Refreshing(_) => {
+                            language.localized(copy::nodes::RESTORING)
+                        }
+                        ImportedSubscriptionState::Ready(_) => {
+                            language.localized(copy::nodes::RESTORES_AFTER_RESTART)
+                        }
+                        ImportedSubscriptionState::Unavailable(_, _)
+                        | ImportedSubscriptionState::StoreError(_) => {
+                            language.localized(copy::nodes::SOURCE_UNAVAILABLE)
+                        }
+                        ImportedSubscriptionState::Removing(_) => {
+                            language.localized(copy::nodes::REMOVING)
+                        }
+                        ImportedSubscriptionState::None => {
+                            language.localized(copy::nodes::NOT_LOADED)
+                        }
+                    }
+                };
+                NodeSourceGroup {
+                    id: format!("subscription:{}", subscription.id),
+                    name,
+                    vehicle: Some(vehicle),
+                    detail: state.to_owned(),
+                    quota: None,
+                    providers,
+                    runtime_provider_names: vec![runtime_provider_name; provider_count],
+                    saved_nodes: Vec::new(),
+                    saved_nodes_use_runtime_providers: false,
+                    subscription_id: Some(subscription.id.clone()),
+                }
+            })
+            .collect()
     }
 
+    /// The sources section: one card per subscription, under a section heading that carries the
+    /// live counts.
     pub(super) fn node_workspace_body(
         &self,
         groups: &[NodeSourceGroup<'_>],
@@ -305,31 +280,51 @@ impl ManisApp {
             language,
             theme,
         } = view;
+        let node_total = groups
+            .iter()
+            .map(NodeSourceGroup::node_count)
+            .sum::<usize>();
         div()
-        .id("node-sources-section")
-        .debug_selector(|| "node-sources-section".to_owned())
-        .flex_shrink_0()
-        .px(if compact { px(12.0) } else { px(24.0) })
-        .py_4()
-        .when(loading && groups.is_empty(), |body| {
-            body.child(Self::node_message_panel(
-                language.localized(copy::nodes::RESTORING_NODES),
-                language.localized(copy::nodes::MANIS_IS_LOADING_NODES_FROM_YOUR_SAVED_SUBSCRIPTIONS),
+            .id("node-sources-section")
+            .debug_selector(|| "node-sources-section".to_owned())
+            .flex_shrink_0()
+            .px(if compact { px(12.0) } else { px(24.0) })
+            .pb(Space::Xxl.px())
+            .flex()
+            .flex_col()
+            .gap(Space::Md.px())
+            .child(section_header(
+                language.localized(copy::nodes::NODE_SOURCE),
+                format!(
+                    "{} · {}",
+                    language.count(CountNoun::Source, groups.len()),
+                    language.count(CountNoun::Node, node_total)
+                ),
+                None,
                 theme,
             ))
-        })
-        .when(unavailable && groups.is_empty(), |body| {
-            body.child(Self::node_message_panel(
-                language.localized(copy::nodes::NODES_ARE_TEMPORARILY_UNAVAILABLE),
-                language.localized(copy::nodes::SUBSCRIPTIONS_REMAIN_STORED_LOCALLY_CHECK_SOURCE_DETAILS_IN_CONFIGURATION),
-                theme,
-            ))
-        })
-        .when(!loading && !unavailable && groups.is_empty(), |body| {
-            body.child(Self::node_empty_state(compact, language, theme, cx))
-        })
-        .when(!groups.is_empty(), |body| {
-            body.child(self.source_group_list(groups, compact, language, theme, cx))
-        })
+            .when(loading && groups.is_empty(), |body| {
+                body.child(Self::node_message_panel(
+                    language.localized(copy::nodes::RESTORING_NODES),
+                    language
+                        .localized(copy::nodes::MANIS_IS_LOADING_NODES_FROM_YOUR_SAVED_SUBSCRIPTIONS),
+                    theme,
+                ))
+            })
+            .when(unavailable && groups.is_empty(), |body| {
+                body.child(Self::node_message_panel(
+                    language.localized(copy::nodes::NODES_ARE_TEMPORARILY_UNAVAILABLE),
+                    language.localized(
+                        copy::nodes::SUBSCRIPTIONS_REMAIN_STORED_LOCALLY_CHECK_SOURCE_DETAILS_IN_CONFIGURATION,
+                    ),
+                    theme,
+                ))
+            })
+            .when(!loading && !unavailable && groups.is_empty(), |body| {
+                body.child(Self::node_empty_state(compact, language, theme, cx))
+            })
+            .when(!groups.is_empty(), |body| {
+                body.child(self.source_group_list(groups, view, cx))
+            })
     }
 }

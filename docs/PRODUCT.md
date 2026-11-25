@@ -37,7 +37,7 @@ The app is a long-running desktop utility used from a normal window and system t
 
 ## Brand Commitments
 
-`Manis` is the confirmed product and repository name, taken from the Latin genus name for Asian pangolins. The existing teal-and-copper Signal Patch Bay palette remains the confirmed visual baseline. The abstract Shanshui mark in `assets/brand/manis-mark.svg` is the compact product mark; the detailed companion artwork is reserved for large-format documentation and release material.
+`Manis` is the confirmed product and repository name, taken from the Latin genus name for Asian pangolins. The visual baseline is **Manis UI 2.0 — Obsidian & Alabaster**, defined in [design-system/manis/MASTER.md](../design-system/manis/MASTER.md): warm alabaster and true-obsidian surfaces, electric cobalt actions, and a royal-violet accent reserved for the rule → policy group → exit chain. The abstract Shanshui mark in `assets/brand/manis-mark.svg` is the compact product mark; the detailed companion artwork is reserved for large-format documentation and release material.
 
 ## Evidence on Hand
 

@@ -1,7 +1,7 @@
 use super::super::{
     driver::{
-        SnapshotWorkspace, close_window, open_policy_section, open_workspace, refresh,
-        save_screenshot, scroll_window, settle_ui_animation, settle_ui_for, theme_toggle_x,
+        SnapshotWorkspace, close_window, connect_proxy, open_policy_section, open_workspace,
+        refresh, save_screenshot, scroll_window, settle_ui_animation, settle_ui_for, toggle_theme,
     },
     fixtures::spawn_mihomo_fixture,
 };
@@ -40,9 +40,7 @@ pub(crate) fn capture_proxy_candidate(
         save_screenshot(cx, window, &format!("proxy-candidate-{label}-row.png"))?;
         for (dark, mode) in [(false, "light"), (true, "dark")] {
             if dark {
-                let toggle_x = theme_toggle_x(width);
-                cx.simulate_click(window, point(px(toggle_x), px(24.0)), Modifiers::none());
-                refresh(cx, window)?;
+                toggle_theme(cx, window, width)?;
             }
             cx.simulate_click(
                 window,
@@ -130,7 +128,7 @@ pub(crate) fn capture_managed_policy_settings(
         let window: AnyWindowHandle = window.into();
         refresh(cx, window)?;
         save_screenshot(cx, window, &format!("policy-home-{label}.png"))?;
-        cx.simulate_click(window, point(px(width - 80.0), px(90.0)), Modifiers::none());
+        connect_proxy(cx, window, width)?;
         settle_ui_for(cx, window, std::time::Duration::from_millis(600))?;
         open_policy_section(cx, window, width)?;
         save_screenshot(cx, window, &format!("policy-flat-{label}-collapsed.png"))?;
@@ -159,9 +157,7 @@ pub(crate) fn capture_managed_policy_settings(
         }
         cx.simulate_keystrokes(window, "escape");
         refresh(cx, window)?;
-        let toggle_x = theme_toggle_x(width);
-        cx.simulate_click(window, point(px(toggle_x), px(24.0)), Modifiers::none());
-        refresh(cx, window)?;
+        toggle_theme(cx, window, width)?;
         save_screenshot(cx, window, &format!("policy-flat-{label}-dark.png"))?;
         close_window(cx, window)?;
     }
@@ -185,7 +181,7 @@ pub(crate) fn capture_automatic_policy(
     let window: AnyWindowHandle = window.into();
 
     refresh(cx, window)?;
-    cx.simulate_click(window, point(px(1_340.0), px(126.0)), Modifiers::none());
+    connect_proxy(cx, window, 1_420.0)?;
     settle_ui_for(cx, window, std::time::Duration::from_millis(600))?;
     open_policy_section(cx, window, 1_420.0)?;
     save_screenshot(cx, window, "native-wide-policy-groups-collapsed.png")?;
@@ -255,14 +251,12 @@ pub(crate) fn capture_routing_rules(
                 &file_name.replace(".png", "-secondary-click.png"),
             )?;
         }
-        let toggle_x = theme_toggle_x(width);
-        cx.simulate_click(window, point(px(toggle_x), px(24.0)), Modifiers::none());
-        refresh(cx, window)?;
+        toggle_theme(cx, window, width)?;
         save_screenshot(cx, window, &file_name.replace(".png", "-dark.png"))?;
         if review_only && width >= 1_280.0 {
             capture_rule_handle_focus(cx, window, width, "dark")?;
         }
-        cx.simulate_click(window, point(px(toggle_x), px(24.0)), Modifiers::none());
+        toggle_theme(cx, window, width)?;
         refresh(cx, window)?;
         if review_only {
             if width >= 1_280.0 {

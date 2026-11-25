@@ -3,16 +3,13 @@ package dev.manis.app.ui
 import android.content.ClipData
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -24,17 +21,17 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
@@ -43,24 +40,23 @@ import dev.manis.app.data.PROXY_DNS_DOH
 import dev.manis.app.data.PROXY_DNS_SYSTEM
 import dev.manis.app.data.Workspace
 
-/** The configuration sections, in navigation order, with the keys other workspaces request. */
-private enum class ConfigSection(val key: String, val label: String, val detail: String) {
-    General("general", "通用", "界面语言与启动"),
-    Runtime("runtime", "运行时", "内核与运行时状态"),
-    ProxySources("proxy", "订阅与节点", "订阅、手动节点与策略组"),
-    RuleSources("rule_sources", "规则集", "远程规则集（暂不支持）"),
-    Advanced("advanced", "高级", "网络行为与备份"),
-    About("about", "关于", "版本、许可与应用更新"),
+/** The configuration sections, in the order the quick-jump row lists them. */
+private enum class ConfigSection(val key: String, val label: String) {
+    General("general", "通用"),
+    Runtime("runtime", "运行时"),
+    ProxySources("proxy", "订阅与节点"),
+    RuleSources("rule_sources", "规则集"),
+    Advanced("advanced", "高级"),
+    About("about", "关于"),
 }
 
 /**
- * The configuration workspace: one vertical feed of every section, with the badge following the
- * scroll position. Wider layouts list the sections beside the same feed.
+ * The settings workspace: one scroll of grouped cards, under a horizontal row of quick-jump pills
+ * that highlights whichever section the scroll is inside.
  */
 @Composable
 fun ConfigurationWorkspace(onMessage: (String) -> Unit, onOpenLogs: () -> Unit) {
     val colors = LocalManisColors.current
-    val compact = LocalSizeClass.current == SizeClass.Compact
     val scope = rememberCoroutineScope()
     val scroll = rememberScrollState()
     val sectionTops = remember { mutableStateMapOf<ConfigSection, Int>() }
@@ -96,252 +92,245 @@ fun ConfigurationWorkspace(onMessage: (String) -> Unit, onOpenLogs: () -> Unit) 
     }
 
     Column(Modifier.fillMaxSize().background(colors.surfaceBase)) {
-        if (compact) {
-            SectionFeed(
-                modifier = Modifier.fillMaxSize(),
-                scroll = scroll,
-                sectionTops = sectionTops,
-                onMessage = onMessage,
-                onOpenLogs = onOpenLogs,
-            )
-        } else {
-            Row(Modifier.fillMaxWidth().weight(1f)) {
-                SectionSidebar(active = active) { entry ->
-                    scope.launch { scroll.animateScrollTo(sectionTops[entry] ?: 0) }
-                }
-                Box(
-                    Modifier
-                        .fillMaxHeight()
-                        .width(1.dp)
-                        .background(colors.outlineSubtle.copy(alpha = 0.5f)),
-                )
-                SectionFeed(
-                    modifier = Modifier.fillMaxHeight().weight(1f),
-                    scroll = scroll,
-                    sectionTops = sectionTops,
-                    onMessage = onMessage,
-                    onOpenLogs = onOpenLogs,
-                )
-            }
-        }
-    }
-}
-
-/** Every section in one scrollable feed; positions feed the badge and the sidebar. */
-@Composable
-private fun SectionFeed(
-    modifier: Modifier,
-    scroll: androidx.compose.foundation.ScrollState,
-    sectionTops: MutableMap<ConfigSection, Int>,
-    onMessage: (String) -> Unit,
-    onOpenLogs: () -> Unit,
-) {
-    Column(
-        modifier
-            .verticalScroll(scroll)
-            .padding(ManisDimens.spaceLg),
-        verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceXl),
-    ) {
-        for (entry in ConfigSection.entries) {
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .onGloballyPositioned { coordinates ->
-                        sectionTops[entry] = coordinates.positionInParent().y.roundToInt()
+        ManisPageHeader(title = "设置")
+        // The jump row sits outside the scroll, so the current section stays visible while the
+        // cards move under it.
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = ManisDimens.spaceLg),
+            horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceXs),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            for (entry in ConfigSection.entries) {
+                ManisChip(
+                    label = entry.label,
+                    selected = entry == active,
+                    onClick = {
+                        scope.launch {
+                            scroll.animateScrollTo(sectionTops[entry] ?: 0)
+                        }
                     },
-                verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceMd),
-            ) {
-                when (entry) {
-                    ConfigSection.General -> GeneralSection(onMessage)
-                    ConfigSection.Runtime -> RuntimeSection(onMessage)
-                    ConfigSection.ProxySources -> ProxySourcesContent(onMessage)
-                    ConfigSection.RuleSources -> RuleSourcesSection()
-                    ConfigSection.Advanced -> AdvancedSection(onMessage, onOpenLogs)
-                    ConfigSection.About -> AboutContent(onMessage)
+                )
+            }
+        }
+        Column(
+            Modifier
+                .fillMaxSize()
+                .verticalScroll(scroll)
+                .padding(
+                    start = ManisDimens.spaceLg,
+                    end = ManisDimens.spaceLg,
+                    top = ManisDimens.spaceSm,
+                    bottom = ManisDimens.spaceXl,
+                ),
+            verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceLg),
+        ) {
+            for (entry in ConfigSection.entries) {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .onGloballyPositioned { coordinates ->
+                            sectionTops[entry] = coordinates.positionInParent().y.roundToInt()
+                        },
+                    verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceMd),
+                ) {
+                    when (entry) {
+                        ConfigSection.General -> GeneralSection()
+                        ConfigSection.Runtime -> RuntimeSection(onMessage)
+                        ConfigSection.ProxySources -> ProxySourcesContent(onMessage)
+                        ConfigSection.RuleSources -> RuleSourcesSection()
+                        ConfigSection.Advanced -> AdvancedSection(onMessage, onOpenLogs)
+                        ConfigSection.About -> AboutContent(onMessage)
+                    }
                 }
             }
         }
     }
 }
 
-/** The desktop section directory beside the content. */
+/**
+ * One row of a settings card: a title, optional supporting text on the left and one value or
+ * control on the right. Every row clears 52dp, so the grouped cards read as even steps.
+ */
 @Composable
-private fun SectionSidebar(active: ConfigSection, onSelect: (ConfigSection) -> Unit) {
+internal fun SettingRow(
+    title: String,
+    modifier: Modifier = Modifier,
+    meta: String? = null,
+    value: String? = null,
+    valueTone: Color? = null,
+    onClick: (() -> Unit)? = null,
+    trailing: (@Composable () -> Unit)? = null,
+) {
     val colors = LocalManisColors.current
-    Column(
-        Modifier
-            .width(228.dp)
-            .fillMaxHeight()
-            .background(colors.surfaceBase)
-            .padding(ManisDimens.spaceMd),
-        verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceXs),
+    Row(
+        modifier
+            .fillMaxWidth()
+            .heightIn(min = 52.dp)
+            .clip(RoundedCornerShape(ManisDimens.radiusRow))
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceMd),
     ) {
-        Text(
-            "设置",
-            style = ManisType.metadata,
-            color = colors.textTertiary,
-            modifier = Modifier.padding(horizontal = ManisDimens.spaceMd, vertical = ManisDimens.spaceSm),
-        )
-        for (entry in ConfigSection.entries) {
-            val selected = entry == active
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .height(ManisDimens.controlStandard)
-                    .clip(RoundedCornerShape(ManisDimens.radiusRow))
-                    .background(if (selected) colors.actionSoft else Color.Transparent)
-                    .clickable { onSelect(entry) }
-                    .padding(horizontal = ManisDimens.spaceMd),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    entry.label,
-                    style = ManisType.label,
-                    color = if (selected) colors.actionPrimary else colors.textPrimary,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun PaneColumn(content: @Composable ColumnScope.() -> Unit) {
-    Column(
-        Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceMd),
-        content = content,
-    )
-}
-@Composable
-private fun GeneralSection(onMessage: (String) -> Unit) {
-    val colors = LocalManisColors.current
-    PaneColumn {
-        ManisCard {
-            Text("外观", style = ManisType.label, color = colors.textPrimary)
-            val themeChoice = when (UiPrefs.dark.value) {
-                true -> "dark"
-                false -> "light"
-                null -> "system"
-            }
-            ManisSelect(
-                label = "主题",
-                options = listOf("system", "light", "dark"),
-                selected = themeChoice,
-                display = { option ->
-                    when (option) {
-                        "light" -> "浅色"
-                        "dark" -> "深色"
-                        else -> "跟随系统"
-                    }
-                },
-                onSelect = { option ->
-                    UiPrefs.setDark(
-                        when (option) {
-                            "light" -> false
-                            "dark" -> true
-                            else -> null
-                        },
-                    )
-                },
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                title,
+                style = ManisType.label,
+                color = colors.textPrimary,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
             )
-            ManisInfoRow("语言", "中文")
+            if (meta != null) ManisMeta(meta, maxLines = 2)
         }
+        if (value != null) {
+            Text(
+                value,
+                style = ManisType.data,
+                color = valueTone ?: colors.textSecondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        trailing?.invoke()
     }
 }
 
+/** The general card: the theme choice, and the language the strings ship in. */
+@Composable
+private fun GeneralSection() {
+    val colors = LocalManisColors.current
+    val choice = when (UiPrefs.dark.value) {
+        true -> 2
+        false -> 1
+        null -> 0
+    }
+    ManisCard {
+        ManisSectionTitle("通用与外观")
+        SettingRow("主题外观", meta = "本地保存，重启后保持")
+        ManisSegmented(
+            options = listOf("跟随系统", "浅色", "深色"),
+            selectedIndex = choice,
+            onSelect = { index ->
+                UiPrefs.setDark(
+                    when (index) {
+                        1 -> false
+                        2 -> true
+                        else -> null
+                    },
+                )
+            },
+        )
+        ManisDivider()
+        SettingRow(
+            "界面语言",
+            value = "简体中文",
+            valueTone = colors.textSecondary,
+        )
+    }
+}
+
+/** The runtime card: what the kernel is doing, and how to make it reload. */
 @Composable
 private fun RuntimeSection(onMessage: (String) -> Unit) {
     val colors = LocalManisColors.current
     val context = LocalContext.current
     val config = Workspace.config.value
     val abi = android.os.Build.SUPPORTED_ABIS.firstOrNull() ?: "unknown"
-    PaneColumn {
-        ManisCard {
-            Text("连接", style = ManisType.label, color = colors.textPrimary)
-            ManisInfoRow("状态", if (RuntimeState.active) "已连接" else "未连接")
-            ManisInfoRow("路由模式", modeLabel(RuntimeState.snapshot?.mode ?: config.mode))
-            ManisInfoRow("节点域名解析", proxyDnsLabel(config))
-        }
-        ManisCard {
-            Text("配置摘要", style = ManisType.label, color = colors.textPrimary)
-            ManisInfoRow("内核版本", RuntimeState.snapshot?.version?.ifBlank { "—" } ?: "—")
-            ManisInfoRow("配置", RuntimeState.summary.ifBlank { "—" })
-            ManisInfoRow(
-                "工作区",
-                "${config.subscriptions.size} 订阅 · ${config.nodes.size} 节点 · ${config.groups.size} 策略组",
-            )
-            ManisInfoRow("设备 ABI", abi)
-            ManisInfoRow("数据目录", "files/mihomo")
-            ManisButton("重新载入配置", onClick = {
-                applyWorkspace(context)
-                onMessage("已重新载入配置")
-            })
-        }
+    ManisCard {
+        ManisSectionTitle("运行内核")
+        SettingRow(
+            "连接状态",
+            trailing = {
+                ManisPill(
+                    if (RuntimeState.active) "已连接" else "未连接",
+                    if (RuntimeState.active) ManisTone.Success else ManisTone.Neutral,
+                )
+            },
+            meta = if (RuntimeState.active) "流量经本机 VPN 转发" else "开启后在此显示内核状态",
+        )
+        ManisDivider()
+        SettingRow("路由模式", value = modeLabel(RuntimeState.snapshot?.mode ?: config.mode))
+        SettingRow("节点域名解析", value = proxyDnsLabel(config))
+        ManisDivider()
+        SettingRow("内核版本", value = RuntimeState.snapshot?.version?.ifBlank { "—" } ?: "—")
+        SettingRow("工作区", value = "${config.subscriptions.size} 订阅 · ${config.nodes.size} 节点")
+        SettingRow("策略组", value = "${config.groups.size} 组")
+        SettingRow("设备 ABI", value = abi)
+        SettingRow("数据目录", value = "files/mihomo")
+        ManisMeta(RuntimeState.summary.ifBlank { "尚无内核摘要" })
+        ManisButton("重新载入配置", onClick = {
+            applyWorkspace(context)
+            onMessage("已重新载入配置")
+        })
     }
 }
 
+/** Rule sources are not supported on Android yet; the card says so instead of hiding the section. */
 @Composable
 private fun RuleSourcesSection() {
-    val colors = LocalManisColors.current
-    PaneColumn {
-        ManisCard {
-            Text("远程规则集", style = ManisType.label, color = colors.textPrimary)
-            ManisMeta("Android 版暂不支持远程规则集；规则在「规则」工作区里手动维护。")
-        }
+    ManisCard {
+        ManisSectionTitle("规则集")
+        ManisMeta("Android 版暂不支持远程规则集；规则在「分流规则」页里手动维护。")
     }
 }
 
+/** DNS resolution, the backup format and the kernel log entry point. */
 @Composable
 private fun AdvancedSection(onMessage: (String) -> Unit, onOpenLogs: () -> Unit) {
     val colors = LocalManisColors.current
     val context = LocalContext.current
     val config = Workspace.config.value
-    PaneColumn {
-        ManisCard {
-            Text("节点域名解析", style = ManisType.label, color = colors.textPrimary)
-            ManisMeta(proxyDnsLabel(config))
-            ManisSelect(
-                label = "解析方式",
-                options = listOf(PROXY_DNS_DOH, PROXY_DNS_SYSTEM),
-                selected = config.proxyDns,
-                display = { if (it == PROXY_DNS_DOH) "加密 DNS（DoH）" else "本机 DNS" },
-                onSelect = { option ->
-                    Workspace.update { it.copy(proxyDns = option) }
-                    applyWorkspace(context)
-                    onMessage(if (option == PROXY_DNS_DOH) "已切换为加密 DNS" else "已切换为本机 DNS")
-                },
-            )
+    ManisCard {
+        ManisSectionTitle("节点域名解析")
+        ManisMeta(proxyDnsLabel(config))
+        ManisSelect(
+            label = "解析方式",
+            options = listOf(PROXY_DNS_DOH, PROXY_DNS_SYSTEM),
+            selected = config.proxyDns,
+            display = { if (it == PROXY_DNS_DOH) "加密 DNS（DoH）" else "本机 DNS" },
+            onSelect = { option ->
+                Workspace.update { it.copy(proxyDns = option) }
+                applyWorkspace(context)
+                onMessage(if (option == PROXY_DNS_DOH) "已切换为加密 DNS" else "已切换为本机 DNS")
+            },
+        )
+    }
+    ManisCard {
+        ManisSectionTitle("备份与恢复")
+        ManisMeta("导出的是 Manis 备份格式（含订阅链接和节点密钥），不是交给其他客户端的 YAML。")
+        Row(horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceXs)) {
+            ManisButton("复制到剪贴板", onClick = {
+                val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)
+                clipboard?.setPrimaryClip(
+                    ClipData.newPlainText("Manis 配置", Workspace.config.value.toJson()),
+                )
+                onMessage("配置已复制到剪贴板")
+            })
+            ManisButton("从剪贴板导入", onClick = {
+                val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)
+                val text = clipboard?.primaryClip
+                    ?.takeIf { it.itemCount > 0 }
+                    ?.getItemAt(0)
+                    ?.coerceToText(context)
+                    ?.toString()
+                    .orEmpty()
+                when (val result = importWorkspace(context, text)) {
+                    null -> onMessage("已从剪贴板导入并生效")
+                    else -> onMessage(result)
+                }
+            })
         }
-        ManisCard {
-            Text("备份与恢复", style = ManisType.label, color = colors.textPrimary)
-            ManisMeta("导出的是 Manis 备份格式（含订阅链接和节点密钥），不是交给其他客户端的 YAML。")
-            Row(horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceXs)) {
-                ManisButton("复制到剪贴板", onClick = {
-                    val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)
-                    clipboard?.setPrimaryClip(
-                        ClipData.newPlainText("Manis 配置", Workspace.config.value.toJson()),
-                    )
-                    onMessage("配置已复制到剪贴板")
-                })
-                ManisButton("从剪贴板导入", onClick = {
-                    val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)
-                    val text = clipboard?.primaryClip
-                        ?.takeIf { it.itemCount > 0 }
-                        ?.getItemAt(0)
-                        ?.coerceToText(context)
-                        ?.toString()
-                        .orEmpty()
-                    when (val result = importWorkspace(context, text)) {
-                        null -> onMessage("已从剪贴板导入并生效")
-                        else -> onMessage(result)
-                    }
-                })
-            }
-        }
-        ManisCard {
-            Text("诊断", style = ManisType.label, color = colors.textPrimary)
-            ManisButton("查看内核日志", onClick = onOpenLogs)
-        }
+    }
+    ManisCard {
+        ManisSectionTitle("诊断")
+        Text(
+            "内核日志会记录每次配置载入与连接错误。",
+            style = ManisType.metadata,
+            color = colors.textTertiary,
+        )
+        ManisButton("查看内核日志", onClick = onOpenLogs)
     }
 }
 

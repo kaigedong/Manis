@@ -10,8 +10,7 @@ use crate::app::{
 use crate::{
     app_update,
     components::{
-        ActionRole, StatusTone, action_button, page_heading, section_heading, status_badge,
-        style_action_button,
+        ActionRole, StatusTone, action_button, section_header, status_badge, style_action_button,
     },
     localization::{
         CountNoun, Language, LanguagePreference, Message, copy, save_language_preference_in,

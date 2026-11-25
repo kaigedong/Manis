@@ -18,7 +18,7 @@ pub(crate) const HTTP_SUBSCRIPTION: LocalizedText =
 pub(crate) const MANUAL_RULES: LocalizedText = LocalizedText::new("Manual rules", "手动规则");
 pub(crate) const MIHOMO_DID_NOT_RETURN_A_RESULT: LocalizedText =
     LocalizedText::new("Mihomo did not return a result", "Mihomo 未返回结果");
-pub(crate) const OFF: LocalizedText = LocalizedText::new("Off", "关闭代理");
+pub(crate) const OFF: LocalizedText = LocalizedText::new("Paused", "已暂停");
 pub(crate) const SAVED: LocalizedText = LocalizedText::new("Saved", "已保存");
 pub(crate) const SYSTEM_PROXY: LocalizedText = LocalizedText::new("System proxy", "系统代理");
 pub(crate) const TUN_PROXY: LocalizedText = LocalizedText::new("TUN proxy", "TUN 代理");

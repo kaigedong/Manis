@@ -1,11 +1,11 @@
 use super::{
     GroupBenchmarkNodeState, GroupBenchmarkState, ManisApp, compact_proxy_mode_label,
-    controller_status_label, policy_kind_label, policy_presentation::PolicyGroupIconView,
-    proxy_mode_label, routing_mode_label, status_bar_values,
+    policy_kind_label, policy_presentation::PolicyGroupIconView, proxy_mode_label,
+    routing_mode_label,
 };
 use crate::{
     assets, brand,
-    components::{ActionRole, StatusTone, action_button, empty_state, page_heading, status_badge},
+    components::{ActionRole, action_button, empty_state},
     diagnostics::{UiEvent, trace_ui},
     localization::{CountNoun, Language, Message, copy},
     mihomo::{ControllerState, LiveStreamPhase},
@@ -17,8 +17,7 @@ use gpui::{
 };
 use gpui_component::{
     Disableable, IconName, Selectable, Sizable,
-    button::{Button, ButtonGroup, ButtonVariant, ButtonVariants},
-    status_bar::StatusBar,
+    button::{Button, ButtonVariant, ButtonVariants},
 };
 use manis_core::{
     ManagedPolicyGroup, ManagedPolicyIcon, ManagedPolicyStrategy, PolicyGroup, PolicyGroupId,

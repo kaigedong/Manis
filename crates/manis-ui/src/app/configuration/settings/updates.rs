@@ -3,7 +3,7 @@ use gpui_component::{Disableable, IconName, button::Button};
 
 use super::{
     ActionRole, AppUpdateState, Context, ControlSize, Div, Language, ManisApp, Space, TextRole,
-    Theme, app_update, copy, panel_surface, section_heading, style_action_button,
+    Theme, app_update, copy, panel_surface, section_header, style_action_button,
 };
 
 impl ManisApp {
@@ -33,7 +33,7 @@ impl ManisApp {
         );
         panel_surface("configuration-app-update", compact, theme)
             .debug_selector(|| "app-update-panel".to_owned())
-            .child(section_heading(
+            .child(section_header(
                 language.localized(copy::app_update::APP_UPDATES),
                 language.localized(copy::app_update::CHECK_AUTOMATICALLY_DETAIL),
                 None,
@@ -42,6 +42,7 @@ impl ManisApp {
             .child(
                 div()
                     .mt(Space::Md.px())
+                    .min_h(px(52.0))
                     .flex()
                     .flex_wrap()
                     .items_center()

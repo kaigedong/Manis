@@ -10,11 +10,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -22,7 +18,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.FileProvider
@@ -79,16 +74,17 @@ fun AboutContent(onMessage: (String) -> Unit) {
         verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceMd),
     ) {
         ManisCard {
-            Text("关于", style = ManisType.label, color = colors.textPrimary)
-            ManisInfoRow("版本", currentVersion)
+            ManisSectionTitle("关于")
+            SettingRow("版本", value = currentVersion)
             ManisMeta("Manis Android 实验版")
             ManisMeta(
                 "Mihomo 内核 v1.19.33 + Android 兼容补丁，随 APK 以 GPL-3.0 分发；" +
                     "补丁与构建脚本见仓库 android/ 目录。",
             )
             ManisMeta("Manis 应用代码为 Apache-2.0。")
-            ManisDivider()
-            Text("应用更新", style = ManisType.label, color = colors.textPrimary)
+        }
+        ManisCard {
+            ManisSectionTitle("应用更新")
             when (val current = state) {
                 UpdateState.Idle -> ManisButton("检查更新", onClick = { UpdateManager.check(context) })
                 UpdateState.Checking -> ManisMeta("正在检查 GitHub Release…")
@@ -97,7 +93,7 @@ fun AboutContent(onMessage: (String) -> Unit) {
                     ManisButton("重新检查", onClick = { UpdateManager.check(context) })
                 }
                 is UpdateState.Available -> {
-                    Text("发现新版本 ${current.update.version}", style = ManisType.body, color = colors.textPrimary)
+                    SettingRow("可用版本", value = current.update.version)
                     if (current.update.size > 0) {
                         ManisMeta("安装包 ${formatSize(current.update.size)}")
                     }
@@ -111,12 +107,12 @@ fun AboutContent(onMessage: (String) -> Unit) {
                     }
                 }
                 is UpdateState.Downloading -> {
-                    Text("正在下载 ${current.update.version}…", style = ManisType.body, color = colors.textPrimary)
+                    SettingRow("正在下载", value = current.update.version)
                     ManisProgress(current.progress / 100f)
                     ManisMeta("${current.progress}%")
                 }
                 is UpdateState.Ready -> {
-                    Text("新版本 ${current.update.version} 已下载", style = ManisType.body, color = colors.textPrimary)
+                    SettingRow("已下载", value = current.update.version)
                     ManisButton("安装", primary = true, onClick = {
                         if (current.file.isFile) {
                             install(current.file)

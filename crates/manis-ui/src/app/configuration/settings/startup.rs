@@ -4,7 +4,7 @@ use gpui::{
 };
 
 use super::{
-    ManisApp, MihomoCoreUpdateState, Space, TextRole, Theme, copy, panel_surface, section_heading,
+    ManisApp, MihomoCoreUpdateState, Space, TextRole, Theme, copy, panel_surface, section_header,
 };
 use crate::auto_connect;
 use crate::autostart;
@@ -23,7 +23,7 @@ impl ManisApp {
         let auto_connect_enabled = self.auto_connect.enabled;
         let auto_connect_available = self.subscription_store_dir.is_some();
         panel_surface("configuration-startup", compact, theme)
-            .child(section_heading(
+            .child(section_header(
                 language.localized(copy::configuration::STARTUP),
                 language.localized(copy::configuration::START_MANIS_WITH_YOUR_DESKTOP_SESSION),
                 None,
@@ -254,6 +254,7 @@ fn startup_row(
         .pt(Space::Md.px())
         .border_t_1()
         .border_color(theme.outline_subtle)
+        .min_h(px(52.0))
         .flex()
         .items_center()
         .justify_between()

@@ -14,9 +14,12 @@ use search::{ConnectionSearchText, user_route_stages};
 
 use super::{ManisApp, ManualRulePrefill, format_bytes};
 use crate::{
-    components::{ActionRole, action_button, empty_state, page_heading},
-    localization::{CountNoun, Language, Message, copy},
-    theme::{ControlSize, Space, TextRole, Theme},
+    components::{
+        ActionRole, RouteSegmentKind, StatusTone, action_button, card_surface, empty_state,
+        latency_pill, route_arrow, route_segment, status_badge,
+    },
+    localization::{Language, Message, copy},
+    theme::{ControlSize, MONO_FAMILY, Space, TextRole, Theme},
 };
 
 /// What the rule editor should be prefilled with when a connection row is clicked.
@@ -31,6 +34,16 @@ struct ActivityConnectionView<'connection, 'matcher> {
     connection: &'connection Connection,
     rule_group: Option<&'matcher str>,
     search_text: ConnectionSearchText,
+}
+
+/// The route the kernel observed for one connection, in the order a user reads it.
+///
+/// `exit` keeps the raw stage so the view can decide whether it is a node with a measured
+/// delay, a direct connection or a rejection.
+struct RouteChain {
+    rule: String,
+    group: Option<String>,
+    exit: Option<String>,
 }
 
 impl ManisApp {
@@ -103,7 +116,7 @@ impl ManisApp {
         )
         .on_click(cx.listener(|this, _, _, cx| this.connect_mihomo(cx)))
         .into_any_element();
-        let rows = Self::activity_rows(
+        let rows = self.activity_rows(
             &visible_connections,
             query.is_empty(),
             compact,
@@ -119,53 +132,50 @@ impl ManisApp {
             .flex()
             .flex_col()
             .bg(theme.surface_base)
-            .child(self.activity_header(compact, summary, reconnect, language, theme))
+            .child(self.activity_toolbar(compact, summary, reconnect, theme))
             .child(rows)
     }
 
-    fn activity_header(
+    /// Search, the live traffic summary and a refresh command. The command bar above already
+    /// names the workspace, so the toolbar carries only what filters and refreshes the list.
+    fn activity_toolbar(
         &self,
         compact: bool,
         summary: String,
         reconnect: AnyElement,
-        language: Language,
         theme: Theme,
     ) -> Div {
         div()
             .flex_shrink_0()
-            .px(Space::Xl.px())
-            .py(Space::Lg.px())
+            .px(if compact {
+                Space::Lg.px()
+            } else {
+                Space::Xl.px()
+            })
+            .py(Space::Md.px())
             .flex()
+            .flex_wrap()
             .items_center()
-            .gap(Space::Lg.px())
-            .when(compact, |header| header.flex_col().items_start())
-            .border_b_1()
-            .border_color(theme.outline_subtle)
-            .child(div().flex_1().min_w_0().child(page_heading(
-                language.message(Message::NetworkActivity),
-                summary,
-                None,
-                theme,
-            )))
+            .gap(Space::Sm.px())
+            .when_some(self.inputs.activity_search.clone(), |toolbar, input| {
+                toolbar.child(
+                    div()
+                        .flex_1()
+                        .min_w(px(180.0))
+                        .when(compact, gpui::Styled::w_full)
+                        .child(input),
+                )
+            })
             .child(
                 div()
                     .flex_shrink_0()
-                    .flex()
-                    .items_center()
-                    .gap(Space::Sm.px())
-                    .when(compact, gpui::Styled::w_full)
-                    .when_some(self.inputs.activity_search.clone(), |tools, input| {
-                        tools.child(
-                            div()
-                                .w(if compact { px(210.0) } else { px(320.0) })
-                                .child(input),
-                        )
-                    })
-                    .child(reconnect),
+                    .child(status_badge(summary, StatusTone::Neutral, theme)),
             )
+            .child(reconnect)
     }
 
     fn activity_rows(
+        &self,
         visible_connections: &[ActivityConnectionView<'_, '_>],
         no_query: bool,
         compact: bool,
@@ -173,14 +183,18 @@ impl ManisApp {
         theme: Theme,
         cx: &mut gpui::Context<Self>,
     ) -> gpui::Stateful<Div> {
-        let mut rows = div()
+        let rows = div()
             .id("activity-scroll")
             .flex_1()
+            .min_h_0()
             .overflow_y_scroll()
-            .flex()
-            .flex_col();
+            .p(if compact {
+                Space::Lg.px()
+            } else {
+                Space::Xl.px()
+            });
         if visible_connections.is_empty() {
-            rows = rows.child(div().flex_1().p(Space::Xl.px()).child(if no_query {
+            return rows.child(if no_query {
                 empty_state(
                     language.message(Message::NoActiveConnections),
                     language.localized(
@@ -213,25 +227,197 @@ impl ManisApp {
                     None,
                     theme,
                 )
-            }));
-        } else {
-            for (index, view) in visible_connections.iter().enumerate() {
-                rows = rows.child(activity_row(
-                    view.connection,
-                    view.rule_group,
-                    theme,
-                    compact,
-                    language,
-                    index,
-                    cx,
-                ));
-            }
+            });
         }
+        let mut card = card_surface(theme).overflow_hidden().flex().flex_col();
+        let last = visible_connections.len().saturating_sub(1);
+        for (index, view) in visible_connections.iter().enumerate() {
+            card = card.child(self.activity_row(
+                view.connection,
+                view.rule_group,
+                theme,
+                language,
+                index,
+                index == last,
+                cx,
+            ));
+        }
+        rows.child(card)
+    }
 
-        rows
+    #[allow(clippy::too_many_arguments)] // One row needs its connection, route, theme and slot.
+    fn activity_row(
+        &self,
+        connection: &Connection,
+        rule_group: Option<&str>,
+        theme: Theme,
+        language: Language,
+        index: usize,
+        last: bool,
+        cx: &mut gpui::Context<Self>,
+    ) -> gpui::Stateful<Div> {
+        let chain = observed_route(connection, rule_group, language);
+        let draft = rule_draft_from_connection(connection);
+        let policy_hint = connection.chains.first().cloned();
+        let mut row = div()
+            .id(gpui::ElementId::Name(
+                format!("activity-connection-{index}").into(),
+            ))
+            .debug_selector(move || format!("activity-connection-{index}"))
+            .flex_shrink_0()
+            .px(Space::Lg.px())
+            .py(Space::Md.px())
+            .flex()
+            .flex_col()
+            .gap(px(7.0))
+            .when(!last, |row| {
+                row.border_b_1().border_color(theme.outline_subtle)
+            })
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap(Space::Md.px())
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(7.0))
+                            .min_w(px(0.0))
+                            .child(
+                                div()
+                                    .min_w(px(0.0))
+                                    .overflow_hidden()
+                                    .whitespace_nowrap()
+                                    .text_ellipsis()
+                                    .font_family(MONO_FAMILY)
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_size(TextRole::Label.size())
+                                    .line_height(TextRole::Label.line_height())
+                                    .text_color(theme.text_primary)
+                                    .child(connection_target(connection, language)),
+                            )
+                            .child(div().flex_shrink_0().child(status_badge(
+                                connection_process(connection, language),
+                                StatusTone::Neutral,
+                                theme,
+                            ))),
+                    )
+                    .child(traffic_cell(connection, theme)),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap(Space::Sm.px())
+                    .flex_wrap()
+                    .child(self.route_chain_row(&chain, language, theme))
+                    .when(draft.is_some(), |line| {
+                        line.child(
+                            div()
+                                .flex_shrink_0()
+                                .text_size(TextRole::Metadata.size())
+                                .line_height(TextRole::Metadata.line_height())
+                                .font_weight(TextRole::Label.weight())
+                                .text_color(theme.action_primary)
+                                .child(add_rule_hint(language)),
+                        )
+                    }),
+            );
+        if let Some(draft) = draft {
+            let RuleDraft {
+                kind,
+                value,
+                prefills,
+            } = draft;
+            row = row
+                .cursor_pointer()
+                .hover(move |style| style.bg(theme.surface_low));
+            row = row.on_click(cx.listener(move |this, _, window, cx| {
+                this.open_manual_rule_editor_for_connection(
+                    kind,
+                    value.clone(),
+                    policy_hint.clone(),
+                    prefills.clone(),
+                    window,
+                    cx,
+                );
+            }));
+        }
+        row
+    }
+
+    /// The signature Route Truth Chain: matched rule, policy group, then the observed exit.
+    fn route_chain_row(&self, chain: &RouteChain, language: Language, theme: Theme) -> Div {
+        let mut line = div()
+            .flex()
+            .items_center()
+            .flex_wrap()
+            .gap(px(6.0))
+            .min_w(px(0.0))
+            .child(route_segment(
+                chain.rule.clone(),
+                RouteSegmentKind::Rule,
+                None,
+                theme,
+            ));
+        if let Some(group) = chain.group.as_deref() {
+            line = line.child(route_arrow(theme)).child(route_segment(
+                group,
+                RouteSegmentKind::Group,
+                None,
+                theme,
+            ));
+        }
+        match chain.exit.as_deref() {
+            Some("DIRECT") => line.child(route_arrow(theme)).child(route_segment(
+                route_stage_label("DIRECT", language),
+                RouteSegmentKind::Direct,
+                None,
+                theme,
+            )),
+            Some("REJECT") => line.child(route_arrow(theme)).child(route_segment(
+                "REJECT",
+                RouteSegmentKind::Reject,
+                None,
+                theme,
+            )),
+            Some(node) => {
+                let latency = self.exit_latency(node);
+                line.child(route_arrow(theme))
+                    .child(route_segment(
+                        node.to_owned(),
+                        RouteSegmentKind::Exit,
+                        latency,
+                        theme,
+                    ))
+                    .child(latency_pill(latency, theme))
+            }
+            // The kernel reported no route for this connection, so the chain says so instead
+            // of claiming an exit it never observed.
+            None => line.child(route_segment(
+                language.localized(copy::activity::ROUTE_UNAVAILABLE),
+                RouteSegmentKind::Direct,
+                None,
+                theme,
+            )),
+        }
+    }
+
+    /// The last measured delay for an exit the catalog still lists.
+    fn exit_latency(&self, node: &str) -> Option<u64> {
+        self.policy_groups()
+            .flat_map(|group| group.nodes.iter())
+            .find(|candidate| candidate.name == node)
+            .and_then(|candidate| candidate.latency_ms)
+            .map(u64::from)
     }
 }
 
+/// The toolbar summary. The active connection count already lives in the command bar, so an
+/// unfiltered row shows only traffic; a filtered row adds the match count it cannot show there.
 fn activity_summary(
     language: Language,
     unfiltered: bool,
@@ -240,142 +426,79 @@ fn activity_summary(
     total_download: u64,
     total_upload: u64,
 ) -> String {
-    let count = if unfiltered {
-        language.count(CountNoun::Connection, total_count)
-    } else {
-        format!(
-            "{}/{} {}",
-            visible_count,
-            total_count,
-            language.localized(copy::activity::CONNECTIONS)
-        )
-    };
-    format!(
-        "{count} · ↓ {} · ↑ {}",
+    let traffic = format!(
+        "↓ {} · ↑ {}",
         format_bytes(total_download),
         format_bytes(total_upload)
-    )
-}
-
-fn activity_row(
-    connection: &Connection,
-    rule_group: Option<&str>,
-    theme: Theme,
-    compact: bool,
-    language: Language,
-    index: usize,
-    cx: &mut gpui::Context<ManisApp>,
-) -> gpui::Stateful<Div> {
-    let target = connection_target(connection, language);
-    let metadata = connection_metadata(connection, language);
-    let chain =
-        route_summary_with_group(&connection.chains, rule_group, language).unwrap_or_else(|| {
-            language
-                .localized(copy::activity::ROUTE_UNAVAILABLE)
-                .to_owned()
-        });
-
-    let draft = rule_draft_from_connection(connection);
-    let policy_hint = connection.chains.first().cloned();
-    let mut row = div()
-        .id(gpui::ElementId::Name(
-            format!("activity-connection-{index}").into(),
-        ))
-        .min_h(px(if compact { 78.0 } else { 60.0 }))
-        .px(Space::Xl.px())
-        .py(Space::Md.px())
-        .flex()
-        .items_center()
-        .gap(Space::Lg.px())
-        .border_b_1()
-        .border_color(theme.outline_subtle)
-        .child(
-            div()
-                .min_w_0()
-                .flex_1()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(
-                    div()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(theme.text_primary)
-                        .text_size(TextRole::Body.size())
-                        .line_height(TextRole::Body.line_height())
-                        .overflow_hidden()
-                        .whitespace_nowrap()
-                        .text_ellipsis()
-                        .child(target),
-                )
-                .child(
-                    div()
-                        .text_size(TextRole::Metadata.size())
-                        .line_height(TextRole::Metadata.line_height())
-                        .text_color(theme.text_tertiary)
-                        .overflow_hidden()
-                        .whitespace_nowrap()
-                        .text_ellipsis()
-                        .child(metadata),
-                )
-                .when(compact, |column| {
-                    column.child(
-                        div()
-                            .text_size(TextRole::Data.size())
-                            .line_height(TextRole::Data.line_height())
-                            .text_color(theme.action_primary)
-                            .child(chain.clone()),
-                    )
-                }),
-        )
-        .when(!compact, |row| {
-            row.child(
-                div()
-                    .w(px(250.0))
-                    .text_size(TextRole::Data.size())
-                    .line_height(TextRole::Data.line_height())
-                    .text_color(theme.action_primary)
-                    .overflow_hidden()
-                    .child(chain),
-            )
-        })
-        .child(traffic_cell(connection, theme));
-    if let Some(draft) = draft {
-        let RuleDraft {
-            kind,
-            value,
-            prefills,
-        } = draft;
-        row = row
-            .cursor_pointer()
-            .hover(move |style| style.bg(theme.button_hover));
-        row = row.on_click(cx.listener(move |this, _, window, cx| {
-            this.open_manual_rule_editor_for_connection(
-                kind,
-                value.clone(),
-                policy_hint.clone(),
-                prefills.clone(),
-                window,
-                cx,
-            );
-        }));
+    );
+    if unfiltered {
+        return traffic;
     }
-    row
+    format!(
+        "{visible_count}/{total_count} {} · {traffic}",
+        language.localized(copy::activity::CONNECTIONS)
+    )
 }
 
 fn traffic_cell(connection: &Connection, theme: Theme) -> Div {
     div()
-        .w(px(126.0))
         .flex_shrink_0()
         .flex()
         .justify_end()
-        .text_size(TextRole::Data.size())
-        .line_height(TextRole::Data.line_height())
+        .font_family(MONO_FAMILY)
+        .text_size(TextRole::Metadata.size())
+        .line_height(TextRole::Metadata.line_height())
         .text_color(theme.text_secondary)
         .child(format!(
-            "↓ {}  ↑ {}",
+            "↓ {} · ↑ {}",
             format_bytes(connection.download),
             format_bytes(connection.upload)
         ))
+}
+
+fn add_rule_hint(language: Language) -> &'static str {
+    match language {
+        Language::English => "Click to add a rule →",
+        Language::SimplifiedChinese => "点击建规则 →",
+    }
+}
+
+/// Reads the observed chain in display order, hiding the runtime groups the kernel adds.
+fn observed_route(
+    connection: &Connection,
+    rule_group: Option<&str>,
+    language: Language,
+) -> RouteChain {
+    let rule_kind = connection
+        .rule
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let rule = match rule_kind {
+        Some(kind) => match connection
+            .rule_payload
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            Some(payload) => format!("{kind} {payload}"),
+            None => kind.to_owned(),
+        },
+        None => language
+            .localized(copy::activity::NO_MATCHED_RULE)
+            .to_owned(),
+    };
+    let stages = user_route_stages(&connection.chains).collect::<Vec<_>>();
+    let group = rule_group
+        .map(str::trim)
+        .filter(|group| !group.is_empty())
+        .map(str::to_owned)
+        .or_else(|| stages.get(1).map(|stage| (*stage).to_owned()));
+    RouteChain {
+        rule,
+        group,
+        exit: stages.first().map(|stage| (*stage).to_owned()),
+    }
 }
 
 /// Picks the rule a click on this connection should create: its domain as a suffix rule, or the
@@ -450,26 +573,8 @@ fn route_stage_label(stage: &str, language: Language) -> &str {
     }
 }
 
-fn route_summary_with_group(
-    chains: &[String],
-    rule_group: Option<&str>,
-    language: Language,
-) -> Option<String> {
-    let mut stages = rule_group
-        .map(str::trim)
-        .filter(|group| !group.is_empty())
-        .into_iter()
-        .chain(
-            user_route_stages(chains)
-                .rev()
-                .map(|stage| route_stage_label(stage, language)),
-        );
-    let route = stages.by_ref().collect::<Vec<_>>().join(" → ");
-    (!route.is_empty()).then_some(route)
-}
-
-fn connection_metadata(connection: &Connection, language: Language) -> String {
-    let process = connection
+fn connection_process(connection: &Connection, language: Language) -> String {
+    connection
         .metadata
         .process
         .as_deref()
@@ -483,30 +588,8 @@ fn connection_metadata(connection: &Connection, language: Language) -> String {
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
         })
-        .unwrap_or_else(|| language.localized(copy::activity::UNKNOWN_PROCESS));
-    let rule = connection
-        .rule
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| language.localized(copy::activity::NO_MATCHED_RULE));
-    let rule = connection
-        .rule_payload
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map_or_else(|| rule.to_owned(), |payload| format!("{rule} · {payload}"));
-    let destination_ip = connection
-        .metadata
-        .destination_ip
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .filter(|address| Some(*address) != connection.metadata.target_host());
-    destination_ip.map_or_else(
-        || format!("{process} · {rule}"),
-        |address| format!("{process} · {address} · {rule}"),
-    )
+        .unwrap_or_else(|| language.localized(copy::activity::UNKNOWN_PROCESS))
+        .to_owned()
 }
 
 fn connection_target(connection: &Connection, language: Language) -> String {
@@ -698,47 +781,112 @@ mod tests {
         assert!(super::rule_draft_from_connection(&empty).is_none());
     }
 
-    #[test]
-    fn route_summary_hides_runtime_groups_and_reads_from_policy_to_node() {
-        let global_route = vec![
-            "HK05".to_owned(),
-            "__MANIS_GLOBAL__".to_owned(),
-            "GLOBAL".to_owned(),
-        ];
-        assert_eq!(
-            super::route_summary_with_group(
-                &global_route,
-                Some("Manual rules"),
-                crate::localization::Language::SimplifiedChinese
-            )
-            .as_deref(),
-            Some("Manual rules → HK05")
-        );
+    /// A rendered connection row is the whole click-to-prefill path: it must exist in the list,
+    /// take the click, and open the editor on the host's suffix rule.
+    #[gpui::test]
+    fn a_rendered_connection_row_opens_the_rule_editor_prefilled(cx: &mut gpui::TestAppContext) {
+        use gpui::{AppContext as _, Modifiers};
 
-        let policy_route = vec![
+        cx.update(crate::init);
+        let mut app = None;
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            let entity = cx.new(|_| {
+                let mut app = super::ManisApp::with_fixture_controller("http://127.0.0.1:1");
+                app.primary_workspace = manis_core::PrimaryWorkspace::Activity;
+                app.active_connections = vec![connection(serde_json::json!({
+                    "metadata": {
+                        "sniffHost": "chat.openai.com",
+                        "process": "Safari",
+                        "destinationPort": "443",
+                        "destinationIP": "203.0.113.10"
+                    },
+                    "chains": ["SG-02", "AI 自动选择", "__MANIS_GLOBAL__", "GLOBAL"],
+                    "rule": "DOMAIN-SUFFIX",
+                    "rulePayload": "openai.com",
+                    "download": 14_200_000,
+                    "upload": 3_100_000
+                }))];
+                app
+            });
+            app = Some(entity.clone());
+            crate::root(entity, window, cx)
+        });
+        let app = app.expect("fixture app");
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+
+        let bounds = cx
+            .debug_bounds("activity-connection-0")
+            .expect("the connection row renders");
+        cx.simulate_click(bounds.center(), Modifiers::none());
+
+        app.read_with(cx, |app, cx| {
+            assert_eq!(
+                app.manual_rule_editor_state,
+                crate::app::ManualRuleEditorState::Creating
+            );
+            let condition = app.manual_rule_conditions.first().expect("condition");
+            assert_eq!(
+                condition.kind,
+                crate::manual_rule::ManualRuleKind::HostSuffix
+            );
+            assert_eq!(condition.input.read(cx).value(), "chat.openai.com");
+            // The exit the chain reports becomes the draft's target; this fixture has no
+            // catalog, so the editor falls back to DIRECT.
+            assert!(!app.manual_rule_target.is_empty());
+        });
+    }
+
+    /// The chain reads rule, then policy group, then exit, and never shows a runtime group.
+    #[test]
+    fn observed_route_reads_from_the_matched_group_to_the_exit_node() {
+        let mut connection = connection(serde_json::json!({
+            "metadata": {"host": "www.example.com"},
+            "rule": "DomainSuffix",
+            "rulePayload": "example.com",
+            "chains": ["HK05", "__MANIS_GLOBAL__", "GLOBAL"]
+        }));
+        let chain = super::observed_route(
+            &connection,
+            Some("Manual rules"),
+            crate::localization::Language::SimplifiedChinese,
+        );
+        assert_eq!(chain.rule, "DomainSuffix example.com");
+        assert_eq!(chain.group.as_deref(), Some("Manual rules"));
+        assert_eq!(chain.exit.as_deref(), Some("HK05"));
+
+        connection.chains = vec![
             "HK05".to_owned(),
             "Hong Kong".to_owned(),
             "Streaming".to_owned(),
         ];
-        assert_eq!(
-            super::route_summary_with_group(
-                &policy_route,
-                Some("Streaming rules"),
-                crate::localization::Language::English
-            )
-            .as_deref(),
-            Some("Streaming rules → Streaming → Hong Kong → HK05")
+        let chain = super::observed_route(
+            &connection,
+            Some("Streaming rules"),
+            crate::localization::Language::English,
         );
+        assert_eq!(chain.group.as_deref(), Some("Streaming rules"));
+        assert_eq!(chain.exit.as_deref(), Some("HK05"));
 
-        assert_eq!(
-            super::route_summary_with_group(
-                &["DIRECT".to_owned()],
-                None,
-                crate::localization::Language::SimplifiedChinese
-            )
-            .as_deref(),
-            Some("直连")
+        // Without a matched rule group the chain falls back to the exit's own policy group.
+        let chain =
+            super::observed_route(&connection, None, crate::localization::Language::English);
+        assert_eq!(chain.group.as_deref(), Some("Hong Kong"));
+    }
+
+    #[test]
+    fn observed_route_names_direct_connections_and_missing_rules() {
+        let connection = connection(serde_json::json!({
+            "metadata": {"host": "www.example.com"},
+            "chains": ["DIRECT"]
+        }));
+        let chain = super::observed_route(
+            &connection,
+            None,
+            crate::localization::Language::SimplifiedChinese,
         );
+        assert_eq!(chain.rule, "未匹配规则");
+        assert_eq!(chain.group, None);
+        assert_eq!(chain.exit.as_deref(), Some("DIRECT"));
     }
 
     #[test]

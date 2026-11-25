@@ -1,16 +1,15 @@
 package dev.manis.app.ui
 
 import android.content.Context
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.material3.Checkbox
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.height
 import dev.manis.app.R
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.CircleShape
@@ -19,7 +18,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.res.painterResource
 import androidx.compose.material3.Icon
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
@@ -35,9 +33,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.window.Popup
-import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import dev.manis.app.core.ControllerApi
 import dev.manis.app.core.CoreController
 import dev.manis.app.data.GroupEntry
@@ -61,37 +58,6 @@ fun ProxySourcesContent(onMessage: (String) -> Unit) {
     val config = Workspace.config.value
     var editor by remember { mutableStateOf<SourceEditor?>(null) }
     var refreshing by remember { mutableStateOf(false) }
-
-    if (editor != null) {
-        SourceEditorPane(
-            editor = editor!!,
-            config = config,
-            onCancel = { editor = null },
-            onSaveSubscription = { name, url ->
-                Workspace.update { current ->
-                    current.copy(subscriptions = current.subscriptions + SubscriptionEntry(name.trim(), url.trim()))
-                }
-                editor = null
-                onMessage("订阅已添加，正在下载…")
-                scope.launch {
-                    refreshing = true
-                    onMessage(refreshSubscriptions(context, Workspace.config.value))
-                    refreshing = false
-                }
-            },
-            onSaveNode = { link ->
-                Workspace.update { current -> current.copy(nodes = current.nodes + NodeEntry(link.trim())) }
-                editor = null
-                onMessage("节点已添加，点「应用」生效")
-            },
-            onSaveGroup = { group ->
-                Workspace.update { current -> current.copy(groups = current.groups + group) }
-                editor = null
-                onMessage("策略组已添加，点「应用」生效")
-            },
-        )
-        return
-    }
 
     Column(
         Modifier.fillMaxWidth(),
@@ -193,6 +159,38 @@ fun ProxySourcesContent(onMessage: (String) -> Unit) {
         }
         ManisMeta("修改会先保存；点「应用」后内核重载配置，VPN 不会断开。")
     }
+
+    // The editor rides over the list as a bottom sheet, so the section it edits stays in sight.
+    val open = editor
+    if (open != null) {
+        SourceEditorPane(
+            editor = open,
+            config = config,
+            onCancel = { editor = null },
+            onSaveSubscription = { name, url ->
+                Workspace.update { current ->
+                    current.copy(subscriptions = current.subscriptions + SubscriptionEntry(name.trim(), url.trim()))
+                }
+                editor = null
+                onMessage("订阅已添加，正在下载…")
+                scope.launch {
+                    refreshing = true
+                    onMessage(refreshSubscriptions(context, Workspace.config.value))
+                    refreshing = false
+                }
+            },
+            onSaveNode = { link ->
+                Workspace.update { current -> current.copy(nodes = current.nodes + NodeEntry(link.trim())) }
+                editor = null
+                onMessage("节点已添加，点「应用」生效")
+            },
+            onSaveGroup = { group ->
+                Workspace.update { current -> current.copy(groups = current.groups + group) }
+                editor = null
+                onMessage("策略组已添加，点「应用」生效")
+            },
+        )
+    }
 }
 
 /** One source row: what it is, whether it is on, and a quiet delete action. */
@@ -206,21 +204,21 @@ private fun SourceRow(
 ) {
     val colors = LocalManisColors.current
     Row(
-        Modifier.fillMaxWidth().height(56.dp),
+        Modifier.fillMaxWidth().heightIn(min = 52.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
     ) {
-        Column(Modifier.weight(1f)) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
                 title,
-                style = ManisType.body,
+                style = ManisType.label,
                 color = colors.textPrimary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
                 subtitle,
-                style = ManisType.metadata,
+                style = ManisType.data.copy(fontSize = 11.5.sp),
                 color = colors.textTertiary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -229,16 +227,20 @@ private fun SourceRow(
         if (checked != null && onToggle != null) {
             ManisToggle(checked = checked, onCheckedChange = onToggle)
         }
-        Icon(
-            painter = painterResource(R.drawable.ic_delete),
-            contentDescription = "删除 $title",
-            modifier = Modifier
-                .size(28.dp)
+        Box(
+            Modifier
+                .size(ManisDimens.minTouch)
                 .clip(CircleShape)
-                .clickable(onClick = onDelete)
-                .padding(4.dp),
-            tint = colors.textTertiary,
-        )
+                .clickable(onClick = onDelete),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_delete),
+                contentDescription = "删除 $title",
+                modifier = Modifier.size(20.dp),
+                tint = colors.textTertiary,
+            )
+        }
     }
 }
 
@@ -389,119 +391,117 @@ private fun SourceEditorPane(
         }
     }
 
-    Popup(onDismissRequest = onCancel, properties = PopupProperties(focusable = true)) {
-        ManisDialog(
-            title = when (editor) {
-                SourceEditor.Subscription -> "添加订阅"
-                SourceEditor.Node -> "添加 VLESS 节点"
-                SourceEditor.Group -> "添加策略组"
-            },
-            subtitle = when (editor) {
-                SourceEditor.Subscription -> "粘贴 Clash 格式订阅地址"
-                SourceEditor.Node -> "支持 TLS / WebSocket / Reality 分享链接"
-                SourceEditor.Group -> "先选节点范围；自动测速组按延迟选最快节点"
-            },
-            onDismiss = onCancel,
-            actions = {
-                Spacer(Modifier.weight(1f))
-                ManisButton("取消", onClick = onCancel)
-                ManisButton("添加", primary = true, onClick = ::submit)
-            },
-        ) {
-            when (editor) {
-                SourceEditor.Subscription -> {
-                    Text("名称（可选）", style = ManisType.label, color = colors.textPrimary)
-                    ManisTextField(value = name, onValueChange = { name = it }, placeholder = "名称")
-                    Text("订阅地址", style = ManisType.label, color = colors.textPrimary)
-                    ManisTextField(value = url, onValueChange = { url = it }, placeholder = "https://…")
-                }
-                SourceEditor.Node -> {
-                    Text("vless:// 分享链接", style = ManisType.label, color = colors.textPrimary)
-                    ManisTextField(value = link, onValueChange = { link = it }, placeholder = "vless://…")
-                }
-                SourceEditor.Group -> {
-                    Text("组名", style = ManisType.label, color = colors.textPrimary)
-                    ManisTextField(value = name, onValueChange = { name = it }, placeholder = "组名")
-                    ManisSelect(
-                        label = "策略",
-                        options = listOf("urltest", "select"),
-                        selected = strategy,
-                        display = { if (it == "urltest") "自动测速" else "手动选择" },
-                        onSelect = { strategy = it },
-                    )
-                    ManisSelect(
-                        label = "节点范围",
-                        options = listOf("all", "contains", "pick"),
-                        selected = scope,
-                        display = {
-                            when (it) {
-                                "contains" -> "名称包含"
-                                "pick" -> "选择节点"
-                                else -> "全部节点"
-                            }
-                        },
-                        onSelect = { scope = it },
-                    )
-                    when (scope) {
-                        "contains" -> {
-                            ManisTextField(
-                                value = contains,
-                                onValueChange = { contains = it },
-                                placeholder = "例如 香港",
-                            )
-                            ManisMeta("只收进名称包含该关键字的节点。")
+    EditorSheet(
+        title = when (editor) {
+            SourceEditor.Subscription -> "添加订阅"
+            SourceEditor.Node -> "添加 VLESS 节点"
+            SourceEditor.Group -> "添加策略组"
+        },
+        subtitle = when (editor) {
+            SourceEditor.Subscription -> "粘贴 Clash 格式订阅地址"
+            SourceEditor.Node -> "支持 TLS / WebSocket / Reality 分享链接"
+            SourceEditor.Group -> "先选节点范围；自动测速组按延迟选最快节点"
+        },
+        onDismiss = onCancel,
+        footer = {
+            Spacer(Modifier.weight(1f))
+            ManisButton("取消", onClick = onCancel)
+            ManisButton("添加", primary = true, onClick = ::submit)
+        },
+    ) {
+        when (editor) {
+            SourceEditor.Subscription -> {
+                Text("名称（可选）", style = ManisType.label, color = colors.textPrimary)
+                ManisTextField(value = name, onValueChange = { name = it }, placeholder = "名称")
+                Text("订阅地址", style = ManisType.label, color = colors.textPrimary)
+                ManisTextField(value = url, onValueChange = { url = it }, placeholder = "https://…")
+            }
+            SourceEditor.Node -> {
+                Text("vless:// 分享链接", style = ManisType.label, color = colors.textPrimary)
+                ManisTextField(value = link, onValueChange = { link = it }, placeholder = "vless://…")
+            }
+            SourceEditor.Group -> {
+                Text("组名", style = ManisType.label, color = colors.textPrimary)
+                ManisTextField(value = name, onValueChange = { name = it }, placeholder = "组名")
+                ManisSelect(
+                    label = "策略",
+                    options = listOf("urltest", "select"),
+                    selected = strategy,
+                    display = { if (it == "urltest") "自动测速" else "手动选择" },
+                    onSelect = { strategy = it },
+                )
+                ManisSelect(
+                    label = "节点范围",
+                    options = listOf("all", "contains", "pick"),
+                    selected = scope,
+                    display = {
+                        when (it) {
+                            "contains" -> "名称包含"
+                            "pick" -> "选择节点"
+                            else -> "全部节点"
                         }
-                        "pick" -> {
-                            ManisMeta("已选 ${picked.size} 个节点")
-                            Column(
-                                Modifier
-                                    .fillMaxWidth()
-                                    .heightIn(max = 260.dp)
-                                    .verticalScroll(rememberScrollState()),
-                            ) {
-                                for ((nodeName, manualNode) in available) {
-                                    Row(
-                                        Modifier
-                                            .fillMaxWidth()
-                                            .clip(RoundedCornerShape(ManisDimens.radiusRow))
-                                            .clickable {
-                                                picked = if (nodeName in picked) {
-                                                    picked - nodeName
-                                                } else {
-                                                    picked + nodeName
-                                                }
+                    },
+                    onSelect = { scope = it },
+                )
+                when (scope) {
+                    "contains" -> {
+                        ManisTextField(
+                            value = contains,
+                            onValueChange = { contains = it },
+                            placeholder = "例如 香港",
+                        )
+                        ManisMeta("只收进名称包含该关键字的节点。")
+                    }
+                    "pick" -> {
+                        ManisMeta("已选 ${picked.size} 个节点")
+                        Column(
+                            Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 260.dp)
+                                .verticalScroll(rememberScrollState()),
+                        ) {
+                            for ((nodeName, manualNode) in available) {
+                                Row(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(ManisDimens.radiusRow))
+                                        .clickable {
+                                            picked = if (nodeName in picked) {
+                                                picked - nodeName
+                                            } else {
+                                                picked + nodeName
                                             }
-                                            .padding(vertical = ManisDimens.spaceXs),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                    ) {
-                                        Checkbox(
-                                            checked = nodeName in picked,
-                                            onCheckedChange = null,
-                                        )
-                                        Spacer(Modifier.width(ManisDimens.spaceSm))
-                                        Column(Modifier.weight(1f)) {
-                                            Text(
-                                                nodeName,
-                                                style = ManisType.body,
-                                                color = colors.textPrimary,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis,
-                                            )
-                                            if (manualNode) ManisMeta("手动节点")
                                         }
+                                        .padding(vertical = ManisDimens.spaceXs),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Checkbox(
+                                        checked = nodeName in picked,
+                                        onCheckedChange = null,
+                                    )
+                                    Spacer(Modifier.width(ManisDimens.spaceSm))
+                                    Column(Modifier.weight(1f)) {
+                                        Text(
+                                            nodeName,
+                                            style = ManisType.body,
+                                            color = colors.textPrimary,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                        if (manualNode) ManisMeta("手动节点")
                                     }
                                 }
-                                if (available.isEmpty()) {
-                                    ManisMeta("还没有节点：先添加订阅或手动节点。")
-                                }
+                            }
+                            if (available.isEmpty()) {
+                                ManisMeta("还没有节点：先添加订阅或手动节点。")
                             }
                         }
-                        else -> ManisMeta("使用全部启用的订阅和手动节点。")
                     }
+                    else -> ManisMeta("使用全部启用的订阅和手动节点。")
                 }
             }
-            error?.let { Text(it, style = ManisType.metadata, color = colors.statusError) }
         }
+        error?.let { Text(it, style = ManisType.metadata, color = colors.statusError) }
     }
 }
 

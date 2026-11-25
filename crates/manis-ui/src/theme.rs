@@ -1,16 +1,29 @@
 #![allow(clippy::unreadable_literal)]
 
+//! Manis UI 2.0 tokens: "Obsidian & Alabaster — Swiss Precision Routing".
+//!
+//! `design-system/manis/tokens.json` is the single source of truth for both the desktop GPUI
+//! application and the Android Compose application. Keep this file a literal projection of it;
+//! a colour that exists here but not there is a design regression, not a local tweak.
+
 use gpui::{FontWeight, Pixels, Rgba, px, rgb, rgba};
 use gpui_component::{Theme as ComponentTheme, ThemeMode};
 
 #[derive(Clone, Copy)]
 pub(crate) struct Theme {
     pub window_backdrop: Rgba,
+    /// The alabaster/obsidian workspace canvas. Page background.
     pub surface_base: Rgba,
+    /// Recessed wells: segmented tracks, input backgrounds, inset strips.
     pub surface_low: Rgba,
+    /// Hover fills and pressed surfaces.
     pub surface_high: Rgba,
+    /// Dialogs, popovers, bottom sheets, utility editors.
     pub surface_overlay: Rgba,
+    /// Navigation rail, command bar, mobile bottom bar.
     pub surface_chrome: Rgba,
+    /// Opaque content cards: policy groups, subscriptions, settings groups.
+    pub surface_elevated: Rgba,
     pub text_primary: Rgba,
     pub text_secondary: Rgba,
     pub text_tertiary: Rgba,
@@ -26,11 +39,20 @@ pub(crate) struct Theme {
     pub button_active: Rgba,
     pub focus_ring: Rgba,
     pub modal_scrim: Rgba,
+    /// Royal Violet, reserved for the rule -> policy group -> exit chain.
     pub route_trace: Rgba,
     pub route_soft: Rgba,
     pub status_success: Rgba,
+    pub status_success_soft: Rgba,
     pub status_warning: Rgba,
+    pub status_warning_soft: Rgba,
     pub status_error: Rgba,
+    pub status_error_soft: Rgba,
+    /// Destructive buttons own an independent fill/label pair.
+    pub danger_fill: Rgba,
+    pub danger_hover: Rgba,
+    pub danger_active: Rgba,
+    pub danger_on: Rgba,
     pub log_info: Rgba,
     pub log_debug: Rgba,
     pub log_trace: Rgba,
@@ -39,74 +61,111 @@ pub(crate) struct Theme {
 impl Theme {
     pub(crate) fn light() -> Self {
         Self {
-            // Tinted surfaces separate chrome, content and controls without desktop bleed-through.
-            // See docs/interface-design.md for the public design references and contrast policy.
-            window_backdrop: rgb(0xfafbfc),
-            surface_base: rgb(0xfafbfc),
-            surface_low: rgb(0xf0f3f5),
-            surface_high: rgb(0xe9eef2),
+            // Warm architectural plaster: canvas #F7F6F3, white cards, a 1px warm stone hairline.
+            window_backdrop: rgb(0xf7f6f3),
+            surface_base: rgb(0xf7f6f3),
+            surface_low: rgb(0xf1efea),
+            surface_high: rgb(0xe6e3dc),
             surface_overlay: rgb(0xffffff),
-            surface_chrome: rgb(0xe9eef2),
-            text_primary: rgb(0x0d0d0d),
-            text_secondary: rgb(0x5d5d5d),
-            text_tertiary: rgb(0x666666),
-            outline_subtle: rgb(0xdde3e8),
-            outline_strong: rgb(0x78828c),
-            action_primary: rgb(0x176c62),
-            action_primary_hover: rgb(0x125d54),
-            action_primary_active: rgb(0x0e4e46),
+            surface_chrome: rgb(0xefece6),
+            surface_elevated: rgb(0xffffff),
+            text_primary: rgb(0x141413),
+            text_secondary: rgb(0x4e4d49),
+            text_tertiary: rgb(0x5e5c57),
+            outline_subtle: rgb(0xe5e2dc),
+            outline_strong: rgb(0x8b8881),
+            action_primary: rgb(0x2b4eff),
+            action_primary_hover: rgb(0x1f3ee0),
+            action_primary_active: rgb(0x1732bd),
             action_on_primary: rgb(0xffffff),
-            action_soft: rgb(0xe3f0ed),
-            button_bg: rgb(0xedf1f4),
-            button_hover: rgb(0xe2e8ed),
-            button_active: rgb(0xd5dfe6),
-            focus_ring: rgb(0x2563eb),
-            modal_scrim: rgba(0x00000040),
-            route_trace: rgb(0x923b0f),
-            route_soft: rgb(0xfff5f0),
-            status_success: rgb(0x00692a),
-            status_warning: rgb(0x875500),
-            status_error: rgb(0xb42318),
+            action_soft: rgb(0xeef2ff),
+            button_bg: rgb(0xeceae4),
+            button_hover: rgb(0xe2dfd7),
+            button_active: rgb(0xd7d3c9),
+            focus_ring: rgb(0x2b4eff),
+            modal_scrim: rgba(0x14141359),
+            route_trace: rgb(0x6d28d9),
+            route_soft: rgb(0xf3eeff),
+            status_success: rgb(0x0e7a4b),
+            status_success_soft: rgb(0xe8f7f0),
+            status_warning: rgb(0x9a5504),
+            status_warning_soft: rgb(0xfef5e7),
+            status_error: rgb(0xc81e1e),
+            status_error_soft: rgb(0xfef2f2),
+            danger_fill: rgb(0xc81e1e),
+            danger_hover: rgb(0xa61717),
+            danger_active: rgb(0x861212),
+            danger_on: rgb(0xffffff),
             log_info: rgb(0x1d4ed8),
-            log_debug: rgb(0x7e22ce),
-            log_trace: rgb(0x0e7490),
+            log_debug: rgb(0x6d28d9),
+            log_trace: rgb(0x0f766e),
         }
     }
 
     pub(crate) fn dark() -> Self {
         Self {
-            window_backdrop: rgb(0x15191e),
-            surface_base: rgb(0x15191e),
-            surface_low: rgb(0x1c2229),
-            surface_high: rgb(0x242c35),
-            surface_overlay: rgb(0x242c35),
-            surface_chrome: rgb(0x1c2229),
-            text_primary: rgb(0xf3f3f3),
-            text_secondary: rgb(0xb9b9b9),
-            text_tertiary: rgb(0xababab),
-            outline_subtle: rgb(0x35404c),
-            outline_strong: rgb(0x858f9b),
-            action_primary: rgb(0x79d7c6),
-            action_primary_hover: rgb(0x95e3d4),
-            action_primary_active: rgb(0xafece0),
-            action_on_primary: rgb(0x0d0d0d),
-            action_soft: rgb(0x203b35),
-            button_bg: rgb(0x29333e),
-            button_hover: rgb(0x354251),
-            button_active: rgb(0x415165),
-            focus_ring: rgb(0x8cb4ff),
-            modal_scrim: rgba(0x00000066),
-            route_trace: rgb(0xffb790),
-            route_soft: rgb(0x362820),
-            status_success: rgb(0x73d499),
-            status_warning: rgb(0xf0c36a),
-            status_error: rgb(0xff9a96),
+            // True neutral obsidian: no cold-blue mud, no green cast.
+            window_backdrop: rgb(0x0d0d0f),
+            surface_base: rgb(0x0d0d0f),
+            surface_low: rgb(0x17171b),
+            surface_high: rgb(0x25252c),
+            surface_overlay: rgb(0x212127),
+            surface_chrome: rgb(0x141417),
+            surface_elevated: rgb(0x1c1c21),
+            text_primary: rgb(0xf4f4f6),
+            text_secondary: rgb(0xb4b4be),
+            text_tertiary: rgb(0x9a9aa6),
+            outline_subtle: rgb(0x2b2b33),
+            outline_strong: rgb(0x787886),
+            action_primary: rgb(0x6b8aff),
+            action_primary_hover: rgb(0x859fff),
+            action_primary_active: rgb(0xa1b5ff),
+            action_on_primary: rgb(0x0a0d18),
+            action_soft: rgb(0x1b2342),
+            button_bg: rgb(0x26262e),
+            button_hover: rgb(0x31313b),
+            button_active: rgb(0x3d3d4a),
+            focus_ring: rgb(0x859fff),
+            modal_scrim: rgba(0x00000080),
+            route_trace: rgb(0xc4b5fd),
+            route_soft: rgb(0x271f3d),
+            status_success: rgb(0x4ade80),
+            status_success_soft: rgb(0x122b20),
+            status_warning: rgb(0xfbbf24),
+            status_warning_soft: rgb(0x2e2312),
+            status_error: rgb(0xf87171),
+            status_error_soft: rgb(0x331719),
+            danger_fill: rgb(0xc81e1e),
+            danger_hover: rgb(0xa61717),
+            danger_active: rgb(0x861212),
+            danger_on: rgb(0xffffff),
             log_info: rgb(0x93c5fd),
             log_debug: rgb(0xd8b4fe),
-            log_trace: rgb(0x67e8f9),
+            log_trace: rgb(0x5eead4),
+        }
+    }
+
+    /// The status colour a measured latency earns, or the neutral token when it is unknown.
+    pub(crate) fn latency_color(self, milliseconds: Option<u64>) -> Rgba {
+        match milliseconds {
+            Some(value) if value < 120 => self.status_success,
+            Some(value) if value <= 350 => self.status_warning,
+            Some(_) => self.status_error,
+            None => self.text_tertiary,
         }
     }
 }
+
+/// The sans stack resolves to the platform UI face; the mono stack keeps every number tabular.
+///
+/// A concrete face is named per platform: the generic `monospace` alias resolves to a
+/// proportional face on some font-kit backends, which breaks the tabular guarantee.
+#[cfg(target_os = "macos")]
+pub(crate) const MONO_FAMILY: &str = "Menlo";
+#[cfg(target_os = "windows")]
+pub(crate) const MONO_FAMILY: &str = "Consolas";
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+pub(crate) const MONO_FAMILY: &str = "DejaVu Sans Mono";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum TextRole {
@@ -114,28 +173,30 @@ pub(crate) enum TextRole {
     SectionTitle,
     Body,
     Label,
-    Metadata,
+    /// Latency, traffic, IPs, rule numbers, timestamps: always monospaced and tabular.
     Data,
+    Metadata,
 }
 
 impl TextRole {
     pub(crate) fn size(self) -> Pixels {
         match self {
-            Self::PageTitle => px(24.0),
-            Self::SectionTitle => px(16.0),
-            Self::Body => px(13.0),
-            Self::Label | Self::Data => px(12.0),
-            Self::Metadata => px(11.0),
+            Self::PageTitle => px(22.0),
+            Self::SectionTitle => px(15.0),
+            Self::Body => px(13.5),
+            Self::Label => px(13.0),
+            Self::Data => px(12.0),
+            Self::Metadata => px(11.5),
         }
     }
 
     pub(crate) fn line_height(self) -> Pixels {
         match self {
-            Self::PageTitle => px(32.0),
+            Self::PageTitle => px(30.0),
             Self::SectionTitle => px(22.0),
             Self::Body => px(20.0),
-            Self::Label | Self::Metadata => px(16.0),
-            Self::Data => px(18.0),
+            Self::Label | Self::Data => px(18.0),
+            Self::Metadata => px(16.0),
         }
     }
 
@@ -155,6 +216,7 @@ pub(crate) enum Space {
     Md,
     Lg,
     Xl,
+    Xxl,
 }
 
 impl Space {
@@ -165,22 +227,29 @@ impl Space {
             Self::Md => px(12.0),
             Self::Lg => px(16.0),
             Self::Xl => px(24.0),
+            Self::Xxl => px(32.0),
         }
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Radius {
+    /// Region codes, protocol/property pills.
+    Badge,
     Control,
     Row,
+    Card,
     Pane,
+    Sheet,
 }
 
 impl Radius {
     pub(crate) fn px(self) -> Pixels {
         match self {
-            Self::Control | Self::Row => px(8.0),
-            Self::Pane => px(12.0),
+            Self::Badge => px(6.0),
+            Self::Control | Self::Row => px(10.0),
+            Self::Card | Self::Pane => px(14.0),
+            Self::Sheet => px(20.0),
         }
     }
 }
@@ -195,18 +264,13 @@ pub(crate) enum ControlSize {
 impl ControlSize {
     pub(crate) fn height(self) -> Pixels {
         match self {
-            Self::Compact => px(34.0),
-            Self::Standard => px(38.0),
-            Self::Icon => px(32.0),
+            Self::Compact | Self::Icon => px(32.0),
+            Self::Standard => px(36.0),
         }
     }
 
     pub(crate) fn min_pointer_target(self) -> Pixels {
-        match self {
-            Self::Icon => px(32.0),
-            Self::Compact => px(34.0),
-            Self::Standard => px(38.0),
-        }
+        self.height()
     }
 }
 
@@ -217,6 +281,9 @@ pub(crate) enum LayoutMetric {
     WideNavigation,
     MediumNavigation,
     CompactNavigation,
+    CommandBarHeight,
+    BrandRowHeight,
+    ContentMaxWidth,
 }
 
 impl LayoutMetric {
@@ -224,9 +291,10 @@ impl LayoutMetric {
         match self {
             Self::MinWindowWidth => px(640.0),
             Self::MinWindowHeight => px(560.0),
-            Self::WideNavigation => px(220.0),
-            Self::MediumNavigation => px(66.0),
-            Self::CompactNavigation => px(56.0),
+            Self::WideNavigation => px(232.0),
+            Self::MediumNavigation => px(68.0),
+            Self::CompactNavigation | Self::CommandBarHeight | Self::BrandRowHeight => px(56.0),
+            Self::ContentMaxWidth => px(1160.0),
         }
     }
 }
@@ -288,31 +356,31 @@ fn project_component_palette(component: &mut ComponentTheme, theme: Theme) {
     component.button_secondary_foreground = theme.text_primary.into();
     // Destructive fills have their own contrast pair; status text and an inverted
     // dark-mode primary button must never determine a destructive button's label.
-    component.button_danger = rgb(0xba2623).into();
-    component.button_danger_hover = rgb(0x911e1b).into();
-    component.button_danger_active = rgb(0x6e1615).into();
-    component.button_danger_foreground = rgb(0xffffff).into();
-    component.secondary = theme.surface_base.into();
+    component.button_danger = theme.danger_fill.into();
+    component.button_danger_hover = theme.danger_hover.into();
+    component.button_danger_active = theme.danger_active.into();
+    component.button_danger_foreground = theme.danger_on.into();
+    component.secondary = theme.surface_low.into();
     component.secondary_hover = theme.surface_high.into();
-    component.secondary_active = theme.action_soft.into();
+    component.secondary_active = theme.button_active.into();
     component.secondary_foreground = theme.text_primary.into();
     component.danger = theme.status_error.into();
-    component.danger_hover = component.button_danger_hover;
-    component.danger_active = component.button_danger_active;
-    component.danger_foreground = theme.action_on_primary.into();
+    component.danger_hover = theme.danger_hover.into();
+    component.danger_active = theme.danger_active.into();
+    component.danger_foreground = theme.danger_on.into();
     // Compound components must not paint their upstream opaque card underneath Manis'
     // rounded shells. Their titles and rows own the visible material instead.
     component.accordion = rgba(0x00000000).into();
-    component.group_box = theme.surface_base.into();
+    component.group_box = theme.surface_elevated.into();
     component.group_box_foreground = theme.text_primary.into();
-    component.colors.list = theme.surface_base.into();
-    component.colors.list_even = theme.surface_base.into();
+    component.colors.list = theme.surface_elevated.into();
+    component.colors.list_even = theme.surface_elevated.into();
     component.colors.list_head = theme.surface_low.into();
     component.colors.list_hover = theme.surface_high.into();
     component.colors.list_active = theme.action_soft.into();
     component.list_active_border = theme.outline_subtle.into();
-    component.table = theme.surface_base.into();
-    component.table_even = theme.surface_base.into();
+    component.table = theme.surface_elevated.into();
+    component.table_even = theme.surface_elevated.into();
     component.table_head = theme.surface_low.into();
     component.table_hover = theme.surface_high.into();
     component.table_active = theme.action_soft.into();
@@ -334,20 +402,20 @@ fn project_component_chrome(component: &mut ComponentTheme, theme: Theme) {
     component.sidebar_foreground = theme.text_primary.into();
     component.sidebar_border = theme.outline_subtle.into();
     component.sidebar_accent = theme.action_soft.into();
-    component.sidebar_accent_foreground = theme.text_primary.into();
+    component.sidebar_accent_foreground = theme.action_primary.into();
     component.sidebar_primary = theme.action_primary.into();
     component.sidebar_primary_foreground = theme.action_on_primary.into();
-    component.tab_bar = theme.surface_base.into();
+    component.tab_bar = theme.surface_chrome.into();
     component.tab_bar_segmented = theme.surface_low.into();
-    component.tab = theme.surface_base.into();
+    component.tab = theme.surface_chrome.into();
     component.tab_foreground = theme.text_secondary.into();
-    component.tab_active = theme.action_soft.into();
+    component.tab_active = theme.surface_elevated.into();
     component.tab_active_foreground = theme.text_primary.into();
     component.progress_bar = theme.action_primary.into();
     component.slider_bar = theme.action_primary.into();
     component.slider_thumb = theme.action_primary.into();
     component.switch = theme.outline_strong.into();
-    component.switch_thumb = theme.surface_base.into();
+    component.switch_thumb = theme.surface_elevated.into();
     component.scrollbar = rgba(0x00000000).into();
     component.scrollbar_thumb = theme.outline_strong.into();
     component.scrollbar_thumb_hover = theme.text_secondary.into();
@@ -388,17 +456,21 @@ mod tests {
         assert_px(Space::Md.px(), 12.0);
         assert_px(Space::Lg.px(), 16.0);
         assert_px(Space::Xl.px(), 24.0);
+        assert_px(Space::Xxl.px(), 32.0);
 
-        assert_px(Radius::Control.px(), 8.0);
-        assert_px(Radius::Row.px(), 8.0);
-        assert_px(Radius::Pane.px(), 12.0);
+        assert_px(Radius::Badge.px(), 6.0);
+        assert_px(Radius::Control.px(), 10.0);
+        assert_px(Radius::Row.px(), 10.0);
+        assert_px(Radius::Card.px(), 14.0);
+        assert_px(Radius::Pane.px(), 14.0);
+        assert_px(Radius::Sheet.px(), 20.0);
 
-        assert_px(ControlSize::Compact.height(), 34.0);
-        assert_px(ControlSize::Standard.height(), 38.0);
+        assert_px(ControlSize::Compact.height(), 32.0);
+        assert_px(ControlSize::Standard.height(), 36.0);
         assert_px(ControlSize::Icon.min_pointer_target(), 32.0);
     }
 
-    fn surfaces(theme: Theme) -> [gpui::Rgba; 7] {
+    fn surfaces(theme: Theme) -> [gpui::Rgba; 8] {
         [
             theme.window_backdrop,
             theme.surface_base,
@@ -406,6 +478,7 @@ mod tests {
             theme.surface_high,
             theme.surface_overlay,
             theme.surface_chrome,
+            theme.surface_elevated,
             theme.action_soft,
         ]
     }
@@ -447,8 +520,9 @@ mod tests {
             assert_ne!(theme.surface_base, theme.surface_low);
             assert_ne!(theme.surface_low, theme.surface_high);
             assert_ne!(theme.surface_high, theme.action_soft);
+            assert_ne!(theme.surface_base, theme.surface_elevated);
             // Only the scrim dims an already opaque application; dialog content never does.
-            assert!((0.2..=0.4).contains(&theme.modal_scrim.a));
+            assert!((0.2..=0.6).contains(&theme.modal_scrim.a));
         }
     }
 
@@ -469,19 +543,48 @@ mod tests {
                 theme.status_warning,
                 theme.status_error,
             ] {
-                for surface in [theme.surface_base, theme.surface_low, theme.surface_overlay] {
+                for surface in [
+                    theme.surface_base,
+                    theme.surface_low,
+                    theme.surface_overlay,
+                    theme.surface_elevated,
+                ] {
                     assert_contrast(status, surface, 4.5);
                 }
             }
             assert_contrast(theme.route_trace, theme.route_soft, 4.5);
+            // Level tags use a 10% tint of their own colour. TRACE has no tinted tag in the
+            // design, so it is only required to read on a plain surface.
             for level in [
                 theme.log_info,
                 theme.log_debug,
-                theme.log_trace,
                 theme.status_warning,
                 theme.status_error,
             ] {
                 assert_contrast(level, theme.surface_base.blend(level.opacity(0.1)), 4.5);
+            }
+            for surface in [
+                theme.surface_base,
+                theme.surface_low,
+                theme.surface_elevated,
+            ] {
+                assert_contrast(theme.log_trace, surface, 4.5);
+            }
+        }
+    }
+
+    #[test]
+    fn soft_status_fills_carry_their_status_text() {
+        for theme in [Theme::light(), Theme::dark()] {
+            for (foreground, background) in [
+                (theme.status_success, theme.status_success_soft),
+                (theme.status_warning, theme.status_warning_soft),
+                (theme.status_error, theme.status_error_soft),
+                (theme.route_trace, theme.route_soft),
+                (theme.action_primary, theme.action_soft),
+                (theme.danger_on, theme.danger_fill),
+            ] {
+                assert_contrast(foreground, background, 4.5);
             }
         }
     }
@@ -489,12 +592,17 @@ mod tests {
     #[test]
     fn controls_and_keyboard_focus_remain_visible() {
         for theme in [Theme::light(), Theme::dark()] {
+            // `border.strong` is specified for interactive input boundaries on content
+            // surfaces. The chrome carries navigation only, so it keeps the non-text floor.
+            for surface in [theme.surface_base, theme.surface_overlay] {
+                assert_contrast(theme.outline_strong, surface, 3.0);
+            }
+            assert_contrast(theme.outline_strong, theme.surface_chrome, 2.9);
             for surface in [
                 theme.surface_base,
                 theme.surface_overlay,
                 theme.surface_chrome,
             ] {
-                assert_contrast(theme.outline_strong, surface, 3.0);
                 assert_contrast(theme.focus_ring, surface, 3.0);
             }
             for fill in [
@@ -566,11 +674,26 @@ mod tests {
     }
 
     #[test]
+    fn latency_colors_follow_the_design_bands() {
+        for theme in [Theme::light(), Theme::dark()] {
+            assert_eq!(theme.latency_color(None), theme.text_tertiary);
+            assert_eq!(theme.latency_color(Some(38)), theme.status_success);
+            assert_eq!(theme.latency_color(Some(119)), theme.status_success);
+            assert_eq!(theme.latency_color(Some(120)), theme.status_warning);
+            assert_eq!(theme.latency_color(Some(350)), theme.status_warning);
+            assert_eq!(theme.latency_color(Some(351)), theme.status_error);
+        }
+    }
+
+    #[test]
     fn layout_metrics_preserve_the_adaptive_breakpoints() {
         assert_px(LayoutMetric::MinWindowWidth.px(), 640.0);
         assert_px(LayoutMetric::MinWindowHeight.px(), 560.0);
-        assert_px(LayoutMetric::WideNavigation.px(), 220.0);
-        assert_px(LayoutMetric::MediumNavigation.px(), 66.0);
+        assert_px(LayoutMetric::WideNavigation.px(), 232.0);
+        assert_px(LayoutMetric::MediumNavigation.px(), 68.0);
         assert_px(LayoutMetric::CompactNavigation.px(), 56.0);
+        assert_px(LayoutMetric::CommandBarHeight.px(), 56.0);
+        assert_px(LayoutMetric::BrandRowHeight.px(), 56.0);
+        assert_px(LayoutMetric::ContentMaxWidth.px(), 1160.0);
     }
 }

@@ -1,77 +1,68 @@
 use super::{
-    ActionRole, Button, ButtonVariant, ButtonVariants, Collapsible, Context, ControlSize, Div,
-    FluentBuilder, FontWeight, GroupBenchmarkNodeState, GroupBenchmarkState, InteractiveElement,
-    IntoElement, Language, LoadedProviderNode, ManisApp, Message, NodeIdentity, NodeSourceGroup,
-    NodeWorkspaceView, ParentElement, PrimaryWorkspace, Radius, Role, SourceGroupPresentation,
-    Space, Stateful, StatefulInteractiveElement, Styled, TextRole, Theme, Toggled,
-    WorkspaceNodeRowContext, action_button, copy, div, empty_state, px,
+    ActionRole, Button, ButtonVariant, ButtonVariants, Collapsible, Context, ControlSize,
+    Disableable, Div, FluentBuilder, FontWeight, GroupBenchmarkNodeState, GroupBenchmarkState,
+    InteractiveElement, IntoElement, Language, LoadedProviderNode, ManisApp, Message, NodeIdentity,
+    NodeSourceGroup, NodeWorkspaceView, ParentElement, PrimaryWorkspace, Role,
+    SourceGroupPresentation, Space, Stateful, StatefulInteractiveElement, Styled, TextRole, Theme,
+    Toggled, WorkspaceNodeRowContext, action_button, copy, div, empty_state, parse_latency_ms, px,
+    region_code, style_action_button,
 };
+use crate::components::{
+    StatusTone, card_surface, latency_pill, mono_text, region_code_badge, status_badge,
+};
+use crate::theme::MONO_FAMILY;
+use gpui_component::IconName;
 
 impl ManisApp {
     pub(super) fn source_group_list(
         &self,
         groups: &[NodeSourceGroup<'_>],
-        compact: bool,
-        language: Language,
-        theme: Theme,
+        view: NodeWorkspaceView,
         cx: &mut Context<Self>,
     ) -> Div {
-        let mut list = div().flex_shrink_0().flex().flex_col().gap_3();
+        let mut list = div().flex_shrink_0().flex().flex_col().gap(Space::Md.px());
         for group in groups {
-            list = list.child(self.source_group(group, compact, language, theme, cx));
+            list = list.child(self.source_group(group, view, cx));
         }
         list
     }
 
+    /// One subscription source: an opaque card whose header carries identity, quota and actions,
+    /// and whose body is the node list.
     pub(super) fn source_group(
         &self,
         group: &NodeSourceGroup<'_>,
-        compact: bool,
-        language: Language,
-        theme: Theme,
+        view: NodeWorkspaceView,
         cx: &mut Context<Self>,
     ) -> Div {
+        let NodeWorkspaceView {
+            language, theme, ..
+        } = view;
         let presentation = self.source_group_presentation(group, language);
-        let header = Self::source_group_header(group, &presentation, compact, language, theme, cx);
-
+        let header = Self::source_group_header(group, &presentation, view, cx);
         let content = if presentation.total_nodes == 0 {
             div()
-                .px_4()
-                .py_3()
+                .px(Space::Lg.px())
+                .pb(Space::Lg.px())
+                .pt(Space::Sm.px())
                 .border_t_1()
                 .border_color(theme.outline_subtle)
-                .bg(theme.surface_base)
                 .text_size(TextRole::Body.size())
                 .line_height(TextRole::Body.line_height())
                 .text_color(theme.text_secondary)
                 .child(language.localized(copy::nodes::NO_NODES_IN_THIS_SOURCE))
                 .into_any_element()
         } else {
-            self.source_group_table(
-                group,
-                presentation.benchmark,
-                NodeWorkspaceView {
-                    compact,
-                    language,
-                    theme,
-                },
-                cx,
-            )
-            .into_any_element()
+            self.source_group_table(group, presentation.benchmark, view, cx)
+                .into_any_element()
         };
 
-        div()
-            .flex_shrink_0()
-            .rounded(Radius::Pane.px())
-            .border_1()
-            .border_color(theme.outline_subtle)
-            .overflow_hidden()
-            .child(
-                Collapsible::new()
-                    .open(!presentation.collapsed)
-                    .child(header)
-                    .content(content),
-            )
+        card_surface(theme).flex_shrink_0().overflow_hidden().child(
+            Collapsible::new()
+                .open(!presentation.collapsed)
+                .child(header)
+                .content(content),
+        )
     }
 
     pub(super) fn source_group_presentation(
@@ -79,12 +70,7 @@ impl ManisApp {
         group: &NodeSourceGroup<'_>,
         language: Language,
     ) -> SourceGroupPresentation<'_> {
-        let total_nodes = group
-            .providers
-            .iter()
-            .map(|provider| provider.nodes.len())
-            .sum::<usize>()
-            + group.saved_nodes.len();
+        let total_nodes = group.node_count();
         let benchmark_key = Self::source_group_benchmark_key(&group.id);
         let benchmark = self
             .managed_policies
@@ -119,14 +105,20 @@ impl ManisApp {
         }
     }
 
+    /// The source header: name, vehicle and node count on the left, refresh, latency test and
+    /// disclosure on the right. The identity area and the disclosure both toggle the node list;
+    /// refresh and the latency test are separate actions that must not collapse the card.
     pub(super) fn source_group_header(
         group: &NodeSourceGroup<'_>,
         presentation: &SourceGroupPresentation<'_>,
-        compact: bool,
-        language: Language,
-        theme: Theme,
+        view: NodeWorkspaceView,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
+        let NodeWorkspaceView {
+            compact,
+            language,
+            theme,
+        } = view;
         let action = if presentation.collapsed {
             language.localized(copy::common::EXPAND)
         } else {
@@ -150,19 +142,14 @@ impl ManisApp {
             .flex_1()
             .px_0()
             .text_color(theme.text_primary)
-            .child(Self::source_group_header_content(
+            .child(Self::source_group_identity(
                 group,
                 presentation,
                 language,
                 theme,
             ))
             .on_click(cx.listener(move |this, _, _, cx| {
-                this.node_workspace.toggle_group(&trigger_group_id);
-                this.persist_node_workspace();
-                this.language()
-                    .localized(copy::nodes::NODE_SOURCE_EXPANDED_STATE_UPDATED)
-                    .clone_into(&mut this.status);
-                cx.notify();
+                this.toggle_source_group(&trigger_group_id, cx);
             }));
         let benchmarking = presentation.benchmark.is_running();
         let benchmark_id = group.id.clone();
@@ -171,20 +158,15 @@ impl ManisApp {
         div()
             .id(format!("source-group-surface-{}", group.id))
             .min_h(px(58.0))
-            .px(if compact { px(12.0) } else { px(16.0) })
-            .py_3()
+            .px(if compact { px(12.0) } else { Space::Lg.px() })
+            .py(Space::Md.px())
             .flex()
             .items_center()
-            .gap_3()
-            .rounded_tl(Radius::Pane.px())
-            .rounded_tr(Radius::Pane.px())
-            .when(presentation.collapsed, |header| {
-                header
-                    .rounded_bl(Radius::Pane.px())
-                    .rounded_br(Radius::Pane.px())
-            })
-            .bg(theme.surface_low)
-            .hover(move |header| header.bg(theme.action_soft))
+            .gap(Space::Sm.px())
+            .bg(theme.surface_elevated)
+            .hover(move |header| header.bg(theme.surface_low))
+            .child(trigger)
+            .child(Self::source_group_refresh_button(group, view, cx))
             .child(Self::group_benchmark_icon(
                 &presentation.benchmark_key,
                 benchmarking,
@@ -201,10 +183,37 @@ impl ManisApp {
                     }
                 }),
             ))
-            .child(trigger)
+            .child(
+                div()
+                    .id(format!("source-group-disclosure-{}", group.id))
+                    .role(Role::Button)
+                    .aria_label(format!("{action} {}", group.name))
+                    .map(crate::components::primary_button_interaction)
+                    .cursor_pointer()
+                    .child(crate::components::disclosure_icon(
+                        !presentation.collapsed,
+                        theme,
+                    ))
+                    .on_click(cx.listener({
+                        let disclosure_group_id = group.id.clone();
+                        move |this, _, _, cx| {
+                            this.toggle_source_group(&disclosure_group_id, cx);
+                        }
+                    })),
+            )
     }
 
-    pub(super) fn source_group_header_content(
+    /// Expanding a source is persisted immediately, so the page survives a restart as it was left.
+    fn toggle_source_group(&mut self, id: &str, cx: &mut Context<Self>) {
+        self.node_workspace.toggle_group(id);
+        self.persist_node_workspace();
+        self.language()
+            .localized(copy::nodes::NODE_SOURCE_EXPANDED_STATE_UPDATED)
+            .clone_into(&mut self.status);
+        cx.notify();
+    }
+
+    fn source_group_identity(
         group: &NodeSourceGroup<'_>,
         presentation: &SourceGroupPresentation<'_>,
         language: Language,
@@ -212,50 +221,99 @@ impl ManisApp {
     ) -> Div {
         div()
             .min_w(px(0.0))
-            .w_full()
-            .flex()
-            .items_center()
-            .justify_between()
-            .gap_3()
+            .flex_1()
             .child(
                 div()
-                    .min_w(px(0.0))
-                    .flex_1()
+                    .flex()
+                    .items_center()
+                    .gap(Space::Sm.px())
                     .child(
                         div()
+                            .min_w(px(0.0))
                             .overflow_x_hidden()
                             .whitespace_nowrap()
                             .text_ellipsis()
-                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_size(TextRole::Body.size())
+                            .line_height(TextRole::Body.line_height())
+                            .font_weight(TextRole::Label.weight())
+                            .text_color(theme.text_primary)
                             .child(group.name.clone()),
                     )
-                    .child(
-                        div()
-                            .mt(Space::Xs.px())
-                            .text_size(TextRole::Metadata.size())
-                            .line_height(TextRole::Metadata.line_height())
-                            .text_color(theme.text_tertiary)
-                            .child(presentation.detail.clone()),
-                    ),
-            )
-            .child(
-                div()
-                    .flex_shrink_0()
-                    .flex()
-                    .items_center()
-                    .gap_3()
-                    .child(
-                        div()
-                            .text_size(TextRole::Metadata.size())
-                            .line_height(TextRole::Metadata.line_height())
-                            .text_color(theme.text_secondary)
-                            .child(Self::node_count_label(presentation.total_nodes, language)),
-                    )
-                    .child(crate::components::disclosure_icon(
-                        !presentation.collapsed,
+                    .when_some(group.vehicle.clone(), |row, vehicle| {
+                        row.child(status_badge(vehicle, StatusTone::Neutral, theme))
+                    })
+                    .child(status_badge(
+                        Self::node_count_label(presentation.total_nodes, language),
+                        StatusTone::Neutral,
                         theme,
                     )),
             )
+            .child(
+                div()
+                    .mt(Space::Xs.px())
+                    .text_size(TextRole::Metadata.size())
+                    .line_height(TextRole::Metadata.line_height())
+                    .text_color(theme.text_tertiary)
+                    .child(presentation.detail.clone()),
+            )
+            .when_some(group.quota.as_ref(), |identity, quota| {
+                // A quota meter only renders for a source that actually reports traffic limits.
+                identity.child(
+                    div()
+                        .mt(Space::Xs.px())
+                        .flex()
+                        .items_center()
+                        .gap(Space::Sm.px())
+                        .child(crate::components::usage_meter(
+                            quota.used_fraction,
+                            110.0,
+                            theme,
+                        ))
+                        .child(mono_text(quota.label.clone(), theme.text_tertiary)),
+                )
+            })
+    }
+
+    /// The refresh control for a source that can be re-fetched; kernel-provided sources cannot,
+    /// so their button stays disabled instead of pretending to refresh.
+    fn source_group_refresh_button(
+        group: &NodeSourceGroup<'_>,
+        view: NodeWorkspaceView,
+        cx: &mut Context<Self>,
+    ) -> Button {
+        let NodeWorkspaceView {
+            language, theme, ..
+        } = view;
+        let subscription_id = group.subscription_id.clone();
+        let refreshable = subscription_id.is_some();
+        style_action_button(
+            Button::new(format!("source-refresh-{}", group.id))
+                .debug_selector({
+                    let id = group.id.clone();
+                    move || format!("source-refresh-{id}")
+                })
+                .accessibility_label(language.message(Message::RefreshData)),
+            ActionRole::Secondary,
+            ControlSize::Icon,
+        )
+        .flex_shrink_0()
+        .when(refreshable, |button| {
+            button
+                .icon(IconName::Redo2)
+                .text_color(theme.text_secondary)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if let Some(id) = subscription_id.clone() {
+                        this.refresh_imported_subscription(id, cx);
+                    }
+                }))
+        })
+        .when(!refreshable, |button| {
+            button
+                .icon(IconName::Redo2)
+                .text_color(theme.text_tertiary)
+                .disabled(true)
+                .cursor_default()
+        })
     }
 
     pub(super) fn source_group_table(
@@ -265,16 +323,8 @@ impl ManisApp {
         view: NodeWorkspaceView,
         cx: &mut Context<Self>,
     ) -> Div {
-        let NodeWorkspaceView {
-            compact,
-            language,
-            theme,
-        } = view;
-        let mut table = div();
-        if !compact {
-            table = table.child(Self::node_table_header(language, theme));
-        }
-
+        let NodeWorkspaceView { theme, .. } = view;
+        let mut table = div().border_t_1().border_color(theme.outline_subtle);
         for (provider_index, provider) in group.providers.iter().enumerate() {
             for (node_index, node) in provider.nodes.iter().enumerate() {
                 table = table.child(self.workspace_node_row(
@@ -283,9 +333,7 @@ impl ManisApp {
                     WorkspaceNodeRowContext {
                         row_id: format!("node-row-{}-{provider_index}-{node_index}", group.id),
                         source_id: group.id.clone(),
-                        compact,
-                        language,
-                        theme,
+                        view,
                     },
                     cx,
                 ));
@@ -308,40 +356,12 @@ impl ManisApp {
                         group.providers.len()
                     ),
                     source_id: group.id.clone(),
-                    compact,
-                    language,
-                    theme,
+                    view,
                 },
                 cx,
             ));
         }
         table
-    }
-
-    pub(in crate::app) fn node_table_header(language: Language, theme: Theme) -> Div {
-        div()
-            .h(ControlSize::Compact.height())
-            .px_4()
-            .flex()
-            .items_center()
-            .gap_3()
-            .bg(theme.surface_low)
-            .text_size(TextRole::Metadata.size())
-            .line_height(TextRole::Metadata.line_height())
-            .font_weight(TextRole::Metadata.weight())
-            .text_color(theme.text_tertiary)
-            .child(div().flex_1().child(language.localized(copy::nodes::NODE)))
-            .child(
-                div()
-                    .w(px(100.0))
-                    .child(language.localized(copy::nodes::PROTOCOL)),
-            )
-            .child(
-                div()
-                    .w(px(136.0))
-                    .text_align(gpui::TextAlign::Right)
-                    .child(language.localized(copy::nodes::LATENCY_AND_EXIT_IP)),
-            )
     }
 
     pub(super) fn workspace_node_row(
@@ -354,10 +374,13 @@ impl ManisApp {
         let WorkspaceNodeRowContext {
             row_id,
             source_id,
+            view,
+        } = context;
+        let NodeWorkspaceView {
             compact,
             language,
             theme,
-        } = context;
+        } = view;
         let latency = benchmark.node_state(&node.name);
         let idle_latency = node.latency_label.clone().unwrap_or_else(|| "—".to_owned());
         let exit_ip = self.exit_ip_label(&node.name).map(str::to_owned);
@@ -370,43 +393,40 @@ impl ManisApp {
         });
         let selection_locked = self.global_selection_busy.is_some();
         let selected_name = node.name.clone();
-        let row_body = if compact {
-            Self::compact_node_row_content(
-                node,
-                latency,
-                idle_latency,
-                exit_ip,
-                &spinner_id,
-                language,
-                theme,
-            )
-        } else {
-            Self::wide_node_row_content(
-                node,
-                latency,
-                idle_latency,
-                exit_ip,
-                &spinner_id,
-                language,
-                theme,
-            )
-        };
+        let row_body = Self::node_row_columns(
+            node,
+            latency,
+            idle_latency,
+            exit_ip,
+            &spinner_id,
+            global_selected,
+            language,
+            theme,
+            compact,
+        );
         let selector = row_id.clone();
         div()
             .id(row_id)
             .debug_selector(move || selector.clone())
-            .min_h(if compact { px(64.0) } else { px(52.0) })
-            .px(if compact { px(12.0) } else { px(16.0) })
-            .py_2()
+            .min_h(if compact { px(56.0) } else { px(44.0) })
+            .px(if compact { px(12.0) } else { Space::Lg.px() })
+            .py(Space::Sm.px())
             .flex()
             .items_center()
-            .gap_3()
+            .gap(Space::Sm.px())
             .border_t_1()
             .border_color(theme.outline_subtle)
             .bg(if global_selected {
                 theme.action_soft
             } else {
-                theme.surface_base
+                theme.surface_elevated
+            })
+            .hover(move |row| {
+                row.bg(if global_selected {
+                    theme.action_soft
+                } else {
+                    theme.surface_low
+                })
             })
             .child(row_body)
             .when_some(global_identity, |row, selected_identity| {
@@ -433,116 +453,128 @@ impl ManisApp {
             })
     }
 
-    pub(in crate::app) fn compact_node_row_content(
+    /// The four-column node row: `[region] name` | protocol | exit IP | signal bars and latency.
+    /// A compact window drops the IP column so the name keeps its width.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::app) fn node_row_columns(
         node: &LoadedProviderNode,
         latency: GroupBenchmarkNodeState,
         idle_latency: String,
         exit_ip: Option<String>,
         spinner_id: &str,
+        selected: bool,
         language: Language,
         theme: Theme,
+        compact: bool,
     ) -> Div {
+        let latency_ms = match latency {
+            GroupBenchmarkNodeState::Measured(milliseconds) => Some(u64::from(milliseconds)),
+            _ => parse_latency_ms(&idle_latency),
+        };
         div()
             .min_w(px(0.0))
             .flex_1()
             .flex()
             .items_center()
-            .justify_between()
-            .gap_3()
+            .gap(Space::Sm.px())
             .child(
                 div()
                     .min_w(px(0.0))
                     .flex_1()
+                    .flex()
+                    .items_center()
+                    .gap(px(10.0))
+                    .child(region_code_badge(region_code(&node.name), theme))
                     .child(
                         div()
-                            .font_weight(FontWeight::SEMIBOLD)
+                            .min_w(px(0.0))
+                            .overflow_x_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .text_size(TextRole::Body.size())
+                            .line_height(TextRole::Body.line_height())
+                            .font_weight(if selected {
+                                FontWeight::SEMIBOLD
+                            } else {
+                                TextRole::Label.weight()
+                            })
+                            .text_color(if selected {
+                                theme.action_primary
+                            } else {
+                                theme.text_primary
+                            })
                             .child(node.name.clone()),
                     )
-                    .child(
-                        div()
-                            .mt_1()
-                            .text_size(TextRole::Metadata.size())
-                            .line_height(TextRole::Metadata.line_height())
-                            .text_color(theme.text_tertiary)
-                            .child(node.protocol.clone()),
-                    ),
+                    .when(selected, |name| {
+                        name.child(status_badge(
+                            language.localized(copy::app::CURRENT),
+                            StatusTone::Neutral,
+                            theme,
+                        ))
+                    }),
             )
             .child(
                 div()
+                    .w(px(if compact { 82.0 } else { 96.0 }))
                     .flex_shrink_0()
-                    .min_w(px(136.0))
-                    .text_align(gpui::TextAlign::Right)
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .items_end()
-                            .child(
-                                div()
-                                    .min_h(px(18.0))
-                                    .flex()
-                                    .items_center()
-                                    .justify_end()
-                                    .child(Self::benchmark_latency_content(
-                                        latency,
-                                        idle_latency,
-                                        spinner_id,
-                                        language,
-                                        theme,
-                                    )),
-                            )
-                            .child(Self::exit_ip_content(exit_ip, theme)),
+                    .overflow_hidden()
+                    .child(status_badge(
+                        Self::protocol_label(node, language),
+                        StatusTone::Neutral,
+                        theme,
+                    )),
+            )
+            .when(!compact, |row| {
+                row.child(
+                    div()
+                        .w(px(124.0))
+                        .flex_shrink_0()
+                        .overflow_x_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .font_family(MONO_FAMILY)
+                        .child(Self::exit_ip_content(exit_ip, theme)),
+                )
+            })
+            .child(
+                div()
+                    .w(px(if compact { 76.0 } else { 86.0 }))
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    .justify_end()
+                    .when(
+                        matches!(
+                            latency,
+                            GroupBenchmarkNodeState::Pending | GroupBenchmarkNodeState::Failed
+                        ),
+                        |cell| {
+                            cell.child(Self::benchmark_latency_content(
+                                latency,
+                                idle_latency,
+                                spinner_id,
+                                language,
+                                theme,
+                            ))
+                        },
+                    )
+                    .when(
+                        !matches!(
+                            latency,
+                            GroupBenchmarkNodeState::Pending | GroupBenchmarkNodeState::Failed
+                        ),
+                        |cell| cell.child(latency_pill(latency_ms, theme)),
                     ),
             )
     }
 
-    pub(in crate::app) fn wide_node_row_content(
-        node: &LoadedProviderNode,
-        latency: GroupBenchmarkNodeState,
-        idle_latency: String,
-        exit_ip: Option<String>,
-        spinner_id: &str,
-        language: Language,
-        theme: Theme,
-    ) -> Div {
-        div()
-            .min_w(px(0.0))
-            .flex_1()
-            .flex()
-            .items_center()
-            .gap_3()
-            .child(
-                div()
-                    .min_w(px(0.0))
-                    .flex_1()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(node.name.clone()),
-            )
-            .child(
-                div()
-                    .w(px(100.0))
-                    .text_size(TextRole::Metadata.size())
-                    .line_height(TextRole::Metadata.line_height())
-                    .text_color(theme.text_tertiary)
-                    .child(node.protocol.clone()),
-            )
-            .child(
-                div()
-                    .w(px(136.0))
-                    .min_h(px(18.0))
-                    .flex()
-                    .flex_col()
-                    .items_end()
-                    .justify_end()
-                    .child(Self::benchmark_latency_content(
-                        latency,
-                        idle_latency,
-                        spinner_id,
-                        language,
-                        theme,
-                    ))
-                    .child(Self::exit_ip_content(exit_ip, theme)),
-            )
+    /// The protocol pill label: a node with no reported protocol still names its state.
+    fn protocol_label(node: &LoadedProviderNode, language: Language) -> String {
+        if node.protocol.trim().is_empty() {
+            language.localized(copy::app::UNKNOWN_TYPE).to_owned()
+        } else {
+            node.protocol.clone()
+        }
     }
 
     pub(in crate::app) fn node_empty_state(

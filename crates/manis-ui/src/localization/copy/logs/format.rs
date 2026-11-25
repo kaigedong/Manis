@@ -1,9 +1,9 @@
-use crate::localization::{CountNoun, Language};
+use crate::localization::Language;
 
-pub(crate) fn summary(language: Language, count: usize) -> String {
-    let count = language.count(CountNoun::Log, count);
+/// The privacy notice beside the log toolbar. The record count lives in the command bar.
+pub(crate) fn summary(language: Language) -> String {
     match language {
-        Language::English => format!("{count} · sensitive data hidden"),
-        Language::SimplifiedChinese => format!("{count} · 敏感信息已隐藏"),
+        Language::English => "Sensitive data hidden".to_owned(),
+        Language::SimplifiedChinese => "敏感信息已隐藏".to_owned(),
     }
 }
