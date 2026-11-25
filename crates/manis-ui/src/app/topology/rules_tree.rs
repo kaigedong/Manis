@@ -168,7 +168,6 @@ impl ManisApp {
         let flow_inner = div()
             .relative()
             .w_full()
-            .min_w(px(860.0))
             .flex()
             .items_start()
             .child(paint_edges_canvas(registry, edges))
@@ -177,10 +176,10 @@ impl ManisApp {
                 div()
                     .relative()
                     .flex_1()
-                    .min_w(px(270.0))
+                    .min_w(px(230.0))
                     .flex()
                     .flex_col()
-                    .gap(px(8.0))
+                    .gap(px(6.0))
                     .child(col_tag(
                         match language {
                             Language::English => "01 · ROUTING RULES (TOP TO BOTTOM)",
@@ -192,16 +191,16 @@ impl ManisApp {
                     .children(col1_cards),
             )
             // Unobstructed Bézier bay 1 -> 2
-            .child(div().w(px(88.0)).flex_shrink_0())
+            .child(div().w(px(72.0)).flex_shrink_0())
             // Column 2: Policy Groups
             .child(
                 div()
                     .relative()
                     .flex_1()
-                    .min_w(px(210.0))
+                    .min_w(px(195.0))
                     .flex()
                     .flex_col()
-                    .gap(px(8.0))
+                    .gap(px(6.0))
                     .child(col_tag(
                         match language {
                             Language::English => "02 · POLICY GROUPS",
@@ -213,16 +212,16 @@ impl ManisApp {
                     .children(col2_cards),
             )
             // Unobstructed Bézier bay 2 -> 3
-            .child(div().w(px(88.0)).flex_shrink_0())
+            .child(div().w(px(72.0)).flex_shrink_0())
             // Column 3: Active Exit Nodes
             .child(
                 div()
                     .relative()
                     .flex_1()
-                    .min_w(px(200.0))
+                    .min_w(px(190.0))
                     .flex()
                     .flex_col()
-                    .gap(px(8.0))
+                    .gap(px(6.0))
                     .child(col_tag(
                         match language {
                             Language::English => "03 · ACTIVE EXITS",
@@ -238,9 +237,8 @@ impl ManisApp {
             .id("rules-tree-canvas")
             .debug_selector(|| "rules-tree-canvas".to_owned())
             .flex_1()
-            .min_h(px(400.0))
-            .p(px(18.0))
-            .overflow_x_scroll()
+            .min_h(px(380.0))
+            .p(px(16.0))
             .on_click(cx.listener(|this, _, _, cx| {
                 if this.topology.pinned_rules.take().is_some() {
                     cx.notify();
@@ -335,19 +333,72 @@ impl ManisApp {
 
         for group_id in &group_order {
             if group_id == mihomo::MANUAL_ROUTING_RULE_GROUP_ID {
-                for (rule_index, rule) in self.manual_rules.iter().enumerate() {
-                    let target = self.effective_rule_target(rule.target(), language);
-                    rule_items.push(RuleTreeItem {
-                        id: format!("manual:{rule_index}"),
-                        order: format!("{seq:02}"),
-                        title: format_manual_rule_summary(rule),
-                        subtitle: language.localized(copy::common::MANUAL_RULES).to_owned(),
-                        samples: Vec::new(),
-                        target_policy: target,
-                        enabled: rule.is_enabled(),
-                        toggle: None,
-                    });
-                    seq += 1;
+                if self.manual_rules.len() <= 3 {
+                    for (rule_index, rule) in self.manual_rules.iter().enumerate() {
+                        let target = self.effective_rule_target(rule.target(), language);
+                        rule_items.push(RuleTreeItem {
+                            id: format!("manual:{rule_index}"),
+                            order: format!("{seq:02}"),
+                            title: format_manual_rule_summary(rule),
+                            subtitle: language.localized(copy::common::MANUAL_RULES).to_owned(),
+                            samples: Vec::new(),
+                            target_policy: target,
+                            enabled: rule.is_enabled(),
+                            toggle: None,
+                        });
+                        seq += 1;
+                    }
+                } else {
+                    // Cluster manual rules by target policy in priority order of first appearance
+                    // so 15+ manual rules stay compact and balanced with the policy column.
+                    let mut cluster_order: Vec<String> = Vec::new();
+                    let mut clusters: BTreeMap<String, Vec<&ManualRule>> = BTreeMap::new();
+                    for rule in &self.manual_rules {
+                        let target = self.effective_rule_target(rule.target(), language);
+                        let bucket = clusters.entry(target.clone()).or_default();
+                        if bucket.is_empty() {
+                            cluster_order.push(target);
+                        }
+                        bucket.push(rule);
+                    }
+                    for (cluster_idx, target) in cluster_order.into_iter().enumerate() {
+                        if let Some(rules) = clusters.get(&target) {
+                            let enabled_count = rules.iter().filter(|r| r.is_enabled()).count();
+                            let mut samples: Vec<String> = rules
+                                .iter()
+                                .take(3)
+                                .map(|rule| format_manual_rule_value(rule))
+                                .collect();
+                            if rules.len() > 3 {
+                                samples.push(format!("+{}", rules.len() - 3));
+                            }
+                            let title = if rules.len() == 1 {
+                                format_manual_rule_summary(rules[0])
+                            } else {
+                                match language {
+                                    Language::English => format!("Manual → {target}"),
+                                    Language::SimplifiedChinese => format!("手动规则 · {target}"),
+                                }
+                            };
+                            let subtitle = match language {
+                                Language::English => format!("Manual · {} rules", rules.len()),
+                                Language::SimplifiedChinese => {
+                                    format!("手动规则 · {} 条", rules.len())
+                                }
+                            };
+                            rule_items.push(RuleTreeItem {
+                                id: format!("manual-cluster:{cluster_idx}"),
+                                order: format!("{seq:02}"),
+                                title,
+                                subtitle,
+                                samples,
+                                target_policy: target,
+                                enabled: enabled_count > 0,
+                                toggle: None,
+                            });
+                            seq += 1;
+                        }
+                    }
                 }
             } else if let Some((source_index, source)) = self
                 .rule_sources
@@ -861,9 +912,9 @@ impl ManisApp {
             .id(format!("tree-rule-card-{index}"))
             .debug_selector(move || selector)
             .relative()
-            .px(px(11.0))
-            .py(px(8.0))
-            .rounded(px(11.0))
+            .px(px(10.0))
+            .py(px(6.5))
+            .rounded(px(10.0))
             .bg(card_bg)
             .border_1()
             .border_color(card_border)
@@ -872,7 +923,7 @@ impl ManisApp {
             .cursor_pointer()
             .flex()
             .flex_col()
-            .gap(px(4.0))
+            .gap(px(3.0))
             .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
                 if *hovered {
                     this.topology.hovered_rules = Some(RulesTreeFocus::Rule(hover_id.clone()));
@@ -1043,9 +1094,9 @@ impl ManisApp {
             .id(format!("tree-rule-policy-card-{index}"))
             .debug_selector(move || selector)
             .relative()
-            .px(px(12.0))
-            .py(px(9.0))
-            .rounded(px(11.0))
+            .px(px(11.0))
+            .py(px(7.5))
+            .rounded(px(10.0))
             .bg(card_bg)
             .border_1()
             .border_color(card_border)
@@ -1053,7 +1104,7 @@ impl ManisApp {
             .cursor_pointer()
             .flex()
             .flex_col()
-            .gap(px(5.0))
+            .gap(px(4.0))
             .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
                 if *hovered {
                     this.topology.hovered_rules = Some(RulesTreeFocus::Policy(hover_name.clone()));
@@ -1237,9 +1288,9 @@ impl ManisApp {
             .id(format!("tree-rule-exit-card-{index}"))
             .debug_selector(move || selector)
             .relative()
-            .px(px(12.0))
-            .py(px(9.0))
-            .rounded(px(11.0))
+            .px(px(11.0))
+            .py(px(7.5))
+            .rounded(px(10.0))
             .bg(card_bg)
             .border_1()
             .border_color(card_border)
@@ -1247,7 +1298,7 @@ impl ManisApp {
             .cursor_pointer()
             .flex()
             .flex_col()
-            .gap(px(5.0))
+            .gap(px(4.0))
             .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
                 if *hovered {
                     this.topology.hovered_rules = Some(RulesTreeFocus::Exit(hover_name.clone()));

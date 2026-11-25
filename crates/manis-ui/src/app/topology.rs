@@ -470,4 +470,89 @@ mod tests {
         assert!(cx.debug_bounds("routing-rule-fallback").is_some());
         assert!(cx.debug_bounds("rules-tree-canvas").is_none());
     }
+
+    #[gpui::test]
+    fn dense_54_nodes_and_15_manual_rules_fit_without_horizontal_overflow(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(crate::init);
+        let mut app = None;
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            let entity = cx.new(|_| {
+                let mut fixture = ManisApp::with_fixture_controller("http://127.0.0.1:1");
+                fixture.source_providers = vec![LoadedProvider {
+                    name: "CloudEdge".to_owned(),
+                    vehicle_type: Some("HTTP".to_owned()),
+                    nodes: (1..=54)
+                        .map(|index| LoadedProviderNode {
+                            name: format!("HK {index:02}"),
+                            protocol: "Trojan".to_owned(),
+                            latency_label: Some(format!("{} ms", 40 + (index % 80))),
+                            alive: Some(true),
+                        })
+                        .collect(),
+                }];
+                fixture.managed_policies.groups = ["Sozenth", "机场专线", "香港", "JP", "US"]
+                    .into_iter()
+                    .enumerate()
+                    .map(|(idx, name)| {
+                        ManagedPolicyGroup::new(&format!("p{idx}"), name).expect("policy")
+                    })
+                    .collect();
+                fixture.manual_rules = (0..15)
+                    .map(|index| {
+                        let target = match index % 3 {
+                            0 => "DIRECT",
+                            1 => "香港",
+                            _ => "JP",
+                        };
+                        ManualRule::parse(
+                            ManualRuleKind::HostSuffix,
+                            &format!("service-{index}.example.com"),
+                            target,
+                        )
+                        .expect("manual rule")
+                    })
+                    .collect();
+                fixture
+            });
+            app = Some(entity.clone());
+            crate::root(entity, window, cx)
+        });
+        let app = app.expect("fixture app");
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+
+        let canvas = cx
+            .debug_bounds("nodes-tree-canvas")
+            .expect("nodes tree canvas");
+        let last_policy = cx
+            .debug_bounds("tree-policy-4")
+            .expect("5th policy card visible");
+        let last_node = cx
+            .debug_bounds("tree-node-53")
+            .expect("54th node chip visible");
+        assert!(
+            last_policy.right() <= canvas.right(),
+            "all 5 policy groups fit within the viewport width"
+        );
+        assert!(
+            last_node.right() <= canvas.right(),
+            "all 54 dense node chips wrap inside the canvas width"
+        );
+
+        // Switch to RoutingRules: 15 manual rules cluster into 3 target groups + FINAL = 4 cards.
+        cx.update(|window, cx| {
+            app.update(cx, |app, cx| {
+                app.primary_workspace = PrimaryWorkspace::RoutingRules;
+                cx.notify();
+            });
+            window.draw(cx).clear(cx);
+        });
+        assert!(cx.debug_bounds("tree-rule-0").is_some());
+        assert!(cx.debug_bounds("tree-rule-3").is_some());
+        assert!(
+            cx.debug_bounds("tree-rule-4").is_none(),
+            "15 manual rules across 3 targets cluster into 3 cards plus FINAL"
+        );
+    }
 }
