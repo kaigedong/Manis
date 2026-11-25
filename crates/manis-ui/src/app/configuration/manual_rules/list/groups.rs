@@ -1,9 +1,7 @@
-use gpui::SharedString;
-use gpui_component::{Disableable, IconName, switch::Switch};
+use gpui::{MouseButton, SharedString};
+use gpui_component::{Disableable, switch::Switch};
 
-use crate::components::{
-    ActionRole, StatusTone, card_surface, row_action_button, status_badge, style_action_button,
-};
+use crate::components::{ActionRole, StatusTone, card_surface, row_action_button, status_badge};
 use crate::theme::{ControlSize, MONO_FAMILY};
 
 use super::{
@@ -85,12 +83,12 @@ impl ManisApp {
             .iter()
             .filter(|rule| !rule.is_enabled())
             .count();
-        let group_order = mihomo::normalized_routing_rule_group_order(
-            &self.rule_sources.group_order,
-            !self.manual_rules.is_empty(),
-            &self.rule_sources.sources,
-            &self.local_rule_groups,
-        );
+        self.topology.rule_group_row_bounds.borrow_mut().clear();
+        let persisted_order = self.normalized_rule_group_order();
+        let group_order = match self.active_rule_group_drag_preview(cx) {
+            Some(preview) if preview.order.len() == persisted_order.len() => preview.order.clone(),
+            _ => persisted_order,
+        };
         let mut list = div()
             .id("active-routing-rules")
             .w_full()
@@ -402,6 +400,10 @@ impl ManisApp {
             .into_any_element()
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Keeps the collapsible rule group card header, live drag surface, and placeholder together"
+    )]
     fn rule_group_card(
         &self,
         view: RuleGroupCardView<'_>,
@@ -425,6 +427,19 @@ impl ManisApp {
             controls,
             enable_switch,
         } = view;
+        if let Some(preview) = self.active_rule_group_drag_preview(cx)
+            && preview.dragged_id == group_id
+        {
+            return Self::rule_group_drag_placeholder(
+                group_id,
+                name,
+                position,
+                preview.slot_height,
+                compact,
+                theme,
+                cx,
+            );
+        }
         let open = rule_group_is_open(&self.node_workspace, key);
         let action = language.localized(if open {
             copy::common::COLLAPSE
@@ -432,6 +447,18 @@ impl ManisApp {
             copy::common::EXPAND
         });
         let toggle_key = key.to_owned();
+        let drag_enabled = group_count > 1
+            && !self.routing_apply_state.is_busy()
+            && !self.configuration_transfer.active;
+        let drag = super::reorder::RuleGroupDrag::new(
+            group_id,
+            name,
+            detail.clone(),
+            target.clone(),
+            position,
+            compact,
+            theme,
+        );
         let title = rule_group_identity(name, detail, target, theme);
         let header = Button::new(format!("rule-group-toggle-{key}"))
             .map(crate::components::primary_button_interaction)
@@ -466,80 +493,39 @@ impl ManisApp {
                         cx,
                     ))
                     .child(title)
-                    .when_some(controls, ParentElement::child)
-                    .child(self.rule_group_priority_actions(
-                        group_id,
-                        (position, group_count),
-                        language,
-                        cx,
-                    ))
-                    .when_some(enable_switch, ParentElement::child)
+                    .when_some(controls, |row, controls| {
+                        row.child(
+                            div()
+                                .flex_shrink_0()
+                                .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                    cx.stop_propagation();
+                                })
+                                .child(controls),
+                        )
+                    })
+                    .when_some(enable_switch, |row, switch| {
+                        row.child(
+                            div()
+                                .flex_shrink_0()
+                                .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                    cx.stop_propagation();
+                                })
+                                .child(switch),
+                        )
+                    })
                     .child(crate::components::disclosure_icon(open, theme)),
             )
             .on_click(cx.listener(move |this, _, _, cx| {
                 Self::sync_rule_group_open(this, &toggle_key, !open, cx);
             }));
+        let header =
+            Self::rule_group_drag_surface(header.into_any_element(), drag, drag_enabled, cx);
         let card = card_surface(theme)
             .id(format!("routing-rule-group-{key}"))
             .flex_shrink_0()
             .overflow_hidden()
             .child(Collapsible::new().open(open).child(header).content(rules));
-        self.rule_group_drop_target(div().w_full().child(card), group_id, theme, cx)
-    }
-
-    /// Up/down priority actions. Each is disabled at its end of the pipeline and moves exactly
-    /// what a drag would move.
-    fn rule_group_priority_actions(
-        &self,
-        group_id: &str,
-        (position, group_count): (usize, usize),
-        language: Language,
-        cx: &mut Context<Self>,
-    ) -> Div {
-        let interactive =
-            !self.routing_apply_state.is_busy() && !self.configuration_transfer.active;
-        let mut actions = div().flex_shrink_0().flex().items_center().gap(px(2.0));
-        for (direction, enabled, icon, label) in [
-            (
-                mihomo::MoveDirection::Up,
-                interactive && position > 0,
-                IconName::ArrowUp,
-                priority_action_label(language, mihomo::MoveDirection::Up),
-            ),
-            (
-                mihomo::MoveDirection::Down,
-                interactive && position + 1 < group_count,
-                IconName::ArrowDown,
-                priority_action_label(language, mihomo::MoveDirection::Down),
-            ),
-        ] {
-            let slot = match direction {
-                mihomo::MoveDirection::Up => "up",
-                mihomo::MoveDirection::Down => "down",
-            };
-            let selector = format!("rule-group-priority-{slot}-{group_id}");
-            let target_id = group_id.to_owned();
-            actions = actions.child(
-                style_action_button(
-                    Button::new(selector.clone()).icon(icon),
-                    ActionRole::Secondary,
-                    ControlSize::Icon,
-                )
-                .debug_selector(move || selector.clone())
-                .accessibility_label(label)
-                .disabled(!enabled)
-                .when(!enabled, gpui::Styled::cursor_default)
-                .when(!enabled, |button| button.opacity(0.35))
-                .block_mouse_except_scroll()
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    cx.stop_propagation();
-                    if enabled {
-                        this.move_routing_rule_group(&target_id, direction, cx);
-                    }
-                })),
-            );
-        }
-        actions
+        self.rule_group_drop_target(div().w_full().child(card), group_id, cx)
     }
 
     pub(in crate::app) fn sync_rule_group_open(
@@ -652,7 +638,12 @@ impl ManisApp {
 }
 
 /// The card header's identity column: the group name and its target pill, above the detail line.
-fn rule_group_identity(name: &str, detail: String, target: Option<String>, theme: Theme) -> Div {
+pub(super) fn rule_group_identity(
+    name: &str,
+    detail: String,
+    target: Option<String>,
+    theme: Theme,
+) -> Div {
     div()
         .flex_1()
         .min_w(px(0.0))
@@ -696,7 +687,7 @@ fn rule_group_identity(name: &str, detail: String, target: Option<String>, theme
 }
 
 /// The pipeline ordinal. Monospaced so reordering never shifts the column.
-fn order_badge(text: impl Into<SharedString>, theme: Theme) -> Div {
+pub(super) fn order_badge(text: impl Into<SharedString>, theme: Theme) -> Div {
     div()
         .flex_shrink_0()
         .w(px(26.0))
@@ -773,15 +764,6 @@ fn fallback_title(language: Language) -> &'static str {
     }
 }
 
-fn priority_action_label(language: Language, direction: mihomo::MoveDirection) -> &'static str {
-    match (language, direction) {
-        (Language::English, mihomo::MoveDirection::Up) => "Move this group up in priority",
-        (Language::English, mihomo::MoveDirection::Down) => "Move this group down in priority",
-        (Language::SimplifiedChinese, mihomo::MoveDirection::Up) => "提高这个规则组的优先级",
-        (Language::SimplifiedChinese, mihomo::MoveDirection::Down) => "降低这个规则组的优先级",
-    }
-}
-
 /// A group-level enable switch. `debug_id` keeps the selector a debug test already relies on.
 fn rule_group_enable_switch(
     id: String,
@@ -820,9 +802,11 @@ mod tests {
 
     use crate::manual_rule::{ManualRule, ManualRuleKind};
 
-    /// The pipeline ends in the fallback node, and every group offers both priority actions.
+    /// The pipeline ends in the fallback node, and groups reorder via drag handles without arrow buttons.
     #[gpui::test]
-    fn the_pipeline_renders_priority_actions_and_a_final_fallback(cx: &mut gpui::TestAppContext) {
+    fn the_pipeline_renders_drag_handles_without_arrow_buttons_and_a_final_fallback(
+        cx: &mut gpui::TestAppContext,
+    ) {
         cx.update(crate::init);
         let mut app = None;
         let (_, cx) = cx.add_window_view(|window, cx| {
@@ -844,11 +828,19 @@ mod tests {
 
         for selector in [
             "rule-group-toggle-routing-manual-rules",
-            "rule-group-priority-up-manual",
-            "rule-group-priority-down-manual",
+            "drag-rule-group-manual",
             "routing-rule-fallback",
         ] {
             assert!(cx.debug_bounds(selector).is_some(), "{selector}");
+        }
+        for removed in [
+            "rule-group-priority-up-manual",
+            "rule-group-priority-down-manual",
+        ] {
+            assert!(
+                cx.debug_bounds(removed).is_none(),
+                "{removed} arrow button must not render"
+            );
         }
     }
 }

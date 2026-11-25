@@ -126,26 +126,26 @@ impl ManisApp {
         );
     }
 
-    pub(in crate::app) fn reorder_routing_rule_group(
+    pub(in crate::app) fn apply_routing_rule_group_order(
         &mut self,
-        group_id: &str,
-        anchor_id: &str,
-        after: bool,
+        next_order: &[String],
         cx: &mut Context<Self>,
     ) {
         if self.configuration_transfer.active || self.routing_apply_state.is_busy() {
             return;
         }
         self.sync_routing_rule_group_order();
-        let previous = self.routing_rollback_snapshot();
-        if !mihomo::place_routing_rule_group(
-            &mut self.rule_sources.group_order,
-            group_id,
-            anchor_id,
-            after,
-        ) {
+        let normalized = mihomo::normalized_routing_rule_group_order(
+            next_order,
+            !self.manual_rules.is_empty(),
+            &self.rule_sources.sources,
+            &self.local_rule_groups,
+        );
+        if normalized == self.rule_sources.group_order {
             return;
         }
+        let previous = self.routing_rollback_snapshot();
+        self.rule_sources.group_order = normalized;
         let Some(store_dir) = self.subscription_store_dir.clone() else {
             self.rule_sources.group_order = previous.group_order;
             self.language()
@@ -162,6 +162,21 @@ impl ManisApp {
             previous,
             cx,
         );
+    }
+
+    #[cfg(test)]
+    pub(in crate::app) fn reorder_routing_rule_group(
+        &mut self,
+        group_id: &str,
+        anchor_id: &str,
+        after: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.sync_routing_rule_group_order();
+        let mut next = self.rule_sources.group_order.clone();
+        if mihomo::place_routing_rule_group(&mut next, group_id, anchor_id, after) {
+            self.apply_routing_rule_group_order(&next, cx);
+        }
     }
 
     pub(in crate::app) fn move_routing_rule_group(

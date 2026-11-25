@@ -1,51 +1,228 @@
 use std::{cell::Cell, rc::Rc};
 
 use gpui::{
-    App, AppContext as _, CursorStyle, DragMoveEvent, Render, ScrollHandle, Stateful, Window,
+    App, AppContext as _, CursorStyle, DragMoveEvent, Pixels, Render, ScrollHandle, Stateful,
+    Window, canvas,
 };
 use gpui_component::Icon;
 
 use super::{
     AnyElement, Context, Div, FluentBuilder, InteractiveElement, IntoElement, Language, ManisApp,
-    ParentElement, Radius, Role, StatefulInteractiveElement, Styled, TextRole, Theme, div, mihomo,
-    px,
+    ParentElement, Radius, Role, StatefulInteractiveElement, Styled, Theme, div, mihomo, px,
 };
+use crate::app::topology::RuleGroupDragPreview;
 
+/// Live metadata for an in-flight routing-rule group drag.
 #[derive(Clone)]
-struct RuleGroupDrag {
-    id: String,
-    label: String,
-    after: Rc<Cell<bool>>,
-    theme: Theme,
+pub(super) struct RuleGroupDrag {
+    pub(super) id: String,
+    pub(super) name: String,
+    pub(super) detail: String,
+    pub(super) target: Option<String>,
+    pub(super) width: Rc<Cell<Pixels>>,
+    pub(super) height: Rc<Cell<Pixels>>,
+    pub(super) live_position: Rc<Cell<usize>>,
+    pub(super) compact: bool,
+    pub(super) theme: Theme,
     scrolling: Rc<Cell<bool>>,
+}
+
+impl RuleGroupDrag {
+    pub(super) fn new(
+        id: &str,
+        name: &str,
+        detail: String,
+        target: Option<String>,
+        position: usize,
+        compact: bool,
+        theme: Theme,
+    ) -> Self {
+        Self {
+            id: id.to_owned(),
+            name: name.to_owned(),
+            detail,
+            target,
+            width: Rc::new(Cell::new(px(560.0))),
+            height: Rc::new(Cell::new(px(64.0))),
+            live_position: Rc::new(Cell::new(position)),
+            compact,
+            theme,
+            scrolling: Rc::new(Cell::new(false)),
+        }
+    }
 }
 
 impl Render for RuleGroupDrag {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let width = self.width.get().max(px(280.0));
+        let height = self.height.get().max(px(56.0));
+        let position = self.live_position.get();
+        let theme = self.theme;
         div()
-            .px_4()
-            .py_3()
-            .rounded(Radius::Control.px())
-            .bg(self.theme.surface_overlay)
-            .border_1()
-            .border_color(self.theme.action_primary)
-            .text_color(self.theme.text_primary)
-            .text_size(TextRole::Body.size())
-            .child(self.label.clone())
+            .w(width)
+            .min_h(height)
+            .px(if self.compact { px(12.0) } else { px(14.0) })
+            .py(px(12.0))
+            .rounded(Radius::Card.px())
+            .bg(theme.surface_elevated)
+            .border_2()
+            .border_color(theme.action_primary)
+            .shadow_lg()
+            .cursor(CursorStyle::ClosedHand)
+            .flex()
+            .items_center()
+            .gap(px(10.0))
+            .child(
+                super::groups::order_badge(format!("{:02}", position + 1), theme)
+                    .bg(theme.action_soft)
+                    .text_color(theme.action_primary),
+            )
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .size(px(32.0))
+                    .rounded(Radius::Control.px())
+                    .bg(theme.action_soft)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_color(theme.action_primary)
+                    .child(Icon::new(gpui_component_assets::IconName::GripVertical).size(px(16.0))),
+            )
+            .child(super::groups::rule_group_identity(
+                &self.name,
+                self.detail.clone(),
+                self.target.clone(),
+                theme,
+            ))
     }
 }
 
 impl ManisApp {
-    pub(in crate::app) fn rule_group_scroll_target(&self, scroll: Stateful<Div>) -> Stateful<Div> {
+    pub(super) fn normalized_rule_group_order(&self) -> Vec<String> {
+        mihomo::normalized_routing_rule_group_order(
+            &self.rule_sources.group_order,
+            !self.manual_rules.is_empty(),
+            &self.rule_sources.sources,
+            &self.local_rule_groups,
+        )
+    }
+
+    pub(super) fn active_rule_group_drag_preview(
+        &self,
+        cx: &Context<Self>,
+    ) -> Option<&RuleGroupDragPreview> {
+        if !cx.has_active_drag() {
+            return None;
+        }
+        self.topology.rule_group_drag_preview.as_ref()
+    }
+
+    pub(super) fn begin_rule_group_drag(
+        &mut self,
+        dragged_id: String,
+        slot_height: Pixels,
+        cx: &mut Context<Self>,
+    ) {
+        if self.routing_apply_state.is_busy() || self.configuration_transfer.active {
+            return;
+        }
+        let order = self.normalized_rule_group_order();
+        if order.len() <= 1 || !order.iter().any(|id| id == &dragged_id) {
+            return;
+        }
+        self.topology.rule_group_drag_preview = Some(RuleGroupDragPreview {
+            dragged_id,
+            order,
+            slot_height: slot_height.max(px(56.0)),
+        });
+        cx.notify();
+    }
+
+    pub(super) fn update_rule_group_drag_pointer(
+        &mut self,
+        drag: &RuleGroupDrag,
+        pointer_y: Pixels,
+        cx: &mut Context<Self>,
+    ) {
+        if self.routing_apply_state.is_busy() || self.configuration_transfer.active {
+            return;
+        }
+        let Some(preview) = self.topology.rule_group_drag_preview.as_mut() else {
+            return;
+        };
+        if preview.dragged_id != drag.id {
+            return;
+        }
+        let Some(dragged_idx) = preview.order.iter().position(|id| id == &drag.id) else {
+            return;
+        };
+        let row_bounds = self.topology.rule_group_row_bounds.borrow();
+        let down_target = ((dragged_idx + 1)..preview.order.len()).rev().find(|&idx| {
+            row_bounds
+                .get(&preview.order[idx])
+                .is_some_and(|bounds| pointer_y > bounds.center().y)
+        });
+        let up_target = (0..dragged_idx).find(|&idx| {
+            row_bounds
+                .get(&preview.order[idx])
+                .is_some_and(|bounds| pointer_y < bounds.center().y)
+        });
+        let (target_id, after) = if let Some(idx) = down_target {
+            (preview.order[idx].clone(), true)
+        } else if let Some(idx) = up_target {
+            (preview.order[idx].clone(), false)
+        } else {
+            return;
+        };
+        drop(row_bounds);
+        if !mihomo::place_routing_rule_group(&mut preview.order, &drag.id, &target_id, after) {
+            return;
+        }
+        if let Some(new_idx) = preview.order.iter().position(|id| id == &drag.id) {
+            drag.live_position.set(new_idx);
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn cancel_rule_group_drag(&mut self, cx: &mut Context<Self>) {
+        if self.topology.rule_group_drag_preview.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    pub(super) fn commit_rule_group_drag(&mut self, drag: &RuleGroupDrag, cx: &mut Context<Self>) {
+        let Some(preview) = self.topology.rule_group_drag_preview.take() else {
+            return;
+        };
+        if preview.dragged_id != drag.id {
+            return;
+        }
+        self.apply_routing_rule_group_order(&preview.order, cx);
+        cx.notify();
+    }
+
+    pub(in crate::app) fn rule_group_scroll_target(
+        &self,
+        scroll: Stateful<Div>,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
         let handle = self.routing_rules_scroll.clone();
         scroll
             .track_scroll(&handle)
-            .on_drag_move::<RuleGroupDrag>(move |event, window, cx| {
-                let drag = event.drag(cx);
-                if !drag.scrolling.replace(true) {
-                    scroll_during_drag(handle.clone(), drag.scrolling.clone(), window, cx);
-                }
-            })
+            .on_drag_move::<RuleGroupDrag>(cx.listener(
+                move |this, event: &DragMoveEvent<RuleGroupDrag>, window, cx| {
+                    let drag = event.drag(cx).clone();
+                    if !drag.scrolling.replace(true) {
+                        scroll_during_drag(handle.clone(), drag.scrolling.clone(), window, cx);
+                    }
+                    this.update_rule_group_drag_pointer(&drag, event.event.position.y, cx);
+                },
+            ))
+            .on_drop(cx.listener(|this, drag: &RuleGroupDrag, _, cx| {
+                cx.stop_propagation();
+                this.commit_rule_group_drag(drag, cx);
+            }))
     }
 
     pub(super) fn rule_group_drag_handle(
@@ -67,13 +244,6 @@ impl ManisApp {
             Language::SimplifiedChinese => {
                 format!("拖动调整{group_name}的顺序，也可按 Alt+上下方向键")
             }
-        };
-        let drag = RuleGroupDrag {
-            id: group_id.to_owned(),
-            label: group_name.to_owned(),
-            after: Rc::new(Cell::new(false)),
-            scrolling: Rc::new(Cell::new(false)),
-            theme,
         };
         let keyboard_id = group_id.to_owned();
         div()
@@ -104,10 +274,8 @@ impl ManisApp {
                 handle
                     .map(crate::components::primary_button_interaction)
                     .cursor(CursorStyle::OpenHand)
-                    .hover(move |style| style.bg(theme.action_soft))
-                    .on_drag(drag, |drag, _, _, cx| {
-                        cx.stop_propagation();
-                        cx.new(|_| drag.clone())
+                    .hover(move |style| {
+                        style.bg(theme.action_soft).text_color(theme.action_primary)
                     })
                     .on_key_down(cx.listener(move |this, event: &gpui::KeyDownEvent, _, cx| {
                         if !event.keystroke.modifiers.alt {
@@ -126,54 +294,122 @@ impl ManisApp {
             .into_any_element()
     }
 
-    pub(super) fn rule_group_drop_target(
-        &self,
-        title: Div,
-        group_id: &str,
-        theme: Theme,
+    pub(super) fn rule_group_drag_surface(
+        header: AnyElement,
+        drag: RuleGroupDrag,
+        enabled: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let anchor_id = group_id.to_owned();
-        let hover_id = group_id.to_owned();
-        title
-            .id(format!("rule-group-drop-{group_id}"))
+        let group_id = drag.id.clone();
+        let width_tracker = drag.width.clone();
+        let height_tracker = drag.height.clone();
+        let app = cx.entity();
+        div()
+            .id(format!("rule-group-drag-surface-{group_id}"))
+            .relative()
+            .w_full()
+            .child(
+                canvas(
+                    move |bounds, _, _| {
+                        width_tracker.set(bounds.size.width);
+                        height_tracker.set(bounds.size.height);
+                    },
+                    |_, (), _, _| {},
+                )
+                .absolute()
+                .inset_0(),
+            )
+            .child(header)
+            .when(enabled, |surface| {
+                surface.on_drag(drag, move |drag, _, _, cx| {
+                    cx.stop_propagation();
+                    let dragged_id = drag.id.clone();
+                    let slot_height = drag.height.get();
+                    app.update(cx, |this, cx| {
+                        this.begin_rule_group_drag(dragged_id, slot_height, cx);
+                    });
+                    cx.new(|_| drag.clone())
+                })
+            })
+            .into_any_element()
+    }
+
+    pub(super) fn rule_group_drop_target(
+        &self,
+        card: Div,
+        group_id: &str,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let bounds_registry = self.topology.rule_group_row_bounds.clone();
+        let bounds_key = group_id.to_owned();
+        card.id(format!("rule-group-drop-{group_id}"))
             .debug_selector({
                 let id = group_id.to_owned();
                 move || format!("rule-group-drop-{id}")
             })
+            .relative()
+            .child(
+                canvas(
+                    move |bounds, _, _| {
+                        bounds_registry.borrow_mut().insert(bounds_key, bounds);
+                    },
+                    |_, (), _, _| {},
+                )
+                .absolute()
+                .inset_0(),
+            )
             .when(
                 !self.routing_apply_state.is_busy() && !self.configuration_transfer.active,
-                |title| {
-                    title
-                        .on_drag_move::<RuleGroupDrag>(|event: &DragMoveEvent<_>, window, cx| {
-                            if event.bounds.contains(&event.event.position) {
-                                let after = event.event.position.y > event.bounds.center().y;
-                                if event.drag(cx).after.replace(after) != after {
-                                    window.refresh();
-                                }
-                            }
-                        })
-                        .drag_over::<RuleGroupDrag>(move |style, drag, _, _| {
-                            if drag.id == hover_id {
-                                return style;
-                            }
-                            let style = style.border_color(theme.action_primary);
-                            if drag.after.get() {
-                                style.border_b_2()
-                            } else {
-                                style.border_t_2()
-                            }
-                        })
-                        .on_drop(cx.listener(move |this, drag: &RuleGroupDrag, _, cx| {
-                            cx.stop_propagation();
-                            this.reorder_routing_rule_group(
-                                &drag.id,
-                                &anchor_id,
-                                drag.after.get(),
-                                cx,
-                            );
-                        }))
+                |wrapper| {
+                    wrapper.on_drop(cx.listener(|this, drag: &RuleGroupDrag, _, cx| {
+                        cx.stop_propagation();
+                        this.commit_rule_group_drag(drag, cx);
+                    }))
                 },
+            )
+            .into_any_element()
+    }
+
+    pub(super) fn rule_group_drag_placeholder(
+        group_id: &str,
+        name: &str,
+        position: usize,
+        slot_height: Pixels,
+        compact: bool,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let id = group_id.to_owned();
+        div()
+            .id(format!("rule-group-drop-{group_id}"))
+            .debug_selector(move || format!("rule-group-drop-{id}"))
+            .w_full()
+            .min_h(slot_height.max(px(56.0)))
+            .px(if compact { px(12.0) } else { px(14.0) })
+            .py(px(12.0))
+            .rounded(Radius::Card.px())
+            .bg(theme.action_soft)
+            .border_2()
+            .border_dashed()
+            .border_color(theme.action_primary)
+            .flex()
+            .items_center()
+            .gap(px(10.0))
+            .on_drop(cx.listener(|this, drag: &RuleGroupDrag, _, cx| {
+                cx.stop_propagation();
+                this.commit_rule_group_drag(drag, cx);
+            }))
+            .child(
+                super::groups::order_badge(format!("{:02}", position + 1), theme)
+                    .bg(theme.surface_elevated)
+                    .text_color(theme.action_primary),
+            )
+            .child(
+                div()
+                    .text_size(px(13.0))
+                    .text_color(theme.action_primary)
+                    .opacity(0.85)
+                    .child(name.to_owned()),
             )
             .into_any_element()
     }
@@ -217,7 +453,13 @@ mod tests {
     use gpui::{Modifiers, MouseButton, point};
 
     #[gpui::test]
-    fn mouse_drag_rolls_back_failed_apply_without_toggling_group(cx: &mut gpui::TestAppContext) {
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Verifies live drag shift, drop rollback, escape cancel, and no-op reorder in one window"
+    )]
+    fn mouse_drag_live_reorders_and_rolls_back_failed_apply_without_toggling_group(
+        cx: &mut gpui::TestAppContext,
+    ) {
         let store = std::env::temp_dir().join(format!("manis-rule-drag-{}", std::process::id()));
         let remote = mihomo::save_qx_rule_source_in(
             &store,
@@ -233,6 +475,10 @@ mod tests {
         let original = vec![
             mihomo::MANUAL_ROUTING_RULE_GROUP_ID.to_owned(),
             remote.id.clone(),
+        ];
+        let reordered = vec![
+            remote.id.clone(),
+            mihomo::MANUAL_ROUTING_RULE_GROUP_ID.to_owned(),
         ];
         mihomo::save_routing_rule_group_order_in(&store, &original).unwrap();
         cx.update(crate::init);
@@ -269,6 +515,16 @@ mod tests {
         );
         window.simulate_mouse_move(to, MouseButton::Left, Modifiers::none());
         window.update(|window, cx| window.draw(cx).clear(cx));
+        assert_eq!(
+            app.read_with(window, |app, _| {
+                app.topology
+                    .rule_group_drag_preview
+                    .as_ref()
+                    .map(|p| p.order.clone())
+            }),
+            Some(reordered.clone()),
+            "moving across the target midpoint shifts the list live before drop"
+        );
         window.simulate_mouse_up(to, MouseButton::Left, Modifiers::none());
         window.run_until_parked();
         assert!(
@@ -293,7 +549,7 @@ mod tests {
             );
             assert!(!app.manual_rule_editor_state.is_open());
         });
-        // Escape cancels the GPUI drag before any save or kernel apply.
+        // Escape cancels the GPUI drag and restores the pre-drag visual order without saving.
         let status = app.read_with(window, |app, _| app.status.clone());
         window.simulate_mouse_down(from, MouseButton::Left, Modifiers::none());
         window.simulate_mouse_move(
@@ -303,6 +559,8 @@ mod tests {
         );
         window.update(|window, cx| window.draw(cx).clear(cx));
         assert!(window.update(|_, cx| cx.has_active_drag()));
+        window.simulate_mouse_move(to, MouseButton::Left, Modifiers::none());
+        window.update(|window, cx| window.draw(cx).clear(cx));
         window.simulate_keystrokes("escape");
         assert!(!window.update(|_, cx| cx.has_active_drag()));
         window.simulate_mouse_up(to, MouseButton::Left, Modifiers::none());

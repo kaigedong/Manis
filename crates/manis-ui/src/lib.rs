@@ -52,6 +52,7 @@ pub fn version() -> &'static str {
 struct ManisRootView {
     app: gpui::Entity<ManisApp>,
     focus: gpui::FocusHandle,
+    _drag_escape: gpui::Subscription,
 }
 
 impl gpui::Render for ManisRootView {
@@ -103,9 +104,19 @@ pub fn root(
     use gpui::AppContext as _;
 
     app.update(cx, |app, cx| app.attach_window(window, cx));
-    let view = cx.new(|cx| ManisRootView {
-        app,
-        focus: cx.focus_handle(),
+    let view = cx.new(|cx| {
+        let drag_escape_app = app.clone();
+        let drag_escape = cx.intercept_keystrokes(move |event, window, cx| {
+            if event.keystroke.key == "escape" && cx.stop_active_drag(window) {
+                drag_escape_app.update(cx, app::ManisApp::cancel_rule_group_drag);
+                cx.stop_propagation();
+            }
+        });
+        ManisRootView {
+            app,
+            focus: cx.focus_handle(),
+            _drag_escape: drag_escape,
+        }
     });
     let focus = view.read(cx).focus.clone();
     window.focus(&focus, cx);

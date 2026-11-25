@@ -103,6 +103,7 @@ impl ManisApp {
                             Space::Lg.px()
                         })
                         .child(self.active_rules_panel(theme, language, compact, cx)),
+                    cx,
                 ),
             )
     }

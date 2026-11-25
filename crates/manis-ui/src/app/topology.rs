@@ -43,6 +43,14 @@ pub(in crate::app) enum RulesTreeFocus {
     Exit(String),
 }
 
+/// Live in-flight drag preview for routing rule group priority reordering.
+#[derive(Clone, Debug)]
+pub(in crate::app) struct RuleGroupDragPreview {
+    pub(in crate::app) dragged_id: String,
+    pub(in crate::app) order: Vec<String>,
+    pub(in crate::app) slot_height: Pixels,
+}
+
 /// Interactive view-mode and hover/pin state shared by the desktop topology workspaces.
 #[derive(Debug, Default)]
 pub(in crate::app) struct TopologyState {
@@ -55,6 +63,8 @@ pub(in crate::app) struct TopologyState {
     pub(in crate::app) pinned_rules: Option<RulesTreeFocus>,
     pub(in crate::app) nodes_scroll: gpui::ScrollHandle,
     pub(in crate::app) rules_scroll: gpui::ScrollHandle,
+    pub(in crate::app) rule_group_drag_preview: Option<RuleGroupDragPreview>,
+    pub(in crate::app) rule_group_row_bounds: PortRegistry,
 }
 
 impl TopologyState {
