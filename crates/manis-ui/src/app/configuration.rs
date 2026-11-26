@@ -1093,6 +1093,89 @@ mod tests {
     }
 
     #[gpui::test]
+    fn settings_groups_collapse_toggle_and_expand_on_navigation(cx: &mut gpui::TestAppContext) {
+        use crate::app::ManisApp;
+        use gpui::{AppContext as _, Modifiers};
+        use manis_core::PrimaryWorkspace;
+
+        cx.update(crate::init);
+        let mut app = None;
+        let (_, window_cx) = cx.add_window_view(|window, cx| {
+            let entity = cx.new(|_| {
+                let mut app = ManisApp::with_fixture_controller("http://127.0.0.1:9090");
+                app.primary_workspace = PrimaryWorkspace::Configuration;
+                app
+            });
+            app = Some(entity.clone());
+            crate::root(entity, window, cx)
+        });
+        let app = app.expect("fixture app");
+
+        // Scroll to ProxySources so it is visible in the viewport, then toggle it closed and open.
+        window_cx.update(|window, cx| {
+            app.update(cx, |app, cx| {
+                app.scroll_to_configuration_section(ConfigurationSection::ProxySources, cx);
+            });
+            window.draw(cx).clear(cx);
+        });
+        assert!(window_cx.debug_bounds("configuration-source").is_some());
+        let proxy_toggle = window_cx
+            .debug_bounds("settings-group-toggle-proxy-sources")
+            .expect("proxy sources toggle header renders");
+        window_cx.simulate_click(proxy_toggle.center(), Modifiers::none());
+        window_cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert!(
+            window_cx.debug_bounds("configuration-source").is_none(),
+            "collapsing proxy sources hides its card body"
+        );
+
+        // Navigating to ProxySources via the directory automatically expands it again.
+        window_cx.update(|window, cx| {
+            app.update(cx, |app, cx| {
+                app.scroll_to_configuration_section(ConfigurationSection::ProxySources, cx);
+            });
+            window.draw(cx).clear(cx);
+        });
+        assert!(
+            window_cx.debug_bounds("configuration-source").is_some(),
+            "directory jump auto-expands a collapsed section"
+        );
+
+        // Rule sources also collapse cleanly on click and re-expand on second click.
+        window_cx.update(|window, cx| {
+            app.update(cx, |app, cx| {
+                app.scroll_to_configuration_section(ConfigurationSection::RuleSources, cx);
+            });
+            window.draw(cx).clear(cx);
+        });
+        assert!(
+            window_cx
+                .debug_bounds("configuration-rule-sources")
+                .is_some()
+        );
+        let rule_toggle = window_cx
+            .debug_bounds("settings-group-toggle-rule-sources")
+            .expect("rule sources toggle header renders");
+        window_cx.simulate_click(rule_toggle.center(), Modifiers::none());
+        window_cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert!(
+            window_cx
+                .debug_bounds("configuration-rule-sources")
+                .is_none()
+        );
+        let rule_toggle = window_cx
+            .debug_bounds("settings-group-toggle-rule-sources")
+            .expect("collapsed rule sources header stays visible");
+        window_cx.simulate_click(rule_toggle.center(), Modifiers::none());
+        window_cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert!(
+            window_cx
+                .debug_bounds("configuration-rule-sources")
+                .is_some()
+        );
+    }
+
+    #[gpui::test]
     fn header_update_controls_track_available_downloading_ready_and_dismiss(
         cx: &mut gpui::TestAppContext,
     ) {

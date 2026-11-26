@@ -22,7 +22,7 @@ use crate::{
 use super::{
     QxRuleEditorView, RuleSourceCardPresentation, RuleSourceRefreshPresentation, field_label,
     refresh_interval_label,
-    settings::{settings_group_card, settings_inset_divider, settings_section_header},
+    settings::{SettingsGroupKey, settings_group_card, settings_inset_divider},
     source_update_label,
 };
 
@@ -43,56 +43,57 @@ impl ManisApp {
         )
         .icon(IconName::Plus)
         .on_click(cx.listener(move |this, _, window, cx| {
+            this.expand_settings_group(SettingsGroupKey::RuleSources);
             this.open_new_qx_rule_editor(cx);
             this.open_qx_rule_source_dialog(window, cx);
         }));
-        let mut card = settings_group_card("configuration-rule-sources", theme);
 
-        if self.rule_sources.sources.is_empty() {
-            card = card.child(
-                div().p(Space::Lg.px()).child(empty_state(
-                    language.localized(copy::configuration::NO_RULE_SOURCES),
-                    language.localized(copy::configuration::ADD_A_REMOTE_QX_RULE_SET),
-                    Some(
-                        action_button(
-                            "configuration-empty-add-rule-source",
-                            language.localized(copy::configuration::ADD_SOURCE),
-                            ActionRole::Primary,
-                            ControlSize::Compact,
-                        )
-                        .icon(IconName::Plus)
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.open_new_qx_rule_editor(cx);
-                            this.open_qx_rule_source_dialog(window, cx);
-                        }))
-                        .into_any_element(),
-                    ),
-                    theme,
-                )),
-            );
-        } else {
-            for (index, source) in self.rule_sources.sources.iter().enumerate() {
-                if index > 0 {
-                    card = card.child(settings_inset_divider(theme, 44.0));
+        self.collapsible_settings_section(
+            SettingsGroupKey::RuleSources,
+            language.localized(copy::configuration::RULE_SOURCES),
+            Some(
+                language
+                    .count(CountNoun::Source, self.rule_sources.sources.len())
+                    .into(),
+            ),
+            Some(add_action.into_any_element()),
+            |cx| {
+                let mut card = settings_group_card("configuration-rule-sources", theme);
+                if self.rule_sources.sources.is_empty() {
+                    card = card.child(
+                        div().p(Space::Lg.px()).child(empty_state(
+                            language.localized(copy::configuration::NO_RULE_SOURCES),
+                            language.localized(copy::configuration::ADD_A_REMOTE_QX_RULE_SET),
+                            Some(
+                                action_button(
+                                    "configuration-empty-add-rule-source",
+                                    language.localized(copy::configuration::ADD_SOURCE),
+                                    ActionRole::Primary,
+                                    ControlSize::Compact,
+                                )
+                                .icon(IconName::Plus)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.open_new_qx_rule_editor(cx);
+                                    this.open_qx_rule_source_dialog(window, cx);
+                                }))
+                                .into_any_element(),
+                            ),
+                            theme,
+                        )),
+                    );
+                } else {
+                    for (index, source) in self.rule_sources.sources.iter().enumerate() {
+                        if index > 0 {
+                            card = card.child(settings_inset_divider(theme, 44.0));
+                        }
+                        card = card.child(self.rule_source_card(index, source, busy, theme, cx));
+                    }
                 }
-                card = card.child(self.rule_source_card(index, source, busy, theme, cx));
-            }
-        }
-
-        div()
-            .id("configuration-rule-sources-section")
-            .w_full()
-            .child(settings_section_header(
-                language.localized(copy::configuration::RULE_SOURCES),
-                Some(
-                    language
-                        .count(CountNoun::Source, self.rule_sources.sources.len())
-                        .into(),
-                ),
-                Some(add_action.into_any_element()),
-                theme,
-            ))
-            .child(card)
+                card.into_any_element()
+            },
+            theme,
+            cx,
+        )
     }
 
     pub(super) fn open_new_qx_rule_editor(&mut self, cx: &mut Context<Self>) {

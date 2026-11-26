@@ -3,9 +3,9 @@ use gpui_component::IconName;
 
 use super::{
     Context, Div, FluentBuilder, FontWeight, InteractiveElement, Language, LanguagePreference,
-    ManisApp, ParentElement, Role, Stateful, StatefulInteractiveElement, Styled, Theme, copy, div,
-    language_preference_label, px, save_language_preference_in, settings_group_card, settings_row,
-    settings_section_header,
+    ManisApp, ParentElement, Role, SettingsGroupKey, Stateful, StatefulInteractiveElement, Styled,
+    Theme, copy, div, language_preference_label, px, save_language_preference_in,
+    settings_group_card, settings_row,
 };
 
 impl ManisApp {
@@ -18,92 +18,93 @@ impl ManisApp {
         let language = self.language();
         let current_preference = self.language_preference();
         let current_language = language.display_name();
-        let segmented = div()
-            .p(px(3.0))
-            .rounded(px(9.0))
-            .bg(theme.surface_low)
-            .flex()
-            .items_center()
-            .gap(px(2.0))
-            .when(compact, gpui::Styled::w_full)
-            .children(
-                [
-                    LanguagePreference::FollowSystem,
-                    LanguagePreference::English,
-                    LanguagePreference::SimplifiedChinese,
-                ]
-                .into_iter()
-                .map(|preference| {
-                    Self::language_option(
-                        preference,
-                        preference == current_preference,
-                        compact,
-                        language,
-                        theme,
-                        cx,
-                    )
-                }),
-            )
-            .into_any_element();
 
-        div()
-            .id("configuration-language-section")
-            .w_full()
-            .child(settings_section_header(
-                language.localized(copy::configuration::GENERAL),
-                None,
-                None,
-                theme,
-            ))
-            .child(
-                settings_group_card("configuration-language", theme).child(if compact {
-                    div()
-                        .w_full()
-                        .px(px(16.0))
-                        .py(px(12.0))
-                        .flex()
-                        .flex_col()
-                        .gap(px(10.0))
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .justify_between()
-                                .child(
-                                    div()
-                                        .text_size(px(13.5))
-                                        .line_height(px(19.0))
-                                        .font_weight(FontWeight::MEDIUM)
-                                        .text_color(theme.text_primary)
-                                        .child(
-                                            language
-                                                .localized(copy::configuration::INTERFACE_LANGUAGE),
-                                        ),
-                                )
-                                .child(
-                                    div()
-                                        .text_size(px(12.0))
-                                        .text_color(theme.text_tertiary)
-                                        .child(current_language),
-                                ),
-                        )
-                        .child(segmented)
-                } else {
-                    settings_row(
-                        IconName::Globe,
-                        language.localized(copy::configuration::INTERFACE_LANGUAGE),
-                        Some(
-                            format!(
-                                "{} · {current_language}",
-                                language.localized(copy::configuration::CURRENT)
+        self.collapsible_settings_section(
+            SettingsGroupKey::Language,
+            language.localized(copy::configuration::GENERAL),
+            Some(current_language.into()),
+            None,
+            |cx| {
+                let segmented = div()
+                    .p(px(3.0))
+                    .rounded(px(9.0))
+                    .bg(theme.surface_low)
+                    .flex()
+                    .items_center()
+                    .gap(px(2.0))
+                    .when(compact, gpui::Styled::w_full)
+                    .children(
+                        [
+                            LanguagePreference::FollowSystem,
+                            LanguagePreference::English,
+                            LanguagePreference::SimplifiedChinese,
+                        ]
+                        .into_iter()
+                        .map(|preference| {
+                            Self::language_option(
+                                preference,
+                                preference == current_preference,
+                                compact,
+                                language,
+                                theme,
+                                cx,
                             )
-                            .into(),
-                        ),
-                        segmented,
-                        theme,
+                        }),
                     )
-                }),
-            )
+                    .into_any_element();
+
+                settings_group_card("configuration-language", theme)
+                    .child(if compact {
+                        div()
+                            .w_full()
+                            .px(px(16.0))
+                            .py(px(12.0))
+                            .flex()
+                            .flex_col()
+                            .gap(px(10.0))
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .justify_between()
+                                    .child(
+                                        div()
+                                            .text_size(px(13.5))
+                                            .line_height(px(19.0))
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .text_color(theme.text_primary)
+                                            .child(language.localized(
+                                                copy::configuration::INTERFACE_LANGUAGE,
+                                            )),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(12.0))
+                                            .text_color(theme.text_tertiary)
+                                            .child(current_language),
+                                    ),
+                            )
+                            .child(segmented)
+                    } else {
+                        settings_row(
+                            IconName::Globe,
+                            language.localized(copy::configuration::INTERFACE_LANGUAGE),
+                            Some(
+                                format!(
+                                    "{} · {current_language}",
+                                    language.localized(copy::configuration::CURRENT)
+                                )
+                                .into(),
+                            ),
+                            segmented,
+                            theme,
+                        )
+                    })
+                    .into_any_element()
+            },
+            theme,
+            cx,
+        )
     }
 
     fn language_option(
