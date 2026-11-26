@@ -27,7 +27,7 @@ manis-mihomo = { path = "../manis-mihomo" }
 manis-profile = { path = "../manis-profile" }
 # Already in the dependency graph via gpui-pre/gpui-component; declaring them here adds no build cost.
 jiff = "1.0.3"
-resvg = { version = "0.46.0", default-features = false }
+resvg = { version = "0.50.0", default-features = false }
 flate2 = "1.1.11"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
