@@ -22,6 +22,7 @@ impl ManisApp {
     ) -> Stateful<Div> {
         let language = self.language();
         let is_checking = matches!(self.app_update_state, AppUpdateState::Checking);
+        let is_downloading = matches!(self.app_update_state, AppUpdateState::Downloading { .. });
 
         let check_trigger = div()
             .id("app-update-check")
@@ -40,7 +41,11 @@ impl ManisApp {
                         .color(theme.action_primary.into()),
                 )
             })
-            .when(!is_checking, |el| {
+            .when(is_downloading, |el| {
+                el.opacity(0.45)
+                    .child(Icon::new(IconName::RefreshCw).size(px(13.0)))
+            })
+            .when(!is_checking && !is_downloading, |el| {
                 el.cursor_pointer()
                     .hover(move |style| style.bg(theme.surface_low).text_color(theme.text_primary))
                     .on_click(cx.listener(|this, _, _window, cx| {
@@ -167,10 +172,13 @@ impl ManisApp {
                 }))
                 .into_any_element(),
             ),
-            AppUpdateState::Downloading(_) => Some(
+            AppUpdateState::Downloading { progress, .. } => Some(
                 style_action_button(
                     Button::new("app-update-downloading")
-                        .label(language.localized(copy::app_update::DOWNLOADING)),
+                        .icon(IconName::ArrowUp)
+                        .label(copy::app_update::downloading_progress_pill(
+                            language, progress,
+                        )),
                     ActionRole::Secondary,
                     ControlSize::Compact,
                 )
@@ -209,8 +217,8 @@ impl ManisApp {
             AppUpdateState::Available(update) => {
                 copy::app_update::available_version(language, &update.version)
             }
-            AppUpdateState::Downloading(_) => {
-                language.localized(copy::app_update::DOWNLOADING).to_owned()
+            AppUpdateState::Downloading { progress, .. } => {
+                copy::app_update::downloading_progress_pill(language, *progress)
             }
             AppUpdateState::Ready { update, .. } => {
                 copy::app_update::ready_to_install(language, &update.version)

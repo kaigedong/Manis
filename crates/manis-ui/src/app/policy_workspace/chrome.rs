@@ -1,4 +1,13 @@
-use crate::components::style_action_button;
+use gpui_component::{Icon, spinner::Spinner, tooltip::Tooltip};
+
+use crate::{
+    app::{
+        AppUpdateState,
+        presentation::{controller_status_label, format_bytes},
+    },
+    app_update::{self, DownloadProgress},
+    components::style_action_button,
+};
 
 use super::{
     ActionRole, AnyElement, Button, ButtonVariant, ButtonVariants, Context, ControlSize,
@@ -8,8 +17,6 @@ use super::{
     UiEvent, WindowSizeClass, action_button, assets, brand, compact_proxy_mode_label, copy, div,
     img, platform_chrome_left_padding, proxy_mode_label, px, routing_mode_label, trace_ui,
 };
-
-use crate::app::presentation::{controller_status_label, format_bytes};
 
 impl ManisApp {
     /// The desktop shell: a left status rail plus a top command bar.
@@ -497,9 +504,252 @@ impl ManisApp {
                     .flex()
                     .items_center()
                     .gap(Space::Sm.px())
+                    .child(self.header_update_controls(theme, cx))
                     .child(self.proxy_control(theme, compact, cx))
                     .child(self.routing_control(theme, compact, cx)),
             )
+    }
+
+    fn header_update_controls(&self, theme: Theme, cx: &mut Context<Self>) -> Div {
+        div()
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .gap(px(6.0))
+            .when_some(self.header_update_pill(theme, cx), ParentElement::child)
+            .child(self.header_update_check_button(theme, cx))
+    }
+
+    fn header_update_pill(&self, theme: Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let language = self.language();
+        match &self.app_update_state {
+            AppUpdateState::Available(update)
+                if !self.is_app_update_banner_dismissed(&update.version) =>
+            {
+                let self_install = app_update::supports_self_install();
+                let tooltip = copy::app_update::update_available_tooltip(
+                    language,
+                    &update.version,
+                    self_install,
+                );
+                let label = language.localized(copy::app_update::UPDATE_ACTION);
+                Some(self.header_update_action_pill(theme, label, tooltip, false, self_install, cx))
+            }
+            AppUpdateState::Downloading { update, progress } => Some(
+                Self::header_update_progress_pill(theme, language, &update.version, *progress),
+            ),
+            AppUpdateState::Ready { update, .. }
+                if !self.is_app_update_banner_dismissed(&update.version) =>
+            {
+                let tooltip =
+                    copy::app_update::restart_to_update_tooltip(language, &update.version);
+                let label = language.localized(copy::app_update::INSTALL_UPDATE_ACTION);
+                Some(self.header_update_action_pill(theme, label, tooltip, true, true, cx))
+            }
+            AppUpdateState::Idle
+            | AppUpdateState::Checking
+            | AppUpdateState::Available(_)
+            | AppUpdateState::Ready { .. }
+            | AppUpdateState::Current
+            | AppUpdateState::Failed(_)
+            | AppUpdateState::InstallFailed(_) => None,
+        }
+    }
+
+    fn header_update_action_pill(
+        &self,
+        theme: Theme,
+        label: &'static str,
+        tooltip: String,
+        ready_to_install: bool,
+        self_install: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let dismiss_label = self.language().localized(copy::app_update::DISMISS_UPDATE);
+        let pill = div()
+            .id("header-update-action")
+            .debug_selector(|| "header-update-action".to_owned())
+            .role(Role::Button)
+            .aria_label(tooltip.clone())
+            .tab_stop(true)
+            .focusable()
+            .map(crate::components::primary_button_interaction)
+            .cursor_pointer()
+            .h(px(28.0))
+            .px(px(11.0))
+            .rounded_full()
+            .bg(theme.action_primary)
+            .hover(move |style| style.bg(theme.action_primary_hover))
+            .active(move |style| style.bg(theme.action_primary_active))
+            .text_color(theme.action_on_primary)
+            .text_size(TextRole::Metadata.size())
+            .line_height(TextRole::Metadata.line_height())
+            .font_weight(gpui::FontWeight::MEDIUM)
+            .flex()
+            .items_center()
+            .gap(px(5.0))
+            .child(Icon::new(IconName::ArrowUp).size(px(13.0)))
+            .child(label)
+            .tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                if ready_to_install {
+                    this.install_app_update(cx);
+                } else if self_install {
+                    this.start_app_update_download(cx);
+                } else {
+                    cx.open_url(app_update::REPOSITORY_URL);
+                }
+            }));
+
+        let dismiss = div()
+            .id("header-update-dismiss")
+            .debug_selector(|| "header-update-dismiss".to_owned())
+            .role(Role::Button)
+            .aria_label(dismiss_label)
+            .occlude()
+            .cursor_pointer()
+            .absolute()
+            .top(px(-5.0))
+            .right(px(-5.0))
+            .size(px(16.0))
+            .rounded_full()
+            .bg(theme.surface_elevated)
+            .border_1()
+            .border_color(theme.outline_subtle)
+            .shadow_xs()
+            .text_color(theme.text_secondary)
+            .hover(move |style| style.bg(theme.surface_high).text_color(theme.text_primary))
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(Icon::new(IconName::Close).size(px(9.0)))
+            .tooltip(move |window, cx| Tooltip::new(dismiss_label).build(window, cx))
+            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click(cx.listener(|this, _, _, cx| {
+                cx.stop_propagation();
+                this.dismiss_app_update_banner(cx);
+            }));
+
+        div()
+            .relative()
+            .flex_shrink_0()
+            .child(pill)
+            .child(dismiss)
+            .into_any_element()
+    }
+
+    fn header_update_progress_pill(
+        theme: Theme,
+        language: super::Language,
+        version: &str,
+        progress: DownloadProgress,
+    ) -> AnyElement {
+        let label = copy::app_update::downloading_progress_pill(language, progress);
+        let tooltip = copy::app_update::downloading_tooltip(language, version);
+        let border_color = gpui::Hsla::from(theme.action_primary).opacity(0.32);
+        let fill_color = gpui::Hsla::from(theme.action_primary).opacity(0.10);
+
+        div()
+            .id("header-update-progress")
+            .debug_selector(|| "header-update-progress".to_owned())
+            .relative()
+            .overflow_hidden()
+            .flex_shrink_0()
+            .h(px(28.0))
+            .px(px(11.0))
+            .rounded_full()
+            .bg(theme.action_soft)
+            .border_1()
+            .border_color(border_color)
+            .text_color(theme.action_primary)
+            .text_size(TextRole::Metadata.size())
+            .line_height(TextRole::Metadata.line_height())
+            .font_weight(gpui::FontWeight::MEDIUM)
+            .flex()
+            .items_center()
+            .when_some(progress.percent(), |el, percent| {
+                el.child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .bottom_0()
+                        .left_0()
+                        .w(gpui::relative(f32::from(percent) / 100.0))
+                        .bg(fill_color),
+                )
+            })
+            .child(
+                div()
+                    .relative()
+                    .flex()
+                    .items_center()
+                    .gap(px(5.0))
+                    .whitespace_nowrap()
+                    .child(Icon::new(IconName::ArrowUp).size(px(13.0)))
+                    .child(label),
+            )
+            .tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
+            .into_any_element()
+    }
+
+    fn header_update_check_button(&self, theme: Theme, cx: &mut Context<Self>) -> Stateful<Div> {
+        let language = self.language();
+        let is_checking = matches!(self.app_update_state, AppUpdateState::Checking);
+        let is_downloading = matches!(self.app_update_state, AppUpdateState::Downloading { .. });
+        let tooltip = match &self.app_update_state {
+            AppUpdateState::Checking => language.localized(copy::app_update::CHECKING).to_owned(),
+            AppUpdateState::Downloading { update, .. } => {
+                copy::app_update::downloading_tooltip(language, &update.version)
+            }
+            AppUpdateState::Current => {
+                copy::app_update::check_up_to_date_tooltip(language).to_owned()
+            }
+            AppUpdateState::Failed(error) => copy::app_update::error(language, *error).to_owned(),
+            AppUpdateState::InstallFailed(message) => {
+                copy::app_update::install_failed(language, message)
+            }
+            AppUpdateState::Idle | AppUpdateState::Available(_) | AppUpdateState::Ready { .. } => {
+                language
+                    .localized(copy::app_update::CHECK_FOR_UPDATES)
+                    .to_owned()
+            }
+        };
+
+        div()
+            .id("header-update-check")
+            .debug_selector(|| "header-update-check".to_owned())
+            .role(Role::Button)
+            .aria_label(language.localized(copy::app_update::CHECK_FOR_UPDATES))
+            .size(px(28.0))
+            .rounded(Radius::Control.px())
+            .flex()
+            .items_center()
+            .justify_center()
+            .text_color(theme.text_secondary)
+            .tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
+            .when(is_checking, |el| {
+                el.child(
+                    Spinner::new()
+                        .icon(IconName::RefreshCw)
+                        .xsmall()
+                        .color(theme.action_primary.into()),
+                )
+            })
+            .when(is_downloading, |el| {
+                el.opacity(0.45)
+                    .child(Icon::new(IconName::RefreshCw).size(px(14.0)))
+            })
+            .when(!is_checking && !is_downloading, |el| {
+                el.tab_stop(true)
+                    .focusable()
+                    .map(crate::components::primary_button_interaction)
+                    .cursor_pointer()
+                    .hover(move |style| style.bg(theme.surface_high).text_color(theme.text_primary))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.check_for_app_update(cx);
+                    }))
+                    .child(Icon::new(IconName::RefreshCw).size(px(14.0)))
+            })
     }
 
     fn workspace_view_switcher(&self, theme: Theme, cx: &mut Context<Self>) -> Option<AnyElement> {

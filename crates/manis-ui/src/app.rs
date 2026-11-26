@@ -170,6 +170,7 @@ pub struct ManisApp {
     runtime: KernelRuntime,
     mihomo_core_update_state: MihomoCoreUpdateState,
     app_update_state: AppUpdateState,
+    app_update_dismissed_version: Option<String>,
     controller: ControllerState,
     observed_routes: Vec<ObservedRouteEvidence>,
     source_providers: Vec<LoadedProvider>,
@@ -283,6 +284,8 @@ impl ManisApp {
             app.update_mihomo_core(cx);
         }
         app.maybe_auto_connect(cx);
+        #[cfg(not(test))]
+        app.maybe_auto_check_app_update(cx);
         app
     }
 
@@ -365,6 +368,7 @@ impl ManisApp {
             runtime,
             mihomo_core_update_state: Self::initial_mihomo_core_update_state(),
             app_update_state: AppUpdateState::Idle,
+            app_update_dismissed_version: None,
             controller: ControllerState::Disconnected,
             observed_routes: Vec::new(),
             source_providers: Vec::new(),

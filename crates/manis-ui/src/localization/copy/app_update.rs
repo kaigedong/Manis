@@ -1,9 +1,14 @@
 use crate::{
-    app_update::AppUpdateError,
+    app_update::{AppUpdateError, DownloadProgress},
     localization::{Language, LocalizedText},
 };
 
 pub(crate) const CLOSE: LocalizedText = LocalizedText::new("Close", "关闭");
+pub(crate) const CHECK_FOR_UPDATES: LocalizedText =
+    LocalizedText::new("Check for updates", "检查更新");
+pub(crate) const UPDATE_ACTION: LocalizedText = LocalizedText::new("Update", "更新");
+pub(crate) const INSTALL_UPDATE_ACTION: LocalizedText = LocalizedText::new("Install", "安装更新");
+pub(crate) const DISMISS_UPDATE: LocalizedText = LocalizedText::new("Dismiss", "稍后提醒");
 pub(crate) const ABOUT_AND_UPDATES: LocalizedText =
     LocalizedText::new("About and updates", "关于与更新");
 pub(crate) const ABOUT_AND_UPDATES_DETAIL: LocalizedText =
@@ -13,8 +18,6 @@ pub(crate) const APP_LICENSE: LocalizedText =
 pub(crate) const CORE_LICENSE: LocalizedText =
     LocalizedText::new("Bundled Mihomo core: GPL-3.0", "内置 Mihomo 内核：GPL-3.0");
 pub(crate) const DOWNLOAD: LocalizedText = LocalizedText::new("Download", "下载");
-pub(crate) const DOWNLOADING: LocalizedText =
-    LocalizedText::new("Downloading update…", "正在下载更新…");
 pub(crate) const INSTALL_AND_RESTART: LocalizedText =
     LocalizedText::new("Install and restart", "安装并重启");
 pub(crate) const OPEN_GITHUB: LocalizedText = LocalizedText::new("View on GitHub", "前往 GitHub");
@@ -34,6 +37,91 @@ pub(crate) fn available_version(language: Language, version: &str) -> String {
     match language {
         Language::English => format!("Version {version} is ready to download"),
         Language::SimplifiedChinese => format!("发现新版本 {version}，可直接下载"),
+    }
+}
+
+pub(crate) fn update_available_tooltip(
+    language: Language,
+    version: &str,
+    supports_self_install: bool,
+) -> String {
+    match (language, supports_self_install) {
+        (Language::English, true) => format!("Download update {version}"),
+        (Language::SimplifiedChinese, true) => format!("点击下载并更新到 {version}"),
+        (Language::English, false) => format!("Version {version} available · view on GitHub"),
+        (Language::SimplifiedChinese, false) => format!("发现新版本 {version}，点击前往 GitHub"),
+    }
+}
+
+pub(crate) fn restart_to_update_tooltip(language: Language, version: &str) -> String {
+    match language {
+        Language::English => format!("Restart to update to {version}"),
+        Language::SimplifiedChinese => format!("重启以更新到 {version}"),
+    }
+}
+
+pub(crate) fn downloading_tooltip(language: Language, version: &str) -> String {
+    match language {
+        Language::English => format!("Downloading Manis {version}"),
+        Language::SimplifiedChinese => format!("正在下载 Manis {version}"),
+    }
+}
+
+pub(crate) fn check_up_to_date_tooltip(language: Language) -> &'static str {
+    language.localized(LocalizedText::new(
+        "Check for updates · Up to date",
+        "检查更新 · 已是最新版本",
+    ))
+}
+
+pub(crate) fn downloading_progress_pill(language: Language, progress: DownloadProgress) -> String {
+    let prefix = match language {
+        Language::English => "Downloading...",
+        Language::SimplifiedChinese => "正在下载...",
+    };
+    let speed =
+        (progress.bytes_per_second > 0).then(|| format_transfer_speed(progress.bytes_per_second));
+    if let Some(percent) = progress.percent() {
+        return match speed {
+            Some(speed) => format!("{prefix} {percent}% · {speed}"),
+            None => format!("{prefix} {percent}%"),
+        };
+    }
+    if progress.downloaded_bytes > 0 {
+        let downloaded = format_compact_size(progress.downloaded_bytes);
+        return match speed {
+            Some(speed) => format!("{prefix} {downloaded} · {speed}"),
+            None => format!("{prefix} {downloaded}"),
+        };
+    }
+    prefix.to_owned()
+}
+
+fn format_transfer_speed(bytes_per_second: u64) -> String {
+    format!("{}/s", format_compact_size(bytes_per_second))
+}
+
+fn format_compact_size(bytes: u64) -> String {
+    const KIB: u64 = 1024;
+    const MIB: u64 = 1024 * 1024;
+    const GIB: u64 = 1024 * 1024 * 1024;
+    let rounded_tenths =
+        |unit: u64| -> u128 { (u128::from(bytes) * 10 + u128::from(unit) / 2) / u128::from(unit) };
+    if bytes >= GIB {
+        let tenths = rounded_tenths(GIB);
+        format!("{}.{} GB", tenths / 10, tenths % 10)
+    } else if bytes >= MIB {
+        let tenths = rounded_tenths(MIB);
+        format!("{}.{} MB", tenths / 10, tenths % 10)
+    } else if bytes >= KIB {
+        let tenths = rounded_tenths(KIB);
+        if tenths >= 1000 {
+            format!("{} KB", tenths / 10)
+        } else {
+            format!("{}.{} KB", tenths / 10, tenths % 10)
+        }
+    } else {
+        format!("{bytes} B")
     }
 }
 

@@ -1,6 +1,7 @@
 use std::error::Error;
 use std::fmt;
-use std::time::Duration;
+use std::io::Read;
+use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 use sha2::{Digest as _, Sha256};
@@ -15,6 +16,8 @@ const MAX_MANIFEST_BYTES: u64 = 256 * 1024;
 const METADATA_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_PACKAGE_BYTES: u64 = 256 * 1024 * 1024;
 const PACKAGE_TIMEOUT: Duration = Duration::from_secs(600);
+const DOWNLOAD_CHUNK_BYTES: usize = 32 * 1024;
+const PROGRESS_EMIT_INTERVAL: Duration = Duration::from_millis(100);
 const MAX_REDIRECTS: u32 = 5;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
@@ -23,6 +26,21 @@ struct Version([u64; 3]);
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct AvailableUpdate {
     pub(crate) version: String,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct DownloadProgress {
+    pub(crate) downloaded_bytes: u64,
+    pub(crate) total_bytes: Option<u64>,
+    pub(crate) bytes_per_second: u64,
+}
+
+impl DownloadProgress {
+    pub(crate) fn percent(self) -> Option<u8> {
+        let total = self.total_bytes.filter(|total| *total > 0)?;
+        let scaled = u128::from(self.downloaded_bytes.min(total)) * 100 / u128::from(total);
+        u8::try_from(scaled).ok()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -72,6 +90,8 @@ struct GithubAsset {
     name: String,
     browser_download_url: String,
     digest: Option<String>,
+    #[serde(default)]
+    size: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -289,9 +309,10 @@ pub(crate) fn platform_asset_name(version: &str) -> Option<String> {
     }
 }
 
-/// Downloads the package for this release and verifies it against the release digest.
-pub(crate) fn download_package(
+/// Downloads the package for this release, reporting streaming progress and verifying the digest.
+pub(crate) fn download_package_with_progress(
     update: &AvailableUpdate,
+    on_progress: impl FnMut(DownloadProgress),
 ) -> Result<std::path::PathBuf, AppUpdateError> {
     let asset_name =
         platform_asset_name(&update.version).ok_or(AppUpdateError::UnsupportedPlatform)?;
@@ -307,7 +328,7 @@ pub(crate) fn download_package(
         .as_deref()
         .ok_or(AppUpdateError::InvalidDigest)
         .and_then(parse_github_digest)?;
-    let bytes = download_package_bytes(&asset.browser_download_url)?;
+    let bytes = download_package_bytes(&asset.browser_download_url, asset.size, on_progress)?;
     verify_digest(&bytes, &digest)?;
 
     let directory = std::env::temp_dir().join(format!("manis-app-update-{}", std::process::id()));
@@ -317,7 +338,11 @@ pub(crate) fn download_package(
     Ok(package)
 }
 
-fn download_package_bytes(url: &str) -> Result<Vec<u8>, AppUpdateError> {
+fn download_package_bytes(
+    url: &str,
+    fallback_total_bytes: Option<u64>,
+    on_progress: impl FnMut(DownloadProgress),
+) -> Result<Vec<u8>, AppUpdateError> {
     let agent: Agent = Agent::config_builder()
         .https_only(true)
         .max_redirects(MAX_REDIRECTS)
@@ -330,22 +355,122 @@ fn download_package_bytes(url: &str) -> Result<Vec<u8>, AppUpdateError> {
         .call()
         .map_err(|error| map_request_error(&error))?;
     require_https(&response)?;
-    response
-        .body_mut()
-        .with_config()
-        .limit(MAX_PACKAGE_BYTES + 1)
-        .read_to_vec()
-        .map_err(|error| match error {
-            ureq::Error::BodyExceedsLimit(_) => AppUpdateError::PackageTooLarge,
-            _ => AppUpdateError::NetworkUnavailable,
-        })
-        .and_then(|bytes| {
-            if bytes.len() as u64 > MAX_PACKAGE_BYTES {
-                Err(AppUpdateError::PackageTooLarge)
-            } else {
-                Ok(bytes)
-            }
-        })
+    let header_total_bytes = response
+        .headers()
+        .get("content-length")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|total| *total > 0);
+    let total_bytes =
+        header_total_bytes.or_else(|| fallback_total_bytes.filter(|total| *total > 0));
+    let mut reader = response.body_mut().as_reader();
+    read_package_stream(&mut reader, total_bytes, MAX_PACKAGE_BYTES, on_progress)
+}
+
+fn read_package_stream(
+    reader: &mut impl Read,
+    total_bytes: Option<u64>,
+    max_bytes: u64,
+    mut on_progress: impl FnMut(DownloadProgress),
+) -> Result<Vec<u8>, AppUpdateError> {
+    if total_bytes.is_some_and(|total| total > max_bytes) {
+        return Err(AppUpdateError::PackageTooLarge);
+    }
+    let initial_capacity = total_bytes
+        .and_then(|total| usize::try_from(total.min(max_bytes)).ok())
+        .unwrap_or(0);
+    let mut bytes = Vec::with_capacity(initial_capacity);
+    let mut buffer = vec![0_u8; DOWNLOAD_CHUNK_BYTES];
+    let started_at = Instant::now();
+    let mut last_emit = started_at;
+    let mut last_sample_at = started_at;
+    let mut last_sample_bytes = 0_u64;
+    let mut smoothed_speed = 0_u64;
+
+    on_progress(DownloadProgress {
+        downloaded_bytes: 0,
+        total_bytes,
+        bytes_per_second: 0,
+    });
+
+    loop {
+        let read = reader
+            .read(&mut buffer)
+            .map_err(|_error| AppUpdateError::NetworkUnavailable)?;
+        if read == 0 {
+            break;
+        }
+        let next_len = bytes
+            .len()
+            .checked_add(read)
+            .ok_or(AppUpdateError::PackageTooLarge)?;
+        if next_len as u64 > max_bytes {
+            return Err(AppUpdateError::PackageTooLarge);
+        }
+        bytes.extend_from_slice(&buffer[..read]);
+        let downloaded = bytes.len() as u64;
+        let now = Instant::now();
+        if now.duration_since(last_emit) >= PROGRESS_EMIT_INTERVAL {
+            smoothed_speed = compute_transfer_speed(
+                downloaded,
+                last_sample_bytes,
+                now.duration_since(last_sample_at),
+                now.duration_since(started_at),
+                smoothed_speed,
+            );
+            last_sample_bytes = downloaded;
+            last_sample_at = now;
+            last_emit = now;
+            on_progress(DownloadProgress {
+                downloaded_bytes: downloaded,
+                total_bytes,
+                bytes_per_second: smoothed_speed,
+            });
+        }
+    }
+
+    let downloaded = bytes.len() as u64;
+    let now = Instant::now();
+    let final_speed = compute_transfer_speed(
+        downloaded,
+        last_sample_bytes,
+        now.duration_since(last_sample_at),
+        now.duration_since(started_at),
+        smoothed_speed,
+    );
+    on_progress(DownloadProgress {
+        downloaded_bytes: downloaded,
+        total_bytes: total_bytes.or(Some(downloaded)),
+        bytes_per_second: final_speed,
+    });
+    Ok(bytes)
+}
+
+fn compute_transfer_speed(
+    downloaded_bytes: u64,
+    last_sample_bytes: u64,
+    window_elapsed: Duration,
+    total_elapsed: Duration,
+    previous_speed: u64,
+) -> u64 {
+    let delta = downloaded_bytes.saturating_sub(last_sample_bytes);
+    let instant_speed = rate_bytes_per_second(delta, window_elapsed)
+        .or_else(|| rate_bytes_per_second(downloaded_bytes, total_elapsed))
+        .unwrap_or(previous_speed);
+    if previous_speed == 0 {
+        instant_speed
+    } else {
+        (previous_speed * 2 + instant_speed) / 3
+    }
+}
+
+fn rate_bytes_per_second(bytes: u64, elapsed: Duration) -> Option<u64> {
+    let millis = elapsed.as_millis();
+    if bytes == 0 || millis == 0 {
+        return None;
+    }
+    let scaled = u128::from(bytes) * 1_000 / millis;
+    u64::try_from(scaled).ok()
 }
 
 /// Installs a downloaded package and restarts the app. Returns only after the swap is scheduled.
@@ -727,5 +852,63 @@ mod tests {
             Err(AppUpdateError::MetadataTooLarge)
         );
         assert_eq!(enforce_body_limit(b"ab".to_vec(), 2), Ok(b"ab".to_vec()));
+    }
+
+    #[test]
+    fn package_stream_reports_progress_and_enforces_size_limit() {
+        let payload = vec![0x5a_u8; 40_000];
+        let mut cursor = std::io::Cursor::new(payload.clone());
+        let mut updates = Vec::new();
+        let downloaded = read_package_stream(&mut cursor, Some(40_000), 100_000, |progress| {
+            updates.push(progress);
+        })
+        .unwrap();
+        assert_eq!(downloaded, payload);
+        assert_eq!(updates.first().unwrap().downloaded_bytes, 0);
+        assert_eq!(updates.first().unwrap().percent(), Some(0));
+        assert_eq!(updates.last().unwrap().downloaded_bytes, 40_000);
+        assert_eq!(updates.last().unwrap().percent(), Some(100));
+
+        let mut oversized = std::io::Cursor::new(vec![0_u8; 16]);
+        assert_eq!(
+            read_package_stream(&mut oversized, Some(16), 8, |_| {}),
+            Err(AppUpdateError::PackageTooLarge)
+        );
+        let mut oversized_unknown_len = std::io::Cursor::new(vec![0_u8; 16]);
+        assert_eq!(
+            read_package_stream(&mut oversized_unknown_len, None, 8, |_| {}),
+            Err(AppUpdateError::PackageTooLarge)
+        );
+    }
+
+    #[test]
+    fn download_progress_percent_clamps_and_handles_missing_total() {
+        assert_eq!(
+            DownloadProgress {
+                downloaded_bytes: 25,
+                total_bytes: None,
+                bytes_per_second: 10,
+            }
+            .percent(),
+            None
+        );
+        assert_eq!(
+            DownloadProgress {
+                downloaded_bytes: 800,
+                total_bytes: Some(10_000),
+                bytes_per_second: 2_300_000,
+            }
+            .percent(),
+            Some(8)
+        );
+        assert_eq!(
+            DownloadProgress {
+                downloaded_bytes: 120,
+                total_bytes: Some(100),
+                bytes_per_second: 0,
+            }
+            .percent(),
+            Some(100)
+        );
     }
 }

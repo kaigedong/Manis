@@ -1117,6 +1117,120 @@ mod tests {
         }
     }
 
+    #[gpui::test]
+    fn header_update_controls_track_available_downloading_ready_and_dismiss(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use crate::app::{AppUpdateState, ManisApp};
+        use crate::app_update::{AvailableUpdate, DownloadProgress};
+        use gpui::{AppContext as _, Modifiers};
+        cx.update(crate::init);
+        let mut app = None;
+        let (_, window_cx) = cx.add_window_view(|window, cx| {
+            let entity = cx.new(|_| ManisApp::with_fixture_controller("http://127.0.0.1:9090"));
+            app = Some(entity.clone());
+            crate::root(entity, window, cx)
+        });
+        let app = app.expect("fixture app");
+        let update = AvailableUpdate {
+            version: "0.2.0".to_owned(),
+        };
+
+        // Idle: only the rotating-arrow check button appears.
+        window_cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert!(window_cx.debug_bounds("header-update-check").is_some());
+        assert!(window_cx.debug_bounds("header-update-action").is_none());
+        assert!(window_cx.debug_bounds("header-update-progress").is_none());
+
+        // Available: shows the primary update pill with dismiss badge; dismissing hides only the pill.
+        window_cx.update(|window, cx| {
+            app.update(cx, |app, cx| {
+                app.app_update_state = AppUpdateState::Available(update.clone());
+                cx.notify();
+            });
+            window.draw(cx).clear(cx);
+        });
+        assert!(window_cx.debug_bounds("header-update-action").is_some());
+        let dismiss = window_cx
+            .debug_bounds("header-update-dismiss")
+            .expect("dismiss badge renders on available pill");
+        window_cx.simulate_click(dismiss.center(), Modifiers::none());
+        window_cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert!(window_cx.debug_bounds("header-update-action").is_none());
+        window_cx.update(|_, cx| {
+            app.read_with(cx, |app, _| {
+                assert_eq!(
+                    app.app_update_state,
+                    AppUpdateState::Available(update.clone())
+                );
+            });
+        });
+
+        // Downloading: shows the soft progress pill with live percent + speed and no dismiss badge.
+        window_cx.update(|window, cx| {
+            app.update(cx, |app, cx| {
+                app.app_update_state = AppUpdateState::Downloading {
+                    update: update.clone(),
+                    progress: DownloadProgress {
+                        downloaded_bytes: 800_000,
+                        total_bytes: Some(10_000_000),
+                        bytes_per_second: 2_306_867,
+                    },
+                };
+                cx.notify();
+            });
+            window.draw(cx).clear(cx);
+        });
+        assert!(window_cx.debug_bounds("header-update-progress").is_some());
+        assert!(window_cx.debug_bounds("header-update-dismiss").is_none());
+
+        // Ready: clears dismissal and shows the install pill again.
+        window_cx.update(|window, cx| {
+            app.update(cx, |app, cx| {
+                app.app_update_dismissed_version = None;
+                app.app_update_state = AppUpdateState::Ready {
+                    update: update.clone(),
+                    package: std::path::PathBuf::from("/tmp/Manis-0.2.0.zip"),
+                };
+                cx.notify();
+            });
+            window.draw(cx).clear(cx);
+        });
+        assert!(window_cx.debug_bounds("header-update-action").is_some());
+        assert!(window_cx.debug_bounds("header-update-dismiss").is_some());
+        assert!(window_cx.debug_bounds("header-update-progress").is_none());
+    }
+
+    #[test]
+    fn download_progress_pill_formats_percent_and_speed() {
+        use crate::app_update::DownloadProgress;
+        use crate::localization::{Language, copy};
+
+        let progress = DownloadProgress {
+            downloaded_bytes: 800_000,
+            total_bytes: Some(10_000_000),
+            bytes_per_second: 2_306_867,
+        };
+        assert_eq!(
+            copy::app_update::downloading_progress_pill(Language::SimplifiedChinese, progress),
+            "正在下载... 8% · 2.2 MB/s"
+        );
+        assert_eq!(
+            copy::app_update::downloading_progress_pill(Language::English, progress),
+            "Downloading... 8% · 2.2 MB/s"
+        );
+
+        let unknown_total = DownloadProgress {
+            downloaded_bytes: 1_572_864,
+            total_bytes: None,
+            bytes_per_second: 512 * 1024,
+        };
+        assert_eq!(
+            copy::app_update::downloading_progress_pill(Language::SimplifiedChinese, unknown_total,),
+            "正在下载... 1.5 MB · 512 KB/s"
+        );
+    }
+
     #[test]
     fn remote_rule_sources_start_open_and_remember_collapse() {
         let mut workspace = NodeWorkspaceState::default();
