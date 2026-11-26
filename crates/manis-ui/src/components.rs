@@ -453,22 +453,7 @@ pub(crate) fn page_heading(
     )
 }
 
-pub(crate) fn section_heading(
-    title: impl Into<SharedString>,
-    detail: impl Into<SharedString>,
-    action: Option<AnyElement>,
-    theme: Theme,
-) -> Div {
-    heading(
-        title,
-        detail,
-        action,
-        theme,
-        TextRole::SectionTitle,
-        TextRole::Metadata,
-    )
-}
-
+#[cfg(test)]
 fn heading(
     title: impl Into<SharedString>,
     detail: impl Into<SharedString>,

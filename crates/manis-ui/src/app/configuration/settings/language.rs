@@ -1,8 +1,11 @@
+use gpui::IntoElement as _;
+use gpui_component::IconName;
+
 use super::{
-    Context, Div, FluentBuilder, FontWeight, InteractiveElement, IntoElement, Language,
-    LanguagePreference, ManisApp, ParentElement, Radius, Role, Space, Stateful,
-    StatefulInteractiveElement, StatusTone, Styled, Theme, copy, div, language_preference_label,
-    panel_surface, px, save_language_preference_in, section_header, status_badge,
+    Context, Div, FluentBuilder, FontWeight, InteractiveElement, Language, LanguagePreference,
+    ManisApp, ParentElement, Role, Stateful, StatefulInteractiveElement, Styled, Theme, copy, div,
+    language_preference_label, px, save_language_preference_in, settings_group_card, settings_row,
+    settings_section_header,
 };
 
 impl ManisApp {
@@ -15,57 +18,108 @@ impl ManisApp {
         let language = self.language();
         let current_preference = self.language_preference();
         let current_language = language.display_name();
-        panel_surface("configuration-language", compact, theme)
-            .child(section_header(
-                language.localized(copy::configuration::INTERFACE_LANGUAGE),
-                "",
-                Some(
-                    status_badge(
-                        format!(
-                            "{} · {current_language}",
-                            language.localized(copy::configuration::CURRENT)
-                        ),
-                        StatusTone::Neutral,
+        let segmented = div()
+            .p(px(3.0))
+            .rounded(px(9.0))
+            .bg(theme.surface_low)
+            .flex()
+            .items_center()
+            .gap(px(2.0))
+            .when(compact, gpui::Styled::w_full)
+            .children(
+                [
+                    LanguagePreference::FollowSystem,
+                    LanguagePreference::English,
+                    LanguagePreference::SimplifiedChinese,
+                ]
+                .into_iter()
+                .map(|preference| {
+                    Self::language_option(
+                        preference,
+                        preference == current_preference,
+                        compact,
+                        language,
                         theme,
+                        cx,
                     )
-                    .into_any_element(),
-                ),
+                }),
+            )
+            .into_any_element();
+
+        div()
+            .id("configuration-language-section")
+            .w_full()
+            .child(settings_section_header(
+                language.localized(copy::configuration::GENERAL),
+                None,
+                None,
                 theme,
             ))
             .child(
-                div()
-                    .mt(Space::Md.px())
-                    .grid()
-                    .gap(Space::Sm.px())
-                    .grid_cols(if compact { 1 } else { 3 })
-                    .children(
-                        [
-                            LanguagePreference::FollowSystem,
-                            LanguagePreference::English,
-                            LanguagePreference::SimplifiedChinese,
-                        ]
-                        .into_iter()
-                        .map(|preference| {
-                            Self::language_option(
-                                preference,
-                                preference == current_preference,
-                                language,
-                                theme,
-                                cx,
+                settings_group_card("configuration-language", theme).child(if compact {
+                    div()
+                        .w_full()
+                        .px(px(16.0))
+                        .py(px(12.0))
+                        .flex()
+                        .flex_col()
+                        .gap(px(10.0))
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .child(
+                                    div()
+                                        .text_size(px(13.5))
+                                        .line_height(px(19.0))
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .text_color(theme.text_primary)
+                                        .child(
+                                            language
+                                                .localized(copy::configuration::INTERFACE_LANGUAGE),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(12.0))
+                                        .text_color(theme.text_tertiary)
+                                        .child(current_language),
+                                ),
+                        )
+                        .child(segmented)
+                } else {
+                    settings_row(
+                        IconName::Globe,
+                        language.localized(copy::configuration::INTERFACE_LANGUAGE),
+                        Some(
+                            format!(
+                                "{} · {current_language}",
+                                language.localized(copy::configuration::CURRENT)
                             )
-                        }),
-                    ),
+                            .into(),
+                        ),
+                        segmented,
+                        theme,
+                    )
+                }),
             )
     }
 
     fn language_option(
         preference: LanguagePreference,
         selected: bool,
+        compact: bool,
         language: Language,
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let label = language_preference_label(preference, language);
+        let selected_bg = if theme.is_dark() {
+            theme.surface_high
+        } else {
+            theme.surface_elevated
+        };
         div()
             .id(format!(
                 "language-option-{}",
@@ -85,73 +139,44 @@ impl ManisApp {
             .focusable()
             .map(crate::components::primary_button_interaction)
             .cursor_pointer()
-            .min_h(px(36.0))
-            .px(Space::Md.px())
-            .py(px(6.0))
-            .rounded(Radius::Row.px())
-            .border_1()
-            .border_color(if selected {
-                theme.action_primary
-            } else {
-                theme.outline_subtle
-            })
+            .when(compact, gpui::Styled::flex_1)
+            .h(px(28.0))
+            .px(px(11.0))
+            .rounded(px(7.0))
             .bg(if selected {
-                theme.action_soft
+                selected_bg
             } else {
-                theme.surface_low
+                gpui::rgba(0x0000_0000)
             })
+            .when(selected && !theme.is_dark(), gpui::Styled::shadow_xs)
             .flex()
             .items_center()
-            .child(
-                div()
-                    .w_full()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap_2()
-                    .child(
-                        div()
-                            .text_size(px(12.5))
-                            .line_height(px(18.0))
-                            .font_weight(if selected {
-                                FontWeight::MEDIUM
-                            } else {
-                                FontWeight::NORMAL
-                            })
-                            .text_color(if selected {
-                                theme.action_primary
-                            } else {
-                                theme.text_primary
-                            })
-                            .child(label),
-                    )
-                    .when(selected, |row| {
-                        use gpui_component::{Icon, IconName, Sizable as _};
-                        row.child(
-                            Icon::new(IconName::Check)
-                                .xsmall()
-                                .flex_shrink_0()
-                                .text_color(theme.action_primary),
-                        )
-                    }),
-            )
-            .hover(move |style| {
-                style.bg(if selected {
-                    theme.action_soft
-                } else {
-                    theme.button_hover
-                })
+            .justify_center()
+            .text_size(px(12.5))
+            .line_height(px(16.0))
+            .font_weight(if selected {
+                FontWeight::SEMIBOLD
+            } else {
+                FontWeight::MEDIUM
             })
-            .active(move |style| {
-                style.bg(if selected {
-                    theme.action_soft
-                } else {
-                    theme.button_active
-                })
+            .text_color(if selected {
+                theme.text_primary
+            } else {
+                theme.text_secondary
+            })
+            .hover(move |style| {
+                style
+                    .bg(if selected {
+                        selected_bg
+                    } else {
+                        theme.button_hover
+                    })
+                    .text_color(theme.text_primary)
             })
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.set_language_preference(preference, cx);
             }))
+            .child(label)
     }
 
     pub(in crate::app) fn set_language_preference(
@@ -185,7 +210,9 @@ impl ManisApp {
             },
             None => {
                 language
-                    .localized(copy::configuration::LANGUAGE_CHANGED_FOR_THIS_SESSION_DATA_DIRECTORY_UNAVAILABLE)
+                    .localized(
+                        copy::configuration::LANGUAGE_CHANGED_FOR_THIS_SESSION_DATA_DIRECTORY_UNAVAILABLE,
+                    )
                     .clone_into(&mut self.status);
             }
         }

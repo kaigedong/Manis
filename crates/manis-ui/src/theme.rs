@@ -145,6 +145,11 @@ impl Theme {
         }
     }
 
+    /// Returns whether this theme renders on a dark canvas.
+    pub(crate) fn is_dark(self) -> bool {
+        self.surface_base.r < 0.5
+    }
+
     /// The status colour a measured latency earns, or the neutral token when it is unknown.
     pub(crate) fn latency_color(self, milliseconds: Option<u64>) -> Rgba {
         match milliseconds {

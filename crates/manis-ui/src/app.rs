@@ -13,7 +13,6 @@ use manis_profile::{QxRuleList, SecretUrl};
 
 use crate::{
     auto_connect, autostart,
-    components::StatusTone,
     diagnostics::{self, LogLevel, UiEvent, record_event, trace_ui},
     kernel::KernelRuntime,
     localization::{CountNoun, Language, LanguagePreference, Localizer, Message, copy},

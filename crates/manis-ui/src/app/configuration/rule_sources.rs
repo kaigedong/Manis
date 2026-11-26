@@ -3,15 +3,15 @@ use gpui::{
     Window, div, prelude::*, px,
 };
 use gpui_component::{
-    Disableable, WindowExt as _, button::Button, checkbox::Checkbox, dialog::Dialog,
+    Disableable, IconName, WindowExt as _, button::Button, checkbox::Checkbox, dialog::Dialog,
 };
 
 use crate::app::{ManisApp, QxRuleImportFeedback, QxRuleSourceRefreshState};
 use crate::{
     components::{
         ActionRole, action_button, dialog_footer_surface, dialog_header_surface, empty_state,
-        popover_menu_list, popover_menu_option, row_action_button, section_heading,
-        style_action_button, style_select_trigger, surface_dialog,
+        popover_menu_list, popover_menu_option, row_action_button, style_action_button,
+        style_select_trigger, surface_dialog,
     },
     localization::{CountNoun, Language, Message, copy},
     mihomo::{self, RemoteSourceRefreshInterval},
@@ -21,7 +21,9 @@ use crate::{
 
 use super::{
     QxRuleEditorView, RuleSourceCardPresentation, RuleSourceRefreshPresentation, field_label,
-    panel_surface, refresh_interval_label, source_update_label,
+    refresh_interval_label,
+    settings::{settings_group_card, settings_inset_divider, settings_section_header},
+    source_update_label,
 };
 
 impl ManisApp {
@@ -29,7 +31,7 @@ impl ManisApp {
         &self,
         busy: bool,
         theme: Theme,
-        compact: bool,
+        _compact: bool,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let language = self.language();
@@ -39,38 +41,16 @@ impl ManisApp {
             ActionRole::Primary,
             ControlSize::Compact,
         )
+        .icon(IconName::Plus)
         .on_click(cx.listener(move |this, _, window, cx| {
             this.open_new_qx_rule_editor(cx);
             this.open_qx_rule_source_dialog(window, cx);
         }));
-        let mut panel = panel_surface("configuration-rule-sources", compact, theme)
-            .child(section_heading(
-                language.localized(copy::configuration::RULE_SOURCES),
-                language.count(CountNoun::Source, self.rule_sources.sources.len()),
-                Some(add_action.into_any_element()),
-                theme,
-            ))
-            .child(
-                div()
-                    .mt(Space::Lg.px())
-                    .pt(Space::Md.px())
-                    .border_t_1()
-                    .border_color(theme.outline_subtle)
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .child(
-                        div()
-                            .text_size(TextRole::Label.size())
-                            .line_height(TextRole::Label.line_height())
-                            .font_weight(TextRole::Label.weight())
-                            .child(language.localized(copy::common::SAVED)),
-                    ),
-            );
+        let mut card = settings_group_card("configuration-rule-sources", theme);
 
         if self.rule_sources.sources.is_empty() {
-            panel = panel.child(
-                empty_state(
+            card = card.child(
+                div().p(Space::Lg.px()).child(empty_state(
                     language.localized(copy::configuration::NO_RULE_SOURCES),
                     language.localized(copy::configuration::ADD_A_REMOTE_QX_RULE_SET),
                     Some(
@@ -80,6 +60,7 @@ impl ManisApp {
                             ActionRole::Primary,
                             ControlSize::Compact,
                         )
+                        .icon(IconName::Plus)
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.open_new_qx_rule_editor(cx);
                             this.open_qx_rule_source_dialog(window, cx);
@@ -87,14 +68,31 @@ impl ManisApp {
                         .into_any_element(),
                     ),
                     theme,
-                )
-                .mt(Space::Md.px()),
+                )),
             );
+        } else {
+            for (index, source) in self.rule_sources.sources.iter().enumerate() {
+                if index > 0 {
+                    card = card.child(settings_inset_divider(theme, 44.0));
+                }
+                card = card.child(self.rule_source_card(index, source, busy, theme, cx));
+            }
         }
-        for (index, source) in self.rule_sources.sources.iter().enumerate() {
-            panel = panel.child(self.rule_source_card(index, source, busy, theme, cx));
-        }
-        panel
+
+        div()
+            .id("configuration-rule-sources-section")
+            .w_full()
+            .child(settings_section_header(
+                language.localized(copy::configuration::RULE_SOURCES),
+                Some(
+                    language
+                        .count(CountNoun::Source, self.rule_sources.sources.len())
+                        .into(),
+                ),
+                Some(add_action.into_any_element()),
+                theme,
+            ))
+            .child(card)
     }
 
     pub(super) fn open_new_qx_rule_editor(&mut self, cx: &mut Context<Self>) {
@@ -483,6 +481,17 @@ impl ManisApp {
         let controls_enabled = presentation.controls_enabled;
         let toggle_id = source.id.clone();
         let enabled = source.enabled;
+        let meta_line = format!(
+            "{} · {} · {} · {}",
+            copy::configuration::rule_source_counts(
+                language,
+                source.rule_count,
+                source.diagnostic_count,
+            ),
+            refresh_interval_label(source.refresh_interval, language),
+            presentation.last_update,
+            source.source.expose_to(str::to_owned),
+        );
         div()
             .id(format!("qx-rule-source-card-{}", source.id))
             .role(Role::Button)
@@ -491,21 +500,18 @@ impl ManisApp {
             .focusable()
             .map(crate::components::primary_button_interaction)
             .when(controls_enabled, gpui::Styled::cursor_pointer)
-            .mt(Space::Sm.px())
-            .p(Space::Md.px())
-            .rounded(Radius::Row.px())
-            .border_1()
-            .border_color(if presentation.duplicate {
-                theme.status_warning
-            } else {
-                theme.outline_subtle
+            .w_full()
+            .min_h(px(62.0))
+            .px(px(16.0))
+            .py(px(12.0))
+            .when(presentation.duplicate, |row| {
+                row.bg(theme.status_warning_soft)
             })
-            .bg(theme.surface_low)
             .flex()
             .items_center()
-            .gap_2()
+            .gap(px(12.0))
             .when(controls_enabled, |card| {
-                card.hover(move |card| card.bg(theme.action_soft))
+                card.hover(move |card| card.bg(theme.surface_low))
             })
             .child(
                 Checkbox::new(format!("qx-rule-enabled-{toggle_id}"))
@@ -528,6 +534,9 @@ impl ManisApp {
                 div()
                     .flex_1()
                     .min_w(px(0.0))
+                    .flex()
+                    .flex_col()
+                    .gap(px(3.0))
                     .child(Self::rule_source_card_header(
                         source,
                         &presentation,
@@ -536,27 +545,26 @@ impl ManisApp {
                     ))
                     .child(
                         div()
-                            .mt_1()
                             .overflow_x_hidden()
                             .whitespace_nowrap()
                             .text_ellipsis()
                             .text_size(TextRole::Metadata.size())
+                            .line_height(TextRole::Metadata.line_height())
                             .text_color(theme.text_tertiary)
-                            .child(source.source.expose_to(str::to_owned)),
+                            .child(meta_line),
                     )
                     .when_some(
                         Self::rule_source_refresh_error(&presentation),
                         |card, error| card.child(Self::rule_source_error(error, language, theme)),
-                    )
-                    .child(Self::rule_source_card_actions(
-                        index,
-                        source,
-                        &presentation,
-                        language,
-                        theme,
-                        cx,
-                    )),
+                    ),
             )
+            .child(Self::rule_source_card_actions(
+                index,
+                source,
+                &presentation,
+                language,
+                cx,
+            ))
             .on_click(cx.listener(move |this, _, window, cx| {
                 if controls_enabled {
                     this.open_qx_rule_editor(edit_id.clone(), cx);
@@ -620,22 +628,35 @@ impl ManisApp {
         div()
             .flex()
             .items_center()
-            .gap_2()
+            .gap(px(8.0))
             .child(
                 div()
-                    .flex_1()
                     .min_w(px(0.0))
                     .overflow_x_hidden()
                     .whitespace_nowrap()
                     .text_ellipsis()
-                    .text_size(TextRole::Label.size())
-                    .font_weight(TextRole::Label.weight())
+                    .text_size(px(13.5))
+                    .line_height(px(19.0))
+                    .font_weight(FontWeight::MEDIUM)
                     .text_color(if enabled {
                         theme.text_primary
                     } else {
                         theme.text_secondary
                     })
                     .child(presentation.name.clone()),
+            )
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .px(px(7.0))
+                    .py(px(1.0))
+                    .rounded(Radius::Badge.px())
+                    .bg(theme.route_soft)
+                    .text_size(px(11.0))
+                    .line_height(px(16.0))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(theme.route_trace)
+                    .child(presentation.target_policy.clone()),
             )
             .when(presentation.refresh.is_refreshing(), |header| {
                 header.child(Self::benchmark_latency_spinner(
@@ -678,7 +699,7 @@ impl ManisApp {
             .mt_1()
             .text_size(TextRole::Metadata.size())
             .line_height(TextRole::Metadata.line_height())
-            .text_color(theme.route_trace)
+            .text_color(theme.status_error)
             .child(format!(
                 "{}: {error}",
                 language.localized(copy::configuration::LAST_UPDATE_FAILED)
@@ -690,7 +711,6 @@ impl ManisApp {
         source: &mihomo::StoredQxRuleSource,
         presentation: &RuleSourceCardPresentation,
         language: Language,
-        theme: Theme,
         cx: &mut Context<Self>,
     ) -> Div {
         let refresh_id = source.id.clone();
@@ -699,28 +719,10 @@ impl ManisApp {
         let refresh_enabled = presentation.controls_enabled && source.enabled;
         let controls_enabled = presentation.controls_enabled;
         div()
-            .mt_1()
+            .flex_shrink_0()
             .flex()
             .items_center()
-            .gap_2()
-            .text_size(TextRole::Metadata.size())
-            .text_color(theme.text_secondary)
-            .child(copy::configuration::rule_source_counts(
-                language,
-                source.rule_count,
-                source.diagnostic_count,
-            ))
-            .child("·")
-            .child(format!(
-                "{} {}",
-                language.localized(copy::configuration::TARGET),
-                presentation.target_policy
-            ))
-            .child("·")
-            .child(refresh_interval_label(source.refresh_interval, language))
-            .child("·")
-            .child(presentation.last_update.clone())
-            .child(div().flex_1())
+            .gap(px(6.0))
             .child(Self::rule_source_refresh_button(
                 refresh_id,
                 refreshing,

@@ -2,21 +2,23 @@ use gpui::{
     Context, Div, Entity, FontWeight, ParentElement, Role, Stateful, Styled, Window, div,
     prelude::*, px,
 };
-use gpui_component::{Disableable, WindowExt as _, button::Button, dialog::Dialog};
+use gpui_component::{Disableable, IconName, WindowExt as _, button::Button, dialog::Dialog};
 use manis_core::ProxyMode;
 
 use crate::app::{ManisApp, SubscriptionFeedback};
 use crate::{
     components::{
-        ActionRole, dialog_footer_surface, dialog_header_surface, section_header,
-        style_action_button, surface_dialog,
+        ActionRole, dialog_footer_surface, dialog_header_surface, style_action_button,
+        surface_dialog,
     },
     localization::{Language, Message, copy},
     mihomo::{self},
     theme::{ControlSize, Space, TextRole, Theme},
 };
 
-use super::panel_surface;
+use super::settings::{
+    settings_group_card, settings_inset_divider, settings_row, settings_section_header,
+};
 
 #[derive(Default)]
 pub(super) enum TransferProgress {
@@ -239,7 +241,7 @@ impl ManisApp {
     pub(super) fn configuration_transfer_panel(
         &self,
         theme: Theme,
-        compact: bool,
+        _compact: bool,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let language = self.language();
@@ -248,7 +250,7 @@ impl ManisApp {
             Button::new("configuration-edit")
                 .label(language.localized(copy::backup::EDIT))
                 .disabled(disabled),
-            ActionRole::Primary,
+            ActionRole::Secondary,
             ControlSize::Compact,
         )
         .when(disabled, gpui::Styled::cursor_default)
@@ -257,30 +259,49 @@ impl ManisApp {
         }))
         .debug_selector(|| "configuration-edit".into())
         .into_any_element();
-        panel_surface("configuration-transfer", compact, theme)
-            .child(section_header(
+        let backup_dir = self
+            .subscription_store_dir
+            .as_deref()
+            .and_then(|store| crate::config_backup::backup_root(store).ok())
+            .filter(|path| path.is_dir());
+
+        div()
+            .id("configuration-transfer-section")
+            .w_full()
+            .child(settings_section_header(
                 language.localized(copy::backup::TITLE),
-                "",
-                Some(edit_action),
+                None,
+                None,
                 theme,
             ))
-            .when_some(
-                self.subscription_store_dir
-                    .as_deref()
-                    .and_then(|store| crate::config_backup::backup_root(store).ok())
-                    .filter(|path| path.is_dir()),
-                |panel, store| {
-                    panel.child(
-                        style_action_button(
+            .child(
+                settings_group_card("configuration-transfer", theme)
+                    .child(settings_row(
+                        IconName::HardDrive,
+                        language.localized(copy::backup::TITLE),
+                        None,
+                        edit_action,
+                        theme,
+                    ))
+                    .when_some(backup_dir, |panel, store| {
+                        let open_backups = style_action_button(
                             Button::new("configuration-backups")
                                 .label(language.localized(copy::backup::SHOW_BACKUPS)),
                             ActionRole::Secondary,
                             ControlSize::Compact,
                         )
-                        .mt(Space::Md.px())
-                        .on_click(move |_, _, cx| cx.reveal_path(&store)),
-                    )
-                },
+                        .on_click(move |_, _, cx| cx.reveal_path(&store))
+                        .into_any_element();
+                        panel
+                            .child(settings_inset_divider(theme, 56.0))
+                            .child(settings_row(
+                                IconName::FolderOpen,
+                                language.localized(copy::backup::SHOW_BACKUPS),
+                                None,
+                                open_backups,
+                                theme,
+                            ))
+                    }),
             )
     }
 

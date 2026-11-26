@@ -2,10 +2,11 @@ use gpui::{
     FontWeight, InteractiveElement, KeyDownEvent, ParentElement, Role, Stateful,
     StatefulInteractiveElement, Styled, div, prelude::FluentBuilder, px,
 };
+use gpui_component::IconName;
 
 use super::{
     ConfigurationSection, Context, CountNoun, Div, ManisApp, Radius, Space, TextRole, Theme,
-    configuration_section_label,
+    configuration_section_label, settings_nav_icon_badge,
 };
 
 pub(in crate::app) fn configuration_section_at_scroll(
@@ -35,6 +36,16 @@ const fn configuration_section_index(section: ConfigurationSection) -> usize {
         ConfigurationSection::ProxySources => 2,
         ConfigurationSection::RuleSources => 3,
         ConfigurationSection::Updates => 4,
+    }
+}
+
+const fn configuration_section_icon(section: ConfigurationSection) -> IconName {
+    match section {
+        ConfigurationSection::General => IconName::Settings2,
+        ConfigurationSection::Runtime => IconName::Cpu,
+        ConfigurationSection::ProxySources => IconName::Globe,
+        ConfigurationSection::RuleSources => IconName::Map,
+        ConfigurationSection::Updates => IconName::Info,
     }
 }
 
@@ -80,7 +91,8 @@ impl ManisApp {
         }
     }
 
-    /// The five-section directory: one compact card of nav rows beside the section document.
+    /// The five-section settings rail: flush modern sidebar beside the document, or a recessed
+    /// pill bar on compact viewports.
     pub(in crate::app) fn configuration_navigation(
         &self,
         theme: Theme,
@@ -91,7 +103,7 @@ impl ManisApp {
             div()
                 .id("configuration-navigation-items")
                 .flex()
-                .gap(px(2.0))
+                .gap(px(4.0))
                 .when(compact, |items| {
                     items.grid().grid_cols(3).gap(Space::Xs.px())
                 })
@@ -100,35 +112,45 @@ impl ManisApp {
                     self.configuration_navigation_item(section, theme, compact, cx)
                 }));
         if compact {
-            return crate::components::card_surface(theme)
+            return div()
                 .id("configuration-navigation")
                 .w_full()
                 .flex_shrink_0()
-                .p(Space::Sm.px())
-                .child(items);
+                .px(px(12.0))
+                .pt(px(12.0))
+                .child(
+                    div()
+                        .w_full()
+                        .p(px(4.0))
+                        .rounded(px(12.0))
+                        .bg(theme.surface_low)
+                        .child(items),
+                );
         }
-        // The wrapper keeps the card at its own height while the document beside it scrolls.
         div()
             .id("configuration-navigation-host")
+            .w(px(224.0))
             .h_full()
             .flex_shrink_0()
+            .border_r_1()
+            .border_color(gpui::Hsla::from(theme.outline_subtle).opacity(0.55))
+            .bg(theme.surface_base)
+            .px(px(12.0))
+            .pt(px(22.0))
+            .pb(px(16.0))
             .flex()
             .flex_col()
             .child(
-                crate::components::card_surface(theme)
+                div()
                     .id("configuration-navigation")
-                    .w(px(196.0))
-                    .flex_shrink_0()
-                    .ml(Space::Xl.px())
-                    .mt(Space::Xl.px())
-                    .p(Space::Sm.px())
+                    .w_full()
                     .flex()
                     .flex_col()
                     .child(items),
             )
     }
 
-    /// The right-hand figure that makes a section's size visible without opening it.
+    /// Quiet right-aligned metadata figure for each settings category.
     fn configuration_navigation_badge(
         &self,
         section: ConfigurationSection,
@@ -144,25 +166,26 @@ impl ManisApp {
             ConfigurationSection::RuleSources => {
                 Some(language.count(CountNoun::Source, self.rule_sources.sources.len()))
             }
-            ConfigurationSection::Updates => None,
+            ConfigurationSection::Updates => match &self.app_update_state {
+                crate::app::AppUpdateState::Available(update)
+                | crate::app::AppUpdateState::Ready { update, .. } => Some(update.version.clone()),
+                _ => None,
+            },
         }
     }
 
-    /// A section's size, set in tabular mono so it never jitters while the counts change.
-    fn configuration_navigation_chip(value: String, theme: Theme) -> Div {
+    fn configuration_navigation_meta(value: String, selected: bool, theme: Theme) -> Div {
         div()
             .ml_auto()
             .flex_shrink_0()
-            .h(px(18.0))
-            .px(px(6.0))
-            .rounded(Radius::Badge.px())
-            .border_1()
-            .border_color(theme.outline_subtle)
-            .bg(theme.surface_elevated)
             .font_family(crate::theme::MONO_FAMILY)
-            .text_size(px(10.5))
+            .text_size(px(11.0))
             .line_height(px(16.0))
-            .text_color(theme.text_tertiary)
+            .text_color(if selected {
+                theme.action_primary
+            } else {
+                theme.text_tertiary
+            })
             .child(value)
     }
 
@@ -176,6 +199,11 @@ impl ManisApp {
         let language = self.language();
         let selected = self.configuration_section == section;
         let metadata = self.configuration_navigation_badge(section, language);
+        let compact_bg = if selected {
+            theme.surface_elevated
+        } else {
+            gpui::rgba(0x0000_0000)
+        };
         div()
             .id(format!("configuration-nav-{}", section.key()))
             .role(Role::Button)
@@ -190,42 +218,44 @@ impl ManisApp {
             .map(crate::components::primary_button_interaction)
             .cursor_pointer()
             .min_w(px(0.0))
-            .h(px(36.0))
-            .px(if compact { Space::Sm.px() } else { px(9.0) })
+            .h(if compact { px(34.0) } else { px(38.0) })
+            .px(if compact { Space::Sm.px() } else { px(10.0) })
             .flex()
             .items_center()
-            .gap(Space::Sm.px())
+            .gap(px(10.0))
             .when(compact, gpui::Styled::justify_center)
             .rounded(Radius::Control.px())
             .border_1()
             .border_color(gpui::rgba(0x0000_0000))
-            .bg(if selected {
+            .bg(if compact {
+                compact_bg
+            } else if selected {
                 theme.action_soft
             } else {
                 gpui::rgba(0x0000_0000)
             })
+            .when(
+                compact && selected && !theme.is_dark(),
+                gpui::Styled::shadow_xs,
+            )
             .hover(move |row| {
                 row.bg(if selected {
-                    theme.action_soft
+                    if compact {
+                        compact_bg
+                    } else {
+                        theme.action_soft
+                    }
                 } else {
                     theme.surface_high
                 })
             })
             .focus_visible(move |row| row.border_color(theme.focus_ring))
             .when(!compact, |row| {
-                // The 3px cobalt stripe marks the section the document is showing.
-                row.child(
-                    div()
-                        .w(px(3.0))
-                        .h(px(18.0))
-                        .flex_shrink_0()
-                        .rounded(px(2.0))
-                        .bg(if selected {
-                            theme.action_primary
-                        } else {
-                            gpui::rgba(0x0000_0000)
-                        }),
-                )
+                row.child(settings_nav_icon_badge(
+                    configuration_section_icon(section),
+                    selected,
+                    theme,
+                ))
             })
             .child(
                 div()
@@ -238,17 +268,23 @@ impl ManisApp {
                     .font_weight(if selected {
                         FontWeight::SEMIBOLD
                     } else {
-                        TextRole::Label.weight()
+                        FontWeight::MEDIUM
                     })
                     .text_color(if selected {
-                        theme.action_primary
+                        if compact {
+                            theme.text_primary
+                        } else {
+                            theme.action_primary
+                        }
                     } else {
                         theme.text_secondary
                     })
                     .child(configuration_section_label(section, language)),
             )
             .when_some(metadata.filter(|_| !compact), |row, metadata| {
-                row.child(Self::configuration_navigation_chip(metadata, theme))
+                row.child(Self::configuration_navigation_meta(
+                    metadata, selected, theme,
+                ))
             })
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.scroll_to_configuration_section(section, cx);

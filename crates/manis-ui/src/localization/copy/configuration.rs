@@ -354,7 +354,6 @@ pub(crate) const SUBSCRIPTION_DISABLED: LocalizedText =
     LocalizedText::new("Subscription disabled", "订阅已停用");
 pub(crate) const SUBSCRIPTION_ENABLED: LocalizedText =
     LocalizedText::new("Subscription enabled", "订阅已启用");
-pub(crate) const TARGET: LocalizedText = LocalizedText::new("Target", "目标");
 pub(crate) const TARGET_POLICY: LocalizedText = LocalizedText::new("Target policy", "目标策略");
 pub(crate) const THE_PARAMETER_CANNOT_CONTAIN_COMMAS_TABS_OR_LINE_BREAKS: LocalizedText =
     LocalizedText::new(

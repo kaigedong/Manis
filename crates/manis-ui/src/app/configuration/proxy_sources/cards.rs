@@ -3,7 +3,8 @@ use super::{
     ImportedSubscriptionState, InteractiveElement, Language, ManisApp, ParentElement, Radius, Role,
     SourceMutation, Stateful, StatefulInteractiveElement, Styled, SubscriptionCardActivity,
     SubscriptionCardPresentation, SubscriptionFeedback, TextRole, Theme, copy, div, mihomo, px,
-    refresh_interval_label, row_action_button, source_kind_label, source_update_label,
+    refresh_interval_label, row_action_button, settings_inset_divider, source_kind_label,
+    source_update_label,
 };
 
 impl ManisApp {
@@ -14,10 +15,21 @@ impl ManisApp {
     ) -> Div {
         let language = self.language();
         let now = mihomo::current_unix_secs();
-        div().children(self.imported_subscriptions.iter().map(|subscription| {
+        let mut list = div().flex().flex_col();
+        for (index, subscription) in self.imported_subscriptions.iter().enumerate() {
+            if index > 0 {
+                list = list.child(settings_inset_divider(theme, 44.0));
+            }
             let presentation = self.subscription_card_presentation(subscription, now, language);
-            Self::imported_subscription_card(subscription, &presentation, language, theme, cx)
-        }))
+            list = list.child(Self::imported_subscription_card(
+                subscription,
+                &presentation,
+                language,
+                theme,
+                cx,
+            ));
+        }
+        list
     }
     fn subscription_card_presentation(
         &self,
@@ -92,6 +104,12 @@ impl ManisApp {
         let controls_enabled = presentation.controls_enabled;
         let toggle_id = subscription.id.clone();
         let enabled = subscription.enabled;
+        let meta_line = format!(
+            "{} · {} · {}",
+            refresh_interval_label(subscription.refresh_interval, language),
+            presentation.updated,
+            subscription.source.expose_to(str::to_owned),
+        );
         div()
             .id(format!("subscription-card-{card_edit_id}"))
             .role(Role::Button)
@@ -100,18 +118,15 @@ impl ManisApp {
             .focusable()
             .map(crate::components::primary_button_interaction)
             .when(controls_enabled, gpui::Styled::cursor_pointer)
-            .mt_2()
-            .px_3()
-            .py_2()
-            .rounded(Radius::Row.px())
-            .border_1()
-            .border_color(theme.outline_subtle)
-            .bg(theme.surface_low)
+            .w_full()
+            .min_h(px(62.0))
+            .px(px(16.0))
+            .py(px(12.0))
             .flex()
             .items_center()
-            .gap_2()
+            .gap(px(12.0))
             .when(controls_enabled, |card| {
-                card.hover(move |card| card.bg(theme.action_soft))
+                card.hover(move |card| card.bg(theme.surface_low))
             })
             .child(
                 Checkbox::new(format!("subscription-enabled-{toggle_id}"))
@@ -134,6 +149,9 @@ impl ManisApp {
                 div()
                     .flex_1()
                     .min_w(px(0.0))
+                    .flex()
+                    .flex_col()
+                    .gap(px(3.0))
                     .child(Self::subscription_card_header(
                         subscription,
                         presentation,
@@ -141,22 +159,21 @@ impl ManisApp {
                     ))
                     .child(
                         div()
-                            .mt_1()
                             .overflow_x_hidden()
                             .whitespace_nowrap()
                             .text_ellipsis()
                             .text_size(TextRole::Metadata.size())
+                            .line_height(TextRole::Metadata.line_height())
                             .text_color(theme.text_tertiary)
-                            .child(subscription.source.expose_to(str::to_owned)),
-                    )
-                    .child(Self::subscription_card_actions(
-                        subscription,
-                        presentation,
-                        language,
-                        theme,
-                        cx,
-                    )),
+                            .child(meta_line),
+                    ),
             )
+            .child(Self::subscription_card_actions(
+                subscription,
+                presentation,
+                language,
+                cx,
+            ))
             .on_click(cx.listener(move |this, _, window, cx| {
                 if controls_enabled {
                     this.open_subscription_editor(card_edit_id.clone(), cx);
@@ -171,41 +188,46 @@ impl ManisApp {
         theme: Theme,
     ) -> Div {
         let enabled = subscription.enabled;
+        let (badge_fill, badge_text) = if !enabled {
+            (theme.surface_low, theme.text_tertiary)
+        } else if presentation.activity.is_healthy() {
+            (theme.surface_low, theme.text_secondary)
+        } else {
+            (theme.status_error_soft, theme.status_error)
+        };
         div()
             .flex()
             .items_center()
-            .gap_2()
+            .gap(px(8.0))
             .child(
                 div()
-                    .flex_1()
                     .min_w(px(0.0))
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .child(
-                        div()
-                            .min_w(px(0.0))
-                            .overflow_x_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
-                            .text_size(TextRole::Label.size())
-                            .font_weight(TextRole::Label.weight())
-                            .text_color(if !enabled {
-                                theme.text_secondary
-                            } else if presentation.activity.is_healthy() {
-                                theme.text_primary
-                            } else {
-                                theme.status_error
-                            })
-                            .child(subscription.name.clone()),
-                    )
-                    .child(
-                        div()
-                            .flex_shrink_0()
-                            .text_size(TextRole::Metadata.size())
-                            .text_color(theme.text_tertiary)
-                            .child(presentation.state.clone()),
-                    ),
+                    .overflow_x_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .text_size(px(13.5))
+                    .line_height(px(19.0))
+                    .font_weight(gpui::FontWeight::MEDIUM)
+                    .text_color(if !enabled {
+                        theme.text_secondary
+                    } else if presentation.activity.is_healthy() {
+                        theme.text_primary
+                    } else {
+                        theme.status_error
+                    })
+                    .child(subscription.name.clone()),
+            )
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .px(px(7.0))
+                    .py(px(1.0))
+                    .rounded(Radius::Badge.px())
+                    .bg(badge_fill)
+                    .text_size(px(11.0))
+                    .line_height(px(16.0))
+                    .text_color(badge_text)
+                    .child(presentation.state.clone()),
             )
             .when(presentation.activity.is_busy(), |row| {
                 row.child(Self::benchmark_latency_spinner(
@@ -219,7 +241,6 @@ impl ManisApp {
         subscription: &crate::app::ImportedSubscription,
         presentation: &SubscriptionCardPresentation,
         language: Language,
-        theme: Theme,
         cx: &mut Context<Self>,
     ) -> Div {
         let refresh_id = subscription.id.clone();
@@ -228,19 +249,10 @@ impl ManisApp {
         let controls_enabled = presentation.controls_enabled;
         let busy = presentation.activity.is_busy();
         div()
-            .mt_1()
+            .flex_shrink_0()
             .flex()
             .items_center()
-            .gap_2()
-            .text_size(TextRole::Metadata.size())
-            .text_color(theme.text_secondary)
-            .child(refresh_interval_label(
-                subscription.refresh_interval,
-                language,
-            ))
-            .child("·")
-            .child(presentation.updated.clone())
-            .child(div().flex_1())
+            .gap(px(6.0))
             .child(
                 row_action_button(
                     format!("subscription-refresh-{refresh_id}"),
@@ -294,9 +306,20 @@ impl ManisApp {
             self.proxy_source_editor.feedback,
             SubscriptionFeedback::Importing(_)
         ) && !self.source_refresh_busy();
-        div().children(self.saved_single_nodes.iter().map(|saved| {
-            Self::saved_single_node_card(saved, controls_enabled, language, theme, cx)
-        }))
+        let mut list = div().flex().flex_col();
+        for (index, saved) in self.saved_single_nodes.iter().enumerate() {
+            if index > 0 {
+                list = list.child(settings_inset_divider(theme, 44.0));
+            }
+            list = list.child(Self::saved_single_node_card(
+                saved,
+                controls_enabled,
+                language,
+                theme,
+                cx,
+            ));
+        }
+        list
     }
 
     pub(in crate::app) fn saved_single_node_card(
@@ -310,6 +333,11 @@ impl ManisApp {
         let node = saved.source.preview();
         let toggle_id = saved.id.clone();
         let enabled = saved.enabled;
+        let meta_line = format!(
+            "{} · {}",
+            node.endpoint,
+            copy::configuration::source_node_detail(language, node.detail),
+        );
         div()
             .id(format!("single-node-card-{card_edit_id}"))
             .role(Role::Button)
@@ -318,18 +346,15 @@ impl ManisApp {
             .focusable()
             .map(crate::components::primary_button_interaction)
             .when(controls_enabled, gpui::Styled::cursor_pointer)
-            .mt_2()
-            .px_3()
-            .py_2()
-            .rounded(Radius::Row.px())
-            .border_1()
-            .border_color(theme.outline_subtle)
-            .bg(theme.surface_low)
+            .w_full()
+            .min_h(px(62.0))
+            .px(px(16.0))
+            .py(px(12.0))
             .flex()
             .items_center()
-            .gap_2()
+            .gap(px(12.0))
             .when(controls_enabled, |card| {
-                card.hover(move |card| card.bg(theme.action_soft))
+                card.hover(move |card| card.bg(theme.surface_low))
             })
             .child(
                 Checkbox::new(format!("single-node-enabled-{toggle_id}"))
@@ -352,26 +377,27 @@ impl ManisApp {
                 div()
                     .flex_1()
                     .min_w(px(0.0))
+                    .flex()
+                    .flex_col()
+                    .gap(px(3.0))
                     .child(Self::saved_single_node_header(saved, node, theme))
                     .child(
                         div()
-                            .mt_1()
                             .overflow_x_hidden()
                             .whitespace_nowrap()
                             .text_ellipsis()
                             .text_size(TextRole::Metadata.size())
+                            .line_height(TextRole::Metadata.line_height())
                             .text_color(theme.text_tertiary)
-                            .child(saved.source.expose_to(str::to_owned)),
-                    )
-                    .child(Self::saved_single_node_actions(
-                        saved,
-                        node,
-                        controls_enabled,
-                        language,
-                        theme,
-                        cx,
-                    )),
+                            .child(meta_line),
+                    ),
             )
+            .child(Self::saved_single_node_actions(
+                saved,
+                controls_enabled,
+                language,
+                cx,
+            ))
             .on_click(cx.listener(move |this, _, window, cx| {
                 if controls_enabled {
                     this.open_single_node_editor(card_edit_id.clone(), cx);
@@ -386,60 +412,52 @@ impl ManisApp {
         theme: Theme,
     ) -> Div {
         let enabled = saved.enabled;
-        div().flex().items_center().gap_2().child(
-            div()
-                .flex_1()
-                .min_w(px(0.0))
-                .flex()
-                .items_center()
-                .gap_2()
-                .child(
-                    div()
-                        .min_w(px(0.0))
-                        .overflow_x_hidden()
-                        .whitespace_nowrap()
-                        .text_ellipsis()
-                        .text_size(TextRole::Label.size())
-                        .font_weight(TextRole::Label.weight())
-                        .text_color(if enabled {
-                            theme.text_primary
-                        } else {
-                            theme.text_secondary
-                        })
-                        .child(saved.name.clone()),
-                )
-                .child(
-                    div()
-                        .flex_shrink_0()
-                        .text_size(TextRole::Metadata.size())
-                        .text_color(theme.text_tertiary)
-                        .child(node.protocol),
-                ),
-        )
+        div()
+            .flex()
+            .items_center()
+            .gap(px(8.0))
+            .child(
+                div()
+                    .min_w(px(0.0))
+                    .overflow_x_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .text_size(px(13.5))
+                    .line_height(px(19.0))
+                    .font_weight(gpui::FontWeight::MEDIUM)
+                    .text_color(if enabled {
+                        theme.text_primary
+                    } else {
+                        theme.text_secondary
+                    })
+                    .child(saved.name.clone()),
+            )
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .px(px(7.0))
+                    .py(px(1.0))
+                    .rounded(Radius::Badge.px())
+                    .bg(theme.surface_low)
+                    .font_family(crate::theme::MONO_FAMILY)
+                    .text_size(px(11.0))
+                    .line_height(px(16.0))
+                    .text_color(theme.text_secondary)
+                    .child(node.protocol),
+            )
     }
 
     pub(in crate::app) fn saved_single_node_actions(
         saved: &mihomo::StoredSingleNode,
-        node: &crate::subscription::SourceNodePreview,
         controls_enabled: bool,
         language: Language,
-        theme: Theme,
         cx: &mut Context<Self>,
     ) -> Div {
         let remove_id = saved.id.clone();
         div()
-            .mt_1()
+            .flex_shrink_0()
             .flex()
             .items_center()
-            .gap_2()
-            .text_size(TextRole::Metadata.size())
-            .text_color(theme.text_secondary)
-            .child(format!(
-                "{} · {}",
-                node.endpoint,
-                copy::configuration::source_node_detail(language, node.detail)
-            ))
-            .child(div().flex_1())
             .when(controls_enabled, |row| {
                 row.child(
                     row_action_button(

@@ -2,7 +2,9 @@ use gpui::{
     AnyElement, Context, Div, Entity, Focusable, ParentElement, Role, Stateful, Styled, Window,
     div, prelude::*, px,
 };
-use gpui_component::{Disableable, Selectable, button::Button, checkbox::Checkbox, dialog::Dialog};
+use gpui_component::{
+    Disableable, IconName, Selectable, button::Button, checkbox::Checkbox, dialog::Dialog,
+};
 
 use crate::app::{
     ImportedSubscriptionState, ManisApp, ProxySourceEditorKind, SourceMutation, SourceRuntimeApply,
@@ -11,7 +13,7 @@ use crate::app::{
 use crate::{
     components::{
         ActionRole, action_button, dialog_footer_surface, dialog_header_surface, empty_state,
-        row_action_button, section_header, style_action_button, surface_dialog,
+        row_action_button, style_action_button, surface_dialog,
     },
     diagnostics::{UiEvent, trace_ui},
     localization::{CountNoun, Language, Message, copy},
@@ -24,7 +26,9 @@ use crate::{
 use super::{
     ProxySourceEditorActivity, ProxySourceEditorInputs, ProxySourceEditorView,
     SubscriptionCardActivity, SubscriptionCardPresentation, field_label, footer_feedback,
-    panel_surface, refresh_interval_label, source_kind_label, source_update_label,
+    refresh_interval_label,
+    settings::{settings_group_card, settings_inset_divider, settings_section_header},
+    source_kind_label, source_update_label,
 };
 
 mod cards;
@@ -34,15 +38,18 @@ mod workflow;
 pub(in crate::app) use model::{ProxySourceEditorState, ProxySourceEditorTarget};
 
 impl ManisApp {
-    pub(super) fn source_panel(&self, theme: Theme, compact: bool, cx: &mut Context<Self>) -> Div {
+    pub(super) fn source_panel(&self, theme: Theme, _compact: bool, cx: &mut Context<Self>) -> Div {
         let language = self.language();
         let saved_source_count = self.imported_subscriptions.len() + self.saved_single_nodes.len();
+        let has_subscriptions = !self.imported_subscriptions.is_empty();
+        let has_single_nodes = !self.saved_single_nodes.is_empty();
         let add_action = action_button(
             "configuration-add-proxy-source",
             language.localized(copy::configuration::ADD_SOURCE),
             ActionRole::Primary,
             ControlSize::Compact,
         )
+        .icon(IconName::Plus)
         .disabled(self.proxy_source_editor.is_importing())
         .when(
             self.proxy_source_editor.is_importing(),
@@ -53,66 +60,66 @@ impl ManisApp {
             this.open_proxy_source_dialog(window, cx);
         }));
 
-        let panel = panel_surface("configuration-source", compact, theme)
-            .child(section_header(
-                language.localized(copy::configuration::PROXY_SOURCES),
-                language.count(CountNoun::Source, saved_source_count),
-                Some(add_action.into_any_element()),
-                theme,
-            ))
+        let card = settings_group_card("configuration-source", theme)
             .when_some(self.source_store_error, |panel, error| {
                 panel.child(Self::subscription_error(
                     language.localized(copy::configuration::SOME_LOCAL_SOURCES_COULD_NOT_BE_RESTORED),
                     copy::configuration::subscription_store_error(language, error).to_owned(),
-                    Some(language.localized(copy::configuration::OTHER_SAFELY_READABLE_SOURCES_ARE_KEPT_CHECK_THE_USER_DATA)),
+                    Some(language.localized(
+                        copy::configuration::OTHER_SAFELY_READABLE_SOURCES_ARE_KEPT_CHECK_THE_USER_DATA,
+                    )),
                     theme,
                 ))
             })
-            .child(
-                div()
-                    .mt(Space::Lg.px())
-                    .pt(Space::Md.px())
-                    .border_t_1()
-                    .border_color(theme.outline_subtle)
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .child(
-                        div()
-                            .text_size(TextRole::Label.size())
-                            .line_height(TextRole::Label.line_height())
-                            .font_weight(TextRole::Label.weight())
-                            .child(language.localized(copy::common::SAVED)),
-                    ),
-            )
             .when(saved_source_count == 0, |panel| {
                 panel.child(
-                    empty_state(
+                    div().p(Space::Lg.px()).child(empty_state(
                         language.localized(copy::configuration::NO_PROXY_SOURCES),
-                        language.localized(copy::configuration::ADD_A_SUBSCRIPTION_OR_A_SINGLE_NODE_SOURCE),
+                        language.localized(
+                            copy::configuration::ADD_A_SUBSCRIPTION_OR_A_SINGLE_NODE_SOURCE,
+                        ),
                         Some(
-                        action_button(
-                            "configuration-empty-add-proxy-source",
-                            language.localized(copy::configuration::ADD_SOURCE),
-                            ActionRole::Primary,
-                            ControlSize::Compact,
-                        )
-                        .disabled(self.proxy_source_editor.is_importing())
-                        .when(self.proxy_source_editor.is_importing(), gpui::Styled::cursor_default)
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.open_new_subscription_editor(cx);
-                            this.open_proxy_source_dialog(window, cx);
-                        }))
+                            action_button(
+                                "configuration-empty-add-proxy-source",
+                                language.localized(copy::configuration::ADD_SOURCE),
+                                ActionRole::Primary,
+                                ControlSize::Compact,
+                            )
+                            .icon(IconName::Plus)
+                            .disabled(self.proxy_source_editor.is_importing())
+                            .when(
+                                self.proxy_source_editor.is_importing(),
+                                gpui::Styled::cursor_default,
+                            )
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.open_new_subscription_editor(cx);
+                                this.open_proxy_source_dialog(window, cx);
+                            }))
                             .into_any_element(),
                         ),
                         theme,
-                    )
-                    .mt(Space::Md.px()),
+                    )),
                 )
             })
-            .child(self.imported_subscription_cards(theme, cx))
-            .child(self.saved_single_node_cards(theme, cx));
-        div().w_full().child(panel)
+            .when(has_subscriptions, |panel| {
+                panel.child(self.imported_subscription_cards(theme, cx))
+            })
+            .when(has_subscriptions && has_single_nodes, |panel| {
+                panel.child(settings_inset_divider(theme, 44.0))
+            })
+            .when(has_single_nodes, |panel| {
+                panel.child(self.saved_single_node_cards(theme, cx))
+            });
+
+        div()
+            .w_full()
+            .child(settings_section_header(
+                language.localized(copy::configuration::PROXY_SOURCES),
+                Some(language.count(CountNoun::Source, saved_source_count).into()),
+                Some(add_action.into_any_element()),
+                theme,
+            ))
+            .child(card)
     }
 
     fn subscription_error(

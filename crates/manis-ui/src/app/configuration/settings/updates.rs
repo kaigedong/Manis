@@ -1,23 +1,24 @@
 use gpui::{
     FontWeight, InteractiveElement, IntoElement, ParentElement, Stateful,
-    StatefulInteractiveElement, Styled, div, prelude::FluentBuilder as _, px,
+    StatefulInteractiveElement, Styled, div, img, prelude::FluentBuilder as _, px,
 };
 use gpui_component::{Disableable, Icon, IconName, Sizable, button::Button, spinner::Spinner};
 
 use super::{
-    ActionRole, AppUpdateState, Context, ControlSize, Div, Language, ManisApp, Space, TextRole,
-    Theme, app_update, copy, panel_surface, section_header, style_action_button,
+    ActionRole, AppUpdateState, Context, ControlSize, Div, Language, ManisApp, TextRole, Theme,
+    app_update, copy, settings_group_card, settings_icon_badge, settings_inset_divider,
+    settings_section_header, style_action_button,
 };
 
 impl ManisApp {
     #[expect(
         clippy::too_many_lines,
-        reason = "Keeps the About & Updates panel layout, inline refresh control, and GitHub link together"
+        reason = "Keeps the About & Updates inset card, zero-shift status slot, GitHub row, and licenses together"
     )]
     pub(in crate::app) fn app_update_panel(
         &self,
         theme: Theme,
-        compact: bool,
+        _compact: bool,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let language = self.language();
@@ -54,100 +55,190 @@ impl ManisApp {
                     .child(Icon::new(IconName::RefreshCw).size(px(13.0)))
             });
 
-        let version_row = div()
-            .flex()
-            .items_center()
-            .gap(px(6.0))
-            .child(
-                div()
-                    .debug_selector(|| "manis-current-version".to_owned())
-                    .text_size(TextRole::Body.size())
-                    .line_height(TextRole::Body.line_height())
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(theme.text_primary)
-                    .child(copy::app_update::current_version(
-                        language,
-                        app_update::current_version(),
-                    )),
-            )
-            .child(check_trigger);
-
-        let github_link = div()
-            .id("app-update-github")
-            .debug_selector(|| "app-update-github".to_owned())
-            .flex()
-            .items_center()
-            .gap(px(6.0))
-            .px(px(6.0))
-            .py(px(2.0))
-            .ml(px(-6.0))
-            .rounded(px(6.0))
-            .cursor_pointer()
-            .text_size(TextRole::Metadata.size())
-            .line_height(TextRole::Metadata.line_height())
-            .text_color(theme.text_secondary)
-            .hover(move |style| style.bg(theme.surface_low).text_color(theme.action_primary))
-            .on_click(|_, _, cx| cx.open_url(app_update::REPOSITORY_URL))
-            .child(Icon::new(IconName::Github).size(px(14.0)))
-            .child(app_update::REPOSITORY_URL);
-
-        let info_block = div()
-            .flex()
-            .flex_col()
-            .items_start()
-            .gap(Space::Xs.px())
-            .child(version_row)
-            .child(github_link);
-
         let install_action = if app_update::supports_self_install() {
             self.app_update_install_action(language, cx)
         } else {
             None
         };
 
-        panel_surface("configuration-app-update", compact, theme)
-            .debug_selector(|| "app-update-panel".to_owned())
-            .child(section_header(
-                language.localized(copy::app_update::ABOUT_AND_UPDATES),
-                "",
-                None,
-                theme,
-            ))
+        let status_color = match &self.app_update_state {
+            AppUpdateState::Available(_) | AppUpdateState::Downloading { .. } => {
+                theme.action_primary
+            }
+            AppUpdateState::Ready { .. } | AppUpdateState::Current => theme.status_success,
+            AppUpdateState::Failed(_) | AppUpdateState::InstallFailed(_) => theme.status_error,
+            AppUpdateState::Idle | AppUpdateState::Checking => theme.text_tertiary,
+        };
+
+        let brand_mark = div()
+            .size(px(36.0))
+            .flex_shrink_0()
+            .rounded(px(10.0))
+            .overflow_hidden()
+            .bg(theme.surface_low)
+            .p(px(4.0))
+            .child(img(crate::assets::BRAND_MARK_PATH).size_full());
+
+        let version_row = div()
+            .w_full()
+            .min_h(px(66.0))
+            .px(px(16.0))
+            .py(px(12.0))
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap(px(16.0))
             .child(
                 div()
-                    .mt(Space::Md.px())
-                    .min_h(px(52.0))
+                    .flex_1()
+                    .min_w(px(0.0))
                     .flex()
-                    .flex_wrap()
                     .items_center()
-                    .justify_between()
-                    .gap(Space::Md.px())
-                    .child(info_block)
-                    .when_some(install_action, ParentElement::child),
+                    .gap(px(12.0))
+                    .child(brand_mark)
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .flex()
+                            .flex_col()
+                            .gap(px(2.0))
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(6.0))
+                                    .child(
+                                        div()
+                                            .debug_selector(|| "manis-current-version".to_owned())
+                                            .text_size(px(14.0))
+                                            .line_height(px(20.0))
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .text_color(theme.text_primary)
+                                            .child(copy::app_update::current_version(
+                                                language,
+                                                app_update::current_version(),
+                                            )),
+                                    )
+                                    .child(check_trigger),
+                            )
+                            // Fixed height prevents layout shift as update states transition.
+                            .child(
+                                div()
+                                    .h(px(18.0))
+                                    .overflow_hidden()
+                                    .whitespace_nowrap()
+                                    .text_ellipsis()
+                                    .text_size(px(12.0))
+                                    .line_height(px(18.0))
+                                    .text_color(status_color)
+                                    .child(self.app_update_status(language)),
+                            ),
+                    ),
             )
             .child(
                 div()
-                    .mt(Space::Sm.px())
+                    .flex_shrink_0()
+                    .h(px(30.0))
+                    .flex()
+                    .items_center()
+                    .when_some(install_action, ParentElement::child),
+            );
+
+        let github_row = div()
+            .id("app-update-github")
+            .debug_selector(|| "app-update-github".to_owned())
+            .w_full()
+            .min_h(px(52.0))
+            .px(px(16.0))
+            .py(px(10.0))
+            .cursor_pointer()
+            .hover(move |style| style.bg(theme.surface_low))
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap(px(12.0))
+            .on_click(|_, _, cx| cx.open_url(app_update::REPOSITORY_URL))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .flex()
+                    .items_center()
+                    .gap(px(12.0))
+                    .child(settings_icon_badge(IconName::Github, theme))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .flex()
+                            .flex_col()
+                            .gap(px(1.0))
+                            .child(
+                                div()
+                                    .text_size(px(13.5))
+                                    .line_height(px(19.0))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(theme.text_primary)
+                                    .child("GitHub"),
+                            )
+                            .child(
+                                div()
+                                    .overflow_hidden()
+                                    .whitespace_nowrap()
+                                    .text_ellipsis()
+                                    .text_size(TextRole::Metadata.size())
+                                    .line_height(TextRole::Metadata.line_height())
+                                    .text_color(theme.text_tertiary)
+                                    .child(app_update::REPOSITORY_URL),
+                            ),
+                    ),
+            )
+            .child(
+                Icon::new(IconName::ExternalLink)
+                    .size(px(14.0))
+                    .text_color(theme.text_tertiary),
+            );
+
+        let licenses_row = div()
+            .w_full()
+            .px(px(16.0))
+            .py(px(12.0))
+            .flex()
+            .flex_col()
+            .gap(px(3.0))
+            .child(
+                div()
                     .text_size(TextRole::Metadata.size())
                     .line_height(TextRole::Metadata.line_height())
-                    .text_color(theme.text_secondary)
+                    .text_color(theme.text_tertiary)
                     .child(language.localized(copy::app_update::APP_LICENSE)),
             )
             .child(
                 div()
                     .text_size(TextRole::Metadata.size())
                     .line_height(TextRole::Metadata.line_height())
-                    .text_color(theme.text_secondary)
+                    .text_color(theme.text_tertiary)
                     .child(language.localized(copy::app_update::CORE_LICENSE)),
-            )
+            );
+
+        div()
+            .id("configuration-app-update-section")
+            .w_full()
+            .child(settings_section_header(
+                language.localized(copy::app_update::ABOUT_AND_UPDATES),
+                None,
+                None,
+                theme,
+            ))
             .child(
-                div()
-                    .mt(Space::Sm.px())
-                    .min_h(px(24.0))
-                    .text_size(TextRole::Metadata.size())
-                    .line_height(TextRole::Metadata.line_height())
-                    .text_color(theme.text_secondary)
-                    .child(self.app_update_status(language)),
+                settings_group_card("configuration-app-update", theme)
+                    .debug_selector(|| "app-update-panel".to_owned())
+                    .child(version_row)
+                    .child(settings_inset_divider(theme, 16.0))
+                    .child(github_row)
+                    .child(settings_inset_divider(theme, 16.0))
+                    .child(licenses_row),
             )
     }
 

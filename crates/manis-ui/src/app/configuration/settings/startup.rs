@@ -1,7 +1,12 @@
-use gpui::{AnyElement, Context, Div, IntoElement, ParentElement, Stateful, Styled, div, px};
+use gpui::{
+    AnyElement, Context, Div, InteractiveElement as _, IntoElement, ParentElement, Stateful,
+    Styled, div,
+};
+use gpui_component::IconName;
 
 use super::{
-    ManisApp, MihomoCoreUpdateState, Space, TextRole, Theme, copy, panel_surface, section_header,
+    ManisApp, MihomoCoreUpdateState, Theme, copy, settings_group_card, settings_inset_divider,
+    settings_row, settings_section_header,
 };
 use crate::auto_connect;
 use crate::autostart;
@@ -12,7 +17,7 @@ impl ManisApp {
     pub(in crate::app) fn startup_panel(
         &self,
         theme: Theme,
-        compact: bool,
+        _compact: bool,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let language = self.language();
@@ -20,41 +25,48 @@ impl ManisApp {
         let login_available = autostart::supported() && self.subscription_store_dir.is_some();
         let auto_connect_enabled = self.auto_connect.enabled;
         let auto_connect_available = self.subscription_store_dir.is_some();
-        panel_surface("configuration-startup", compact, theme)
-            .child(section_header(
+
+        div()
+            .id("configuration-startup-section")
+            .w_full()
+            .child(settings_section_header(
                 language.localized(copy::configuration::STARTUP),
-                "",
+                None,
                 None,
                 theme,
             ))
-            .child(startup_row(
-                language.localized(copy::configuration::LAUNCH_AT_LOGIN),
-                Self::startup_switch(
-                    "launch-at-login-toggle",
-                    login_item,
-                    login_available,
-                    language.localized(copy::configuration::LAUNCH_AT_LOGIN),
-                    theme,
-                    cx,
-                    |this, cx| this.set_launch_at_login(!this.launch_at_login, cx),
-                ),
-                theme,
-                true,
-            ))
-            .child(startup_row(
-                language.localized(copy::configuration::AUTO_CONNECT_ON_STARTUP),
-                Self::startup_switch(
-                    "auto-connect-toggle",
-                    auto_connect_enabled,
-                    auto_connect_available,
-                    language.localized(copy::configuration::AUTO_CONNECT_ON_STARTUP),
-                    theme,
-                    cx,
-                    |this, cx| this.set_auto_connect(!this.auto_connect.enabled, cx),
-                ),
-                theme,
-                false,
-            ))
+            .child(
+                settings_group_card("configuration-startup", theme)
+                    .child(settings_row(
+                        IconName::Play,
+                        language.localized(copy::configuration::LAUNCH_AT_LOGIN),
+                        None,
+                        Self::startup_switch(
+                            "launch-at-login-toggle",
+                            login_item,
+                            login_available,
+                            language.localized(copy::configuration::LAUNCH_AT_LOGIN),
+                            cx,
+                            |this, cx| this.set_launch_at_login(!this.launch_at_login, cx),
+                        ),
+                        theme,
+                    ))
+                    .child(settings_inset_divider(theme, 56.0))
+                    .child(settings_row(
+                        gpui_component_assets::IconName::Network,
+                        language.localized(copy::configuration::AUTO_CONNECT_ON_STARTUP),
+                        None,
+                        Self::startup_switch(
+                            "auto-connect-toggle",
+                            auto_connect_enabled,
+                            auto_connect_available,
+                            language.localized(copy::configuration::AUTO_CONNECT_ON_STARTUP),
+                            cx,
+                            |this, cx| this.set_auto_connect(!this.auto_connect.enabled, cx),
+                        ),
+                        theme,
+                    )),
+            )
     }
 
     fn startup_switch(
@@ -62,7 +74,6 @@ impl ManisApp {
         enabled: bool,
         available: bool,
         label: &'static str,
-        _theme: Theme,
         cx: &mut Context<Self>,
         toggle: fn(&mut Self, &mut Context<Self>),
     ) -> AnyElement {
@@ -186,34 +197,6 @@ impl ManisApp {
             record_event(LogLevel::Warn, "autostart.sync_failed", error.to_string());
         }
     }
-}
-
-fn startup_row(label: &'static str, switch: AnyElement, theme: Theme, first: bool) -> Div {
-    div()
-        .mt(if first {
-            Space::Md.px()
-        } else {
-            Space::Sm.px()
-        })
-        .pt(Space::Md.px())
-        .border_t_1()
-        .border_color(theme.outline_subtle)
-        .min_h(px(44.0))
-        .flex()
-        .items_center()
-        .justify_between()
-        .gap(Space::Lg.px())
-        .child(
-            div()
-                .flex_1()
-                .min_w(px(0.0))
-                .text_size(TextRole::Label.size())
-                .line_height(TextRole::Label.line_height())
-                .font_weight(TextRole::Label.weight())
-                .text_color(theme.text_primary)
-                .child(label),
-        )
-        .child(switch)
 }
 
 #[cfg(test)]

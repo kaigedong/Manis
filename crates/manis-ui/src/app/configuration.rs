@@ -8,8 +8,7 @@ use gpui::Window;
 use gpui_component::WindowExt as _;
 
 use gpui::{
-    AnyElement, Context, Div, Entity, KeyDownEvent, ParentElement, Stateful, Styled, div,
-    prelude::*, px,
+    AnyElement, Context, Div, Entity, KeyDownEvent, ParentElement, Styled, div, prelude::*, px,
 };
 use manis_core::WindowSizeClass;
 
@@ -22,7 +21,7 @@ use crate::{
     rule_source::download_qx_rule_document,
     subscription::SourceKind,
     subscription_input::SubscriptionTextInput,
-    theme::{LayoutMetric, Space, TextRole, Theme},
+    theme::{Space, TextRole, Theme},
 };
 
 mod editor;
@@ -323,18 +322,6 @@ fn rule_group_is_open(workspace: &manis_core::NodeWorkspaceState, key: &str) -> 
     !workspace.is_group_collapsed(key)
 }
 
-/// One opaque settings card: elevated fill, 1px warm hairline, card radius.
-fn panel_surface(id: &'static str, compact: bool, theme: Theme) -> Stateful<Div> {
-    crate::components::card_surface(theme)
-        .id(id)
-        .w_full()
-        .p(if compact {
-            Space::Md.px()
-        } else {
-            Space::Lg.px()
-        })
-}
-
 fn field_label(label: impl Into<gpui::SharedString>, theme: Theme) -> Div {
     let label = label.into();
     div()
@@ -569,7 +556,7 @@ impl ManisApp {
             div()
                 .flex()
                 .flex_col()
-                .gap(Space::Lg.px())
+                .gap(px(20.0))
                 .child(self.language_panel(theme, compact, cx))
                 .child(self.startup_panel(theme, compact, cx))
                 .child(self.configuration_transfer_panel(theme, compact, cx))
@@ -588,16 +575,16 @@ impl ManisApp {
             .min_h(px(0.0))
             .overflow_y_scroll()
             .track_scroll(&self.configuration_scroll)
-            .px(if compact { px(12.0) } else { px(24.0) })
-            .pb(px(56.0))
+            .px(if compact { px(12.0) } else { px(32.0) })
+            .pb(px(64.0))
             .children(ConfigurationSection::ALL.into_iter().zip(sections).map(
                 |(section, detail)| {
                     div()
                         .id(format!("configuration-section-{}", section.key()))
                         .w_full()
-                        .max_w(LayoutMetric::ContentMaxWidth.px())
+                        .max_w(px(740.0))
                         .mx_auto()
-                        .pt(if compact { px(12.0) } else { px(24.0) })
+                        .pt(if compact { px(16.0) } else { px(24.0) })
                         .child(detail)
                 },
             ))
