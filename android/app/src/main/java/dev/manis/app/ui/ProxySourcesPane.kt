@@ -49,9 +49,12 @@ import kotlinx.coroutines.withContext
 
 internal enum class SourceEditor { Subscription, Node, Group }
 
-/** The GPUI proxy-sources section: subscriptions, manual nodes and policy groups. */
+/** The proxy-sources subpage content: subscriptions, manual nodes and policy groups. */
 @Composable
-fun ProxySourcesContent(onMessage: (String) -> Unit) {
+fun ProxySourcesContent(
+    onMessage: (String) -> Unit,
+    showPendingBanner: Boolean = true,
+) {
     val colors = LocalManisColors.current
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -61,12 +64,22 @@ fun ProxySourcesContent(onMessage: (String) -> Unit) {
 
     Column(
         Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceMd),
+        verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
-        if (Workspace.pending.value) {
-            ManisCard {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("有未应用的更改", style = ManisType.label, color = colors.textPrimary, modifier = Modifier.weight(1f))
+        if (showPendingBanner && Workspace.pending.value) {
+            SettingsInsetCard {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = ManisDimens.spaceLg, vertical = ManisDimens.spaceMd),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "有未应用的更改",
+                        style = ManisType.label,
+                        color = colors.textPrimary,
+                        modifier = Modifier.weight(1f),
+                    )
                     ManisButton("应用", primary = true, onClick = {
                         applyWorkspace(context)
                         onMessage("已应用工作区")
@@ -74,8 +87,9 @@ fun ProxySourcesContent(onMessage: (String) -> Unit) {
                 }
             }
         }
-        ManisCard {
-            ManisSectionBar("订阅") {
+        SettingsGroup(
+            header = "订阅",
+            headerAction = {
                 ManisSectionAction(if (refreshing) "刷新中…" else "刷新", onClick = {
                     if (refreshing || config.subscriptions.none { it.enabled }) return@ManisSectionAction
                     refreshing = true
@@ -85,79 +99,93 @@ fun ProxySourcesContent(onMessage: (String) -> Unit) {
                     }
                 })
                 ManisSectionAction("添加", onClick = { editor = SourceEditor.Subscription })
-            }
+            },
+        ) {
             if (config.subscriptions.isEmpty()) {
-                ManisMeta("粘贴 Clash 订阅地址，添加后立即下载。")
-            }
-            config.subscriptions.forEachIndexed { index, entry ->
-                ManisDivider()
-                SourceRow(
-                    title = entry.name.ifBlank { "订阅 ${index + 1}" },
-                    subtitle = maskUrl(entry.url),
-                    checked = entry.enabled,
-                    onToggle = { enabled ->
-                        Workspace.update { current ->
-                            current.copy(
-                                subscriptions = current.subscriptions.mapIndexed { at, item ->
-                                    if (at == index) item.copy(enabled = enabled) else item
-                                },
-                            )
-                        }
-                    },
-                    onDelete = { Workspace.removeSubscription(index) },
-                )
+                Box(Modifier.padding(horizontal = ManisDimens.spaceLg, vertical = ManisDimens.spaceLg)) {
+                    ManisMeta("粘贴 Clash 订阅地址，添加后立即下载。")
+                }
+            } else {
+                config.subscriptions.forEachIndexed { index, entry ->
+                    if (index > 0) SettingsInsetDivider(startIndent = ManisDimens.spaceLg)
+                    SourceRow(
+                        title = entry.name.ifBlank { "订阅 ${index + 1}" },
+                        subtitle = maskUrl(entry.url),
+                        checked = entry.enabled,
+                        onToggle = { enabled ->
+                            Workspace.update { current ->
+                                current.copy(
+                                    subscriptions = current.subscriptions.mapIndexed { at, item ->
+                                        if (at == index) item.copy(enabled = enabled) else item
+                                    },
+                                )
+                            }
+                        },
+                        onDelete = { Workspace.removeSubscription(index) },
+                    )
+                }
             }
         }
-        ManisCard {
-            ManisSectionBar("手动节点") {
+        SettingsGroup(
+            header = "手动节点",
+            headerAction = {
                 ManisSectionAction("添加", onClick = { editor = SourceEditor.Node })
-            }
+            },
+        ) {
             if (config.nodes.isEmpty()) {
-                ManisMeta("粘贴 vless:// 分享链接，一行一个。")
-            }
-            config.nodes.forEachIndexed { index, entry ->
-                ManisDivider()
-                SourceRow(
-                    title = entry.displayName,
-                    subtitle = "VLESS",
-                    checked = entry.enabled,
-                    onToggle = { enabled ->
-                        Workspace.update { current ->
-                            current.copy(
-                                nodes = current.nodes.mapIndexed { at, item ->
-                                    if (at == index) item.copy(enabled = enabled) else item
-                                },
-                            )
-                        }
-                    },
-                    onDelete = { Workspace.removeNode(index) },
-                )
+                Box(Modifier.padding(horizontal = ManisDimens.spaceLg, vertical = ManisDimens.spaceLg)) {
+                    ManisMeta("粘贴 vless:// 分享链接，一行一个。")
+                }
+            } else {
+                config.nodes.forEachIndexed { index, entry ->
+                    if (index > 0) SettingsInsetDivider(startIndent = ManisDimens.spaceLg)
+                    SourceRow(
+                        title = entry.displayName,
+                        subtitle = "VLESS",
+                        checked = entry.enabled,
+                        onToggle = { enabled ->
+                            Workspace.update { current ->
+                                current.copy(
+                                    nodes = current.nodes.mapIndexed { at, item ->
+                                        if (at == index) item.copy(enabled = enabled) else item
+                                    },
+                                )
+                            }
+                        },
+                        onDelete = { Workspace.removeNode(index) },
+                    )
+                }
             }
         }
-        ManisCard {
-            ManisSectionBar("策略组") {
+        SettingsGroup(
+            header = "策略组",
+            footer = "修改会先保存；点「应用」后内核重载配置，VPN 不会断开。",
+            headerAction = {
                 ManisSectionAction("添加", onClick = { editor = SourceEditor.Group })
-            }
+            },
+        ) {
             if (config.groups.isEmpty()) {
-                ManisMeta("没有策略组时，直接使用来源里选中的节点。")
-            }
-            config.groups.forEachIndexed { index, group ->
-                ManisDivider()
-                SourceRow(
-                    title = group.name,
-                    subtitle = "${if (group.strategy == "urltest") "自动测速" else "手动选择"} · " +
-                        "${group.subscriptionIndexes.size} 个订阅 / ${group.nodeIndexes.size} 个节点",
-                    checked = null,
-                    onToggle = null,
-                    onDelete = {
-                        Workspace.update { current ->
-                            current.copy(groups = current.groups.filterIndexed { at, _ -> at != index })
-                        }
-                    },
-                )
+                Box(Modifier.padding(horizontal = ManisDimens.spaceLg, vertical = ManisDimens.spaceLg)) {
+                    ManisMeta("没有策略组时，直接使用来源里选中的节点。")
+                }
+            } else {
+                config.groups.forEachIndexed { index, group ->
+                    if (index > 0) SettingsInsetDivider(startIndent = ManisDimens.spaceLg)
+                    SourceRow(
+                        title = group.name,
+                        subtitle = "${if (group.strategy == "urltest") "自动测速" else "手动选择"} · " +
+                            "${group.subscriptionIndexes.size} 个订阅 / ${group.nodeIndexes.size} 个节点",
+                        checked = null,
+                        onToggle = null,
+                        onDelete = {
+                            Workspace.update { current ->
+                                current.copy(groups = current.groups.filterIndexed { at, _ -> at != index })
+                            }
+                        },
+                    )
+                }
             }
         }
-        ManisMeta("修改会先保存；点「应用」后内核重载配置，VPN 不会断开。")
     }
 
     // The editor rides over the list as a bottom sheet, so the section it edits stays in sight.
@@ -204,7 +232,15 @@ private fun SourceRow(
 ) {
     val colors = LocalManisColors.current
     Row(
-        Modifier.fillMaxWidth().heightIn(min = 52.dp),
+        Modifier
+            .fillMaxWidth()
+            .heightIn(min = 58.dp)
+            .padding(
+                start = ManisDimens.spaceLg,
+                end = ManisDimens.spaceSm,
+                top = 8.dp,
+                bottom = 8.dp,
+            ),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
     ) {

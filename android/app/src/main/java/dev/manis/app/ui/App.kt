@@ -273,6 +273,10 @@ fun ManisApp() {
                 PrimaryWorkspace.Activity -> ActivityWorkspace(onMessage = ::say)
                 PrimaryWorkspace.Logs -> LogsWorkspace(onMessage = ::say)
                 PrimaryWorkspace.Configuration -> ConfigurationWorkspace(
+                    connected = RuntimeState.active,
+                    mode = mode,
+                    onToggleConnection = ::toggleConnection,
+                    onModeSelect = ::selectMode,
                     onMessage = ::say,
                     onOpenLogs = { workspace = PrimaryWorkspace.Logs },
                 )
