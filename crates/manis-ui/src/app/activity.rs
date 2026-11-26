@@ -306,26 +306,7 @@ impl ManisApp {
                     )
                     .child(traffic_cell(connection, theme)),
             )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap(Space::Sm.px())
-                    .flex_wrap()
-                    .child(self.route_chain_row(&chain, language, theme))
-                    .when(draft.is_some(), |line| {
-                        line.child(
-                            div()
-                                .flex_shrink_0()
-                                .text_size(TextRole::Metadata.size())
-                                .line_height(TextRole::Metadata.line_height())
-                                .font_weight(TextRole::Label.weight())
-                                .text_color(theme.action_primary)
-                                .child(add_rule_hint(language)),
-                        )
-                    }),
-            );
+            .child(self.route_chain_row(&chain, language, theme));
         if let Some(draft) = draft {
             let RuleDraft {
                 kind,
@@ -454,13 +435,6 @@ fn traffic_cell(connection: &Connection, theme: Theme) -> Div {
             format_bytes(connection.download),
             format_bytes(connection.upload)
         ))
-}
-
-fn add_rule_hint(language: Language) -> &'static str {
-    match language {
-        Language::English => "Click to add a rule →",
-        Language::SimplifiedChinese => "点击建规则 →",
-    }
 }
 
 /// Reads the observed chain in display order, hiding the runtime groups the kernel adds.

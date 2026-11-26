@@ -4,8 +4,6 @@ use crate::{
 };
 
 pub(crate) const CLOSE: LocalizedText = LocalizedText::new("Close", "关闭");
-pub(crate) const CHECK_FOR_UPDATES: LocalizedText =
-    LocalizedText::new("Check for updates", "检查更新");
 pub(crate) const UPDATE_ACTION: LocalizedText = LocalizedText::new("Update", "更新");
 pub(crate) const INSTALL_UPDATE_ACTION: LocalizedText = LocalizedText::new("Install", "安装更新");
 pub(crate) const DISMISS_UPDATE: LocalizedText = LocalizedText::new("Dismiss", "稍后提醒");
@@ -63,13 +61,6 @@ pub(crate) fn downloading_tooltip(language: Language, version: &str) -> String {
         Language::English => format!("Downloading Manis {version}"),
         Language::SimplifiedChinese => format!("正在下载 Manis {version}"),
     }
-}
-
-pub(crate) fn check_up_to_date_tooltip(language: Language) -> &'static str {
-    language.localized(LocalizedText::new(
-        "Check for updates · Up to date",
-        "检查更新 · 已是最新版本",
-    ))
 }
 
 pub(crate) fn downloading_progress_pill(language: Language, progress: DownloadProgress) -> String {

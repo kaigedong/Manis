@@ -1232,9 +1232,9 @@ mod tests {
             version: "0.2.0".to_owned(),
         };
 
-        // Idle: only the rotating-arrow check button appears.
+        // Idle: no update check icon or pill appears in the top command bar.
         window_cx.update(|window, cx| window.draw(cx).clear(cx));
-        assert!(window_cx.debug_bounds("header-update-check").is_some());
+        assert!(window_cx.debug_bounds("header-update-check").is_none());
         assert!(window_cx.debug_bounds("header-update-action").is_none());
         assert!(window_cx.debug_bounds("header-update-progress").is_none());
 

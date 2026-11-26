@@ -1,4 +1,4 @@
-use gpui_component::{Icon, spinner::Spinner, tooltip::Tooltip};
+use gpui_component::{Icon, tooltip::Tooltip};
 
 use crate::{
     app::{
@@ -504,20 +504,10 @@ impl ManisApp {
                     .flex()
                     .items_center()
                     .gap(Space::Sm.px())
-                    .child(self.header_update_controls(theme, cx))
+                    .when_some(self.header_update_pill(theme, cx), ParentElement::child)
                     .child(self.proxy_control(theme, compact, cx))
                     .child(self.routing_control(theme, compact, cx)),
             )
-    }
-
-    fn header_update_controls(&self, theme: Theme, cx: &mut Context<Self>) -> Div {
-        div()
-            .flex_shrink_0()
-            .flex()
-            .items_center()
-            .gap(px(6.0))
-            .when_some(self.header_update_pill(theme, cx), ParentElement::child)
-            .child(self.header_update_check_button(theme, cx))
     }
 
     fn header_update_pill(&self, theme: Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -690,66 +680,6 @@ impl ManisApp {
             )
             .tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
             .into_any_element()
-    }
-
-    fn header_update_check_button(&self, theme: Theme, cx: &mut Context<Self>) -> Stateful<Div> {
-        let language = self.language();
-        let is_checking = matches!(self.app_update_state, AppUpdateState::Checking);
-        let is_downloading = matches!(self.app_update_state, AppUpdateState::Downloading { .. });
-        let tooltip = match &self.app_update_state {
-            AppUpdateState::Checking => language.localized(copy::app_update::CHECKING).to_owned(),
-            AppUpdateState::Downloading { update, .. } => {
-                copy::app_update::downloading_tooltip(language, &update.version)
-            }
-            AppUpdateState::Current => {
-                copy::app_update::check_up_to_date_tooltip(language).to_owned()
-            }
-            AppUpdateState::Failed(error) => copy::app_update::error(language, *error).to_owned(),
-            AppUpdateState::InstallFailed(message) => {
-                copy::app_update::install_failed(language, message)
-            }
-            AppUpdateState::Idle | AppUpdateState::Available(_) | AppUpdateState::Ready { .. } => {
-                language
-                    .localized(copy::app_update::CHECK_FOR_UPDATES)
-                    .to_owned()
-            }
-        };
-
-        div()
-            .id("header-update-check")
-            .debug_selector(|| "header-update-check".to_owned())
-            .role(Role::Button)
-            .aria_label(language.localized(copy::app_update::CHECK_FOR_UPDATES))
-            .size(px(28.0))
-            .rounded(Radius::Control.px())
-            .flex()
-            .items_center()
-            .justify_center()
-            .text_color(theme.text_secondary)
-            .tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
-            .when(is_checking, |el| {
-                el.child(
-                    Spinner::new()
-                        .icon(IconName::RefreshCw)
-                        .xsmall()
-                        .color(theme.action_primary.into()),
-                )
-            })
-            .when(is_downloading, |el| {
-                el.opacity(0.45)
-                    .child(Icon::new(IconName::RefreshCw).size(px(14.0)))
-            })
-            .when(!is_checking && !is_downloading, |el| {
-                el.tab_stop(true)
-                    .focusable()
-                    .map(crate::components::primary_button_interaction)
-                    .cursor_pointer()
-                    .hover(move |style| style.bg(theme.surface_high).text_color(theme.text_primary))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.check_for_app_update(cx);
-                    }))
-                    .child(Icon::new(IconName::RefreshCw).size(px(14.0)))
-            })
     }
 
     fn workspace_view_switcher(&self, theme: Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
