@@ -353,6 +353,13 @@ impl ManisApp {
             })
             .collect::<Vec<_>>();
 
+        let preview_exit_name = preview_switch_target.and_then(|(_, candidate)| {
+            data.policy_slots
+                .iter()
+                .find(|slot| slot.name == candidate)
+                .map(|slot| slot.exit_name.as_str())
+        });
+
         let col3_cards = data
             .exit_slots
             .iter()
@@ -361,7 +368,8 @@ impl ManisApp {
                 Self::rules_tree_exit_card(
                     index,
                     exit,
-                    hl_exits.contains(exit.name.as_str()),
+                    hl_exits.contains(exit.name.as_str())
+                        || preview_exit_name == Some(exit.name.as_str()),
                     has_focus,
                     registry.clone(),
                     language,
@@ -2012,31 +2020,18 @@ impl ManisApp {
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let neutral_builtin = slot.is_direct || slot.is_reject;
+        let (card_bg, card_border, dimmed) =
+            policy_card_visual_style(&state, neutral_builtin, theme);
         let PolicyCardViewState {
             highlighted,
-            has_focus,
             pin_role,
+            ..
         } = state;
         let is_current_pinned_target = matches!(pin_role, PolicyPinRole::CurrentTarget);
         let (switch_action, is_hovered_switch) = match pin_role {
             PolicyPinRole::SwitchCandidate { action, hovered } => (Some(action), hovered),
             PolicyPinRole::None | PolicyPinRole::CurrentTarget => (None, false),
-        };
-        let can_switch = switch_action.is_some();
-        let dimmed = has_focus && !highlighted && !can_switch;
-        let neutral_builtin = slot.is_direct || slot.is_reject;
-        let (card_bg, card_border) = if is_hovered_switch {
-            (theme.route_soft, theme.route_trace)
-        } else if highlighted {
-            if neutral_builtin {
-                (theme.surface_high, theme.outline_strong)
-            } else {
-                (theme.action_soft, theme.action_primary)
-            }
-        } else if can_switch {
-            (theme.surface_elevated, theme.outline_strong)
-        } else {
-            (theme.surface_elevated, theme.outline_subtle)
         };
         let hover_name = slot.name.clone();
         let click_name = slot.name.clone();
@@ -2106,7 +2101,6 @@ impl ManisApp {
             .border_1()
             .border_color(card_border)
             .when(dimmed, |el| el.opacity(0.28))
-            .when(can_switch && !is_hovered_switch, |el| el.opacity(0.92))
             .cursor_pointer()
             .flex()
             .flex_col()
@@ -2239,7 +2233,7 @@ impl ManisApp {
             )
             .child(port_dot(
                 PortSide::Right,
-                if highlighted {
+                if highlighted || is_hovered_switch {
                     if neutral_builtin {
                         theme.text_primary
                     } else {
@@ -2248,7 +2242,7 @@ impl ManisApp {
                 } else {
                     theme.surface_elevated
                 },
-                if highlighted {
+                if highlighted || is_hovered_switch {
                     if neutral_builtin {
                         theme.text_primary
                     } else {
@@ -2257,7 +2251,7 @@ impl ManisApp {
                 } else {
                     theme.outline_strong
                 },
-                highlighted,
+                highlighted || is_hovered_switch,
             ))
             .into_any_element()
     }
@@ -2598,9 +2592,92 @@ fn format_manual_rule_summary(rule: &ManualRule) -> String {
     }
 }
 
+fn policy_card_visual_style(
+    state: &PolicyCardViewState,
+    neutral_builtin: bool,
+    theme: Theme,
+) -> (gpui::Rgba, gpui::Rgba, bool) {
+    let is_hovered_switch = matches!(
+        state.pin_role,
+        PolicyPinRole::SwitchCandidate { hovered: true, .. }
+    );
+    let dimmed = state.has_focus && !state.highlighted && !is_hovered_switch;
+    let (card_bg, card_border) = if is_hovered_switch {
+        (theme.route_soft, theme.route_trace)
+    } else if state.highlighted {
+        if neutral_builtin {
+            (theme.surface_high, theme.outline_strong)
+        } else {
+            (theme.action_soft, theme.action_primary)
+        }
+    } else {
+        (theme.surface_elevated, theme.outline_subtle)
+    };
+    (card_bg, card_border, dimmed)
+}
+
 fn format_manual_rule_value(rule: &ManualRule) -> String {
     match rule.conditions().first() {
         Some(cond) => cond.parameter().to_owned(),
         None => "FINAL".to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PolicyCardViewState, PolicyPinRole, RuleRetargetAction, policy_card_visual_style};
+    use crate::theme::Theme;
+
+    #[test]
+    fn pinned_rule_dims_unhovered_policy_candidates_until_hovered() {
+        let theme = Theme::light();
+
+        let current_target = policy_card_visual_style(
+            &PolicyCardViewState {
+                highlighted: true,
+                has_focus: true,
+                pin_role: PolicyPinRole::CurrentTarget,
+            },
+            false,
+            theme,
+        );
+        assert_eq!(
+            current_target,
+            (theme.action_soft, theme.action_primary, false)
+        );
+
+        let unhovered_candidate = policy_card_visual_style(
+            &PolicyCardViewState {
+                highlighted: false,
+                has_focus: true,
+                pin_role: PolicyPinRole::SwitchCandidate {
+                    action: RuleRetargetAction::LocalGroup(0),
+                    hovered: false,
+                },
+            },
+            false,
+            theme,
+        );
+        assert_eq!(
+            unhovered_candidate,
+            (theme.surface_elevated, theme.outline_subtle, true)
+        );
+
+        let hovered_candidate = policy_card_visual_style(
+            &PolicyCardViewState {
+                highlighted: false,
+                has_focus: true,
+                pin_role: PolicyPinRole::SwitchCandidate {
+                    action: RuleRetargetAction::LocalGroup(0),
+                    hovered: true,
+                },
+            },
+            false,
+            theme,
+        );
+        assert_eq!(
+            hovered_candidate,
+            (theme.route_soft, theme.route_trace, false)
+        );
     }
 }
