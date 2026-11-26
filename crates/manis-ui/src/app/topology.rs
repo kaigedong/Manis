@@ -1527,6 +1527,9 @@ mod tests {
         let (_, window) = cx.add_window_view(|window, cx| {
             let entity = cx.new(|_| {
                 let mut fixture = ManisApp::with_fixture_controller("http://127.0.0.1:1");
+                fixture
+                    .localizer
+                    .set_preference(crate::localization::LanguagePreference::English);
                 fixture.source_providers = vec![LoadedProvider {
                     name: "BigAirport".to_owned(),
                     vehicle_type: Some("HTTP".to_owned()),
@@ -1579,15 +1582,15 @@ mod tests {
         let app = app.expect("fixture app");
         window.update(|window, cx| window.draw(cx).clear(cx));
 
+        let policy_viewport = window
+            .debug_bounds("nodes-tree-col-policy-0-scroll")
+            .expect("policy column viewport");
         let nodes_viewport = window
             .debug_bounds("nodes-tree-col-nodes-scroll")
             .expect("nodes column viewport");
         let policy_far = window
             .debug_bounds("tree-policy-0")
             .expect("Far Nodes policy card");
-        let policy_all = window
-            .debug_bounds("tree-policy-1")
-            .expect("All Nodes policy card");
         let node40_initial = window
             .debug_bounds("tree-node-40")
             .expect("Node-40 laid out below fold");
@@ -1604,6 +1607,12 @@ mod tests {
             window.executor().advance_clock(Duration::from_millis(16));
         }
         window.update(|window, cx| window.draw(cx).clear(cx));
+        let policy_viewport_after = window
+            .debug_bounds("nodes-tree-col-policy-0-scroll")
+            .expect("policy column viewport after scroll");
+        let nodes_viewport = window
+            .debug_bounds("nodes-tree-col-nodes-scroll")
+            .expect("nodes column viewport after pin");
         let policy_far_after = window
             .debug_bounds("tree-policy-0")
             .expect("Far Nodes policy card after scroll");
@@ -1614,8 +1623,16 @@ mod tests {
             .debug_bounds("tree-node-42")
             .expect("Node-42 after auto-scroll");
         assert_eq!(
-            policy_far_after.origin.y, policy_far.origin.y,
+            app.read_with(window, |app, _| {
+                app.topology.nodes_policy_col_scrolls.borrow()[0].offset().y
+            }),
+            gpui::px(0.0),
             "pinning a policy must not scroll its own column"
+        );
+        assert_eq!(
+            policy_far_after.origin.y - policy_viewport_after.top(),
+            policy_far.origin.y - policy_viewport.top(),
+            "pinning a policy must preserve its vertical position inside its own column"
         );
         assert!(
             node40_after.top() >= nodes_viewport.top()
@@ -1625,6 +1642,9 @@ mod tests {
 
         // 2. Pin "All Nodes" (spans Node-00..Node-53, exceeding viewport height): column sweeps
         // from the first active node down to the last active node (Node-53).
+        let policy_all = window
+            .debug_bounds("tree-policy-1")
+            .expect("All Nodes policy card");
         window.simulate_click(policy_all.center(), Modifiers::none());
         window.update(|window, cx| window.draw(cx).clear(cx));
         // Advance through approach back toward Node-00 (first active node).
@@ -1632,6 +1652,9 @@ mod tests {
             window.executor().advance_clock(Duration::from_millis(16));
         }
         window.update(|window, cx| window.draw(cx).clear(cx));
+        let nodes_viewport = window
+            .debug_bounds("nodes-tree-col-nodes-scroll")
+            .expect("nodes column viewport during sweep");
         let node0_during = window
             .debug_bounds("tree-node-0")
             .expect("Node-00 at start of sweep");
@@ -1656,8 +1679,14 @@ mod tests {
 
         // 3. Manual scroll interruption: re-pin "Far Nodes" then scroll manually mid-flight;
         // auto-scroll must yield immediately and leave the manual scroll offset intact.
+        let policy_far = window
+            .debug_bounds("tree-policy-0")
+            .expect("Far Nodes policy card before manual interruption");
         window.simulate_click(policy_far.center(), Modifiers::none());
         window.update(|window, cx| window.draw(cx).clear(cx));
+        let nodes_viewport = window
+            .debug_bounds("nodes-tree-col-nodes-scroll")
+            .expect("nodes column viewport before manual scroll");
         for _ in 0..5 {
             window.executor().advance_clock(Duration::from_millis(16));
         }
@@ -1710,6 +1739,9 @@ mod tests {
             window.executor().advance_clock(Duration::from_millis(16));
         }
         window.update(|window, cx| window.draw(cx).clear(cx));
+        let rules_viewport = window
+            .debug_bounds("rules-tree-col-rules-scroll")
+            .expect("rules column viewport after pin");
         let rule15_after = window
             .debug_bounds("tree-rule-15")
             .expect("Rule Group 15 after auto-scroll");
