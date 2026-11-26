@@ -32,7 +32,8 @@ mod settings;
 mod source_mutations;
 pub(in crate::app) use manual_rules::{
     LocalRuleGroupDraft, LocalRuleGroupEditorState, ManualRuleConditionEditor,
-    ManualRuleEditorState, ManualRuleInsert, ManualRulePopover, ManualRulePrefill, RuleRowScope,
+    ManualRuleEditorState, ManualRuleInsert, ManualRulePopover, ManualRulePrefill, RuleGroupDrag,
+    RuleRowScope,
 };
 pub(in crate::app) use proxy_sources::ProxySourceEditorState;
 pub(in crate::app) use source_mutations::{

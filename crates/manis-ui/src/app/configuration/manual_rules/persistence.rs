@@ -250,26 +250,6 @@ impl ManisApp {
         self.persist_routing_rules(completion, previous, cx)
     }
 
-    pub(in crate::app) fn move_routing_rule_group_step(
-        &mut self,
-        group_id: &str,
-        direction: mihomo::MoveDirection,
-        cx: &mut Context<Self>,
-    ) {
-        if self.configuration_transfer.active || self.routing_apply_state.is_busy() {
-            return;
-        }
-        let mut order = mihomo::normalized_routing_rule_group_order(
-            &self.rule_sources.group_order,
-            self.has_regular_manual_rules(),
-            &self.rule_sources.sources,
-            &self.local_rule_groups,
-        );
-        if mihomo::move_routing_rule_group(&mut order, group_id, direction) {
-            self.apply_routing_rule_group_order(&order, cx);
-        }
-    }
-
     pub(in crate::app) fn sync_routing_rule_group_order(&mut self) {
         self.rule_sources.group_order = mihomo::normalized_routing_rule_group_order(
             &self.rule_sources.group_order,

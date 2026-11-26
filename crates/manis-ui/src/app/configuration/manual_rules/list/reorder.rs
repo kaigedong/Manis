@@ -14,7 +14,7 @@ use crate::app::topology::RuleGroupDragPreview;
 
 /// Live metadata for an in-flight routing-rule group drag.
 #[derive(Clone)]
-pub(super) struct RuleGroupDrag {
+pub(in crate::app) struct RuleGroupDrag {
     pub(super) id: String,
     pub(super) name: String,
     pub(super) detail: String,
@@ -28,7 +28,7 @@ pub(super) struct RuleGroupDrag {
 }
 
 impl RuleGroupDrag {
-    pub(super) fn new(
+    pub(in crate::app) fn new(
         id: &str,
         name: &str,
         detail: String,
@@ -54,8 +54,8 @@ impl RuleGroupDrag {
 
 impl Render for RuleGroupDrag {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        let width = self.width.get().max(px(280.0));
-        let height = self.height.get().max(px(56.0));
+        let width = self.width.get().max(px(220.0));
+        let height = self.height.get().max(px(52.0));
         let position = self.live_position.get();
         let theme = self.theme;
         div()
@@ -99,7 +99,7 @@ impl Render for RuleGroupDrag {
 }
 
 impl ManisApp {
-    pub(super) fn normalized_rule_group_order(&self) -> Vec<String> {
+    pub(in crate::app) fn normalized_rule_group_order(&self) -> Vec<String> {
         mihomo::normalized_routing_rule_group_order(
             &self.rule_sources.group_order,
             self.has_regular_manual_rules(),
@@ -108,7 +108,7 @@ impl ManisApp {
         )
     }
 
-    pub(super) fn active_rule_group_drag_preview(
+    pub(in crate::app) fn active_rule_group_drag_preview(
         &self,
         cx: &Context<Self>,
     ) -> Option<&RuleGroupDragPreview> {
@@ -131,10 +131,12 @@ impl ManisApp {
         if order.len() <= 1 || !order.iter().any(|id| id == &dragged_id) {
             return;
         }
+        self.topology.cancel_auto_scroll();
+        self.topology.hovered_rules = None;
         self.topology.rule_group_drag_preview = Some(RuleGroupDragPreview {
             dragged_id,
             order,
-            slot_height: slot_height.max(px(56.0)),
+            slot_height: slot_height.max(px(52.0)),
         });
         cx.notify();
     }
@@ -208,8 +210,15 @@ impl ManisApp {
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let handle = self.routing_rules_scroll.clone();
-        scroll
-            .track_scroll(&handle)
+        Self::rule_group_drag_scroll_target(scroll.track_scroll(&handle), handle, cx)
+    }
+
+    pub(in crate::app) fn rule_group_drag_scroll_target(
+        container: Stateful<Div>,
+        handle: ScrollHandle,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        container
             .on_drag_move::<RuleGroupDrag>(cx.listener(
                 move |this, event: &DragMoveEvent<RuleGroupDrag>, window, cx| {
                     let drag = event.drag(cx).clone();
@@ -234,6 +243,54 @@ impl ManisApp {
         language: Language,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        self.rule_group_drag_handle_sized(
+            group_id,
+            group_name,
+            (position, group_count),
+            px(32.0),
+            px(16.0),
+            theme,
+            language,
+            cx,
+        )
+    }
+
+    pub(in crate::app) fn rule_group_compact_drag_handle(
+        &self,
+        group_id: &str,
+        group_name: &str,
+        (position, group_count): (usize, usize),
+        theme: Theme,
+        language: Language,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        self.rule_group_drag_handle_sized(
+            group_id,
+            group_name,
+            (position, group_count),
+            px(22.0),
+            px(13.0),
+            theme,
+            language,
+            cx,
+        )
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Shared drag handle builder parameterized by hit-target and icon size for list and tree cards"
+    )]
+    fn rule_group_drag_handle_sized(
+        &self,
+        group_id: &str,
+        group_name: &str,
+        (position, group_count): (usize, usize),
+        button_size: Pixels,
+        icon_size: Pixels,
+        theme: Theme,
+        language: Language,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let enabled = group_count > 1
             && !self.routing_apply_state.is_busy()
             && !self.configuration_transfer.active;
@@ -253,7 +310,7 @@ impl ManisApp {
                 move || format!("drag-rule-group-{id}")
             })
             .flex_shrink_0()
-            .size(px(32.0))
+            .size(button_size)
             .rounded(Radius::Control.px())
             .border_2()
             .border_color(gpui::rgba(0x0000_0000))
@@ -290,11 +347,11 @@ impl ManisApp {
                         this.move_routing_rule_group(&keyboard_id, direction, cx);
                     }))
             })
-            .child(Icon::new(gpui_component_assets::IconName::GripVertical).size(px(16.0)))
+            .child(Icon::new(gpui_component_assets::IconName::GripVertical).size(icon_size))
             .into_any_element()
     }
 
-    pub(super) fn rule_group_drag_surface(
+    pub(in crate::app) fn rule_group_drag_surface(
         header: AnyElement,
         drag: RuleGroupDrag,
         enabled: bool,
@@ -334,7 +391,7 @@ impl ManisApp {
             .into_any_element()
     }
 
-    pub(super) fn rule_group_drop_target(
+    pub(in crate::app) fn rule_group_drop_target(
         &self,
         card: Div,
         group_id: &str,
@@ -370,12 +427,17 @@ impl ManisApp {
             .into_any_element()
     }
 
-    pub(super) fn rule_group_drag_placeholder(
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Shared dashed drag placeholder for list and tree cards with optional tree port tracker"
+    )]
+    pub(in crate::app) fn rule_group_drag_placeholder(
         group_id: &str,
         name: &str,
         position: usize,
         slot_height: Pixels,
         compact: bool,
+        port_tracker: Option<AnyElement>,
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -383,11 +445,12 @@ impl ManisApp {
         div()
             .id(format!("rule-group-drop-{group_id}"))
             .debug_selector(move || format!("rule-group-drop-{id}"))
+            .relative()
             .w_full()
-            .min_h(slot_height.max(px(56.0)))
-            .px(if compact { px(12.0) } else { px(14.0) })
-            .py(px(12.0))
-            .rounded(Radius::Card.px())
+            .min_h(slot_height.max(px(52.0)))
+            .px(if compact { px(10.0) } else { px(14.0) })
+            .py(if compact { px(8.0) } else { px(12.0) })
+            .rounded(if compact { px(10.0) } else { Radius::Card.px() })
             .bg(theme.action_soft)
             .border_2()
             .border_dashed()
@@ -395,6 +458,7 @@ impl ManisApp {
             .flex()
             .items_center()
             .gap(px(10.0))
+            .when_some(port_tracker, ParentElement::child)
             .on_drop(cx.listener(|this, drag: &RuleGroupDrag, _, cx| {
                 cx.stop_propagation();
                 this.commit_rule_group_drag(drag, cx);
@@ -406,7 +470,12 @@ impl ManisApp {
             )
             .child(
                 div()
-                    .text_size(px(13.0))
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .text_ellipsis()
+                    .whitespace_nowrap()
+                    .text_size(if compact { px(12.5) } else { px(13.0) })
                     .text_color(theme.action_primary)
                     .opacity(0.85)
                     .child(name.to_owned()),

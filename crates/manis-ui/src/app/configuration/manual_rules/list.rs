@@ -3,6 +3,7 @@ mod groups;
 mod reorder;
 use crate::components::{StatusTone, status_badge};
 use crate::theme::MONO_FAMILY;
+pub(in crate::app) use reorder::RuleGroupDrag;
 
 use super::{
     AnyElement, Button, ButtonVariant, ButtonVariants, Collapsible, Context, ContextMenuExt, Div,

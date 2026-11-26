@@ -454,6 +454,7 @@ impl ManisApp {
                 position,
                 preview.slot_height,
                 compact,
+                None,
                 theme,
                 cx,
             );

@@ -37,6 +37,7 @@ mod list;
 mod local_groups;
 mod model;
 mod persistence;
+pub(in crate::app) use list::RuleGroupDrag;
 pub(in crate::app) use model::{
     LocalRuleGroupDraft, LocalRuleGroupEditorState, ManualRuleConditionEditor,
     ManualRuleEditorState, ManualRuleInsert, ManualRulePopover, ManualRulePrefill, RuleRowScope,

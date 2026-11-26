@@ -1813,15 +1813,54 @@ mod tests {
             "clicking a policy in Column 2 while a rule is pinned persists retargeting"
         );
 
-        // 3. Reorder: move Manual Rules group down below the local group using ↓ button.
-        let move_down = window
-            .debug_bounds("tree-rule-move-down-manual")
-            .expect("Manual Rules group down-arrow renders");
-        window.simulate_click(move_down.center(), Modifiers::none());
+        // 3. Reorder: no up/down buttons render; dragging Manual Rules below the local group
+        // live-reorders the tree column and commits on drop without toggling Manual Rules open.
+        assert!(
+            window.debug_bounds("tree-rule-move-down-manual").is_none()
+                && window.debug_bounds("tree-rule-move-up-manual").is_none(),
+            "rules tree uses drag-and-drop handles instead of up/down buttons"
+        );
+        let from = window
+            .debug_bounds("drag-rule-group-manual")
+            .expect("Manual Rules group drag handle renders")
+            .center();
+        let target = window
+            .debug_bounds("rule-group-drop-local-ai")
+            .expect("local rule group drop target renders");
+        let to = gpui::point(target.center().x, target.bottom() - gpui::px(4.0));
+        window.simulate_mouse_down(from, gpui::MouseButton::Left, Modifiers::none());
+        window.simulate_mouse_move(
+            from + gpui::point(gpui::px(10.0), gpui::px(10.0)),
+            gpui::MouseButton::Left,
+            Modifiers::none(),
+        );
+        window.update(|window, cx| window.draw(cx).clear(cx));
+        assert!(
+            window.update(|_, cx| cx.has_active_drag()),
+            "dragging a rule group handle in tree view starts a GPUI drag"
+        );
+        window.simulate_mouse_move(to, gpui::MouseButton::Left, Modifiers::none());
+        window.update(|window, cx| window.draw(cx).clear(cx));
+        assert_eq!(
+            app.read_with(window, |app, _| {
+                app.topology
+                    .rule_group_drag_preview
+                    .as_ref()
+                    .map(|preview| preview.order.clone())
+            }),
+            Some(vec!["local-ai".to_owned(), "manual".to_owned()]),
+            "dragging over the local rule group live-reorders the tree preview"
+        );
+        window.simulate_mouse_up(to, gpui::MouseButton::Left, Modifiers::none());
         window.run_until_parked();
+        window.update(|window, cx| window.draw(cx).clear(cx));
+        assert!(
+            app.read_with(window, |app, _| !app.topology.rules_manual_group_expanded),
+            "dragging Manual Rules header does not toggle it open"
+        );
         assert!(
             app.read_with(window, |app, _| !app.status.is_empty()),
-            "clicking down arrow triggers rule group order persistence"
+            "dropping the dragged rule group persists the reordered priority"
         );
 
         // 4. Expand Manual Rules group -> indented manual sub-rules appear, and pinning

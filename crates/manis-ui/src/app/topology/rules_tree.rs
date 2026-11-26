@@ -1,8 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use gpui::{
-    AnyElement, Context, Div, FontWeight, InteractiveElement, IntoElement, ParentElement, Stateful,
-    StatefulInteractiveElement, Styled, div, prelude::FluentBuilder as _, px,
+    AnyElement, Context, Div, FontWeight, InteractiveElement, IntoElement, MouseButton,
+    ParentElement, Stateful, StatefulInteractiveElement, Styled, div, prelude::FluentBuilder as _,
+    px,
 };
 use gpui_component::{Disableable as _, Icon, IconName, Sizable as _, switch::Switch};
 use manis_core::WindowSizeClass;
@@ -15,7 +16,10 @@ use super::{
     with_alpha,
 };
 use crate::{
-    app::{ManisApp, RuleRowScope, nodes::region_code, presentation::policy_kind_label},
+    app::{
+        ManisApp, RuleRowScope, configuration::RuleGroupDrag, nodes::region_code,
+        presentation::policy_kind_label,
+    },
     components::{
         ActionRole, RouteSegmentKind, StatusTone, action_button, card_surface, empty_state,
         region_code_badge, route_segment, status_badge,
@@ -180,7 +184,12 @@ impl ManisApp {
             Some(RulesTreeFocus::Policy(name)) => Some(name.as_str()),
             _ => None,
         };
-        let data = self.collect_rules_tree_data(language, pinned_rule_id, manual_expanded);
+        self.topology.rule_group_row_bounds.borrow_mut().clear();
+        let preview_order = self
+            .active_rule_group_drag_preview(cx)
+            .map(|preview| preview.order.as_slice());
+        let data =
+            self.collect_rules_tree_data(language, pinned_rule_id, manual_expanded, preview_order);
         let active_rules = active_rules_in_mode(&data.entries, manual_expanded);
         let pinned_rule =
             pinned_rule_id.and_then(|id| active_rules.iter().copied().find(|item| item.id == id));
@@ -441,23 +450,27 @@ impl ManisApp {
                 theme,
             ));
 
-        let canvas_card = card_surface(theme)
-            .id("rules-tree-canvas")
-            .debug_selector(|| "rules-tree-canvas".to_owned())
-            .flex_1()
-            .min_h_0()
-            .w_full()
-            .overflow_hidden()
-            .p(px(14.0))
-            .flex()
-            .flex_col()
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.topology.cancel_auto_scroll();
-                if this.topology.pinned_rules.take().is_some() {
-                    cx.notify();
-                }
-            }))
-            .child(flow_inner);
+        let canvas_card = Self::rule_group_drag_scroll_target(
+            card_surface(theme)
+                .id("rules-tree-canvas")
+                .debug_selector(|| "rules-tree-canvas".to_owned())
+                .flex_1()
+                .min_h_0()
+                .w_full()
+                .overflow_hidden()
+                .p(px(14.0))
+                .flex()
+                .flex_col()
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.topology.cancel_auto_scroll();
+                    if this.topology.pinned_rules.take().is_some() {
+                        cx.notify();
+                    }
+                }))
+                .child(flow_inner),
+            self.topology.rules_col_scrolls[0].clone(),
+            cx,
+        );
 
         let horizontal_pad = if compact {
             Space::Md.px()
@@ -497,7 +510,7 @@ impl ManisApp {
             RulesTreeFocus::Rule(id) => Some(id.as_str()),
             _ => None,
         };
-        let data = self.collect_rules_tree_data(language, pinned_rule_id, manual_expanded);
+        let data = self.collect_rules_tree_data(language, pinned_rule_id, manual_expanded, None);
         let active_rules = active_rules_in_mode(&data.entries, manual_expanded);
         let (hl_rules, hl_policies, hl_exits) =
             compute_rules_tree_highlights(&active_rules, &data.policy_slots, Some(focus));
@@ -559,6 +572,7 @@ impl ManisApp {
         language: Language,
         pinned_rule_id: Option<&str>,
         manual_expanded: bool,
+        preview_order: Option<&[String]>,
     ) -> RulesTreeData {
         // 1. Gather policy group active exits from live catalog or offline managed groups.
         let mut policy_lookup: BTreeMap<String, (String, String, Option<u64>, String)> =
@@ -616,13 +630,12 @@ impl ManisApp {
             }
         }
 
-        // 2. Build ordered rule groups from normalized routing rule group order.
-        let group_order = mihomo::normalized_routing_rule_group_order(
-            &self.rule_sources.group_order,
-            self.has_regular_manual_rules(),
-            &self.rule_sources.sources,
-            &self.local_rule_groups,
-        );
+        // 2. Build ordered rule groups from live drag preview or persisted routing rule group order.
+        let persisted_order = self.normalized_rule_group_order();
+        let group_order = match preview_order {
+            Some(preview) if preview.len() == persisted_order.len() => preview.to_vec(),
+            _ => persisted_order,
+        };
         let group_count = group_order.len();
 
         let mut entries = Vec::new();
@@ -1170,94 +1183,6 @@ impl ManisApp {
             .child(actions)
     }
 
-    fn rules_tree_reorder_controls(
-        &self,
-        group_id: &str,
-        position: usize,
-        total: usize,
-        theme: Theme,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        if total <= 1 {
-            return None;
-        }
-        let busy = self.routing_apply_state.is_busy() || self.configuration_transfer.active;
-        let can_up = !busy && position > 0;
-        let can_down = !busy && position + 1 < total;
-        let up_group_id = group_id.to_owned();
-        let down_group_id = group_id.to_owned();
-        let up_selector = format!("tree-rule-move-up-{group_id}");
-        let down_selector = format!("tree-rule-move-down-{group_id}");
-
-        let make_btn = |id: String,
-                        selector: String,
-                        icon: IconName,
-                        enabled: bool,
-                        target_group_id: String,
-                        direction: mihomo::MoveDirection,
-                        cx: &mut Context<Self>| {
-            div()
-                .id(id)
-                .debug_selector(move || selector)
-                .size(px(20.0))
-                .rounded(px(5.0))
-                .bg(theme.surface_low)
-                .border_1()
-                .border_color(theme.outline_subtle)
-                .flex()
-                .items_center()
-                .justify_center()
-                .when(enabled, |el| {
-                    el.cursor_pointer()
-                        .hover(move |style| {
-                            style
-                                .bg(theme.surface_high)
-                                .border_color(theme.outline_strong)
-                        })
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            cx.stop_propagation();
-                            this.topology.cancel_auto_scroll();
-                            this.move_routing_rule_group_step(&target_group_id, direction, cx);
-                        }))
-                })
-                .when(!enabled, |el| {
-                    el.opacity(0.32).on_click(|_, _, cx| cx.stop_propagation())
-                })
-                .child(
-                    Icon::new(icon)
-                        .size(px(11.0))
-                        .text_color(theme.text_secondary),
-                )
-        };
-
-        Some(
-            div()
-                .flex_shrink_0()
-                .flex()
-                .items_center()
-                .gap(px(2.0))
-                .child(make_btn(
-                    format!("tree-rule-up-{group_id}"),
-                    up_selector,
-                    IconName::ArrowUp,
-                    can_up,
-                    up_group_id,
-                    mihomo::MoveDirection::Up,
-                    cx,
-                ))
-                .child(make_btn(
-                    format!("tree-rule-down-{group_id}"),
-                    down_selector,
-                    IconName::ArrowDown,
-                    can_down,
-                    down_group_id,
-                    mihomo::MoveDirection::Down,
-                    cx,
-                ))
-                .into_any_element(),
-        )
-    }
-
     #[expect(
         clippy::too_many_arguments,
         clippy::too_many_lines,
@@ -1278,16 +1203,38 @@ impl ManisApp {
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let group_id = mihomo::MANUAL_ROUTING_RULE_GROUP_ID;
+        let group_name = language.localized(copy::common::MANUAL_RULES);
+        let (pos, total) = group_position;
+        if let Some(preview) = self.active_rule_group_drag_preview(cx)
+            && preview.dragged_id == group_id
+        {
+            return Self::rule_group_drag_placeholder(
+                group_id,
+                group_name,
+                pos,
+                preview.slot_height,
+                true,
+                None,
+                theme,
+                cx,
+            );
+        }
+
         let enabled_count = children.iter().filter(|rule| rule.enabled).count();
         let selector = format!("tree-rule-{index}");
-        let (pos, total) = group_position;
-        let reorder_controls = self.rules_tree_reorder_controls(
-            mihomo::MANUAL_ROUTING_RULE_GROUP_ID,
-            pos,
-            total,
-            theme,
-            cx,
-        );
+        let drag_enabled =
+            total > 1 && !self.routing_apply_state.is_busy() && !self.configuration_transfer.active;
+        let drag_handle = (total > 1).then(|| {
+            self.rule_group_compact_drag_handle(
+                group_id,
+                group_name,
+                (pos, total),
+                theme,
+                language,
+                cx,
+            )
+        });
         let subtitle = if expanded {
             match language {
                 Language::English => {
@@ -1325,6 +1272,17 @@ impl ManisApp {
             }
         };
 
+        let drag = RuleGroupDrag::new(
+            group_id,
+            group_name,
+            subtitle.clone(),
+            None,
+            pos,
+            true,
+            theme,
+        );
+        let has_drag_handle = drag_handle.is_some();
+
         let header = div()
             .id("tree-rule-manual-header")
             .debug_selector(|| "tree-rule-manual-toggle".to_owned())
@@ -1353,7 +1311,7 @@ impl ManisApp {
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(7.0))
+                    .gap(px(6.0))
                     .child(
                         div()
                             .min_w(px(30.0))
@@ -1370,6 +1328,7 @@ impl ManisApp {
                             .text_center()
                             .child(order.to_owned()),
                     )
+                    .when_some(drag_handle, ParentElement::child)
                     .child(
                         div()
                             .flex_1()
@@ -1380,9 +1339,8 @@ impl ManisApp {
                             .text_size(px(12.5))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(theme.text_primary)
-                            .child(language.localized(copy::common::MANUAL_RULES)),
+                            .child(group_name),
                     )
-                    .when_some(reorder_controls, ParentElement::child)
                     .child(
                         div()
                             .flex_shrink_0()
@@ -1428,7 +1386,7 @@ impl ManisApp {
             )
             .child(
                 div()
-                    .pl(px(37.0))
+                    .pl(if has_drag_handle { px(64.0) } else { px(36.0) })
                     .flex()
                     .items_center()
                     .gap(px(6.0))
@@ -1454,6 +1412,8 @@ impl ManisApp {
                             .child(subtitle),
                     ),
             );
+        let header =
+            Self::rule_group_drag_surface(header.into_any_element(), drag, drag_enabled, cx);
 
         let mut container = div()
             .id(format!("tree-rule-manual-group-{index}"))
@@ -1510,7 +1470,7 @@ impl ManisApp {
             );
         }
 
-        container.into_any_element()
+        self.rule_group_drop_target(div().w_full().child(container), group_id, cx)
     }
 
     #[expect(
@@ -1690,7 +1650,7 @@ impl ManisApp {
     #[expect(
         clippy::too_many_arguments,
         clippy::too_many_lines,
-        reason = "Single GPUI rule card builder with reorder arrows, toggle switch, sample chips, and port dot"
+        reason = "Single GPUI rule card builder with drag-and-drop handle, toggle switch, sample chips, and port dot"
     )]
     fn rules_tree_rule_card(
         &self,
@@ -1702,6 +1662,25 @@ impl ManisApp {
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        if let Some((group_id, (pos, _))) = item.group_order_id.as_deref().zip(item.group_position)
+            && let Some(preview) = self.active_rule_group_drag_preview(cx)
+            && preview.dragged_id == group_id
+        {
+            return Self::rule_group_drag_placeholder(
+                group_id,
+                &item.title,
+                pos,
+                preview.slot_height,
+                true,
+                Some(
+                    card_port_tracker(registry, format!("r:{}", item.id), "col:rules".to_owned())
+                        .into_any_element(),
+                ),
+                theme,
+                cx,
+            );
+        }
+
         let suppressed_by_manual = emphasis == RuleCardEmphasis::SuppressedByManual;
         let is_pinned = emphasis == RuleCardEmphasis::Pinned;
         let highlighted = matches!(
@@ -1726,13 +1705,21 @@ impl ManisApp {
         let click_id = item.id.clone();
         let selector = format!("tree-rule-{index}");
 
-        let reorder_controls = item
-            .group_order_id
-            .as_deref()
-            .zip(item.group_position)
-            .and_then(|(group_id, (pos, total))| {
-                self.rules_tree_reorder_controls(group_id, pos, total, theme, cx)
-            });
+        let reorder_meta = item.group_order_id.as_deref().zip(item.group_position);
+        let drag_handle =
+            reorder_meta
+                .filter(|(_, (_, total))| *total > 1)
+                .map(|(group_id, (pos, total))| {
+                    self.rule_group_compact_drag_handle(
+                        group_id,
+                        &item.title,
+                        (pos, total),
+                        theme,
+                        language,
+                        cx,
+                    )
+                });
+        let has_drag_handle = drag_handle.is_some();
 
         let switch_el: Option<AnyElement> = match &item.toggle {
             Some(RuleToggleAction::Remote(source_id)) => {
@@ -1778,7 +1765,7 @@ impl ManisApp {
             Some(RuleToggleAction::ManualRule(_)) | None => None,
         };
 
-        div()
+        let card = div()
             .id(format!("tree-rule-card-{index}"))
             .debug_selector(move || selector)
             .relative()
@@ -1797,7 +1784,7 @@ impl ManisApp {
             .flex_col()
             .gap(px(3.0))
             .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
-                if this.topology.rules_manual_group_expanded {
+                if this.topology.rules_manual_group_expanded || cx.has_active_drag() {
                     return;
                 }
                 if *hovered {
@@ -1862,6 +1849,7 @@ impl ManisApp {
                             .text_center()
                             .child(item.order.clone()),
                     )
+                    .when_some(drag_handle, ParentElement::child)
                     .child(
                         div()
                             .flex_1()
@@ -1891,12 +1879,20 @@ impl ManisApp {
                                 }),
                         )
                     })
-                    .when_some(reorder_controls, ParentElement::child)
-                    .when_some(switch_el, ParentElement::child),
+                    .when_some(switch_el, |row, control| {
+                        row.child(
+                            div()
+                                .flex_shrink_0()
+                                .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                    cx.stop_propagation();
+                                })
+                                .child(control),
+                        )
+                    }),
             )
             .child(
                 div()
-                    .pl(px(36.0))
+                    .pl(if has_drag_handle { px(64.0) } else { px(36.0) })
                     .flex()
                     .items_center()
                     .gap(px(5.0))
@@ -1940,8 +1936,27 @@ impl ManisApp {
                     },
                     highlighted,
                 ))
-            })
-            .into_any_element()
+            });
+
+        if let Some((group_id, (pos, total))) = reorder_meta {
+            let drag_enabled = total > 1
+                && !self.routing_apply_state.is_busy()
+                && !self.configuration_transfer.active;
+            let drag = RuleGroupDrag::new(
+                group_id,
+                &item.title,
+                item.subtitle.clone(),
+                Some(item.target_policy.clone()),
+                pos,
+                true,
+                theme,
+            );
+            let drag_surface =
+                Self::rule_group_drag_surface(card.into_any_element(), drag, drag_enabled, cx);
+            self.rule_group_drop_target(div().w_full().child(drag_surface), group_id, cx)
+        } else {
+            card.into_any_element()
+        }
     }
 
     #[expect(
