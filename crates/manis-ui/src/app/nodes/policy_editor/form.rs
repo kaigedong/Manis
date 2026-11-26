@@ -21,46 +21,37 @@ impl ManisApp {
         let nodes = self.policy_editor_candidates(draft, language, theme, popover_width, cx);
 
         div()
-        .id("policy-editor-scroll")
-        .when(!embedded, |form| {
-            form.flex_1().min_h_0().overflow_y_scroll()
-        })
-        .px(if embedded {
-            px(0.0)
-        } else if compact {
-            px(16.0)
-        } else {
-            px(28.0)
-        })
-        .py(if embedded { px(0.0) } else { px(24.0) })
-        .child(
-            div()
-                .w_full()
-                .max_w(px(760.0))
-                .mx_auto()
-                .child(Self::policy_editor_section_label(
-                    language.localized(copy::nodes::BASIC_INFORMATION),
-                    theme,
-                ))
-                .child(basics)
-                .child(
-                    Self::policy_editor_section_label(
-                        language.localized(copy::nodes::CANDIDATES),
+            .id("policy-editor-scroll")
+            .when(!embedded, |form| {
+                form.flex_1().min_h_0().overflow_y_scroll()
+            })
+            .px(if embedded {
+                px(0.0)
+            } else if compact {
+                px(16.0)
+            } else {
+                px(28.0)
+            })
+            .py(if embedded { px(0.0) } else { px(24.0) })
+            .child(
+                div()
+                    .w_full()
+                    .max_w(px(760.0))
+                    .mx_auto()
+                    .child(Self::policy_editor_section_label(
+                        language.localized(copy::nodes::BASIC_INFORMATION),
                         theme,
+                    ))
+                    .child(basics)
+                    .child(
+                        Self::policy_editor_section_label(
+                            language.localized(copy::nodes::CANDIDATES),
+                            theme,
+                        )
+                        .mt_6(),
                     )
-                    .mt_6(),
-                )
-                .child(nodes)
-                .child(
-                    div()
-                        .mt_3()
-                        .px_2()
-                        .text_size(TextRole::Body.size())
-                        .line_height(TextRole::Body.line_height())
-                        .text_color(theme.text_tertiary)
-                        .child(language.localized(copy::nodes::ROUTING_RULES_POINT_TO_THIS_POLICY_THE_POLICY_CHOOSES_ONE)),
-                ),
-        )
+                    .child(nodes),
+            )
     }
 
     pub(in crate::app) fn policy_editor_basics(

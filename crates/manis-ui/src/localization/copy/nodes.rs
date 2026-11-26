@@ -112,11 +112,6 @@ pub(crate) const RESTORING: LocalizedText = LocalizedText::new("Restoring", "正
 pub(crate) const RESTORING_NODES: LocalizedText =
     LocalizedText::new("Restoring nodes", "正在恢复节点");
 pub(crate) const RETEST_INTERVAL: LocalizedText = LocalizedText::new("Retest interval", "重测间隔");
-pub(crate) const ROUTING_RULES_POINT_TO_THIS_POLICY_THE_POLICY_CHOOSES_ONE: LocalizedText =
-    LocalizedText::new(
-        "Routing rules point to this policy; the policy chooses one exit from this node scope.",
-        "分流规则会指向这个策略组；策略组再从这里配置的节点范围中选择出口。",
-    );
 pub(crate) const SELECT: LocalizedText = LocalizedText::new("Select", "选择");
 pub(crate) const SELECTED_CANDIDATES: LocalizedText =
     LocalizedText::new("Selected candidates", "已选候选项");

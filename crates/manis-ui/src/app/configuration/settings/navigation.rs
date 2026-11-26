@@ -5,7 +5,7 @@ use gpui::{
 
 use super::{
     ConfigurationSection, Context, CountNoun, Div, ManisApp, Radius, Space, TextRole, Theme,
-    configuration_section_detail, configuration_section_label, copy,
+    configuration_section_label, copy,
 };
 
 pub(in crate::app) fn configuration_section_at_scroll(
@@ -88,7 +88,6 @@ impl ManisApp {
         compact: bool,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let language = self.language();
         let items =
             div()
                 .id("configuration-navigation-items")
@@ -101,13 +100,6 @@ impl ManisApp {
                 .children(ConfigurationSection::ALL.into_iter().map(|section| {
                     self.configuration_navigation_item(section, theme, compact, cx)
                 }));
-        let note = div()
-            .mt(Space::Sm.px())
-            .px(Space::Sm.px())
-            .text_size(TextRole::Metadata.size())
-            .line_height(TextRole::Metadata.line_height())
-            .text_color(theme.text_tertiary)
-            .child(language.localized(copy::configuration::CHANGES_ARE_STORED_LOCALLY));
         if compact {
             return crate::components::card_surface(theme)
                 .id("configuration-navigation")
@@ -133,8 +125,7 @@ impl ManisApp {
                     .p(Space::Sm.px())
                     .flex()
                     .flex_col()
-                    .child(items)
-                    .child(note),
+                    .child(items),
             )
     }
 
@@ -227,12 +218,6 @@ impl ManisApp {
                 })
             })
             .focus_visible(move |row| row.border_color(theme.focus_ring))
-            .tooltip(move |window, cx| {
-                gpui_component::tooltip::Tooltip::new(configuration_section_detail(
-                    section, language,
-                ))
-                .build(window, cx)
-            })
             .when(!compact, |row| {
                 // The 3px cobalt stripe marks the section the document is showing.
                 row.child(

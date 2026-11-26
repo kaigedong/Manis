@@ -556,25 +556,6 @@ fn configuration_section_label(section: ConfigurationSection, language: Language
     }
 }
 
-fn configuration_section_detail(section: ConfigurationSection, language: Language) -> &'static str {
-    match section {
-        ConfigurationSection::General => {
-            language.localized(copy::configuration::INTERFACE_LANGUAGE_AND_STARTUP)
-        }
-        ConfigurationSection::Runtime => language.localized(copy::configuration::CORE_AND_UPDATES),
-        ConfigurationSection::ProxySources => {
-            language.localized(copy::configuration::SUBSCRIPTIONS_AND_NODES)
-        }
-        ConfigurationSection::RuleSources => {
-            language.localized(copy::configuration::REMOTE_RULE_SETS)
-        }
-        ConfigurationSection::Advanced => language.localized(copy::configuration::NETWORK_BEHAVIOR),
-        ConfigurationSection::Updates => {
-            language.localized(copy::app_update::ABOUT_AND_UPDATES_DETAIL)
-        }
-    }
-}
-
 impl ManisApp {
     pub(super) fn configuration_workspace(
         &self,

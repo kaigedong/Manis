@@ -1,7 +1,7 @@
 use super::{
-    Div, IntoElement, ManisApp, ParentElement, Space, Stateful, StatusTone, Styled, TextRole,
-    Theme, copy, div, panel_surface, proxy_mode_label, px, routing_mode_label, section_header,
-    status_badge,
+    Div, FluentBuilder, IntoElement, ManisApp, ParentElement, Space, Stateful, StatusTone, Styled,
+    TextRole, Theme, copy, div, panel_surface, proxy_mode_label, px, routing_mode_label,
+    section_header, status_badge,
 };
 impl ManisApp {
     pub(in crate::app) fn advanced_configuration_panel(
@@ -15,7 +15,7 @@ impl ManisApp {
         panel_surface("configuration-advanced", compact, theme)
             .child(section_header(
                 language.localized(copy::configuration::ADVANCED_SETTINGS),
-                language.localized(copy::configuration::CURRENT_MANAGED_NETWORK_BEHAVIOR),
+                "",
                 Some(
                     status_badge(
                         language.localized(copy::configuration::MANAGED),
@@ -29,19 +29,19 @@ impl ManisApp {
             .child(Self::advanced_configuration_row(
                 language.localized(copy::configuration::PROXY_MODE),
                 proxy_mode_label(language, self.proxy_mode),
-                language.localized(copy::configuration::CHANGED_FROM_THE_MAIN_TOOLBAR),
+                None,
                 theme,
             ))
             .child(Self::advanced_configuration_row(
                 language.localized(copy::configuration::ROUTING_MODE),
                 routing_mode_label(language, self.routing_mode),
-                language.localized(copy::configuration::DIRECT_GLOBAL_OR_ORDERED_RULES),
+                None,
                 theme,
             ))
             .child(Self::advanced_configuration_row(
                 language.localized(copy::configuration::PROCESS_IDENTIFICATION),
                 language.localized(copy::configuration::ALWAYS),
-                language.localized(copy::configuration::USED_TO_IMPROVE_NETWORK_ACTIVITY),
+                None,
                 theme,
             ))
             .child(Self::advanced_configuration_row(
@@ -55,7 +55,7 @@ impl ManisApp {
     fn advanced_configuration_row(
         label: &'static str,
         value: &'static str,
-        detail: &'static str,
+        detail: Option<&'static str>,
         theme: Theme,
     ) -> Div {
         div()
@@ -63,7 +63,7 @@ impl ManisApp {
             .pt(Space::Md.px())
             .border_t_1()
             .border_color(theme.outline_subtle)
-            .min_h(px(52.0))
+            .min_h(px(44.0))
             .flex()
             .items_center()
             .justify_between()
@@ -79,14 +79,16 @@ impl ManisApp {
                             .text_color(theme.text_primary)
                             .child(label),
                     )
-                    .child(
-                        div()
-                            .mt(Space::Xs.px())
-                            .text_size(TextRole::Metadata.size())
-                            .line_height(TextRole::Metadata.line_height())
-                            .text_color(theme.text_secondary)
-                            .child(detail),
-                    ),
+                    .when_some(detail, |column, detail| {
+                        column.child(
+                            div()
+                                .mt(Space::Xs.px())
+                                .text_size(TextRole::Metadata.size())
+                                .line_height(TextRole::Metadata.line_height())
+                                .text_color(theme.text_secondary)
+                                .child(detail),
+                        )
+                    }),
             )
             .child(status_badge(value, StatusTone::Neutral, theme))
     }

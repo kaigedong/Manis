@@ -23,14 +23,12 @@ impl ManisApp {
         panel_surface("configuration-startup", compact, theme)
             .child(section_header(
                 language.localized(copy::configuration::STARTUP),
-                language.localized(copy::configuration::START_MANIS_WITH_YOUR_DESKTOP_SESSION),
+                "",
                 None,
                 theme,
             ))
             .child(startup_row(
                 language.localized(copy::configuration::LAUNCH_AT_LOGIN),
-                language
-                    .localized(copy::configuration::OPENING_MANIS_AGAIN_BRINGS_THIS_WINDOW_FORWARD),
                 Self::startup_switch(
                     "launch-at-login-toggle",
                     login_item,
@@ -45,7 +43,6 @@ impl ManisApp {
             ))
             .child(startup_row(
                 language.localized(copy::configuration::AUTO_CONNECT_ON_STARTUP),
-                language.localized(copy::configuration::START_THE_KERNEL_AS_SOON_AS_MANIS_OPENS),
                 Self::startup_switch(
                     "auto-connect-toggle",
                     auto_connect_enabled,
@@ -191,13 +188,7 @@ impl ManisApp {
     }
 }
 
-fn startup_row(
-    label: &'static str,
-    detail: &'static str,
-    switch: AnyElement,
-    theme: Theme,
-    first: bool,
-) -> Div {
+fn startup_row(label: &'static str, switch: AnyElement, theme: Theme, first: bool) -> Div {
     div()
         .mt(if first {
             Space::Md.px()
@@ -216,22 +207,11 @@ fn startup_row(
             div()
                 .flex_1()
                 .min_w(px(0.0))
-                .child(
-                    div()
-                        .text_size(TextRole::Label.size())
-                        .line_height(TextRole::Label.line_height())
-                        .font_weight(TextRole::Label.weight())
-                        .text_color(theme.text_primary)
-                        .child(label),
-                )
-                .child(
-                    div()
-                        .mt(Space::Xs.px())
-                        .text_size(TextRole::Metadata.size())
-                        .line_height(TextRole::Metadata.line_height())
-                        .text_color(theme.text_secondary)
-                        .child(detail),
-                ),
+                .text_size(TextRole::Label.size())
+                .line_height(TextRole::Label.line_height())
+                .font_weight(TextRole::Label.weight())
+                .text_color(theme.text_primary)
+                .child(label),
         )
         .child(switch)
 }

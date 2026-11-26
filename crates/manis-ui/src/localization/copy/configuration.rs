@@ -33,11 +33,6 @@ pub(crate) const ADD_SOURCE: LocalizedText = LocalizedText::new("Add source", "�
 pub(crate) const ADVANCED: LocalizedText = LocalizedText::new("Advanced", "高级设置");
 pub(crate) const ADVANCED_SETTINGS: LocalizedText =
     LocalizedText::new("Advanced settings", "高级设置");
-pub(crate) const ALL_CONDITIONS_MUST_MATCH_GROUP_ORDER_DETERMINES_RULE_PRIORITY: LocalizedText =
-    LocalizedText::new(
-        "All conditions must match. Group order determines rule priority.",
-        "同一条规则中的条件必须全部命中；分组顺序决定规则优先级。",
-    );
 pub(crate) const ALREADY_ADDED: LocalizedText = LocalizedText::new("Already added", "已添加");
 pub(crate) const ALREADY_CONFIGURED: LocalizedText =
     LocalizedText::new("Already configured", "已经配置");
@@ -59,17 +54,8 @@ pub(crate) const A_RULE_CAN_CONTAIN_AT_MOST_FOUR_CONDITIONS: LocalizedText = Loc
     "A rule can contain at most four conditions",
     "一条规则最多包含四个条件",
 );
-pub(crate) const A_SINGLE_NODE_SOURCE_DOES_NOT_NEED_AN_UPDATE_INTERVAL: LocalizedText =
-    LocalizedText::new(
-        "A single-node source does not need an update interval.",
-        "单节点来源不需要更新间隔。",
-    );
 pub(crate) const BROWSER_USER_AGENT: LocalizedText =
     LocalizedText::new("Browser user agent", "浏览器标识");
-pub(crate) const CHANGED_FROM_THE_MAIN_TOOLBAR: LocalizedText =
-    LocalizedText::new("Changed from the main toolbar", "可在主工具栏中切换");
-pub(crate) const CHANGES_ARE_STORED_LOCALLY: LocalizedText =
-    LocalizedText::new("Changes are stored locally", "更改仅保存在本机");
 pub(crate) const CHANGE_TARGET_POLICY_FOR_THIS_RULE_SOURCE: LocalizedText = LocalizedText::new(
     "Change target policy for this rule source",
     "修改这个规则源的目标策略",
@@ -78,11 +64,6 @@ pub(crate) const CHECK_FOR_UPDATE: LocalizedText =
     LocalizedText::new("Check for update", "检查更新");
 pub(crate) const CHOOSE_AN_EXISTING_POLICY_GROUP: LocalizedText =
     LocalizedText::new("Choose an existing policy group", "请选择已有策略组");
-pub(crate) const CHOOSE_A_SUBSCRIPTION_OR_A_SINGLE_NODE_SHARE_LINK: LocalizedText =
-    LocalizedText::new(
-        "Choose a subscription or a single-node share link.",
-        "请选择订阅来源或单节点分享链接。",
-    );
 pub(crate) const CHOOSE_CONDITION_TYPE: LocalizedText =
     LocalizedText::new("Choose condition type", "选择条件类型");
 pub(crate) const CHOOSE_RULE_UPDATE_INTERVAL: LocalizedText =
@@ -92,8 +73,6 @@ pub(crate) const CHOOSE_SUBSCRIPTION_UPDATE_INTERVAL: LocalizedText =
 pub(crate) const CHOOSE_TARGET_POLICY: LocalizedText =
     LocalizedText::new("Choose target policy", "选择目标策略");
 pub(crate) const CONDITION_1: LocalizedText = LocalizedText::new("Condition 1", "条件 1");
-pub(crate) const CORE_AND_UPDATES: LocalizedText =
-    LocalizedText::new("Core version and runtime", "内核版本与运行状态");
 pub(crate) const COULD_NOT_DETERMINE_WHERE_TO_SAVE_RULES: LocalizedText = LocalizedText::new(
     "Could not determine where to save rules",
     "无法确定规则保存位置",
@@ -114,13 +93,9 @@ pub(crate) const COULD_NOT_UPDATE_SOURCE: LocalizedText =
 pub(crate) const COUNTRY_OR_REGION: LocalizedText =
     LocalizedText::new("Country or region", "国家或地区");
 pub(crate) const CURRENT: LocalizedText = LocalizedText::new("Current", "当前");
-pub(crate) const CURRENT_MANAGED_NETWORK_BEHAVIOR: LocalizedText =
-    LocalizedText::new("Current managed network behavior", "当前托管网络行为");
 pub(crate) const DAILY: LocalizedText = LocalizedText::new("Daily", "每天");
 pub(crate) const DESTINATION_PORT: LocalizedText =
     LocalizedText::new("Destination port", "目标端口");
-pub(crate) const DIRECT_GLOBAL_OR_ORDERED_RULES: LocalizedText =
-    LocalizedText::new("Direct, global, or ordered rules", "直连、全局或有序规则");
 pub(crate) const DISABLED: LocalizedText = LocalizedText::new("Disabled", "已禁用");
 pub(crate) const SOURCE_DISABLED_LABEL: LocalizedText = LocalizedText::new("Disabled", "未启用");
 pub(crate) const DNS_AND_TUN: LocalizedText = LocalizedText::new("DNS and TUN", "DNS 与 TUN");
@@ -223,29 +198,12 @@ pub(crate) const FINAL_DOES_NOT_NEED_A_MATCH_PARAMETER: LocalizedText = Localize
     "FINAL does not need a match parameter",
     "FINAL 不需要匹配参数",
 );
-pub(crate) const FINAL_IS_ALWAYS_EVALUATED_LAST_AND_HANDLES_UNMATCHED_TRAFFIC: LocalizedText =
-    LocalizedText::new(
-        "FINAL is always evaluated last and handles unmatched traffic.",
-        "FINAL 始终最后匹配，用于处理此前未命中的流量。",
-    );
 pub(crate) const FOLLOW_SYSTEM: LocalizedText = LocalizedText::new("Follow system", "跟随系统");
 pub(crate) const GENERAL: LocalizedText = LocalizedText::new("General", "通用");
 pub(crate) const GLOBAL_EXIT: LocalizedText = LocalizedText::new("Global exit", "全局出口");
-pub(crate) const GROUPS_MATCH_FROM_TOP_TO_BOTTOM_DRAG_TO_REORDER: LocalizedText =
-    LocalizedText::new(
-        "Groups match from top to bottom; drag the handle to change priority.",
-        "分组从上到下匹配；拖动把手调整优先级。",
-    );
-pub(crate) const HTTPS_ONLY_UP_TO_1_MIB_INVALID_LINES_ARE_COUNTED: LocalizedText =
-    LocalizedText::new(
-        "HTTPS only · Up to 1 MiB · Invalid lines are counted separately",
-        "只接受 HTTPS · 最多 1 MiB · 无效行会单独计数",
-    );
 pub(crate) const INSTALLED: LocalizedText = LocalizedText::new("Installed", "已安装");
 pub(crate) const INTERFACE_LANGUAGE: LocalizedText =
     LocalizedText::new("Interface language", "界面语言");
-pub(crate) const INTERFACE_LANGUAGE_AND_STARTUP: LocalizedText =
-    LocalizedText::new("Interface language and startup", "界面语言与启动");
 pub(crate) const IPV4_ADDRESS_RANGE: LocalizedText =
     LocalizedText::new("IPv4 address range", "IPv4 地址段");
 pub(crate) const IPV6_ADDRESS_RANGE: LocalizedText =
@@ -263,21 +221,9 @@ pub(crate) const LANGUAGE_SAVED: LocalizedText =
     LocalizedText::new("Language saved", "界面语言已保存");
 pub(crate) const LAUNCH_AT_LOGIN: LocalizedText =
     LocalizedText::new("Launch at login", "登录时自动启动");
-pub(crate) const START_MANIS_WITH_YOUR_DESKTOP_SESSION: LocalizedText = LocalizedText::new(
-    "Start Manis automatically with your desktop session; only one copy runs at a time",
-    "随桌面会话自动启动 Manis；同一时间只运行一个实例",
-);
-pub(crate) const OPENING_MANIS_AGAIN_BRINGS_THIS_WINDOW_FORWARD: LocalizedText = LocalizedText::new(
-    "Opening Manis again brings this window forward instead of starting a second copy.",
-    "再次打开 Manis 时会显示当前窗口，不会启动第二个实例。",
-);
 pub(crate) const STARTUP: LocalizedText = LocalizedText::new("Startup", "启动");
 pub(crate) const AUTO_CONNECT_ON_STARTUP: LocalizedText =
     LocalizedText::new("Start connected", "启动时自动连接");
-pub(crate) const START_THE_KERNEL_AS_SOON_AS_MANIS_OPENS: LocalizedText = LocalizedText::new(
-    "Starts the managed kernel when Manis opens, so the proxy is ready without a second click.",
-    "打开 Manis 时自动启动内核，不必再点一次「启动 Mihomo」。",
-);
 pub(crate) const STARTUP_SETTING_COULD_NOT_BE_SAVED: LocalizedText =
     LocalizedText::new("The startup setting could not be saved", "启动设置保存失败");
 pub(crate) const STARTUP_SETTING_DATA_DIRECTORY_UNAVAILABLE: LocalizedText = LocalizedText::new(
@@ -301,8 +247,6 @@ pub(crate) const MATCHES_ONLY_AFTER_EVERY_RULE_ABOVE_MISSES: LocalizedText = Loc
     "Matches only after every rule above misses",
     "仅在上方所有规则均未命中时生效",
 );
-pub(crate) const NETWORK_BEHAVIOR: LocalizedText =
-    LocalizedText::new("Network behavior", "网络行为");
 pub(crate) const NEVER_UPDATED: LocalizedText = LocalizedText::new("Never updated", "从未更新");
 pub(crate) const NODE_NAME: LocalizedText = LocalizedText::new("Node name", "节点名称");
 pub(crate) const NOT_INSTALLED: LocalizedText = LocalizedText::new("Not installed", "尚未安装");
@@ -349,8 +293,6 @@ pub(crate) const REMOTE_QX_RULE_REMOVAL_FAILED: LocalizedText =
     LocalizedText::new("Remote QX rule removal failed", "远程 QX 规则移除失败");
 pub(crate) const REMOTE_QX_RULE_UPDATE_FAILED: LocalizedText =
     LocalizedText::new("Remote QX rule update failed", "远程 QX 规则更新失败");
-pub(crate) const REMOTE_RULE_SETS: LocalizedText =
-    LocalizedText::new("Remote rule sets", "远程规则集");
 pub(crate) const REMOVE: LocalizedText = LocalizedText::new("Remove", "移除");
 pub(crate) const REMOVE_CONDITION: LocalizedText =
     LocalizedText::new("Remove condition", "移除条件");
@@ -420,8 +362,6 @@ pub(crate) const SOURCE_RECOGNITION_FAILED: LocalizedText =
 pub(crate) const SOURCE_TYPE: LocalizedText = LocalizedText::new("Source type", "来源类型");
 pub(crate) const SOURCE_URL: LocalizedText = LocalizedText::new("Source URL", "来源 URL");
 pub(crate) const SUBSCRIPTION: LocalizedText = LocalizedText::new("Subscription", "订阅来源");
-pub(crate) const SUBSCRIPTIONS_AND_NODES: LocalizedText =
-    LocalizedText::new("Subscriptions and nodes", "订阅与单节点");
 pub(crate) const SUBSCRIPTION_DISABLED: LocalizedText =
     LocalizedText::new("Subscription disabled", "订阅已停用");
 pub(crate) const SUBSCRIPTION_ENABLED: LocalizedText =
@@ -437,11 +377,6 @@ pub(crate) const THE_SAME_CONDITION_APPEARS_MORE_THAN_ONCE: LocalizedText = Loca
     "The same condition appears more than once",
     "同一个匹配条件不能重复添加",
 );
-pub(crate) const THE_TARGET_POLICY_IS_USED_BY_EVERY_RULE_IN_THIS: LocalizedText =
-    LocalizedText::new(
-        "The target policy is used by every rule in this source.",
-        "此来源中的全部规则都会使用所选目标策略。",
-    );
 pub(crate) const THIS_MANUAL_RULE_ALREADY_EXISTS: LocalizedText =
     LocalizedText::new("This manual rule already exists", "这条手动规则已经存在");
 pub(crate) const THIS_RULE_TYPE_CANNOT_BE_MATCHED_EXACTLY_BY_THE_CURRENT: LocalizedText =
@@ -466,10 +401,6 @@ pub(crate) const UPDATE_STATUS: LocalizedText = LocalizedText::new("Updating…"
 pub(crate) const UPDATING_REMOTE_QX_RULES: LocalizedText =
     LocalizedText::new("Updating remote QX rules", "正在更新远程 QX 规则");
 pub(crate) const US: LocalizedText = LocalizedText::new("US", "US（国家代码）");
-pub(crate) const USED_TO_IMPROVE_NETWORK_ACTIVITY: LocalizedText = LocalizedText::new(
-    "Used to improve Network Activity",
-    "用于改善网络活动中的进程信息",
-);
 pub(crate) const USE_THIS_SOURCE: LocalizedText =
     LocalizedText::new("Use this source", "使用此来源");
 pub(crate) const VALIDATING_AND_SAVING_SINGLE_NODE_SOURCE: LocalizedText = LocalizedText::new(

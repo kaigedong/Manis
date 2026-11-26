@@ -655,24 +655,7 @@ impl ManisApp {
             .flex_1();
 
         match focus {
-            None => {
-                summary = summary
-                    .child(div().size(px(7.0)).rounded_full().bg(theme.route_trace))
-                    .child(
-                        div()
-                            .text_size(px(12.5))
-                            .line_height(px(18.0))
-                            .text_color(theme.text_secondary)
-                            .child(match language {
-                                Language::English => {
-                                    "Hover any rule to trace Rule → Policy Group → Active Exit, or hover an exit to find every matching rule."
-                                }
-                                Language::SimplifiedChinese => {
-                                    "悬停左侧分流规则查看「规则 → 策略组 → 激活节点」完整链路；悬停右侧出口可反查所有经由该节点出站的规则。"
-                                }
-                            }),
-                    );
-            }
+            None => {}
             Some(RulesTreeFocus::Rule(rule_id)) => {
                 if let Some(item) = rule_items.iter().find(|r| r.id == *rule_id) {
                     let slot = policy_slots.iter().find(|p| p.name == item.target_policy);

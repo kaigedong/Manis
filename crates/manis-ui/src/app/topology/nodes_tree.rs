@@ -234,28 +234,12 @@ impl ManisApp {
                     })
                     .collect::<Vec<_>>();
 
-                let mut header = div()
+                let header = div()
                     .flex()
                     .items_center()
                     .justify_between()
                     .gap(Space::Sm.px())
                     .child(tier_tag(tier_label, theme));
-                if layer_idx == 0 {
-                    header = header.child(
-                        div()
-                            .text_size(px(11.5))
-                            .line_height(px(16.0))
-                            .text_color(theme.text_tertiary)
-                            .child(match language {
-                                Language::English => {
-                                    "Hover a policy group to trace member groups & nodes · Click to pin & switch exit"
-                                }
-                                Language::SimplifiedChinese => {
-                                    "悬停任意策略组高亮全部成员与出口链路 · 点击锁定后可直接点下级策略组或节点切换"
-                                }
-                            }),
-                    );
-                }
 
                 let row = div()
                     .w_full()
@@ -584,24 +568,7 @@ impl ManisApp {
             .flex_1();
 
         match focus {
-            None => {
-                summary = summary
-                    .child(div().size(px(7.0)).rounded_full().bg(theme.status_success))
-                    .child(
-                        div()
-                            .text_size(px(12.5))
-                            .line_height(px(18.0))
-                            .text_color(theme.text_secondary)
-                            .child(match language {
-                                Language::English => {
-                                    "Hover any policy group to highlight its path to every member node, or hover a node to trace its groups."
-                                }
-                                Language::SimplifiedChinese => {
-                                    "将鼠标移到任意策略组上，即可高亮通往全部成员节点的路径；移到下方节点上可反查所属策略组。"
-                                }
-                            }),
-                    );
-            }
+            None => {}
             Some(NodesTreeFocus::Policy(policy_id)) => {
                 if let Some(policy) = policies.iter().find(|item| item.id == *policy_id) {
                     let policy_name_map: BTreeMap<String, usize> = policies

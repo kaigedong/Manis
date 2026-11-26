@@ -83,9 +83,7 @@ impl ManisApp {
                     })
                     .child(section_header(
                         pipeline_title(language),
-                        language.localized(
-                            copy::configuration::GROUPS_MATCH_FROM_TOP_TO_BOTTOM_DRAG_TO_REORDER,
-                        ),
+                        "",
                         Some(actions),
                         theme,
                     )),

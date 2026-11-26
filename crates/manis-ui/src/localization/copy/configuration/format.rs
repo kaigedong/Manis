@@ -273,21 +273,14 @@ pub(crate) fn updated_days_ago(language: Language, days: u64) -> String {
     }
 }
 
-pub(crate) fn profile_source_detail(
+pub(crate) const fn profile_source_detail(
     language: Language,
     source: RuntimeProfileSource,
-) -> &'static str {
+) -> Option<&'static str> {
     match (language, source) {
-        #[cfg(any(test, feature = "snapshot-fixtures"))]
-        (Language::English, RuntimeProfileSource::FixtureController) => "Test snapshot only",
-        (Language::English, RuntimeProfileSource::SavedSources) => {
-            "Compiled from private local sources"
-        }
-        (Language::English, RuntimeProfileSource::Invalid) => "Check local startup arguments",
-        #[cfg(any(test, feature = "snapshot-fixtures"))]
-        (Language::SimplifiedChinese, RuntimeProfileSource::FixtureController) => "仅用于测试快照",
-        (Language::SimplifiedChinese, RuntimeProfileSource::SavedSources) => "从本机私有来源编译",
-        (Language::SimplifiedChinese, RuntimeProfileSource::Invalid) => "请检查来源设置",
+        (Language::English, RuntimeProfileSource::Invalid) => Some("Check local startup arguments"),
+        (Language::SimplifiedChinese, RuntimeProfileSource::Invalid) => Some("请检查来源设置"),
+        _ => None,
     }
 }
 

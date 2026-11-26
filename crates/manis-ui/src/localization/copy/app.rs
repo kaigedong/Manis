@@ -189,11 +189,6 @@ pub(crate) const RESTART_PREFERENCE_COULD_NOT_BE_SAVED: LocalizedText = Localize
     " · restart preference could not be saved",
     " · 但未能保存重启偏好",
 );
-pub(crate) const ROUTING_RULES_CHOOSE_POLICY_GROUPS_POLICIES_CHOOSE_EXITS: LocalizedText =
-    LocalizedText::new(
-        "Routing rules choose policy groups; policies choose exits.",
-        "分流规则命中策略组，策略组再决定具体出口。",
-    );
 pub(crate) const ROUTING_RULES_OPENED: LocalizedText =
     LocalizedText::new("Routing rules opened", "已打开分流规则");
 pub(crate) const RULES: LocalizedText = LocalizedText::new("Rules", "规则");

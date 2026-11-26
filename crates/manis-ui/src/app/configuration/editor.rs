@@ -184,7 +184,6 @@ impl ManisApp {
             .text_size(TextRole::Metadata.size())
             .line_height(TextRole::Metadata.line_height())
             .text_color(theme.text_secondary)
-            .child(language.localized(copy::backup::EDIT_DETAIL))
             .child(
                 div()
                     .flex()

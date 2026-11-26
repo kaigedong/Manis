@@ -11,8 +11,6 @@ pub(crate) const INSTALL_UPDATE_ACTION: LocalizedText = LocalizedText::new("Inst
 pub(crate) const DISMISS_UPDATE: LocalizedText = LocalizedText::new("Dismiss", "稍后提醒");
 pub(crate) const ABOUT_AND_UPDATES: LocalizedText =
     LocalizedText::new("About and updates", "关于与更新");
-pub(crate) const ABOUT_AND_UPDATES_DETAIL: LocalizedText =
-    LocalizedText::new("Version, licence and app updates", "版本、许可与应用更新");
 pub(crate) const APP_LICENSE: LocalizedText =
     LocalizedText::new("Application code: Apache-2.0", "应用代码：Apache-2.0");
 pub(crate) const CORE_LICENSE: LocalizedText =

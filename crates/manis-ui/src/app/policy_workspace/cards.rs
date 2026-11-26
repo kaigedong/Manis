@@ -1,6 +1,6 @@
 use super::{
     AnyElement, Context, ControllerState, CountNoun, Div, InteractiveElement, IntoElement,
-    ManisApp, Message, ParentElement, Space, Stateful, Styled, Theme, copy, div, px,
+    ManisApp, Message, ParentElement, Space, Stateful, Styled, Theme, div, px,
 };
 use crate::components::section_header;
 
@@ -70,13 +70,7 @@ impl ManisApp {
             .gap(Space::Md.px())
             .child(section_header(
                 language.message(Message::PolicyGroups),
-                format!(
-                    "{} · {}",
-                    language.count(CountNoun::PolicyGroup, policy_count),
-                    language.localized(
-                        copy::app::ROUTING_RULES_CHOOSE_POLICY_GROUPS_POLICIES_CHOOSE_EXITS,
-                    ),
-                ),
+                language.count(CountNoun::PolicyGroup, policy_count),
                 Some(actions.into_any_element()),
                 theme,
             ));

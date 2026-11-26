@@ -277,7 +277,10 @@ impl ManisApp {
                 .mt_4(),
             )
             .child(self.qx_rule_interval_select(view, language, theme, cx))
-            .child(self.qx_rule_import_feedback(theme, language));
+            .when_some(
+                self.qx_rule_import_feedback(theme, language),
+                ParentElement::child,
+            );
         crate::app::windows::EditorSections::new(
             Self::qx_rule_editor_title(view.editing, language, theme),
             body,
@@ -454,26 +457,16 @@ impl ManisApp {
     }
 
     fn qx_rule_editor_title(editing: bool, language: Language, theme: Theme) -> Div {
-        dialog_header_surface(theme)
-            .child(
-                div()
-                    .text_size(px(17.0))
-                    .font_weight(TextRole::SectionTitle.weight())
-                    .child(if editing {
-                        language.localized(copy::configuration::EDIT_RULE_SOURCE)
-                    } else {
-                        language.localized(copy::configuration::ADD_RULE_SOURCE)
-                    }),
-            )
-            .child(
-                div()
-                    .mt_1()
-                    .text_size(TextRole::Metadata.size())
-                    .text_color(theme.text_secondary)
-                    .child(language.localized(
-                        copy::configuration::THE_TARGET_POLICY_IS_USED_BY_EVERY_RULE_IN_THIS,
-                    )),
-            )
+        dialog_header_surface(theme).child(
+            div()
+                .text_size(px(17.0))
+                .font_weight(TextRole::SectionTitle.weight())
+                .child(if editing {
+                    language.localized(copy::configuration::EDIT_RULE_SOURCE)
+                } else {
+                    language.localized(copy::configuration::ADD_RULE_SOURCE)
+                }),
+        )
     }
 
     fn rule_source_card(

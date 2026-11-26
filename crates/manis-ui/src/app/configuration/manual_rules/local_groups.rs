@@ -436,15 +436,6 @@ impl ManisApp {
                         language.localized(copy::configuration::ADD_LOCAL_RULE_GROUP)
                     }),
             )
-            .child(
-                div()
-                    .mt_1()
-                    .text_size(TextRole::Metadata.size())
-                    .text_color(theme.text_secondary)
-                    .child(language.localized(
-                        copy::configuration::THE_TARGET_POLICY_IS_USED_BY_EVERY_RULE_IN_THIS,
-                    )),
-            )
             .into_any_element()
     }
 
@@ -482,31 +473,19 @@ impl ManisApp {
             )
             .child(self.local_rule_group_target_select(theme, language, cx))
             .child(
-                div()
-                    .mt_4()
-                    .child(
-                        Checkbox::new("local-rule-group-enabled")
-                            .label(language.localized(copy::configuration::LOCAL_RULE_GROUP_ENABLED))
-                            .map(crate::components::primary_button_interaction)
-                            .checked(draft.enabled)
-                            .tab_stop(true)
-                            .cursor_pointer()
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.local_rule_group_draft.enabled =
-                                    !this.local_rule_group_draft.enabled;
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        div()
-                            .mt_1()
-                            .text_size(TextRole::Metadata.size())
-                            .line_height(TextRole::Metadata.line_height())
-                            .text_color(theme.text_tertiary)
-                            .child(language.localized(
-                                copy::configuration::THE_TARGET_POLICY_IS_USED_BY_EVERY_RULE_IN_THIS,
-                            )),
-                    ),
+                div().mt_4().child(
+                    Checkbox::new("local-rule-group-enabled")
+                        .label(language.localized(copy::configuration::LOCAL_RULE_GROUP_ENABLED))
+                        .map(crate::components::primary_button_interaction)
+                        .checked(draft.enabled)
+                        .tab_stop(true)
+                        .cursor_pointer()
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.local_rule_group_draft.enabled =
+                                !this.local_rule_group_draft.enabled;
+                            cx.notify();
+                        })),
+                ),
             )
             .when_some(draft.error, |body, error| {
                 body.child(

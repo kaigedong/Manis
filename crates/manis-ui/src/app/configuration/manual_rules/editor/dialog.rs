@@ -75,7 +75,7 @@ impl ManisApp {
         let footer = self.manual_rule_editor_footer(editing, theme, language, cx);
 
         crate::app::windows::EditorSections::new(
-            Self::manual_rule_editor_title(editing, final_selected, theme, language),
+            Self::manual_rule_editor_title(editing, theme, language),
             body,
             footer,
         )
@@ -228,32 +228,20 @@ impl ManisApp {
 
     pub(in crate::app) fn manual_rule_editor_title(
         editing: bool,
-        final_selected: bool,
         theme: Theme,
         language: Language,
     ) -> Stateful<Div> {
         dialog_header_surface(theme)
-        .id("manual-rule-modal-header")
-        .child(
-            div()
-                .text_size(px(17.0))
-                .font_weight(TextRole::SectionTitle.weight())
-                .child(if editing {
-                    language.localized(copy::configuration::EDIT_ROUTING_RULE)
-                } else {
-                    language.localized(copy::configuration::ADD_ROUTING_RULE)
-                }),
-        )
-        .child(
-            div()
-                .mt_1()
-                .text_size(TextRole::Metadata.size())
-                .text_color(theme.text_secondary)
-                .child(if final_selected {
-                    language.localized(copy::configuration::FINAL_IS_ALWAYS_EVALUATED_LAST_AND_HANDLES_UNMATCHED_TRAFFIC)
-                } else {
-                    language.localized(copy::configuration::ALL_CONDITIONS_MUST_MATCH_GROUP_ORDER_DETERMINES_RULE_PRIORITY)
-                }),
-        )
+            .id("manual-rule-modal-header")
+            .child(
+                div()
+                    .text_size(px(17.0))
+                    .font_weight(TextRole::SectionTitle.weight())
+                    .child(if editing {
+                        language.localized(copy::configuration::EDIT_ROUTING_RULE)
+                    } else {
+                        language.localized(copy::configuration::ADD_ROUTING_RULE)
+                    }),
+            )
     }
 }

@@ -429,23 +429,20 @@ impl ManisApp {
         cx: &mut Context<Self>,
     ) -> Div {
         // Feedback stays beside the submit button, so an error is never off-screen.
-        let (feedback, feedback_color) = match self.proxy_source_editor.error.as_ref() {
-            Some(error) => (error.clone(), theme.status_error),
-            None if view.busy() => (
+        let feedback = match self.proxy_source_editor.error.as_ref() {
+            Some(error) => Some((error.clone(), theme.status_error)),
+            None if view.busy() => Some((
                 language
                     .localized(copy::configuration::PROCESSING)
                     .to_owned(),
                 theme.text_secondary,
-            ),
-            None => (
-                language
-                    .localized(copy::configuration::CHANGES_ARE_STORED_LOCALLY)
-                    .to_owned(),
-                theme.text_tertiary,
-            ),
+            )),
+            None => None,
         };
         dialog_footer_surface(theme)
-            .child(footer_feedback(feedback, feedback_color))
+            .when_some(feedback, |footer, (text, color)| {
+                footer.child(footer_feedback(text, color))
+            })
             .child(
                 style_action_button(
                     Button::new("cancel-proxy-source")
@@ -491,8 +488,7 @@ impl ManisApp {
         language: Language,
         theme: Theme,
     ) -> Div {
-        dialog_header_surface(theme)
-        .child(
+        dialog_header_surface(theme).child(
             div()
                 .text_size(TextRole::SectionTitle.size())
                 .line_height(TextRole::SectionTitle.line_height())
@@ -502,17 +498,6 @@ impl ManisApp {
                     language.localized(copy::configuration::EDIT_PROXY_SOURCE)
                 } else {
                     language.localized(copy::configuration::ADD_PROXY_SOURCE)
-                }),
-        )
-        .child(
-            div()
-                .mt_1()
-                .text_size(TextRole::Metadata.size())
-                .text_color(theme.text_secondary)
-                .child(if view.direct_input {
-                    language.localized(copy::configuration::A_SINGLE_NODE_SOURCE_DOES_NOT_NEED_AN_UPDATE_INTERVAL)
-                } else {
-                    language.localized(copy::configuration::CHOOSE_A_SUBSCRIPTION_OR_A_SINGLE_NODE_SHARE_LINK)
                 }),
         )
     }

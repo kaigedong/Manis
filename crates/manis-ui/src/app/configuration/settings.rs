@@ -18,10 +18,7 @@ use crate::{
     theme::{ControlSize, Radius, Space, TextRole, Theme},
 };
 
-use super::{
-    configuration_section_detail, configuration_section_label, language_preference_label,
-    panel_surface,
-};
+use super::{configuration_section_label, language_preference_label, panel_surface};
 
 mod advanced;
 mod kernel;

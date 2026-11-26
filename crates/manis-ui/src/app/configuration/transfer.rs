@@ -260,29 +260,10 @@ impl ManisApp {
         panel_surface("configuration-transfer", compact, theme)
             .child(section_header(
                 language.localized(copy::backup::TITLE),
-                language.localized(copy::backup::DETAIL),
+                "",
                 Some(edit_action),
                 theme,
             ))
-            .child(
-                div()
-                    .mt(Space::Md.px())
-                    .pt(Space::Md.px())
-                    .border_t_1()
-                    .border_color(theme.outline_subtle)
-                    .text_size(TextRole::Metadata.size())
-                    .line_height(TextRole::Metadata.line_height())
-                    .text_color(theme.text_secondary)
-                    .child(language.localized(copy::backup::SENSITIVE)),
-            )
-            .child(
-                div()
-                    .mt(Space::Xs.px())
-                    .text_size(TextRole::Metadata.size())
-                    .line_height(TextRole::Metadata.line_height())
-                    .text_color(theme.text_secondary)
-                    .child(language.localized(copy::backup::EXCLUDED)),
-            )
             .when_some(
                 self.subscription_store_dir
                     .as_deref()
@@ -296,7 +277,7 @@ impl ManisApp {
                             ActionRole::Secondary,
                             ControlSize::Compact,
                         )
-                        .mt(Space::Sm.px())
+                        .mt(Space::Md.px())
                         .on_click(move |_, _, cx| cx.reveal_path(&store)),
                     )
                 },
@@ -456,13 +437,6 @@ impl ManisApp {
                         .line_height(TextRole::Metadata.line_height())
                         .text_color(theme.status_warning)
                         .child(language.localized(copy::backup::REPLACE_NOTICE)),
-                )
-                .child(
-                    div()
-                        .text_size(TextRole::Metadata.size())
-                        .line_height(TextRole::Metadata.line_height())
-                        .text_color(theme.text_secondary)
-                        .child(language.localized(copy::backup::EXCLUDED)),
                 );
         }
         if !state.message.is_empty() {

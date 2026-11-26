@@ -733,23 +733,11 @@ fn fallback_card(language: Language, theme: Theme) -> Stateful<Div> {
                 .child(
                     div()
                         .min_w(px(0.0))
-                        .child(
-                            div()
-                                .text_size(TextRole::Label.size())
-                                .line_height(TextRole::Label.line_height())
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(theme.text_primary)
-                                .child(fallback_title(language)),
-                        )
-                        .child(
-                            div()
-                                .text_size(TextRole::Metadata.size())
-                                .line_height(TextRole::Metadata.line_height())
-                                .text_color(theme.text_tertiary)
-                                .child(language.localized(
-                                    copy::configuration::FALLBACK_FOR_TRAFFIC_NOT_MATCHED_ABOVE,
-                                )),
-                        ),
+                        .text_size(TextRole::Label.size())
+                        .line_height(TextRole::Label.line_height())
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(theme.text_primary)
+                        .child(fallback_title(language)),
                 ),
         )
         .child(status_badge(
