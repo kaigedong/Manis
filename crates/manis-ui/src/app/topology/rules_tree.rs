@@ -4,15 +4,14 @@ use gpui::{
     AnyElement, Context, Div, FontWeight, InteractiveElement, IntoElement, ParentElement, Stateful,
     StatefulInteractiveElement, Styled, div, prelude::FluentBuilder as _, px,
 };
-use gpui_component::{
-    Disableable as _, IconName, Sizable as _, scroll::ScrollableElement as _, switch::Switch,
-};
+use gpui_component::{Disableable as _, IconName, Sizable as _, switch::Switch};
 use manis_core::WindowSizeClass;
 use manis_profile::QxRuleList;
 
 use super::{
-    BezierEdge, EdgeOrientation, PortRegistry, PortSide, RulesTreeFocus, compact_protocol_label,
-    legend_entry, new_port_registry, paint_edges_canvas, port_dot, port_tracker, with_alpha,
+    BezierEdge, EdgeOrientation, LayoutRegistry, PortSide, RulesTreeFocus, card_port_tracker,
+    col_tag, compact_protocol_label, legend_entry, new_layout_registry, paint_edges_canvas,
+    port_dot, scrollable_tree_column, with_alpha,
 };
 use crate::{
     app::{ManisApp, nodes::region_code, presentation::policy_kind_label},
@@ -110,7 +109,7 @@ impl ManisApp {
                 ));
         }
 
-        let registry = new_port_registry();
+        let registry = new_layout_registry();
         let edges = build_rules_tree_edges(&rule_items, &policy_slots, focus.as_ref(), theme);
 
         let (hl_rules, hl_policies, hl_exits) =
@@ -167,82 +166,105 @@ impl ManisApp {
             })
             .collect::<Vec<_>>();
 
-        let bay_width = if compact { px(44.0) } else { px(64.0) };
+        let bay_width = if compact { px(32.0) } else { px(48.0) };
+        let col1_header = col_tag(
+            match language {
+                Language::English => format!("01 · ROUTING RULES ({})", rule_items.len()),
+                Language::SimplifiedChinese => {
+                    format!("01 · 分流规则（{}）", rule_items.len())
+                }
+            },
+            theme.route_trace,
+            theme.route_soft,
+        )
+        .into_any_element();
+        let col2_header = col_tag(
+            match language {
+                Language::English => format!("02 · POLICY GROUPS ({})", policy_slots.len()),
+                Language::SimplifiedChinese => {
+                    format!("02 · 策略组（{}）", policy_slots.len())
+                }
+            },
+            theme.action_primary,
+            theme.action_soft,
+        )
+        .into_any_element();
+        let col3_header = col_tag(
+            match language {
+                Language::English => format!("03 · ACTIVE EXITS ({})", exit_slots.len()),
+                Language::SimplifiedChinese => {
+                    format!("03 · 当前激活出口（{}）", exit_slots.len())
+                }
+            },
+            theme.status_success,
+            theme.status_success_soft,
+        )
+        .into_any_element();
+
         let flow_inner = div()
             .relative()
-            .w_full()
+            .size_full()
+            .min_h_0()
             .flex()
-            .items_start()
-            .child(paint_edges_canvas(registry, edges))
-            // Column 1: Rules
-            .child(
-                div()
-                    .relative()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .gap(px(5.0))
-                    .child(col_tag(
-                        match language {
-                            Language::English => "01 · ROUTING RULES (TOP TO BOTTOM)",
-                            Language::SimplifiedChinese => "01 · 分流规则（自上而下）",
-                        },
-                        theme.route_trace,
-                        theme.route_soft,
-                    ))
-                    .children(col1_cards),
-            )
+            .items_stretch()
+            .child(paint_edges_canvas(registry.clone(), edges))
+            // Column 1: Rules (independently scrollable)
+            .child(scrollable_tree_column(
+                "rules-tree-col-rules-scroll",
+                "rules-tree-col-rules-scroll".to_owned(),
+                "col:rules".to_owned(),
+                col1_header,
+                col1_cards,
+                px(5.0),
+                &self.topology.rules_col_scrolls[0],
+                registry.clone(),
+                None,
+                px(0.0),
+                theme,
+            ))
             // Unobstructed Bézier bay 1 -> 2
             .child(div().w(bay_width).flex_shrink_0())
-            // Column 2: Policy Groups
-            .child(
-                div()
-                    .relative()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .gap(px(5.0))
-                    .child(col_tag(
-                        match language {
-                            Language::English => "02 · POLICY GROUPS",
-                            Language::SimplifiedChinese => "02 · 策略组",
-                        },
-                        theme.action_primary,
-                        theme.action_soft,
-                    ))
-                    .children(col2_cards),
-            )
+            // Column 2: Policy Groups (independently scrollable)
+            .child(scrollable_tree_column(
+                "rules-tree-col-policies-scroll",
+                "rules-tree-col-policies-scroll".to_owned(),
+                "col:policies".to_owned(),
+                col2_header,
+                col2_cards,
+                px(5.0),
+                &self.topology.rules_col_scrolls[1],
+                registry.clone(),
+                None,
+                px(0.0),
+                theme,
+            ))
             // Unobstructed Bézier bay 2 -> 3
             .child(div().w(bay_width).flex_shrink_0())
-            // Column 3: Active Exit Nodes
-            .child(
-                div()
-                    .relative()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .gap(px(5.0))
-                    .child(col_tag(
-                        match language {
-                            Language::English => "03 · ACTIVE EXITS",
-                            Language::SimplifiedChinese => "03 · 当前激活出口",
-                        },
-                        theme.status_success,
-                        theme.status_success_soft,
-                    ))
-                    .children(col3_cards),
-            );
+            // Column 3: Active Exit Nodes (independently scrollable)
+            .child(scrollable_tree_column(
+                "rules-tree-col-exits-scroll",
+                "rules-tree-col-exits-scroll".to_owned(),
+                "col:exits".to_owned(),
+                col3_header,
+                col3_cards,
+                px(5.0),
+                &self.topology.rules_col_scrolls[2],
+                registry,
+                None,
+                px(0.0),
+                theme,
+            ));
 
         let canvas_card = card_surface(theme)
             .id("rules-tree-canvas")
             .debug_selector(|| "rules-tree-canvas".to_owned())
+            .flex_1()
+            .min_h_0()
             .w_full()
-            .flex_shrink_0()
-            .min_h(px(360.0))
-            .p(px(16.0))
+            .overflow_hidden()
+            .p(px(14.0))
+            .flex()
+            .flex_col()
             .on_click(cx.listener(|this, _, _, cx| {
                 if this.topology.pinned_rules.take().is_some() {
                     cx.notify();
@@ -267,28 +289,14 @@ impl ManisApp {
             .child(div().flex_shrink_0().px(horizontal_pad).child(inspector))
             .child(
                 div()
-                    .relative()
                     .flex_1()
                     .min_h_0()
                     .w_full()
-                    .child(
-                        div()
-                            .id("rules-tree-scroll")
-                            .debug_selector(|| "rules-tree-scroll".to_owned())
-                            .size_full()
-                            .overflow_y_scroll()
-                            .track_scroll(&self.topology.rules_scroll)
-                            .child(
-                                div()
-                                    .w_full()
-                                    .px(horizontal_pad)
-                                    .pb(Space::Lg.px())
-                                    .flex()
-                                    .flex_col()
-                                    .child(canvas_card),
-                            ),
-                    )
-                    .vertical_scrollbar(&self.topology.rules_scroll),
+                    .px(horizontal_pad)
+                    .pb(Space::Lg.px())
+                    .flex()
+                    .flex_col()
+                    .child(canvas_card),
             )
     }
 
@@ -862,7 +870,7 @@ impl ManisApp {
         item: &RuleTreeItem,
         highlighted: bool,
         has_focus: bool,
-        registry: PortRegistry,
+        registry: LayoutRegistry,
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -958,7 +966,11 @@ impl ManisApp {
                 }
                 cx.notify();
             }))
-            .child(port_tracker(registry, format!("r:{}", item.id)))
+            .child(card_port_tracker(
+                registry,
+                format!("r:{}", item.id),
+                "col:rules".to_owned(),
+            ))
             .child(
                 div()
                     .flex()
@@ -1052,7 +1064,7 @@ impl ManisApp {
         slot: &PolicySlot,
         highlighted: bool,
         has_focus: bool,
-        registry: PortRegistry,
+        registry: LayoutRegistry,
         language: Language,
         theme: Theme,
         cx: &mut Context<Self>,
@@ -1139,7 +1151,11 @@ impl ManisApp {
                 }
                 cx.notify();
             }))
-            .child(port_tracker(registry, format!("rp:{}", slot.name)))
+            .child(card_port_tracker(
+                registry,
+                format!("rp:{}", slot.name),
+                "col:policies".to_owned(),
+            ))
             .child(port_dot(
                 PortSide::Left,
                 if highlighted {
@@ -1244,7 +1260,7 @@ impl ManisApp {
         exit: &ActiveExitSlot,
         highlighted: bool,
         has_focus: bool,
-        registry: PortRegistry,
+        registry: LayoutRegistry,
         language: Language,
         theme: Theme,
         cx: &mut Context<Self>,
@@ -1333,7 +1349,11 @@ impl ManisApp {
                 }
                 cx.notify();
             }))
-            .child(port_tracker(registry, format!("re:{}", exit.name)))
+            .child(card_port_tracker(
+                registry,
+                format!("re:{}", exit.name),
+                "col:exits".to_owned(),
+            ))
             .child(port_dot(
                 PortSide::Left,
                 if highlighted {
@@ -1515,20 +1535,6 @@ fn build_rules_tree_edges(
     }
 
     edges
-}
-
-fn col_tag(label: &'static str, fg: gpui::Rgba, bg: gpui::Rgba) -> Div {
-    div()
-        .self_start()
-        .px(px(8.0))
-        .py(px(2.5))
-        .rounded(Radius::Badge.px())
-        .bg(bg)
-        .text_size(px(11.0))
-        .line_height(px(16.0))
-        .font_weight(FontWeight::SEMIBOLD)
-        .text_color(fg)
-        .child(label)
 }
 
 fn arrow_sep(theme: Theme) -> Div {

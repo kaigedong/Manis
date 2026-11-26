@@ -4,12 +4,13 @@ use gpui::{
     AnyElement, Context, Div, FontWeight, InteractiveElement, IntoElement, ParentElement, Stateful,
     StatefulInteractiveElement, Styled, div, prelude::FluentBuilder as _, px,
 };
-use gpui_component::{Icon, scroll::ScrollableElement as _};
+use gpui_component::Icon;
 use manis_core::{ManagedPolicyStrategy, NodeIdentity, PolicyGroupId, ProxyId, WindowSizeClass};
 
 use super::{
-    BezierEdge, EdgeOrientation, NodesTreeFocus, PortRegistry, PortSide, compact_protocol_label,
-    legend_entry, new_port_registry, paint_edges_canvas, port_dot, port_tracker, with_alpha,
+    BezierEdge, EdgeOrientation, LayoutRegistry, NodesTreeFocus, PortSide, card_port_tracker,
+    col_tag, compact_protocol_label, legend_entry, new_layout_registry, paint_edges_canvas,
+    port_dot, scrollable_tree_column, with_alpha,
 };
 use crate::{
     app::{
@@ -22,7 +23,7 @@ use crate::{
     },
     localization::{CountNoun, Language},
     mihomo::ControllerState,
-    theme::{MONO_FAMILY, Radius, Space, Theme},
+    theme::{MONO_FAMILY, Space, Theme},
 };
 
 struct TreePolicyData {
@@ -54,9 +55,10 @@ struct TreeSourceChip {
 }
 
 impl ManisApp {
-    /// Policy-to-nodes tree workspace: Tier 01 policy groups on top, unobstructed cubic Bézier
-    /// connection bay in the middle, and Tier 02 all nodes below.
-    #[allow(clippy::too_many_lines)] // Keeps the two-tier tree layout and edge builder cohesive.
+    /// Horizontal policy-to-nodes tree workspace: policy hierarchy columns on the left,
+    /// unobstructed cubic Bézier bays between tiers, and all physical nodes on the right.
+    /// Every column scrolls vertically on its own so dense tiers scroll without moving peers.
+    #[allow(clippy::too_many_lines)] // Keeps the horizontal multi-column tree layout cohesive.
     pub(in crate::app) fn nodes_tree_workspace(
         &self,
         theme: Theme,
@@ -112,7 +114,7 @@ impl ManisApp {
             None => all_nodes.iter().collect(),
         };
 
-        let registry = new_port_registry();
+        let registry = new_layout_registry();
         let policy_graph = build_policy_graph(&policies);
         let highlight = compute_nodes_tree_highlight(&policies, &policy_graph, focus.as_ref());
         let dense_mode = visible_nodes.len() > 10;
@@ -126,95 +128,125 @@ impl ManisApp {
             theme,
         );
 
-        let node_cards = visible_nodes
-            .iter()
-            .enumerate()
-            .map(|(index, node)| {
-                Self::nodes_tree_node_card(
-                    index,
-                    node,
-                    &policies,
-                    focus.as_ref(),
-                    &highlight,
-                    pinned_policy_id.as_deref(),
-                    dense_mode,
-                    registry.clone(),
-                    language,
-                    theme,
-                    cx,
-                )
-            })
-            .collect::<Vec<_>>();
-
-        // Keep the entire tree fitted cleanly to the viewport width: policy layers stack in
-        // topological order (composite groups above leaf groups, with same-row/cyclic arcs for
-        // mesh links), and the physical nodes tier switches to a wrapped chip matrix when > 10.
         let policy_layer_count = policy_graph.layers.len().max(1);
-        let node_bay_height = if policy_layer_count > 1 {
-            if dense_mode { px(74.0) } else { px(124.0) }
-        } else if dense_mode {
-            px(96.0)
+        let total_cols = policy_layer_count + 1;
+        let bay_width = if compact {
+            px(32.0)
+        } else if total_cols >= 3 {
+            px(44.0)
         } else {
-            px(152.0)
+            px(56.0)
         };
-        let inter_policy_bay_height = px(58.0);
+        let col_min_width = (total_cols >= 4).then_some(px(210.0));
 
-        let mut policy_tiers_stack = div().relative().w_full().flex().flex_col();
+        let mut flow_inner = div()
+            .relative()
+            .h_full()
+            .min_h_0()
+            .flex()
+            .items_stretch()
+            // Passive & adjacent-column edges paint cleanly behind cards and port dots.
+            .child(paint_edges_canvas(registry.clone(), bg_edges));
+
+        if total_cols >= 4 {
+            let cols = f32::from(u16::try_from(total_cols).unwrap_or(u16::MAX));
+            let min_total = cols * 220.0 + (cols - 1.0) * 44.0;
+            flow_inner = flow_inner.w_full().min_w(px(min_total));
+        } else {
+            flow_inner = flow_inner.w_full();
+        }
+
         if policies.is_empty() {
-            policy_tiers_stack = policy_tiers_stack.child(
-                div()
-                    .py(Space::Lg.px())
-                    .child(self.empty_policy_content(language, theme)),
-            );
+            let empty_policy_col = div()
+                .relative()
+                .flex_1()
+                .min_w_0()
+                .h_full()
+                .min_h_0()
+                .flex()
+                .flex_col()
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .pl(px(6.0))
+                        .pr(px(10.0))
+                        .pb(px(8.0))
+                        .border_b_1()
+                        .border_color(theme.outline_subtle)
+                        .child(col_tag(
+                            match language {
+                                Language::English => "01 · POLICY GROUPS (0)",
+                                Language::SimplifiedChinese => "01 · 策略组（0）",
+                            },
+                            theme.action_primary,
+                            theme.action_soft,
+                        )),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_h_0()
+                        .pt(Space::Md.px())
+                        .child(self.empty_policy_content(language, theme)),
+                );
+            flow_inner = flow_inner.child(empty_policy_col);
         } else {
             for (layer_idx, policy_indices) in policy_graph.layers.iter().enumerate() {
                 if layer_idx > 0 {
-                    policy_tiers_stack =
-                        policy_tiers_stack.child(div().h(inter_policy_bay_height).flex_shrink_0());
+                    flow_inner = flow_inner.child(div().w(bay_width).flex_shrink_0());
                 }
-                let layer_has_same_row = policy_graph
-                    .layer_has_same_row_edge
+                let layer_has_same_col = policy_graph
+                    .layer_has_same_column_edge
                     .get(layer_idx)
                     .copied()
                     .unwrap_or(false);
-                let tier_number = layer_idx + 1;
-                let tier_label = if policy_layer_count == 1 {
-                    match language {
-                        Language::English => {
-                            format!("TIER 01 · POLICY GROUPS ({})", policies.len())
-                        }
-                        Language::SimplifiedChinese => {
-                            format!("TIER 01 · 策略组（{}）", policies.len())
-                        }
-                    }
+                let col_number = layer_idx + 1;
+                let (col_label, tag_text, tag_fill) = if policy_layer_count == 1 {
+                    (
+                        match language {
+                            Language::English => {
+                                format!("01 · POLICY GROUPS ({})", policies.len())
+                            }
+                            Language::SimplifiedChinese => {
+                                format!("01 · 策略组（{}）", policies.len())
+                            }
+                        },
+                        theme.action_primary,
+                        theme.action_soft,
+                    )
                 } else if layer_idx + 1 < policy_layer_count {
-                    match language {
-                        Language::English => format!(
-                            "TIER {:02} · COMPOSITE POLICIES ({})",
-                            tier_number,
-                            policy_indices.len()
-                        ),
-                        Language::SimplifiedChinese => format!(
-                            "TIER {:02} · 复合策略组（{}）",
-                            tier_number,
-                            policy_indices.len()
-                        ),
-                    }
+                    (
+                        match language {
+                            Language::English => format!(
+                                "{col_number:02} · COMPOSITE POLICIES ({})",
+                                policy_indices.len()
+                            ),
+                            Language::SimplifiedChinese => {
+                                format!("{col_number:02} · 复合策略组（{}）", policy_indices.len())
+                            }
+                        },
+                        theme.route_trace,
+                        theme.route_soft,
+                    )
                 } else {
-                    match language {
-                        Language::English => format!(
-                            "TIER {:02} · POLICY GROUPS ({})",
-                            tier_number,
-                            policy_indices.len()
-                        ),
-                        Language::SimplifiedChinese => format!(
-                            "TIER {:02} · 策略组（{}）",
-                            tier_number,
-                            policy_indices.len()
-                        ),
-                    }
+                    (
+                        match language {
+                            Language::English => {
+                                format!(
+                                    "{col_number:02} · POLICY GROUPS ({})",
+                                    policy_indices.len()
+                                )
+                            }
+                            Language::SimplifiedChinese => {
+                                format!("{col_number:02} · 策略组（{}）", policy_indices.len())
+                            }
+                        },
+                        theme.action_primary,
+                        theme.action_soft,
+                    )
                 };
 
+                let col_key = format!("col:policy:{layer_idx}");
                 let layer_cards = policy_indices
                     .iter()
                     .map(|&policy_idx| {
@@ -226,6 +258,7 @@ impl ManisApp {
                             focus.as_ref(),
                             &highlight,
                             pinned_policy_id.as_deref(),
+                            col_key.clone(),
                             registry.clone(),
                             language,
                             theme,
@@ -234,109 +267,123 @@ impl ManisApp {
                     })
                     .collect::<Vec<_>>();
 
-                let header = div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap(Space::Sm.px())
-                    .child(tier_tag(tier_label, theme));
-
-                let row = div()
-                    .w_full()
-                    .when(layer_has_same_row, |el| el.pt(px(26.0)))
-                    .flex()
-                    .flex_wrap()
-                    .items_stretch()
-                    .when(policy_indices.len() < 3, Styled::justify_center)
-                    .gap(px(10.0))
-                    .children(layer_cards);
-
-                policy_tiers_stack = policy_tiers_stack.child(
-                    div()
-                        .relative()
-                        .w_full()
-                        .flex()
-                        .flex_col()
-                        .gap(px(8.0))
-                        .child(header)
-                        .child(row),
-                );
+                let scroll_handle = self.topology.nodes_policy_col_scroll(layer_idx);
+                let extra_left_pad = if layer_idx == 0 && layer_has_same_col {
+                    px(18.0)
+                } else {
+                    px(0.0)
+                };
+                flow_inner = flow_inner.child(scrollable_tree_column(
+                    format!("nodes-tree-col-policy-{layer_idx}-scroll"),
+                    format!("nodes-tree-col-policy-{layer_idx}-scroll"),
+                    col_key,
+                    col_tag(col_label, tag_text, tag_fill).into_any_element(),
+                    layer_cards,
+                    px(6.0),
+                    &scroll_handle,
+                    registry.clone(),
+                    col_min_width,
+                    extra_left_pad,
+                    theme,
+                ));
             }
         }
 
-        let node_grid = if node_cards.is_empty() {
-            div()
-                .py(Space::Lg.px())
-                .child(Self::node_empty_state(compact, language, theme, cx))
-        } else if dense_mode {
-            div()
-                .w_full()
-                .flex()
-                .flex_wrap()
-                .items_stretch()
-                .gap_x(px(6.0))
-                .gap_y(px(8.0))
-                .children(node_cards)
-        } else {
-            div()
-                .w_full()
-                .flex()
-                .items_stretch()
-                .gap(px(8.0))
-                .children(node_cards)
-        };
+        // Unobstructed Bézier bay between policies and physical nodes
+        flow_inner = flow_inner.child(div().w(bay_width).flex_shrink_0());
 
-        let nodes_tier_number = policy_layer_count + 1;
-        let canvas_inner = div()
-            .relative()
-            .w_full()
-            .flex()
-            .flex_col()
-            // Passive background edges render behind cards.
-            .child(paint_edges_canvas(registry.clone(), bg_edges))
-            // Layered policy groups (supports nested hierarchies and cyclic mesh references).
-            .child(policy_tiers_stack)
-            // Unobstructed Bézier curve bay between policies and physical nodes
-            .child(div().h(node_bay_height).flex_shrink_0())
-            // Physical node cards + footer filter row strictly below cards
-            .child(
+        let nodes_col_key = "col:nodes".to_owned();
+        let node_cards: Vec<AnyElement> = if visible_nodes.is_empty() {
+            vec![
                 div()
-                    .relative()
-                    .w_full()
-                    .flex()
-                    .flex_col()
-                    .gap(px(10.0))
-                    .child(node_grid)
-                    .child(Self::nodes_tree_tier2_footer(
-                        nodes_tier_number,
-                        visible_nodes.len(),
-                        all_nodes.len(),
-                        &source_chips,
-                        active_filter,
+                    .py(Space::Lg.px())
+                    .child(Self::node_empty_state(compact, language, theme, cx))
+                    .into_any_element(),
+            ]
+        } else {
+            visible_nodes
+                .iter()
+                .enumerate()
+                .map(|(index, node)| {
+                    Self::nodes_tree_node_card(
+                        index,
+                        node,
+                        &policies,
+                        focus.as_ref(),
+                        &highlight,
+                        pinned_policy_id.as_deref(),
+                        nodes_col_key.clone(),
+                        registry.clone(),
                         language,
                         theme,
                         cx,
-                    )),
-            )
-            // Highlighted focus edges and nested policy active links render in a click-through
-            // overlay so multi-row traces stay vivid all the way to every target port.
+                    )
+                })
+                .collect()
+        };
+
+        let nodes_col_number = policy_layer_count + 1;
+        let nodes_col_header = Self::nodes_tree_nodes_col_header(
+            nodes_col_number,
+            visible_nodes.len(),
+            all_nodes.len(),
+            &source_chips,
+            active_filter,
+            language,
+            theme,
+            cx,
+        )
+        .into_any_element();
+
+        flow_inner = flow_inner
+            .child(scrollable_tree_column(
+                "nodes-tree-col-nodes-scroll",
+                "nodes-tree-col-nodes-scroll".to_owned(),
+                nodes_col_key,
+                nodes_col_header,
+                node_cards,
+                px(5.0),
+                &self.topology.nodes_leaf_col_scroll,
+                registry.clone(),
+                col_min_width,
+                px(0.0),
+                theme,
+            ))
+            // Skip-layer and cyclic highlighted edges render in a click-through overlay so
+            // multi-column links remain legible across intermediate policy tiers.
             .when(!fg_edges.is_empty(), |inner| {
                 inner.child(paint_edges_canvas(registry, fg_edges))
             });
 
+        let canvas_body: AnyElement = if total_cols >= 4 {
+            div()
+                .id("nodes-tree-hscroll")
+                .size_full()
+                .min_h_0()
+                .overflow_x_scroll()
+                .track_scroll(&self.topology.nodes_horizontal_scroll)
+                .child(flow_inner)
+                .into_any_element()
+        } else {
+            flow_inner.into_any_element()
+        };
+
         let canvas_card = card_surface(theme)
             .id("nodes-tree-canvas")
             .debug_selector(|| "nodes-tree-canvas".to_owned())
+            .flex_1()
+            .min_h_0()
             .w_full()
-            .flex_shrink_0()
-            .min_h(px(360.0))
-            .p(px(16.0))
+            .overflow_hidden()
+            .p(px(14.0))
+            .flex()
+            .flex_col()
             .on_click(cx.listener(|this, _, _, cx| {
                 if this.topology.pinned_nodes.take().is_some() {
                     cx.notify();
                 }
             }))
-            .child(canvas_inner);
+            .child(canvas_body);
 
         let horizontal_pad = if compact { px(12.0) } else { px(24.0) };
         div()
@@ -351,28 +398,14 @@ impl ManisApp {
             .child(div().flex_shrink_0().px(horizontal_pad).child(inspector))
             .child(
                 div()
-                    .relative()
                     .flex_1()
                     .min_h_0()
                     .w_full()
-                    .child(
-                        div()
-                            .id("nodes-tree-scroll")
-                            .debug_selector(|| "nodes-tree-scroll".to_owned())
-                            .size_full()
-                            .overflow_y_scroll()
-                            .track_scroll(&self.topology.nodes_scroll)
-                            .child(
-                                div()
-                                    .w_full()
-                                    .px(horizontal_pad)
-                                    .pb(Space::Lg.px())
-                                    .flex()
-                                    .flex_col()
-                                    .child(canvas_card),
-                            ),
-                    )
-                    .vertical_scrollbar(&self.topology.nodes_scroll),
+                    .px(horizontal_pad)
+                    .pb(Space::Lg.px())
+                    .flex()
+                    .flex_col()
+                    .child(canvas_card),
             )
     }
 
@@ -654,7 +687,7 @@ impl ManisApp {
                                     "Pinned · Click a highlighted group or node to switch"
                                 }
                                 Language::SimplifiedChinese => {
-                                    "已锁定 · 点击下方高亮策略组或节点即可切换出口"
+                                    "已锁定 · 点击高亮策略组或节点即可切换出口"
                                 }
                             }
                         } else {
@@ -776,7 +809,8 @@ impl ManisApp {
         focus: Option<&NodesTreeFocus>,
         highlight: &NodesTreeHighlight,
         pinned_policy_id: Option<&str>,
-        registry: PortRegistry,
+        column_key: String,
+        registry: LayoutRegistry,
         language: Language,
         theme: Theme,
         cx: &mut Context<Self>,
@@ -881,9 +915,10 @@ impl ManisApp {
             .map_or_else(|| "—".to_owned(), |ms| format!("{ms}ms"));
 
         let member_summary = policy_member_summary(policy, &policy_graph.name_to_idx, language);
-        let show_top_port =
-            policy_graph.has_incoming_policy[index] || policy_graph.has_same_row_edge[index];
-        let show_bottom_port = !policy.members.is_empty() || policy_graph.has_same_row_edge[index];
+        let show_left_port =
+            policy_graph.has_incoming_policy[index] || policy_graph.has_same_column_edge[index];
+        let show_right_port =
+            !policy.members.is_empty() || policy_graph.has_same_column_edge[index];
 
         let hover_id = policy.id.clone();
         let click_id = policy.id.clone();
@@ -893,11 +928,10 @@ impl ManisApp {
             .id(format!("tree-policy-card-{index}"))
             .debug_selector(move || selector)
             .relative()
-            .flex_1()
-            .min_w(px(162.0))
-            .max_w(px(300.0))
-            .p(px(10.0))
-            .rounded(Radius::Card.px())
+            .w_full()
+            .px(px(11.0))
+            .py(px(8.5))
+            .rounded(px(10.0))
             .bg(card_bg)
             .border_1()
             .border_color(card_border)
@@ -936,11 +970,15 @@ impl ManisApp {
                     cx.notify();
                 }
             }))
-            .child(port_tracker(registry, format!("p:{}", policy.id)))
-            // Top anchor port when referenced by another policy group
-            .when(show_top_port, |el| {
+            .child(card_port_tracker(
+                registry,
+                format!("p:{}", policy.id),
+                column_key,
+            ))
+            // Left anchor port when referenced by another policy group
+            .when(show_left_port, |el| {
                 el.child(port_dot(
-                    PortSide::Top,
+                    PortSide::Left,
                     if highlighted {
                         port_accent
                     } else {
@@ -1084,10 +1122,10 @@ impl ManisApp {
                             .child(latency_label),
                     ),
             )
-            // Bottom anchor port
-            .when(show_bottom_port, |el| {
+            // Right anchor port connecting to child policies or physical nodes
+            .when(show_right_port, |el| {
                 el.child(port_dot(
-                    PortSide::Bottom,
+                    PortSide::Right,
                     if highlighted {
                         port_accent
                     } else {
@@ -1113,8 +1151,8 @@ impl ManisApp {
         focus: Option<&NodesTreeFocus>,
         highlight: &NodesTreeHighlight,
         pinned_policy_id: Option<&str>,
-        dense: bool,
-        registry: PortRegistry,
+        column_key: String,
+        registry: LayoutRegistry,
         language: Language,
         theme: Theme,
         cx: &mut Context<Self>,
@@ -1232,10 +1270,10 @@ impl ManisApp {
                 .is_some_and(|p| p.members.iter().any(|(_, name)| name == &node.name))
         });
 
-        let source_bar_color = match node.source_index % 3 {
-            0 => with_alpha(theme.action_primary, 0.40),
-            1 => with_alpha(theme.route_trace, 0.40),
-            _ => with_alpha(theme.status_success, 0.40),
+        let source_dot_color = match node.source_index % 3 {
+            0 => theme.action_primary,
+            1 => theme.route_trace,
+            _ => theme.status_success,
         };
         let latency_color = theme.latency_color(node.latency_ms);
         let latency_label = node
@@ -1247,17 +1285,22 @@ impl ManisApp {
         let selector = format!("tree-node-{index}");
         let display_name = Self::policy_candidate_display_name(&node.name).to_owned();
 
-        let base = div()
+        div()
             .id(format!("tree-node-card-{index}"))
             .debug_selector(move || selector)
             .relative()
+            .w_full()
+            .px(px(10.0))
+            .py(px(7.0))
+            .rounded(px(9.0))
             .bg(card_bg)
             .border_1()
             .border_color(card_border)
-            .when(dimmed, |el| el.opacity(if dense { 0.22 } else { 0.30 }))
+            .when(dimmed, |el| el.opacity(0.26))
             .cursor_pointer()
             .flex()
             .flex_col()
+            .gap(px(4.0))
             .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
                 if *hovered {
                     if keep_pinned_on_hover {
@@ -1281,190 +1324,50 @@ impl ManisApp {
                     this.select_global_node(identity, cx);
                 }
             }))
-            .child(port_tracker(registry, format!("n:{}", node.name)))
+            .child(card_port_tracker(
+                registry,
+                format!("n:{}", node.name),
+                column_key,
+            ))
             .child(port_dot(
-                PortSide::Top,
+                PortSide::Left,
                 port_fill,
                 port_border,
                 is_active_hl || is_member_hl,
-            ));
-
-        if dense {
-            return base
-                .w(px(118.0))
-                .flex_shrink_0()
-                .pt(px(6.0))
-                .pb(px(5.0))
-                .px(px(7.0))
-                .rounded(px(9.0))
-                .gap(px(3.0))
-                // Row 1: compact region code + node name + active indicator dot
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(4.0))
-                        .min_w_0()
-                        .child(
-                            div()
-                                .flex_shrink_0()
-                                .px(px(3.5))
-                                .h(px(15.0))
-                                .rounded(px(4.0))
-                                .bg(theme.surface_low)
-                                .border_1()
-                                .border_color(theme.outline_subtle)
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .font_family(MONO_FAMILY)
-                                .text_size(px(9.0))
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(theme.text_secondary)
-                                .child(node.region.clone()),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .overflow_hidden()
-                                .text_ellipsis()
-                                .whitespace_nowrap()
-                                .text_size(px(11.0))
-                                .line_height(px(15.0))
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(theme.text_primary)
-                                .child(display_name),
-                        )
-                        .child(div().size(px(5.5)).rounded_full().flex_shrink_0().bg(
-                            if active_anywhere {
-                                theme.status_success
-                            } else {
-                                with_alpha(theme.text_tertiary, 0.28)
-                            },
-                        )),
-                )
-                // Row 2: protocol (or role badge when highlighted) + latency
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .gap(px(4.0))
-                        .child(if let Some(label) = role_label {
-                            div()
-                                .px(px(4.0))
-                                .h(px(14.0))
-                                .rounded(px(4.0))
-                                .bg(if is_active_hl {
-                                    theme.status_success
-                                } else {
-                                    theme.surface_elevated
-                                })
-                                .flex()
-                                .items_center()
-                                .text_size(px(9.0))
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(if is_active_hl {
-                                    theme.action_on_primary
-                                } else {
-                                    theme.action_primary
-                                })
-                                .child(label)
-                        } else {
-                            div()
-                                .font_family(MONO_FAMILY)
-                                .text_size(px(9.5))
-                                .text_color(theme.text_tertiary)
-                                .child(node.protocol.clone())
-                        })
-                        .child(
-                            div()
-                                .font_family(MONO_FAMILY)
-                                .text_size(px(10.0))
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(latency_color)
-                                .child(latency_label),
-                        ),
-                )
-                .child(div().h(px(2.0)).rounded_full().bg(source_bar_color))
-                .into_any_element();
-        }
-
-        base.flex_1()
-            .min_w(px(90.0))
-            .pt(px(12.0))
-            .pb(px(9.0))
-            .px(px(9.0))
-            .rounded(px(12.0))
-            .gap(px(5.0))
-            // Region badge + status dot
+            ))
+            // Row 1: region badge + node name + optional role pill + active dot
             .child(
                 div()
                     .flex()
                     .items_center()
-                    .justify_between()
-                    .gap(px(4.0))
+                    .gap(px(6.0))
+                    .min_w_0()
                     .child(region_code_badge(node.region.clone(), theme))
-                    .child(div().size(px(6.5)).rounded_full().bg(if active_anywhere {
-                        theme.status_success
-                    } else {
-                        with_alpha(theme.text_tertiary, 0.35)
-                    })),
-            )
-            // Node name
-            .child(
-                div()
-                    .overflow_hidden()
-                    .text_ellipsis()
-                    .whitespace_nowrap()
-                    .text_size(px(12.0))
-                    .line_height(px(16.0))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(theme.text_primary)
-                    .child(display_name),
-            )
-            // Protocol + latency
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap(px(3.0))
                     .child(
                         div()
-                            .font_family(MONO_FAMILY)
-                            .text_size(px(10.0))
-                            .text_color(theme.text_tertiary)
-                            .child(node.protocol.clone()),
-                    )
-                    .child(
-                        div()
-                            .font_family(MONO_FAMILY)
-                            .text_size(px(10.5))
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .whitespace_nowrap()
+                            .text_size(px(12.0))
+                            .line_height(px(16.0))
                             .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(latency_color)
-                            .child(latency_label),
-                    ),
-            )
-            // Role pill slot (keeps height uniform whether highlighted or idle)
-            .child(
-                div()
-                    .h(px(18.0))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .when_some(role_label, |slot, label| {
+                            .text_color(theme.text_primary)
+                            .child(display_name),
+                    )
+                    .when_some(role_label, |row, label| {
                         let (fg, bg) = if is_active_hl {
                             (theme.action_on_primary, theme.status_success)
                         } else {
                             (theme.action_primary, theme.surface_elevated)
                         };
-                        slot.child(
+                        row.child(
                             div()
-                                .w_full()
-                                .h_full()
-                                .rounded(px(5.0))
+                                .flex_shrink_0()
+                                .px(px(5.0))
+                                .h(px(16.0))
+                                .rounded(px(4.0))
                                 .bg(bg)
                                 .border_1()
                                 .border_color(if is_active_hl {
@@ -1474,26 +1377,68 @@ impl ManisApp {
                                 })
                                 .flex()
                                 .items_center()
-                                .justify_center()
-                                .text_size(px(10.0))
+                                .text_size(px(9.5))
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .text_color(fg)
                                 .child(label),
                         )
-                    }),
+                    })
+                    .child(div().size(px(6.0)).rounded_full().flex_shrink_0().bg(
+                        if active_anywhere {
+                            theme.status_success
+                        } else {
+                            with_alpha(theme.text_tertiary, 0.30)
+                        },
+                    )),
             )
-            // Source bar
-            .child(div().h(px(2.5)).rounded_full().bg(source_bar_color))
+            // Row 2: source dot + protocol on left, latency on right
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap(px(6.0))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(5.0))
+                            .min_w_0()
+                            .child(
+                                div()
+                                    .size(px(5.0))
+                                    .rounded_full()
+                                    .flex_shrink_0()
+                                    .bg(source_dot_color),
+                            )
+                            .child(
+                                div()
+                                    .font_family(MONO_FAMILY)
+                                    .text_size(px(10.5))
+                                    .text_color(theme.text_tertiary)
+                                    .child(node.protocol.clone()),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .font_family(MONO_FAMILY)
+                            .text_size(px(11.0))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(latency_color)
+                            .child(latency_label),
+                    ),
+            )
             .into_any_element()
     }
 
     #[expect(
         clippy::too_many_arguments,
         clippy::too_many_lines,
-        reason = "Renders the physical nodes tier badge and source filter chips together"
+        reason = "Renders the pinned physical nodes column header and source filter chips"
     )]
-    fn nodes_tree_tier2_footer(
-        tier_number: usize,
+    fn nodes_tree_nodes_col_header(
+        col_number: usize,
         visible_count: usize,
         total_count: usize,
         source_chips: &[TreeSourceChip],
@@ -1502,15 +1447,27 @@ impl ManisApp {
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Div {
-        let mut filters = div().flex().items_center().gap(px(6.0)).flex_wrap();
+        let mut header = div().flex().flex_col().gap(px(6.0)).child(col_tag(
+            match language {
+                Language::English => {
+                    format!("{col_number:02} · ALL NODES ({visible_count})")
+                }
+                Language::SimplifiedChinese => {
+                    format!("{col_number:02} · 全部节点（{visible_count}）")
+                }
+            },
+            theme.status_success,
+            theme.status_success_soft,
+        ));
 
         if source_chips.len() > 1 {
+            let mut filters = div().flex().items_center().gap(px(4.0)).flex_wrap();
             let all_selected = active_filter.is_none();
             filters = filters.child(
                 div()
                     .id("tree-source-filter-all")
-                    .px(px(9.0))
-                    .h(px(24.0))
+                    .px(px(8.0))
+                    .h(px(22.0))
                     .rounded_full()
                     .cursor_pointer()
                     .flex()
@@ -1526,7 +1483,7 @@ impl ManisApp {
                     } else {
                         theme.outline_subtle
                     })
-                    .text_size(px(11.0))
+                    .text_size(px(10.5))
                     .font_weight(if all_selected {
                         FontWeight::SEMIBOLD
                     } else {
@@ -1543,8 +1500,8 @@ impl ManisApp {
                         cx.notify();
                     }))
                     .child(match language {
-                        Language::English => format!("All sources ({total_count})"),
-                        Language::SimplifiedChinese => format!("全部来源 ({total_count})"),
+                        Language::English => format!("All ({total_count})"),
+                        Language::SimplifiedChinese => format!("全部 ({total_count})"),
                     }),
             );
 
@@ -1559,13 +1516,13 @@ impl ManisApp {
                 filters = filters.child(
                     div()
                         .id(format!("tree-source-filter-{}", chip.color_index))
-                        .px(px(9.0))
-                        .h(px(24.0))
+                        .px(px(8.0))
+                        .h(px(22.0))
                         .rounded_full()
                         .cursor_pointer()
                         .flex()
                         .items_center()
-                        .gap(px(5.0))
+                        .gap(px(4.0))
                         .bg(if selected {
                             theme.action_soft
                         } else {
@@ -1577,7 +1534,7 @@ impl ManisApp {
                         } else {
                             theme.outline_subtle
                         })
-                        .text_size(px(11.0))
+                        .text_size(px(10.5))
                         .font_weight(if selected {
                             FontWeight::SEMIBOLD
                         } else {
@@ -1593,30 +1550,14 @@ impl ManisApp {
                             this.topology.node_source_filter = Some(chip_id.clone());
                             cx.notify();
                         }))
-                        .child(div().size(px(6.0)).rounded_full().bg(dot_color))
+                        .child(div().size(px(5.0)).rounded_full().bg(dot_color))
                         .child(format!("{} ({})", chip.name, chip.count)),
                 );
             }
+            header = header.child(filters);
         }
 
-        div()
-            .flex()
-            .items_center()
-            .justify_between()
-            .gap(Space::Sm.px())
-            .flex_wrap()
-            .child(tier_tag(
-                match language {
-                    Language::English => {
-                        format!("TIER {tier_number:02} · ALL NODES ({visible_count})")
-                    }
-                    Language::SimplifiedChinese => {
-                        format!("TIER {tier_number:02} · 全部节点（{visible_count}）")
-                    }
-                },
-                theme,
-            ))
-            .child(filters)
+        header
     }
 }
 
@@ -1627,8 +1568,8 @@ struct PolicyGraph {
     layer_of: Vec<usize>,
     layers: Vec<Vec<usize>>,
     has_incoming_policy: Vec<bool>,
-    has_same_row_edge: Vec<bool>,
-    layer_has_same_row_edge: Vec<bool>,
+    has_same_column_edge: Vec<bool>,
+    layer_has_same_column_edge: Vec<bool>,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -1713,13 +1654,13 @@ fn build_policy_graph(policies: &[TreePolicyData]) -> PolicyGraph {
         }
     }
 
-    let mut has_same_row_edge = vec![false; n];
-    let mut layer_has_same_row_edge = vec![false; non_empty_layers.len()];
+    let mut has_same_column_edge = vec![false; n];
+    let mut layer_has_same_column_edge = vec![false; non_empty_layers.len()];
     for &(from_idx, to_idx) in &policy_edges {
         if normalized_layer_of[from_idx] == normalized_layer_of[to_idx] {
-            has_same_row_edge[from_idx] = true;
-            has_same_row_edge[to_idx] = true;
-            layer_has_same_row_edge[normalized_layer_of[from_idx]] = true;
+            has_same_column_edge[from_idx] = true;
+            has_same_column_edge[to_idx] = true;
+            layer_has_same_column_edge[normalized_layer_of[from_idx]] = true;
         }
     }
 
@@ -1729,8 +1670,8 @@ fn build_policy_graph(policies: &[TreePolicyData]) -> PolicyGraph {
         layer_of: normalized_layer_of,
         layers: non_empty_layers,
         has_incoming_policy,
-        has_same_row_edge,
-        layer_has_same_row_edge,
+        has_same_column_edge,
+        layer_has_same_column_edge,
     }
 }
 
@@ -1908,15 +1849,20 @@ fn build_nodes_tree_edges(
     let mut bg_edges = Vec::new();
     let mut fg_edges = Vec::new();
 
-    // 1. Policy -> Policy edges (supports downward hierarchy, same-row peer arcs, and cyclic loops).
+    let policy_layer_count = graph.layers.len().max(1);
+
+    // 1. Policy -> Policy edges (left-to-right hierarchy, same-column peer arcs, and backward loops).
     for &(from_idx, to_idx) in &graph.policy_edges {
         let from_policy = &policies[from_idx];
         let to_policy = &policies[to_idx];
-        let orientation = match graph.layer_of[from_idx].cmp(&graph.layer_of[to_idx]) {
-            std::cmp::Ordering::Less => EdgeOrientation::Vertical,
-            std::cmp::Ordering::Equal => EdgeOrientation::SameRowArc,
-            std::cmp::Ordering::Greater => EdgeOrientation::UpwardLoop,
+        let from_layer = graph.layer_of[from_idx];
+        let to_layer = graph.layer_of[to_idx];
+        let orientation = match from_layer.cmp(&to_layer) {
+            std::cmp::Ordering::Less => EdgeOrientation::Horizontal,
+            std::cmp::Ordering::Equal => EdgeOrientation::SameColumnArc,
+            std::cmp::Ordering::Greater => EdgeOrientation::BackwardLoop,
         };
+        let crosses_columns = to_layer > from_layer + 1 || to_layer < from_layer;
         let is_active_exit = from_policy.current_exit.as_deref() == Some(to_policy.name.as_str());
         let on_active_chain = highlight
             .active_chain_policy_edges
@@ -1925,34 +1871,55 @@ fn build_nodes_tree_edges(
             .highlighted_policy_edges
             .contains(&(from_idx, to_idx));
 
+        let push_edge = |edge: BezierEdge,
+                         prefer_fg: bool,
+                         bg: &mut Vec<BezierEdge>,
+                         fg: &mut Vec<BezierEdge>| {
+            if prefer_fg && crosses_columns {
+                fg.push(edge);
+            } else {
+                bg.push(edge);
+            }
+        };
+
         if on_active_chain {
-            fg_edges.push(BezierEdge {
-                from_key: format!("p:{}", from_policy.id),
-                to_key: format!("p:{}", to_policy.id),
-                orientation,
-                color: theme.status_success,
-                width: 2.75,
-                dashed: false,
-                layer: 3,
-            });
+            push_edge(
+                BezierEdge {
+                    from_key: format!("p:{}", from_policy.id),
+                    to_key: format!("p:{}", to_policy.id),
+                    orientation,
+                    color: theme.status_success,
+                    width: 2.75,
+                    dashed: false,
+                    layer: 3,
+                },
+                true,
+                &mut bg_edges,
+                &mut fg_edges,
+            );
         } else if is_highlighted {
             let is_parent_incoming = matches!(
                 highlight.policy_roles.get(&from_policy.id),
                 Some(PolicyHighlightRole::Parent)
             );
-            fg_edges.push(BezierEdge {
-                from_key: format!("p:{}", from_policy.id),
-                to_key: format!("p:{}", to_policy.id),
-                orientation,
-                color: if is_parent_incoming {
-                    with_alpha(theme.route_trace, 0.85)
-                } else {
-                    with_alpha(theme.action_primary, 0.90)
+            push_edge(
+                BezierEdge {
+                    from_key: format!("p:{}", from_policy.id),
+                    to_key: format!("p:{}", to_policy.id),
+                    orientation,
+                    color: if is_parent_incoming {
+                        with_alpha(theme.route_trace, 0.85)
+                    } else {
+                        with_alpha(theme.action_primary, 0.90)
+                    },
+                    width: 2.0,
+                    dashed: is_parent_incoming,
+                    layer: 2,
                 },
-                width: 2.0,
-                dashed: is_parent_incoming,
-                layer: 2,
-            });
+                true,
+                &mut bg_edges,
+                &mut fg_edges,
+            );
         } else if focus.is_some() {
             bg_edges.push(BezierEdge {
                 from_key: format!("p:{}", from_policy.id),
@@ -1964,15 +1931,20 @@ fn build_nodes_tree_edges(
                 layer: 0,
             });
         } else if is_active_exit {
-            fg_edges.push(BezierEdge {
-                from_key: format!("p:{}", from_policy.id),
-                to_key: format!("p:{}", to_policy.id),
-                orientation,
-                color: with_alpha(theme.status_success, 0.62),
-                width: 1.9,
-                dashed: false,
-                layer: 2,
-            });
+            push_edge(
+                BezierEdge {
+                    from_key: format!("p:{}", from_policy.id),
+                    to_key: format!("p:{}", to_policy.id),
+                    orientation,
+                    color: with_alpha(theme.status_success, 0.62),
+                    width: 1.9,
+                    dashed: false,
+                    layer: 2,
+                },
+                true,
+                &mut bg_edges,
+                &mut fg_edges,
+            );
         } else {
             bg_edges.push(BezierEdge {
                 from_key: format!("p:{}", from_policy.id),
@@ -1988,6 +1960,7 @@ fn build_nodes_tree_edges(
 
     // 2. Policy -> Leaf Node edges (policy-group members were handled above).
     for (policy_idx, policy) in policies.iter().enumerate() {
+        let spans_intermediate = graph.layer_of[policy_idx] + 1 < policy_layer_count;
         let visible_member_count = policy
             .members
             .iter()
@@ -2027,13 +2000,13 @@ fn build_nodes_tree_edges(
                 let edge = BezierEdge {
                     from_key: format!("p:{}", policy.id),
                     to_key: format!("n:{member_name}"),
-                    orientation: EdgeOrientation::Vertical,
+                    orientation: EdgeOrientation::Horizontal,
                     color,
                     width,
                     dashed,
                     layer,
                 };
-                if dense_mode || on_active_chain {
+                if spans_intermediate {
                     fg_edges.push(edge);
                 } else {
                     bg_edges.push(edge);
@@ -2043,7 +2016,7 @@ fn build_nodes_tree_edges(
                     bg_edges.push(BezierEdge {
                         from_key: format!("p:{}", policy.id),
                         to_key: format!("n:{member_name}"),
-                        orientation: EdgeOrientation::Vertical,
+                        orientation: EdgeOrientation::Horizontal,
                         color: with_alpha(theme.outline_strong, 0.06),
                         width: 1.0,
                         dashed: false,
@@ -2054,13 +2027,13 @@ fn build_nodes_tree_edges(
                 let edge = BezierEdge {
                     from_key: format!("p:{}", policy.id),
                     to_key: format!("n:{member_name}"),
-                    orientation: EdgeOrientation::Vertical,
+                    orientation: EdgeOrientation::Horizontal,
                     color: with_alpha(theme.status_success, if dense_mode { 0.44 } else { 0.36 }),
                     width: 1.6,
                     dashed: false,
                     layer: 1,
                 };
-                if dense_mode {
+                if spans_intermediate {
                     fg_edges.push(edge);
                 } else {
                     bg_edges.push(edge);
@@ -2069,7 +2042,7 @@ fn build_nodes_tree_edges(
                 bg_edges.push(BezierEdge {
                     from_key: format!("p:{}", policy.id),
                     to_key: format!("n:{member_name}"),
-                    orientation: EdgeOrientation::Vertical,
+                    orientation: EdgeOrientation::Horizontal,
                     color: with_alpha(theme.outline_strong, 0.11),
                     width: 1.0,
                     dashed: false,
@@ -2080,19 +2053,4 @@ fn build_nodes_tree_edges(
     }
 
     (bg_edges, fg_edges)
-}
-
-fn tier_tag(label: String, theme: Theme) -> Div {
-    div()
-        .px(px(8.0))
-        .py(px(2.0))
-        .rounded(Radius::Badge.px())
-        .bg(theme.surface_low)
-        .border_1()
-        .border_color(theme.outline_subtle)
-        .text_size(px(11.0))
-        .line_height(px(16.0))
-        .font_weight(FontWeight::SEMIBOLD)
-        .text_color(theme.text_tertiary)
-        .child(label)
 }
