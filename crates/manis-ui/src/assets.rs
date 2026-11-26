@@ -4,7 +4,10 @@ use gpui::{AssetSource, Result, SharedString};
 
 pub(crate) const BRAND_MARK_PATH: &str = "brand/manis-mark.svg";
 
-const BRAND_MARK: &[u8] = include_bytes!("../../../assets/brand/manis-mark.svg");
+pub(crate) const BRAND_MARK: &[u8] = include_bytes!("../../../assets/brand/manis-mark.svg");
+#[cfg(any(target_os = "macos", test))]
+pub(crate) const TRAY_TEMPLATE: &[u8] =
+    include_bytes!("../../../assets/brand/manis-tray-template.svg");
 
 /// Serves Manis-owned assets alongside the icons bundled by gpui-component.
 pub struct Assets;
@@ -40,7 +43,7 @@ impl AssetSource for Assets {
 mod tests {
     use gpui::AssetSource as _;
 
-    use super::{Assets, BRAND_MARK_PATH};
+    use super::{Assets, BRAND_MARK_PATH, TRAY_TEMPLATE};
 
     #[test]
     fn rule_drag_handle_is_embedded_alongside_the_component_icons() {
@@ -60,17 +63,22 @@ mod tests {
         }
     }
 
+    fn assert_safe_embedded_svg(bytes: &[u8]) {
+        let svg = std::str::from_utf8(bytes).expect("brand asset is UTF-8 SVG");
+
+        assert!(svg.contains("<svg"));
+        assert!(!svg.contains("<script"));
+        assert!(!svg.contains("<foreignObject"));
+        assert!(!svg.contains("href=\"http://") && !svg.contains("href=\"https://"));
+    }
+
     #[test]
     fn brand_mark_is_embedded_without_remote_or_executable_content() {
         let bytes = Assets
             .load(BRAND_MARK_PATH)
             .expect("load embedded brand mark")
             .expect("brand mark exists");
-        let svg = std::str::from_utf8(&bytes).expect("brand mark is UTF-8 SVG");
-
-        assert!(svg.contains("<svg"));
-        assert!(!svg.contains("<script"));
-        assert!(!svg.contains("<foreignObject"));
-        assert!(!svg.contains("href=\"http://") && !svg.contains("href=\"https://"));
+        assert_safe_embedded_svg(&bytes);
+        assert_safe_embedded_svg(TRAY_TEMPLATE);
     }
 }

@@ -1,7 +1,11 @@
 # Manis brand assets
 
 - `manis-mark.svg` is the compact product mark. Use it for application icons, the in-app brand
-  lockup, repository avatars, and other small or square placements.
+  lockup, repository avatars, non-template system trays (Linux/Windows), and other small or square
+  placements.
+- `manis-tray-template.svg` is the monochrome transparent menu bar template derived from the core
+  layered silhouette of `manis-mark.svg` without the dark backing tile. Use it for the macOS status
+  bar template icon so AppKit tints it cleanly for both light and dark menu bars.
 - `manis-shanshui.svg` is the detailed companion artwork. Use it at large sizes in documentation
   or release material; its fine texture is not intended for interface icons.
 

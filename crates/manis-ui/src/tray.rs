@@ -14,6 +14,7 @@ use tray_icon::{
 use crate::{
     ManisApp,
     app::ProxyModeBlock,
+    assets,
     diagnostics::{LogLevel, record_event},
     localization::{Language, Localizer, copy},
     mihomo,
@@ -36,6 +37,11 @@ const SYSTEM_PROXY_MENU_ID: &str = "manis.tray.proxy.system";
 #[cfg(not(target_os = "linux"))]
 const TUN_PROXY_MENU_ID: &str = "manis.tray.proxy.tun";
 const TRAY_EVENT_INTERVAL: Duration = Duration::from_millis(100);
+// 44px matches 2x Retina at tray-icon's 22pt macOS menu bar cap (`MAX_ICON_HEIGHT`).
+#[cfg(target_os = "macos")]
+const TRAY_ICON_SIZE: u32 = 44;
+#[cfg(not(target_os = "macos"))]
+const TRAY_ICON_SIZE: u32 = 64;
 
 #[cfg(not(target_os = "linux"))]
 struct ManisTray {
@@ -248,7 +254,7 @@ fn create_native_tray(language: Language) -> Result<ManisTray, &'static str> {
         &quit,
     ])
     .map_err(|_error| language.localized(copy::tray::COULD_NOT_CREATE_THE_SYSTEM_TRAY_MENU))?;
-    let icon = Icon::from_rgba(manis_icon_rgba(), 32, 32)
+    let icon = Icon::from_rgba(manis_icon_rgba(), TRAY_ICON_SIZE, TRAY_ICON_SIZE)
         .map_err(|_error| language.localized(copy::tray::COULD_NOT_CREATE_THE_SYSTEM_TRAY_ICON))?;
     let tray = TrayIconBuilder::new()
         .with_id("manis.status")
@@ -473,24 +479,29 @@ fn tray_menu_label(language: Language, mode: ProxyMode, block: Option<ProxyModeB
 }
 
 fn manis_icon_rgba() -> Vec<u8> {
-    const SIZE: u32 = 32;
-    let mut rgba = vec![0; (SIZE * SIZE * 4) as usize];
-    for y in 0..SIZE {
-        for x in 0..SIZE {
-            let dx = i64::from(x) - 16;
-            let dy = i64::from(y) - 16;
-            let radius_squared = dx * dx + dy * dy;
-            let route = (8..=24).contains(&x) && (13..=17).contains(&y)
-                || (20..=24).contains(&x) && (8..=17).contains(&y);
-            let visible = (94..=177).contains(&radius_squared) || route;
-            if visible {
-                let index = ((y * SIZE + x) * 4) as usize;
-                rgba[index] = 23;
-                rgba[index + 1] = 108;
-                rgba[index + 2] = 98;
-                rgba[index + 3] = 255;
-            }
-        }
+    #[cfg(target_os = "macos")]
+    let svg = assets::TRAY_TEMPLATE;
+    #[cfg(not(target_os = "macos"))]
+    let svg = assets::BRAND_MARK;
+    render_svg_rgba(svg, TRAY_ICON_SIZE)
+}
+
+fn render_svg_rgba(svg: &[u8], size: u32) -> Vec<u8> {
+    let options = resvg::usvg::Options::default();
+    let tree =
+        resvg::usvg::Tree::from_data(svg, &options).expect("embedded Manis brand SVG should parse");
+    let mut pixmap =
+        resvg::tiny_skia::Pixmap::new(size, size).expect("tray icon dimensions should be non-zero");
+    let source = tree.size();
+    let target = f32::from(u16::try_from(size).expect("tray icon size fits in u16"));
+    let transform =
+        resvg::tiny_skia::Transform::from_scale(target / source.width(), target / source.height());
+    resvg::render(&tree, transform, &mut pixmap.as_mut());
+
+    let mut rgba = Vec::with_capacity((size * size * 4) as usize);
+    for pixel in pixmap.pixels() {
+        let color = pixel.demultiply();
+        rgba.extend_from_slice(&[color.red(), color.green(), color.blue(), color.alpha()]);
     }
     rgba
 }
@@ -500,8 +511,11 @@ mod tests {
     use gpui::{AnyWindowHandle, AppContext as _, WindowHandle};
     use gpui_component::WindowExt as _;
 
-    use super::{GlobalManisApp, main_window_options, manis_icon_rgba, open_about_dialog};
-    use crate::ManisApp;
+    use super::{
+        GlobalManisApp, TRAY_ICON_SIZE, main_window_options, manis_icon_rgba, open_about_dialog,
+        render_svg_rgba,
+    };
+    use crate::{ManisApp, assets};
 
     fn fixture_window(cx: &mut gpui::TestAppContext) -> (gpui::Entity<ManisApp>, AnyWindowHandle) {
         cx.update(crate::init);
@@ -599,8 +613,47 @@ mod tests {
     #[test]
     fn tray_icon_is_rgba_and_contains_transparency() {
         let icon = manis_icon_rgba();
-        assert_eq!(icon.len(), 32 * 32 * 4);
+        assert_eq!(icon.len(), (TRAY_ICON_SIZE * TRAY_ICON_SIZE * 4) as usize);
         assert!(icon.iter().skip(3).step_by(4).any(|alpha| *alpha == 0));
         assert!(icon.iter().skip(3).step_by(4).any(|alpha| *alpha == 255));
+        // Anti-aliased vector rasterization produces partial alpha edges and/or layered tones.
+        assert!(
+            icon.iter()
+                .skip(3)
+                .step_by(4)
+                .any(|alpha| (1..255).contains(alpha))
+        );
+    }
+
+    #[test]
+    fn both_tray_svg_variants_rasterize_cleanly() {
+        let template = render_svg_rgba(assets::TRAY_TEMPLATE, 44);
+        assert_eq!(template.len(), 44 * 44 * 4);
+        // Template icon must stay transparent at corners and carry black-tinted pixels only.
+        assert_eq!(template[3], 0);
+        for pixel in template.as_chunks::<4>().0 {
+            if pixel[3] > 0 {
+                assert_eq!((pixel[0], pixel[1], pixel[2]), (0, 0, 0));
+            }
+        }
+        assert!(
+            template
+                .iter()
+                .skip(3)
+                .step_by(4)
+                .any(|alpha| (100..=145).contains(alpha)),
+            "template should preserve the layered mountain opacity"
+        );
+
+        let full_color = render_svg_rgba(assets::BRAND_MARK, 64);
+        assert_eq!(full_color.len(), 64 * 64 * 4);
+        assert_eq!(full_color[3], 0);
+        assert!(
+            full_color
+                .iter()
+                .skip(3)
+                .step_by(4)
+                .any(|alpha| *alpha == 255)
+        );
     }
 }

@@ -14,7 +14,7 @@ use ksni::{
 };
 use manis_core::ProxyMode;
 
-use super::{TrayProxySnapshot, manis_icon_rgba, tray_menu_label};
+use super::{TRAY_ICON_SIZE, TrayProxySnapshot, manis_icon_rgba, tray_menu_label};
 use crate::{
     app::ProxyModeBlock,
     localization::{Language, copy},
@@ -160,9 +160,10 @@ impl ksni::Tray for LinuxTray {
             // SNI requires ARGB in network byte order, not RGBA or native-endian u32s.
             pixel.rotate_right(1);
         }
+        let size = i32::try_from(TRAY_ICON_SIZE).expect("tray icon size fits in i32");
         vec![ksni::Icon {
-            width: 32,
-            height: 32,
+            width: size,
+            height: size,
             data,
         }]
     }
@@ -328,8 +329,12 @@ mod tests {
         let icons = tray.icon_pixmap();
         assert_eq!(icons.len(), 1);
         let icon = &icons[0];
-        assert_eq!((icon.width, icon.height), (32, 32));
-        assert_eq!(icon.data.len(), 32 * 32 * 4);
+        let expected_size = i32::try_from(TRAY_ICON_SIZE).expect("tray icon size fits in i32");
+        assert_eq!((icon.width, icon.height), (expected_size, expected_size));
+        assert_eq!(
+            icon.data.len(),
+            (TRAY_ICON_SIZE * TRAY_ICON_SIZE * 4) as usize
+        );
         for (argb, rgba) in icon
             .data
             .as_chunks::<4>()
