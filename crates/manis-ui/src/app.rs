@@ -93,7 +93,6 @@ enum ConfigurationSection {
     Runtime,
     ProxySources,
     RuleSources,
-    Advanced,
     Updates,
 }
 
@@ -105,12 +104,11 @@ enum ProxySourceEditorKind {
 }
 
 impl ConfigurationSection {
-    const ALL: [Self; 6] = [
+    const ALL: [Self; 5] = [
         Self::General,
         Self::Runtime,
         Self::ProxySources,
         Self::RuleSources,
-        Self::Advanced,
         Self::Updates,
     ];
 
@@ -120,7 +118,6 @@ impl ConfigurationSection {
             Self::Runtime => "runtime",
             Self::ProxySources => "proxy-sources",
             Self::RuleSources => "rule-sources",
-            Self::Advanced => "advanced",
             Self::Updates => "updates",
         }
     }

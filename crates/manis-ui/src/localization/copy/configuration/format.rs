@@ -1,7 +1,7 @@
 use crate::{
     localization::{CountNoun, Language, LanguagePreferenceError},
     manual_rule::ManualRuleStoreError,
-    mihomo::{RuntimeProfileSource, SubscriptionPreviewError, SubscriptionStoreError},
+    mihomo::{SubscriptionPreviewError, SubscriptionStoreError},
     rule_source::RuleDownloadError,
     subscription::{SourceNodeDetail, SourceNodeSecurity, SubscriptionInputError},
 };
@@ -270,17 +270,6 @@ pub(crate) fn updated_days_ago(language: Language, days: u64) -> String {
     match language {
         Language::English => format!("Updated {days} d ago"),
         Language::SimplifiedChinese => format!("{days} 天前更新"),
-    }
-}
-
-pub(crate) const fn profile_source_detail(
-    language: Language,
-    source: RuntimeProfileSource,
-) -> Option<&'static str> {
-    match (language, source) {
-        (Language::English, RuntimeProfileSource::Invalid) => Some("Check local startup arguments"),
-        (Language::SimplifiedChinese, RuntimeProfileSource::Invalid) => Some("请检查来源设置"),
-        _ => None,
     }
 }
 

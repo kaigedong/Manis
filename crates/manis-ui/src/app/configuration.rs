@@ -551,7 +551,6 @@ fn configuration_section_label(section: ConfigurationSection, language: Language
             language.localized(copy::configuration::PROXY_SOURCES)
         }
         ConfigurationSection::RuleSources => language.localized(copy::configuration::RULE_SOURCES),
-        ConfigurationSection::Advanced => language.localized(copy::configuration::ADVANCED),
         ConfigurationSection::Updates => language.localized(copy::app_update::ABOUT_AND_UPDATES),
     }
 }
@@ -578,8 +577,6 @@ impl ManisApp {
             self.kernel_panel(theme, compact, cx).into_any_element(),
             self.source_panel(theme, compact, cx).into_any_element(),
             self.rule_source_manager(rule_busy, theme, compact, cx)
-                .into_any_element(),
-            self.advanced_configuration_panel(theme, compact)
                 .into_any_element(),
             self.app_update_panel(theme, compact, cx).into_any_element(),
         ];
@@ -912,15 +909,14 @@ mod tests {
         use super::settings::navigation::configuration_section_at_scroll;
         use gpui::px;
 
-        let tops = [120.0, 480.0, 790.0, 1_450.0, 1_900.0, 2_300.0].map(px);
+        let tops = [120.0, 480.0, 790.0, 1_450.0, 1_900.0].map(px);
         for (offset, expected) in [
             (120.0, ConfigurationSection::General),
             (478.0, ConfigurationSection::General),
             (480.0, ConfigurationSection::Runtime),
             (1_200.0, ConfigurationSection::ProxySources),
             (1_500.0, ConfigurationSection::RuleSources),
-            (1_900.0, ConfigurationSection::Advanced),
-            (2_300.0, ConfigurationSection::Updates),
+            (1_900.0, ConfigurationSection::Updates),
             (500.0, ConfigurationSection::Runtime),
             (120.0, ConfigurationSection::General),
         ] {
@@ -930,7 +926,7 @@ mod tests {
             );
         }
         assert_eq!(
-            configuration_section_at_scroll(&tops, px(2_000.0), true),
+            configuration_section_at_scroll(&tops, px(1_600.0), true),
             ConfigurationSection::Updates,
             "the last short section is active when the viewport reaches the bottom",
         );
@@ -961,7 +957,7 @@ mod tests {
             window.draw(cx).clear(cx);
             app.read_with(cx, |app, _| {
                 assert_eq!(app.configuration_section, ConfigurationSection::General);
-                assert_eq!(app.configuration_scroll.children_count(), 6);
+                assert_eq!(app.configuration_scroll.children_count(), 5);
                 assert_eq!(app.configuration_scroll.offset().y, px(0.0));
             });
 
@@ -972,8 +968,19 @@ mod tests {
             app.read_with(cx, |app, _| {
                 let scroll = &app.configuration_scroll;
                 let runtime = scroll.bounds_for_item(1).expect("runtime anchor");
+                let target_scroll =
+                    (runtime.top() - scroll.bounds().top()).min(scroll.max_offset().y);
                 assert!(
-                    (runtime.top() + scroll.offset().y - scroll.bounds().top()).abs() <= px(1.0)
+                    target_scroll > px(0.0),
+                    "expected configuration document to scroll toward Runtime (max_offset {:?})",
+                    scroll.max_offset().y,
+                );
+                assert!(
+                    (scroll.offset().y + target_scroll).abs() <= px(1.0),
+                    "scroll offset {:?} did not reach expected target -{:?} (max_offset {:?})",
+                    scroll.offset().y,
+                    target_scroll,
+                    scroll.max_offset().y,
                 );
             });
 
@@ -987,7 +994,7 @@ mod tests {
             window.draw(cx).clear(cx);
             app.read_with(cx, |app, _| {
                 assert_eq!(app.configuration_scroll.offset().y, px(0.0));
-                assert_eq!(app.configuration_scroll.children_count(), 6);
+                assert_eq!(app.configuration_scroll.children_count(), 5);
             });
         });
 

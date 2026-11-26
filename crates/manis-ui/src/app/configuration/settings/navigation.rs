@@ -5,7 +5,7 @@ use gpui::{
 
 use super::{
     ConfigurationSection, Context, CountNoun, Div, ManisApp, Radius, Space, TextRole, Theme,
-    configuration_section_label, copy,
+    configuration_section_label,
 };
 
 pub(in crate::app) fn configuration_section_at_scroll(
@@ -34,8 +34,7 @@ const fn configuration_section_index(section: ConfigurationSection) -> usize {
         ConfigurationSection::Runtime => 1,
         ConfigurationSection::ProxySources => 2,
         ConfigurationSection::RuleSources => 3,
-        ConfigurationSection::Advanced => 4,
-        ConfigurationSection::Updates => 5,
+        ConfigurationSection::Updates => 4,
     }
 }
 
@@ -81,7 +80,7 @@ impl ManisApp {
         }
     }
 
-    /// The six-section directory: one compact card of nav rows beside the section document.
+    /// The five-section directory: one compact card of nav rows beside the section document.
     pub(in crate::app) fn configuration_navigation(
         &self,
         theme: Theme,
@@ -145,11 +144,6 @@ impl ManisApp {
             ConfigurationSection::RuleSources => {
                 Some(language.count(CountNoun::Source, self.rule_sources.sources.len()))
             }
-            ConfigurationSection::Advanced => Some(
-                language
-                    .localized(copy::configuration::MANAGED_SECTION_SUMMARY)
-                    .to_owned(),
-            ),
             ConfigurationSection::Updates => None,
         }
     }

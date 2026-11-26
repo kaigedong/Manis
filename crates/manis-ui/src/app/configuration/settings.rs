@@ -3,10 +3,7 @@ use gpui::{
 };
 use manis_core::WindowSizeClass;
 
-use crate::app::{
-    AppUpdateState, ConfigurationSection, ManisApp, MihomoCoreUpdateState, proxy_mode_label,
-    routing_mode_label,
-};
+use crate::app::{AppUpdateState, ConfigurationSection, ManisApp, MihomoCoreUpdateState};
 use crate::{
     app_update,
     components::{
@@ -20,7 +17,6 @@ use crate::{
 
 use super::{configuration_section_label, language_preference_label, panel_surface};
 
-mod advanced;
 mod kernel;
 mod language;
 pub(in crate::app) mod navigation;

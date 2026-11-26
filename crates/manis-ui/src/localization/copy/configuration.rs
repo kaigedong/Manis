@@ -30,13 +30,9 @@ pub(crate) const ADD_RULES_TO_SEND_MATCHING_CONNECTIONS_THROUGH_A_POLICY_GROUP: 
 pub(crate) const ADD_RULE_SOURCE: LocalizedText =
     LocalizedText::new("Add rule source", "添加规则来源");
 pub(crate) const ADD_SOURCE: LocalizedText = LocalizedText::new("Add source", "添加来源");
-pub(crate) const ADVANCED: LocalizedText = LocalizedText::new("Advanced", "高级设置");
-pub(crate) const ADVANCED_SETTINGS: LocalizedText =
-    LocalizedText::new("Advanced settings", "高级设置");
 pub(crate) const ALREADY_ADDED: LocalizedText = LocalizedText::new("Already added", "已添加");
 pub(crate) const ALREADY_CONFIGURED: LocalizedText =
     LocalizedText::new("Already configured", "已经配置");
-pub(crate) const ALWAYS: LocalizedText = LocalizedText::new("Always", "始终识别");
 pub(crate) const AND: LocalizedText = LocalizedText::new("AND", "并且");
 pub(crate) const AN_EXISTING_SUBSCRIPTION_MUST_KEEP_AN_HTTP_HTTPS_URL: LocalizedText =
     LocalizedText::new(
@@ -47,7 +43,6 @@ pub(crate) const APPLYING_RULE_SOURCE_STATE: LocalizedText =
     LocalizedText::new("Applying rule source state", "正在应用规则来源状态");
 pub(crate) const APPLYING_SUBSCRIPTION_STATE: LocalizedText =
     LocalizedText::new("Applying subscription state", "正在应用订阅状态");
-pub(crate) const AUTOMATIC: LocalizedText = LocalizedText::new("Automatic", "自动管理");
 pub(crate) const AUTONOMOUS_SYSTEM: LocalizedText =
     LocalizedText::new("Autonomous system", "自治系统");
 pub(crate) const A_RULE_CAN_CONTAIN_AT_MOST_FOUR_CONDITIONS: LocalizedText = LocalizedText::new(
@@ -98,7 +93,6 @@ pub(crate) const DESTINATION_PORT: LocalizedText =
     LocalizedText::new("Destination port", "目标端口");
 pub(crate) const DISABLED: LocalizedText = LocalizedText::new("Disabled", "已禁用");
 pub(crate) const SOURCE_DISABLED_LABEL: LocalizedText = LocalizedText::new("Disabled", "未启用");
-pub(crate) const DNS_AND_TUN: LocalizedText = LocalizedText::new("DNS and TUN", "DNS 与 TUN");
 pub(crate) const DOMAIN_CONTAINS_KEYWORD: LocalizedText =
     LocalizedText::new("Domain contains keyword", "域名中包含关键词");
 pub(crate) const DOMAIN_SUFFIX: LocalizedText = LocalizedText::new("Domain suffix", "域名后缀");
@@ -236,8 +230,6 @@ pub(crate) const STARTUP_SETTING_SAVED: LocalizedText =
     LocalizedText::new("Startup setting saved", "启动设置已保存");
 pub(crate) const LAST_UPDATE_FAILED: LocalizedText =
     LocalizedText::new("Last update failed", "上次更新失败");
-pub(crate) const MANAGED: LocalizedText = LocalizedText::new("Managed", "Manis 托管");
-pub(crate) const MANAGED_SECTION_SUMMARY: LocalizedText = LocalizedText::new("Managed", "托管");
 pub(crate) const MANUAL: LocalizedText = LocalizedText::new("Manual", "手动");
 pub(crate) const MANUAL_RULES_UPDATED: LocalizedText =
     LocalizedText::new("Manual rules updated", "手动分流规则已更新");
@@ -272,11 +264,8 @@ pub(crate) const OTHER_SAFELY_READABLE_SOURCES_ARE_KEPT_CHECK_THE_USER_DATA: Loc
 pub(crate) const POLICY_GROUP_AFTER_MATCH: LocalizedText =
     LocalizedText::new("Policy group after match", "命中后的策略组");
 pub(crate) const PROCESSING: LocalizedText = LocalizedText::new("Processing…", "正在处理…");
-pub(crate) const PROCESS_IDENTIFICATION: LocalizedText =
-    LocalizedText::new("Process identification", "进程识别");
 pub(crate) const PROCESS_NAME: LocalizedText = LocalizedText::new("Process name", "进程名");
 pub(crate) const PROCESS_PATH: LocalizedText = LocalizedText::new("Process path", "进程路径");
-pub(crate) const PROXY_MODE: LocalizedText = LocalizedText::new("Proxy mode", "代理模式");
 pub(crate) const PROXY_SOURCES: LocalizedText = LocalizedText::new("Proxy sources", "代理来源");
 pub(crate) const QX_RULES_NOT_IMPORTED_NO_RECOGNIZABLE_DOMAIN_RULES: LocalizedText =
     LocalizedText::new(
@@ -305,7 +294,6 @@ pub(crate) const REMOVE_THIS_SUBSCRIPTION: LocalizedText =
 pub(crate) const REMOVING: LocalizedText = LocalizedText::new("Removing…", "正在移除…");
 pub(crate) const REMOVING_REMOTE_QX_RULES: LocalizedText =
     LocalizedText::new("Removing remote QX rules", "正在移除远程 QX 规则");
-pub(crate) const ROUTING_MODE: LocalizedText = LocalizedText::new("Routing mode", "路由模式");
 pub(crate) const RULE_GROUP_MOVED_DOWN: LocalizedText =
     LocalizedText::new("Rule group moved down", "规则分组已下移");
 pub(crate) const RULE_GROUP_MOVED_UP: LocalizedText =
