@@ -1,15 +1,16 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::time::Duration;
 
 use gpui::{
-    AnyElement, Bounds, ContentMask, Div, ElementId, FontWeight, InteractiveElement, IntoElement,
-    ParentElement, PathBuilder, Pixels, Point, Rgba, SharedString, StatefulInteractiveElement,
-    Styled, canvas, div, point, px,
+    AnyElement, Bounds, ContentMask, Context, Div, ElementId, FontWeight, InteractiveElement,
+    IntoElement, ParentElement, PathBuilder, Pixels, Point, Rgba, SharedString,
+    StatefulInteractiveElement, Styled, Task, canvas, div, point, px,
 };
-use gpui_component::scroll::ScrollableElement as _;
-use manis_core::PrimaryWorkspace;
+use manis_core::{NodeIdentity, PrimaryWorkspace};
 
+use super::ManisApp;
 use crate::theme::{Radius, Theme};
 
 mod nodes_tree;
@@ -55,20 +56,46 @@ pub(in crate::app) struct RuleGroupDragPreview {
     pub(in crate::app) slot_height: Pixels,
 }
 
+/// Add/remove operation armed via the left-edge `+` / `-` button on a downstream tree card.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::app) enum PolicyMemberEditOp {
+    Add,
+    Remove,
+}
+
+/// Armed two-step confirmation for adding or removing a candidate from a pinned policy group.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::app) struct PendingPolicyMemberEdit {
+    pub(in crate::app) parent_policy_id: String,
+    pub(in crate::app) parent_policy_name: String,
+    pub(in crate::app) target_key: String,
+    pub(in crate::app) target_label: String,
+    pub(in crate::app) member_identity: NodeIdentity,
+    pub(in crate::app) op: PolicyMemberEditOp,
+    pub(in crate::app) animation_nonce: u64,
+}
+
 /// Interactive view-mode and hover/pin state shared by the desktop topology workspaces.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub(in crate::app) struct TopologyState {
     pub(in crate::app) nodes_view: WorkspaceViewMode,
     pub(in crate::app) rules_view: WorkspaceViewMode,
     pub(in crate::app) node_source_filter: Option<String>,
     pub(in crate::app) hovered_nodes: Option<NodesTreeFocus>,
     pub(in crate::app) pinned_nodes: Option<NodesTreeFocus>,
+    pub(in crate::app) hovered_member_target: Option<String>,
+    pub(in crate::app) pending_member_edit: Option<PendingPolicyMemberEdit>,
+    pub(in crate::app) member_edit_nonce: u64,
     pub(in crate::app) hovered_rules: Option<RulesTreeFocus>,
     pub(in crate::app) pinned_rules: Option<RulesTreeFocus>,
     pub(in crate::app) nodes_policy_col_scrolls: RefCell<Vec<gpui::ScrollHandle>>,
     pub(in crate::app) nodes_leaf_col_scroll: gpui::ScrollHandle,
     pub(in crate::app) nodes_horizontal_scroll: gpui::ScrollHandle,
     pub(in crate::app) rules_col_scrolls: [gpui::ScrollHandle; 3],
+    nodes_layout: RefCell<LayoutRegistry>,
+    rules_layout: RefCell<LayoutRegistry>,
+    auto_scroll_generation: u64,
+    auto_scroll_task: Option<Task<()>>,
     pub(in crate::app) rule_group_drag_preview: Option<RuleGroupDragPreview>,
     pub(in crate::app) rule_group_row_bounds: PortRegistry,
 }
@@ -82,8 +109,29 @@ impl TopologyState {
         scrolls[layer_idx].clone()
     }
 
+    pub(super) fn replace_nodes_layout(&self, layout: LayoutRegistry) {
+        *self.nodes_layout.borrow_mut() = layout;
+    }
+
+    pub(super) fn nodes_layout(&self) -> LayoutRegistry {
+        self.nodes_layout.borrow().clone()
+    }
+
+    pub(super) fn replace_rules_layout(&self, layout: LayoutRegistry) {
+        *self.rules_layout.borrow_mut() = layout;
+    }
+
+    pub(super) fn rules_layout(&self) -> LayoutRegistry {
+        self.rules_layout.borrow().clone()
+    }
+
+    pub(super) fn cancel_auto_scroll(&mut self) {
+        self.auto_scroll_generation = self.auto_scroll_generation.wrapping_add(1);
+        self.auto_scroll_task = None;
+    }
+
     pub(in crate::app) fn active_nodes_focus(&self) -> Option<&NodesTreeFocus> {
-        self.hovered_nodes.as_ref().or(self.pinned_nodes.as_ref())
+        self.pinned_nodes.as_ref().or(self.hovered_nodes.as_ref())
     }
 
     pub(in crate::app) fn active_rules_focus(&self) -> Option<&RulesTreeFocus> {
@@ -115,6 +163,9 @@ impl TopologyState {
                 }
                 self.nodes_view = mode;
                 self.hovered_nodes = None;
+                self.hovered_member_target = None;
+                self.pending_member_edit = None;
+                self.cancel_auto_scroll();
                 true
             }
             PrimaryWorkspace::RoutingRules => {
@@ -123,6 +174,7 @@ impl TopologyState {
                 }
                 self.rules_view = mode;
                 self.hovered_rules = None;
+                self.cancel_auto_scroll();
                 true
             }
             PrimaryWorkspace::Activity
@@ -142,9 +194,14 @@ impl TopologyState {
     }
 
     pub(in crate::app) fn clear_pins(&mut self) -> bool {
-        let had = self.pinned_nodes.is_some() || self.pinned_rules.is_some();
+        let had = self.pinned_nodes.is_some()
+            || self.pinned_rules.is_some()
+            || self.pending_member_edit.is_some();
         self.pinned_nodes = None;
         self.pinned_rules = None;
+        self.hovered_member_target = None;
+        self.pending_member_edit = None;
+        self.cancel_auto_scroll();
         had
     }
 }
@@ -165,7 +222,244 @@ pub(super) struct TopologyLayout {
     viewports: HashMap<String, Bounds<Pixels>>,
 }
 
+impl TopologyLayout {
+    pub(super) fn viewport(&self, column_key: &str) -> Option<Bounds<Pixels>> {
+        self.viewports.get(column_key).copied()
+    }
+
+    pub(super) fn port_bounds(&self, port_key: &str) -> Option<Bounds<Pixels>> {
+        self.ports.get(port_key).map(|(bounds, _)| *bounds)
+    }
+}
+
 pub(super) type LayoutRegistry = Rc<RefCell<TopologyLayout>>;
+
+const AUTO_SCROLL_FRAME_MS: u16 = 16;
+const AUTO_SCROLL_DWELL_MS: u16 = 200;
+const AUTO_SCROLL_VIEWPORT_PAD: f32 = 16.0;
+
+#[derive(Clone, Copy)]
+struct ScrollSegment {
+    from_y: f32,
+    to_y: f32,
+    duration_ms: u16,
+}
+
+/// Smooth auto-scroll trajectory for one overflowing tree column so connected items outside the
+/// viewport glide smoothly into view (sweeping from the first connected item to the last when
+/// their span exceeds one viewport height).
+pub(super) struct ColumnAutoScrollTrack {
+    scroll_handle: gpui::ScrollHandle,
+    segments: Vec<ScrollSegment>,
+    total_ms: u16,
+    last_applied_y: Option<f32>,
+    cancelled: bool,
+}
+
+impl ColumnAutoScrollTrack {
+    fn sample(&self, elapsed_ms: u16) -> f32 {
+        let mut cursor = 0u16;
+        for segment in &self.segments {
+            if segment.duration_ms == 0 {
+                continue;
+            }
+            let end = cursor.saturating_add(segment.duration_ms);
+            if elapsed_ms < end {
+                let raw = f32::from(elapsed_ms - cursor) / f32::from(segment.duration_ms);
+                let eased = ease_in_out_cubic(raw);
+                return segment.from_y + (segment.to_y - segment.from_y) * eased;
+            }
+            cursor = end;
+        }
+        self.segments.last().map_or(0.0, |segment| segment.to_y)
+    }
+}
+
+fn ease_in_out_cubic(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    if t < 0.5 {
+        4.0 * t * t * t
+    } else {
+        1.0 - (-2.0 * t + 2.0).powi(3) / 2.0
+    }
+}
+
+fn scroll_duration_ms(distance: f32, min_ms: u16, max_ms: u16, px_per_sec: f32) -> u16 {
+    let clamped_ms =
+        ((distance.max(0.0) / px_per_sec) * 1000.0).clamp(f32::from(min_ms), f32::from(max_ms));
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "clamped_ms is bounded within [min_ms, max_ms] where both are u16"
+    )]
+    {
+        clamped_ms.round() as u16
+    }
+}
+
+pub(super) fn build_column_auto_scroll_track(
+    scroll_handle: gpui::ScrollHandle,
+    viewport: Bounds<Pixels>,
+    active_bounds: &[Bounds<Pixels>],
+) -> Option<ColumnAutoScrollTrack> {
+    let max_y = scroll_handle.max_offset().y.as_f32();
+    let vp_h = viewport.size.height.as_f32();
+    if max_y <= 1.0 || vp_h <= 1.0 || active_bounds.is_empty() {
+        return None;
+    }
+
+    let cur_offset_y = scroll_handle.offset().y.as_f32();
+    let cur_y = (-cur_offset_y).clamp(0.0, max_y);
+
+    let mut first_top = f32::INFINITY;
+    let mut last_bottom = f32::NEG_INFINITY;
+    for bounds in active_bounds {
+        let top = (bounds.top() - viewport.top()).as_f32() - cur_offset_y;
+        let bottom = (bounds.bottom() - viewport.top()).as_f32() - cur_offset_y;
+        first_top = first_top.min(top);
+        last_bottom = last_bottom.max(bottom);
+    }
+    if !first_top.is_finite() || !last_bottom.is_finite() {
+        return None;
+    }
+
+    // All connected items are already completely inside the visible viewport.
+    if first_top >= cur_y - 1.0 && last_bottom <= cur_y + vp_h + 1.0 {
+        return None;
+    }
+
+    let first_y = (first_top - AUTO_SCROLL_VIEWPORT_PAD).clamp(0.0, max_y);
+    let last_y = (last_bottom + AUTO_SCROLL_VIEWPORT_PAD - vp_h).clamp(0.0, max_y);
+
+    let mut segments = Vec::new();
+    if last_y > first_y + 1.0 {
+        // Active items exceed a single viewport: glide to the first active item (if needed),
+        // hold briefly so its connection registers, then sweep smoothly to the last active item.
+        if (cur_y - first_y).abs() > 2.0 {
+            segments.push(ScrollSegment {
+                from_y: cur_y,
+                to_y: first_y,
+                duration_ms: scroll_duration_ms((first_y - cur_y).abs(), 220, 560, 1200.0),
+            });
+        }
+        segments.push(ScrollSegment {
+            from_y: first_y,
+            to_y: first_y,
+            duration_ms: AUTO_SCROLL_DWELL_MS,
+        });
+        segments.push(ScrollSegment {
+            from_y: first_y,
+            to_y: last_y,
+            duration_ms: scroll_duration_ms(last_y - first_y, 700, 2400, 480.0),
+        });
+    } else {
+        // All active items fit within a single viewport, but at least one is currently off-screen:
+        // glide smoothly so the active span sits centered in the column viewport.
+        let target_y = (f32::midpoint(first_top, last_bottom) - vp_h * 0.5).clamp(0.0, max_y);
+        if (target_y - cur_y).abs() <= 1.0 {
+            return None;
+        }
+        segments.push(ScrollSegment {
+            from_y: cur_y,
+            to_y: target_y,
+            duration_ms: scroll_duration_ms((target_y - cur_y).abs(), 260, 680, 950.0),
+        });
+    }
+
+    let total_ms = segments
+        .iter()
+        .fold(0u16, |acc, seg| acc.saturating_add(seg.duration_ms));
+    (total_ms > 0).then_some(ColumnAutoScrollTrack {
+        scroll_handle,
+        segments,
+        total_ms,
+        last_applied_y: Some(cur_y),
+        cancelled: false,
+    })
+}
+
+impl ManisApp {
+    pub(super) fn start_topology_auto_scroll(
+        &mut self,
+        mut tracks: Vec<ColumnAutoScrollTrack>,
+        cx: &mut Context<Self>,
+    ) {
+        self.topology.cancel_auto_scroll();
+        if tracks.is_empty() {
+            return;
+        }
+        let generation = self.topology.auto_scroll_generation;
+        let max_total_ms = tracks.iter().map(|track| track.total_ms).max().unwrap_or(0);
+        if max_total_ms == 0 {
+            return;
+        }
+
+        let task = cx.spawn(async move |this, cx| {
+            let mut elapsed_ms = 0u16;
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_millis(u64::from(AUTO_SCROLL_FRAME_MS)))
+                    .await;
+                elapsed_ms = elapsed_ms.saturating_add(AUTO_SCROLL_FRAME_MS);
+
+                let Some(entity) = this.upgrade() else {
+                    break;
+                };
+                let keep_going = entity.update(cx, |this, cx| {
+                    if this.topology.auto_scroll_generation != generation {
+                        return false;
+                    }
+                    let mut any_changed = false;
+                    let mut any_active = false;
+                    for track in &mut tracks {
+                        if track.cancelled {
+                            continue;
+                        }
+                        let current_max = track.scroll_handle.max_offset().y.as_f32().max(0.0);
+                        let current_offset = track.scroll_handle.offset();
+                        let actual_y = -current_offset.y.as_f32();
+                        if let Some(expected_y) = track.last_applied_y {
+                            let clamped_expected = expected_y.clamp(0.0, current_max);
+                            if (actual_y - clamped_expected).abs() > 1.5 {
+                                // Yield immediately when the user manually scrolls this column.
+                                track.cancelled = true;
+                                continue;
+                            }
+                        }
+
+                        let next_y = track.sample(elapsed_ms).clamp(0.0, current_max);
+                        if (actual_y - next_y).abs() > 0.25 {
+                            track
+                                .scroll_handle
+                                .set_offset(point(current_offset.x, px(-next_y)));
+                            any_changed = true;
+                        }
+                        track.last_applied_y = Some(next_y);
+                        if elapsed_ms < track.total_ms {
+                            any_active = true;
+                        }
+                    }
+
+                    if any_changed {
+                        cx.notify();
+                    }
+                    if !any_active || elapsed_ms >= max_total_ms {
+                        if this.topology.auto_scroll_generation == generation {
+                            this.topology.auto_scroll_task = None;
+                        }
+                        return false;
+                    }
+                    true
+                });
+
+                if !keep_going {
+                    break;
+                }
+            }
+        });
+        self.topology.auto_scroll_task = Some(task);
+    }
+}
 
 pub(super) fn new_layout_registry() -> LayoutRegistry {
     Rc::new(RefCell::new(TopologyLayout::default()))
@@ -204,13 +498,8 @@ pub(super) fn card_port_tracker(
 
 #[derive(Clone, Copy)]
 pub(super) enum EdgeOrientation {
-    /// Connects right-center of `from` to left-center of `to` (left-to-right column flow).
+    /// Connects right-center of `from` to left-center of `to` (left-to-right tree flow).
     Horizontal,
-    /// Connects peers in the same column with a smooth arc on the right (top->bottom) or left
-    /// (bottom->top).
-    SameColumnArc,
-    /// Connects a right-hand policy column back to a left-hand policy column (cyclic mesh link).
-    BackwardLoop,
 }
 
 pub(super) struct BezierEdge {
@@ -307,35 +596,6 @@ fn bezier_anchors(
             let dx = px(((p2.x - p1.x).as_f32() * 0.48).max(32.0));
             (p1, p2, point(p1.x + dx, p1.y), point(p2.x - dx, p2.y))
         }
-        EdgeOrientation::SameColumnArc => {
-            let top_to_bottom = from.center().y <= to.center().y;
-            let span = (to.center().y - from.center().y).as_f32().abs();
-            let bulge = px((24.0 + span * 0.10).min(46.0));
-            if top_to_bottom {
-                let p1 = point(from.right(), from.center().y);
-                let p2 = point(to.right(), to.center().y);
-                (p1, p2, point(p1.x + bulge, p1.y), point(p2.x + bulge, p2.y))
-            } else {
-                let p1 = point(from.left(), from.center().y);
-                let p2 = point(to.left(), to.center().y);
-                (p1, p2, point(p1.x - bulge, p1.y), point(p2.x - bulge, p2.y))
-            }
-        }
-        EdgeOrientation::BackwardLoop => {
-            let go_above = from.center().y <= to.center().y;
-            let p1 = if go_above {
-                point(from.center().x, from.top())
-            } else {
-                point(from.center().x, from.bottom())
-            };
-            let p2 = if go_above {
-                point(to.center().x, to.top())
-            } else {
-                point(to.center().x, to.bottom())
-            };
-            let lift = px(if go_above { -34.0 } else { 34.0 });
-            (p1, p2, point(p1.x, p1.y + lift), point(p2.x, p2.y + lift))
-        }
     }
 }
 
@@ -380,8 +640,12 @@ pub(super) fn col_tag(label: impl Into<SharedString>, fg: Rgba, bg: Rgba) -> Div
         .child(label.into())
 }
 
+pub(super) const TREE_COL_LEFT_PAD: f32 = 12.0;
+pub(super) const TREE_COL_RIGHT_PAD: f32 = 8.0;
+
 /// A full-height horizontal tree column with a pinned header and an independently scrollable
-/// vertical card list whose scroll padding preserves protruding left/right port dots.
+/// vertical card list (without scrollbar chrome) whose padding preserves left/right ports and
+/// left-edge membership `+`/`-` badges.
 #[expect(
     clippy::too_many_arguments,
     reason = "Shared independently-scrollable tree column shell"
@@ -396,11 +660,11 @@ pub(super) fn scrollable_tree_column(
     scroll_handle: &gpui::ScrollHandle,
     registry: LayoutRegistry,
     min_width: Option<Pixels>,
-    extra_left_pad: Pixels,
+    card_horizontal_padding: bool,
     theme: Theme,
 ) -> Div {
-    let left_pad = px(6.0) + extra_left_pad;
-    let right_pad = px(10.0);
+    let left_pad = px(TREE_COL_LEFT_PAD);
+    let right_pad = px(TREE_COL_RIGHT_PAD);
     div()
         .relative()
         .flex_1()
@@ -438,16 +702,23 @@ pub(super) fn scrollable_tree_column(
                         .child(
                             div()
                                 .w_full()
-                                .pl(left_pad)
-                                .pr(right_pad)
+                                .pl(if card_horizontal_padding {
+                                    left_pad
+                                } else {
+                                    px(0.0)
+                                })
+                                .pr(if card_horizontal_padding {
+                                    right_pad
+                                } else {
+                                    px(0.0)
+                                })
                                 .py(px(6.0))
                                 .flex()
                                 .flex_col()
                                 .gap(card_gap)
                                 .children(cards),
                         ),
-                )
-                .vertical_scrollbar(scroll_handle),
+                ),
         )
 }
 
@@ -1003,6 +1274,442 @@ mod tests {
         assert!(
             cx.debug_bounds("tree-node-3").is_none(),
             "referenced policy groups must not be duplicated into the nodes tier"
+        );
+    }
+
+    #[gpui::test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Verifies pinned tier-1 hover +/-, two-step confirmation, cancel, commit, and acyclic guard"
+    )]
+    fn pinned_policy_offers_two_step_confirmed_add_and_remove_without_cycles(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use std::collections::BTreeSet;
+
+        use manis_core::{NodeIdentity, PolicyCandidateMatcher};
+
+        cx.update(crate::init);
+        let root = std::env::temp_dir().join(format!(
+            "manis-tree-member-edit-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let store = root.join("subscriptions");
+        let mut final_group = ManagedPolicyGroup::new("p-final", "Final").expect("final policy");
+        final_group
+            .set_matcher(PolicyCandidateMatcher::Explicit(BTreeSet::from([
+                NodeIdentity::new("policy:p-proxy", "Proxy").expect("proxy ref"),
+                NodeIdentity::new("builtin", "DIRECT").expect("direct ref"),
+            ])))
+            .expect("set final matcher");
+        let mut proxy_group = ManagedPolicyGroup::new("p-proxy", "Proxy").expect("proxy policy");
+        proxy_group
+            .set_matcher(PolicyCandidateMatcher::Explicit(BTreeSet::from([
+                NodeIdentity::new("mihomo:0", "HK 01").expect("hk ref"),
+            ])))
+            .expect("set proxy matcher");
+        let mut jp_group = ManagedPolicyGroup::new("p-jp", "日本").expect("jp policy");
+        jp_group
+            .set_matcher(PolicyCandidateMatcher::Explicit(BTreeSet::from([
+                NodeIdentity::new("mihomo:0", "JP 01").expect("jp ref"),
+            ])))
+            .expect("set jp matcher");
+
+        let mut app = None;
+        let (_, window) = cx.add_window_view(|window, cx| {
+            let entity = cx.new(|_| {
+                let mut fixture = ManisApp::with_fixture_controller_and_subscription_store(
+                    "http://127.0.0.1:1",
+                    store.clone(),
+                );
+                fixture.source_providers = vec![LoadedProvider {
+                    name: "CloudEdge".to_owned(),
+                    vehicle_type: Some("HTTP".to_owned()),
+                    nodes: vec![
+                        LoadedProviderNode {
+                            name: "HK 01".to_owned(),
+                            protocol: "Trojan".to_owned(),
+                            latency_label: Some("42 ms".to_owned()),
+                            alive: Some(true),
+                        },
+                        LoadedProviderNode {
+                            name: "JP 01".to_owned(),
+                            protocol: "Trojan".to_owned(),
+                            latency_label: Some("68 ms".to_owned()),
+                            alive: Some(true),
+                        },
+                    ],
+                }];
+                fixture.managed_policies.groups =
+                    vec![final_group.clone(), proxy_group.clone(), jp_group.clone()];
+                fixture
+            });
+            app = Some(entity.clone());
+            crate::root(entity, window, cx)
+        });
+        let app = app.expect("fixture app");
+        window.update(|window, cx| window.draw(cx).clear(cx));
+
+        // Tier 1: Final (policy 0); Tier 2: Proxy (policy 1), 日本 (policy 2); Tier 3: nodes.
+        let final_bounds = window
+            .debug_bounds("tree-policy-0")
+            .expect("tier-1 Final renders");
+        let proxy_bounds = window
+            .debug_bounds("tree-policy-1")
+            .expect("tier-2 Proxy renders");
+        let jp_bounds = window
+            .debug_bounds("tree-policy-2")
+            .expect("tier-2 日本 renders");
+        let jp_node_bounds = window
+            .debug_bounds("tree-node-1")
+            .expect("tier-3 JP 01 renders");
+        let direct_bounds = window
+            .debug_bounds("tree-node-2")
+            .expect("tier-3 DIRECT renders");
+        assert!(
+            final_bounds.right() < proxy_bounds.left() && final_bounds.right() < jp_bounds.left(),
+            "Final sits in column 1 to the left of tier-2 policies"
+        );
+
+        // Pin Final.
+        window.simulate_click(final_bounds.center(), Modifiers::none());
+        window.update(|window, cx| window.draw(cx).clear(cx));
+        assert_eq!(
+            app.read_with(window, |app, _| app.topology.pinned_nodes.clone()),
+            Some(NodesTreeFocus::Policy("p-final".to_owned()))
+        );
+
+        // Hover tier-2 日本 (not in Final) -> left-edge `+` trigger appears; no mutation yet.
+        window.simulate_mouse_move(jp_bounds.center(), None, Modifiers::none());
+        window.update(|window, cx| window.draw(cx).clear(cx));
+        let add_trigger = window
+            .debug_bounds("tree-member-trigger-policy-2")
+            .expect("hovering unincluded tier-2 policy shows left-edge + button");
+        assert!(
+            add_trigger.center().x <= jp_bounds.left() + gpui::px(4.0),
+            "+ button sits on the left edge of the card"
+        );
+        assert!(
+            app.read_with(window, |app, _| app.topology.pending_member_edit.is_none()),
+            "hover alone does not arm confirmation"
+        );
+
+        // First click on `+` arms two-step confirmation without mutating Final yet.
+        window.simulate_click(add_trigger.center(), Modifiers::none());
+        window.update(|window, cx| window.draw(cx).clear(cx));
+        let armed = app
+            .read_with(window, |app, _| app.topology.pending_member_edit.clone())
+            .expect("first click arms two-step confirmation");
+        assert_eq!(armed.op, super::PolicyMemberEditOp::Add);
+        assert_eq!(armed.parent_policy_id, "p-final");
+        assert_eq!(armed.target_key, "p:p-jp");
+        let cancel_btn = window
+            .debug_bounds("tree-member-cancel-policy-2")
+            .expect("two-step cancel button appears");
+        let _confirm_btn = window
+            .debug_bounds("tree-member-confirm-policy-2")
+            .expect("two-step confirm button appears");
+
+        // Cancel clears armed confirmation without mutating.
+        window.simulate_click(cancel_btn.center(), Modifiers::none());
+        window.update(|window, cx| window.draw(cx).clear(cx));
+        assert!(
+            app.read_with(window, |app, _| app.topology.pending_member_edit.is_none()),
+            "cancel disarms pending member edit"
+        );
+
+        // Hover tier-2 Proxy (already in Final) -> left-edge `-` trigger arms removal.
+        window.simulate_mouse_move(proxy_bounds.center(), None, Modifiers::none());
+        window.update(|window, cx| window.draw(cx).clear(cx));
+        let remove_trigger = window
+            .debug_bounds("tree-member-trigger-policy-1")
+            .expect("hovering existing tier-2 member shows left-edge - button");
+        window.simulate_click(remove_trigger.center(), Modifiers::none());
+        window.update(|window, cx| window.draw(cx).clear(cx));
+        let armed_remove = app
+            .read_with(window, |app, _| app.topology.pending_member_edit.clone())
+            .expect("first click on - arms removal confirmation");
+        assert_eq!(armed_remove.op, super::PolicyMemberEditOp::Remove);
+        assert_eq!(armed_remove.target_key, "p:p-proxy");
+
+        // Hover tier-3 JP 01 (not in Final) and DIRECT (in Final) -> both offer +/- triggers.
+        window.simulate_mouse_move(jp_node_bounds.center(), None, Modifiers::none());
+        window.update(|window, cx| window.draw(cx).clear(cx));
+        let node_add_trigger = window
+            .debug_bounds("tree-member-trigger-node-1")
+            .expect("hovering unincluded node shows left-edge + button");
+        window.simulate_click(node_add_trigger.center(), Modifiers::none());
+        window.update(|window, cx| window.draw(cx).clear(cx));
+        assert_eq!(
+            app.read_with(window, |app, _| app
+                .topology
+                .pending_member_edit
+                .as_ref()
+                .map(|p| (p.op, p.target_key.clone()))),
+            Some((super::PolicyMemberEditOp::Add, "n:JP 01".to_owned()))
+        );
+        let node_confirm_btn = window
+            .debug_bounds("tree-member-confirm-node-1")
+            .expect("confirm button renders for armed node addition");
+        window.simulate_click(node_confirm_btn.center(), Modifiers::none());
+        window.run_until_parked();
+        assert!(
+            app.read_with(window, |app, _| app.topology.pending_member_edit.is_none()),
+            "second click consumes confirmation and triggers persistence"
+        );
+        assert!(
+            app.read_with(window, |app, _| !app.status.is_empty()),
+            "confirmed edit ran through the persistence transaction"
+        );
+
+        window.simulate_mouse_move(direct_bounds.center(), None, Modifiers::none());
+        window.update(|window, cx| window.draw(cx).clear(cx));
+        let direct_remove_trigger = window
+            .debug_bounds("tree-member-trigger-node-2")
+            .expect("hovering included DIRECT node shows left-edge - button");
+        window.simulate_click(direct_remove_trigger.center(), Modifiers::none());
+        window.update(|window, cx| window.draw(cx).clear(cx));
+        assert_eq!(
+            app.read_with(window, |app, _| app
+                .topology
+                .pending_member_edit
+                .as_ref()
+                .map(|p| (p.op, p.target_key.clone()))),
+            Some((super::PolicyMemberEditOp::Remove, "n:DIRECT".to_owned()))
+        );
+
+        // Acyclic guard: pin tier-2 日本 and hover tier-1 Final -> no + / - trigger allowed.
+        app.update(window, |app, cx| {
+            app.topology.pending_member_edit = None;
+            app.topology.pinned_nodes = Some(NodesTreeFocus::Policy("p-jp".to_owned()));
+            app.topology.hovered_member_target = None;
+            cx.notify();
+        });
+        window.update(|window, cx| window.draw(cx).clear(cx));
+        window.simulate_mouse_move(final_bounds.center(), None, Modifiers::none());
+        window.update(|window, cx| window.draw(cx).clear(cx));
+        assert!(
+            window
+                .debug_bounds("tree-member-trigger-policy-0")
+                .is_none(),
+            "upstream tier-1 policy must never offer + when a downstream tier-2 policy is pinned"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[gpui::test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Verifies off-screen reveal, multi-screen first-to-last sweep, manual scroll yield, and rules-tree auto-scroll"
+    )]
+    fn pinning_policy_auto_scrolls_overflowing_columns_and_yields_to_manual_scroll(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use std::collections::BTreeSet;
+        use std::time::Duration;
+
+        use manis_core::{NodeIdentity, PolicyCandidateMatcher};
+
+        cx.update(crate::init);
+        let mut app = None;
+        let (_, window) = cx.add_window_view(|window, cx| {
+            let entity = cx.new(|_| {
+                let mut fixture = ManisApp::with_fixture_controller("http://127.0.0.1:1");
+                fixture.source_providers = vec![LoadedProvider {
+                    name: "BigAirport".to_owned(),
+                    vehicle_type: Some("HTTP".to_owned()),
+                    nodes: (0..54)
+                        .map(|idx| LoadedProviderNode {
+                            name: format!("Node-{idx:02}"),
+                            protocol: "VLESS".to_owned(),
+                            latency_label: Some(format!("{} ms", 30 + idx)),
+                            alive: Some(true),
+                        })
+                        .collect(),
+                }];
+
+                let mut far_policy = ManagedPolicyGroup::new("p-far", "Far Nodes").expect("far");
+                far_policy
+                    .set_matcher(PolicyCandidateMatcher::Explicit(BTreeSet::from([
+                        NodeIdentity::new("mihomo:0", "Node-40").expect("node 40"),
+                        NodeIdentity::new("mihomo:0", "Node-41").expect("node 41"),
+                        NodeIdentity::new("mihomo:0", "Node-42").expect("node 42"),
+                    ])))
+                    .expect("far matcher");
+
+                let all_policy = ManagedPolicyGroup::new("p-all", "All Nodes").expect("all");
+
+                fixture.managed_policies.groups = vec![far_policy, all_policy];
+                fixture.local_rule_groups = (0..18)
+                    .map(|idx| {
+                        let target = if idx == 15 { "Far Nodes" } else { "All Nodes" };
+                        LocalRoutingRuleGroup {
+                            id: format!("rule-group-{idx:02}"),
+                            name: format!("Rule Group {idx:02}"),
+                            target_policy: manis_profile::Name::parse(target).expect("target"),
+                            enabled: true,
+                            rules: vec![
+                                ManualRule::parse(
+                                    ManualRuleKind::HostSuffix,
+                                    &format!("r{idx}.example.com"),
+                                    target,
+                                )
+                                .expect("rule"),
+                            ],
+                        }
+                    })
+                    .collect();
+                fixture
+            });
+            app = Some(entity.clone());
+            crate::root(entity, window, cx)
+        });
+        let app = app.expect("fixture app");
+        window.update(|window, cx| window.draw(cx).clear(cx));
+
+        let nodes_viewport = window
+            .debug_bounds("nodes-tree-col-nodes-scroll")
+            .expect("nodes column viewport");
+        let policy_far = window
+            .debug_bounds("tree-policy-0")
+            .expect("Far Nodes policy card");
+        let policy_all = window
+            .debug_bounds("tree-policy-1")
+            .expect("All Nodes policy card");
+        let node40_initial = window
+            .debug_bounds("tree-node-40")
+            .expect("Node-40 laid out below fold");
+        assert!(
+            node40_initial.top() > nodes_viewport.bottom(),
+            "Node-40 starts off-screen below the nodes viewport"
+        );
+
+        // 1. Pin "Far Nodes" (contains only off-screen Node-40..42): nodes column must auto-scroll
+        // smoothly to bring Node-40..42 inside the viewport while the policy column stays fixed.
+        window.simulate_click(policy_far.center(), Modifiers::none());
+        window.update(|window, cx| window.draw(cx).clear(cx));
+        for _ in 0..60 {
+            window.executor().advance_clock(Duration::from_millis(16));
+        }
+        window.update(|window, cx| window.draw(cx).clear(cx));
+        let policy_far_after = window
+            .debug_bounds("tree-policy-0")
+            .expect("Far Nodes policy card after scroll");
+        let node40_after = window
+            .debug_bounds("tree-node-40")
+            .expect("Node-40 after auto-scroll");
+        let node42_after = window
+            .debug_bounds("tree-node-42")
+            .expect("Node-42 after auto-scroll");
+        assert_eq!(
+            policy_far_after.origin.y, policy_far.origin.y,
+            "pinning a policy must not scroll its own column"
+        );
+        assert!(
+            node40_after.top() >= nodes_viewport.top()
+                && node42_after.bottom() <= nodes_viewport.bottom(),
+            "off-screen active nodes (Node-40..42) auto-scroll cleanly inside the viewport"
+        );
+
+        // 2. Pin "All Nodes" (spans Node-00..Node-53, exceeding viewport height): column sweeps
+        // from the first active node down to the last active node (Node-53).
+        window.simulate_click(policy_all.center(), Modifiers::none());
+        window.update(|window, cx| window.draw(cx).clear(cx));
+        // Advance through approach back toward Node-00 (first active node).
+        for _ in 0..38 {
+            window.executor().advance_clock(Duration::from_millis(16));
+        }
+        window.update(|window, cx| window.draw(cx).clear(cx));
+        let node0_during = window
+            .debug_bounds("tree-node-0")
+            .expect("Node-00 at start of sweep");
+        assert!(
+            node0_during.top() >= nodes_viewport.top() - gpui::px(2.0)
+                && node0_during.bottom() <= nodes_viewport.bottom(),
+            "sweep visits the first active node (Node-00) before panning to the last"
+        );
+        // Advance through dwell + full sweep to the last active node (Node-53).
+        for _ in 0..190 {
+            window.executor().advance_clock(Duration::from_millis(16));
+        }
+        window.update(|window, cx| window.draw(cx).clear(cx));
+        let node53_after = window
+            .debug_bounds("tree-node-53")
+            .expect("Node-53 at end of sweep");
+        assert!(
+            node53_after.top() >= nodes_viewport.top()
+                && node53_after.bottom() <= nodes_viewport.bottom(),
+            "multi-screen sweep finishes with the last active node (Node-53) inside the viewport"
+        );
+
+        // 3. Manual scroll interruption: re-pin "Far Nodes" then scroll manually mid-flight;
+        // auto-scroll must yield immediately and leave the manual scroll offset intact.
+        window.simulate_click(policy_far.center(), Modifiers::none());
+        window.update(|window, cx| window.draw(cx).clear(cx));
+        for _ in 0..5 {
+            window.executor().advance_clock(Duration::from_millis(16));
+        }
+        window.simulate_event(gpui::ScrollEvent {
+            position: nodes_viewport.center(),
+            delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.0), gpui::px(220.0))),
+            ..Default::default()
+        });
+        window.update(|window, cx| window.draw(cx).clear(cx));
+        let manual_offset = app.read_with(window, |app, _| {
+            app.topology.nodes_leaf_col_scroll.offset().y
+        });
+        for _ in 0..60 {
+            window.executor().advance_clock(Duration::from_millis(16));
+        }
+        window.update(|window, cx| window.draw(cx).clear(cx));
+        let offset_after_wait = app.read_with(window, |app, _| {
+            app.topology.nodes_leaf_col_scroll.offset().y
+        });
+        assert_eq!(
+            offset_after_wait, manual_offset,
+            "manual scroll wheel must immediately cancel column auto-scroll"
+        );
+
+        // 4. Rules tree: pinning "Far Nodes" in Column 2 must auto-scroll overflowing Column 1
+        // so its matching rule (Rule Group 15) glides into view.
+        window.update(|window, cx| {
+            app.update(cx, |app, cx| {
+                app.primary_workspace = PrimaryWorkspace::RoutingRules;
+                cx.notify();
+            });
+            window.draw(cx).clear(cx);
+        });
+        let rules_viewport = window
+            .debug_bounds("rules-tree-col-rules-scroll")
+            .expect("rules column viewport");
+        let rule15_before = window
+            .debug_bounds("tree-rule-15")
+            .expect("Rule Group 15 laid out below fold");
+        assert!(
+            rule15_before.top() > rules_viewport.bottom(),
+            "Rule Group 15 starts off-screen below the rules column viewport"
+        );
+        let far_policy_in_rules = window
+            .debug_bounds("tree-rule-policy-0")
+            .expect("Far Nodes policy card in rules tree");
+        window.simulate_click(far_policy_in_rules.center(), Modifiers::none());
+        window.update(|window, cx| window.draw(cx).clear(cx));
+        for _ in 0..60 {
+            window.executor().advance_clock(Duration::from_millis(16));
+        }
+        window.update(|window, cx| window.draw(cx).clear(cx));
+        let rule15_after = window
+            .debug_bounds("tree-rule-15")
+            .expect("Rule Group 15 after auto-scroll");
+        assert!(
+            rule15_after.top() >= rules_viewport.top()
+                && rule15_after.bottom() <= rules_viewport.bottom(),
+            "pinning a policy in rules tree auto-scrolls its off-screen rules into view"
         );
     }
 }

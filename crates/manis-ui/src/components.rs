@@ -196,6 +196,7 @@ pub(crate) enum StatusTone {
     Neutral,
     Success,
     Route,
+    Danger,
 }
 
 impl StatusTone {
@@ -204,6 +205,7 @@ impl StatusTone {
             Self::Neutral => (theme.text_secondary, theme.surface_low),
             Self::Success => (theme.status_success, theme.status_success_soft),
             Self::Route => (theme.route_trace, theme.route_soft),
+            Self::Danger => (theme.status_error, theme.status_error_soft),
         }
     }
 }

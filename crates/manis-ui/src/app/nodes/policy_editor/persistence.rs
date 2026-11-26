@@ -191,6 +191,92 @@ impl ManisApp {
                 return;
             }
         };
+        self.persist_managed_policy_group(group, dialog_window, cx);
+    }
+
+    /// Commits a two-step confirmed `+` / `-` membership edit from the horizontal Nodes tree,
+    /// enforcing acyclic policy references and at least one remaining candidate.
+    pub(in crate::app) fn commit_policy_member_edit(
+        &mut self,
+        edit: crate::app::topology::PendingPolicyMemberEdit,
+        cx: &mut Context<Self>,
+    ) {
+        if self.configuration_transfer.active || self.managed_policies.mutation_state.is_busy() {
+            return;
+        }
+        self.topology.pending_member_edit = None;
+        let language = self.language();
+        let Some(mut group) = self
+            .managed_policies
+            .groups
+            .iter()
+            .find(|existing| existing.id == edit.parent_policy_id)
+            .cloned()
+        else {
+            cx.notify();
+            return;
+        };
+
+        let mut members: BTreeSet<manis_core::NodeIdentity> = match &group.matcher {
+            PolicyCandidateMatcher::Explicit(existing) => existing.clone(),
+            PolicyCandidateMatcher::All | PolicyCandidateMatcher::NameContains(_) => self
+                .node_inventory()
+                .into_iter()
+                .filter(|node| group.matches(&node.source_id, &node.node_name))
+                .collect(),
+        };
+
+        match edit.op {
+            crate::app::topology::PolicyMemberEditOp::Add => {
+                members.insert(edit.member_identity);
+            }
+            crate::app::topology::PolicyMemberEditOp::Remove => {
+                let target_policy_source = edit
+                    .member_identity
+                    .source_id
+                    .starts_with("policy:")
+                    .then_some(edit.member_identity.source_id.as_str());
+                members.retain(|member| {
+                    member != &edit.member_identity
+                        && target_policy_source.is_none_or(|src| member.source_id != src)
+                });
+                if members.is_empty() {
+                    self.status = ManagedPolicyDraftError::MissingExplicitMember.message(language);
+                    cx.notify();
+                    return;
+                }
+            }
+        }
+
+        if group
+            .set_matcher(PolicyCandidateMatcher::Explicit(members))
+            .is_err()
+        {
+            self.status = ManagedPolicyDraftError::NoCandidates.message(language);
+            cx.notify();
+            return;
+        }
+
+        let mut proposed = self.managed_policies.groups.clone();
+        if let Some(existing) = proposed.iter_mut().find(|existing| existing.id == group.id) {
+            existing.clone_from(&group);
+        }
+        if let Err(error) = mihomo::validate_managed_policy_references(&proposed) {
+            self.status = error.to_string();
+            cx.notify();
+            return;
+        }
+
+        self.persist_managed_policy_group(group, None, cx);
+    }
+
+    fn persist_managed_policy_group(
+        &mut self,
+        group: ManagedPolicyGroup,
+        dialog_window: Option<AnyWindowHandle>,
+        cx: &mut Context<Self>,
+    ) {
+        let language = self.language();
         let Some(store_dir) = self.subscription_store_dir.clone() else {
             language
                 .localized(copy::nodes::COULD_NOT_DETERMINE_WHERE_TO_SAVE_POLICY_GROUPS)

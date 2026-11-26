@@ -1,16 +1,20 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::time::Duration;
 
 use gpui::{
-    AnyElement, Context, Div, FontWeight, InteractiveElement, IntoElement, ParentElement, Stateful,
-    StatefulInteractiveElement, Styled, div, prelude::FluentBuilder as _, px,
+    Animation, AnimationExt as _, AnyElement, Context, Div, FontWeight, InteractiveElement,
+    IntoElement, ParentElement, Stateful, StatefulInteractiveElement, Styled, div, ease_out_quint,
+    prelude::FluentBuilder as _, px,
 };
-use gpui_component::Icon;
+use gpui_component::{Icon, IconName};
 use manis_core::{ManagedPolicyStrategy, NodeIdentity, PolicyGroupId, ProxyId, WindowSizeClass};
 
 use super::{
-    BezierEdge, EdgeOrientation, LayoutRegistry, NodesTreeFocus, PortSide, card_port_tracker,
-    col_tag, compact_protocol_label, legend_entry, new_layout_registry, paint_edges_canvas,
-    port_dot, scrollable_tree_column, with_alpha,
+    BezierEdge, EdgeOrientation, LayoutRegistry, NodesTreeFocus, PendingPolicyMemberEdit,
+    PolicyMemberEditOp, PortSide, TREE_COL_LEFT_PAD, TREE_COL_RIGHT_PAD,
+    build_column_auto_scroll_track, card_port_tracker, col_tag, compact_protocol_label,
+    legend_entry, new_layout_registry, paint_edges_canvas, port_dot, scrollable_tree_column,
+    with_alpha,
 };
 use crate::{
     app::{
@@ -28,6 +32,7 @@ use crate::{
 
 struct TreePolicyData {
     id: String,
+    managed_id: Option<String>,
     group_id: PolicyGroupId,
     name: String,
     strategy: String,
@@ -45,6 +50,17 @@ struct TreeNodeData {
     source_id: String,
     source_index: usize,
     identity: Option<NodeIdentity>,
+    managed_identity: Option<NodeIdentity>,
+}
+
+#[derive(Clone)]
+struct PolicyMemberAction {
+    parent_policy_id: String,
+    parent_policy_name: String,
+    target_key: String,
+    target_label: String,
+    member_identity: NodeIdentity,
+    op: PolicyMemberEditOp,
 }
 
 struct TreeSourceChip {
@@ -115,15 +131,21 @@ impl ManisApp {
         };
 
         let registry = new_layout_registry();
+        self.topology.replace_nodes_layout(registry.clone());
         let policy_graph = build_policy_graph(&policies);
         let highlight = compute_nodes_tree_highlight(&policies, &policy_graph, focus.as_ref());
         let dense_mode = visible_nodes.len() > 10;
+        let hovered_target = self.topology.hovered_member_target.as_deref();
+        let pending_edit = self.topology.pending_member_edit.as_ref();
+        let editing_enabled =
+            !self.configuration_transfer.active && !self.managed_policies.mutation_state.is_busy();
         let (bg_edges, fg_edges) = build_nodes_tree_edges(
             &policies,
             &policy_graph,
             &visible_nodes,
             focus.as_ref(),
             &highlight,
+            pending_edit,
             dense_mode,
             theme,
         );
@@ -131,11 +153,11 @@ impl ManisApp {
         let policy_layer_count = policy_graph.layers.len().max(1);
         let total_cols = policy_layer_count + 1;
         let bay_width = if compact {
-            px(32.0)
+            px(28.0)
         } else if total_cols >= 3 {
-            px(44.0)
+            px(40.0)
         } else {
-            px(56.0)
+            px(52.0)
         };
         let col_min_width = (total_cols >= 4).then_some(px(210.0));
 
@@ -150,7 +172,7 @@ impl ManisApp {
 
         if total_cols >= 4 {
             let cols = f32::from(u16::try_from(total_cols).unwrap_or(u16::MAX));
-            let min_total = cols * 220.0 + (cols - 1.0) * 44.0;
+            let min_total = cols * 220.0 + (cols - 1.0) * 40.0;
             flow_inner = flow_inner.w_full().min_w(px(min_total));
         } else {
             flow_inner = flow_inner.w_full();
@@ -168,8 +190,8 @@ impl ManisApp {
                 .child(
                     div()
                         .flex_shrink_0()
-                        .pl(px(6.0))
-                        .pr(px(10.0))
+                        .pl(px(12.0))
+                        .pr(px(8.0))
                         .pb(px(8.0))
                         .border_b_1()
                         .border_color(theme.outline_subtle)
@@ -195,11 +217,6 @@ impl ManisApp {
                 if layer_idx > 0 {
                     flow_inner = flow_inner.child(div().w(bay_width).flex_shrink_0());
                 }
-                let layer_has_same_col = policy_graph
-                    .layer_has_same_column_edge
-                    .get(layer_idx)
-                    .copied()
-                    .unwrap_or(false);
                 let col_number = layer_idx + 1;
                 let (col_label, tag_text, tag_fill) = if policy_layer_count == 1 {
                     (
@@ -258,6 +275,9 @@ impl ManisApp {
                             focus.as_ref(),
                             &highlight,
                             pinned_policy_id.as_deref(),
+                            hovered_target,
+                            pending_edit,
+                            editing_enabled,
                             col_key.clone(),
                             registry.clone(),
                             language,
@@ -268,11 +288,6 @@ impl ManisApp {
                     .collect::<Vec<_>>();
 
                 let scroll_handle = self.topology.nodes_policy_col_scroll(layer_idx);
-                let extra_left_pad = if layer_idx == 0 && layer_has_same_col {
-                    px(18.0)
-                } else {
-                    px(0.0)
-                };
                 flow_inner = flow_inner.child(scrollable_tree_column(
                     format!("nodes-tree-col-policy-{layer_idx}-scroll"),
                     format!("nodes-tree-col-policy-{layer_idx}-scroll"),
@@ -283,7 +298,7 @@ impl ManisApp {
                     &scroll_handle,
                     registry.clone(),
                     col_min_width,
-                    extra_left_pad,
+                    false,
                     theme,
                 ));
             }
@@ -296,6 +311,8 @@ impl ManisApp {
         let node_cards: Vec<AnyElement> = if visible_nodes.is_empty() {
             vec![
                 div()
+                    .pl(px(TREE_COL_LEFT_PAD))
+                    .pr(px(TREE_COL_RIGHT_PAD))
                     .py(Space::Lg.px())
                     .child(Self::node_empty_state(compact, language, theme, cx))
                     .into_any_element(),
@@ -312,6 +329,9 @@ impl ManisApp {
                         focus.as_ref(),
                         &highlight,
                         pinned_policy_id.as_deref(),
+                        hovered_target,
+                        pending_edit,
+                        editing_enabled,
                         nodes_col_key.clone(),
                         registry.clone(),
                         language,
@@ -346,11 +366,11 @@ impl ManisApp {
                 &self.topology.nodes_leaf_col_scroll,
                 registry.clone(),
                 col_min_width,
-                px(0.0),
+                false,
                 theme,
             ))
-            // Skip-layer and cyclic highlighted edges render in a click-through overlay so
-            // multi-column links remain legible across intermediate policy tiers.
+            // Skip-layer highlighted edges render in a click-through overlay so multi-column links
+            // remain legible across intermediate policy tiers.
             .when(!fg_edges.is_empty(), |inner| {
                 inner.child(paint_edges_canvas(registry, fg_edges))
             });
@@ -379,7 +399,17 @@ impl ManisApp {
             .flex()
             .flex_col()
             .on_click(cx.listener(|this, _, _, cx| {
-                if this.topology.pinned_nodes.take().is_some() {
+                this.topology.cancel_auto_scroll();
+                let cleared_pending = this.topology.pending_member_edit.take().is_some();
+                let cleared_pin = if cleared_pending {
+                    false
+                } else {
+                    this.topology.pinned_nodes.take().is_some()
+                };
+                if cleared_pin {
+                    this.topology.hovered_member_target = None;
+                }
+                if cleared_pending || cleared_pin {
                     cx.notify();
                 }
             }))
@@ -409,6 +439,83 @@ impl ManisApp {
             )
     }
 
+    fn start_nodes_tree_auto_scroll(&mut self, policy_id: &str, cx: &mut Context<Self>) {
+        let layout_registry = self.topology.nodes_layout();
+        let layout = layout_registry.borrow();
+        let language = self.language();
+        let (policies, all_nodes, source_chips) = self.collect_nodes_tree_data(language);
+        let Some(focused_idx) = policies.iter().position(|policy| policy.id == policy_id) else {
+            drop(layout);
+            self.topology.cancel_auto_scroll();
+            return;
+        };
+
+        let policy_graph = build_policy_graph(&policies);
+        let focused_layer = policy_graph.layer_of[focused_idx];
+        let focus = NodesTreeFocus::Policy(policy_id.to_owned());
+        let highlight = compute_nodes_tree_highlight(&policies, &policy_graph, Some(&focus));
+        let focused_policy = &policies[focused_idx];
+
+        let mut tracks = Vec::new();
+        for (layer_idx, policy_indices) in policy_graph.layers.iter().enumerate() {
+            if layer_idx == focused_layer {
+                continue;
+            }
+            let col_key = format!("col:policy:{layer_idx}");
+            let Some(viewport) = layout.viewport(&col_key) else {
+                continue;
+            };
+            let active_bounds: Vec<_> = policy_indices
+                .iter()
+                .filter_map(|&p_idx| {
+                    let candidate = &policies[p_idx];
+                    highlight
+                        .policy_roles
+                        .contains_key(&candidate.id)
+                        .then(|| layout.port_bounds(&format!("p:{}", candidate.id)))
+                        .flatten()
+                })
+                .collect();
+            if let Some(track) = build_column_auto_scroll_track(
+                self.topology.nodes_policy_col_scroll(layer_idx),
+                viewport,
+                &active_bounds,
+            ) {
+                tracks.push(track);
+            }
+        }
+
+        if let Some(viewport) = layout.viewport("col:nodes") {
+            let active_filter = self
+                .topology
+                .node_source_filter
+                .as_deref()
+                .filter(|id| source_chips.iter().any(|chip| chip.id == *id));
+            let active_bounds: Vec<_> = all_nodes
+                .iter()
+                .filter(|node| active_filter.is_none_or(|filter_id| node.source_id == filter_id))
+                .filter(|node| {
+                    focused_policy
+                        .members
+                        .iter()
+                        .any(|(_, name)| name == &node.name)
+                        || highlight.active_chain_nodes.contains(&node.name)
+                })
+                .filter_map(|node| layout.port_bounds(&format!("n:{}", node.name)))
+                .collect();
+            if let Some(track) = build_column_auto_scroll_track(
+                self.topology.nodes_leaf_col_scroll.clone(),
+                viewport,
+                &active_bounds,
+            ) {
+                tracks.push(track);
+            }
+        }
+        drop(layout);
+
+        self.start_topology_auto_scroll(tracks, cx);
+    }
+
     #[expect(
         clippy::too_many_lines,
         reason = "Gathers policies, sources, and fallback runtime nodes in one pass"
@@ -424,8 +531,14 @@ impl ManisApp {
                 .filter(|group| group.name != manis_profile::MANIS_GLOBAL_GROUP_NAME)
             {
                 let selected = self.selected_node_for_policy(group);
+                let managed_id = self
+                    .editable_policy_group_id(&group.name)
+                    .map(str::to_owned);
                 policies.push(TreePolicyData {
-                    id: group.id.as_str().to_owned(),
+                    id: managed_id
+                        .clone()
+                        .unwrap_or_else(|| group.id.as_str().to_owned()),
+                    managed_id,
                     group_id: group.id.clone(),
                     name: group.name.clone(),
                     strategy: policy_kind_label(language, group.kind).to_owned(),
@@ -457,6 +570,7 @@ impl ManisApp {
                 });
                 policies.push(TreePolicyData {
                     id: group.id.clone(),
+                    managed_id: Some(group.id.clone()),
                     group_id: PolicyGroupId::new(group.id.clone()),
                     name: group.name.clone(),
                     strategy: Self::offline_policy_strategy(language, group.strategy),
@@ -503,6 +617,7 @@ impl ManisApp {
                         source_id: source.id.clone(),
                         source_index,
                         identity: NodeIdentity::new(&runtime_provider, &node.name).ok(),
+                        managed_identity: NodeIdentity::new(&source.id, &node.name).ok(),
                         name: node.name.clone(),
                     });
                 }
@@ -519,6 +634,7 @@ impl ManisApp {
                     source_id: source.id.clone(),
                     source_index,
                     identity: NodeIdentity::new(&source.id, &saved.name).ok(),
+                    managed_identity: NodeIdentity::new(&source.id, &saved.name).ok(),
                     name: saved.name.clone(),
                 });
             }
@@ -561,6 +677,11 @@ impl ManisApp {
                         .get(member_name.as_str())
                         .copied()
                         .unwrap_or(("", None));
+                    let managed_identity = if matches!(member_name.as_str(), "DIRECT" | "REJECT") {
+                        NodeIdentity::new("builtin", member_name).ok()
+                    } else {
+                        None
+                    };
                     nodes.push(TreeNodeData {
                         region: region_code(member_name),
                         protocol: compact_protocol_label(proto),
@@ -568,6 +689,7 @@ impl ManisApp {
                         source_id: "runtime".to_owned(),
                         source_index: source_chips.len(),
                         identity: NodeIdentity::new("runtime", member_name).ok(),
+                        managed_identity,
                         name: member_name.clone(),
                     });
                 }
@@ -681,22 +803,72 @@ impl ManisApp {
                             ));
                     }
                     if pinned_policy_id == Some(policy.id.as_str()) {
-                        let pin_hint = if policy.allows_manual_selection {
-                            match language {
-                                Language::English => {
-                                    "Pinned · Click a highlighted group or node to switch"
-                                }
-                                Language::SimplifiedChinese => {
-                                    "已锁定 · 点击高亮策略组或节点即可切换出口"
-                                }
-                            }
+                        if let Some(pending) =
+                            self.topology
+                                .pending_member_edit
+                                .as_ref()
+                                .filter(|pending| {
+                                    policy.managed_id.as_deref()
+                                        == Some(pending.parent_policy_id.as_str())
+                                })
+                        {
+                            let (badge_text, tone) = match pending.op {
+                                PolicyMemberEditOp::Add => (
+                                    match language {
+                                        Language::English => format!(
+                                            "Confirm add “{}” to “{}”",
+                                            pending.target_label, pending.parent_policy_name
+                                        ),
+                                        Language::SimplifiedChinese => format!(
+                                            "二次确认：将「{}」添加到「{}」",
+                                            pending.target_label, pending.parent_policy_name
+                                        ),
+                                    },
+                                    StatusTone::Success,
+                                ),
+                                PolicyMemberEditOp::Remove => (
+                                    match language {
+                                        Language::English => format!(
+                                            "Confirm remove “{}” from “{}”",
+                                            pending.target_label, pending.parent_policy_name
+                                        ),
+                                        Language::SimplifiedChinese => format!(
+                                            "二次确认：从「{}」移除「{}」",
+                                            pending.parent_policy_name, pending.target_label
+                                        ),
+                                    },
+                                    StatusTone::Danger,
+                                ),
+                            };
+                            summary = summary.child(status_badge(badge_text, tone, theme));
                         } else {
-                            match language {
-                                Language::English => "Pinned · Automatic policy (read-only)",
-                                Language::SimplifiedChinese => "已锁定 · 自动策略（只读）",
-                            }
-                        };
-                        summary = summary.child(status_badge(pin_hint, StatusTone::Route, theme));
+                            let pin_hint = if policy.managed_id.is_some() {
+                                match language {
+                                    Language::English => {
+                                        "Pinned · Hover right tiers to + / − members"
+                                    }
+                                    Language::SimplifiedChinese => {
+                                        "已锁定 · 悬停右侧层级可 + 添加或 − 移除成员"
+                                    }
+                                }
+                            } else if policy.allows_manual_selection {
+                                match language {
+                                    Language::English => {
+                                        "Pinned · Click a highlighted group or node to switch"
+                                    }
+                                    Language::SimplifiedChinese => {
+                                        "已锁定 · 点击高亮策略组或节点即可切换出口"
+                                    }
+                                }
+                            } else {
+                                match language {
+                                    Language::English => "Pinned · Automatic policy (read-only)",
+                                    Language::SimplifiedChinese => "已锁定 · 自动策略（只读）",
+                                }
+                            };
+                            summary =
+                                summary.child(status_badge(pin_hint, StatusTone::Route, theme));
+                        }
                     }
                 }
             }
@@ -809,6 +981,9 @@ impl ManisApp {
         focus: Option<&NodesTreeFocus>,
         highlight: &NodesTreeHighlight,
         pinned_policy_id: Option<&str>,
+        hovered_member_target: Option<&str>,
+        pending_member_edit: Option<&PendingPolicyMemberEdit>,
+        editing_enabled: bool,
         column_key: String,
         registry: LayoutRegistry,
         language: Language,
@@ -818,7 +993,7 @@ impl ManisApp {
         let is_pinned = pinned_policy_id == Some(policy.id.as_str());
         let role = highlight.policy_roles.get(&policy.id).copied();
         let highlighted = role.is_some();
-        let dimmed = focus.is_some() && !highlighted;
+        let target_key = format!("p:{}", policy.id);
 
         // If a manual parent policy is currently pinned and this policy group is one of its
         // selectable members, clicking this card switches the parent's exit to this group.
@@ -842,33 +1017,94 @@ impl ManisApp {
                     node_name: policy.name.clone(),
                 })
             });
-        let keep_pinned_on_hover = pinned_policy_id.is_some_and(|pid| {
-            pid != policy.id
-                && policies
-                    .iter()
-                    .find(|p| p.id == pid)
-                    .is_some_and(|p| p.members.iter().any(|(_, name)| name == &policy.name))
-        });
 
-        let (card_bg, card_border, port_accent) = match role {
-            Some(PolicyHighlightRole::ActiveChild | PolicyHighlightRole::ActiveDescendant) => (
-                theme.status_success_soft,
-                theme.status_success,
-                theme.status_success,
-            ),
-            Some(PolicyHighlightRole::Parent) => {
-                (theme.route_soft, theme.route_trace, theme.route_trace)
+        // Strict acyclic tree membership editing: when an editable policy group in an earlier
+        // column is pinned, hovering a downstream policy group offers `+` (add) or `-` (remove)
+        // on its left edge, gated by a two-step confirmation pill.
+        let member_action: Option<PolicyMemberAction> = editing_enabled
+            .then(|| {
+                let pid = pinned_policy_id?;
+                let parent_idx = policies.iter().position(|p| p.id == pid)?;
+                if policy_graph.layer_of[index] <= policy_graph.layer_of[parent_idx] {
+                    return None;
+                }
+                if policy_graph.ancestors_of[parent_idx].contains(&index) {
+                    return None;
+                }
+                let parent = &policies[parent_idx];
+                let parent_managed_id = parent.managed_id.as_deref()?;
+                let target_managed_id = policy.managed_id.as_deref()?;
+                let member_identity =
+                    NodeIdentity::new(&format!("policy:{target_managed_id}"), &policy.name).ok()?;
+                let is_direct_member = parent.members.iter().any(|(_, name)| name == &policy.name);
+                let op = if is_direct_member {
+                    if parent.members.len() <= 1 {
+                        return None;
+                    }
+                    PolicyMemberEditOp::Remove
+                } else {
+                    PolicyMemberEditOp::Add
+                };
+                Some(PolicyMemberAction {
+                    parent_policy_id: parent_managed_id.to_owned(),
+                    parent_policy_name: parent.name.clone(),
+                    target_key: target_key.clone(),
+                    target_label: policy.name.clone(),
+                    member_identity,
+                    op,
+                })
+            })
+            .flatten();
+
+        let armed_edit = pending_member_edit.filter(|pending| {
+            member_action.as_ref().is_some_and(|action| {
+                pending.parent_policy_id == action.parent_policy_id
+                    && pending.target_key == action.target_key
+            })
+        });
+        let is_hovered_target = hovered_member_target == Some(target_key.as_str());
+        let show_member_control =
+            member_action.is_some() && (armed_edit.is_some() || is_hovered_target);
+        let dimmed = focus.is_some() && !highlighted && armed_edit.is_none();
+
+        let (card_bg, card_border, port_accent) = if let Some(armed) = armed_edit {
+            match armed.op {
+                PolicyMemberEditOp::Add => (
+                    theme.status_success_soft,
+                    theme.status_success,
+                    theme.status_success,
+                ),
+                PolicyMemberEditOp::Remove => (
+                    theme.status_error_soft,
+                    theme.danger_fill,
+                    theme.danger_fill,
+                ),
             }
-            Some(PolicyHighlightRole::Focused | PolicyHighlightRole::CandidateChild) => (
-                theme.action_soft,
-                theme.action_primary,
-                theme.action_primary,
-            ),
-            None => (
-                theme.surface_elevated,
-                theme.outline_subtle,
-                theme.outline_strong,
-            ),
+        } else {
+            match role {
+                Some(PolicyHighlightRole::ActiveChild | PolicyHighlightRole::ActiveDescendant) => (
+                    theme.status_success_soft,
+                    theme.status_success,
+                    theme.status_success,
+                ),
+                Some(PolicyHighlightRole::Parent) => {
+                    (theme.route_soft, theme.route_trace, theme.route_trace)
+                }
+                Some(PolicyHighlightRole::Focused | PolicyHighlightRole::CandidateChild) => (
+                    theme.action_soft,
+                    theme.action_primary,
+                    theme.action_primary,
+                ),
+                None => (
+                    theme.surface_elevated,
+                    if show_member_control {
+                        theme.outline_strong
+                    } else {
+                        theme.outline_subtle
+                    },
+                    theme.outline_strong,
+                ),
+            }
         };
 
         let role_badge: Option<(&'static str, gpui::Rgba, gpui::Rgba)> = if is_pinned {
@@ -915,14 +1151,24 @@ impl ManisApp {
             .map_or_else(|| "—".to_owned(), |ms| format!("{ms}ms"));
 
         let member_summary = policy_member_summary(policy, &policy_graph.name_to_idx, language);
-        let show_left_port =
-            policy_graph.has_incoming_policy[index] || policy_graph.has_same_column_edge[index];
-        let show_right_port =
-            !policy.members.is_empty() || policy_graph.has_same_column_edge[index];
+        let show_left_port = policy_graph.has_incoming_policy[index];
+        let show_right_port = !policy.members.is_empty();
 
         let hover_id = policy.id.clone();
+        let hover_target_key = target_key.clone();
         let click_id = policy.id.clone();
         let selector = format!("tree-policy-{index}");
+        let member_control = member_action.and_then(|action| {
+            Self::nodes_tree_member_action_control(
+                &format!("policy-{index}"),
+                action,
+                is_hovered_target,
+                armed_edit.map(|pending| pending.animation_nonce),
+                language,
+                theme,
+                cx,
+            )
+        });
 
         let card = div()
             .id(format!("tree-policy-card-{index}"))
@@ -935,48 +1181,41 @@ impl ManisApp {
             .bg(card_bg)
             .border_1()
             .border_color(card_border)
-            .when(dimmed, |el| el.opacity(0.28))
+            .when(dimmed, |el| {
+                el.opacity(if show_member_control { 0.94 } else { 0.28 })
+            })
             .cursor_pointer()
             .flex()
             .flex_col()
             .gap(px(5.0))
-            .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
-                if *hovered {
-                    if keep_pinned_on_hover {
-                        return;
-                    }
-                    this.topology.hovered_nodes = Some(NodesTreeFocus::Policy(hover_id.clone()));
-                    cx.notify();
-                } else if matches!(
-                    this.topology.hovered_nodes.as_ref(),
-                    Some(NodesTreeFocus::Policy(current)) if current == &hover_id
-                ) {
-                    this.topology.hovered_nodes = None;
-                    cx.notify();
-                }
-            }))
             .on_click(cx.listener(move |this, _, _, cx| {
                 cx.stop_propagation();
+                if this.topology.pending_member_edit.take().is_some() {
+                    this.topology.cancel_auto_scroll();
+                    cx.notify();
+                    return;
+                }
                 if let Some(request) = pinned_parent_switch.clone() {
+                    this.topology.cancel_auto_scroll();
                     this.select_policy_node(request, cx);
                 } else if matches!(
                     this.topology.pinned_nodes.as_ref(),
                     Some(NodesTreeFocus::Policy(current)) if current == &click_id
                 ) {
                     this.topology.pinned_nodes = None;
+                    this.topology.hovered_member_target = None;
+                    this.topology.cancel_auto_scroll();
                     cx.notify();
                 } else {
                     this.topology.pinned_nodes = Some(NodesTreeFocus::Policy(click_id.clone()));
+                    this.topology.hovered_member_target = None;
+                    this.start_nodes_tree_auto_scroll(&click_id, cx);
                     cx.notify();
                 }
             }))
-            .child(card_port_tracker(
-                registry,
-                format!("p:{}", policy.id),
-                column_key,
-            ))
-            // Left anchor port when referenced by another policy group
-            .when(show_left_port, |el| {
+            .child(card_port_tracker(registry, target_key, column_key))
+            // Left anchor port when referenced by an upstream policy group
+            .when(show_left_port && !show_member_control, |el| {
                 el.child(port_dot(
                     PortSide::Left,
                     if highlighted {
@@ -1134,15 +1373,51 @@ impl ManisApp {
                     port_accent,
                     highlighted,
                 ))
-            });
+            })
+            // Left-edge hover `+` / `-` button or animated two-step confirm pill
+            .when_some(member_control, ParentElement::child);
 
-        card.into_any_element()
+        div()
+            .id(format!("tree-policy-slot-{index}"))
+            .w_full()
+            .pl(px(TREE_COL_LEFT_PAD))
+            .pr(px(TREE_COL_RIGHT_PAD))
+            .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                if this.topology.pinned_nodes.is_some() {
+                    if *hovered {
+                        if this.topology.hovered_member_target.as_deref()
+                            != Some(hover_target_key.as_str())
+                        {
+                            this.topology.hovered_member_target = Some(hover_target_key.clone());
+                            cx.notify();
+                        }
+                    } else if this.topology.hovered_member_target.as_deref()
+                        == Some(hover_target_key.as_str())
+                    {
+                        this.topology.hovered_member_target = None;
+                        cx.notify();
+                    }
+                    return;
+                }
+                if *hovered {
+                    this.topology.hovered_nodes = Some(NodesTreeFocus::Policy(hover_id.clone()));
+                    cx.notify();
+                } else if matches!(
+                    this.topology.hovered_nodes.as_ref(),
+                    Some(NodesTreeFocus::Policy(current)) if current == &hover_id
+                ) {
+                    this.topology.hovered_nodes = None;
+                    cx.notify();
+                }
+            }))
+            .child(card)
+            .into_any_element()
     }
 
     #[expect(
         clippy::too_many_arguments,
         clippy::too_many_lines,
-        reason = "Single GPUI node tile builder with highlight roles and click-to-switch"
+        reason = "Single GPUI node tile builder with highlight roles, switch, and membership +/-"
     )]
     fn nodes_tree_node_card(
         index: usize,
@@ -1151,12 +1426,16 @@ impl ManisApp {
         focus: Option<&NodesTreeFocus>,
         highlight: &NodesTreeHighlight,
         pinned_policy_id: Option<&str>,
+        hovered_member_target: Option<&str>,
+        pending_member_edit: Option<&PendingPolicyMemberEdit>,
+        editing_enabled: bool,
         column_key: String,
         registry: LayoutRegistry,
         language: Language,
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let target_key = format!("n:{}", node.name);
         let active_anywhere = policies
             .iter()
             .any(|policy| policy.current_exit.as_deref() == Some(node.name.as_str()));
@@ -1224,8 +1503,59 @@ impl ManisApp {
             None => (false, false, None),
         };
 
-        let dimmed = focus.is_some() && !is_active_hl && !is_member_hl;
-        let (card_bg, card_border, port_fill, port_border) = if is_active_hl {
+        let member_action: Option<PolicyMemberAction> = editing_enabled
+            .then(|| {
+                let pid = pinned_policy_id?;
+                let parent = policies.iter().find(|p| p.id == pid)?;
+                let parent_managed_id = parent.managed_id.as_deref()?;
+                let member_identity = node.managed_identity.clone()?;
+                let is_direct_member = parent.members.iter().any(|(_, name)| name == &node.name);
+                let op = if is_direct_member {
+                    if parent.members.len() <= 1 {
+                        return None;
+                    }
+                    PolicyMemberEditOp::Remove
+                } else {
+                    PolicyMemberEditOp::Add
+                };
+                Some(PolicyMemberAction {
+                    parent_policy_id: parent_managed_id.to_owned(),
+                    parent_policy_name: parent.name.clone(),
+                    target_key: target_key.clone(),
+                    target_label: Self::policy_candidate_display_name(&node.name).to_owned(),
+                    member_identity,
+                    op,
+                })
+            })
+            .flatten();
+
+        let armed_edit = pending_member_edit.filter(|pending| {
+            member_action.as_ref().is_some_and(|action| {
+                pending.parent_policy_id == action.parent_policy_id
+                    && pending.target_key == action.target_key
+            })
+        });
+        let is_hovered_target = hovered_member_target == Some(target_key.as_str());
+        let show_member_control =
+            member_action.is_some() && (armed_edit.is_some() || is_hovered_target);
+        let dimmed = focus.is_some() && !is_active_hl && !is_member_hl && armed_edit.is_none();
+
+        let (card_bg, card_border, port_fill, port_border) = if let Some(armed) = armed_edit {
+            match armed.op {
+                PolicyMemberEditOp::Add => (
+                    theme.status_success_soft,
+                    theme.status_success,
+                    theme.status_success,
+                    theme.status_success,
+                ),
+                PolicyMemberEditOp::Remove => (
+                    theme.status_error_soft,
+                    theme.danger_fill,
+                    theme.danger_fill,
+                    theme.danger_fill,
+                ),
+            }
+        } else if is_active_hl {
             (
                 theme.status_success_soft,
                 theme.status_success,
@@ -1242,7 +1572,11 @@ impl ManisApp {
         } else {
             (
                 theme.surface_elevated,
-                theme.outline_subtle,
+                if show_member_control {
+                    theme.outline_strong
+                } else {
+                    theme.outline_subtle
+                },
                 theme.surface_elevated,
                 theme.outline_strong,
             )
@@ -1263,12 +1597,6 @@ impl ManisApp {
                 node_name: node.name.clone(),
             })
         });
-        let keep_pinned_on_hover = pinned_policy_id.is_some_and(|pid| {
-            policies
-                .iter()
-                .find(|p| p.id == pid)
-                .is_some_and(|p| p.members.iter().any(|(_, name)| name == &node.name))
-        });
 
         let source_dot_color = match node.source_index % 3 {
             0 => theme.action_primary,
@@ -1281,11 +1609,23 @@ impl ManisApp {
             .map_or_else(|| "—".to_owned(), |ms| format!("{ms}ms"));
 
         let hover_name = node.name.clone();
+        let hover_target_key = target_key.clone();
         let fallback_identity = node.identity.clone();
         let selector = format!("tree-node-{index}");
         let display_name = Self::policy_candidate_display_name(&node.name).to_owned();
+        let member_control = member_action.and_then(|action| {
+            Self::nodes_tree_member_action_control(
+                &format!("node-{index}"),
+                action,
+                is_hovered_target,
+                armed_edit.map(|pending| pending.animation_nonce),
+                language,
+                theme,
+                cx,
+            )
+        });
 
-        div()
+        let card = div()
             .id(format!("tree-node-card-{index}"))
             .debug_selector(move || selector)
             .relative()
@@ -1296,45 +1636,35 @@ impl ManisApp {
             .bg(card_bg)
             .border_1()
             .border_color(card_border)
-            .when(dimmed, |el| el.opacity(0.26))
+            .when(dimmed, |el| {
+                el.opacity(if show_member_control { 0.94 } else { 0.26 })
+            })
             .cursor_pointer()
             .flex()
             .flex_col()
             .gap(px(4.0))
-            .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
-                if *hovered {
-                    if keep_pinned_on_hover {
-                        return;
-                    }
-                    this.topology.hovered_nodes = Some(NodesTreeFocus::Node(hover_name.clone()));
-                    cx.notify();
-                } else if matches!(
-                    this.topology.hovered_nodes.as_ref(),
-                    Some(NodesTreeFocus::Node(current)) if current == &hover_name
-                ) {
-                    this.topology.hovered_nodes = None;
-                    cx.notify();
-                }
-            }))
             .on_click(cx.listener(move |this, _, _, cx| {
                 cx.stop_propagation();
+                this.topology.cancel_auto_scroll();
+                if this.topology.pending_member_edit.take().is_some() {
+                    cx.notify();
+                    return;
+                }
                 if let Some(request) = pinned_switch.clone() {
                     this.select_policy_node(request, cx);
                 } else if let Some(identity) = fallback_identity.clone() {
                     this.select_global_node(identity, cx);
                 }
             }))
-            .child(card_port_tracker(
-                registry,
-                format!("n:{}", node.name),
-                column_key,
-            ))
-            .child(port_dot(
-                PortSide::Left,
-                port_fill,
-                port_border,
-                is_active_hl || is_member_hl,
-            ))
+            .child(card_port_tracker(registry, target_key, column_key))
+            .when(!show_member_control, |el| {
+                el.child(port_dot(
+                    PortSide::Left,
+                    port_fill,
+                    port_border,
+                    is_active_hl || is_member_hl,
+                ))
+            })
             // Row 1: region badge + node name + optional role pill + active dot
             .child(
                 div()
@@ -1429,7 +1759,244 @@ impl ManisApp {
                             .child(latency_label),
                     ),
             )
+            // Left-edge hover `+` / `-` button or animated two-step confirm pill
+            .when_some(member_control, ParentElement::child);
+
+        div()
+            .id(format!("tree-node-slot-{index}"))
+            .w_full()
+            .pl(px(TREE_COL_LEFT_PAD))
+            .pr(px(TREE_COL_RIGHT_PAD))
+            .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                if this.topology.pinned_nodes.is_some() {
+                    if *hovered {
+                        if this.topology.hovered_member_target.as_deref()
+                            != Some(hover_target_key.as_str())
+                        {
+                            this.topology.hovered_member_target = Some(hover_target_key.clone());
+                            cx.notify();
+                        }
+                    } else if this.topology.hovered_member_target.as_deref()
+                        == Some(hover_target_key.as_str())
+                    {
+                        this.topology.hovered_member_target = None;
+                        cx.notify();
+                    }
+                    return;
+                }
+                if *hovered {
+                    this.topology.hovered_nodes = Some(NodesTreeFocus::Node(hover_name.clone()));
+                    cx.notify();
+                } else if matches!(
+                    this.topology.hovered_nodes.as_ref(),
+                    Some(NodesTreeFocus::Node(current)) if current == &hover_name
+                ) {
+                    this.topology.hovered_nodes = None;
+                    cx.notify();
+                }
+            }))
+            .child(card)
             .into_any_element()
+    }
+
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Renders the left-edge +/- trigger and animated two-step confirmation pill"
+    )]
+    fn nodes_tree_member_action_control(
+        id_suffix: &str,
+        action: PolicyMemberAction,
+        is_hovered_target: bool,
+        armed_nonce: Option<u64>,
+        language: Language,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        if !is_hovered_target && armed_nonce.is_none() {
+            return None;
+        }
+
+        if let Some(nonce) = armed_nonce {
+            let (confirm_label, confirm_fill, confirm_hover, confirm_text, border_color) =
+                match action.op {
+                    PolicyMemberEditOp::Add => (
+                        match language {
+                            Language::English => "Confirm add",
+                            Language::SimplifiedChinese => "确认添加",
+                        },
+                        theme.status_success,
+                        with_alpha(theme.status_success, 0.86),
+                        theme.action_on_primary,
+                        theme.status_success,
+                    ),
+                    PolicyMemberEditOp::Remove => (
+                        match language {
+                            Language::English => "Confirm",
+                            Language::SimplifiedChinese => "确认移除",
+                        },
+                        theme.danger_fill,
+                        theme.danger_hover,
+                        theme.danger_on,
+                        theme.danger_fill,
+                    ),
+                };
+
+            let confirm_edit = PendingPolicyMemberEdit {
+                parent_policy_id: action.parent_policy_id,
+                parent_policy_name: action.parent_policy_name,
+                target_key: action.target_key,
+                target_label: action.target_label,
+                member_identity: action.member_identity,
+                op: action.op,
+                animation_nonce: nonce,
+            };
+            let confirm_selector = format!("tree-member-confirm-{id_suffix}");
+            let cancel_selector = format!("tree-member-cancel-{id_suffix}");
+            let anim_id =
+                gpui::SharedString::from(format!("tree-member-confirm-anim-{id_suffix}-{nonce}"));
+
+            let pill = div()
+                .id(format!("tree-member-confirm-pill-{id_suffix}"))
+                .h(px(26.0))
+                .p(px(2.0))
+                .rounded_full()
+                .bg(theme.surface_elevated)
+                .border_1()
+                .border_color(border_color)
+                .shadow_sm()
+                .flex()
+                .items_center()
+                .gap(px(3.0))
+                .on_click(|_, _, cx| cx.stop_propagation())
+                .child(
+                    div()
+                        .id(format!("tree-member-confirm-btn-{id_suffix}"))
+                        .debug_selector(move || confirm_selector)
+                        .h(px(20.0))
+                        .px(px(8.0))
+                        .rounded_full()
+                        .bg(confirm_fill)
+                        .hover(move |style| style.bg(confirm_hover))
+                        .cursor_pointer()
+                        .flex()
+                        .items_center()
+                        .gap(px(3.0))
+                        .text_size(px(10.5))
+                        .line_height(px(14.0))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(confirm_text)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.commit_policy_member_edit(confirm_edit.clone(), cx);
+                        }))
+                        .child(Icon::new(IconName::Check).size(px(10.0)))
+                        .child(confirm_label),
+                )
+                .child(
+                    div()
+                        .id(format!("tree-member-cancel-btn-{id_suffix}"))
+                        .debug_selector(move || cancel_selector)
+                        .size(px(20.0))
+                        .rounded_full()
+                        .bg(theme.surface_low)
+                        .hover(move |style| style.bg(theme.surface_high))
+                        .cursor_pointer()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .text_color(theme.text_secondary)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.topology.pending_member_edit = None;
+                            cx.notify();
+                        }))
+                        .child(Icon::new(IconName::Close).size(px(9.0))),
+                )
+                .with_animation(
+                    anim_id,
+                    Animation::new(Duration::from_millis(180)).with_easing(ease_out_quint()),
+                    |el, delta| el.opacity(0.25 + 0.75 * delta).ml(px(-8.0 * (1.0 - delta))),
+                );
+
+            return Some(
+                div()
+                    .absolute()
+                    .left(px(-10.0))
+                    .top(gpui::relative(0.5))
+                    .mt(px(-13.0))
+                    .child(pill)
+                    .into_any_element(),
+            );
+        }
+
+        let (fill, hover_fill, glyph_color) = match action.op {
+            PolicyMemberEditOp::Add => (
+                theme.status_success,
+                with_alpha(theme.status_success, 0.86),
+                theme.action_on_primary,
+            ),
+            PolicyMemberEditOp::Remove => (theme.danger_fill, theme.danger_hover, theme.danger_on),
+        };
+        let is_add = action.op == PolicyMemberEditOp::Add;
+        let trigger_selector = format!("tree-member-trigger-{id_suffix}");
+
+        let glyph = div()
+            .relative()
+            .size(px(10.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(div().w(px(9.0)).h(px(1.8)).rounded_full().bg(glyph_color))
+            .when(is_add, |el| {
+                el.child(
+                    div()
+                        .absolute()
+                        .w(px(1.8))
+                        .h(px(9.0))
+                        .rounded_full()
+                        .bg(glyph_color),
+                )
+            });
+
+        Some(
+            div()
+                .id(format!("tree-member-trigger-btn-{id_suffix}"))
+                .debug_selector(move || trigger_selector)
+                .absolute()
+                .left(px(-10.0))
+                .top(gpui::relative(0.5))
+                .mt(px(-10.0))
+                .size(px(20.0))
+                .rounded_full()
+                .bg(fill)
+                .hover(move |style| style.bg(hover_fill))
+                .border_2()
+                .border_color(theme.surface_elevated)
+                .shadow_xs()
+                .cursor_pointer()
+                .flex()
+                .items_center()
+                .justify_center()
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.topology.cancel_auto_scroll();
+                    this.topology.member_edit_nonce =
+                        this.topology.member_edit_nonce.wrapping_add(1);
+                    let nonce = this.topology.member_edit_nonce;
+                    this.topology.pending_member_edit = Some(PendingPolicyMemberEdit {
+                        parent_policy_id: action.parent_policy_id.clone(),
+                        parent_policy_name: action.parent_policy_name.clone(),
+                        target_key: action.target_key.clone(),
+                        target_label: action.target_label.clone(),
+                        member_identity: action.member_identity.clone(),
+                        op: action.op,
+                        animation_nonce: nonce,
+                    });
+                    cx.notify();
+                }))
+                .child(glyph)
+                .into_any_element(),
+        )
     }
 
     #[expect(
@@ -1496,6 +2063,7 @@ impl ManisApp {
                     })
                     .on_click(cx.listener(|this, _, _, cx| {
                         cx.stop_propagation();
+                        this.topology.cancel_auto_scroll();
                         this.topology.node_source_filter = None;
                         cx.notify();
                     }))
@@ -1547,6 +2115,7 @@ impl ManisApp {
                         })
                         .on_click(cx.listener(move |this, _, _, cx| {
                             cx.stop_propagation();
+                            this.topology.cancel_auto_scroll();
                             this.topology.node_source_filter = Some(chip_id.clone());
                             cx.notify();
                         }))
@@ -1563,13 +2132,12 @@ impl ManisApp {
 
 struct PolicyGraph {
     name_to_idx: BTreeMap<String, usize>,
-    /// Directed policy -> policy edges `(from_idx, to_idx)`.
+    /// Directed acyclic policy -> policy edges `(from_idx, to_idx)`.
     policy_edges: Vec<(usize, usize)>,
     layer_of: Vec<usize>,
     layers: Vec<Vec<usize>>,
     has_incoming_policy: Vec<bool>,
-    has_same_column_edge: Vec<bool>,
-    layer_has_same_column_edge: Vec<bool>,
+    ancestors_of: Vec<BTreeSet<usize>>,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -1590,18 +2158,37 @@ struct NodesTreeHighlight {
     highlighted_policy_edges: BTreeSet<(usize, usize)>,
 }
 
-fn policy_graph_height(idx: usize, children: &[Vec<usize>], visiting: &mut [bool]) -> usize {
-    visiting[idx] = true;
-    let mut max_child = 0usize;
-    let mut has_descendant = false;
-    for &child in &children[idx] {
-        if !visiting[child] {
-            has_descendant = true;
-            max_child = max_child.max(policy_graph_height(child, children, visiting));
+fn can_reach(start: usize, target: usize, children: &[Vec<usize>]) -> bool {
+    let mut stack = vec![start];
+    let mut visited = vec![false; children.len()];
+    while let Some(curr) = stack.pop() {
+        if curr == target {
+            return true;
+        }
+        if visited[curr] {
+            continue;
+        }
+        visited[curr] = true;
+        for &next in &children[curr] {
+            if !visited[next] {
+                stack.push(next);
+            }
         }
     }
-    visiting[idx] = false;
-    if has_descendant { max_child + 1 } else { 0 }
+    false
+}
+
+fn policy_graph_height(idx: usize, children: &[Vec<usize>], memo: &mut [Option<usize>]) -> usize {
+    if let Some(cached) = memo[idx] {
+        return cached;
+    }
+    let height = children[idx]
+        .iter()
+        .map(|&child| policy_graph_height(child, children, memo) + 1)
+        .max()
+        .unwrap_or(0);
+    memo[idx] = Some(height);
+    height
 }
 
 fn build_policy_graph(policies: &[TreePolicyData]) -> PolicyGraph {
@@ -1612,28 +2199,33 @@ fn build_policy_graph(policies: &[TreePolicyData]) -> PolicyGraph {
     }
 
     let mut children: Vec<Vec<usize>> = vec![Vec::new(); n];
+    let mut parents: Vec<Vec<usize>> = vec![Vec::new(); n];
     let mut policy_edges = Vec::new();
     let mut has_incoming_policy = vec![false; n];
 
+    // Policy hierarchy is strictly acyclic (DAG): reject self-edges and any back-edge that
+    // would form a cycle so every policy link flows strictly left-to-right across tiers.
     for (from_idx, policy) in policies.iter().enumerate() {
         let mut seen_children = BTreeSet::new();
         for (_, member_name) in &policy.members {
             if let Some(&to_idx) = name_to_idx.get(member_name)
                 && to_idx != from_idx
                 && seen_children.insert(to_idx)
+                && !can_reach(to_idx, from_idx, &children)
             {
                 children[from_idx].push(to_idx);
+                parents[to_idx].push(from_idx);
                 policy_edges.push((from_idx, to_idx));
                 has_incoming_policy[to_idx] = true;
             }
         }
     }
 
-    // Bottom-up cycle-safe longest path height: leaf policies get height 0, composite policies
-    // that wrap them get height 1+, and symmetric cycles settle into the same layer gracefully.
-    let mut visiting = vec![false; n];
+    // Bottom-up longest path height on the strict DAG: leaf policies get height 0, composite
+    // policies that wrap them get height 1+, guaranteeing layer_of[from] < layer_of[to].
+    let mut memo = vec![None; n];
     let heights: Vec<usize> = (0..n)
-        .map(|idx| policy_graph_height(idx, &children, &mut visiting))
+        .map(|idx| policy_graph_height(idx, &children, &mut memo))
         .collect();
     let max_height = heights.iter().copied().max().unwrap_or(0);
 
@@ -1654,15 +2246,18 @@ fn build_policy_graph(policies: &[TreePolicyData]) -> PolicyGraph {
         }
     }
 
-    let mut has_same_column_edge = vec![false; n];
-    let mut layer_has_same_column_edge = vec![false; non_empty_layers.len()];
-    for &(from_idx, to_idx) in &policy_edges {
-        if normalized_layer_of[from_idx] == normalized_layer_of[to_idx] {
-            has_same_column_edge[from_idx] = true;
-            has_same_column_edge[to_idx] = true;
-            layer_has_same_column_edge[normalized_layer_of[from_idx]] = true;
-        }
-    }
+    let ancestors_of: Vec<BTreeSet<usize>> = (0..n)
+        .map(|idx| {
+            let mut ancestors = BTreeSet::new();
+            let mut stack = parents[idx].clone();
+            while let Some(parent) = stack.pop() {
+                if ancestors.insert(parent) {
+                    stack.extend(&parents[parent]);
+                }
+            }
+            ancestors
+        })
+        .collect();
 
     PolicyGraph {
         name_to_idx,
@@ -1670,8 +2265,7 @@ fn build_policy_graph(policies: &[TreePolicyData]) -> PolicyGraph {
         layer_of: normalized_layer_of,
         layers: non_empty_layers,
         has_incoming_policy,
-        has_same_column_edge,
-        layer_has_same_column_edge,
+        ancestors_of,
     }
 }
 
@@ -1833,8 +2427,9 @@ fn policy_member_summary(
 }
 
 #[expect(
+    clippy::too_many_arguments,
     clippy::too_many_lines,
-    reason = "Builds policy-to-policy mesh edges and policy-to-node edges in one coherent pass"
+    reason = "Builds strict left-to-right tree edges and armed membership previews in one pass"
 )]
 fn build_nodes_tree_edges(
     policies: &[TreePolicyData],
@@ -1842,6 +2437,7 @@ fn build_nodes_tree_edges(
     visible_nodes: &[&TreeNodeData],
     focus: Option<&NodesTreeFocus>,
     highlight: &NodesTreeHighlight,
+    pending_edit: Option<&PendingPolicyMemberEdit>,
     dense_mode: bool,
     theme: Theme,
 ) -> (Vec<BezierEdge>, Vec<BezierEdge>) {
@@ -1850,19 +2446,25 @@ fn build_nodes_tree_edges(
     let mut fg_edges = Vec::new();
 
     let policy_layer_count = graph.layers.len().max(1);
+    let pending_remove = pending_edit.and_then(|pending| {
+        (pending.op == PolicyMemberEditOp::Remove).then_some((
+            pending.parent_policy_id.as_str(),
+            pending.target_key.as_str(),
+        ))
+    });
 
-    // 1. Policy -> Policy edges (left-to-right hierarchy, same-column peer arcs, and backward loops).
+    // 1. Policy -> Policy edges (strictly left-to-right across policy tiers).
     for &(from_idx, to_idx) in &graph.policy_edges {
         let from_policy = &policies[from_idx];
         let to_policy = &policies[to_idx];
         let from_layer = graph.layer_of[from_idx];
         let to_layer = graph.layer_of[to_idx];
-        let orientation = match from_layer.cmp(&to_layer) {
-            std::cmp::Ordering::Less => EdgeOrientation::Horizontal,
-            std::cmp::Ordering::Equal => EdgeOrientation::SameColumnArc,
-            std::cmp::Ordering::Greater => EdgeOrientation::BackwardLoop,
-        };
-        let crosses_columns = to_layer > from_layer + 1 || to_layer < from_layer;
+        let to_key = format!("p:{}", to_policy.id);
+        if pending_remove == Some((from_policy.id.as_str(), to_key.as_str())) {
+            continue;
+        }
+        let orientation = EdgeOrientation::Horizontal;
+        let crosses_columns = to_layer > from_layer + 1;
         let is_active_exit = from_policy.current_exit.as_deref() == Some(to_policy.name.as_str());
         let on_active_chain = highlight
             .active_chain_policy_edges
@@ -1975,6 +2577,10 @@ fn build_nodes_tree_edges(
             {
                 continue;
             }
+            let target_key = format!("n:{member_name}");
+            if pending_remove == Some((policy.id.as_str(), target_key.as_str())) {
+                continue;
+            }
             let is_active_exit = policy.current_exit.as_deref() == Some(member_name.as_str());
             let on_active_chain = highlight
                 .active_chain_node_edges
@@ -2050,6 +2656,22 @@ fn build_nodes_tree_edges(
                 });
             }
         }
+    }
+
+    if let Some(pending) = pending_edit {
+        let (color, width) = match pending.op {
+            PolicyMemberEditOp::Add => (theme.status_success, 2.4),
+            PolicyMemberEditOp::Remove => (theme.danger_fill, 2.5),
+        };
+        fg_edges.push(BezierEdge {
+            from_key: format!("p:{}", pending.parent_policy_id),
+            to_key: pending.target_key.clone(),
+            orientation: EdgeOrientation::Horizontal,
+            color,
+            width,
+            dashed: true,
+            layer: 4,
+        });
     }
 
     (bg_edges, fg_edges)

@@ -9,9 +9,10 @@ use manis_core::WindowSizeClass;
 use manis_profile::QxRuleList;
 
 use super::{
-    BezierEdge, EdgeOrientation, LayoutRegistry, PortSide, RulesTreeFocus, card_port_tracker,
-    col_tag, compact_protocol_label, legend_entry, new_layout_registry, paint_edges_canvas,
-    port_dot, scrollable_tree_column, with_alpha,
+    BezierEdge, EdgeOrientation, LayoutRegistry, PortSide, RulesTreeFocus,
+    build_column_auto_scroll_track, card_port_tracker, col_tag, compact_protocol_label,
+    legend_entry, new_layout_registry, paint_edges_canvas, port_dot, scrollable_tree_column,
+    with_alpha,
 };
 use crate::{
     app::{ManisApp, nodes::region_code, presentation::policy_kind_label},
@@ -110,6 +111,7 @@ impl ManisApp {
         }
 
         let registry = new_layout_registry();
+        self.topology.replace_rules_layout(registry.clone());
         let edges = build_rules_tree_edges(&rule_items, &policy_slots, focus.as_ref(), theme);
 
         let (hl_rules, hl_policies, hl_exits) =
@@ -166,7 +168,7 @@ impl ManisApp {
             })
             .collect::<Vec<_>>();
 
-        let bay_width = if compact { px(32.0) } else { px(48.0) };
+        let bay_width = if compact { px(28.0) } else { px(44.0) };
         let col1_header = col_tag(
             match language {
                 Language::English => format!("01 · ROUTING RULES ({})", rule_items.len()),
@@ -219,7 +221,7 @@ impl ManisApp {
                 &self.topology.rules_col_scrolls[0],
                 registry.clone(),
                 None,
-                px(0.0),
+                true,
                 theme,
             ))
             // Unobstructed Bézier bay 1 -> 2
@@ -235,7 +237,7 @@ impl ManisApp {
                 &self.topology.rules_col_scrolls[1],
                 registry.clone(),
                 None,
-                px(0.0),
+                true,
                 theme,
             ))
             // Unobstructed Bézier bay 2 -> 3
@@ -251,7 +253,7 @@ impl ManisApp {
                 &self.topology.rules_col_scrolls[2],
                 registry,
                 None,
-                px(0.0),
+                true,
                 theme,
             ));
 
@@ -266,6 +268,7 @@ impl ManisApp {
             .flex()
             .flex_col()
             .on_click(cx.listener(|this, _, _, cx| {
+                this.topology.cancel_auto_scroll();
                 if this.topology.pinned_rules.take().is_some() {
                     cx.notify();
                 }
@@ -298,6 +301,65 @@ impl ManisApp {
                     .flex_col()
                     .child(canvas_card),
             )
+    }
+
+    fn start_rules_tree_auto_scroll(&mut self, focus: &RulesTreeFocus, cx: &mut Context<Self>) {
+        let layout_registry = self.topology.rules_layout();
+        let layout = layout_registry.borrow();
+        let language = self.language();
+        let (rule_items, policy_slots, _) = self.collect_rules_tree_data(language);
+        let (hl_rules, hl_policies, hl_exits) =
+            compute_rules_tree_highlights(&rule_items, &policy_slots, Some(focus));
+
+        let mut tracks = Vec::new();
+        if !matches!(focus, RulesTreeFocus::Rule(_))
+            && let Some(viewport) = layout.viewport("col:rules")
+        {
+            let active_bounds: Vec<_> = hl_rules
+                .iter()
+                .filter_map(|id| layout.port_bounds(&format!("r:{id}")))
+                .collect();
+            if let Some(track) = build_column_auto_scroll_track(
+                self.topology.rules_col_scrolls[0].clone(),
+                viewport,
+                &active_bounds,
+            ) {
+                tracks.push(track);
+            }
+        }
+        if !matches!(focus, RulesTreeFocus::Policy(_))
+            && let Some(viewport) = layout.viewport("col:policies")
+        {
+            let active_bounds: Vec<_> = hl_policies
+                .iter()
+                .filter_map(|name| layout.port_bounds(&format!("rp:{name}")))
+                .collect();
+            if let Some(track) = build_column_auto_scroll_track(
+                self.topology.rules_col_scrolls[1].clone(),
+                viewport,
+                &active_bounds,
+            ) {
+                tracks.push(track);
+            }
+        }
+        if !matches!(focus, RulesTreeFocus::Exit(_))
+            && let Some(viewport) = layout.viewport("col:exits")
+        {
+            let active_bounds: Vec<_> = hl_exits
+                .iter()
+                .filter_map(|name| layout.port_bounds(&format!("re:{name}")))
+                .collect();
+            if let Some(track) = build_column_auto_scroll_track(
+                self.topology.rules_col_scrolls[2].clone(),
+                viewport,
+                &active_bounds,
+            ) {
+                tracks.push(track);
+            }
+        }
+        drop(layout);
+
+        self.start_topology_auto_scroll(tracks, cx);
     }
 
     #[allow(clippy::too_many_lines)] // Gathers live rules, target policy groups, and deduplicated exits.
@@ -961,8 +1023,11 @@ impl ManisApp {
                     Some(RulesTreeFocus::Rule(current)) if current == &click_id
                 ) {
                     this.topology.pinned_rules = None;
+                    this.topology.cancel_auto_scroll();
                 } else {
-                    this.topology.pinned_rules = Some(RulesTreeFocus::Rule(click_id.clone()));
+                    let focus = RulesTreeFocus::Rule(click_id.clone());
+                    this.topology.pinned_rules = Some(focus.clone());
+                    this.start_rules_tree_auto_scroll(&focus, cx);
                 }
                 cx.notify();
             }))
@@ -1146,8 +1211,11 @@ impl ManisApp {
                     Some(RulesTreeFocus::Policy(current)) if current == &click_name
                 ) {
                     this.topology.pinned_rules = None;
+                    this.topology.cancel_auto_scroll();
                 } else {
-                    this.topology.pinned_rules = Some(RulesTreeFocus::Policy(click_name.clone()));
+                    let focus = RulesTreeFocus::Policy(click_name.clone());
+                    this.topology.pinned_rules = Some(focus.clone());
+                    this.start_rules_tree_auto_scroll(&focus, cx);
                 }
                 cx.notify();
             }))
@@ -1344,8 +1412,11 @@ impl ManisApp {
                     Some(RulesTreeFocus::Exit(current)) if current == &click_name
                 ) {
                     this.topology.pinned_rules = None;
+                    this.topology.cancel_auto_scroll();
                 } else {
-                    this.topology.pinned_rules = Some(RulesTreeFocus::Exit(click_name.clone()));
+                    let focus = RulesTreeFocus::Exit(click_name.clone());
+                    this.topology.pinned_rules = Some(focus.clone());
+                    this.start_rules_tree_auto_scroll(&focus, cx);
                 }
                 cx.notify();
             }))
